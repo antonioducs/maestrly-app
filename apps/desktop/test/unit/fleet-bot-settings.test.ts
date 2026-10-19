@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { fleetBotSchema, type FleetBot, type FleetSelectionOption } from '@maestrly/bot-fleet-protocol'
+import {
+  FLEET_BOT_DELEGATION_DEFAULT,
+  fleetBotSchema,
+  type FleetBot,
+  type FleetSelectionOption,
+} from '@maestrly/bot-fleet-protocol'
 import {
   AUTO_RULESET,
   BOT_MEMORY_WRITE_RULES,
@@ -252,7 +257,7 @@ describe('bot settings translations', () => {
 
   it('names every field, problem, section and autonomy row in both languages', () => {
     const keys = [
-      ...['name', 'role', 'instructions', 'ceiling', 'selection', 'compaction', 'talksTo'].map(
+      ...['name', 'role', 'instructions', 'ceiling', 'selection', 'compaction', 'talksTo', 'delegation'].map(
         (field) => `botSettings.field.${field}`
       ),
       ...['name', 'role', 'compactionModel', 'compactionInterval', 'compactionContextLimit'].map(
@@ -262,6 +267,7 @@ describe('bot settings translations', () => {
         'identity',
         'autonomy',
         'model',
+        'tasks',
         'accounts',
         'skills',
         'peers',
@@ -312,5 +318,28 @@ describe('bot artifact publishing preference', () => {
   it('names the toggle in both UI catalogs', () => {
     expect(resources.en.ui.artifacts.publishingBot.label).toBe('Publish artifacts')
     expect(resources['pt-BR'].ui.artifacts.publishingBot.label).toBe('Publicar artefatos')
+  })
+})
+
+describe('bot delegation setting', () => {
+  it('starts from the defaults for a bot that never set it, and sends nothing unchanged', () => {
+    const current = bot()
+    const draft = botSettingsDraft(current, false)
+    expect(draft.delegation).toEqual(FLEET_BOT_DELEGATION_DEFAULT)
+    expect(botSettingsPatch(current, draft, false, [])).toEqual({})
+  })
+  it('patches the whole group when the owner changes it', () => {
+    const current = bot()
+    const draft = botSettingsDraft(current, false)
+    const edited = { ...draft, delegation: { ...draft.delegation, mode: 'delegate' as const } }
+    expect(changedBotSettings(current, edited, false)).toEqual(['delegation'])
+    expect(botSettingsPatch(current, edited, false, [])).toEqual({ delegation: edited.delegation })
+  })
+  it('follows the bot unless the owner edited it', () => {
+    const previous = botSettingsDraft(bot(), false)
+    const next = botSettingsDraft(bot({ delegation: { ...FLEET_BOT_DELEGATION_DEFAULT, maxTasks: 2 } }), false)
+    expect(rebaseBotSettingsDraft(previous, previous, next).delegation.maxTasks).toBe(2)
+    const edited = { ...previous, delegation: { ...previous.delegation, mode: 'delegate' as const } }
+    expect(rebaseBotSettingsDraft(edited, previous, next).delegation).toEqual(edited.delegation)
   })
 })

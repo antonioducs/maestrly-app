@@ -5,6 +5,8 @@ import {
   type FleetCompactionConfig,
   type FleetPatchBotRequest,
   type FleetSelectionOption,
+  FLEET_BOT_DELEGATION_DEFAULT,
+  type FleetBotDelegation,
 } from '@maestrly/bot-fleet-protocol'
 import {
   compactionFormFrom,
@@ -49,8 +51,10 @@ export type BotSettingsDraft = {
   talksTo: string[]
   selectionId: string
   compaction: CompactionForm
+  delegation: FleetBotDelegation
 }
 export type BotSettingsField =
+  | 'delegation'
   | 'publishArtifacts'
   | 'name'
   | 'role'
@@ -68,8 +72,14 @@ export const botSettingsFields = [
   { id: 'publishArtifacts', section: 'autonomy' },
   { id: 'selection', section: 'model' },
   { id: 'compaction', section: 'model' },
+  { id: 'delegation', section: 'tasks' },
   { id: 'talksTo', section: 'peers' },
 ] as const satisfies ReadonlyArray<{ id: BotSettingsField; section: string }>
+
+/** How the bot splits its work: its own settings, or the defaults when it never set any. */
+export function delegationOf(bot: Pick<FleetBot, 'delegation'>): FleetBotDelegation {
+  return bot.delegation ?? FLEET_BOT_DELEGATION_DEFAULT
+}
 
 export function selectionIdOf(bot: Pick<FleetBot, 'selection'>): string {
   return bot.selection ? `${bot.selection.providerId}::${bot.selection.modelId}` : ''
@@ -93,6 +103,7 @@ export function botSettingsDraft(bot: FleetBot, inheritable: boolean): BotSettin
       inheritable && compactionSourceOf(bot) !== 'bot'
         ? { ...compaction, modelId: ENVIRONMENT_COMPACTION_CHOICE }
         : compaction,
+    delegation: structuredClone(delegationOf(bot)),
   }
 }
 
@@ -117,6 +128,7 @@ export function rebaseBotSettingsDraft(
     talksTo: sortedIds(draft.talksTo) === sortedIds(previous.talksTo) ? next.talksTo : draft.talksTo,
     selectionId: pick('selectionId'),
     compaction: pick('compaction'),
+    delegation: pick('delegation'),
   }
 }
 
@@ -153,6 +165,7 @@ export function changedBotSettings(bot: FleetBot, draft: BotSettingsDraft, inher
     selection: draft.selectionId !== selectionIdOf(bot),
     compaction: compactionChange(bot, draft.compaction, inheritable).dirty,
     talksTo: sortedIds(draft.talksTo) !== sortedIds(bot.talksTo),
+    delegation: JSON.stringify(draft.delegation) !== JSON.stringify(delegationOf(bot)),
   }
   return botSettingsFields.filter((field) => changed[field.id]).map((field) => field.id)
 }
@@ -199,6 +212,7 @@ export function botSettingsPatch(
     else if (field === 'publishArtifacts') patch.publishArtifacts = draft.publishArtifacts
     else if (field === 'talksTo') patch.talksTo = [...draft.talksTo]
     else if (field === 'compaction') patch.compaction = compactionChange(bot, draft.compaction, inheritable).value
+    else if (field === 'delegation') patch.delegation = draft.delegation
     else {
       const chosen = options.find((option) => option.id === draft.selectionId)
       patch.selection = chosen

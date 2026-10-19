@@ -2,11 +2,13 @@ import { SettingsSwitch } from './SettingsSwitch'
 import { ApiKeyAccountForm } from './ApiKeyAccountForm'
 import { BotAccountsSection } from './BotAccountsSection'
 import { BotSkillsMcpSection } from './BotSkillsMcpSection'
+import { BotTasksSection } from './BotTasksSection'
 import { hasEnvironments } from '@/lib/fleet/environments'
 import { botEnvironments, environmentOf } from '@/lib/fleet/selectors'
 import {
   botProvisioningKey,
   contextLimitAvailability,
+  delegationAvailability,
   provisioningAvailability,
   useBotProvisioning,
 } from '@/lib/fleet/provisioning'
@@ -70,6 +72,7 @@ type TabId =
   | 'identity'
   | 'autonomy'
   | 'model'
+  | 'tasks'
   | 'peers'
   | 'routines'
   | 'memory'
@@ -105,6 +108,7 @@ const fieldTargets: Record<BotSettingsField, string> = {
   selection: 'fleet-settings-model-heading',
   compaction: 'fleet-compaction-heading',
   talksTo: 'fleet-settings-peers-heading',
+  delegation: 'fleet-settings-tasks-heading',
 }
 const fieldInput =
   'w-full rounded-[9px] border border-input bg-black/25 px-3 py-2 text-sm transition-[border-color,box-shadow] placeholder:text-muted-foreground/70 hover:border-border-strong focus-visible:border-ring focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/20 aria-[invalid=true]:border-destructive'
@@ -201,6 +205,8 @@ export function BotSettings({
   const inheritable = shared && fleet.state.connection.features.includes(FLEET_ENVIRONMENT_COMPACTION_FEATURE)
   // The Maestrly that applies the limit is the environment's when it is listed, else the bot's own.
   const contextLimit = contextLimitAvailability(fleet, environment ?? bot)
+  // A gateway that stores how a bot splits its work, and a running Maestrly that applies it.
+  const delegation = delegationAvailability(fleet, environment ?? bot)
 
   const base = botSettingsDraft(bot, inheritable)
   const baseKey = JSON.stringify(base)
@@ -246,6 +252,7 @@ export function BotSettings({
     'identity',
     'autonomy',
     'model',
+    ...(delegation === 'unsupported' ? [] : (['tasks'] as const)),
     'peers',
     'routines',
     'memory',
@@ -762,6 +769,18 @@ export function BotSettings({
                 />
               </>
             )}
+          </SettingsTabPanel>
+
+          <SettingsTabPanel tab="tasks" current={current}>
+            <BotTasksSection
+              id={domId('tasks')}
+              botName={bot.name}
+              value={draft.delegation}
+              onChange={(next) => edit({ delegation: next })}
+              options={options}
+              availability={delegation}
+              environmentName={environment?.name ?? null}
+            />
           </SettingsTabPanel>
 
           <SettingsTabPanel tab="peers" current={current}>

@@ -989,12 +989,52 @@ export default {
       description: 'Runs commands and edits files without asking, anywhere in the container it runs in.',
     },
   },
+  botTasks: {
+    mode: {
+      normal: {
+        title: 'Normal',
+        description:
+          "{{name}} does the work and splits it into parallel tasks when that helps. Tasks use the conversation's model.",
+      },
+      delegate: {
+        title: 'Delegate',
+        description: '{{name}} hands all long work to tasks. Each one runs on a model you allow, chosen by difficulty.',
+      },
+    },
+    maxTasks: 'Tasks at the same time',
+    maxTasksHint: 'The others wait their turn.',
+    fewer: 'Fewer tasks',
+    more: 'More tasks',
+    models: {
+      title: 'Models {{name}} can use',
+      note: 'Check the allowed models and say what kind of task each one is for.',
+      empty: "No model allowed. Tasks use the conversation's model.",
+    },
+    tier: { fast: 'Fast', balanced: 'Balanced', strong: 'Strong' },
+    tierFor: 'What {{model}} is for',
+    preview: {
+      simple: 'Simple tasks',
+      medium: 'Medium tasks',
+      complex: 'Complex tasks',
+      or: 'or',
+      upgraded: '(no {{tier}} model allowed)',
+      self: '{{name}} does them itself',
+    },
+    retryStronger: 'Redo with a stronger model',
+    retryStrongerHint: 'When a task fails or its model says it was unsure. Once per task.',
+    spreadAccounts: 'Use the account with the most room',
+    spreadAccountsHint: 'When a model is on several accounts, the task goes to the one with the most usage left now.',
+    sideConversations: 'Also in routines and conversations with other bots',
+    sideConversationsHint: 'Off, only your conversation with {{name}} delegates.',
+    restart: 'Restart the {{environment}} environment to use these settings.',
+  },
   botSettings: {
     nav: 'Settings sections',
     section: {
       identity: 'Identity',
       autonomy: 'Autonomy',
       model: 'Model',
+      tasks: 'Tasks',
       accounts: 'Accounts',
       skills: 'Skills and MCP',
       peers: 'Conversations',
@@ -1008,6 +1048,7 @@ export default {
     sectionDirty: 'unsaved changes',
     sectionAttention: 'needs attention',
     identityNote: 'What it is called and what it takes care of.',
+    tasksNote: 'How {{name}} splits work into tasks that run at the same time.',
     optional: 'optional',
     rolePlaceholder: 'E.g. Invoice analyst',
     instructionsPlaceholder:
@@ -1148,6 +1189,7 @@ export default {
       selection: 'Main model',
       compaction: 'Compaction',
       talksTo: 'Conversations',
+      delegation: 'How it splits work',
     },
     problemField: {
       name: 'name',
