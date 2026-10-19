@@ -52,6 +52,7 @@ import { SubagentCoordinator } from '../subagent-coordinator'
 import type { ChatSubagentUsage } from '../../../shared/chat'
 import { createCursorTaskRuntime, type CursorManagedTaskRunner } from './task-runtime'
 import { MAESTRO_DELEGATE_TOOL_DESCRIPTION, MAESTRO_DELEGATE_TOOL_SCHEMA } from '../maestro-delegation'
+import { withTaskComplexity } from '../subagent-route'
 import { buildSubagentSupervisionTools } from '../maestro-supervision-tools'
 import {
   createCursorStreamMapper,
@@ -562,15 +563,18 @@ async function runCursorSubscriptionChatInScope(
               inputSchema: jsonSchema(
                 args.mode === 'maestro'
                   ? MAESTRO_DELEGATE_TOOL_SCHEMA
-                  : {
-                      type: 'object',
-                      properties: {
-                        agent: { type: 'string', enum: agents.map((agent) => agent.name) },
-                        prompt: { type: 'string', description: 'Self-contained subtask and all required context.' },
+                  : withTaskComplexity(
+                      {
+                        type: 'object',
+                        properties: {
+                          agent: { type: 'string', enum: agents.map((agent) => agent.name) },
+                          prompt: { type: 'string', description: 'Self-contained subtask and all required context.' },
+                        },
+                        required: ['agent', 'prompt'],
+                        additionalProperties: false,
                       },
-                      required: ['agent', 'prompt'],
-                      additionalProperties: false,
-                    }
+                      args.conversationId
+                    )
               ),
               execute: async (input, options) => {
                 if (!state.runTask) throw new Error('The Maestrly subagent executor is not ready')

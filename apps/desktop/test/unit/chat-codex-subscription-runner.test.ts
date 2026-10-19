@@ -64,6 +64,7 @@ import { QuestionBroker } from '../../src/main/chat/question-broker'
 import { chatToolOutputToAiSdkOutput, mcpResultToChatToolOutput } from '../../src/main/chat/tool-output'
 import { toolOutputImages, toolOutputText } from '../../src/shared/chat'
 import { resolveSubagentExecutionProfile } from '../../src/main/chat/subagent-execution-profile'
+import { setSubagentRouter } from '../../src/main/chat/subagent-route'
 import { runSubagent } from '../../src/main/chat/subagent-runner'
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
@@ -5070,6 +5071,49 @@ describe('Codex subscription runner', () => {
 
     client.emit(completedNotification('thread_1', 'turn_approval'))
     await running
+  })
+
+  it('requires and forwards the difficulty of a task when the conversation routes its tasks', async () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, {})
+    persistUser(conversation.id, 'user_routed_task', 'Split the work', 1)
+    setSubagentRouter(conversation.id, () => ({
+      info: { complexity: 'simple', declared: true, tier: null, upgraded: false },
+      candidates: [],
+    }))
+    try {
+      const client = new FakeCodexClient()
+      client.queueTurn({ turnId: 'turn_root_routed', notifications: [] })
+      resolveSubagentExecutionProfileMock.mockResolvedValueOnce({
+        definition: null,
+        profile: { version: 1, agentName: 'explore', effective: null, attempts: [] },
+      })
+      const args = runArgs(conversation.id, workspace.id, conversation.cwd, client)
+      args.mode = 'agent'
+      const running = runCodexSubscriptionChat(args)
+      await vi.waitFor(() => expect(client.startTurnCalls).toHaveLength(1))
+      const taskSpec = (await hostMcpTools(client.startThreadCalls[0])).find((spec) => spec.name === 'task')
+      expect((taskSpec?.inputSchema as { required?: string[] }).required).toEqual(['agent', 'prompt', 'complexity'])
+      await client.serverRequest({
+        id: 'task_routed',
+        method: 'item/tool/call',
+        params: {
+          threadId: 'thread_1',
+          turnId: 'turn_root_routed',
+          itemId: 'task_routed',
+          callId: 'task_routed',
+          tool: 'task',
+          arguments: { agent: 'explore', prompt: 'Rename the photos.', complexity: 'simple' },
+        },
+      })
+      expect(resolveSubagentExecutionProfileMock).toHaveBeenCalledWith(
+        expect.objectContaining({ agentName: 'explore', complexity: 'simple' })
+      )
+      client.emit(completedNotification('thread_1', 'turn_root_routed'))
+      await running
+    } finally {
+      setSubagentRouter(conversation.id, null)
+    }
   })
 
   it('runs a Codex Fast task from the snapshot, ignoring the live Standard conversation preference', async () => {

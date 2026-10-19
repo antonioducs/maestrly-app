@@ -21,6 +21,7 @@ import type { PermissionBroker } from '../permission'
 import type { QuestionBroker } from '../question-broker'
 import type { SubagentCoordinator, SubagentLease } from '../subagent-coordinator'
 import { resolveSubagentExecutionProfile } from '../subagent-execution-profile'
+import { parseTaskComplexity } from '../subagent-route'
 import {
   assertSubagentSelection,
   recordSubagentDispatch,
@@ -123,6 +124,7 @@ export function createAntigravityTaskRuntime(args: CreateAntigravityTaskRuntimeA
           agents: [...args.agents],
           conversationId: args.conversationId,
           parentFastMode: args.fastMode,
+          complexity: parseTaskComplexity(parsed.complexity),
           parent: {
             ...args.selection,
             effort: args.reasoningEffort && args.reasoningEffort !== 'off' ? args.reasoningEffort : '',

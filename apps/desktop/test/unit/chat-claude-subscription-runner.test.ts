@@ -99,6 +99,7 @@ import {
   runClaudeChat,
   type RunClaudeChatArgs,
 } from '../../src/main/chat/claude-agent-sdk/runner'
+import { setSubagentRouter } from '../../src/main/chat/subagent-route'
 import type {
   ClaudeSubscriptionAccountIdentity,
   ClaudeSubscriptionManager,
@@ -1058,6 +1059,65 @@ describe('Claude official chat runner', () => {
     } finally {
       setConversationShellEnv(botA.id, null)
     }
+  })
+
+  it('asks for the difficulty of every task once the conversation routes its tasks', async () => {
+    const workspace = makeWorkspace()
+    h.listAgents.mockResolvedValue([
+      {
+        name: 'general-purpose',
+        description: 'Worker with full tools.',
+        tools: ['read', 'bash', 'write', 'edit'],
+        prompt: 'Do the work.',
+        source: 'test',
+      },
+    ])
+    const run = async (routed: boolean) => {
+      const conversation = makeConversation(workspace.id, { cwd: '/repo' })
+      upsertChatMessage({
+        id: `user-routed-${routed}`,
+        conversationId: conversation.id,
+        role: 'user',
+        parts: [{ type: 'text', id: `text-routed-${routed}`, text: 'Split the work.' }],
+        createdAt: 1,
+      })
+      if (routed)
+        setSubagentRouter(conversation.id, () => ({
+          info: { complexity: 'medium', declared: true, tier: null, upgraded: false },
+          candidates: [],
+        }))
+      try {
+        const manager = new StreamingTextManager()
+        await runClaudeChat({
+          conversationId: conversation.id,
+          projectId: workspace.id,
+          cwd: '/repo',
+          selection: { providerId: 'builtin_claude_subscription', modelId: 'sonnet' },
+          mode: 'agent',
+          permMode: 'ask',
+          manager: manager as unknown as ClaudeSubscriptionManager,
+          accountIdentity: identity,
+          broker: { assert: vi.fn(), on: vi.fn() } as never,
+          questionBroker: { ask: vi.fn() } as never,
+          emit: vi.fn(),
+          signal: new AbortController().signal,
+        })
+        const options = manager.calls[0].options ?? {}
+        return (
+          (options.mcpServers as Record<string, { instance: unknown }>).maestrly.instance as {
+            _registeredTools: Record<string, { inputSchema: { safeParse(value: unknown): { success: boolean } } }>
+          }
+        )._registeredTools.task.inputSchema
+      } finally {
+        setSubagentRouter(conversation.id, null)
+      }
+    }
+    const plain = { agent: 'general-purpose', prompt: 'Rename the photos.' }
+    const routed = await run(true)
+    expect(routed.safeParse(plain).success).toBe(false)
+    expect(routed.safeParse({ ...plain, complexity: 'simple' }).success).toBe(true)
+    // Without routing the task keeps today's input, with no difficulty to declare.
+    expect((await run(false)).safeParse(plain).success).toBe(true)
   })
 
   it('gives Design the Agent tool surface, hashes its prompt once, and keeps Plan/Ask restricted', async () => {
