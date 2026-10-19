@@ -94,7 +94,10 @@ permission requests are rejected.
 The server always runs in an app-owned working directory, never in your
 project, so project files such as `.agents/hooks.json` cannot run commands
 through it. The project directory is passed to the model in its instructions and
-used by Maestrly's tools.
+used by Maestrly's tools. Because the server ignores project rule files, the
+first message of each Antigravity session carries the project's instructions
+(`AGENTS.md` or `CLAUDE.md`), the conversation's pinned memory, and the skill and
+subagent catalogs; the date and git branch come with every message.
 
 ## Credentials and local data
 

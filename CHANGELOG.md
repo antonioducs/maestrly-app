@@ -27,6 +27,12 @@ User-visible changes by version. Downloads are on
   Shift for a floating window), or with the drawer's **Open in a floating
   window** button. The shortcut can be changed in **Settings → Tools & drawer**.
   See [remote workspaces](docs/remote-workspaces.md#computer).
+- Gemini 4 Argon and Gemini 3.8 Flash follow instructions written for them,
+  based on Google's prompting guidance for Gemini agents, on every provider
+  that serves them: Google AI (Antigravity), a Gemini API key, OpenRouter,
+  GitHub Copilot and Cursor. With a Gemini API key or OpenRouter they offer
+  Low, Medium and High effort only. Claude Opus 5 and Claude Fable 5.1 on
+  OpenRouter now get the same instructions as on Anthropic.
 
 ### Fixed
 
@@ -38,6 +44,10 @@ User-visible changes by version. Downloads are on
   edit the limit but did not save it, and the other subscriptions hid the
   option. A save that fails now shows an error. See
   [context limit](docs/chat-context.md#context-limit).
+- Google AI (Antigravity) conversations now receive the project's
+  `AGENTS.md` or `CLAUDE.md`, the conversation's pinned memory, the skill and
+  subagent catalogs, and the current date and git branch. Before, the model
+  never saw them.
 - The **Subscription usage** dialog in the desktop sidebar now includes
   connected Google AI (Antigravity) accounts alongside Claude and ChatGPT.
 - In the **Terminal** tab of a conversation on a server's workspaces

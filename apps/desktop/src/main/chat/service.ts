@@ -115,6 +115,7 @@ import { harnessFor, resolveHarnessContract } from './harness/execution'
 import { captureHarnessFlags } from './harness/flags'
 import { harnessCompactionSystem } from './harness/host-contracts'
 import { createHarnessSnapshot } from './harness/compatibility'
+import { offeredReasoningEfforts } from './harness/policies'
 import type { ResolvedHarness } from './harness/types'
 import {
   PermissionBroker,
@@ -3302,17 +3303,19 @@ export async function effectiveModelMeta(
     : effective != null
       ? ({ contextWindow: effective, ...manualContextLimitMeta(limit, effective) } as ChatModelMeta)
       : null
-  if (outMeta?.reasoningEfforts?.includes('ultra')) {
-    try {
-      if (
-        resolveChatHarnessMetadata(providerId, modelId, { flags: captureHarnessFlags() }).harness.reasoning.nativeUltra
-      ) {
-        outMeta.nativeUltraMode = true
-      }
-    } catch {
-      // Missing provider metadata already degrades through the normal selector path.
-    }
+  let reasoning: ResolvedHarness['reasoning'] | null = null
+  try {
+    reasoning = resolveChatHarnessMetadata(providerId, modelId, { flags: captureHarnessFlags() }).harness.reasoning
+  } catch {
+    // Missing provider metadata already degrades through the normal selector path.
   }
+  if (outMeta && reasoning?.manifestEfforts) {
+    // The runner applies the same rule, so the picker never offers a tier the turn would drop.
+    const reasoningEfforts = offeredReasoningEfforts(reasoning, baseMeta?.reasoningEfforts)
+    outMeta.reasoning = reasoningEfforts.length > 0
+    outMeta.reasoningEfforts = reasoningEfforts
+  }
+  if (outMeta?.reasoningEfforts?.includes('ultra') && reasoning?.nativeUltra) outMeta.nativeUltraMode = true
   return { meta: outMeta, providerWindow, catalogWindow, limit }
 }
 
