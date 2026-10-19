@@ -25,6 +25,7 @@ const { InstanceHelpStore } = await import('../../src/main/fleet/instance/help')
 const { InstanceHoldManager } = await import('../../src/main/fleet/instance/gate')
 const { BotRunConversations } = await import('../../src/main/fleet/instance/routine-runs')
 const { BotRuntime } = await import('../../src/main/fleet/instance/runtime')
+const { subagentConcurrencyOf } = await import('../../src/main/chat/subagent-concurrency')
 const { getSubscriptionFailoverRouter, resetSubscriptionFailoverRouterForTests } = await import(
   '../../src/main/chat/subscription-failover/router'
 )
@@ -427,5 +428,22 @@ describe('turns of the bot conversations at the same time', () => {
     for (const entry of started) entry.finish()
     await both
     expect(runtime.currentInput(primary.id)).toBeNull()
+  })
+
+  it("limits the tasks of every conversation of the bot together, and forgets a deleted run's", async () => {
+    const { runtime, primary, runs } = await bot()
+    const { started } = heldTurns()
+    ;(BotRuntime.prototype as unknown as { applyProfile(): void }).applyProfile.call(runtime)
+    expect(subagentConcurrencyOf(primary.id)).toEqual({ pool: 'alpha', limit: 4 })
+    const runId = randomUUID()
+    await runtime.input(routineInput(runId))
+    const running = turn(runtime)
+    await vi.waitFor(() => expect(started).toHaveLength(1))
+    const record = runs.get(runId)!
+    expect(subagentConcurrencyOf(record.conversationId)).toEqual({ pool: 'alpha', limit: 4 })
+    started[0]!.finish()
+    await running
+    await runtime.deleteRun(runId)
+    expect(subagentConcurrencyOf(record.conversationId)).toBeNull()
   })
 })

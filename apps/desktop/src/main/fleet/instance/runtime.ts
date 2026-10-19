@@ -153,6 +153,7 @@ import {
   resetConversationSkillOverrides,
   setConversationSkillSelection,
 } from '../../chat/skill-state'
+import { setSubagentConcurrency } from '../../chat/subagent-concurrency'
 
 /** Whether the bot may start turns at all; each conversation then starts its own while it runs none. */
 export function canDispatch(
@@ -304,6 +305,8 @@ function toFleetBotMemory(memory: LocalMemory): FleetBotMemory {
 }
 
 const COMPACTION_DISABLED: BackgroundCompactionConfig = { enabled: false, intervalTokens: 100_000, selection: null }
+/** How many tasks a bot runs at once, across all its conversations. */
+const BOT_TASKS_AT_ONCE = 4
 
 /** A bot's two screens: its apps display and the area of the environment display that holds its browser. */
 export interface BotScreen {
@@ -721,6 +724,7 @@ export class BotRuntime {
     this.registeredConversation = null
     const id = registered.id
     clearCompactionSummarizer(id)
+    setSubagentConcurrency(id, null)
     setConversationContextLimit(id, null)
     clearConversationMemorySpace(id)
     clearMemoryCoreExtras(id)
@@ -852,6 +856,7 @@ export class BotRuntime {
       },
     })
     publishConvChatSettings(id)
+    setSubagentConcurrency(id, { pool: this.botId, limit: BOT_TASKS_AT_ONCE })
     // The owner's cap on the conversation's window, whatever its model; the usage the Mac shows follows it at once.
     const limit = this.stored.profile.compaction?.contextLimitTokens ?? null
     if ((getConversationContextLimit(id) ?? null) !== limit) {
@@ -906,6 +911,7 @@ export class BotRuntime {
       stopObserving()
       stopGate()
       clearCompactionSummarizer(id)
+      setSubagentConcurrency(id, null)
       setConversationContextLimit(id, null)
       clearConversationMemorySpace(id)
       clearMemoryCoreExtras(id)
@@ -936,6 +942,7 @@ export class BotRuntime {
         tools: { ...previous.tools, app: true },
       },
     })
+    setSubagentConcurrency(id, { pool: this.botId, limit: BOT_TASKS_AT_ONCE })
     setConversationContextLimit(id, this.stored.profile.compaction?.contextLimitTokens ?? null)
     const selection = this.currentSelection()
     if (selection)

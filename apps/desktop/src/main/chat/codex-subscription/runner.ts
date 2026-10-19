@@ -82,6 +82,7 @@ import {
   type NormalizedAiUsage,
 } from '../subagent-runner'
 import { SubagentCoordinator, type SubagentLease } from '../subagent-coordinator'
+import { acquireSubagentSlot, SUBAGENT_SLOT_WAIT_LINE } from '../subagent-concurrency'
 import { createSubagentSessionRecorder } from '../subagent-session'
 import {
   MAESTRO_DELEGATE_TOOL_DESCRIPTION,
@@ -3571,6 +3572,7 @@ export async function runCodexSubscriptionChat(
             return { output: '', error: `Subagent "${agentName}" has no runnable execution profile.`, sub }
           }
           let lease: SubagentLease | null = null
+          let releaseSlot: (() => void) | null = null
           let maestroWorkerRuntime: MaestroWorkerToolRuntime | null = null
           try {
             maestroWorkerRuntime =
@@ -3656,6 +3658,10 @@ export async function runCodexSubscriptionChat(
             const nativeCursor = isCursorSubscriptionProvider(profile.effective.providerId)
             const nativeAntigravity = isAntigravitySubscriptionProvider(profile.effective.providerId)
             const nativeCopilot = isGitHubCopilotSubscriptionProvider(profile.effective.providerId)
+            // A conversation with a task limit (a bot's) waits for a free slot, as executeSubagent does.
+            releaseSlot = await acquireSubagentSlot(args.conversationId, signal, () =>
+              progress(SUBAGENT_SLOT_WAIT_LINE)
+            )
             lease = await state.subagentCoordinator.acquire({ agent: agentName, signal })
             const childApproval = approvalConfig(codexReadOnly ? 'plan' : 'agent', args.permMode)
             // Maestro continuity (same semantics as subagent-executor): reopen this agent's previous native thread
@@ -4276,6 +4282,7 @@ export async function runCodexSubscriptionChat(
             throw error
           } finally {
             lease?.release()
+            releaseSlot?.()
             await maestroWorkerRuntime?.close()
           }
         } finally {
