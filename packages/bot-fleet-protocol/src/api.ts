@@ -52,6 +52,7 @@ import {
   fleetRoutineRunKeptSchema,
   fleetPeerThreadSchema,
   fleetPeerThreadSettingsSchema,
+  fleetBotDelegationSchema,
   fleetRoutineRunMediaSchema,
   fleetRoutineRunSettingsSchema,
   fleetBotMemorySchema,
@@ -446,6 +447,8 @@ export const fleetPatchBotRequestSchema = z.object({
    * a model becomes that default, used by the bot and its siblings without one.
    */
   compaction: fleetCompactionConfigSchema.nullable().optional(),
+  /** How the bot splits its work into tasks (`bot-delegation`); replaced whole. */
+  delegation: fleetBotDelegationSchema.optional(),
 })
 export type FleetPatchBotRequest = z.infer<typeof fleetPatchBotRequestSchema>
 export const fleetSelectionsResponseSchema = z.object({
@@ -918,6 +921,8 @@ export const fleetInstanceProfileSchema = z.object({
     .string()
     .regex(/^#[0-9a-fA-F]{6}$/)
     .optional(),
+  /** How the bot splits its work into tasks (`bot-delegation`); absent from gateways that predate it or until set. */
+  delegation: fleetBotDelegationSchema.optional(),
 })
 export type FleetInstanceProfile = z.infer<typeof fleetInstanceProfileSchema>
 /** Installs or updates a bot in an environment instance: its profile, its display slot and its own gateway token. */

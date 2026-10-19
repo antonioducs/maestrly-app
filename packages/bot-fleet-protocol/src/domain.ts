@@ -26,6 +26,7 @@ import {
   FLEET_RUNTIME_STATES,
   FLEET_DESKTOP_BRIDGE_LIMITS,
   FLEET_PEER_THREAD_LIMITS,
+  FLEET_DELEGATION_LIMITS,
 } from './constants.js'
 
 export const fleetIdSchema = z.string().min(1)
@@ -353,6 +354,83 @@ export const fleetPeerThreadSettingsSchema = z.object({
 })
 export type FleetPeerThreadSettings = z.infer<typeof fleetPeerThreadSettingsSchema>
 export const FLEET_PEER_THREAD_SETTINGS_DEFAULT: FleetPeerThreadSettings = { retentionDays: 30, hopLimit: 8 }
+export const FLEET_DELEGATION_TIERS = ['fast', 'balanced', 'strong'] as const
+export type FleetDelegationTier = (typeof FLEET_DELEGATION_TIERS)[number]
+export const FLEET_TASK_COMPLEXITIES = ['simple', 'medium', 'complex'] as const
+export type FleetTaskComplexity = (typeof FLEET_TASK_COMPLEXITIES)[number]
+/** The model class a task of each difficulty asks for. */
+export const FLEET_TASK_COMPLEXITY_TIER: Record<FleetTaskComplexity, FleetDelegationTier> = {
+  simple: 'fast',
+  medium: 'balanced',
+  complex: 'strong',
+}
+/** A model the owner allows for delegated tasks, on every connected account of its provider. */
+export const fleetDelegationModelSchema = z.object({
+  /** The provider without an account suffix: `builtin_claude_subscription`, or an API-key provider's id. */
+  providerId: fleetIdSchema,
+  modelId: fleetIdSchema,
+  tier: z.enum(FLEET_DELEGATION_TIERS),
+})
+export type FleetDelegationModel = z.infer<typeof fleetDelegationModelSchema>
+/**
+ * How a bot splits its work into tasks (`bot-delegation`). In `normal` mode its tasks run on its conversation's model;
+ * in `delegate` mode it hands long work to tasks, each on an allowed model of the class its difficulty asks for.
+ */
+export const fleetBotDelegationSchema = z.object({
+  mode: z.enum(['normal', 'delegate']).default('normal'),
+  maxTasks: z.number().int().min(FLEET_DELEGATION_LIMITS.tasksMin).max(FLEET_DELEGATION_LIMITS.tasksMax).default(4),
+  models: z
+    .array(fleetDelegationModelSchema)
+    .max(FLEET_DELEGATION_LIMITS.modelsMax)
+    .refine(
+      (models) => new Set(models.map((model) => `${model.providerId}::${model.modelId}`)).size === models.length,
+      'models must be unique'
+    )
+    .default([]),
+  retryStronger: z.boolean().default(true),
+  spreadAccounts: z.boolean().default(true),
+  sideConversations: z.boolean().default(false),
+})
+export type FleetBotDelegation = z.infer<typeof fleetBotDelegationSchema>
+export const FLEET_BOT_DELEGATION_DEFAULT: FleetBotDelegation = {
+  mode: 'normal',
+  maxTasks: 4,
+  models: [],
+  retryStronger: true,
+  spreadAccounts: true,
+  sideConversations: false,
+}
+/** The class of allowed model a task runs on: the one its difficulty asks for, else the next stronger one. */
+export function fleetDelegationTierFor(
+  models: readonly Pick<FleetDelegationModel, 'tier'>[],
+  complexity: FleetTaskComplexity
+): { tier: FleetDelegationTier; upgraded: boolean } | null {
+  const start = FLEET_DELEGATION_TIERS.indexOf(FLEET_TASK_COMPLEXITY_TIER[complexity])
+  for (let index = start; index < FLEET_DELEGATION_TIERS.length; index++) {
+    const tier = FLEET_DELEGATION_TIERS[index]!
+    if (models.some((model) => model.tier === tier)) return { tier, upgraded: index > start }
+  }
+  return null
+}
+/** A `task` tool call as the owner sees it (`bot-delegation`). */
+export const fleetTranscriptTaskSchema = z.object({
+  agent: z.string().max(80),
+  prompt: z.string().max(FLEET_DELEGATION_LIMITS.taskPromptMax),
+  /** The model that runs it; null before its profile resolves. */
+  model: z.string().max(200).nullable(),
+  /** Set when the bot's delegation routed it. */
+  delegation: z
+    .object({
+      complexity: z.enum(FLEET_TASK_COMPLEXITIES),
+      declared: z.boolean(),
+      tier: z.enum(FLEET_DELEGATION_TIERS).nullable(),
+      upgraded: z.boolean(),
+    })
+    .optional(),
+  /** What it is doing now, while it runs. */
+  activity: z.string().max(200).nullable(),
+})
+export type FleetTranscriptTask = z.infer<typeof fleetTranscriptTaskSchema>
 /** The routine run a bot is working on now, in its own conversation. */
 export const fleetRunningRoutineRunSchema = z.object({
   id: fleetIdSchema,
@@ -426,6 +504,8 @@ export const fleetBotSchema = z.object({
   runSettings: fleetRoutineRunSettingsSchema.nullable().default(null),
   /** How it keeps its conversations with other bots; null from gateways without `peer-conversations`. */
   peerSettings: fleetPeerThreadSettingsSchema.nullable().default(null),
+  /** How the bot splits its work into tasks; null from gateways without `bot-delegation` or until the owner sets it. */
+  delegation: fleetBotDelegationSchema.nullable().default(null),
   /** The routine run its turn works on now, in the run's own conversation; null otherwise. */
   runningRun: fleetRunningRoutineRunSchema.nullable().default(null),
   /**
@@ -805,6 +885,8 @@ export const fleetTranscriptItemSchema = z.discriminatedUnion('kind', [
     files: z.array(fleetFileRefSchema).max(FLEET_FILE_LIMITS.attachmentsMax).optional(),
     // todo_write only: the list it recorded. Absent from other tools and from instances that predate it.
     todos: z.array(fleetTodoSchema).max(FLEET_TODO_LIMITS.itemsMax).optional(),
+    // task only (`bot-delegation`): absent from instances that predate it.
+    task: fleetTranscriptTaskSchema.optional(),
   }),
   z.object({
     ...transcriptBase,

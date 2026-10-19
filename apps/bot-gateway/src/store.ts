@@ -1713,6 +1713,7 @@ export class Store {
       peerSettings: row.peer_settings_json
         ? (JSON.parse(String(row.peer_settings_json)) as FleetPeerThreadSettings)
         : FLEET_PEER_THREAD_SETTINGS_DEFAULT,
+      delegation: null,
       runningRun: null,
       turns: null,
     }

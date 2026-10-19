@@ -202,6 +202,13 @@ export const FLEET_CANCEL_CONVERSATION_QUERY = 'conversation'
 export const FLEET_PEER_CONVERSATIONS_FEATURE = 'peer-conversations'
 /** The query parameter a reader of events sets to `1` to receive the threads between bots and their transcripts. */
 export const FLEET_PEER_THREADS_QUERY = 'peerThreads'
+/**
+ * Bots that split their work into tasks routed to the models their owner allows (`bot-delegation`): the bot's
+ * `delegation` settings, which the gateway stores and sends in the profile, and the `task` details of transcript tool
+ * items. A gateway feature (`moreFeatures`) and an instance capability.
+ */
+export const FLEET_BOT_DELEGATION_FEATURE = 'bot-delegation'
+export const FLEET_DELEGATION_LIMITS = { modelsMax: 24, tasksMin: 1, tasksMax: 8, taskPromptMax: 4_000 } as const
 /** The folder of a bot's conversation where a deleted thread's images and attachments are kept. */
 export const FLEET_PEER_THREAD_KEPT_FOLDER = 'bots'
 export const FLEET_PEER_THREAD_LIMITS = {
