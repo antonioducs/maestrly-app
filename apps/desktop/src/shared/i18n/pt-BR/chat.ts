@@ -1192,6 +1192,9 @@ export default {
     limitCeilingUnknown: 'Teto real desconhecido',
     limitHint: 'Aceita 100k, 1M ou o número cru.',
     limitClampNote: 'Valor acima do teto real; será limitado a {{ceiling}}.',
+    limitSaveFailed: 'Não foi possível salvar o limite. Tente de novo.',
+    limitBetweenTurnsNote:
+      'Este runtime executa cada turno sozinho: o limite compacta a conversa entre os turnos, e um turno longo pode passar dele.',
     limitSave: 'Salvar',
     limitClear: 'Sem limite',
     limitButtonTitle: 'Definir limite de contexto',

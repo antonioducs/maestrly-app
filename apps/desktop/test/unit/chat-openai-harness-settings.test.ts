@@ -93,7 +93,7 @@ vi.mock('../../src/main/chat/catalog', () => ({
   isSubscriptionProvider: vi.fn(
     (providerId: string) => providerId.startsWith('builtin-') || providerId.startsWith('builtin_')
   ),
-  isChatGptWebProvider: vi.fn(() => false),
+  isChatGptWebProvider: vi.fn((providerId?: string) => providerId === 'builtin_chatgpt_web'),
   isChatGptWebEnabled: vi.fn(() => false),
   setChatGptWebEnabled: vi.fn(),
   isManagedProvider: vi.fn((providerId: string) => providerId.startsWith('builtin-')),
@@ -624,7 +624,7 @@ describe('OpenAI harness kill switch', () => {
     ).resolves.toMatchObject({ limit: null, providerWindow: 1_000_000, effective: 950_000 })
   })
 
-  it('allows Codex account limits while blocking other managed providers', () => {
+  it('accepts limits for every subscription account and blocks only the web companion', () => {
     const handlers = register()
     expect(
       handlers.get('chat:context-limit:set')?.(undefined as never, 'builtin-codex-subscription', 'gpt-5.6-sol', 300_000)
@@ -639,7 +639,14 @@ describe('OpenAI harness kill switch', () => {
     ).toEqual({ ok: true })
     expect(
       handlers.get('chat:context-limit:set')?.(undefined as never, 'builtin-claude-subscription', 'claude', 300_000)
+    ).toEqual({ ok: true })
+    expect(JSON.parse(h.settings.get('chat.contextLimits') ?? '{}')).toMatchObject({
+      'builtin-claude-subscription::claude': 300_000,
+    })
+    expect(
+      handlers.get('chat:context-limit:set')?.(undefined as never, 'builtin_chatgpt_web', 'chatgpt', 300_000)
     ).toEqual({ ok: false, error: 'unsupported' })
+    expect(JSON.parse(h.settings.get('chat.contextLimits') ?? '{}')).not.toHaveProperty('builtin_chatgpt_web::chatgpt')
   })
 
   it('does not invent 1.1M context before runtime discovery', async () => {

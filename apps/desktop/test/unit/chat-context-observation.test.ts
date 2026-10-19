@@ -321,6 +321,15 @@ describe('composer context observations', () => {
     ).toBeUndefined()
   })
 
+  it('caps the real ceiling a runtime reports with the manual limit in effect', () => {
+    const limited = { contextWindow: 50_000, contextLimit: 50_000 }
+    expect(contextMeterReading(history, limited, snapshot(), model).window).toBe(50_000)
+    expect(contextMeterReading(history, limited, undefined, model).window).toBe(50_000)
+    // A limit above the real ceiling never raises it.
+    expect(contextMeterReading(history, { contextLimit: 150_000 }, snapshot(), model).window).toBe(100_000)
+    expect(contextMeterReading(history, { contextWindow: 1_000_000 }, snapshot(), model).window).toBe(100_000)
+  })
+
   it('distinguishes estimates and accepts measured zero instead of reverting to old history', () => {
     expect(contextMeterReading(history, null, snapshot({ quality: 'estimated' }), model).quality).toBe('estimated')
     expect(contextMeterReading(history, null, snapshot({ usedTokens: 0 }), model).used).toBe(0)
