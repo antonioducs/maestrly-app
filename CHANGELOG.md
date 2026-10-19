@@ -5,6 +5,15 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Fixed
+
+- Conversations that use an OpenAI API key work again in **Ask** and **Agent**
+  modes, with the **OpenAI** preset or a custom OpenAI-compatible provider at
+  `https://api.openai.com/v1`. Every first message failed with HTTP 400
+  "Invalid schema for function 'start_conversations': … 'uri' is not a valid
+  format", because the strict schema sent to OpenAI kept the `uri` string
+  format.
+
 ## [0.22.0] - 2026-10-19
 
 ### Added

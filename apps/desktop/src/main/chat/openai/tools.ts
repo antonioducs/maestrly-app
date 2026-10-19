@@ -101,11 +101,27 @@ const nullableSchema = (schema: JSONSchema7): JSONSchema7 | null => {
   return null
 }
 
+export const OPENAI_STRICT_STRING_FORMATS: ReadonlySet<string> = new Set([
+  'date-time',
+  'time',
+  'date',
+  'duration',
+  'email',
+  'hostname',
+  'ipv4',
+  'ipv6',
+  'uuid',
+])
+
+const hasStringType = (type: JSONSchema7['type']): boolean =>
+  type === 'string' || (Array.isArray(type) && type.includes('string'))
+
 /**
  * Strict function calling accepts only a subset of JSON Schema. Zod/Ajv annotations do not change local
- * validation; notably, the wire schema does not support `default`. Keep `description`, which is essential to
- * model-visible semantics; discard other metadata only from the provider-bound copy. The original schema remains
- * the source for validation and defaults.
+ * validation; notably, the wire schema does not support `default` or arbitrary string `format` values (such as
+ * `uri` from `z.string().url()`). Keep `description`, which is essential to model-visible semantics; discard
+ * unsupported metadata only from the provider-bound copy. The original schema remains the source for validation
+ * and defaults.
  */
 const stripStrictAnnotations = (input: JSONSchema7): JSONSchema7 => {
   const {
@@ -118,12 +134,17 @@ const stripStrictAnnotations = (input: JSONSchema7): JSONSchema7 => {
     deprecated: _deprecated,
     readOnly: _readOnly,
     writeOnly: _writeOnly,
+    format,
     const: constant,
     ...schema
   } = input
+  const withFormat =
+    typeof format === 'string' && OPENAI_STRICT_STRING_FORMATS.has(format) && hasStringType(input.type)
+      ? { ...schema, format }
+      : schema
   // `enum` belongs to the documented Structured Outputs subset; `const` varies across validators/adapters.
   // A single-value enum preserves exactly the same semantics without relying on that wire keyword.
-  return Object.hasOwn(input, 'const') ? { ...schema, enum: [constant] } : schema
+  return Object.hasOwn(input, 'const') ? { ...withFormat, enum: [constant] } : withFormat
 }
 
 const STRICT_SCHEMA_KEYS = new Set([

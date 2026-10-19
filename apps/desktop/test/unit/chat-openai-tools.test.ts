@@ -2,13 +2,18 @@ import { asSchema } from '@ai-sdk/provider-utils'
 import { jsonSchema, tool, type ToolExecutionOptions, type ToolSet } from 'ai'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
+import { autonomousReportTools } from '../../src/main/chat/autonomous-tools'
+import { buildSubagentSupervisionTools } from '../../src/main/chat/maestro-supervision-tools'
 import {
+  OPENAI_STRICT_STRING_FORMATS,
   OpenAIToolScheduler,
   isOpenAIParallelSafeTool,
   isOpenAIReadOnlyTool,
   makeOpenAIFunctionSchemaStrict,
   optimizeOpenAITools,
 } from '../../src/main/chat/openai/tools'
+import { ALL_TOOLS } from '../../src/main/chat/tools'
+import { startConversationsTool } from '../../src/main/chat/tools/conversation-dispatch'
 
 const executionOptions = { toolCallId: 'call-1', messages: [], context: undefined } as ToolExecutionOptions<unknown>
 
@@ -154,6 +159,132 @@ describe('OpenAI tool optimization', () => {
     expect(result.strictToolNames).toEqual(['inspect'])
     expect(wireSchema.properties?.kind).toMatchObject({ enum: ['inspect'] })
     expect(wireSchema.properties?.kind).not.toHaveProperty('const')
+  })
+
+  it('keeps only OpenAI-supported string formats on strict wire schemas and strips uri on start_conversations', async () => {
+    const converted = makeOpenAIFunctionSchemaStrict({
+      type: 'object',
+      properties: {
+        supportedUuid: { type: 'string', format: 'uuid' },
+        supportedDateTime: { type: 'string', format: 'date-time' },
+        unsupportedUri: { type: 'string', format: 'uri' },
+        nonStringFormat: { type: 'integer', format: 'int32' },
+      },
+      required: ['supportedUuid'],
+    })
+
+    expect(converted?.schema).toEqual({
+      type: 'object',
+      additionalProperties: false,
+      required: ['nonStringFormat', 'supportedDateTime', 'supportedUuid', 'unsupportedUri'],
+      properties: {
+        supportedUuid: { type: 'string', format: 'uuid' },
+        supportedDateTime: { type: ['string', 'null'], format: 'date-time' },
+        unsupportedUri: { type: ['string', 'null'] },
+        nonStringFormat: { type: ['integer', 'null'] },
+      },
+    })
+
+    const result = await optimizeOpenAITools({
+      start_conversations: tool({
+        description: startConversationsTool.description,
+        inputSchema: startConversationsTool.parameters,
+        execute: (input) => input,
+      }),
+    })
+    const adaptedSchema = asSchema(result.tools.start_conversations.inputSchema)
+    const wireSchema = await adaptedSchema.jsonSchema
+
+    expect(result.strictToolNames).toEqual(['start_conversations'])
+    expect(result.tools.start_conversations.strict).toBe(true)
+    expect(JSON.stringify(wireSchema)).not.toContain('"uri"')
+
+    // Local Zod validation still enforces `.url()` after synthetic nulls are stripped.
+    const invalidUrl = await adaptedSchema.validate?.({
+      tasks: [
+        {
+          requestKey: 'issue-1',
+          title: 'Fix bug',
+          prompt: 'Investigate the issue',
+          placement: null,
+          target: null,
+          settings: null,
+          source: { label: 'Issue #1', url: 'not-a-valid-url' },
+        },
+      ],
+    })
+    expect(invalidUrl?.success).toBe(false)
+
+    const omittedUrl = await adaptedSchema.validate?.({
+      tasks: [
+        {
+          requestKey: 'issue-1',
+          title: 'Fix bug',
+          prompt: 'Investigate the issue',
+          placement: null,
+          target: null,
+          settings: null,
+          source: { label: 'Issue #1', url: null },
+        },
+      ],
+    })
+    expect(omittedUrl).toEqual({
+      success: true,
+      value: {
+        tasks: [
+          {
+            requestKey: 'issue-1',
+            title: 'Fix bug',
+            prompt: 'Investigate the issue',
+            source: { label: 'Issue #1' },
+          },
+        ],
+      },
+    })
+  })
+
+  it('ensures no built-in tool exits the optimizer with strict: true and an unsupported format', async () => {
+    const collectFormats = (node: unknown, out: string[] = []): string[] => {
+      if (Array.isArray(node)) {
+        for (const item of node) collectFormats(item, out)
+        return out
+      }
+      if (typeof node !== 'object' || node === null) return out
+      const record = node as Record<string, unknown>
+      if (typeof record.format === 'string') out.push(record.format)
+      for (const value of Object.values(record)) collectFormats(value, out)
+      return out
+    }
+
+    const builtInTools: ToolSet = {
+      ...Object.fromEntries(
+        ALL_TOOLS.map((def) => [
+          def.name,
+          tool({
+            description: def.description,
+            inputSchema: def.parameters,
+            execute: () => 'ok',
+          }),
+        ])
+      ),
+      ...buildSubagentSupervisionTools({
+        conversationId: 'conv-format-audit',
+        parentMessageId: 'msg-format-audit',
+        maestro: true,
+        signal: new AbortController().signal,
+      }),
+      ...autonomousReportTools(),
+    }
+
+    const result = await optimizeOpenAITools(builtInTools)
+    expect(result.strictToolNames).toContain('start_conversations')
+
+    for (const [name, optimizedTool] of Object.entries(result.tools)) {
+      if ((optimizedTool as { strict?: boolean }).strict !== true) continue
+      const wireSchema = await asSchema(optimizedTool.inputSchema).jsonSchema
+      const invalidFormats = collectFormats(wireSchema).filter((format) => !OPENAI_STRICT_STRING_FORMATS.has(format))
+      expect(invalidFormats, `tool "${name}" has unsupported strict format(s)`).toEqual([])
+    }
   })
 
   it('falls back to non-strict for combinators instead of promising unsupported compatibility', async () => {
