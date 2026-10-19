@@ -11,7 +11,7 @@ function provider(overrides: Partial<ChatProviderInfo> & Pick<ChatProviderInfo, 
 }
 
 describe('quick subscription usage targets', () => {
-  it('keeps connected Claude/Codex default and additional accounts with their labels', () => {
+  it('keeps connected Claude, Codex and Google AI default and additional accounts with their labels', () => {
     const providers = [
       provider({
         id: 'builtin_codex_subscription',
@@ -26,6 +26,12 @@ describe('quick subscription usage targets', () => {
         connected: true,
         accountId: 'acc_work',
         accountLabel: 'Work',
+      }),
+      provider({
+        id: 'builtin_antigravity_subscription',
+        name: 'Google AI (Antigravity)',
+        kind: 'antigravity-subscription',
+        connected: true,
       }),
     ]
 
@@ -42,6 +48,12 @@ describe('quick subscription usage targets', () => {
         accountId: 'acc_work',
         label: 'Claude — Work',
         accountLabel: 'Work',
+      },
+      {
+        providerId: 'builtin_antigravity_subscription',
+        providerKind: 'antigravity-subscription',
+        accountId: null,
+        label: 'Google AI (Antigravity)',
       },
     ])
   })

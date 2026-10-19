@@ -1,6 +1,10 @@
-import type { ChatConfig, ChatSubscriptionProviderKind } from '../../../shared/chat'
+import {
+  supportsSubscriptionUsage,
+  type ChatConfig,
+  type ChatSubscriptionUsageProviderKind,
+} from '../../../shared/chat'
 
-export type QuickUsageProviderKind = Extract<ChatSubscriptionProviderKind, 'codex-subscription' | 'claude-subscription'>
+export type QuickUsageProviderKind = ChatSubscriptionUsageProviderKind
 
 export interface QuickUsageTarget {
   providerId: string
@@ -12,10 +16,7 @@ export interface QuickUsageTarget {
 
 export function connectedQuickUsageTargets(config: Pick<ChatConfig, 'providers'>): QuickUsageTarget[] {
   return config.providers.flatMap((provider) => {
-    if (
-      provider.connected !== true ||
-      (provider.kind !== 'codex-subscription' && provider.kind !== 'claude-subscription')
-    ) {
+    if (provider.connected !== true || !supportsSubscriptionUsage(provider.kind)) {
       return []
     }
     return [

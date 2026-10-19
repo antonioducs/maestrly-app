@@ -1373,7 +1373,7 @@ export default {
     keepAwakeOff: 'Impedir suspensão: desligado',
     usage: 'Usage',
     usageTitle: 'Uso das assinaturas',
-    usageDescription: 'Saúde atual dos limites dos planos Claude e ChatGPT conectados.',
+    usageDescription: 'Saúde atual dos limites dos planos Claude, ChatGPT e Google AI conectados.',
     usageRefresh: 'Atualizar uso das assinaturas',
     usageUnavailable: 'Os detalhes de uso estão indisponíveis para esta conta.',
     settingsTitle: 'Configurações — CLIs instaladas, modo YOLO',

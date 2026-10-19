@@ -24,6 +24,8 @@ User-visible changes by version. Downloads are on
 
 ### Fixed
 
+- The **Subscription usage** dialog in the desktop sidebar now includes
+  connected Google AI (Antigravity) accounts alongside Claude and ChatGPT.
 - Conversations that use an OpenAI API key work again in **Ask** and **Agent**
   modes, with the **OpenAI** preset or a custom OpenAI-compatible provider at
   `https://api.openai.com/v1`. Every first message failed with HTTP 400
