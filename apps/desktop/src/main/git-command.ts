@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { promisify } from 'node:util'
+import { recycleCodexConnections } from './chat/codex-subscription/manager'
 import { pathEnvKey, refreshWindowsPathFromRegistry, windowsEnvValue, type WindowsPathRefreshDeps } from './fix-path'
 
 const execFileAsync = promisify(execFile)
@@ -35,6 +36,7 @@ async function locateWindowsGit(deps: WindowsPathRefreshDeps): Promise<boolean> 
   if (!dir) return false
   const key = pathEnvKey(env)
   env[key] = [(env[key] ?? '').replace(/;+$/, ''), dir].filter(Boolean).join(';')
+  await recycleCodexConnections()
   return true
 }
 

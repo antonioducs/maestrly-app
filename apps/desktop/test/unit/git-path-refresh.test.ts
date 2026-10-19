@@ -6,6 +6,7 @@ const h = vi.hoisted(() => ({
   execFile: vi.fn(),
   spawn: vi.fn(),
   exists: vi.fn((_file: string) => false),
+  recycleCodexConnections: vi.fn(async () => true),
 }))
 
 vi.mock('node:child_process', async (importOriginal) => ({
@@ -19,6 +20,12 @@ vi.mock('node:fs', async (importOriginal) => {
   return { ...actual, default: { ...actual, existsSync: h.exists }, existsSync: h.exists }
 })
 
+vi.mock('../../src/main/chat/codex-subscription/manager', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/chat/codex-subscription/manager')>()),
+  recycleCodexConnections: h.recycleCodexConnections,
+}))
+
+import { refreshWindowsPathFromRegistry } from '../../src/main/fix-path'
 import { refreshGitPath, retryWhenGitAppears, runGitRaw, windowsGitDirectories } from '../../src/main/git-command'
 import { preflightGit } from '../../src/main/project-setup/git-runner'
 import { PluginGitSource } from '../../src/main/plugins/git-source'
@@ -242,5 +249,35 @@ describe('finding Git installed while the app is open', () => {
     }
     expect(h.execFile).not.toHaveBeenCalled()
     expect(process.env.Path).toBe('C:\\Windows\\system32')
+  })
+
+  it('recycles idle Codex connections when a PATH refresh adds a directory, and skips when nothing changed', async () => {
+    fakeExecFile(
+      () => (installed ? REG_WITH_GIT : REG_WITHOUT_GIT),
+      () => installed
+    )
+
+    // Registry refresh with no new directory does not recycle Codex connections.
+    await expect(refreshWindowsPathFromRegistry()).resolves.toEqual([])
+    expect(h.recycleCodexConnections).not.toHaveBeenCalled()
+
+    // Registry refresh that adds Git's directory recycles idle Codex connections.
+    installed = true
+    await expect(refreshWindowsPathFromRegistry()).resolves.toEqual([GIT_DIR])
+    expect(h.recycleCodexConnections).toHaveBeenCalledTimes(1)
+
+    // Subsequent refresh when the directory is already on Path does not recycle again.
+    await expect(refreshWindowsPathFromRegistry()).resolves.toEqual([])
+    expect(h.recycleCodexConnections).toHaveBeenCalledTimes(1)
+
+    // Fallback directory path in refreshGitPath (when registry lacks Git) also recycles idle Codex connections.
+    process.env.Path = 'C:\\Windows\\system32'
+    fakeExecFile(
+      () => REG_WITHOUT_GIT,
+      () => installed
+    )
+    await expect(refreshGitPath()).resolves.toBe(true)
+    expect(process.env.Path).toBe(`C:\\Windows\\system32;${GIT_DIR}`)
+    expect(h.recycleCodexConnections).toHaveBeenCalledTimes(2)
   })
 })
