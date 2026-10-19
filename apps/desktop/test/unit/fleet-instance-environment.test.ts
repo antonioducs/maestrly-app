@@ -503,6 +503,7 @@ describe('bot environment registry', () => {
       'routine-conversations',
       'parallel-turns',
       'peer-conversations',
+      'bot-delegation',
     ])
     expect(runtime.health()).toMatchObject({
       ok: true,
@@ -526,6 +527,7 @@ describe('bot environment registry', () => {
         'routine-conversations',
         'parallel-turns',
         'peer-conversations',
+        'bot-delegation',
       ],
     })
   })
@@ -1295,6 +1297,7 @@ describe('bot environment registry', () => {
           'routine-conversations',
           'parallel-turns',
           'peer-conversations',
+          'bot-delegation',
         ],
       })
       expect(await (await request('GET', '/v1/environment/status')).json()).toMatchObject({
@@ -1318,6 +1321,7 @@ describe('bot environment registry', () => {
           'routine-conversations',
           'parallel-turns',
           'peer-conversations',
+          'bot-delegation',
         ],
         bots: [
           { botId: 'alpha', slot: 1 },
@@ -1345,6 +1349,7 @@ describe('bot environment registry', () => {
           'routine-conversations',
           'parallel-turns',
           'peer-conversations',
+          'bot-delegation',
         ],
       })
       const selections = await request('GET', '/v1/environment/selections')

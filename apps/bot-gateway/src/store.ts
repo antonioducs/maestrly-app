@@ -30,6 +30,7 @@ import {
   type FleetPeerThreadSettings,
   FLEET_ROUTINE_RUN_SETTINGS_DEFAULT,
   FLEET_PEER_THREAD_SETTINGS_DEFAULT,
+  fleetBotDelegationSchema,
 } from '@maestrly/bot-fleet-protocol'
 import { GatewayError } from './errors.js'
 
@@ -308,7 +309,7 @@ export class Store {
     const version = Number(
       (this.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get() as Row | undefined)?.value ?? 0
     )
-    if (version > 20) throw new Error('Gateway database schema is newer than this binary')
+    if (version > 21) throw new Error('Gateway database schema is newer than this binary')
     if (version === 0) {
       this.db.exec(`
         CREATE TABLE devices (id TEXT PRIMARY KEY, name TEXT NOT NULL, token_sha256 TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, last_seen_at TEXT, revoked_at TEXT);
@@ -466,6 +467,12 @@ export class Store {
         'CREATE TABLE IF NOT EXISTS dictation_settings (id INTEGER PRIMARY KEY CHECK (id = 1), provider TEXT NOT NULL, api_key TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT NOT NULL)'
       )
       this.db.prepare("UPDATE meta SET value='20' WHERE key='schema_version'").run()
+    }
+    if (version <= 20) {
+      // Schema 21: how a bot splits its work into tasks (`bot-delegation`); null until the owner sets it.
+      const bots = new Set((this.db.prepare('PRAGMA table_info(bots)').all() as Row[]).map((row) => row.name))
+      if (!bots.has('delegation_json')) this.db.exec('ALTER TABLE bots ADD COLUMN delegation_json TEXT')
+      this.db.prepare("UPDATE meta SET value='21' WHERE key='schema_version'").run()
     }
 
     if (this.db.prepare('PRAGMA foreign_key_check').all().length)
@@ -1456,8 +1463,8 @@ export class Store {
         )
       }
       this.db
-        .prepare(`INSERT INTO bots(id,name,role,instructions,tint,ceiling,selection_json,compaction_json,talks_to_json,paused,publish_artifacts,lifecycle,setup_json,created_at,updated_at,archived_at,environment_id,slot,archived_with_environment)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`)
+        .prepare(`INSERT INTO bots(id,name,role,instructions,tint,ceiling,selection_json,compaction_json,talks_to_json,paused,publish_artifacts,lifecycle,setup_json,created_at,updated_at,archived_at,environment_id,slot,delegation_json,archived_with_environment)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`)
         .run(
           bot.id,
           bot.name,
@@ -1476,7 +1483,8 @@ export class Store {
           bot.updatedAt,
           bot.lifecycle === 'archived' ? bot.updatedAt : null,
           environmentId,
-          slot
+          slot,
+          bot.delegation ? JSON.stringify(bot.delegation) : null
         )
       this.db
         .prepare('INSERT INTO bot_secrets(bot_id,gateway_token,gateway_token_sha256) VALUES(?,?,?)')
@@ -1491,7 +1499,7 @@ export class Store {
   saveBot(bot: FleetBot) {
     const archived = Number(bot.lifecycle === 'archived')
     const result = this.db
-      .prepare(`UPDATE bots SET name=?,role=?,instructions=?,tint=?,ceiling=?,selection_json=?,compaction_json=?,talks_to_json=?,paused=?,publish_artifacts=?,lifecycle=?,setup_json=?,updated_at=?,
+      .prepare(`UPDATE bots SET name=?,role=?,instructions=?,tint=?,ceiling=?,selection_json=?,compaction_json=?,talks_to_json=?,paused=?,publish_artifacts=?,lifecycle=?,setup_json=?,delegation_json=?,updated_at=?,
       archived_at=CASE WHEN ? THEN COALESCE(archived_at,?) END,archived_with_environment=CASE WHEN ? THEN archived_with_environment ELSE 0 END WHERE id=?`)
       .run(
         bot.name,
@@ -1506,6 +1514,7 @@ export class Store {
         Number(bot.publishArtifacts ?? false),
         bot.lifecycle,
         JSON.stringify(bot.setup),
+        bot.delegation ? JSON.stringify(bot.delegation) : null,
         bot.updatedAt,
         archived,
         bot.updatedAt,
@@ -1713,6 +1722,9 @@ export class Store {
       peerSettings: row.peer_settings_json
         ? (JSON.parse(String(row.peer_settings_json)) as FleetPeerThreadSettings)
         : FLEET_PEER_THREAD_SETTINGS_DEFAULT,
+      delegation: row.delegation_json
+        ? (fleetBotDelegationSchema.safeParse(JSON.parse(String(row.delegation_json))).data ?? null)
+        : null,
       runningRun: null,
       turns: null,
     }

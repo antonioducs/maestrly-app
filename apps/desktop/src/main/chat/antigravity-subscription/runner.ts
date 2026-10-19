@@ -45,6 +45,7 @@ import {
   mergeGeneratedImageUsage,
 } from '../image-gen'
 import { MAESTRO_DELEGATE_TOOL_DESCRIPTION, MAESTRO_DELEGATE_TOOL_SCHEMA } from '../maestro-delegation'
+import { withTaskComplexity } from '../subagent-route'
 import type { MaestroLiveRunPort } from '../maestro-live'
 import { buildSubagentSupervisionTools } from '../maestro-supervision-tools'
 import { buildAppTools, buildMcpTools, hasPersonalMemoryTools, PERSONAL_MEMORY_TOOLS } from '../mcp'
@@ -410,15 +411,18 @@ export async function runAntigravitySubscriptionChat(
             inputSchema: jsonSchema(
               args.mode === 'maestro'
                 ? MAESTRO_DELEGATE_TOOL_SCHEMA
-                : {
-                    type: 'object',
-                    properties: {
-                      agent: { type: 'string', enum: agents.map((agent) => agent.name) },
-                      prompt: { type: 'string', description: 'Self-contained subtask and all required context.' },
+                : withTaskComplexity(
+                    {
+                      type: 'object',
+                      properties: {
+                        agent: { type: 'string', enum: agents.map((agent) => agent.name) },
+                        prompt: { type: 'string', description: 'Self-contained subtask and all required context.' },
+                      },
+                      required: ['agent', 'prompt'],
+                      additionalProperties: false,
                     },
-                    required: ['agent', 'prompt'],
-                    additionalProperties: false,
-                  }
+                    args.conversationId
+                  )
             ),
             // The host MCP server announces the call; this reports the authoritative terminal state (with `sub`).
             execute: async (input, options) => {

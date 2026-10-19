@@ -35,6 +35,8 @@ export interface ResolveSubagentProfileInput {
   /** Effective Fast Mode of the parent turn; only the selected `parent` layer may inherit it. */
   parentFastMode?: boolean
   diagnostics?: SubagentProfileDiagnostic[]
+  /** Candidates a host chose for this task (a delegating bot's routing), tried before every rule. */
+  hostRoute?: { ruleKey: string; candidates: SubagentProfileCandidate[] }
 }
 
 type Layer = {
@@ -60,8 +62,11 @@ function candidatesAt(rules: SubagentProfileRulesV1 | null | undefined, axis: 'b
 
 function buildLayers(input: ResolveSubagentProfileInput, agentName: string, category?: string): Layer[] {
   const { conversationRules: conversation, globalRules: global, agent, parent } = input
+  const host: Layer[] = input.hostRoute?.candidates.length
+    ? [{ source: 'bot-delegation', ruleKey: input.hostRoute.ruleKey, candidates: input.hostRoute.candidates }]
+    : []
   if (input.profilesEnabled === false) {
-    return [{ source: 'parent', candidates: [parent], synthesizedEffort: true }]
+    return [...host, { source: 'parent', candidates: [parent], synthesizedEffort: true }]
   }
   const frontmatter = agent.profile
     ? [agent.profile]
@@ -69,6 +74,7 @@ function buildLayers(input: ResolveSubagentProfileInput, agentName: string, cate
       ? [{ providerId: parent.providerId, modelId: agent.legacyModel, effort: parent.effort }]
       : []
   return [
+    ...host,
     { source: 'conversation-agent', ruleKey: agentName, candidates: candidatesAt(conversation, 'byAgent', agentName) },
     {
       source: 'conversation-category',

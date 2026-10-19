@@ -68,6 +68,7 @@ import type { ChatAgent } from '../agents'
 import { listEffectiveAgents } from '../virtual-subagents'
 import { buildAndRenderSubagentDispatchCatalog } from '../subagent-dispatch-catalog'
 import { resolveSubagentExecutionProfile } from '../subagent-execution-profile'
+import { parseTaskComplexity, withTaskComplexity } from '../subagent-route'
 import { getSubagentProfileModelMeta } from '../subagent-profile-model-meta'
 import {
   assertSubagentSelection,
@@ -82,6 +83,7 @@ import {
   type NormalizedAiUsage,
 } from '../subagent-runner'
 import { SubagentCoordinator, type SubagentLease } from '../subagent-coordinator'
+import { acquireSubagentSlot, SUBAGENT_SLOT_WAIT_LINE } from '../subagent-concurrency'
 import { createSubagentSessionRecorder } from '../subagent-session'
 import {
   MAESTRO_DELEGATE_TOOL_DESCRIPTION,
@@ -2012,19 +2014,22 @@ async function buildDynamicTools(
           inputSchema:
             args.mode === 'maestro'
               ? MAESTRO_DELEGATE_TOOL_SCHEMA
-              : {
-                  type: 'object',
-                  properties: {
-                    agent: {
-                      type: 'string',
-                      enum: agents.map((agent) => agent.name),
-                      description: 'Subagent name from the catalog.',
+              : withTaskComplexity(
+                  {
+                    type: 'object',
+                    properties: {
+                      agent: {
+                        type: 'string',
+                        enum: agents.map((agent) => agent.name),
+                        description: 'Subagent name from the catalog.',
+                      },
+                      prompt: { type: 'string', description: 'Self-contained subtask and all required context.' },
                     },
-                    prompt: { type: 'string', description: 'Self-contained subtask and all required context.' },
+                    required: ['agent', 'prompt'],
+                    additionalProperties: false,
                   },
-                  required: ['agent', 'prompt'],
-                  additionalProperties: false,
-                },
+                  args.conversationId
+                ),
         },
         execute: (input, toolCallId, signal, update) => {
           if (!state.runTask) throw new Error('The Maestrly subagent executor is not ready')
@@ -2687,6 +2692,7 @@ export async function runCodexSubscriptionChat(
         buildMaestrlyBasePrompt({
           harness: profile.harness,
           cwd: args.cwd,
+          conversationId: args.conversationId,
           scope: 'standalone',
           mode: args.mode,
           appToolsEnabled: dynamic.appToolsEnabled,
@@ -3513,6 +3519,7 @@ export async function runCodexSubscriptionChat(
                   agents: dynamic.agents,
                   conversationId: args.conversationId,
                   parentFastMode: args.fastMode,
+                  complexity: parseTaskComplexity(isRecord(input) ? input.complexity : null),
                   parent: {
                     ...args.selection,
                     effort: currentReasoningEffort || 'off',
@@ -3571,6 +3578,7 @@ export async function runCodexSubscriptionChat(
             return { output: '', error: `Subagent "${agentName}" has no runnable execution profile.`, sub }
           }
           let lease: SubagentLease | null = null
+          let releaseSlot: (() => void) | null = null
           let maestroWorkerRuntime: MaestroWorkerToolRuntime | null = null
           try {
             maestroWorkerRuntime =
@@ -3656,6 +3664,10 @@ export async function runCodexSubscriptionChat(
             const nativeCursor = isCursorSubscriptionProvider(profile.effective.providerId)
             const nativeAntigravity = isAntigravitySubscriptionProvider(profile.effective.providerId)
             const nativeCopilot = isGitHubCopilotSubscriptionProvider(profile.effective.providerId)
+            // A conversation with a task limit (a bot's) waits for a free slot, as executeSubagent does.
+            releaseSlot = await acquireSubagentSlot(args.conversationId, signal, () =>
+              progress(SUBAGENT_SLOT_WAIT_LINE)
+            )
             lease = await state.subagentCoordinator.acquire({ agent: agentName, signal })
             const childApproval = approvalConfig(codexReadOnly ? 'plan' : 'agent', args.permMode)
             // Maestro continuity (same semantics as subagent-executor): reopen this agent's previous native thread
@@ -4276,6 +4288,7 @@ export async function runCodexSubscriptionChat(
             throw error
           } finally {
             lease?.release()
+            releaseSlot?.()
             await maestroWorkerRuntime?.close()
           }
         } finally {

@@ -60,6 +60,7 @@ it('preserves every populated v4 table when migrating and reopens the current sc
       publish_artifacts: 0,
       run_settings_json: null,
       peer_settings_json: null,
+      delegation_json: null,
     })),
     peer_messages: before.peer_messages.map((row) => ({ ...row, thread_id: null })),
     bot_secrets: before.bot_secrets.map((row) => ({
@@ -71,7 +72,7 @@ it('preserves every populated v4 table when migrating and reopens the current sc
   }
   let store = new Store(dir)
   const version = () => store.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get()
-  expect(version()).toEqual({ value: '20' })
+  expect(version()).toEqual({ value: '21' })
   expect(snapshot(store.db)).toEqual(migrated)
   expect(store.getEnvironment('bot-1')?.compaction).toEqual({ enabled: true })
   expect(store.environmentSecrets('bot-1')).toEqual({
@@ -92,7 +93,7 @@ it('preserves every populated v4 table when migrating and reopens the current sc
   const migratedMeta = store.db.prepare('SELECT * FROM meta ORDER BY key').all()
   store.close()
   store = new Store(dir)
-  expect(version()).toEqual({ value: '20' })
+  expect(version()).toEqual({ value: '21' })
   expect(snapshot(store.db)).toEqual(migrated)
   expect(store.db.prepare('SELECT * FROM sqlite_master ORDER BY name').all()).toEqual(schema)
   expect(store.db.prepare('SELECT * FROM meta ORDER BY key').all()).toEqual(migratedMeta)

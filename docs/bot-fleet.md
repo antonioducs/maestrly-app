@@ -290,7 +290,7 @@ Desktop apps from before environments can list, restore and delete an archived e
 
 **Start** can also retry a failed bot in an already running shared environment without restarting its neighbours. Other start, stop and restart aliases retain the restrictions above. A stopped or failed environment must be started before the app offers it for a new bot to join.
 
-The gateway migrates schemas 5 to 19 to schema 20 in place and refuses databases with a newer schema. Schema 8 records when an environment update was scheduled; schema 9 whether a bot may publish artifacts; schema 10 which computers linked which bot for the desktop bridge; schema 11 whether an environment runs bots or hosts workspaces; schema 12 the token a workspaces environment publishes artifacts with; schema 13 each environment's CPU limit, idle stop, color, and (for workspaces) which server folder it mounts, keeping the whole folder for workspaces environments created before; schema 14 the push token and notification choices of each phone; schema 15 whether each device is a phone or a computer, and its platform, as it says when it pairs (unknown for devices paired before); schema 16 which workspaces environments linked which bot for the desktop bridge; schema 17 the moves of bots between environments; schema 18 the conversation of each routine run and each bot's run settings; schema 19 the conversations between bots, the conversation each message between bots belongs to (none for messages from before), and each bot's settings for them; and schema 20 the server's dictation key. Older gateways cannot open a newer schema; back up the gateway volume before upgrading and restore a matching backup to downgrade.
+The gateway migrates schemas 5 to 20 to schema 21 in place and refuses databases with a newer schema. Schema 8 records when an environment update was scheduled; schema 9 whether a bot may publish artifacts; schema 10 which computers linked which bot for the desktop bridge; schema 11 whether an environment runs bots or hosts workspaces; schema 12 the token a workspaces environment publishes artifacts with; schema 13 each environment's CPU limit, idle stop, color, and (for workspaces) which server folder it mounts, keeping the whole folder for workspaces environments created before; schema 14 the push token and notification choices of each phone; schema 15 whether each device is a phone or a computer, and its platform, as it says when it pairs (unknown for devices paired before); schema 16 which workspaces environments linked which bot for the desktop bridge; schema 17 the moves of bots between environments; schema 18 the conversation of each routine run and each bot's run settings; schema 19 the conversations between bots, the conversation each message between bots belongs to (none for messages from before), and each bot's settings for them; schema 20 the server's dictation key; and schema 21 how each bot splits its work into tasks. Older gateways cannot open a newer schema; back up the gateway volume before upgrading and restore a matching backup to downgrade.
 
 Workspaces environments need the gateway's `workspaces-host` feature and a bot image that can host workspaces. The desktop app offers **Set up workspaces on this server** only with that feature. A desktop app from before it shows a workspaces environment as an environment with no bots; the gateway refuses to add a bot to it. On an image from before it, a workspaces environment fails to start with "This bot image cannot host workspaces. Update the server."
 
@@ -306,6 +306,8 @@ older image keeps its separate **Browser** and **Apps** areas until it restarts 
 A bot reaches the projects of your computers when the gateway has the `desktop-bridge` feature, the environment's image has the matching capability, and the computer runs a desktop app that answers desktop calls; until all three are updated, the bot's **Projects** settings say what is missing and the bot has no `desktop_*` tools. A computer on an older desktop app never asks for desktop calls, so it is offline for every bot. This adds schema 10 (`desktop_links`) to the gateway database: back up the gateway volume before upgrading, since an older gateway refuses a newer schema.
 
 A bot reaches the projects of a workspaces environment when the gateway has the `host-desktop-calls` feature (announced in `moreFeatures` of `/v1/meta`), the bot's environment has the `desktop-bridge` capability, and the workspaces environment runs an image that advertises `host-desktop-calls`, which it does only with its host token. Until all three are updated, **Workspaces on the server** in the bot's **Projects** settings says what is missing. A desktop app from before it lists a workspaces environment's link among the computers with access, and can remove it. This adds schema 16 (`environment_desktop_links`) to the gateway database.
+
+A bot's **Tasks** settings need the gateway's `bot-delegation` feature (announced in `moreFeatures` of `/v1/meta`) and the matching capability in the environment's image. With an older gateway the tab does not appear; with an older image it asks you to restart the environment first. The gateway sends the settings in the bot's profile, and an older image ignores them, so its bot keeps working in the normal mode. Task rows in the conversation need the environment's image from this release; an older image sends a task as an ordinary tool step. This adds schema 21 (`bots.delegation_json`) to the gateway database.
 
 Editing your last message to a bot needs the gateway's `message-edit` feature and the matching capability in the environment's image. Until both are updated, **Edit and resend** does not appear.
 
@@ -821,6 +823,42 @@ With a bot server and environment image from this release, a bot works in severa
 - **Header:** while other conversations work, the header names the one that started first, how long it has been working, and how many more there are; choose it to open that conversation.
 
 The mobile app shows only a bot's conversation with you, and its **Stop** stops only that conversation; Maestrly on your computer shows the others. With an older server or image, a bot works on one conversation at a time.
+
+## Tasks in parallel
+
+A bot splits independent work into **tasks** that run at the same time: it calls `task` for each part in the same response, and each task works in a context of its own and brings back a short report with the paths of the files it wrote. Several images, several files to convert or transcribe, or separate research questions no longer wait for one another.
+
+- **Limit:** a bot runs at most four tasks at once, counting all its conversations together (its conversation with you, its routine runs and its conversations with other bots). The others wait for a free slot, and the task shows that it is waiting.
+- **Images:** several `generate_image` calls run at the same time, each on its own image generation. Two calls never write the same file: the second one is refused until the first ends.
+- **Screen and browser:** tasks that run at the same time share the bot's desktop and browser, so the bot lets at most one of them use `computer_*` or `browser_*` tools.
+
+In the normal mode, tasks use the model of the conversation that started them. With an older environment image, a bot gets no task guidance and no limit, and its image generations run one after another.
+
+### Delegate mode
+
+Choose how a bot works in **Settings → Tasks**:
+
+- **Normal**, the default: the bot does the work itself and splits it into parallel tasks when that helps.
+- **Delegate**: the bot hands every long piece of work to a task, and keeps for itself short answers, the conversation with you, decisions that need the conversation, and the final summary. Each task runs on one of the models you allow.
+
+The tasks-at-the-same-time limit applies to both modes, from one to eight.
+
+In **Delegate**, check the models the bot may use and say what each one is for: **Fast**, **Balanced** or **Strong**. A guess from the model's name comes preselected. A checked model counts for every connected account of its provider. The bot declares how hard each task is, and Maestrly runs it on an allowed model of the matching class:
+
+| Task | Model class |
+| --- | --- |
+| Simple: mechanical or high-volume work, such as downloading, renaming, converting, transcribing or extracting | Fast |
+| Medium: routine writing, editing or code | Balanced |
+| Complex: unknown causes, design decisions, subtle correctness | Strong |
+
+When no allowed model of a class exists, the task runs on the next stronger class. When no class fits, the bot does that work itself; the settings preview where each difficulty goes. The effort comes from the class: low for fast models, medium for balanced ones and high for strong ones, within what each model accepts.
+
+- **Use the account with the most room:** when a model is on several accounts, a task goes to the account with the most usage left in its five-hour and weekly windows. Accounts that reached their limit are skipped. An account whose usage the environment has not read yet counts as half used, and the environment reads it in the background for the next task.
+- **Redo with a stronger model:** when a task fails or its report says it was unsure, the bot runs it once more with the next difficulty, passing what the first attempt reported. The second attempt is a new task row. Off, the bot tells you instead.
+- **Also in routines and conversations with other bots:** off by default, so only your conversation with the bot delegates; the others work in the normal mode.
+
+Each task is a row in the bot's conversation with its title, its difficulty and model, what it is doing and what came back. Open it to see why it ran on that model and what the bot asked. Switching the mode changes the bot's `task` tool, so its model session starts over once.
+
 
 ## Routine runs
 

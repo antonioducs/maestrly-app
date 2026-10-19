@@ -74,7 +74,7 @@ it('keeps a single managed task and coordinator lease while its real Claude chil
       },
       attempts: [],
     }
-    vi.spyOn(resolver, 'resolveSubagentExecutionProfile').mockResolvedValue({ definition, profile })
+    const resolve = vi.spyOn(resolver, 'resolveSubagentExecutionProfile').mockResolvedValue({ definition, profile })
     const targets = [0, 1].map((index) => ({
       providerId: index ? 'builtin_claude_subscription@acc_b' : 'builtin_claude_subscription',
       accountId: index ? 'acc_b' : null,
@@ -145,7 +145,7 @@ it('keeps a single managed task and coordinator lease while its real Claude chil
       turnState: { requested: new Set(), dispatched: new Set() },
     })
     const output = await runTask(
-      { agent: 'reviewer', prompt: 'Review now.' },
+      { agent: 'reviewer', prompt: 'Review now.', complexity: 'simple' },
       'same-card',
       new AbortController().signal,
       vi.fn()
@@ -154,6 +154,8 @@ it('keeps a single managed task and coordinator lease while its real Claude chil
       output: 'Review finished.',
       sub: { runtimeEstimatedCostUsd: 0.02, usage: { input: 20, output: 10 } },
     })
+    // The difficulty the parent declared reaches the profile resolution, where a delegating bot routes it.
+    expect(resolve).toHaveBeenCalledWith(expect.objectContaining({ complexity: 'simple' }))
     expect(lifecycle.mock.calls.map(([event]) => event.type)).toEqual(['acquired', 'released'])
     expect(new Set(apply.mock.calls.map(([event]) => event.toolCallId))).toEqual(new Set(['same-card']))
     expect(listSubagentSessions(conversation.id)).toHaveLength(1)

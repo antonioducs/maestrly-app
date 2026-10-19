@@ -10,6 +10,8 @@ import type { AppToolGroup } from '../../../shared/app-tool-groups'
 export interface BuildHarnessPromptInput {
   harness: ResolvedHarness
   cwd: string
+  /** The conversation the prompt is for; absent for subagents, which never get a bot's task guidance. */
+  conversationId?: string
   scope?: 'project' | 'standalone'
   mode: ChatBehavior
   appToolsEnabled: boolean

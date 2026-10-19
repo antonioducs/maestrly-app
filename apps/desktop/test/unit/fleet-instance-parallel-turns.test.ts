@@ -3,7 +3,11 @@ import { mkdtemp, realpath, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { FLEET_BOT_SIDE_TURNS_MAX, type FleetInstanceEvent } from '@maestrly/bot-fleet-protocol'
+import {
+  FLEET_BOT_DELEGATION_DEFAULT,
+  FLEET_BOT_SIDE_TURNS_MAX,
+  type FleetInstanceEvent,
+} from '@maestrly/bot-fleet-protocol'
 
 const h = vi.hoisted(() => ({ userData: '' }))
 vi.mock('electron', async (importOriginal) => {
@@ -25,6 +29,9 @@ const { InstanceHelpStore } = await import('../../src/main/fleet/instance/help')
 const { InstanceHoldManager } = await import('../../src/main/fleet/instance/gate')
 const { BotRunConversations } = await import('../../src/main/fleet/instance/routine-runs')
 const { BotRuntime } = await import('../../src/main/fleet/instance/runtime')
+const { subagentConcurrencyOf } = await import('../../src/main/chat/subagent-concurrency')
+const { botTaskPolicyPrompt } = await import('../../src/main/fleet/instance/task-policy')
+const { getSubagentRouter } = await import('../../src/main/chat/subagent-route')
 const { getSubscriptionFailoverRouter, resetSubscriptionFailoverRouterForTests } = await import(
   '../../src/main/chat/subscription-failover/router'
 )
@@ -427,5 +434,58 @@ describe('turns of the bot conversations at the same time', () => {
     for (const entry of started) entry.finish()
     await both
     expect(runtime.currentInput(primary.id)).toBeNull()
+  })
+
+  it("limits the tasks of every conversation of the bot together, and forgets a deleted run's", async () => {
+    const { runtime, primary, runs } = await bot()
+    const { started } = heldTurns()
+    ;(BotRuntime.prototype as unknown as { applyProfile(): void }).applyProfile.call(runtime)
+    expect(subagentConcurrencyOf(primary.id)).toEqual({ pool: 'alpha', limit: 4 })
+    const runId = randomUUID()
+    await runtime.input(routineInput(runId))
+    const running = turn(runtime)
+    await vi.waitFor(() => expect(started).toHaveLength(1))
+    const record = runs.get(runId)!
+    expect(subagentConcurrencyOf(record.conversationId)).toEqual({ pool: 'alpha', limit: 4 })
+    started[0]!.finish()
+    await running
+    await runtime.deleteRun(runId)
+    expect(subagentConcurrencyOf(record.conversationId)).toBeNull()
+    vi.stubEnv('MAESTRLY_BOT_MODE', '1')
+    expect(botTaskPolicyPrompt(primary.id)).toContain('at most 4 run at once')
+    expect(botTaskPolicyPrompt(record.conversationId)).toBe('')
+    vi.unstubAllEnvs()
+  })
+
+  it('routes the tasks of a delegating bot in its own conversation, and in side ones only when the owner says so', async () => {
+    const { runtime, primary, runs } = await bot()
+    const { started } = heldTurns()
+    const stored = (runtime as unknown as { stored: { profile: Record<string, unknown> } }).stored
+    const install = (delegation: Partial<typeof FLEET_BOT_DELEGATION_DEFAULT>) => {
+      stored.profile = { ...profile, delegation: { ...FLEET_BOT_DELEGATION_DEFAULT, ...delegation } }
+      ;(BotRuntime.prototype as unknown as { applyProfile(): void }).applyProfile.call(runtime)
+    }
+    const runTurn = async () => {
+      const runId = randomUUID()
+      await runtime.input(routineInput(runId))
+      const running = turn(runtime)
+      await vi.waitFor(() => expect(started.length).toBeGreaterThan(0))
+      const conversationId = runs.get(runId)!.conversationId
+      const routed = getSubagentRouter(conversationId) !== null
+      started.splice(0).forEach((entry) => entry.finish())
+      await running
+      return routed
+    }
+
+    install({ mode: 'delegate', maxTasks: 2 })
+    expect(getSubagentRouter(primary.id)).not.toBeNull()
+    expect(subagentConcurrencyOf(primary.id)?.limit).toBe(2)
+    expect(await runTurn()).toBe(false)
+
+    install({ mode: 'delegate', sideConversations: true })
+    expect(await runTurn()).toBe(true)
+
+    install({ mode: 'normal' })
+    expect(getSubagentRouter(primary.id)).toBeNull()
   })
 })

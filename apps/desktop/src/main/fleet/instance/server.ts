@@ -40,6 +40,7 @@ import {
   FLEET_CANCEL_CONVERSATION_QUERY,
   FLEET_PARALLEL_TURNS_FEATURE,
   FLEET_PEER_CONVERSATIONS_FEATURE,
+  FLEET_BOT_DELEGATION_FEATURE,
   FLEET_PROVISIONING_FEATURE,
   FLEET_RUNTIME_UPDATES_FEATURE,
   FLEET_ROUTINE_CONVERSATIONS_FEATURE,
@@ -121,8 +122,8 @@ export class InstanceHttpError extends Error {
  * in transcripts to readers that ask for it, reports the versions of its Claude Code and Codex with checks for
  * newer ones, gives its bots the desktop_* tools that reach the Macs that linked them, lets the owner edit their
  * last message, streams its screens as video, moves its bots to other environments with everything that is theirs,
- * says why an MCP connection test failed, and runs routines in conversations of their own when the gateway asks.
- * Its health and every status advertise them.
+ * says why an MCP connection test failed, runs routines in conversations of their own when the gateway asks, and
+ * routes the tasks of a bot that delegates to the models its owner allows. Its health and every status advertise them.
  */
 export const INSTANCE_CAPABILITIES: readonly string[] = [
   FLEET_FILES_FEATURE,
@@ -143,6 +144,7 @@ export const INSTANCE_CAPABILITIES: readonly string[] = [
   FLEET_ROUTINE_CONVERSATIONS_FEATURE,
   FLEET_PARALLEL_TURNS_FEATURE,
   FLEET_PEER_CONVERSATIONS_FEATURE,
+  FLEET_BOT_DELEGATION_FEATURE,
 ]
 
 type MemoryStatus = 'active' | 'archived' | 'superseded' | 'all'

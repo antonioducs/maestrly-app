@@ -715,6 +715,22 @@ export default {
   },
   conversation: { recalled: 'Lembrou: {{titles}}' },
   transcript: {
+    task: {
+      untitled: 'Tarefa',
+      complexity: { simple: 'Tarefa simples', medium: 'Tarefa média', complex: 'Tarefa complexa' },
+      difficulty: { simple: 'simples', medium: 'média', complex: 'complexa' },
+      conversationModel: 'modelo da conversa',
+      prompt: 'O que o {{name}} pediu',
+      result: 'Resultado',
+      why: {
+        declared: 'O {{name}} indicou que é uma tarefa {{complexity}}.',
+        default: 'O {{name}} não indicou a dificuldade; contou como tarefa média.',
+        routed: 'Rodou num modelo {{tier}}: {{model}}.',
+        upgraded: 'Nenhum modelo {{wanted}} está liberado, então rodou num modelo {{tier}}: {{model}}.',
+        none: 'Nenhum modelo liberado serve para ela, então rodou com o modelo da conversa: {{model}}.',
+        conversationModel: 'Rodou com o modelo da conversa: {{model}}.',
+      },
+    },
     compaction: {
       heading: 'Contexto compactado',
       prepared: 'Resumo preparado em segundo plano',
@@ -994,12 +1010,54 @@ export default {
       description: 'Roda comandos e edita arquivos sem perguntar, em qualquer lugar do contêiner onde roda.',
     },
   },
+  botTasks: {
+    mode: {
+      normal: {
+        title: 'Normal',
+        description:
+          'O {{name}} faz o trabalho e divide em tarefas paralelas quando isso adianta. As tarefas usam o modelo da conversa.',
+      },
+      delegate: {
+        title: 'Delegar',
+        description:
+          'O {{name}} passa todo trabalho longo para tarefas. Cada uma roda num modelo que você liberar, conforme a dificuldade.',
+      },
+    },
+    maxTasks: 'Tarefas ao mesmo tempo',
+    maxTasksHint: 'As outras esperam a vez.',
+    fewer: 'Menos tarefas',
+    more: 'Mais tarefas',
+    models: {
+      title: 'Modelos que o {{name}} pode usar',
+      note: 'Marque os modelos liberados e diga para que tipo de tarefa cada um serve.',
+      empty: 'Nenhum modelo liberado. As tarefas usam o modelo da conversa.',
+    },
+    tier: { fast: 'Rápido', balanced: 'Equilibrado', strong: 'Forte' },
+    tierFor: 'Para que serve o {{model}}',
+    preview: {
+      simple: 'Tarefas simples',
+      medium: 'Tarefas médias',
+      complex: 'Tarefas complexas',
+      or: 'ou',
+      upgraded: '(nenhum modelo {{tier}} liberado)',
+      self: 'o {{name}} faz ele mesmo',
+    },
+    retryStronger: 'Refazer com um modelo mais forte',
+    retryStrongerHint: 'Quando uma tarefa falha ou o modelo diz que não teve certeza. Uma vez por tarefa.',
+    spreadAccounts: 'Usar a conta com mais folga',
+    spreadAccountsHint:
+      'Se um modelo está em mais de uma conta, a tarefa vai para a que tem mais uso disponível agora.',
+    sideConversations: 'Também em rotinas e conversas entre bots',
+    sideConversationsHint: 'Desligado, só a conversa com você delega.',
+    restart: 'Reinicie o ambiente {{environment}} para usar estes ajustes.',
+  },
   botSettings: {
     nav: 'Seções dos ajustes',
     section: {
       identity: 'Identidade',
       autonomy: 'Autonomia',
       model: 'Modelo',
+      tasks: 'Tarefas',
       accounts: 'Contas',
       skills: 'Skills e MCP',
       peers: 'Conversas',
@@ -1013,6 +1071,7 @@ export default {
     sectionDirty: 'alterações não salvas',
     sectionAttention: 'precisa de atenção',
     identityNote: 'Como ele se chama e do que cuida.',
+    tasksNote: 'Como o {{name}} divide o trabalho em tarefas que rodam ao mesmo tempo.',
     optional: 'opcional',
     rolePlaceholder: 'Ex.: Analista de faturas',
     instructionsPlaceholder:
@@ -1155,6 +1214,7 @@ export default {
       selection: 'Modelo principal',
       compaction: 'Compactação',
       talksTo: 'Conversas',
+      delegation: 'Como divide o trabalho',
     },
     problemField: {
       name: 'nome',

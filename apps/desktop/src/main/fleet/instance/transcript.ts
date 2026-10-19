@@ -14,6 +14,8 @@ import {
   type FleetImageRef,
   type FleetFileRef,
   type FleetTodo,
+  type FleetTranscriptTask,
+  FLEET_DELEGATION_LIMITS,
 } from '@maestrly/bot-fleet-protocol'
 import { chatTodosFromInput, type ChatMessage, type ChatQuestion, type MessagePart } from '../../../shared/chat'
 import { expandGenUiPreviews, genUiPreviewsOf } from '../../../shared/genui-widget'
@@ -129,6 +131,28 @@ function peerOutput(output: unknown): { delivered?: boolean; name?: string; thre
 }
 const sharesImages = (input: unknown): boolean =>
   input !== null && typeof input === 'object' && (input as { share?: unknown }).share === true
+/** A task's title: the first line of the prompt the bot gave it. */
+function taskTitle(input: unknown): string | null {
+  const prompt = (input as { prompt?: unknown } | null)?.prompt
+  if (typeof prompt !== 'string') return null
+  const line = prompt.split('\n').find((entry) => entry.trim())
+  return line ? short(line.trim(), 80) : null
+}
+/** What the owner sees of a `task` call: the agent, the prompt, the model that runs it and what it does now. */
+function fleetTask(part: Extract<MessagePart, { type: 'tool' }>): FleetTranscriptTask | undefined {
+  const input = part.input as { agent?: unknown; prompt?: unknown } | null
+  if (!input || typeof input.prompt !== 'string') return undefined
+  const sub = 'sub' in part.state ? part.state.sub : undefined
+  const effective = sub?.profile?.effective
+  const phase = sub?.phase
+  return {
+    agent: typeof input.agent === 'string' ? short(input.agent, 80) : '',
+    prompt: short(input.prompt, FLEET_DELEGATION_LIMITS.taskPromptMax),
+    model: effective ? short(effective.modelId, 200) : null,
+    ...(sub?.profile?.delegation ? { delegation: sub.profile.delegation } : {}),
+    activity: part.state.status === 'running' && phase && phase !== 'model-started' ? short(phase, 200) : null,
+  }
+}
 function toolItem(
   message: ChatMessage,
   part: Extract<MessagePart, { type: 'tool' }>,
@@ -167,7 +191,7 @@ function toolItem(
     id: `${message.id}:${index}`,
     at: at(message.createdAt),
     name: part.toolName,
-    target: toolTarget(part.input) ?? routineTitle,
+    target: part.toolName === 'task' ? taskTitle(part.input) : (toolTarget(part.input) ?? routineTitle),
     state: interrupted
       ? 'interrupted'
       : status === 'completed'
@@ -181,7 +205,13 @@ function toolItem(
     ...(images.length ? { shared: sharesImages(part.input) } : {}),
     ...(files ? { files } : {}),
     ...(part.toolName === 'todo_write' ? { todos: fleetTodos(part.input) } : {}),
+    ...taskField(part),
   }
+}
+function taskField(part: Extract<MessagePart, { type: 'tool' }>): { task?: FleetTranscriptTask } {
+  if (part.toolName !== 'task') return {}
+  const task = fleetTask(part)
+  return task ? { task } : {}
 }
 function ownerImageRefs(message: ChatMessage): FleetImageRef[] {
   return message.parts

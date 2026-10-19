@@ -27,6 +27,7 @@ import { pdfFallbackText, sendPdfNatively } from './pdf-attachments'
 // ---- zod: defensive part parsing on DB reads (legacy/corrupt rows become []). ----
 
 const zSubagentProfileSource = z.enum([
+  'bot-delegation',
   'maestro-resource',
   'conversation-agent',
   'conversation-category',
@@ -93,6 +94,14 @@ const zSubagentExecutionSnapshot = z.object({
     })
   ),
   diagnostics: z.array(zSubagentProfileDiagnostic).optional(),
+  delegation: z
+    .object({
+      complexity: z.enum(['simple', 'medium', 'complex']),
+      declared: z.boolean(),
+      tier: z.enum(['fast', 'balanced', 'strong']).nullable(),
+      upgraded: z.boolean(),
+    })
+    .optional(),
 })
 
 const zSubagentRunMeta = z

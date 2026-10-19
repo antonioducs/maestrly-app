@@ -64,6 +64,7 @@ import { QuestionBroker } from '../../src/main/chat/question-broker'
 import { chatToolOutputToAiSdkOutput, mcpResultToChatToolOutput } from '../../src/main/chat/tool-output'
 import { toolOutputImages, toolOutputText } from '../../src/shared/chat'
 import { resolveSubagentExecutionProfile } from '../../src/main/chat/subagent-execution-profile'
+import { setSubagentRouter } from '../../src/main/chat/subagent-route'
 import { runSubagent } from '../../src/main/chat/subagent-runner'
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
@@ -101,6 +102,33 @@ async function hostMcpTools(threadStart: unknown): Promise<HostMcpToolSpec[]> {
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
   })
   return ((await response.json()) as { result: { tools: HostMcpToolSpec[] } }).result.tools
+}
+
+/** Calls a tool the way Codex does over the host MCP server, for the root thread that `threadStart` started. */
+async function callHostMcpTool(
+  threadStart: unknown,
+  name: string,
+  args: unknown,
+  callId: string,
+  threadId = 'thread_1'
+): Promise<{ content: Array<{ type: string; text?: string }>; isError?: boolean }> {
+  const config = (threadStart as { config?: Record<string, unknown> }).config ?? {}
+  const server = config[`mcp_servers.${CODEX_HOST_MCP_SERVER_NAME}`] as { url: string }
+  const response = await fetch(server.url, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer ${codexHostMcpProcessEnv()[CODEX_HOST_MCP_TOKEN_ENV]}`,
+    },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name, arguments: args, _meta: { threadId, callId } },
+    }),
+  })
+  return ((await response.json()) as { result: { content: Array<{ type: string; text?: string }>; isError?: boolean } })
+    .result
 }
 
 const cursorH = vi.hoisted(() => ({
@@ -740,6 +768,7 @@ describe('Codex subscription runner', () => {
       const dynamicNames = started.dynamicTools.flatMap((spec) => spec.tools?.map((tool) => tool.name) ?? [spec.name])
       expect(dynamicNames).not.toContain('browser_screenshot')
       expect(dynamicNames).not.toContain('computer_screenshot')
+      expect(dynamicNames).not.toContain('generate_image')
       const server = started.config['mcp_servers.maestrly'] as { url: string }
       expect(server.url).toMatch(/^http:\/\/127\.0\.0\.1:/)
       const token = codexHostMcpProcessEnv()[CODEX_HOST_MCP_TOKEN_ENV]
@@ -2753,7 +2782,7 @@ describe('Codex subscription runner', () => {
 
     expect(started.developerInstructions).not.toContain('# Maestrly Design mode')
     expect(started.dynamicTools.map((tool) => tool.name)).toContain('bash')
-    expect((await hostMcpTools(started)).map((tool) => tool.name)).toEqual(['task'])
+    expect((await hostMcpTools(started)).map((tool) => tool.name)).toEqual(['generate_image', 'task'])
     expect(started.environments).toBeUndefined()
     expect(designStart.config).toEqual(started.config)
     expect(designStart.environments).toBeUndefined()
@@ -2810,7 +2839,7 @@ describe('Codex subscription runner', () => {
     expect(started.developerInstructions.match(/# Maestrly Design mode — design-v1/g)).toHaveLength(1)
     expect(started.developerInstructions).toContain('Design mode has Agent-equivalent capabilities')
     expect(started.dynamicTools.map((tool) => tool.name)).toContain('bash')
-    expect((await hostMcpTools(started)).map((tool) => tool.name)).toEqual(['task'])
+    expect((await hostMcpTools(started)).map((tool) => tool.name)).toEqual(['generate_image', 'task'])
   })
 
   it('discards the created thread when teardown wins the race before the first turn', async () => {
@@ -5044,6 +5073,49 @@ describe('Codex subscription runner', () => {
     await running
   })
 
+  it('requires and forwards the difficulty of a task when the conversation routes its tasks', async () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, {})
+    persistUser(conversation.id, 'user_routed_task', 'Split the work', 1)
+    setSubagentRouter(conversation.id, () => ({
+      info: { complexity: 'simple', declared: true, tier: null, upgraded: false },
+      candidates: [],
+    }))
+    try {
+      const client = new FakeCodexClient()
+      client.queueTurn({ turnId: 'turn_root_routed', notifications: [] })
+      resolveSubagentExecutionProfileMock.mockResolvedValueOnce({
+        definition: null,
+        profile: { version: 1, agentName: 'explore', effective: null, attempts: [] },
+      })
+      const args = runArgs(conversation.id, workspace.id, conversation.cwd, client)
+      args.mode = 'agent'
+      const running = runCodexSubscriptionChat(args)
+      await vi.waitFor(() => expect(client.startTurnCalls).toHaveLength(1))
+      const taskSpec = (await hostMcpTools(client.startThreadCalls[0])).find((spec) => spec.name === 'task')
+      expect((taskSpec?.inputSchema as { required?: string[] }).required).toEqual(['agent', 'prompt', 'complexity'])
+      await client.serverRequest({
+        id: 'task_routed',
+        method: 'item/tool/call',
+        params: {
+          threadId: 'thread_1',
+          turnId: 'turn_root_routed',
+          itemId: 'task_routed',
+          callId: 'task_routed',
+          tool: 'task',
+          arguments: { agent: 'explore', prompt: 'Rename the photos.', complexity: 'simple' },
+        },
+      })
+      expect(resolveSubagentExecutionProfileMock).toHaveBeenCalledWith(
+        expect.objectContaining({ agentName: 'explore', complexity: 'simple' })
+      )
+      client.emit(completedNotification('thread_1', 'turn_root_routed'))
+      await running
+    } finally {
+      setSubagentRouter(conversation.id, null)
+    }
+  })
+
   it('runs a Codex Fast task from the snapshot, ignoring the live Standard conversation preference', async () => {
     const workspace = makeWorkspace()
     const conversation = makeConversation(workspace.id, {})
@@ -5139,9 +5211,12 @@ describe('Codex subscription runner', () => {
     expect(client.startThreadCalls).toHaveLength(2)
     expect(client.startThreadCalls[0]).toMatchObject({
       config: { 'features.multi_agent': false, 'features.multi_agent_v2': false },
-      dynamicTools: expect.arrayContaining([expect.objectContaining({ name: 'generate_image' })]),
+      dynamicTools: expect.not.arrayContaining([expect.objectContaining({ name: 'generate_image' })]),
     })
-    expect((await hostMcpTools(client.startThreadCalls[0])).map((tool) => tool.name)).toEqual(['task'])
+    expect((await hostMcpTools(client.startThreadCalls[0])).map((tool) => tool.name)).toEqual([
+      'generate_image',
+      'task',
+    ])
     expect(client.startThreadCalls[1]).toMatchObject({
       model: 'gpt-5.6-mini',
       serviceTier: 'priority',
@@ -7223,8 +7298,9 @@ describe('Codex subscription runner', () => {
       await runCodexSubscriptionChat(agentArgs)
       expect(agentClient.startThreadCalls[0]).toMatchObject({
         config: { 'features.image_generation': false },
-        dynamicTools: expect.arrayContaining([expect.objectContaining({ name: 'generate_image' })]),
+        dynamicTools: expect.not.arrayContaining([expect.objectContaining({ name: 'generate_image' })]),
       })
+      expect((await hostMcpTools(agentClient.startThreadCalls[0])).map((tool) => tool.name)).toContain('generate_image')
 
       const designConversation = makeConversation(workspace.id, {})
       persistUser(designConversation.id, 'user_img_cfg_design', 'Design a robot', 1)
@@ -7239,8 +7315,11 @@ describe('Codex subscription runner', () => {
       await runCodexSubscriptionChat(designArgs)
       expect(designClient.startThreadCalls[0]).toMatchObject({
         config: { 'features.image_generation': false },
-        dynamicTools: expect.arrayContaining([expect.objectContaining({ name: 'generate_image' })]),
+        dynamicTools: expect.not.arrayContaining([expect.objectContaining({ name: 'generate_image' })]),
       })
+      expect((await hostMcpTools(designClient.startThreadCalls[0])).map((tool) => tool.name)).toContain(
+        'generate_image'
+      )
 
       const askConversation = makeConversation(workspace.id, {})
       persistUser(askConversation.id, 'user_img_cfg_ask', 'Generate a robot', 1)
@@ -7254,6 +7333,9 @@ describe('Codex subscription runner', () => {
         config: { 'features.image_generation': false },
         dynamicTools: expect.not.arrayContaining([expect.objectContaining({ name: 'generate_image' })]),
       })
+      expect((await hostMcpTools(askClient.startThreadCalls[0])).map((tool) => tool.name)).not.toContain(
+        'generate_image'
+      )
 
       // Plan is read-only, but the RUNTIME default for image_generation is `true` (0.153.4). Without the explicit
       // flag, the mode would gain artifact writing by omission.
@@ -7271,6 +7353,9 @@ describe('Codex subscription runner', () => {
         config: { 'features.image_generation': false },
         dynamicTools: expect.not.arrayContaining([expect.objectContaining({ name: 'generate_image' })]),
       })
+      expect((await hostMcpTools(planClient.startThreadCalls[0])).map((tool) => tool.name)).not.toContain(
+        'generate_image'
+      )
     })
 
     it('runs generate_image through the default Codex account, creates the asset and persists the preview', async () => {
@@ -7308,31 +7393,19 @@ describe('Codex subscription runner', () => {
         const running = runCodexSubscriptionChat(args)
         await vi.waitFor(() => expect(client.startTurnCalls).toHaveLength(1))
 
-        const response = client.serverRequest({
-          id: 'generate_image_request',
-          method: 'item/tool/call',
-          params: {
-            threadId: 'thread_1',
-            turnId: 'turn_root_host_image',
-            itemId: 'generate_image_call',
-            callId: 'generate_image_call',
-            tool: 'generate_image',
-            arguments: {
-              prompt: 'A polished teal robot for a landing page hero',
-              outputPath: 'public/images/hero.webp',
-            },
-          },
-        })
+        // Codex calls it over the host MCP server, where several calls overlap.
+        const result = await callHostMcpTool(
+          client.startThreadCalls[0],
+          'generate_image',
+          { prompt: 'A polished teal robot for a landing page hero', outputPath: 'public/images/hero.webp' },
+          'generate_image_call'
+        )
 
-        await expect(response).resolves.toMatchObject({
-          success: true,
-          contentItems: [
-            {
-              type: 'inputText',
-              text: expect.stringContaining('public/images/hero.png'),
-            },
-          ],
-        })
+        expect(result.isError).toBeUndefined()
+        expect(result.content).toEqual([
+          expect.objectContaining({ type: 'text', text: expect.stringContaining('public/images/hero.png') }),
+        ])
+        expect((await hostMcpTools(client.startThreadCalls[0])).map((tool) => tool.name)).toContain('generate_image')
         client.emit(completedNotification('thread_1', 'turn_root_host_image'))
         await running
 
@@ -7340,7 +7413,7 @@ describe('Codex subscription runner', () => {
         expect(client.startThreadCalls[0]).toMatchObject({ model: 'gpt-5.6-sol' })
         expect(client.startThreadCalls[0]).toMatchObject({
           config: { 'features.image_generation': false },
-          dynamicTools: expect.arrayContaining([expect.objectContaining({ name: 'generate_image' })]),
+          dynamicTools: expect.not.arrayContaining([expect.objectContaining({ name: 'generate_image' })]),
         })
         expect(client.startThreadCalls[1]).toMatchObject({
           ephemeral: true,

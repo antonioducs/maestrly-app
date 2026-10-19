@@ -519,6 +519,19 @@ describe('bot transcript segments', () => {
     expect(first.steps.map((step) => step.id)).toEqual(['m1:1'])
   })
 
+  it("keeps a bot's tasks outside the activity, each on a row of its own", () => {
+    const task = { agent: 'general-purpose', prompt: 'Transcribe EP14', model: 'haiku', activity: null }
+    const items = [
+      botTool('m1:0', 'task', { task, target: 'Transcribe EP14' }),
+      botTool('m1:1', 'bash', { target: 'ls' }),
+      assistant('m1:2', 'Done.'),
+      // An older bot sends no details: its task stays a step.
+      botTool('m2:0', 'task'),
+    ]
+    const segments = fleetActivitySegments(items, { working: false })
+    expect(ids(segments)).toEqual(['m1:0', 'm1:2', 'activity:m1', 'activity:m2'])
+  })
+
   it('keeps what the bot said last in view above the activity, folding the older text', () => {
     const said = [assistant('m1:0', 'I will check the deploy.'), botTool('m1:1', 'bash', { state: 'running' })]
     // A step after the text does not hide it; the line stays under it.

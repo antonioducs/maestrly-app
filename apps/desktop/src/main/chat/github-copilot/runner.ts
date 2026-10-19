@@ -84,6 +84,7 @@ import { buildHarnessPrompt } from '../harness/prompt-builder'
 import { generatedInterfacesEnabled } from '../generated-interfaces'
 import type { ResolvedHarness } from '../harness/types'
 import { resolveSubagentExecutionProfile } from '../subagent-execution-profile'
+import { parseTaskComplexity, withTaskComplexity } from '../subagent-route'
 import { namespaceSubagentToolSet, type NormalizedAiUsage } from '../subagent-runner'
 import { SubagentCoordinator, type SubagentLease } from '../subagent-coordinator'
 import { recordModelCallUsage } from '../usage-diagnostics'
@@ -629,15 +630,18 @@ async function prepareRuntime(
             inputSchema: jsonSchema(
               args.mode === 'maestro'
                 ? MAESTRO_DELEGATE_TOOL_SCHEMA
-                : {
-                    type: 'object',
-                    properties: {
-                      agent: { type: 'string', enum: agents.map((agent) => agent.name) },
-                      prompt: { type: 'string', description: 'Self-contained subtask and all required context.' },
+                : withTaskComplexity(
+                    {
+                      type: 'object',
+                      properties: {
+                        agent: { type: 'string', enum: agents.map((agent) => agent.name) },
+                        prompt: { type: 'string', description: 'Self-contained subtask and all required context.' },
+                      },
+                      required: ['agent', 'prompt'],
+                      additionalProperties: false,
                     },
-                    required: ['agent', 'prompt'],
-                    additionalProperties: false,
-                  }
+                    args.conversationId
+                  )
             ),
             execute: async (input, options) => {
               if (!state.runTask) throw new Error('The Maestrly subagent executor is not ready')
@@ -721,6 +725,7 @@ async function prepareRuntime(
         harness,
         scope: args.projectId === null ? 'standalone' : 'project',
         cwd: args.cwd,
+        conversationId: args.conversationId,
         appToolsEnabled,
         disabledAppToolGroups: appAccess.disabledGroups,
         mode: args.mode,
@@ -740,6 +745,7 @@ async function prepareRuntime(
         scope: args.projectId === null ? 'standalone' : 'project',
         harness: copilot.harness,
         cwd: args.cwd,
+        conversationId: args.conversationId,
         mode: args.mode,
         appToolsEnabled,
         disabledAppToolGroups: appAccess.disabledGroups,
@@ -1211,6 +1217,7 @@ export async function runGitHubCopilotChat(args: RunGitHubCopilotChatArgs): Prom
               agents: taskRuntime.agents,
               conversationId: args.conversationId,
               parentFastMode: false,
+              complexity: parseTaskComplexity((input as { complexity?: unknown } | null)?.complexity),
               parent: { ...args.selection, effort: args.reasoningEffort || 'off' },
             })
         resolvedTaskProfiles.set(toolCallId, resolved)

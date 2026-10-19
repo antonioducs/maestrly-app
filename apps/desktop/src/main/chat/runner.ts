@@ -83,6 +83,7 @@ import { adaptToolSetForModel, supportsChatToolImages } from './tool-capabilitie
 import { supportsNativePdf } from './pdf-attachments'
 import { buildAndRenderSubagentDispatchCatalog } from './subagent-dispatch-catalog'
 import { resolveSubagentExecutionProfile } from './subagent-execution-profile'
+import { parseTaskComplexity, withTaskComplexity } from './subagent-route'
 import { getSubagentProfileModelMeta } from './subagent-profile-model-meta'
 import { executeSubagent } from './subagent-executor'
 import type { SubagentSessionRecorder } from './subagent-session'
@@ -910,22 +911,25 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
           inputSchema: jsonSchema(
             mode === 'maestro'
               ? MAESTRO_DELEGATE_TOOL_SCHEMA
-              : {
-                  type: 'object',
-                  properties: {
-                    agent: {
-                      type: 'string',
-                      enum: agents.map((item) => item.name),
-                      description: 'subagent name (from the catalog in the system prompt)',
+              : withTaskComplexity(
+                  {
+                    type: 'object',
+                    properties: {
+                      agent: {
+                        type: 'string',
+                        enum: agents.map((item) => item.name),
+                        description: 'subagent name (from the catalog in the system prompt)',
+                      },
+                      prompt: {
+                        type: 'string',
+                        description:
+                          'the subtask, with ALL the context it needs (the subagent does NOT see this conversation)',
+                      },
                     },
-                    prompt: {
-                      type: 'string',
-                      description:
-                        'the subtask, with ALL the context it needs (the subagent does NOT see this conversation)',
-                    },
+                    required: ['agent', 'prompt'],
                   },
-                  required: ['agent', 'prompt'],
-                }
+                  conversationId
+                )
           ),
           execute: async (input: unknown, opts?: { toolCallId?: string }) => {
             const toolCallId = opts?.toolCallId
@@ -973,6 +977,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
                   agents,
                   conversationId,
                   parentFastMode: fastMode,
+                  complexity: parseTaskComplexity((standard as { complexity?: unknown }).complexity),
                   parent: {
                     ...selection,
                     effort: reasoningEffort || 'off',
@@ -1409,6 +1414,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     harness,
     scope: projectId === null ? 'standalone' : 'project',
     cwd,
+    conversationId,
     appToolsEnabled,
     disabledAppToolGroups: appAccess.disabledGroups,
     mode,
@@ -1444,6 +1450,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         scope: projectId === null ? 'standalone' : 'project',
         harness,
         cwd,
+        conversationId,
         mode,
         appToolsEnabled,
         disabledAppToolGroups: appAccess.disabledGroups,

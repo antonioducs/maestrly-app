@@ -113,6 +113,7 @@ export async function buildAntigravityInstructions(
     buildHarnessPrompt({
       harness,
       cwd: args.cwd,
+      conversationId: args.conversationId,
       mode: args.mode,
       appToolsEnabled: args.appToolsEnabled ?? false,
       ...(args.disabledAppToolGroups ? { disabledAppToolGroups: args.disabledAppToolGroups } : {}),

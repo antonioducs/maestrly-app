@@ -59,9 +59,15 @@ describe('Codex host MCP server', () => {
   afterEach(() => setCodexHostMcpCallHandler(null))
   afterAll(closeCodexHostMcpServer)
 
-  it('hosts only the registered read-only app image producers', () => {
+  it('hosts delegation, the read-only app image producers and image generation', () => {
     expect([...CODEX_HOST_MCP_IMAGE_TOOL_NAMES]).toEqual(['browser_screenshot', 'computer_screenshot'])
-    expect([...CODEX_HOST_MCP_TOOL_NAMES]).toEqual(['task', 'delegate', 'browser_screenshot', 'computer_screenshot'])
+    expect([...CODEX_HOST_MCP_TOOL_NAMES]).toEqual([
+      'task',
+      'delegate',
+      'browser_screenshot',
+      'computer_screenshot',
+      'generate_image',
+    ])
   })
 
   it('also routes delegation through the same server', async () => {

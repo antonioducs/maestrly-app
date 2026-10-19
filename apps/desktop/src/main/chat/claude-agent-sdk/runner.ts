@@ -118,6 +118,7 @@ import {
   maestroAgentsFromTurn,
   renderMaestroAgentCatalog,
 } from '../maestro-delegation'
+import { withTaskComplexity } from '../subagent-route'
 import { renderMaestroTurnPolicy } from '../maestro-prompt'
 import { buildSubagentSupervisionTools } from '../maestro-supervision-tools'
 import {
@@ -677,15 +678,18 @@ async function prepareRuntime(
             inputSchema: jsonSchema(
               args.mode === 'maestro'
                 ? MAESTRO_DELEGATE_TOOL_SCHEMA
-                : {
-                    type: 'object',
-                    properties: {
-                      agent: { type: 'string', enum: agents.map((agent) => agent.name) },
-                      prompt: { type: 'string' },
+                : withTaskComplexity(
+                    {
+                      type: 'object',
+                      properties: {
+                        agent: { type: 'string', enum: agents.map((agent) => agent.name) },
+                        prompt: { type: 'string' },
+                      },
+                      required: ['agent', 'prompt'],
+                      additionalProperties: false,
                     },
-                    required: ['agent', 'prompt'],
-                    additionalProperties: false,
-                  }
+                    args.conversationId
+                  )
             ),
             execute: async (input, options) => {
               if (!state.runTask) throw new Error('The Maestrly subagent executor is not ready.')
@@ -770,6 +774,7 @@ async function prepareRuntime(
         scope: args.projectId === null ? 'standalone' : 'project',
         harness,
         cwd: args.cwd,
+        conversationId: args.conversationId,
         appToolsEnabled,
         disabledAppToolGroups: appAccess.disabledGroups,
         mode: args.mode,

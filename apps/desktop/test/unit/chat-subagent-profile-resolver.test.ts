@@ -41,6 +41,34 @@ async function selectedSource(input: Parameters<typeof resolveSubagentProfile>[0
 }
 
 describe('resolveSubagentProfile', () => {
+  it('tries the host route before every rule and falls back past a rejected route candidate', async () => {
+    const routed = candidate('route-provider', 'haiku', 'low')
+    const conversation = rules({ byAgent: { 'explore-agent': [candidate('p', 'selected')] } })
+    const chosen = await resolveSubagentProfile(
+      {
+        agent: agent(),
+        conversationRules: conversation,
+        parent,
+        hostRoute: { ruleKey: 'simple', candidates: [routed] },
+      },
+      deps({ modelCatalog: async () => ({ status: 'available', models: ['haiku', 'selected', 'parent'] }) })
+    )
+    expect(chosen.effective).toMatchObject({ source: 'bot-delegation', ruleKey: 'simple', modelId: 'haiku' })
+    expect(chosen.effective?.fastMode).toBe(false)
+
+    const fallback = await resolveSubagentProfile(
+      {
+        agent: agent(),
+        conversationRules: conversation,
+        parent,
+        hostRoute: { ruleKey: 'simple', candidates: [routed] },
+      },
+      deps({ providerStatus: async (id) => (id === 'route-provider' ? 'disconnected' : 'available') })
+    )
+    expect(fallback.attempts[0]).toMatchObject({ source: 'bot-delegation', outcome: 'rejected' })
+    expect(fallback.effective).toMatchObject({ source: 'conversation-agent', modelId: 'selected' })
+  })
+
   it('applies eight profile layers in order', async () => {
     const a = agent({ profile: candidate('front-provider', 'front', 'high') })
     const conversation = rules({

@@ -86,6 +86,8 @@ export interface ToolDef<P extends z.ZodTypeAny = z.ZodTypeAny, R = unknown> {
   execute: (args: z.infer<P>, ctx: ToolContext) => Promise<R>
   /** How to render R as model-visible text. */
   toModelText: (args: z.infer<P>, result: R) => string
+  /** Scheduling hints for runtimes that overlap calls; absent means a serialized mutator. */
+  metadata?: { parallelSafe?: boolean; readOnly?: boolean }
 }
 
 /** Typing helper for declaring tools while preserving schema inference. */

@@ -67,6 +67,7 @@ import type { QuestionBroker } from './question-broker'
 import { withSubagentMessageOwnership, type SubagentMessageOwnership } from './subagent-ownership'
 import type { SubagentTextUpdateHandler } from './subagent-text-stream'
 import { createSubagentSessionRecorder, type SubagentSessionRecorder } from './subagent-session'
+import { acquireSubagentSlot, SUBAGENT_SLOT_WAIT_LINE } from './subagent-concurrency'
 import {
   namespaceSubagentToolCallId,
   namespaceSubagentToolSet,
@@ -93,9 +94,7 @@ export interface SubagentExecutorAccountContext {
   antigravity?: { manager: AntigravitySubscriptionManager; identity: AntigravityAccountIdentity }
 }
 
-/** Provider boundary for one already-resolved child execution. Profile resolution, coordinator leases,
- * usage aggregation and UI state deliberately remain with the task runtime. */
-export async function executeSubagent(args: {
+export interface ExecuteSubagentArgs {
   conversationId: string
   projectId: string | null
   permissionScope?: PermissionScope
@@ -135,7 +134,23 @@ export async function executeSubagent(args: {
     onUsage?: (usage: GeneratedImageUsage) => void
   ) => Promise<GeneratedImageEmission>
   account?: SubagentExecutorAccountContext
-}): Promise<SubagentExecutionResult> {
+}
+
+/** Provider boundary for one already-resolved child execution. Profile resolution, coordinator leases,
+ * usage aggregation and UI state deliberately remain with the task runtime. A conversation with a task limit (a
+ * bot's) waits here for a free slot first. */
+export async function executeSubagent(args: ExecuteSubagentArgs): Promise<SubagentExecutionResult> {
+  const releaseSlot = await acquireSubagentSlot(args.conversationId, args.signal, () =>
+    args.progress?.(SUBAGENT_SLOT_WAIT_LINE)
+  )
+  try {
+    return await runSubagentExecution(args)
+  } finally {
+    releaseSlot()
+  }
+}
+
+async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<SubagentExecutionResult> {
   const recorder =
     args.sessionRecorder ??
     (args.toolCallId

@@ -48,7 +48,23 @@ export interface SubagentProfileRulesV1 {
   byAgent?: Record<string, SubagentProfileCandidate[]>
 }
 
+export const TASK_COMPLEXITIES = ['simple', 'medium', 'complex'] as const
+export type TaskComplexity = (typeof TASK_COMPLEXITIES)[number]
+export const SUBAGENT_MODEL_TIERS = ['fast', 'balanced', 'strong'] as const
+export type SubagentModelTier = (typeof SUBAGENT_MODEL_TIERS)[number]
+/** How a host that routes tasks by difficulty (a delegating bot) placed one task. */
+export interface SubagentDelegationInfo {
+  complexity: TaskComplexity
+  /** False when the parent omitted `complexity` and the task counted as medium. */
+  declared: boolean
+  /** The model class the bot's routing picked; null when no allowed model fits and the parent's model ran it. */
+  tier: SubagentModelTier | null
+  /** True when no allowed model of the wanted class existed and a stronger class ran it. */
+  upgraded: boolean
+}
+
 export type SubagentProfileSource =
+  | 'bot-delegation'
   | 'maestro-resource'
   | 'conversation-agent'
   | 'conversation-category'
@@ -113,6 +129,8 @@ export interface SubagentExecutionSnapshotV1 {
   attempts: SubagentProfileAttempt[]
 
   diagnostics?: SubagentProfileDiagnostic[]
+  /** Set when a host routed the task by its difficulty. */
+  delegation?: SubagentDelegationInfo
 }
 
 export interface SubagentAgentDto {

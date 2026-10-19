@@ -469,6 +469,8 @@ const FLEET_STATUS: Record<Extract<FleetTranscriptItem, { kind: 'tool' }>['state
 const pinnedFleetItem = (item: FleetStepItem): boolean =>
   item.kind === 'tool' &&
   ((baseToolName(item.name) === 'todo_write' && !!item.todos) ||
+    // A task the bot started is a row of its own, with its difficulty, model and result.
+    (baseToolName(item.name) === 'task' && !!item.task) ||
     !!item.files?.length ||
     ['artifact_create', 'artifact_update'].includes(baseToolName(item.name)))
 

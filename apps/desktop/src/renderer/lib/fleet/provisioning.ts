@@ -7,6 +7,7 @@ import {
 import { useCallback, useEffect, useState } from 'react'
 import {
   FLEET_CONTEXT_LIMIT_FEATURE,
+  FLEET_BOT_DELEGATION_FEATURE,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
   FLEET_ENVIRONMENT_LIMITS,
   FLEET_ENVIRONMENTS_FEATURE,
@@ -171,6 +172,15 @@ export function contextLimitAvailability(
 ): ContextLimitAvailability {
   if (!fleet.state.connection.features.includes(FLEET_CONTEXT_LIMIT_FEATURE)) return 'unsupported'
   return needsRestart(runtime, FLEET_CONTEXT_LIMIT_FEATURE) ? 'restart-environment' : 'ready'
+}
+export type DelegationAvailability = 'unsupported' | 'restart-environment' | 'ready'
+/** Whether the owner can set how a bot splits its work: the gateway must store it and the running Maestrly apply it. */
+export function delegationAvailability(
+  fleet: FleetController,
+  runtime: Pick<FleetEnvironment, 'lifecycle' | 'capabilities'>
+): DelegationAvailability {
+  if (!fleet.state.connection.features.includes(FLEET_BOT_DELEGATION_FEATURE)) return 'unsupported'
+  return needsRestart(runtime, FLEET_BOT_DELEGATION_FEATURE) ? 'restart-environment' : 'ready'
 }
 /** Where a bot's accounts, skills and MCP servers live: its environment on gateways with environments, else itself. */
 export function provisioningTargetForBot(

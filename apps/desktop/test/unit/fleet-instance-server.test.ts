@@ -467,6 +467,7 @@ describe('instance control HTTP', () => {
       'routine-conversations',
       'parallel-turns',
       'peer-conversations',
+      'bot-delegation',
     ])
     const { base, environment } = await setup()
     const response = await send(base, 'GET', '/v1/environment/selections')

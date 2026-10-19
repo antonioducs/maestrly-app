@@ -3,12 +3,14 @@ import {
   SUBAGENT_PROFILE_RULES_VERSION,
   normalizeSubagentProfileKey,
   type SubagentExecutionSnapshotV1,
+  type TaskComplexity,
 } from '../../shared/subagent-profiles'
 import type { ChatAgent } from './agents'
 import { getConversationSubagentProfileRules, getGlobalSubagentProfileRules } from './subagent-profile-config'
 import { getSubagentProfileModelMeta } from './subagent-profile-model-meta'
 import { subagentModelCatalog, subagentProviderStatus } from './subagent-provider-runtime'
 import { resolveParentSubagentProfile, resolveSubagentProfile } from './subagent-profile-resolver'
+import { getSubagentRouter } from './subagent-route'
 
 interface ResolveSubagentExecutionProfileInput {
   agentName: string
@@ -17,6 +19,8 @@ interface ResolveSubagentExecutionProfileInput {
   parent: ChatModelRef & { effort: string }
   /** Effective Fast Mode of the parent turn, captured before resolving the child profile. */
   parentFastMode?: boolean
+  /** How hard the parent said the task is; a conversation whose host routes tasks picks the model from it. */
+  complexity?: TaskComplexity | null
 }
 
 interface ResolveParentSubagentExecutionProfileInput {
@@ -61,6 +65,7 @@ export async function resolveSubagentExecutionProfile({
   conversationId,
   parent,
   parentFastMode,
+  complexity,
 }: ResolveSubagentExecutionProfileInput): Promise<{
   definition: ChatAgent | null
   profile: SubagentExecutionSnapshotV1
@@ -106,6 +111,8 @@ export async function resolveSubagentExecutionProfile({
       },
     }
   }
+  const router = getSubagentRouter(conversationId)
+  const route = router ? router({ agentName: normalizedName, complexity: complexity ?? null }) : null
   const profile = await resolveSubagentProfile(
     {
       agent: definition,
@@ -119,8 +126,9 @@ export async function resolveSubagentExecutionProfile({
       },
       parentFastMode,
       diagnostics,
+      hostRoute: route ? { ruleKey: route.info.complexity, candidates: route.candidates } : undefined,
     },
     subagentProfileResolverDeps
   )
-  return { definition, profile }
+  return { definition, profile: route ? { ...profile, delegation: route.info } : profile }
 }

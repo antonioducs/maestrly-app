@@ -712,6 +712,7 @@ export class Lifecycle {
       ceiling: bot.ceiling,
       selection: bot.selection,
       compaction: this.effectiveCompaction(bot, environment),
+      ...(bot.delegation ? { delegation: bot.delegation } : {}),
       ...(environment && this.environmentCapabilities(environment.id).includes(FLEET_ENVIRONMENT_SETTINGS_FEATURE)
         ? { compactionInherited: !bot.compaction && !!environment.compaction }
         : {}),
@@ -952,6 +953,7 @@ export class Lifecycle {
       runningRun: null,
       turns: null,
       peerSettings: FLEET_PEER_THREAD_SETTINGS_DEFAULT,
+      delegation: null,
       createdAt: at,
       updatedAt: at,
     }
