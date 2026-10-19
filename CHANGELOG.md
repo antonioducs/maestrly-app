@@ -87,7 +87,9 @@ User-visible changes by version. Downloads are on
   again after the install now adds the project, and project conversations,
   their worktrees and diff reviews work too: when `git` does not start,
   Maestrly rereads the `Path` that Windows keeps for new programs and also
-  looks in the folders where the Git for Windows installer puts it.
+  looks in the folders where the Git for Windows installer puts it. Plugin
+  sources do the same: adding or updating one after installing Git no longer
+  fails with **Git is not installed or cannot run.**
 
 ## [0.21.1] - 2026-10-18
 

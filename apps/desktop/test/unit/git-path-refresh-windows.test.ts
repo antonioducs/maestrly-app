@@ -5,6 +5,7 @@ import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
 import { pathEnvKey, refreshWindowsPathFromRegistry, windowsEnvValue } from '../../src/main/fix-path'
 import { refreshGitPath, windowsGitDirectories } from '../../src/main/git-command'
+import { PluginGitSource } from '../../src/main/plugins/git-source'
 
 const execFileAsync = promisify(execFile)
 const onWindows = process.platform === 'win32'
@@ -47,5 +48,18 @@ describe.runIf(onWindows)('Windows PATH refresh against the real system', () => 
     expect(env[pathEnvKey(env)]?.split(';')).toContain(installedGitDir)
     const { stdout } = await execFileAsync('git', ['--version'], { env, windowsHide: true })
     expect(stdout).toMatch(/^git version \d+\.\d+/)
+  })
+
+  it.runIf(installedGitDir !== undefined)('lets plugin downloads reach Git from a PATH that lacked it', async () => {
+    // The plugin runner builds its restricted environment from this process's own, so that is what goes stale.
+    const key = pathEnvKey(process.env)
+    const saved = process.env[key]
+    const stale = staleEnvironment()
+    process.env[key] = stale[pathEnvKey(stale)]
+    try {
+      await expect(new PluginGitSource({ allowFileRoot: null }).gitVersion()).resolves.toMatch(/^\d+\.\d+/)
+    } finally {
+      process.env[key] = saved
+    }
   })
 })
