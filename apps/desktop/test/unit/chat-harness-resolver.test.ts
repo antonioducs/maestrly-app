@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { harnessRegistry } from '../../src/main/chat/harness/catalog'
 import { resolveChatHarness, resolveChatHarnessExecution } from '../../src/main/chat/harness/execution'
-import { serializableReasoningEffort } from '../../src/main/chat/harness/policies'
+import { resolveGitHubCopilotHarness } from '../../src/main/chat/harness/adapters/copilot'
+import { offeredReasoningEfforts, serializableReasoningEffort } from '../../src/main/chat/harness/policies'
 import { resolveHarness } from '../../src/main/chat/harness/resolver'
 import type { ChatProviderKind } from '../../src/shared/chat'
 import type { HarnessCapabilityClaims } from '../../src/shared/harness'
@@ -212,6 +213,91 @@ describe('harness resolver: capabilities and efforts', () => {
     expect(gateway.harness.reason).toBe('unsupported-endpoint')
     expect(gateway.harness.runtime.promptCacheTtl).toBeNull()
     expect(gateway.capabilities.responseItems).toBe(true)
+  })
+})
+
+describe('harness resolver: Gemini profiles on every transport', () => {
+  const GEMINI_API = 'https://generativelanguage.googleapis.com/v1beta/openai'
+  const OPENROUTER = 'https://openrouter.ai/api/v1'
+  const models = [
+    { folder: 'gemini-4-argon', behavior: 'maestrly-gemini-4-argon-v1', flag: 'chat.geminiArgonProfile' },
+    { folder: 'gemini-3.8-flash', behavior: 'maestrly-gemini-3.8-flash-v1', flag: 'chat.gemini38FlashProfile' },
+  ] as const
+
+  describe.each(models)('$folder', ({ folder, behavior, flag }) => {
+    it.each([
+      ['antigravity-subscription', folder, undefined],
+      ['openai', `models/${folder}`, GEMINI_API],
+      ['openai', folder, GEMINI_API],
+      ['openai', `google/${folder}`, OPENROUTER],
+      ['openai-responses', `google/${folder}`, OPENROUTER],
+      ['cursor-subscription', folder, undefined],
+      ['openai', folder.toUpperCase(), GEMINI_API],
+    ] as const)('applies on provider=%s model=%s', (providerKind, modelId, baseURL) => {
+      const { harness } = resolveChatHarness(providerKind, modelId, baseURL)
+      expect(harness.profileId).toBe(folder)
+      expect(harness.identity.behaviorProfileId).toBe(behavior)
+      expect(harness.prompts.styleAndWork).toContain('# Errors and persistence')
+      expect(harness.prompts.subagent).toContain('delegated by another agent')
+      expect(harness.reasoning.effectiveEfforts).toEqual(['low', 'medium', 'high'])
+    })
+
+    it('never serializes or offers an effort Gemini rejects or maps away', () => {
+      const { reasoning } = resolveChatHarness('openai', `models/${folder}`, GEMINI_API).harness
+      const rejected = ['minimal', 'none', 'xhigh']
+      for (const effort of rejected) expect(serializableReasoningEffort(reasoning, effort)).toBeNull()
+      expect(serializableReasoningEffort(reasoning, 'high')).toBe('high')
+      const catalog = ['minimal', 'low', 'medium', 'high']
+      expect(offeredReasoningEfforts(reasoning, catalog)).toEqual(['low', 'medium', 'high'])
+      expect(offeredReasoningEfforts(reasoning, undefined)).toEqual(['low', 'medium', 'high'])
+      expect(offeredReasoningEfforts(reasoning, ['high'])).toEqual(['high'])
+    })
+
+    it('reaches Copilot through its gateway normalization, on the textual axis only', () => {
+      const copilot = resolveGitHubCopilotHarness(`google/${folder}`, registry)
+      expect(copilot.family).toBe('generic')
+      expect(copilot.promptProfile).toBe(`maestrly-${folder}@v1`)
+      expect(copilot.harness.prompts.styleAndWork).toContain('# Errors and persistence')
+      expect(copilot.harness.identity.behaviorProfileId).toBeNull()
+    })
+
+    it.each([`${folder}-latest`, `vertex/${folder}`, `models/google/${folder}`, folder.replace(/-[a-z]+$/, '')])(
+      'fails closed for the near miss %s',
+      (modelId) => {
+        expect(resolveChatHarness('openai', modelId, GEMINI_API).harness.profileId).toBe('default')
+      }
+    )
+
+    it('closes with its own flag', () => {
+      const { harness } = resolveChatHarness('antigravity-subscription', folder, undefined, {
+        flags: { [flag]: false },
+      })
+      expect(harness.reason).toBe('disabled')
+      expect(harness.identity.behaviorProfileId).toBeNull()
+    })
+  })
+
+  it('leaves the effort axis to the catalog for a model without a manifest', () => {
+    const { reasoning } = resolveChatHarness('openai', 'models/gemini-3.1-pro', GEMINI_API).harness
+    expect(offeredReasoningEfforts(reasoning, ['minimal', 'high'])).toEqual(['minimal', 'high'])
+    expect(offeredReasoningEfforts(reasoning, undefined)).toEqual([])
+  })
+
+  it('keeps the Cursor prompt identity convention', () => {
+    expect(resolveChatHarness('cursor-subscription', 'gemini-4-argon').harness.identity.promptIdentity).toBe(
+      'cursor-native-with-host-gemini-4-argon-v1'
+    )
+  })
+})
+
+describe('harness resolver: gateway identities of the transport-independent profiles', () => {
+  it.each([
+    ['anthropic/claude-opus-5', 'maestrly-opus-5-v1'],
+    ['anthropic/claude-fable-5.1', 'maestrly-fable-5.1-v1'],
+  ])('matches the OpenRouter id %s', (modelId, behaviorProfileId) => {
+    const { harness } = resolveChatHarness('openai', modelId, 'https://openrouter.ai/api/v1')
+    expect(harness.reason).toBe('matched-alias')
+    expect(harness.identity.behaviorProfileId).toBe(behaviorProfileId)
   })
 })
 

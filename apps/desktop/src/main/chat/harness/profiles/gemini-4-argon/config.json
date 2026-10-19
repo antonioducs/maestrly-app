@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "maestrly-gemini-4-argon",
+  "profileVersion": 1,
+  "match": {
+    "caseInsensitive": true,
+    "aliases": ["models/gemini-4-argon", "google/gemini-4-argon"]
+  },
+  "featureFlag": { "key": "chat.geminiArgonProfile", "default": true },
+  "bindings": [
+    {
+      "providerKind": "*",
+      "overrides": {
+        "identity": {
+          "behaviorProfileId": "maestrly-gemini-4-argon-v1",
+          "promptIdentity": "maestrly-gemini-4-argon@v1"
+        },
+        "prompts": { "styleAndWork": "prompt.md", "subagent": "subagent.md" },
+        "reasoning": { "manifestEfforts": ["low", "medium", "high"], "nonSerializableEfforts": ["none", "minimal"] }
+      }
+    },
+    {
+      "providerKind": "cursor-subscription",
+      "overrides": { "identity": { "promptIdentity": "cursor-native-with-host-gemini-4-argon-v1" } }
+    }
+  ]
+}

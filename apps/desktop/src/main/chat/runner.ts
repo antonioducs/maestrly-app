@@ -136,6 +136,7 @@ import { openAINativeToolsPromptOverlay } from './harness/strategies/prompt-layo
 import { withEnvironmentOnLastUserMessage } from './harness/strategies/environment'
 import { captureHarnessFlags } from './harness/flags'
 import { createHarnessSnapshot } from './harness/compatibility'
+import { offeredReasoningEfforts } from './harness/policies'
 import type { ResolvedHarness } from './harness/types'
 import { buildOpenAIModelMessages } from './openai/history'
 import {
@@ -684,11 +685,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   })
   // A profile that publishes a reasoning manifest owns the effort axis; otherwise the catalog does.
   const manifestEfforts = harness.reasoning.manifestEfforts != null
-  const effectiveReasoningEfforts = manifestEfforts
-    ? harness.reasoning.effectiveEfforts.filter(
-        (effort) => !meta?.reasoningEfforts?.length || meta.reasoningEfforts.includes(effort)
-      )
-    : (meta?.reasoningEfforts ?? [])
+  const effectiveReasoningEfforts = offeredReasoningEfforts(harness.reasoning, meta?.reasoningEfforts)
   const reasoningMeta = manifestEfforts
     ? { reasoning: effectiveReasoningEfforts.length > 0, reasoningEfforts: effectiveReasoningEfforts }
     : meta

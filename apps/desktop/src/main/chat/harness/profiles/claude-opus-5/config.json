@@ -2,6 +2,7 @@
   "schemaVersion": 1,
   "id": "maestrly-opus-5",
   "profileVersion": 1,
+  "match": { "aliases": ["anthropic/claude-opus-5"] },
   "featureFlag": { "key": "chat.opus5Profile", "default": true },
   "bindings": [
     {

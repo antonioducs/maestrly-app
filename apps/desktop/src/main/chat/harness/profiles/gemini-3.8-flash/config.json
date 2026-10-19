@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "maestrly-gemini-3.8-flash",
+  "profileVersion": 1,
+  "match": {
+    "caseInsensitive": true,
+    "aliases": ["models/gemini-3.8-flash", "google/gemini-3.8-flash"]
+  },
+  "featureFlag": { "key": "chat.gemini38FlashProfile", "default": true },
+  "bindings": [
+    {
+      "providerKind": "*",
+      "overrides": {
+        "identity": {
+          "behaviorProfileId": "maestrly-gemini-3.8-flash-v1",
+          "promptIdentity": "maestrly-gemini-3.8-flash@v1"
+        },
+        "prompts": { "styleAndWork": "prompt.md", "subagent": "subagent.md" },
+        "reasoning": { "manifestEfforts": ["low", "medium", "high"], "nonSerializableEfforts": ["none", "minimal"] }
+      }
+    },
+    {
+      "providerKind": "cursor-subscription",
+      "overrides": { "identity": { "promptIdentity": "cursor-native-with-host-gemini-3.8-flash-v1" } }
+    }
+  ]
+}
