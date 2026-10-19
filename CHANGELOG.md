@@ -13,6 +13,14 @@ User-visible changes by version. Downloads are on
   and browser, so only one of them uses the computer at a time. It needs a bot
   environment image on this version. See
   [tasks in parallel](docs/bot-fleet.md#tasks-in-parallel).
+- Let a bot delegate: in **Settings → Tasks** choose **Delegate**, check the
+  models it may use and say what each is for (fast, balanced or strong). The bot
+  hands long work to tasks and declares how hard each one is, and Maestrly runs
+  it on an allowed model of that class, on the account with the most usage
+  left. Task rows in the bot's conversation show each task's difficulty, model
+  and result. **Normal** stays the default. It needs a bot server, a bot
+  environment image and a desktop app on this version. See
+  [delegate mode](docs/bot-fleet.md#delegate-mode).
 
 ### Fixed
 
