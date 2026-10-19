@@ -10,6 +10,8 @@ test('accepts conventional English subjects with optional scopes, bodies, or tru
     'fix(ci): accept standard metadata\n\nExplain why the change is needed.',
     'build(deps): update packages\n\nSigned-off-by: dependabot[bot] <support@github.com>',
     'docs: credit collaborators\n\nCo-authored-by: Example User <contributor@example.com>',
+    'fix(chat): accept OpenAI API-key chats in Ask/Agent, and refresh Codex PATH after Git installs (#263)',
+    `feat: ${'x'.repeat(94)} (#263)`,
   ]) {
     assert.equal(validateCommit(message), null)
   }
@@ -23,6 +25,9 @@ test('rejects empty, malformed, padded, and oversized commit subjects', () => {
     'Feat: change',
     ' feat: change',
     'feat: change ',
+    `feat: ${'x'.repeat(95)}`,
+    `feat: ${'x'.repeat(95)} (#263)`,
+    `feat: ${'x'.repeat(45)} (#263) ${'y'.repeat(42)}`,
     `feat: ${'x'.repeat(101)}`,
   ]) {
     assert.notEqual(validateCommit(message), null)
