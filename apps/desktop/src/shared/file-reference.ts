@@ -4,6 +4,8 @@ export interface LocalFileReference {
   endLine?: number
 }
 
+const FILE_URI_RE = /^file:\/\/(?:localhost)?(\/.*)$/i
+const WINDOWS_DRIVE_SLASH_RE = /^\/([A-Za-z]:[\\/].*)$/
 const WINDOWS_ABSOLUTE_RE = /^[A-Za-z]:[\\/]/
 const URI_SCHEME_RE = /^[A-Za-z][A-Za-z\d+.-]*:/
 const GENERIC_EXTENSION_RE = /\.[A-Za-z][A-Za-z\d_-]{0,15}$/
@@ -32,6 +34,8 @@ export function parseLocalFileReference(value: string): LocalFileReference | nul
   let raw = value.trim()
   if (!raw) return null
   if (raw.startsWith('<') && raw.endsWith('>')) raw = raw.slice(1, -1).trim()
+  const fileUri = raw.match(FILE_URI_RE)
+  if (fileUri) raw = fileUri[1].replace(WINDOWS_DRIVE_SLASH_RE, '$1')
 
   try {
     raw = decodeURIComponent(raw)

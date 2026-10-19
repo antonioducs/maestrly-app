@@ -12,6 +12,11 @@ describe('parseLocalFileReference', () => {
     ['src/chat/view.tsx#L42', { filePath: 'src/chat/view.tsx', startLine: 42 }],
     ['src/chat/view.tsx#L42-L50', { filePath: 'src/chat/view.tsx', startLine: 42, endLine: 50 }],
     ['/Users/alice/My%20Project/src/view.tsx#L7', { filePath: '/Users/alice/My Project/src/view.tsx', startLine: 7 }],
+    [
+      'file:///Users/alice/My%20Project/src/view.tsx#L7-L12',
+      { filePath: '/Users/alice/My Project/src/view.tsx', startLine: 7, endLine: 12 },
+    ],
+    ['file:///C:/repo/src/view.tsx:9', { filePath: 'C:/repo/src/view.tsx', startLine: 9 }],
     ['C:\\repo\\src\\view.tsx:9', { filePath: 'C:\\repo\\src\\view.tsx', startLine: 9 }],
     ['C:/repo/src/view.tsx:9', { filePath: 'C:/repo/src/view.tsx', startLine: 9 }],
     ['./Dockerfile', { filePath: './Dockerfile' }],

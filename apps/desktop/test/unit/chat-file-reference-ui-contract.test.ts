@@ -34,6 +34,7 @@ describe('local chat references → embedded VS Code', () => {
   })
 
   it('transports range start and end to the existing IPC channel', () => {
+    expect(chatViewSource).toContain('const opensFiles = useHostInfo().editor')
     expect(chatViewSource).toContain('openPlanFile(conversationId, relPath, startLine, endLine)')
     expect(preloadSource).toContain(
       'openPlanFile: (convId: string, filePath: string, line?: number, endLine?: number): Promise<void>'
