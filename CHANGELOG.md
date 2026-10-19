@@ -5,6 +5,15 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Added
+
+- Let a bot split independent work into tasks that run at the same time: up to
+  four at once across all its conversations, with several image generations
+  running together instead of one after another. Tasks share the bot's desktop
+  and browser, so only one of them uses the computer at a time. It needs a bot
+  environment image on this version. See
+  [tasks in parallel](docs/bot-fleet.md#tasks-in-parallel).
+
 ### Fixed
 
 - Conversations that use an OpenAI API key work again in **Ask** and **Agent**

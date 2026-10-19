@@ -822,6 +822,16 @@ With a bot server and environment image from this release, a bot works in severa
 
 The mobile app shows only a bot's conversation with you, and its **Stop** stops only that conversation; Maestrly on your computer shows the others. With an older server or image, a bot works on one conversation at a time.
 
+## Tasks in parallel
+
+A bot splits independent work into **tasks** that run at the same time: it calls `task` for each part in the same response, and each task works in a context of its own and brings back a short report with the paths of the files it wrote. Several images, several files to convert or transcribe, or separate research questions no longer wait for one another.
+
+- **Limit:** a bot runs at most four tasks at once, counting all its conversations together (its conversation with you, its routine runs and its conversations with other bots). The others wait for a free slot, and the task shows that it is waiting.
+- **Images:** several `generate_image` calls run at the same time, each on its own image generation. Two calls never write the same file: the second one is refused until the first ends.
+- **Screen and browser:** tasks that run at the same time share the bot's desktop and browser, so the bot lets at most one of them use `computer_*` or `browser_*` tools.
+
+Tasks use the model of the conversation that started them. With an older environment image, a bot gets no task guidance and no limit, and its image generations run one after another.
+
 ## Routine runs
 
 With a bot server and environment image from this release, each routine run works in a **conversation of its own**, apart from your conversation with the bot. Open them from the **Runs** tab next to **Conversation** in the bot's header. The tab counts the runs that ended with something new since you last looked; this count is kept on each computer. While a run works, the header shows its routine and how long it has been running. Your conversation with the bot does not wait for it (see [Conversations at once](#conversations-at-once)); with an older server or image, your messages wait until the run ends.

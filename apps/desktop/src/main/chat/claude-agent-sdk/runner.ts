@@ -770,6 +770,7 @@ async function prepareRuntime(
         scope: args.projectId === null ? 'standalone' : 'project',
         harness,
         cwd: args.cwd,
+        conversationId: args.conversationId,
         appToolsEnabled,
         disabledAppToolGroups: appAccess.disabledGroups,
         mode: args.mode,

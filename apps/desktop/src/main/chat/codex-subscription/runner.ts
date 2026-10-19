@@ -2688,6 +2688,7 @@ export async function runCodexSubscriptionChat(
         buildMaestrlyBasePrompt({
           harness: profile.harness,
           cwd: args.cwd,
+          conversationId: args.conversationId,
           scope: 'standalone',
           mode: args.mode,
           appToolsEnabled: dynamic.appToolsEnabled,

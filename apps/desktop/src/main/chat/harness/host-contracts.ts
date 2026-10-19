@@ -1,6 +1,7 @@
 import { capabilityBehaviorFor } from '../../../shared/chat-mode'
 import { isBotMode } from '../../fleet/instance/config'
 import { BOT_APP_TOOLS_GUIDANCE, botIdentityPrompt } from '../../fleet/instance/identity'
+import { botTaskPolicyPrompt } from '../../fleet/instance/task-policy'
 import type { ChatBehavior } from '../../../shared/conversation-experience'
 import { renderDesignModePrompt } from '../design-mode-prompt'
 import { MAESTRO_SYSTEM_SPEC } from '../maestro-prompt'
@@ -193,6 +194,8 @@ export function hostAppToolsSection(
 export interface MaestrlyBasePromptInput {
   harness: ResolvedHarness
   cwd: string
+  /** The conversation the prompt is for; a bot's conversations add their own task guidance. Absent for subagents. */
+  conversationId?: string
   scope?: 'project' | 'standalone'
   appToolsEnabled: boolean
   /** App-tool groups the user turned off; the prompt stops naming their tools. */
@@ -256,6 +259,7 @@ ${discovery} Online research requires an actually available tool: use web_search
       chatStyle,
       harnessBehaviorHeader(input.harness),
       botIdentityPrompt(input.cwd),
+      botTaskPolicyPrompt(input.conversationId),
       standaloneProfileText(input.harness.prompts.styleAndWork, { chatStyle: Boolean(chatStyle) }),
       HOST_USING_TOOLS,
       standaloneCapabilities(input.mode),

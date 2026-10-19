@@ -26,6 +26,7 @@ const { InstanceHoldManager } = await import('../../src/main/fleet/instance/gate
 const { BotRunConversations } = await import('../../src/main/fleet/instance/routine-runs')
 const { BotRuntime } = await import('../../src/main/fleet/instance/runtime')
 const { subagentConcurrencyOf } = await import('../../src/main/chat/subagent-concurrency')
+const { botTaskPolicyPrompt } = await import('../../src/main/fleet/instance/task-policy')
 const { getSubscriptionFailoverRouter, resetSubscriptionFailoverRouterForTests } = await import(
   '../../src/main/chat/subscription-failover/router'
 )
@@ -445,5 +446,9 @@ describe('turns of the bot conversations at the same time', () => {
     await running
     await runtime.deleteRun(runId)
     expect(subagentConcurrencyOf(record.conversationId)).toBeNull()
+    vi.stubEnv('MAESTRLY_BOT_MODE', '1')
+    expect(botTaskPolicyPrompt(primary.id)).toContain('at most 4 run at once')
+    expect(botTaskPolicyPrompt(record.conversationId)).toBe('')
+    vi.unstubAllEnvs()
   })
 })

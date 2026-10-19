@@ -154,6 +154,7 @@ import {
   setConversationSkillSelection,
 } from '../../chat/skill-state'
 import { setSubagentConcurrency } from '../../chat/subagent-concurrency'
+import { parallelTasksPolicy, setBotTaskPolicy } from './task-policy'
 
 /** Whether the bot may start turns at all; each conversation then starts its own while it runs none. */
 export function canDispatch(
@@ -725,6 +726,7 @@ export class BotRuntime {
     const id = registered.id
     clearCompactionSummarizer(id)
     setSubagentConcurrency(id, null)
+    setBotTaskPolicy(id, null)
     setConversationContextLimit(id, null)
     clearConversationMemorySpace(id)
     clearMemoryCoreExtras(id)
@@ -857,6 +859,7 @@ export class BotRuntime {
     })
     publishConvChatSettings(id)
     setSubagentConcurrency(id, { pool: this.botId, limit: BOT_TASKS_AT_ONCE })
+    setBotTaskPolicy(id, () => parallelTasksPolicy(BOT_TASKS_AT_ONCE))
     // The owner's cap on the conversation's window, whatever its model; the usage the Mac shows follows it at once.
     const limit = this.stored.profile.compaction?.contextLimitTokens ?? null
     if ((getConversationContextLimit(id) ?? null) !== limit) {
@@ -912,6 +915,7 @@ export class BotRuntime {
       stopGate()
       clearCompactionSummarizer(id)
       setSubagentConcurrency(id, null)
+      setBotTaskPolicy(id, null)
       setConversationContextLimit(id, null)
       clearConversationMemorySpace(id)
       clearMemoryCoreExtras(id)
@@ -943,6 +947,7 @@ export class BotRuntime {
       },
     })
     setSubagentConcurrency(id, { pool: this.botId, limit: BOT_TASKS_AT_ONCE })
+    setBotTaskPolicy(id, () => parallelTasksPolicy(BOT_TASKS_AT_ONCE))
     setConversationContextLimit(id, this.stored.profile.compaction?.contextLimitTokens ?? null)
     const selection = this.currentSelection()
     if (selection)
