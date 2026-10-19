@@ -56,6 +56,7 @@ import {
   subagentToolMutates,
 } from './tools'
 import type { ToolContext } from './tools/util'
+import { environmentLine } from './tools/command-shell'
 import { withAnthropicCacheControl } from './message'
 import { AI_SDK_MAX_RETRIES, classifyStreamRetry, shouldBlockHighUsageRetry } from './retry-policy'
 import { recordModelCallUsage } from './usage-diagnostics'
@@ -448,12 +449,20 @@ export async function runSubagent(args: {
         subagentTaskCallId
       ),
     }
-    let subSystem = harnessSubagentPrompt(
+    const standalone = args.messageOwnership?.kind === 'standalone' || args.projectId === null
+    // Read once the tools are final: local_shell replaces `bash` for some OpenAI models and takes argv instead.
+    const delegatedEnvironment = (): string =>
+      `Delegated subagent: ${args.agentName}. ${environmentLine({ cwd: args.cwd, privateDirectory: args.projectId === null, commandShell: 'bash' in tools })}`
+    const environmentSection = (): string =>
+      args.messageOwnership?.kind === 'standalone'
+        ? `# Environment\n\nHost-managed settings surface. No project or workspace context is available. ${environmentLine({ commandShell: 'bash' in tools })}`
+        : `# Environment\n\n${delegatedEnvironment()}`
+    let subSystem = `${harnessSubagentPrompt(
       [def.prompt, args.projectId === null ? PERSONAL_MEMORY_TOOL_GUIDANCE : MEMORY_TOOL_GUIDANCE]
         .filter(Boolean)
         .join('\n\n'),
       subHarness
-    )
+    )}\n\n${environmentSection()}`
     chatDiag({
       kind: 'harness-behavior-profile',
       profile: subHarness.identity.behaviorProfileId ?? 'legacy',
@@ -468,7 +477,6 @@ export async function runSubagent(args: {
     let subLifecycle: OpenAICompactionLifecycle | null = useOpenAISubagent
       ? createOpenAICompactionLifecycle(createOpenAIResponsesLedger())
       : null
-    const standalone = args.messageOwnership?.kind === 'standalone' || args.projectId === null
     const executionStore =
       args.messageOwnership?.kind === 'standalone' ? createStandaloneOpenAIExecutionStore() : undefined
     if (useOpenAISubagent) {
@@ -508,11 +516,8 @@ export async function runSubagent(args: {
       ]
         .filter(Boolean)
         .join('\n\n')
-      const genericEnvironment = standalone
-        ? '# Environment\n\nHost-managed settings surface. No project or workspace context is available.'
-        : `# Environment\n\nDelegated subagent: ${args.agentName}. Project directory: ${args.cwd}.`
       let promptStablePrefix = genericStablePrefix
-      subSystem = `${genericStablePrefix}\n\n${genericEnvironment}`
+      subSystem = `${genericStablePrefix}\n\n${environmentSection()}`
       if (!standalone && subHarness.prompts.layout !== 'maestrly-base') {
         const prompt = buildHarnessPrompt({
           harness: subHarness,
@@ -522,7 +527,7 @@ export async function runSubagent(args: {
           hasNotesTab: false,
           projectContext,
           agentsContext: `${subagentCanMutate ? '' : 'This delegated run is read-only.\n\n'}${def.prompt}`,
-          envContext: `Delegated subagent: ${args.agentName}. Project directory: ${args.cwd}.`,
+          envContext: delegatedEnvironment(),
           generatedInterfaces: false,
           nativeTools: {
             localShell: nativeTools[OPENAI_LOCAL_SHELL_TOOL_NAME] != null,

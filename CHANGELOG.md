@@ -14,6 +14,21 @@ User-visible changes by version. Downloads are on
   them; the server needs this version to answer. See
   [Mobile app](docs/mobile.md#what-it-does).
 
+### Security
+
+- A saved "Always allow" rule for a command no longer covers a longer command
+  built to hide a second one. Before, a model could get, for example,
+  `echo $(echo ')'); rm x` past a saved `echo *` rule without asking: the check
+  that splits a command into the commands it runs ignored quotes inside
+  `$( )`, missed commands in backquotes with escaped backquotes, in comments
+  holding a quote, in heredocs, in `<( )` and in `$'...'`, and on Windows in
+  PowerShell comments and arguments in parentheses. It now reads them the way
+  the shell does. A command whose structure it cannot read with certainty no
+  longer matches any saved rule: it asks every time (unless the conversation
+  has full access) and offers no "Always allow". Ordinary commands such as
+  `git status`, `npm test -- --run` or pipes still match their rules. See
+  [Security model](docs/security-model.md#commands-files-and-git).
+
 ### Fixed
 
 - On Windows, the agent's commands run in Windows PowerShell 5.1 instead of
@@ -27,6 +42,13 @@ User-visible changes by version. Downloads are on
   command's own. On macOS and Linux commands still run in `/bin/sh`. Plugin
   hooks still run in `cmd.exe` on Windows.
   See [Plugins](docs/plugins.md#hooks).
+- Subagents are told the operating system, today's date and their directory,
+  and, when they can run commands, which shell the `bash` tool uses, as the
+  main agent already was. Before, a subagent on Windows learned about
+  PowerShell only from the tool description, and subagents of every runtime
+  had to guess the date. This applies to subagents run with an API key and to
+  those of the Claude, ChatGPT, GitHub Copilot, Cursor and Google Antigravity
+  subscriptions.
 - Moving a bot whose working folder holds a Git repository no longer fails
   while its data is packed. Its whole working folder now moves, `.git` folders,
   empty folders, files ending in `.tmp`, and the links that lead inside it (such
@@ -65,7 +87,9 @@ User-visible changes by version. Downloads are on
   again after the install now adds the project, and project conversations,
   their worktrees and diff reviews work too: when `git` does not start,
   Maestrly rereads the `Path` that Windows keeps for new programs and also
-  looks in the folders where the Git for Windows installer puts it.
+  looks in the folders where the Git for Windows installer puts it. Plugin
+  sources do the same: adding or updating one after installing Git no longer
+  fails with **Git is not installed or cannot run.**
 
 ## [0.21.1] - 2026-10-18
 

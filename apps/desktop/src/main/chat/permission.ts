@@ -1,5 +1,5 @@
 import { permissionScopeKey, type PermissionScope } from '../../shared/conversation-scope'
-import { permissionSubjectTitle } from '../../shared/permission-preview'
+import { isUnparsedCommandResource, permissionSubjectTitle } from '../../shared/permission-preview'
 import { autonomousPolicy, assertAutonomousPermission } from './autonomous'
 import { remoteChatPolicy, assertRemoteChatPermission } from './remote-policy'
 /**
@@ -128,6 +128,11 @@ function evaluate(action: string, resource: string, ...rulesets: Ruleset[]): Rul
     if (wildcardMatch(action, r.action) && wildcardMatch(resource, r.resource)) return r
   }
   return { action, resource: '*', effect: 'ask' }
+}
+
+/** Saved rules never decide a command the splitter could not read: only the permission mode's base rules do. */
+function effectFor(action: string, resource: string, base: Ruleset, saved: Ruleset): RuleEffect {
+  return evaluate(action, resource, base, isUnparsedCommandResource(resource) ? [] : saved).effect
 }
 
 // ---- Default rulesets (BYOK gates dangerous actions; inverted opencode build-agent port). ----
@@ -277,10 +282,10 @@ export class PermissionBroker extends EventEmitter {
   private evaluateInput(input: AssertInput): { effect: RuleEffect; rules: Ruleset } {
     const base = this.baseRules(input.conversationId)
     if (this.denied(input, base)) return { effect: 'deny', rules: base } // deny: base rules only (G1).
-    const all = [...base, ...this.savedRules(this.scopeKey(input))]
-    const effs = input.resources.map((res) => evaluate(input.action, res, all).effect)
+    const saved = this.savedRules(this.scopeKey(input))
+    const effs = input.resources.map((res) => effectFor(input.action, res, base, saved))
     const effect: RuleEffect = effs.includes('deny') ? 'deny' : effs.includes('ask') ? 'ask' : 'allow'
-    return { effect, rules: all }
+    return { effect, rules: [...base, ...saved] }
   }
 
   private buildRequest(input: AssertInput): PermissionRequest {
@@ -384,8 +389,8 @@ export class PermissionBroker extends EventEmitter {
     for (const [id, item] of this.pending) {
       const base = this.baseRules(item.request.conversationId)
       if (this.denied(item.request, base)) continue
-      const eff = [...base, ...this.savedRules(this.scopeKey(item.request))]
-      if (item.request.resources.every((res) => evaluate(item.request.action, res, eff).effect === 'allow')) {
+      const saved = this.savedRules(this.scopeKey(item.request))
+      if (item.request.resources.every((res) => effectFor(item.request.action, res, base, saved) === 'allow')) {
         this.emitResolved(item.request, 'allow')
         item.resolve('always')
         this.pending.delete(id)

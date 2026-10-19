@@ -1,5 +1,6 @@
 import { abortCursorAccountRuns } from '../../src/main/chat/cursor-subscription/account-runs'
 import { describe, expect, it, vi } from 'vitest'
+import { subagentEnvironment } from '../../src/main/chat/tools/command-shell'
 import type { AgentOptions, SDKMessage } from '@cursor/sdk'
 import { jsonSchema, tool, type ToolSet } from 'ai'
 import type { SubagentExecutionSnapshotV1 } from '../../src/shared/subagent-profiles'
@@ -254,6 +255,10 @@ describe('Cursor isolated subagent runner', () => {
     }
     expect(exposed.local?.customTools?.generate_image).toBeDefined()
     expect(exposed.local?.customTools?.use_skill).toBeUndefined()
+    const child = (await createAgent.mock.results[0]?.value) as { agent: { send: ReturnType<typeof vi.fn> } }
+    expect(JSON.stringify(child.agent.send.mock.calls[0])).toContain(
+      JSON.stringify(subagentEnvironment({ cwd: '/tmp/project', standalone: false, commandShell: false })).slice(1, -1)
+    )
 
     await run({}, false)
     const withoutHost = createAgent.mock.calls[1]?.[0] as {

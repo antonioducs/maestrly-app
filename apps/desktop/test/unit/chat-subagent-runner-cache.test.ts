@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { environmentLine } from '../../src/main/chat/tools/command-shell'
 import { jsonSchema, streamText, tool } from 'ai'
 import { runSubagent } from '../../src/main/chat/subagent-runner'
 import { adaptToolSetForModel } from '../../src/main/chat/tool-capabilities'
@@ -155,6 +156,10 @@ describe('BYOK subagent prompt cache contract', () => {
 
     expect(streamTextMock).toHaveBeenCalledTimes(2)
     for (const [options] of streamTextMock.mock.calls) {
+      // Read-only `explore` has no `bash`, so the shell is left out.
+      expect(options.system).toContain(
+        `# Environment\n\nDelegated subagent: explore. ${environmentLine({ cwd: '/repo', commandShell: false })}`
+      )
       expect(options.maxRetries).toBe(0)
       expect(
         options.messages?.filter((message) => message.providerOptions?.anthropic?.cacheControl != null).length

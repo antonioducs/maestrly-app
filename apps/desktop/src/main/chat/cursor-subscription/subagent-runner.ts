@@ -10,6 +10,7 @@ import type { ChatAgent } from '../agents'
 import type { NormalizedAiUsage } from '../subagent-runner'
 import { createSubagentTextEmitter, type SubagentTextUpdateHandler } from '../subagent-text-stream'
 import { selectSubagentToolNames } from '../tools'
+import { subagentEnvironment } from '../tools/command-shell'
 import { PARENT_ONLY_CONVERSATION_TOOL_NAMES } from '../tool-policy'
 import { recordModelCallUsage } from '../usage-diagnostics'
 import { MEMORY_TOOL_GUIDANCE, PERSONAL_MEMORY_TOOL_GUIDANCE } from '../memory-tool-guidance'
@@ -111,6 +112,11 @@ async function runCursorSubagentInScope(args: RunCursorSubagentArgs): Promise<{
     args.readOnly
       ? 'This delegated run is strictly read-only. Do not modify files, execute mutating commands, or spawn subagents.'
       : 'You are a worker. Do not spawn subagents. Return a concise result to the parent when the task is complete.',
+    subagentEnvironment({
+      cwd: args.cwd,
+      standalone: getConversation(args.conversationId)?.scope === 'standalone',
+      commandShell: 'bash' in tools,
+    }),
   ].join('\n\n')
 
   let lease: CursorAgentLease | null = null

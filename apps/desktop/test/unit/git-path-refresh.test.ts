@@ -21,6 +21,7 @@ vi.mock('node:fs', async (importOriginal) => {
 
 import { refreshGitPath, retryWhenGitAppears, runGitRaw, windowsGitDirectories } from '../../src/main/git-command'
 import { preflightGit } from '../../src/main/project-setup/git-runner'
+import { PluginGitSource } from '../../src/main/plugins/git-source'
 
 const GIT_DIR = 'C:\\Program Files\\Git\\cmd'
 const GIT_EXE = `${GIT_DIR}\\git.exe`
@@ -159,6 +160,32 @@ describe('finding Git installed while the app is open', () => {
     installed = true
     await expect(preflightGit('C:\\repo')).resolves.toBeUndefined()
     expect(h.spawn).toHaveBeenCalledTimes(3)
+  })
+
+  it('plugin downloads find Git installed later, through the same restricted environment', async () => {
+    process.env.GIT_DIR = 'C:\\elsewhere'
+    fakeExecFile(
+      () => (installed ? REG_WITH_GIT : REG_WITHOUT_GIT),
+      () => installed
+    )
+    const envs: NodeJS.ProcessEnv[] = []
+    h.spawn.mockImplementation((_file: string, _args: string[], opts: { env?: NodeJS.ProcessEnv }) => {
+      const env = opts.env ?? {}
+      envs.push(env)
+      return fakeChild(installed && (env.Path ?? '').split(';').includes(GIT_DIR) ? 'ok' : 'enoent')
+    })
+    const source = new PluginGitSource({ allowFileRoot: null })
+
+    await expect(source.gitVersion()).resolves.toBeNull()
+    expect(h.spawn).toHaveBeenCalledTimes(1)
+
+    installed = true
+    await expect(source.gitVersion()).resolves.toBe('2.56.0.windows.1')
+    expect(h.spawn).toHaveBeenCalledTimes(3)
+    expect(envs[2].Path).toBe(`C:\\Windows\\system32;${GIT_DIR}`)
+    // The retry rebuilds the environment from the same allowlist: no GIT_* override of the parent gets through.
+    expect(Object.keys(envs[2]).sort()).toEqual(Object.keys(envs[1]).sort())
+    expect(envs[2].GIT_DIR).toBeUndefined()
   })
 
   it('does not retry when Git was already on PATH (the failure had another cause)', async () => {

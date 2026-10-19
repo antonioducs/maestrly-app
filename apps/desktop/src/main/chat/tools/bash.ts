@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process'
 import fs from 'node:fs/promises'
 import { z } from 'zod'
 import { trackCommandGroup } from '../../process-ownership/owned-groups'
+import { unparsedCommandResource } from '../../../shared/permission-preview'
 import { conversationShellEnv } from '../conversation-env'
 import {
   agentCommandShell,
@@ -12,6 +13,7 @@ import {
   POWERSHELL_ARGS,
   systemCommandShell,
 } from './command-shell'
+import { splitCommand } from './command-segments'
 import { defineTool, resolveInside, type ToolContext } from './util'
 
 const DEFAULT_TIMEOUT_MS = 120_000
@@ -91,212 +93,30 @@ export function bashPermissionSavePattern(command: string): string {
   return `${prefix} *`
 }
 
-/** Quote characters PowerShell accepts: the ASCII ones plus the typographic variants it treats the same way. */
-const PS_SINGLE_QUOTES = new Set(["'", '‘', '’', '‚', '‛'])
-const PS_DOUBLE_QUOTES = new Set(['"', '“', '”', '„'])
-
 /**
- * PowerShell syntax: the backtick escapes, a backslash is a plain character, typographic quotes open and close strings,
- * and a here-string runs from `@"`/`@'` at the end of a line to `"@`/`'@` at the start of one. Reading it with the sh
- * rules could take a separator that runs as code for part of a string and join two commands into one resource.
+ * Subcommands the permission gate checks one by one (see `command-segments.ts`), or `null` when the command uses syntax
+ * the splitter cannot read with certainty. `dialect` follows the shell that runs the command: PowerShell for the
+ * `bash` tool on Windows, sh rules otherwise.
  */
-function powerShellSegments(command: string): string[] {
-  return scanPowerShell(command, 0, false).segs
-}
-
-/** Scans from `start`; `nested` stops at the `)` that closes a `$(` and returns its index as `end`. */
-function scanPowerShell(command: string, start: number, nested: boolean): { segs: string[]; end: number } {
-  const segs: string[] = []
-  let cur = ''
-  let single = false
-  let double = false
-  let depth = 0
-  const push = () => {
-    const t = cur.trim()
-    if (t) segs.push(t)
-    cur = ''
-  }
-  // A `$(` runs its contents as commands, inside double quotes too: they become resources of their own.
-  const subexpression = (at: number): number => {
-    const inner = scanPowerShell(command, at + 2, true)
-    for (const s of inner.segs) segs.push(s)
-    return inner.end
-  }
-  let i = start
-  for (; i < command.length; i++) {
-    const ch = command[i]
-    if (single) {
-      cur += ch
-      if (PS_SINGLE_QUOTES.has(ch)) single = false
-      continue
-    }
-    if (ch === '`') {
-      cur += command.slice(i, i + 2)
-      i++
-      continue
-    }
-    if (!double && ch === '@') {
-      const opener = /^@(["'‘’‚‛“”„])[ \t]*\r?\n/.exec(command.slice(i))
-      if (opener) {
-        const expands = PS_DOUBLE_QUOTES.has(opener[1])
-        const quotes = expands ? PS_DOUBLE_QUOTES : PS_SINGLE_QUOTES
-        let j = i + opener[0].length - 1
-        for (; j < command.length; j++) {
-          if (command[j] === '\n' && quotes.has(command[j + 1] ?? '') && command[j + 2] === '@') {
-            j += 2
-            break
-          }
-          if (!expands) continue
-          if (command[j] === '`') j++
-          else if (command.startsWith('$(', j)) j = subexpression(j)
-        }
-        cur += command.slice(i, j + 1)
-        i = j
-        continue
-      }
-    }
-    if (!double && PS_SINGLE_QUOTES.has(ch)) {
-      single = true
-      cur += ch
-      continue
-    }
-    if (PS_DOUBLE_QUOTES.has(ch)) {
-      double = !double
-      cur += ch
-      continue
-    }
-    if (command.startsWith('$(', i)) {
-      const close = subexpression(i)
-      cur += command.slice(i, close + 1)
-      i = close
-      continue
-    }
-    if (!double) {
-      if (nested && ch === '(') depth++
-      if (nested && ch === ')') {
-        if (depth === 0) {
-          push()
-          return { segs, end: i }
-        }
-        depth--
-      }
-      if ((ch === '&' || ch === '|') && command[i + 1] === ch) {
-        push()
-        i++
-        continue
-      }
-      if (ch === '|' || ch === ';' || ch === '\n' || ch === '\r') {
-        push()
-        continue
-      }
-      // The call operator & starts a command; after > it is redirection (2>&1, *>&1).
-      if (ch === '&' && command[i - 1] !== '>') {
-        push()
-        continue
-      }
-    }
-    cur += ch
-  }
-  push()
-  return { segs, end: i }
+export function commandSegments(
+  command: string,
+  dialect: CommandDialect = agentCommandShell().dialect
+): string[] | null {
+  return splitCommand(command, dialect)
 }
 
 /**
- * Splits top-level SUBCOMMANDS (&&, ||, ;, |, &, newline — outside quotes), including command
- * substitution contents (dollar-parenthesis and backticks) as extra segments. Each segment becomes a
- * gate resource: a saved "npm test *" rule must NOT authorize "npm test && rm -rf /" — the broker requires
- * allow for ALL resources. Otherwise, the prefix wildcard would match the entire chained command.
- * `dialect` follows the shell that runs the command: PowerShell for the `bash` tool on Windows, sh rules otherwise.
+ * What the gate checks for a command: one resource per subcommand, all of which must be allowed, and the prefixes
+ * "always" saves. An unreadable command becomes one resource that no saved rule covers, with nothing to save.
  */
-export function commandSegments(command: string, dialect: CommandDialect = agentCommandShell().dialect): string[] {
-  if (dialect === 'powershell') return powerShellSegments(command)
-  // Heredoc body is stdin (arbitrary lines) — a simple parser cannot segment it; gate the literal command.
-  if (/<<-?\s*["']?\w/.test(command)) return [command.trim()]
-  const segs: string[] = []
-  let cur = ''
-  let single = false
-  let double = false
-  let escaped = false
-  const push = () => {
-    const t = cur.trim()
-    if (t) segs.push(t)
-    cur = ''
-  }
-  for (let i = 0; i < command.length; i++) {
-    const ch = command[i]
-    if (escaped) {
-      cur += ch
-      escaped = false
-      continue
-    }
-    if (single) {
-      cur += ch
-      if (ch === "'") single = false
-      continue
-    }
-    if (ch === '\\') {
-      cur += ch
-      escaped = true
-      continue
-    }
-    if (ch === "'" && !double) {
-      single = true
-      cur += ch
-      continue
-    }
-    if (ch === '"') {
-      double = !double
-      cur += ch
-      continue
-    }
-    // Command substitution (also executes inside double quotes) → gate its inner contents too.
-    if (command.startsWith('$(', i)) {
-      let depth = 1
-      let j = i + 2
-      while (j < command.length && depth > 0) {
-        if (command[j] === '(') depth++
-        else if (command[j] === ')') depth--
-        j++
-      }
-      const inner = command.slice(i + 2, depth === 0 ? j - 1 : j)
-      for (const s of commandSegments(inner)) segs.push(s)
-      cur += command.slice(i, j)
-      i = j - 1
-      continue
-    }
-    if (ch === '`') {
-      const close = command.indexOf('`', i + 1)
-      const end = close === -1 ? command.length : close
-      for (const s of commandSegments(command.slice(i + 1, end))) segs.push(s)
-      cur += command.slice(i, close === -1 ? command.length : close + 1)
-      i = close === -1 ? command.length : close
-      continue
-    }
-    if (!double) {
-      if ((ch === '&' || ch === '|') && command[i + 1] === ch) {
-        push()
-        i++
-        continue
-      }
-      if (ch === '|' && command[i + 1] === '&') {
-        push()
-        i++
-        continue
-      }
-      if (ch === '|' || ch === ';' || ch === '\n') {
-        push()
-        continue
-      }
-      // Background & — not redirection & (2>&1, >&2).
-      if (ch === '&' && command[i - 1] !== '>') {
-        push()
-        continue
-      }
-    }
-    cur += ch
-  }
-  push()
-  return segs
+export function commandPermission(
+  command: string,
+  dialect: CommandDialect = agentCommandShell().dialect
+): { resources: string[]; save: string[] } {
+  const segments = commandSegments(command, dialect)
+  if (!segments) return { resources: [unparsedCommandResource(command)], save: [] }
+  const resources = segments.length > 1 ? segments : [command]
+  return { resources, save: [...new Set(resources.map(bashPermissionSavePattern))] }
 }
 
 async function run(args: z.infer<typeof params>, ctx: ToolContext, shell: CommandShell): Promise<BashResult> {
@@ -305,9 +125,8 @@ async function run(args: z.infer<typeof params>, ctx: ToolContext, shell: Comman
   if (!stat?.isDirectory()) throw new Error(`Invalid directory: ${cwd}`)
   if (external) await ctx.ask('external_directory', [cwd], [cwd])
   // Chained command → one resource PER subcommand (all need allow); "always" saves each prefix.
-  const segments = commandSegments(args.command, shell.dialect)
-  const resources = segments.length > 1 ? segments : [args.command]
-  await ctx.ask('bash', resources, [...new Set(resources.map(bashPermissionSavePattern))], args.command)
+  const { resources, save } = commandPermission(args.command, shell.dialect)
+  await ctx.ask('bash', resources, save, args.command)
 
   const isWin = process.platform === 'win32'
   const powershell = shell.kind === 'powershell'

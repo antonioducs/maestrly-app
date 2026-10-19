@@ -5,6 +5,7 @@ import type { ChatAgent } from '../agents'
 import type { NormalizedAiUsage } from '../subagent-runner'
 import { createSubagentTextEmitter, type SubagentTextUpdateHandler } from '../subagent-text-stream'
 import { selectSubagentToolNames } from '../tools'
+import { subagentEnvironment } from '../tools/command-shell'
 import { PARENT_ONLY_CONVERSATION_TOOL_NAMES } from '../tool-policy'
 import { recordModelCallUsage } from '../usage-diagnostics'
 import { MEMORY_TOOL_GUIDANCE, PERSONAL_MEMORY_TOOL_GUIDANCE } from '../memory-tool-guidance'
@@ -180,7 +181,11 @@ export async function runGitHubCopilotSubagent(
   ].join('\n\n')
   // The child resolves its own model; it never inherits the parent's contract.
   const harness = harnessFor('github-copilot-subscription', effective.modelId, { flags: captureHarnessFlags() })
-  const systemMessage = harnessSubagentPrompt(legacySystemMessage, harness)
+  const systemMessage = `${harnessSubagentPrompt(legacySystemMessage, harness)}\n\n${subagentEnvironment({
+    cwd: args.cwd,
+    standalone: args.conversationScope === 'standalone',
+    commandShell: tools.some((entry) => entry.name === 'bash'),
+  })}`
   chatDiag({
     kind: 'harness-behavior-profile',
     profile: harness.identity.behaviorProfileId ?? 'legacy',

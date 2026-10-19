@@ -135,7 +135,7 @@ import { runAntigravitySubagent } from '../antigravity-subscription/subagent-run
 import { getGitHubCopilotSubscriptionManager } from '../github-copilot/manager'
 import { runGitHubCopilotSubagent } from '../github-copilot/subagent-runner'
 import { copilotTools } from '../github-copilot/tools'
-import { bashPermissionSavePattern, commandSegments } from '../tools/bash'
+import { commandPermission } from '../tools/bash'
 import { commandShellEnvironment } from '../tools/command-shell'
 import { conversationShellEnv } from '../conversation-env'
 import { buildTools, isSubagentReadOnly, selectSubagentToolNames } from '../tools'
@@ -1555,7 +1555,7 @@ async function handleServerRequest(client: CodexAppServerClient, request: CodexS
       preserveOnAccountFailover: threadId !== route.rootThreadId,
     })
     const command = typeof params.command === 'string' && params.command.trim() ? params.command.trim() : 'command'
-    const commandResources = commandSegments(command)
+    const commandGate = commandPermission(command)
     const permissionResources = resourcesFromPermissions(params.additionalPermissions)
     const networkContext = isRecord(params.networkApprovalContext) ? params.networkApprovalContext : null
     const networkResource =
@@ -1563,17 +1563,12 @@ async function handleServerRequest(client: CodexAppServerClient, request: CodexS
         ? `network:${typeof networkContext.protocol === 'string' ? `${networkContext.protocol}://` : ''}${networkContext.host}`
         : null
     const resources = [
-      ...new Set([...commandResources, ...permissionResources, ...(networkResource ? [networkResource] : [])]),
+      ...new Set([...commandGate.resources, ...permissionResources, ...(networkResource ? [networkResource] : [])]),
     ]
-    const allowSession = supportsSessionDecision(params.availableDecisions)
+    // An unreadable command has no prefix to save, so it is never approved for the session either.
+    const allowSession = supportsSessionDecision(params.availableDecisions) && commandGate.save.length > 0
     const save = allowSession
-      ? [
-          ...new Set([
-            ...commandResources.map(bashPermissionSavePattern),
-            ...permissionResources,
-            ...(networkResource ? [networkResource] : []),
-          ]),
-        ]
+      ? [...new Set([...commandGate.save, ...permissionResources, ...(networkResource ? [networkResource] : [])])]
       : undefined
     try {
       const decision = await route.broker.assertDecision({
@@ -4305,7 +4300,7 @@ export async function runCodexSubscriptionChat(
     }
     const inspectItem = (item: Record<string, unknown>): void => {
       if (typeof item.id === 'string' && item.type === 'commandExecution' && typeof item.command === 'string') {
-        itemResources.set(item.id, commandSegments(item.command))
+        itemResources.set(item.id, commandPermission(item.command).resources)
       }
       if (typeof item.id === 'string' && item.type === 'fileChange' && Array.isArray(item.changes)) {
         const paths = item.changes

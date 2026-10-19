@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import type { PluginSourceErrorCode } from '../../shared/plugins'
+import { retryWhenGitAppears } from '../git-command'
 import { createAskpassDenyScript, terminateTree } from '../project-setup/git-runner'
 import { PLUGIN_LIMITS } from './limits'
 import { normalizeGitUrl } from './marketplace'
@@ -239,13 +240,19 @@ export class PluginGitSource {
     const { hooksDir, emptyConfig } = gitSupport()
     const askpass = await createAskpassDenyScript()
     try {
-      const result = await this.spawnGit(hardenedGitArgs(args, hooksDir, !!this.allowFileRoot), {
-        cwd,
-        env: hardenedGitEnv(askpass.path, emptyConfig),
-        signal: opts.signal,
-        timeoutMs: this.timeoutMs,
-        input: opts.input,
-      })
+      // The environment is rebuilt for the retry so it carries the PATH refreshGitPath just extended; the variables
+      // it keeps stay the same. Git missing never started a process, so the retry has no side effects.
+      const result = await retryWhenGitAppears(
+        () =>
+          this.spawnGit(hardenedGitArgs(args, hooksDir, !!this.allowFileRoot), {
+            cwd,
+            env: hardenedGitEnv(askpass.path, emptyConfig),
+            signal: opts.signal,
+            timeoutMs: this.timeoutMs,
+            input: opts.input,
+          }),
+        (error) => error instanceof PluginGitError && error.code === 'git-unavailable' && !opts.signal?.aborted
+      )
       if (result.code !== 0 && !opts.allowFailure)
         throw new PluginGitError(classify(result.stderr), result.stderr.trim())
       return result

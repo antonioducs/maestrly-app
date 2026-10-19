@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -39,7 +39,9 @@ import {
   agentCommandShell,
   bashToolDescription,
   commandShellEnvironment,
+  environmentLine,
   POWERSHELL_ARGS,
+  subagentEnvironment,
   systemCommandShell,
 } from '../../src/main/chat/tools/command-shell'
 import type { ToolContext } from '../../src/main/chat/tools/util'
@@ -125,6 +127,24 @@ describe('the shell the bash tool runs in', () => {
     expect(bootstrap).toContain('[Console]::OutputEncoding = $__maestrlyUtf8')
     expect(bootstrap).toContain('if ($LASTEXITCODE) { exit $LASTEXITCODE }')
     expect(bootstrap).toContain('Language.Parser]::ParseInput($__maestrlyCommand')
+  })
+})
+
+describe('the environment line of agents and subagents', () => {
+  it('names the OS, the shell only with the bash tool, the date and the directory', () => {
+    const today = new Date().toISOString().slice(0, 10)
+    expect(environmentLine({ cwd: 'C:\\repo', commandShell: true, platform: 'win32' })).toBe(
+      `OS: Windows. ${commandShellEnvironment('win32')} Today's date: ${today}. Project directory: C:\\repo.`
+    )
+    expect(
+      environmentLine({ cwd: '/home/me/chat', privateDirectory: true, commandShell: false, platform: 'darwin' })
+    ).toBe(`OS: macOS. Today's date: ${today}. Private working directory: /home/me/chat.`)
+    expect(environmentLine({ commandShell: true, platform: 'linux' })).toBe(
+      `OS: linux. ${commandShellEnvironment('linux')} Today's date: ${today}.`
+    )
+    expect(subagentEnvironment({ cwd: '/repo', standalone: false, commandShell: false })).toBe(
+      `# Environment\n${environmentLine({ cwd: '/repo', commandShell: false })}`
+    )
   })
 })
 
@@ -243,6 +263,33 @@ describe.runIf(process.platform === 'win32')('bash tool on a real Windows PowerS
     expect(result.exitCode).toBe(0)
     expect(result.output).toContain('progress')
   }, 60_000)
+
+  // Each command hides a `Set-Content hit`: if PowerShell runs it, the permission gate must have shown it as a segment
+  // of its own or refused to read the command.
+  it.each([
+    "Write-Output $(Write-Output ')'); Set-Content hit 1",
+    "Write-Output a # '\nSet-Content hit 1 #'",
+    "Write-Output a <# ' #> ; Set-Content hit 1 ; <# ' #>",
+    'Write-Output (Set-Content hit 1)',
+    'Write-Output @(Set-Content hit 1)',
+    'Write-Output "$(Set-Content hit 1)"',
+    'Write-Output a; & { Set-Content hit 1 }',
+    'Write-Output @{ a = $(Set-Content hit 1) }',
+    "Write-Output --% '\nSet-Content hit 1 # '",
+    "Write-Output a#'\nSet-Content hit 1 #'",
+    'Write-Output a`; Set-Content hit 1',
+    "Write-Output 'a''; Set-Content hit 1'",
+    'Write-Output @"\n"@ ; Set-Content hit 1 ; @"\n"@',
+  ])(
+    'shows every command PowerShell runs in %j',
+    async (command) => {
+      const segments = commandSegments(command, 'powershell')
+      await run(command)
+      if (existsSync(path.join(dir, 'hit')) && segments)
+        expect(segments.some((segment) => segment.startsWith('Set-Content hit'))).toBe(true)
+    },
+    60_000
+  )
 
   it('reports a parse error instead of running part of the command', async () => {
     const result = await run("Write-Output 'never'\nif (")
