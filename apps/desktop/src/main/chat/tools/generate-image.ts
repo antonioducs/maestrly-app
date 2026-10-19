@@ -7,6 +7,7 @@
  * `ctx.emitGeneratedImage`: the model receives only a TEXTUAL REFERENCE (name + revised prompt), never base64
  * — the same invariant keeping parts_json and transcript reseeds small.
  */
+import path from 'node:path'
 import { z } from 'zod'
 import { defineTool, type GeneratedImageEmission } from './util'
 
@@ -23,6 +24,9 @@ const parameters = z.object({
       'Relative path inside the conversation worktree where the generated asset should be written, for example public/images/hero.png. Use this when the image is part of the project implementation; omit it only for chat preview.'
     ),
 })
+
+/** Output files a running call is writing, so two parallel calls never race on one path. */
+const writing = new Set<string>()
 
 interface GenerateImageResult {
   name: string
@@ -41,72 +45,91 @@ export const generateImageTool = defineTool<typeof parameters, GenerateImageResu
     'pictures, illustrations, diagram art, mockups, icons or other visuals that must be drawn rather than ' +
     'written. Describe the image fully in the prompt — the generator sees only this text.',
   parameters,
+  // Each call generates on an ephemeral thread of its own, so independent images overlap; it still writes files.
+  metadata: { parallelSafe: true, readOnly: false },
   execute: async (args, ctx) => {
     // The runner registers this tool only when it can publish the part; without the hook, the image would be orphaned
     // (on disk but invisible), so reject before consuming the user's subscription.
-    if (!ctx.emitGeneratedImage) throw new Error('Image generation is not available in this conversation.')
-    if (args.outputPath) {
-      const { resolveGeneratedImageOutputCandidates } = await import('../generated-images')
-      const possibleTargets = resolveGeneratedImageOutputCandidates(ctx.cwd, args.outputPath)
-      // Approve BEFORE generating. Since the actual format is known only afterward, cover all supported
-      // extensions for the same directory/stem — no variant may overwrite without authorization.
-      await ctx.ask('edit', possibleTargets, ['*'])
-    }
-    // Dynamic import keeps the tool registry lightweight (Codex manager pulls app-server runtime/protocol)
-    // and loads this path only when the model requests an image.
-    let usageReported = false
-    const reportUsage = (usage: NonNullable<GeneratedImageEmission['usage']>): void => {
-      // Runtime callback and returned image.usage are two delivery paths for the same
-      // auxiliary call. The first non-empty report owns accounting for this tool call.
-      if (usageReported) return
-      if (
-        ![usage.input, usage.output, usage.cachedInput, usage.cacheCreate].some(
-          (value) => Number.isFinite(value) && Number(value) > 0
-        )
-      )
-        return
-      usageReported = true
-      ctx.onGeneratedImageUsage?.(usage)
-    }
-    const image = ctx.generateImage
-      ? await ctx.generateImage(args.prompt, ctx.signal, reportUsage)
-      : await (async () => {
-          const { generateImageForConversation } = await import('../codex-subscription/image-generation')
-          return generateImageForConversation({
-            conversationId: ctx.conversationId,
-            cwd: ctx.cwd,
-            prompt: args.prompt,
-            signal: ctx.signal,
-            onUsage: reportUsage,
-          })
-        })()
-    if (!usageReported && image.usage) reportUsage(image.usage)
-    let materialized: { path: string; existed: boolean } | undefined
+    const emitGeneratedImage = ctx.emitGeneratedImage
+    if (!emitGeneratedImage) throw new Error('Image generation is not available in this conversation.')
+    let claimed: string | null = null
     try {
-      ctx.signal.throwIfAborted()
       if (args.outputPath) {
-        const { materializeGeneratedImage } = await import('../generated-images')
-        materialized = await materializeGeneratedImage({
-          conversationId: ctx.conversationId,
-          artifactId: image.artifactId,
-          expectedByteSize: image.byteSize,
-          cwd: ctx.cwd,
-          outputPath: args.outputPath,
-        })
+        // Claimed before any await, so the check and the claim cannot interleave with another call's. Every variant of
+        // the file (the same directory and stem, any extension) may be written, so the stem is what is claimed.
+        const target = path.parse(path.resolve(ctx.cwd, args.outputPath))
+        const key = `${ctx.conversationId}\0${path.join(target.dir, target.name)}`
+        if (writing.has(key))
+          throw new Error(
+            `Another generate_image call is already writing ${args.outputPath}. Use a different outputPath.`
+          )
+        writing.add(key)
+        claimed = key
+        const { resolveGeneratedImageOutputCandidates } = await import('../generated-images')
+        const possibleTargets = resolveGeneratedImageOutputCandidates(ctx.cwd, args.outputPath)
+        // Approve BEFORE generating. Since the actual format is known only afterward, cover all supported
+        // extensions for the same directory/stem — no variant may overwrite without authorization.
+        await ctx.ask('edit', possibleTargets, ['*'])
       }
-      ctx.signal.throwIfAborted()
-      ctx.emitGeneratedImage(image)
-    } catch (error) {
-      // The file exists when the hook runs. Abort or part-persistence failure must not orphan it;
-      // delete best-effort and keep the original error as the tool response.
-      const { deleteGeneratedImages } = await import('../generated-images')
-      await deleteGeneratedImages(ctx.conversationId, [image.artifactId])
-      throw error
-    }
-    return {
-      name: image.name,
-      ...(image.revisedPrompt ? { revisedPrompt: image.revisedPrompt } : {}),
-      ...(materialized ? { outputPath: materialized.path, overwritten: materialized.existed } : {}),
+      // Dynamic import keeps the tool registry lightweight (Codex manager pulls app-server runtime/protocol)
+      // and loads this path only when the model requests an image.
+      let usageReported = false
+      const reportUsage = (usage: NonNullable<GeneratedImageEmission['usage']>): void => {
+        // Runtime callback and returned image.usage are two delivery paths for the same
+        // auxiliary call. The first non-empty report owns accounting for this tool call.
+        if (usageReported) return
+        if (
+          ![usage.input, usage.output, usage.cachedInput, usage.cacheCreate].some(
+            (value) => Number.isFinite(value) && Number(value) > 0
+          )
+        )
+          return
+        usageReported = true
+        ctx.onGeneratedImageUsage?.(usage)
+      }
+      const image = ctx.generateImage
+        ? await ctx.generateImage(args.prompt, ctx.signal, reportUsage)
+        : await (async () => {
+            const { generateImageForConversation } = await import('../codex-subscription/image-generation')
+            return generateImageForConversation({
+              conversationId: ctx.conversationId,
+              cwd: ctx.cwd,
+              prompt: args.prompt,
+              signal: ctx.signal,
+              onUsage: reportUsage,
+            })
+          })()
+      if (!usageReported && image.usage) reportUsage(image.usage)
+      let materialized: { path: string; existed: boolean } | undefined
+      try {
+        ctx.signal.throwIfAborted()
+        if (args.outputPath) {
+          const { materializeGeneratedImage } = await import('../generated-images')
+          materialized = await materializeGeneratedImage({
+            conversationId: ctx.conversationId,
+            artifactId: image.artifactId,
+            expectedByteSize: image.byteSize,
+            cwd: ctx.cwd,
+            outputPath: args.outputPath,
+          })
+        }
+        ctx.signal.throwIfAborted()
+        emitGeneratedImage(image)
+      } catch (error) {
+        // The file exists when the hook runs. Abort or part-persistence failure must not orphan it;
+        // delete best-effort and keep the original error as the tool response.
+        const { deleteGeneratedImages } = await import('../generated-images')
+        await deleteGeneratedImages(ctx.conversationId, [image.artifactId])
+        throw error
+      }
+      return {
+        name: image.name,
+        ...(image.revisedPrompt ? { revisedPrompt: image.revisedPrompt } : {}),
+        ...(materialized ? { outputPath: materialized.path, overwritten: materialized.existed } : {}),
+      }
+    } finally {
+      // Only this call's own claim: a call refused for a taken path never releases the other one's.
+      if (claimed) writing.delete(claimed)
     }
   },
   toModelText: (_args, result) => {

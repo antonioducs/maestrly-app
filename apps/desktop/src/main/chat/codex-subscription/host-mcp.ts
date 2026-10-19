@@ -31,6 +31,9 @@ export const CODEX_HOST_MCP_TOOL_NAMES: ReadonlySet<string> = new Set([
   'task',
   'delegate',
   ...CODEX_HOST_MCP_IMAGE_TOOL_NAMES,
+  // generate_image runs an ephemeral thread of its own; served over MCP, several calls overlap instead of waiting on
+  // Codex's write lock.
+  'generate_image',
 ])
 
 const MAX_BODY_BYTES = 4 * 1024 * 1024

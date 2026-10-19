@@ -269,6 +269,7 @@ function toAiTool(def: ToolDef<any, any>, makeCtx: (toolCallId: string, signal: 
   return tool({
     description: def.description,
     inputSchema: def.parameters,
+    ...(def.metadata ? { metadata: def.metadata } : {}),
     execute: async (args: unknown, opts: { toolCallId: string; abortSignal?: AbortSignal }) => {
       const ctx = makeCtx(opts.toolCallId, opts.abortSignal ?? new AbortController().signal)
       const result = await def.execute(args, ctx)
