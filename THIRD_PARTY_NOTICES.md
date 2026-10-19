@@ -87,6 +87,15 @@ The complete license and attribution are distributed with the `ws` package in
 `node_modules/ws/LICENSE`, inside the gateway image and inside the packaged
 desktop app.
 
+## noble-curves
+
+The desktop app includes [noble-curves](https://github.com/paulmillr/noble-curves)
+2.4.0 for the P-256 arithmetic of the pairing code exchange between the owner's
+computers, with its dependency [noble-hashes](https://github.com/paulmillr/noble-hashes)
+2.4.0. Both are licensed under the MIT License, Copyright (c) 2022 Paul Miller.
+The complete licenses are distributed with the packages in
+`node_modules/@noble/curves/LICENSE` and `node_modules/@noble/hashes/LICENSE`.
+
 ## uqr
 
 The desktop app includes [uqr](https://github.com/unjs/uqr) 0.1.3 to draw the QR
