@@ -14,7 +14,14 @@ vi.mock('../../src/main/store', () => ({
   getLocale: h.getLocale,
 }))
 
-import { clearPlan, decidePlan, getPending, releasePlanRevision, stagePlan } from '../../src/main/plan-broker'
+import {
+  clearPlan,
+  decidePlan,
+  getPending,
+  releasePlanRevision,
+  stagePlan,
+  stripProposedPlanTag,
+} from '../../src/main/plan-broker'
 import { createChatGptWebSession } from '../../src/main/chat/chatgpt-web/session'
 
 describe('plan-broker', () => {
@@ -60,6 +67,37 @@ describe('plan-broker', () => {
     stagePlan({ agentId: 'conv-chat', cwd: '/tmp/project', plan: '## v3' })
     expect(decidePlan('conv-chat', { action: 'discard' })).toEqual({ action: 'discard' })
     expect(getPending('conv-chat')).toBeNull()
+  })
+
+  it('stagePlan drops the <proposed_plan> wrapper a model puts around the plan', () => {
+    stagePlan({
+      agentId: 'conv-chat',
+      cwd: '/tmp/project',
+      plan: '<proposed_plan>\n# Add tests\n\n- step one\n- step two\n</proposed_plan>\n',
+    })
+
+    expect(getPending('conv-chat')?.plan).toBe('# Add tests\n\n- step one\n- step two')
+    expect(h.sendToConversation).toHaveBeenCalledWith(
+      'conv-chat',
+      'plan:received',
+      expect.objectContaining({ plan: '# Add tests\n\n- step one\n- step two' }),
+      { panel: 'plan' }
+    )
+    // The approved plan, and the next version's diff base, are the cleaned text too.
+    expect(decidePlan('conv-chat', { action: 'approve' })).toMatchObject({
+      approvedPlan: '# Add tests\n\n- step one\n- step two',
+    })
+  })
+
+  it('stripProposedPlanTag handles a lone opening or closing tag, keeps the middle and plain plans', () => {
+    expect(stripProposedPlanTag('<proposed_plan>\n## Plan\n- one')).toBe('## Plan\n- one')
+    expect(stripProposedPlanTag('## Plan\n- one\n</proposed_plan>')).toBe('## Plan\n- one')
+    expect(stripProposedPlanTag('  <proposed_plan>## Plan</proposed_plan>  ')).toBe('## Plan')
+    expect(stripProposedPlanTag('## Plan\nUse the <proposed_plan> tag as is\n- one')).toBe(
+      '## Plan\nUse the <proposed_plan> tag as is\n- one'
+    )
+    expect(stripProposedPlanTag('## Plan\n- one')).toBe('## Plan\n- one')
+    expect(stripProposedPlanTag('<proposed_plan></proposed_plan>')).toBe('<proposed_plan></proposed_plan>')
   })
 
   it('decidePlan returns null when nothing is pending', () => {

@@ -186,7 +186,26 @@ function registerPlan(input: PlanSubmitInput): PlanSubmitResult {
  * pending Promise or timeout is held here.
  */
 export function stagePlan(input: PlanSubmitInput): PlanSubmitResult {
-  return registerPlan(input)
+  return registerPlan({ ...input, plan: stripProposedPlanTag(input.plan) })
+}
+
+const PROPOSED_PLAN_OPEN = '<proposed_plan>'
+const PROPOSED_PLAN_CLOSE = '</proposed_plan>'
+
+/**
+ * Some models (ChatGPT's) wrap the `review_plan` argument in a `<proposed_plan>` tag, which the Plan tab would show
+ * as a raw line. Drops that wrapper, or an opening or closing tag left at the start or end alone; tags in the middle
+ * of the plan are content.
+ */
+export function stripProposedPlanTag(plan: string): string {
+  let text = plan.trim()
+  if (text.slice(0, PROPOSED_PLAN_OPEN.length).toLowerCase() === PROPOSED_PLAN_OPEN) {
+    text = text.slice(PROPOSED_PLAN_OPEN.length).trimStart()
+  }
+  const tail = text.slice(Math.max(0, text.length - PROPOSED_PLAN_CLOSE.length))
+  if (tail.toLowerCase() === PROPOSED_PLAN_CLOSE) text = text.slice(0, text.length - tail.length).trimEnd()
+  // A plan that was only the tag keeps its text: staging nothing would hide what the model sent.
+  return text || plan.trim()
 }
 
 /**
