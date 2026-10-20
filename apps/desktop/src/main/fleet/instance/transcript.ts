@@ -17,7 +17,13 @@ import {
   type FleetTranscriptTask,
   FLEET_DELEGATION_LIMITS,
 } from '@maestrly/bot-fleet-protocol'
-import { chatTodosFromInput, type ChatMessage, type ChatQuestion, type MessagePart } from '../../../shared/chat'
+import {
+  chatQuestionsFromInput,
+  chatTodosFromInput,
+  type ChatMessage,
+  type ChatQuestion,
+  type MessagePart,
+} from '../../../shared/chat'
 import { expandGenUiPreviews, genUiPreviewsOf } from '../../../shared/genui-widget'
 import type { PermissionRequest } from '../../chat/permission'
 import {
@@ -372,17 +378,23 @@ export function projectMessages(
         }
       } else if (part.type === 'tool' && message.role === 'assistant') {
         if (part.toolName === 'ask_question') {
-          const input = part.input as { questions?: ChatQuestion[] }
-          items.push({
-            kind: 'question',
-            id,
-            at: time,
-            toolCallId: part.toolCallId,
-            questions: fleetQuestions(input?.questions ?? []),
-            state:
-              part.state.status === 'completed' ? 'answered' : part.state.status === 'denied' ? 'dismissed' : 'pending',
-            answers: null,
-          })
+          const questions = chatQuestionsFromInput(part.input)
+          // A call rejected for malformed input asked nothing: no card for it.
+          if (questions.length > 0)
+            items.push({
+              kind: 'question',
+              id,
+              at: time,
+              toolCallId: part.toolCallId,
+              questions: fleetQuestions(questions),
+              state:
+                part.state.status === 'completed'
+                  ? 'answered'
+                  : part.state.status === 'denied'
+                    ? 'dismissed'
+                    : 'pending',
+              answers: null,
+            })
         } else if (part.toolName === 'request_owner_help') {
           // The help store supplies this item with its own stable id and resolution state.
         } else if (part.toolName === 'bot_peers_send') {
