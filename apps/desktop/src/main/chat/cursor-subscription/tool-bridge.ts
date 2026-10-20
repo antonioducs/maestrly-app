@@ -135,6 +135,35 @@ function toSdkResult(value: unknown): SDKCustomToolResult {
   }
 }
 
+function snakeToCamelCase(key: string): string {
+  return key.replace(/_+([a-zA-Z0-9])/g, (_match, char: string) => char.toUpperCase())
+}
+
+/**
+ * Cursor models sometimes call a host tool with the snake_case names of Cursor's own native tools
+ * (`old_string`) instead of the camelCase names of the published schema (`oldString`). Renames such top-level keys
+ * when the schema declares the camelCase one, never overwriting an argument that already arrived under that name.
+ * Anything else, including keys the schema does not know, is left for validation to judge.
+ */
+function normalizeSnakeCaseArguments(
+  args: Record<string, SDKJsonValue>,
+  jsonSchema: Record<string, SDKJsonValue>
+): Record<string, SDKJsonValue> {
+  const properties = jsonSchema.properties
+  if (!properties || typeof properties !== 'object' || Array.isArray(properties)) return args
+  const normalized: Record<string, SDKJsonValue> = { ...args }
+  let renamed = false
+  for (const [key, value] of Object.entries(args)) {
+    if (!key.includes('_') || Object.hasOwn(properties, key)) continue
+    const camel = snakeToCamelCase(key)
+    if (camel === key || !Object.hasOwn(properties, camel) || Object.hasOwn(normalized, camel)) continue
+    delete normalized[key]
+    normalized[camel] = value
+    renamed = true
+  }
+  return renamed ? normalized : args
+}
+
 function applyCursorErrorStatus(result: SDKCustomToolResult, isError: boolean): SDKCustomToolResult {
   if (!result || typeof result !== 'object' || Array.isArray(result)) {
     return isError ? { content: [{ type: 'text', text: String(result ?? '(no output)') }], isError: true } : result
@@ -164,17 +193,21 @@ export async function buildCursorToolBridge(args: BuildCursorToolBridgeArgs): Pr
     customTools[name] = {
       description,
       inputSchema: jsonSchema,
-      execute: async (args, context) => {
+      execute: async (rawArgs, context) => {
         signal.throwIfAborted()
         const toolCallId = context?.toolCallId ?? `cursor_${name}`
+        const args = normalizeSnakeCaseArguments(rawArgs, jsonSchema)
 
         let parsed: Record<string, SDKJsonValue> = args
         if (schema.validate) {
           const validation = await schema.validate(args)
           if (!validation.success) {
             const message = validation.error instanceof Error ? validation.error.message : String(validation.error)
+            const text = `Invalid arguments for "${name}": ${message}`
+            // The SDK reports a refused call as completed, so the mapper needs the canonical error to close the card.
+            canonicalOutputs.set(toolCallId, { text, isError: true })
             return {
-              content: [{ type: 'text', text: `Invalid arguments for "${name}": ${message}` }],
+              content: [{ type: 'text', text }],
               isError: true,
             }
           }

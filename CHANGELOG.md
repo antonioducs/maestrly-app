@@ -19,6 +19,11 @@ User-visible changes by version. Downloads are on
   readable text. On Windows they appeared as raw HTML tags and attributes.
 - The plan of a ChatGPT conversation no longer starts with a `<proposed_plan>`
   line in the **Plan** tab.
+- Cursor models that call a Maestrly tool with snake_case argument names, such
+  as `old_string` and `new_string` for **Edit**, no longer get the call
+  rejected, so the edit is applied instead of the model falling back to the
+  shell. When a Cursor tool call is still rejected or fails, its card now shows
+  an error instead of a success such as "Edited notes.txt".
 
 ## [0.23.0] - 2026-10-19
 
