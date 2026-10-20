@@ -8,7 +8,14 @@ import {
   FLEET_SCREEN_UPDATE_REQUIRED,
 } from '../../src/shared/fleet-targets'
 
+const SERVER = 'aaaaaaaa-0000-4000-8000-000000000001'
+const OTHER_SERVER = 'bbbbbbbb-0000-4000-8000-000000000002'
 const mocks = vi.hoisted(() => ({
+  list: vi.fn((): unknown[] => [
+    { id: 'aaaaaaaa-0000-4000-8000-000000000001', installed: false, connection: { state: 'connected' } },
+  ]),
+  pair: vi.fn(async (): Promise<unknown> => ({ id: 'aaaaaaaa-0000-4000-8000-000000000001' })),
+  remove: vi.fn(async () => {}),
   hasFeature: vi.fn((_feature: string) => false),
   call: vi.fn(async (): Promise<unknown> => undefined),
   getImage: vi.fn(async () => ({ mediaType: 'image/png', data: new Uint8Array([137, 80, 78, 71]) })),
@@ -28,13 +35,14 @@ vi.mock('../../src/main/dictation/settings', () => ({
   getDictationEngine: mocks.dictationEngine,
   getDictationKey: mocks.dictationKey,
 }))
-vi.mock('../../src/main/fleet/client/service', () => ({
-  fleetClientService: {
-    start: vi.fn(),
-    stop: vi.fn(),
+vi.mock('../../src/main/fleet/client/service', () => ({ revealFleetDownload: mocks.revealDownload }))
+vi.mock('../../src/main/fleet/client/screen-bridge', () => ({
+  FleetScreenBridge: { forChannel: (channelId: string) => (channelId === 'channel' ? mocks.screens : null) },
+}))
+vi.mock('../../src/main/fleet/client/servers', () => {
+  const client = {
+    serverId: 'aaaaaaaa-0000-4000-8000-000000000001',
     getConnection: vi.fn(),
-    connect: vi.fn(),
-    disconnect: vi.fn(),
     getSnapshot: vi.fn(),
     refresh: vi.fn(),
     call: mocks.call,
@@ -48,8 +56,21 @@ vi.mock('../../src/main/fleet/client/service', () => ({
     prepareMedia: mocks.prepareMedia,
     screens: mocks.screens,
     idempotencyKey: () => '550e8400-e29b-41d4-a716-446655440000',
-  },
-}))
+  }
+  return {
+    fleetServers: {
+      start: vi.fn(),
+      stop: vi.fn(),
+      list: mocks.list,
+      pair: mocks.pair,
+      remove: mocks.remove,
+      require: (serverId: string) => {
+        if (serverId !== client.serverId) throw new Error('FLEET_SERVER_UNKNOWN')
+        return client
+      },
+    },
+  }
+})
 import { registerFleetClientIpc } from '../../src/main/fleet/client/ipc'
 import { FleetClientError } from '../../src/main/fleet/client/api'
 import { GATEWAY_RESTART_TO_OPEN_SCREEN, GATEWAY_SCREEN_CONTROLLED } from '../../src/main/fleet/client/targets'
@@ -69,10 +90,10 @@ describe('fleet IPC validation', () => {
       mhandle: (channel: string, fn: (...args: unknown[]) => unknown) => mutations.set(channel, fn),
     } as unknown as IpcRegistrar)
     const download = mutations.get('fleet:downloadFile')!
-    expect(() => download({}, '../bot', 'f-file')).toThrow()
-    expect(() => download({}, 'bot', '../../secret')).toThrow()
+    expect(() => download({}, SERVER, '../bot', 'f-file')).toThrow()
+    expect(() => download({}, SERVER, 'bot', '../../secret')).toThrow()
     expect(mocks.downloadFile).not.toHaveBeenCalled()
-    await download({}, 'bot', 'f-file', '/arbitrary/destination')
+    await download({}, SERVER, 'bot', 'f-file', '/arbitrary/destination')
     expect(mocks.downloadFile).toHaveBeenCalledExactlyOnceWith('bot', 'f-file')
     const reveal = mutations.get('fleet:revealDownload')!
     expect(() => reveal({}, '/arbitrary/path')).toThrow()
@@ -80,9 +101,9 @@ describe('fleet IPC validation', () => {
     await reveal({}, '550e8400-e29b-41d4-a716-446655440000')
     expect(mocks.revealDownload).toHaveBeenCalledExactlyOnceWith('550e8400-e29b-41d4-a716-446655440000')
     const lookup = reads.get('fleet:getDownload')!
-    expect(() => lookup({}, '../bot', 'f-file')).toThrow()
-    expect(() => lookup({}, 'bot', '../file')).toThrow()
-    await lookup({}, 'bot', 'f-file')
+    expect(() => lookup({}, SERVER, '../bot', 'f-file')).toThrow()
+    expect(() => lookup({}, SERVER, 'bot', '../file')).toThrow()
+    await lookup({}, SERVER, 'bot', 'f-file')
     expect(mocks.getDownload).toHaveBeenCalledExactlyOnceWith('bot', 'f-file')
   })
   it('prepares videos only from trusted windows, by bot and opaque file id, and marks missing files', async () => {
@@ -95,13 +116,13 @@ describe('fleet IPC validation', () => {
     } as unknown as IpcRegistrar)
     expect(reads.has('fleet:prepareMedia')).toBe(false)
     const prepare = mutations.get('fleet:prepareMedia')!
-    expect(() => prepare({}, '../bot', 'f-file')).toThrow()
-    expect(() => prepare({}, 'bot', '../../secret')).toThrow()
+    expect(() => prepare({}, SERVER, '../bot', 'f-file')).toThrow()
+    expect(() => prepare({}, SERVER, 'bot', '../../secret')).toThrow()
     expect(mocks.prepareMedia).not.toHaveBeenCalled()
-    await expect(prepare({}, 'bot', 'f-file')).resolves.toMatch(/^maestrly-media:\/\/fleet\/bot\/f-file\//)
+    await expect(prepare({}, SERVER, 'bot', 'f-file')).resolves.toMatch(/^maestrly-media:\/\/fleet\/bot\/f-file\//)
     expect(mocks.prepareMedia).toHaveBeenCalledExactlyOnceWith('bot', 'f-file')
     mocks.prepareMedia.mockRejectedValueOnce(new FleetClientError('NOT_FOUND', 404, 'gone'))
-    await expect(prepare({}, 'bot', 'f-file')).rejects.toThrow('FLEET_FILE_NOT_FOUND')
+    await expect(prepare({}, SERVER, 'bot', 'f-file')).rejects.toThrow('FLEET_FILE_NOT_FOUND')
   })
   it('validates file ids to follow and cancel a transfer, and takes only valid lists of shown files', () => {
     const mutations = new Map<string, (...args: unknown[]) => unknown>()
@@ -114,24 +135,58 @@ describe('fleet IPC validation', () => {
     const cancel = mutations.get('fleet:cancelDownload')!
     const active = reads.get('fleet:getActiveDownload')!
     expect(reads.has('fleet:cancelDownload')).toBe(false)
-    expect(() => cancel({}, '../bot', 'f-file')).toThrow()
-    expect(() => active({}, 'bot', '../file')).toThrow()
-    cancel({}, 'bot', 'f-file')
-    active({}, 'bot', 'f-file')
+    expect(() => cancel({}, SERVER, '../bot', 'f-file')).toThrow()
+    expect(() => active({}, SERVER, 'bot', '../file')).toThrow()
+    cancel({}, SERVER, 'bot', 'f-file')
+    active({}, SERVER, 'bot', 'f-file')
     expect(mocks.cancelDownload).toHaveBeenCalledExactlyOnceWith('bot', 'f-file')
     expect(mocks.getActiveDownload).toHaveBeenCalledExactlyOnceWith('bot', 'f-file')
     const attend = mutations.get('fleet:attendDownloads')!
     const sender = {}
+    const file = { serverId: SERVER, botId: 'bot', fileId: 'f-file' }
     for (const invalid of [
       null,
-      [{ botId: '../bot', fileId: 'f-file' }],
-      [{ botId: 'bot', fileId: 'f-file', path: '/tmp' }],
-      Array.from({ length: 1_001 }, () => ({ botId: 'bot', fileId: 'f-file' })),
+      [{ ...file, botId: '../bot' }],
+      [{ ...file, path: '/tmp' }],
+      [{ botId: 'bot', fileId: 'f-file' }],
+      [{ ...file, serverId: 'Server/1' }],
+      Array.from({ length: 1_001 }, () => file),
     ])
       expect(() => attend({ sender }, invalid)).toThrow()
     expect(mocks.attend).not.toHaveBeenCalled()
-    attend({ sender }, [{ botId: 'bot', fileId: 'f-file' }])
-    expect(mocks.attend).toHaveBeenCalledExactlyOnceWith(sender, [{ botId: 'bot', fileId: 'f-file' }])
+    // Each shown file names its server: windows can show the files of several servers.
+    attend({ sender }, [file])
+    expect(mocks.attend).toHaveBeenCalledExactlyOnceWith(sender, [file])
+  })
+  it('refuses a call for a server this computer is not paired with, before it reaches a client', async () => {
+    const handlers = new Map<string, (...args: unknown[]) => unknown>()
+    const register = (channel: string, fn: (...args: unknown[]) => unknown): void => {
+      handlers.set(channel, fn)
+    }
+    registerFleetClientIpc({ handle: register, mhandle: register, on: register, mon: register } as IpcRegistrar)
+    const getBot = handlers.get('fleet:getBot')!
+    expect(() => getBot({}, OTHER_SERVER, 'bot')).toThrow('FLEET_SERVER_UNKNOWN')
+    expect(() => getBot({}, '../bot')).toThrow('FLEET_SERVER_UNKNOWN')
+    expect(mocks.call).not.toHaveBeenCalled()
+    await getBot({}, SERVER, 'bot')
+    expect(mocks.call).toHaveBeenCalledExactlyOnceWith('botGet', { params: { id: 'bot' } })
+  })
+  it('lists the paired servers, pairs one, pairs one again, and removes one', async () => {
+    const handlers = new Map<string, (...args: unknown[]) => unknown>()
+    const register = (channel: string, fn: (...args: unknown[]) => unknown): void => {
+      handlers.set(channel, fn)
+    }
+    registerFleetClientIpc({ handle: register, mhandle: register, on: register, mon: register } as IpcRegistrar)
+    expect(await handlers.get('fleet:servers')!({})).toEqual(mocks.list())
+    const input = { url: 'https://vps.example', code: 'ABCD-EFGH' }
+    await handlers.get('fleet:connect')!({}, input)
+    expect(mocks.pair).toHaveBeenLastCalledWith(input, undefined)
+    await handlers.get('fleet:connect')!({}, input, SERVER)
+    expect(mocks.pair).toHaveBeenLastCalledWith(input, SERVER)
+    expect(() => handlers.get('fleet:connect')!({}, input, 'Bad/Server')).toThrow('FLEET_SERVER_UNKNOWN')
+    expect(() => handlers.get('fleet:connect')!({}, { ...input, path: '/x' })).toThrow()
+    await handlers.get('fleet:disconnect')!({}, SERVER)
+    expect(mocks.remove).toHaveBeenCalledExactlyOnceWith(SERVER)
   })
   it('validates all login mutations before dispatch', () => {
     process.env.MAESTRLY_BOT_MODE = '1'
@@ -164,17 +219,17 @@ describe('fleet IPC validation', () => {
       mon: () => {},
     } as unknown as IpcRegistrar)
     const mutate = (channel: string, ...args: unknown[]) => mutations.get(channel)?.({}, ...args)
-    expect(() => mutate('fleet:ownerMemoryCreate', { content: 'a'.repeat(501) })).toThrow()
-    expect(() => mutate('fleet:ownerMemoryUpdate', 'm1', {})).toThrow()
-    expect(() => mutate('fleet:ownerMemoryUpdate', 'm1', { status: 'superseded' })).toThrow()
-    expect(() => mutate('fleet:patchBotMemory', 'scout', 'm1', {})).toThrow()
-    expect(() => reads.get('fleet:listRoutineRuns')?.({}, '../bad', 'r1')).toThrow()
-    expect(() => reads.get('fleet:listRoutineRuns')?.({}, 'scout', '')).toThrow()
+    expect(() => mutate('fleet:ownerMemoryCreate', SERVER, { content: 'a'.repeat(501) })).toThrow()
+    expect(() => mutate('fleet:ownerMemoryUpdate', SERVER, 'm1', {})).toThrow()
+    expect(() => mutate('fleet:ownerMemoryUpdate', SERVER, 'm1', { status: 'superseded' })).toThrow()
+    expect(() => mutate('fleet:patchBotMemory', SERVER, 'scout', 'm1', {})).toThrow()
+    expect(() => reads.get('fleet:listRoutineRuns')?.({}, SERVER, '../bad', 'r1')).toThrow()
+    expect(() => reads.get('fleet:listRoutineRuns')?.({}, SERVER, 'scout', '')).toThrow()
     expect(mocks.call).not.toHaveBeenCalled()
-    await mutate('fleet:ownerMemoryCreate', { content: 'Prefer short answers.' })
-    await mutate('fleet:ownerMemoryUpdate', 'm1', { status: 'archived' })
-    await reads.get('fleet:listRoutineRuns')?.({}, 'scout', 'r1')
-    await mutate('fleet:patchBotMemory', 'scout', 'm1', { pinned: true })
+    await mutate('fleet:ownerMemoryCreate', SERVER, { content: 'Prefer short answers.' })
+    await mutate('fleet:ownerMemoryUpdate', SERVER, 'm1', { status: 'archived' })
+    await reads.get('fleet:listRoutineRuns')?.({}, SERVER, 'scout', 'r1')
+    await mutate('fleet:patchBotMemory', SERVER, 'scout', 'm1', { pinned: true })
     expect(mocks.call.mock.calls).toEqual([
       [
         'ownerMemoryCreate',
@@ -211,7 +266,7 @@ describe('fleet IPC validation', () => {
     registerFleetClientIpc({ handle: register, mhandle: register, on: register, mon: register } as IpcRegistrar)
     const invoke = (channel: string, ...args: unknown[]) => handlers.get(channel)?.({ sender: {} }, ...args)
     const data = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])
-    await invoke('fleet:sendMessage', 'bot', '', [{ name: 'small.png', mediaType: 'image/png', data }])
+    await invoke('fleet:sendMessage', SERVER, 'bot', '', [{ name: 'small.png', mediaType: 'image/png', data }])
     expect(mocks.call).toHaveBeenCalledWith('botMessageSend', {
       params: { id: 'bot' },
       body: {
@@ -227,17 +282,17 @@ describe('fleet IPC validation', () => {
         ],
       },
     })
-    expect(() => invoke('fleet:sendMessage', 'bot', '', [])).toThrow()
+    expect(() => invoke('fleet:sendMessage', SERVER, 'bot', '', [])).toThrow()
     expect(() =>
-      invoke('fleet:sendMessage', 'bot', 'hello', [
+      invoke('fleet:sendMessage', SERVER, 'bot', 'hello', [
         { name: 'bad.png', mediaType: 'image/png', data: new Uint8Array(5 * 1024 * 1024 + 1) },
       ])
     ).toThrow()
-    await invoke('fleet:getImage', 'bot', 't-valid')
+    await invoke('fleet:getImage', SERVER, 'bot', 't-valid')
     expect(mocks.getImage).toHaveBeenCalledWith('bot', 't-valid', null)
-    await invoke('fleet:getImage', 'bot', 't-valid', 'run-1')
+    await invoke('fleet:getImage', SERVER, 'bot', 't-valid', 'run-1')
     expect(mocks.getImage).toHaveBeenLastCalledWith('bot', 't-valid', 'run-1')
-    expect(() => invoke('fleet:getImage', 'bot', '../bad')).toThrow()
+    expect(() => invoke('fleet:getImage', SERVER, 'bot', '../bad')).toThrow()
   })
   it('gates documents on gateway and bot support and rejects corrupt binary text', async () => {
     process.env.MAESTRLY_BOT_MODE = '1'
@@ -247,7 +302,7 @@ describe('fleet IPC validation', () => {
     }
     registerFleetClientIpc({ handle: register, mhandle: register, on: register, mon: register } as IpcRegistrar)
     const send = (data = new TextEncoder().encode('Olá')) =>
-      handlers.get('fleet:sendMessage')?.({}, 'bot', '', [
+      handlers.get('fleet:sendMessage')?.({}, SERVER, 'bot', '', [
         { kind: 'text', name: 'code.ts', mediaType: 'text/plain', data },
       ])
     mocks.hasFeature.mockReturnValue(false)
@@ -291,16 +346,16 @@ describe('fleet IPC validation', () => {
     expect(reads.has('fleet:listArchivedBots')).toBe(true)
     // Restoring and deleting change the server: both go through the trusted-sender guard.
     expect(reads.has('fleet:restoreArchivedBot') || reads.has('fleet:deleteArchivedBot')).toBe(false)
-    await reads.get('fleet:listArchivedBots')?.({ sender: {} })
-    await mutations.get('fleet:restoreArchivedBot')?.({ sender: {} }, 'scout')
-    await mutations.get('fleet:deleteArchivedBot')?.({ sender: {} }, 'scout')
+    await reads.get('fleet:listArchivedBots')?.({ sender: {} }, SERVER)
+    await mutations.get('fleet:restoreArchivedBot')?.({ sender: {} }, SERVER, 'scout')
+    await mutations.get('fleet:deleteArchivedBot')?.({ sender: {} }, SERVER, 'scout')
     expect(mocks.call.mock.calls).toEqual([
       ['archivedBotsList', { query: { separateEnvironments: 1 } }],
       ['archivedBotRestore', { params: { id: 'scout' } }],
       ['archivedBotDelete', { params: { id: 'scout' } }],
     ])
-    expect(() => mutations.get('fleet:deleteArchivedBot')?.({ sender: {} }, '../scout')).toThrow()
-    expect(() => mutations.get('fleet:restoreArchivedBot')?.({ sender: {} }, undefined)).toThrow()
+    expect(() => mutations.get('fleet:deleteArchivedBot')?.({ sender: {} }, SERVER, '../scout')).toThrow()
+    expect(() => mutations.get('fleet:restoreArchivedBot')?.({ sender: {} }, SERVER, undefined)).toThrow()
   })
   it('marks only a missing image as not found, so the UI can offer a retry for other failures', async () => {
     const handlers = new Map<string, (...args: unknown[]) => unknown>()
@@ -310,9 +365,9 @@ describe('fleet IPC validation', () => {
     registerFleetClientIpc({ handle: register, mhandle: register, on: register, mon: register } as IpcRegistrar)
     const invoke = (channel: string, ...args: unknown[]) => handlers.get(channel)?.({ sender: {} }, ...args)
     mocks.getImage.mockRejectedValueOnce(new FleetClientError('NOT_FOUND', 404, 'Image not found'))
-    await expect(invoke('fleet:getImage', 'bot', 't-gone')).rejects.toThrow('FLEET_IMAGE_NOT_FOUND')
+    await expect(invoke('fleet:getImage', SERVER, 'bot', 't-gone')).rejects.toThrow('FLEET_IMAGE_NOT_FOUND')
     mocks.getImage.mockRejectedValueOnce(new FleetClientError('INSTANCE_UNAVAILABLE', 0, 'Gateway unavailable'))
-    await expect(invoke('fleet:getImage', 'bot', 't-later')).rejects.toThrow('Gateway unavailable')
+    await expect(invoke('fleet:getImage', SERVER, 'bot', 't-later')).rejects.toThrow('Gateway unavailable')
   })
   it('rejects invalid bot IDs, creation bodies, actions, resolutions, and screen frames before dispatch', async () => {
     process.env.MAESTRLY_BOT_MODE = '1'
@@ -322,10 +377,14 @@ describe('fleet IPC validation', () => {
     }
     registerFleetClientIpc({ handle: register, mhandle: register, on: register, mon: register } as IpcRegistrar)
     const invoke = (channel: string, ...args: unknown[]): unknown => handlers.get(channel)?.({ sender: {} }, ...args)
-    expect(() => invoke('fleet:getBot', '../bad')).toThrow()
-    expect(() => invoke('fleet:createBot', { name: '', instructions: '', ceiling: 'ask', talksTo: [] })).toThrow()
-    expect(() => invoke('fleet:botAction', 'bot', 'delete')).toThrow()
-    expect(() => invoke('fleet:resolveInteraction', 'bot', 'id', { kind: 'permission', reply: 'forever' })).toThrow()
+    expect(() => invoke('fleet:getBot', SERVER, '../bad')).toThrow()
+    expect(() =>
+      invoke('fleet:createBot', SERVER, { name: '', instructions: '', ceiling: 'ask', talksTo: [] })
+    ).toThrow()
+    expect(() => invoke('fleet:botAction', SERVER, 'bot', 'delete')).toThrow()
+    expect(() =>
+      invoke('fleet:resolveInteraction', SERVER, 'bot', 'id', { kind: 'permission', reply: 'forever' })
+    ).toThrow()
     expect(() => invoke('fleet:screenSend', 'channel', 'text')).toThrow()
     expect(() => invoke('fleet:screenClipboardRead', '')).toThrow()
     mocks.screens.readClipboard.mockResolvedValueOnce('host text')
@@ -342,7 +401,7 @@ describe('fleet IPC validation', () => {
       'Clipboard unavailable'
     )
     expect(mocks.call).not.toHaveBeenCalled()
-    await invoke('fleet:createBot', { name: 'Valid', instructions: '', ceiling: 'ask', talksTo: [] })
+    await invoke('fleet:createBot', SERVER, { name: 'Valid', instructions: '', ceiling: 'ask', talksTo: [] })
     expect(mocks.call).toHaveBeenCalledWith('botsCreate', {
       body: {
         name: 'Valid',
@@ -361,7 +420,7 @@ describe('fleet IPC validation', () => {
     }
     registerFleetClientIpc({ handle: register, mhandle: register, on: register, mon: register } as IpcRegistrar)
     const invoke = (botId: unknown, op: unknown, args: unknown) =>
-      handlers.get('fleet:conversationCall')?.({ sender: {} }, botId, op, args)
+      handlers.get('fleet:conversationCall')?.({ sender: {} }, SERVER, botId, op, args)
     mocks.call.mockResolvedValueOnce({ result: { imageGen: true } })
     await expect(invoke('bot', 'chatGetConvTools', [])).resolves.toEqual({ imageGen: true })
     expect(mocks.call).toHaveBeenCalledWith('botConversationCall', {
@@ -380,7 +439,9 @@ describe('fleet IPC validation', () => {
     }
     registerFleetClientIpc({ handle: register, mhandle: register, on: register, mon: register } as IpcRegistrar)
     mocks.call.mockRejectedValueOnce(new FleetClientError('CONFLICT', 409, 'Bot is finishing a step'))
-    await expect(handlers.get('fleet:takeover')?.({ sender: {} }, 'bot')).rejects.toThrow('FLEET_TAKEOVER_CONFLICT')
+    await expect(handlers.get('fleet:takeover')?.({ sender: {} }, SERVER, 'bot')).rejects.toThrow(
+      'FLEET_TAKEOVER_CONFLICT'
+    )
   })
   it('calls only a control session on the shared display a screen conflict, among the 409s of a screen ticket', async () => {
     process.env.MAESTRLY_BOT_MODE = '1'
@@ -394,7 +455,7 @@ describe('fleet IPC validation', () => {
     // A gateway that streams screens as video.
     mocks.hasFeature.mockReturnValue(true)
     const open = (mode: 'view' | 'control') =>
-      (screenOpen({ sender: {} }, 'scout', mode) as Promise<unknown>).then(
+      (screenOpen({ sender: {} }, SERVER, 'scout', mode) as Promise<unknown>).then(
         () => 'opened',
         (cause: unknown) => (cause instanceof Error ? cause.message : String(cause))
       )
@@ -428,13 +489,13 @@ describe('fleet IPC validation', () => {
     } as unknown as IpcRegistrar)
     const create = mutations.get('fleet:createPairing')!
     mocks.hasFeature.mockReturnValue(false)
-    await expect(create({})).rejects.toMatchObject({
+    await expect(create({}, SERVER)).rejects.toMatchObject({
       code: 'PROTOCOL_INCOMPATIBLE',
       message: 'Update the bot server to pair a phone',
     })
     expect(mocks.call).not.toHaveBeenCalled()
     mocks.hasFeature.mockReturnValue(true)
-    await create({})
+    await create({}, SERVER)
     expect(mocks.call).toHaveBeenCalledExactlyOnceWith('pairingsCreate', { body: {} })
     mocks.hasFeature.mockReturnValue(false)
   })
@@ -449,14 +510,14 @@ describe('fleet IPC validation', () => {
     const revoke = handlers.get('fleet:revokeDevice')!
     mocks.call.mockClear()
     mocks.hasFeature.mockReturnValue(false)
-    await expect(async () => list({})).rejects.toThrow('FLEET_DEVICES_UNSUPPORTED')
-    await expect(async () => revoke({}, 'device-2')).rejects.toThrow('FLEET_DEVICES_UNSUPPORTED')
+    await expect(async () => list({}, SERVER)).rejects.toThrow('FLEET_DEVICES_UNSUPPORTED')
+    await expect(async () => revoke({}, SERVER, 'device-2')).rejects.toThrow('FLEET_DEVICES_UNSUPPORTED')
     expect(mocks.call).not.toHaveBeenCalled()
     mocks.hasFeature.mockReturnValue(true)
-    await list({})
-    await revoke({}, 'device-2')
+    await list({}, SERVER)
+    await revoke({}, SERVER, 'device-2')
     expect(mocks.call.mock.calls).toEqual([['devicesList'], ['deviceRevoke', { params: { deviceId: 'device-2' } }]])
-    await expect(async () => revoke({}, '')).rejects.toThrow()
+    await expect(async () => revoke({}, SERVER, '')).rejects.toThrow()
     mocks.hasFeature.mockReturnValue(false)
   })
 
@@ -466,7 +527,7 @@ describe('fleet IPC validation', () => {
       handlers.set(channel, fn)
     }
     registerFleetClientIpc({ handle: register, mhandle: register, on: register, mon: register } as IpcRegistrar)
-    const open = (target: unknown) => handlers.get('fleet:screenOpen')!({ sender: {} }, target, 'view')
+    const open = (target: unknown) => handlers.get('fleet:screenOpen')!({ sender: {} }, SERVER, target, 'view')
     mocks.hasFeature.mockImplementation((feature: string) => feature === 'environments')
     for (const target of ['scout', { botId: 'scout', surface: 'apps' }, { environmentId: 'work' }])
       expect(() => open(target)).toThrow(FLEET_SCREEN_UPDATE_REQUIRED)
@@ -505,7 +566,7 @@ describe('fleet dictation IPC', () => {
   it('reads nothing from a server that lacks dictation', async () => {
     mocks.hasFeature.mockImplementation(() => false)
     const { reads } = register()
-    expect(await reads.get('fleet:dictation')!({})).toBeNull()
+    expect(await reads.get('fleet:dictation')!({}, SERVER)).toBeNull()
     expect(mocks.call).not.toHaveBeenCalled()
   })
 
@@ -513,7 +574,11 @@ describe('fleet dictation IPC', () => {
     mocks.hasFeature.mockImplementation((feature) => feature === 'dictation')
     mocks.call.mockResolvedValueOnce({ configured: false, provider: null, keyHint: null })
     const { reads } = register()
-    expect(await reads.get('fleet:dictation')!({})).toEqual({ configured: false, provider: null, keyHint: null })
+    expect(await reads.get('fleet:dictation')!({}, SERVER)).toEqual({
+      configured: false,
+      provider: null,
+      keyHint: null,
+    })
     expect(mocks.call).toHaveBeenCalledExactlyOnceWith('dictationGet')
   })
 
@@ -522,7 +587,7 @@ describe('fleet dictation IPC', () => {
     mocks.dictationEngine.mockReturnValue('openai')
     mocks.dictationKey.mockImplementation((provider) => (provider === 'openai' ? 'sk-x' : null))
     const { mutations } = register()
-    await mutations.get('fleet:dictationUseLocal')!({})
+    await mutations.get('fleet:dictationUseLocal')!({}, SERVER)
     expect(mocks.call).toHaveBeenCalledExactlyOnceWith('dictationKeySet', {
       body: { provider: 'openai', key: 'sk-x' },
     })
@@ -533,12 +598,12 @@ describe('fleet dictation IPC', () => {
     const { mutations } = register()
     mocks.dictationEngine.mockReturnValue('local')
     mocks.dictationKey.mockReturnValue('sk-x')
-    await expect(async () => mutations.get('fleet:dictationUseLocal')!({})).rejects.toThrow(
+    await expect(async () => mutations.get('fleet:dictationUseLocal')!({}, SERVER)).rejects.toThrow(
       'No dictation key on this computer'
     )
     mocks.dictationEngine.mockReturnValue('groq')
     mocks.dictationKey.mockReturnValue(null)
-    await expect(async () => mutations.get('fleet:dictationUseLocal')!({})).rejects.toThrow(
+    await expect(async () => mutations.get('fleet:dictationUseLocal')!({}, SERVER)).rejects.toThrow(
       'No dictation key on this computer'
     )
     expect(mocks.call).not.toHaveBeenCalled()
@@ -547,10 +612,10 @@ describe('fleet dictation IPC', () => {
   it("removes the server's key, and refuses on a server without dictation", async () => {
     mocks.hasFeature.mockImplementation((feature) => feature === 'dictation')
     const { mutations } = register()
-    await mutations.get('fleet:dictationRemove')!({})
+    await mutations.get('fleet:dictationRemove')!({}, SERVER)
     expect(mocks.call).toHaveBeenCalledExactlyOnceWith('dictationKeyDelete')
     mocks.hasFeature.mockImplementation(() => false)
-    await expect(async () => mutations.get('fleet:dictationRemove')!({})).rejects.toThrow(
+    await expect(async () => mutations.get('fleet:dictationRemove')!({}, SERVER)).rejects.toThrow(
       'Update the bot server to dictate from the phone'
     )
   })

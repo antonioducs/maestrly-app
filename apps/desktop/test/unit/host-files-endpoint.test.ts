@@ -41,10 +41,15 @@ async function stub(answer: (seen: Seen) => { status: number; body: unknown }) {
 const STAT = { path: '/srv/a.csv', name: 'a.csv', size: 3, modifiedAt: 1, identity: '3:1:2' }
 const host = (id: string, lifecycle: string): HostView =>
   ({ id, remote: true, environment: { id: 'workspaces', lifecycle, updateAvailable: false } }) as HostView
-const fleet = (origin: string, features: string[] = ['host-files']) => ({
-  hostFilesAccess: () => ({ origin, headers: { 'X-Maestrly-Fleet-Protocol': '1', Authorization: 'Bearer device' } }),
+const client = (origin: string, features: string[] = ['host-files'], token = 'device') => ({
+  hostFilesAccess: () => ({ origin, headers: { 'X-Maestrly-Fleet-Protocol': '1', Authorization: `Bearer ${token}` } }),
   hasFeature: (feature: string) => features.includes(feature),
 })
+/** The paired servers: `server-1` alone, reached at `origin`. */
+const fleet = (origin: string, features: string[] = ['host-files']) => {
+  const server = client(origin, features)
+  return (serverId: string) => (serverId === 'server-1' ? server : null)
+}
 const registry = (hosts: HostView[], direct: { origin: string; token: string } | null = null) => ({
   list: () => hosts,
   directHost: () => direct,
@@ -73,6 +78,26 @@ describe('host files endpoint', () => {
     })
     expect(gateway.seen[0].headers.authorization).toBe('Bearer device')
     expect(gateway.seen[0].headers['x-maestrly-fleet-protocol']).toBe('1')
+  })
+
+  it("reaches each host through its own server's gateway and device", async () => {
+    const one = await stub(() => ({ status: 200, body: STAT }))
+    const two = await stub(() => ({ status: 200, body: STAT }))
+    const servers = { 'server-1': client(one.origin), 'server-2': client(two.origin, ['host-files'], 'device-2') }
+    const deps = {
+      registry: registry([host('server-1/workspaces', 'running'), host('server-2/workspaces', 'running')]),
+      fleet: (serverId: string) => servers[serverId as keyof typeof servers] ?? null,
+    }
+    await resolveHostFilesEndpoint('server-2/workspaces', deps).json('hostFileStat', { body: { path: '/srv/a' } })
+    expect(one.seen).toEqual([])
+    expect(two.seen[0].headers.authorization).toBe('Bearer device-2')
+    const unpaired = failureOf(() =>
+      resolveHostFilesEndpoint('server-3/workspaces', {
+        ...deps,
+        registry: registry([host('server-3/workspaces', 'running')]),
+      })
+    )
+    expect((unpaired as TransferFailure).reason).toBe('unknown-host')
   })
 
   it('sends the folder routes only through a gateway that passes them', async () => {

@@ -27,7 +27,7 @@ function fixture(options: { viewerPort?: () => number | null } = {}) {
     connection,
     host,
     call,
-    server: new ServerArtifacts({ fleet, viewerPort: options.viewerPort ?? (() => 4011) }),
+    server: new ServerArtifacts({ fleet: () => fleet, viewerPort: options.viewerPort ?? (() => 4011) }),
   }
 }
 const GATEWAY_VIEWER = 'artifacts-gateway-viewer'

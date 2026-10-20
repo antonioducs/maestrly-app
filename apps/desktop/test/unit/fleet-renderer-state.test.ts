@@ -6,7 +6,13 @@ import {
   formatPairingCode,
   memorySegments,
 } from '../../src/renderer/lib/fleet/format'
-import { fleetReducer, initialFleetState, mergeTranscriptItems } from '../../src/renderer/lib/fleet/state'
+import {
+  fleetReducer,
+  fleetServersReducer,
+  initialFleetState,
+  mergeTranscriptItems,
+} from '../../src/renderer/lib/fleet/state'
+import type { FleetServerId } from '../../src/shared/fleet-servers'
 
 const user = (id: string, at: string, text = id): FleetTranscriptItem => ({
   kind: 'user',
@@ -205,5 +211,26 @@ describe('fleet pure state', () => {
     expect(accountsExhaustedNotice('codex-accounts-exhausted until=never')).toEqual({ kind: 'codex', until: null })
     expect(accountsExhaustedNotice('Turn failed.')).toBeNull()
     expect(accountsExhaustedNotice(null)).toBeNull()
+  })
+})
+
+describe('fleet state of several servers', () => {
+  const A = 'aaaaaaaa-0000-4000-8000-000000000001' as FleetServerId
+  const B = 'bbbbbbbb-0000-4000-8000-000000000002' as FleetServerId
+  const connected = { ...initialFleetState.connection, state: 'connected' as const, url: 'https://a.example' }
+  const snapshotWithBot = (id: string) => ({ host: null, bots: [bot(id)], inbox: [], peerMessages: [] })
+
+  it('applies an action to its own server only', () => {
+    const a = fleetServersReducer({}, { serverId: A, action: { type: 'connection', value: connected } })
+    const b = fleetServersReducer(a, { serverId: B, action: { type: 'snapshot', value: snapshotWithBot('alex') } })
+    expect(b[A].connection).toEqual(connected)
+    expect(b[A].snapshot.bots).toEqual([])
+    expect(b[B].snapshot.bots.map((item) => item.id)).toEqual(['alex'])
+    expect(b[B].connection).toEqual(initialFleetState.connection)
+  })
+  it('drops the state of servers that are no longer paired', () => {
+    const state = { [A]: initialFleetState, [B]: initialFleetState }
+    expect(Object.keys(fleetServersReducer(state, { type: 'retain', ids: [B] }))).toEqual([B])
+    expect(fleetServersReducer(state, { type: 'retain', ids: [A, B] })).toBe(state)
   })
 })

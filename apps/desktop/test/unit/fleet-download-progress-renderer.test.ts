@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { tFor } from '../../src/shared/i18n'
 import { attendFleetFile, downloadStatusLabel, fileSizeLabel } from '../../src/renderer/lib/fleet/downloads'
+import type { FleetServerId } from '../../src/shared/fleet-servers'
+
+const DOWNLOAD_SERVER = 'aaaaaaaa-0000-4000-8000-000000000001' as FleetServerId
 
 const MB = 1024 * 1024
 
@@ -39,23 +42,23 @@ describe('bot file download progress in the renderer', () => {
     vi.useFakeTimers()
     const attend = vi.fn(async () => {})
     vi.stubGlobal('window', { api: { fleetAttendDownloads: attend } })
-    const first = attendFleetFile('bot', 'f-a')
-    const again = attendFleetFile('bot', 'f-a')
-    const other = attendFleetFile('bot', 'f-b')
+    const first = attendFleetFile(DOWNLOAD_SERVER, 'bot', 'f-a')
+    const again = attendFleetFile(DOWNLOAD_SERVER, 'bot', 'f-a')
+    const other = attendFleetFile(DOWNLOAD_SERVER, 'bot', 'f-b')
     vi.runAllTimers()
     expect(attend.mock.calls).toEqual([
       [
         [
-          { botId: 'bot', fileId: 'f-a' },
-          { botId: 'bot', fileId: 'f-b' },
+          { serverId: DOWNLOAD_SERVER, botId: 'bot', fileId: 'f-a' },
+          { serverId: DOWNLOAD_SERVER, botId: 'bot', fileId: 'f-b' },
         ],
       ],
     ])
     first()
     vi.runAllTimers()
     expect(attend).toHaveBeenLastCalledWith([
-      { botId: 'bot', fileId: 'f-a' },
-      { botId: 'bot', fileId: 'f-b' },
+      { serverId: DOWNLOAD_SERVER, botId: 'bot', fileId: 'f-a' },
+      { serverId: DOWNLOAD_SERVER, botId: 'bot', fileId: 'f-b' },
     ])
     again()
     other()
@@ -64,7 +67,7 @@ describe('bot file download progress in the renderer', () => {
     expect(attend).toHaveBeenCalledTimes(3)
     // A failed report never surfaces.
     attend.mockRejectedValueOnce(new Error('IPC blocked'))
-    const last = attendFleetFile('bot', 'f-c')
+    const last = attendFleetFile(DOWNLOAD_SERVER, 'bot', 'f-c')
     vi.runAllTimers()
     await Promise.resolve()
     last()

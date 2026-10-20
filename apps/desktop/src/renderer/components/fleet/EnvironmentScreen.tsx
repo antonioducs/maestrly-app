@@ -59,6 +59,7 @@ export function EnvironmentScreen({
   onRestore: () => void
   onClose: () => void
 }) {
+  const serverId = fleet.serverId
   const { t } = useTranslation('fleet')
   const target = useRef<HTMLDivElement>(null)
   const [mode, setMode] = useState<'view' | 'control'>('view')
@@ -74,7 +75,7 @@ export function EnvironmentScreen({
   // without asking for it, its screen shows an empty, black tile. Showing it opens no section and, while another
   // screen of the environment is controlled, does not take the keyboard. Failing only leaves the tile as it was.
   const showSettingsWindow = useCallback(() => {
-    void window.api.fleetEnvironmentUiOpen(environment.id, 'main').catch(() => {})
+    void window.api.fleetEnvironmentUiOpen(serverId, environment.id, 'main').catch(() => {})
   }, [environment.id])
   useEffect(() => {
     if (streaming && running && !oldImage) showSettingsWindow()

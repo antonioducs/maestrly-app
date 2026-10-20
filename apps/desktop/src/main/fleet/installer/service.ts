@@ -32,7 +32,9 @@ import {
 } from '../../../shared/fleet-installer'
 import { compareSemver } from '../../../shared/update'
 import { broadcast } from '../../window-ipc'
-import { fleetClientService, type FleetClientService } from '../client/service'
+import type { FleetClientService } from '../client/service'
+import { fleetServers } from '../client/servers'
+import type { FleetServerId, FleetServerView } from '../../../shared/fleet-servers'
 import { DockerHost, lastLine } from './docker-host'
 import { scheduleEnvironmentUpdates } from './environment-updates'
 import { InstallerError, installerErrorOf } from './errors'
@@ -77,10 +79,23 @@ import { isHeadlessInstance } from '../../remote-host/server/config'
 /** What the installer needs from an SSH connection. */
 export type InstallerSession = Pick<SshSession, 'exec' | 'forward' | 'onClose' | 'close' | 'hostKey' | 'root'>
 export type InstallerTunnel = Pick<SshTunnel, 'start' | 'stop' | 'port' | 'state' | 'lastForwardError'>
+/** The installed server's client, as the installer reads and drives it. */
 export type FleetInstallerFleet = Pick<
   FleetClientService,
-  'getConnection' | 'getSnapshot' | 'connect' | 'disconnect' | 'retarget' | 'call' | 'hasFeature'
+  'getConnection' | 'getSnapshot' | 'call' | 'hasFeature' | 'serverId'
 >
+/** The paired servers, of which the install record names one. */
+export interface FleetInstallerServers {
+  get(id: FleetServerId): FleetInstallerFleet | null
+  /** The server bots update on when this app installed none: the default one. */
+  default(): FleetInstallerFleet | null
+  /** The paired server reached at an address, for a record of an earlier version that names none. */
+  findByUrl(url: string): FleetServerId | null
+  pair(input: { url: string; code: string; deviceName: string }, id?: FleetServerId): Promise<FleetServerView>
+  retarget(id: FleetServerId, url: string): void
+  /** Unpairs a server; it stays listed until `leaving` ends. */
+  remove(id: FleetServerId, leaving?: () => Promise<void>): Promise<void>
+}
 export interface FleetInstallerStore {
   readRecord(): FleetInstallRecord | null
   writeRecord(record: FleetInstallRecord): void
@@ -108,7 +123,7 @@ export interface FleetInstallerDeps {
   ) => Promise<InstallerSession>
   remoteRunner?: (session: InstallerSession) => CommandRunner
   createTunnel?: (options: TunnelOptions) => InstallerTunnel
-  fleet: FleetInstallerFleet
+  servers: FleetInstallerServers
   store: FleetInstallerStore
   /** Resolves once the gateway at this origin answers `/v1/meta`. */
   fetchMeta: (origin: string) => Promise<void>
@@ -223,16 +238,34 @@ export class FleetInstallerService {
 
   /** The version the connected gateway reports; a reconnecting client may still hold the one it replaced. */
   private reportedGatewayVersion(): string | null {
-    return this.deps.fleet.getConnection().state === 'connected'
-      ? (this.deps.fleet.getSnapshot().host?.gatewayVersion ?? null)
-      : null
+    const fleet = this.fleet()
+    return fleet?.getConnection().state === 'connected' ? (fleet.getSnapshot().host?.gatewayVersion ?? null) : null
+  }
+
+  /**
+   * The install record, linked to its paired server. A record of an earlier version names none: it takes the server
+   * paired at the install's address.
+   */
+  private readRecord(): FleetInstallRecord | null {
+    const record = this.deps.store.readRecord()
+    if (!record || record.serverId) return record
+    const serverId = this.deps.servers.findByUrl(this.origin(record))
+    if (!serverId) return record
+    const linked = { ...record, serverId }
+    this.deps.store.writeRecord(linked)
+    return linked
+  }
+
+  /** The client of the server this app installed; null while it is not paired. */
+  private fleet(record = this.readRecord()): FleetInstallerFleet | null {
+    return record?.serverId ? this.deps.servers.get(record.serverId) : null
   }
   private serverUpdateState(record: FleetInstallRecord): FleetUpdateState {
     return fleetUpdateState(knownServerVersion(record.version, this.reportedGatewayVersion()), this.deps.appVersion)
   }
 
   status(): FleetInstallerStatus {
-    const record = this.deps.store.readRecord()
+    const record = this.readRecord()
     return {
       record,
       appVersion: this.deps.appVersion,
@@ -377,9 +410,10 @@ export class FleetInstallerService {
         await host.up({ signal: context.signal })
         await this.waitHealthy(origin, context.signal)
       })
-      await this.pair(context, origin, input.deviceName, () => host.pair())
-      if (!joining) await this.initializeArtifacts()
+      const { serverId } = await this.pair(context, origin, input.deviceName, () => host.pair())
+      if (!joining) await this.initializeArtifacts(serverId)
       this.deps.store.writeRecord({
+        serverId,
         mode: 'local',
         ...(artifactsOnly ? { artifactsOnly: true } : {}),
         artifactsPort: artifactsPort!,
@@ -431,7 +465,7 @@ export class FleetInstallerService {
         sessionClosed = true
       })
       let temporary: InstallerTunnel | null = null
-      let paired = false
+      let paired: { serverId: FleetServerId; paired: boolean } | null = null
       let saved = false
       try {
         const probe = await context.step('check', async (detail) => {
@@ -510,7 +544,8 @@ export class FleetInstallerService {
           return bound
         })
         paired = await this.pair(context, loopbackOrigin(port), input.deviceName, () => host.pair())
-        if (!joining) await this.initializeArtifacts()
+        const serverId = paired.serverId
+        if (!joining) await this.initializeArtifacts(serverId)
         await context.step('key', async () => {
           const keyTag = `maestrly-${this.deps.randomId(12)}`
           const key = generateSshKey(keyTag)
@@ -526,6 +561,7 @@ export class FleetInstallerService {
           this.deps.store.saveKey(key.privateKey)
           const current = parseBotServerEnv(env)
           const record: FleetInstallRecord = {
+            serverId,
             mode: 'remote',
             ...((joining ? sameServer && previous?.artifactsOnly : input.hosts === 'artifacts-only')
               ? { artifactsOnly: true }
@@ -547,7 +583,7 @@ export class FleetInstallerService {
         })
       } catch (error) {
         // A device paired through a tunnel that is going away would only reconnect in vain.
-        if (paired && !saved) await this.deps.fleet.disconnect().catch(() => {})
+        if (paired?.paired && !saved) await this.deps.servers.remove(paired.serverId).catch(() => {})
         throw error
       } finally {
         await (temporary as InstallerTunnel | null)?.stop()
@@ -587,10 +623,11 @@ export class FleetInstallerService {
     for (const ref of missing) if (!(await host.imageExists(ref))) throw new InstallerError('images-unavailable', ref)
   }
 
-  private async initializeArtifacts(): Promise<void> {
-    if (!this.deps.fleet.hasFeature(FLEET_ARTIFACTS_FEATURE)) return
+  private async initializeArtifacts(serverId: FleetServerId): Promise<void> {
+    const fleet = this.deps.servers.get(serverId)
+    if (!fleet?.hasFeature(FLEET_ARTIFACTS_FEATURE)) return
     try {
-      await this.deps.fleet.call('artifactHostPatch', { body: { enabled: true } })
+      await fleet.call('artifactHostPatch', { body: { enabled: true } })
     } catch {
       if (this.job) this.job.warning = 'artifacts-enable-failed'
       this.emit()
@@ -654,31 +691,37 @@ export class FleetInstallerService {
     }
   }
 
-  /** Pairs this computer with the gateway, unless it already is; true when it paired now. */
+  /**
+   * Pairs this computer with the installed gateway, unless it already is: as a new server, or again under the id of
+   * the server the record or the address names. `paired` is whether it paired now.
+   */
   private async pair(
     context: JobContext,
     origin: string,
     deviceName: string,
     code: () => Promise<string>
-  ): Promise<boolean> {
-    const connection = this.deps.fleet.getConnection()
+  ): Promise<{ serverId: FleetServerId; paired: boolean }> {
+    const known = this.readRecord()?.serverId ?? this.deps.servers.findByUrl(origin) ?? undefined
+    const current = known ? this.deps.servers.get(known) : null
+    const connection = current?.getConnection()
     if (
-      connection.url === origin &&
+      current &&
+      connection?.url === origin &&
       connection.deviceId &&
       ['connecting', 'connected', 'reconnecting'].includes(connection.state)
     ) {
       context.skip('pair')
-      return false
+      return { serverId: current.serverId, paired: false }
     }
-    await context.step('pair', async () => {
+    const serverId = await context.step('pair', async () => {
       const pairing = await code()
       try {
-        await this.deps.fleet.connect({ url: origin, code: pairing, deviceName })
+        return (await this.deps.servers.pair({ url: origin, code: pairing, deviceName }, current?.serverId)).id
       } catch (error) {
         throw new InstallerError('connect-failed', error instanceof Error ? error.message : null)
       }
     })
-    return true
+    return { serverId, paired: true }
   }
 
   private async startTunnel(record: FleetInstallRecord): Promise<void> {
@@ -698,7 +741,8 @@ export class FleetInstallerService {
     const port = await tunnel.start()
     if (port !== record.port) {
       this.deps.store.writeRecord({ ...record, port })
-      this.deps.fleet.retarget(loopbackOrigin(port))
+      if (record.serverId && this.deps.servers.get(record.serverId))
+        this.deps.servers.retarget(record.serverId, loopbackOrigin(port))
     }
     await this.startArtifactsTunnel(this.deps.store.readRecord() ?? record)
     this.emit()
@@ -854,13 +898,16 @@ export class FleetInstallerService {
         await this.removeOtherVersions(host, images)
         this.deps.store.writeRecord({ ...(this.deps.store.readRecord() ?? record), version: this.deps.appVersion })
         // The updated gateway recreates no running environment on its own: each is scheduled to follow once idle.
-        const environments = await context.step('environment-updates', () =>
-          scheduleEnvironmentUpdates(this.deps.fleet, {
-            signal: context.signal,
-            waitMs: this.deps.healthTimeoutMs,
-            pollMs: this.deps.pollMs,
-          })
-        )
+        const fleet = this.fleet()
+        const environments = fleet
+          ? await context.step('environment-updates', () =>
+              scheduleEnvironmentUpdates(fleet, {
+                signal: context.signal,
+                waitMs: this.deps.healthTimeoutMs,
+                pollMs: this.deps.pollMs,
+              })
+            )
+          : { supported: false, scheduled: [], failed: [] }
         if (!environments.supported) context.skip('environment-updates')
         this.lastEnvironmentUpdate = environments
       } finally {
@@ -874,14 +921,19 @@ export class FleetInstallerService {
    * then schedules every running environment on an older image to update once its bots are idle.
    */
   async updateBots(): Promise<FleetUpdateBotsResult> {
-    const record = this.deps.store.readRecord()
+    const record = this.readRecord()
     if (record && this.serverUpdateState(record) === 'available') {
       this.lastEnvironmentUpdate = null
       const status = await this.update()
       return { status, environments: status.job?.state === 'succeeded' ? this.lastEnvironmentUpdate : null }
     }
     this.assertIdle()
-    return { status: this.status(), environments: await scheduleEnvironmentUpdates(this.deps.fleet, { waitMs: 0 }) }
+    // A server this app did not install updates its own images: only its environments are scheduled here.
+    const fleet = record ? this.fleet(record) : this.deps.servers.default()
+    const environments = fleet
+      ? await scheduleEnvironmentUpdates(fleet, { waitMs: 0 })
+      : { supported: false, scheduled: [], failed: [] }
+    return { status: this.status(), environments }
   }
 
   /** Removes this registry's images of other versions; ones still in use stay. Never fails the update. */
@@ -924,8 +976,17 @@ export class FleetInstallerService {
   /** Unpairs this computer and forgets its access to a VPS; the server keeps running. */
   async disconnect(): Promise<FleetInstallerStatus> {
     this.assertIdle()
-    const record = this.deps.store.readRecord()
-    await this.deps.fleet.disconnect()
+    const record = this.readRecord()
+    // The server leaves the list last: until then its settings show it, and no other install starts in its place.
+    if (record?.serverId && this.deps.servers.get(record.serverId))
+      await this.deps.servers.remove(record.serverId, () => this.forgetAccess(record))
+    else await this.forgetAccess(record)
+    this.emit()
+    return this.status()
+  }
+
+  /** Revokes Maestrly's key on a VPS when it can be reached, stops the tunnels, and forgets the install. */
+  private async forgetAccess(record: FleetInstallRecord | null): Promise<void> {
     if (record?.remote) {
       const privateKey = this.deps.store.readKey()
       if (privateKey) {
@@ -953,24 +1014,25 @@ export class FleetInstallerService {
       this.deps.store.clearKey()
       this.deps.store.clearRecord()
     }
-    this.emit()
-    return this.status()
   }
 
   /** Deletes every environment and bot, the gateway and its data, its images, and Maestrly's files and key. */
   async remove(): Promise<FleetInstallerStatus> {
     this.assertIdle()
-    const record = this.deps.store.readRecord()
-    if (!record || this.deps.fleet.getConnection().state !== 'connected') throw new InstallerError('not-connected')
+    const record = this.readRecord()
+    const fleet = this.fleet(record)
+    if (!record?.serverId || !fleet || fleet.getConnection().state !== 'connected')
+      throw new InstallerError('not-connected')
+    const serverId = record.serverId
     const ids: FleetInstallerStepId[] =
       record.mode === 'remote' ? ['connect', 'environments', 'teardown'] : ['environments', 'teardown']
     return this.runJob('remove', record.mode, ids, async (context) => {
       const { host, session, close } = await this.openHost(record, context)
       try {
-        await context.step('environments', (detail) => this.deleteEverything(detail))
+        await context.step('environments', (detail) => this.deleteEverything(fleet, detail))
         await context.step('teardown', async () => {
           const env = parseBotServerEnv((await host.readEnv()) ?? '')
-          await this.deps.fleet.disconnect()
+          if (this.deps.servers.get(serverId)) await this.deps.servers.remove(serverId)
           await host.down({ signal: context.signal })
           await host.removeImages([env.gatewayImage, env.botImage].filter((ref): ref is string => ref !== null))
           if (session && record.remote) {
@@ -992,8 +1054,7 @@ export class FleetInstallerService {
   }
 
   /** Archives every environment and bot, then deletes them for good, through the gateway. */
-  private async deleteEverything(detail: (text: string | null) => void): Promise<void> {
-    const fleet = this.deps.fleet
+  private async deleteEverything(fleet: FleetInstallerFleet, detail: (text: string | null) => void): Promise<void> {
     if (fleet.hasFeature(FLEET_ENVIRONMENTS_FEATURE)) {
       const { environments } = await fleet.call('environmentsList')
       for (const environment of environments) {
@@ -1101,7 +1162,7 @@ export const fleetInstallerService = new FleetInstallerService({
   timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   localRunner,
   connectSsh: (target, credentials, options) => SshSession.connect(target, credentials, options),
-  fleet: fleetClientService,
+  servers: fleetServers,
   store: {
     readRecord: readInstallRecord,
     writeRecord: writeInstallRecord,

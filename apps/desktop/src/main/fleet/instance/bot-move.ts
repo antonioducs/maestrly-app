@@ -1,19 +1,4 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { constants as fsConstants, createReadStream, createWriteStream } from 'node:fs'
-import {
-  chmod,
-  copyFile,
-  link as hardLink,
-  lstat,
-  mkdir,
-  open,
-  readdir,
-  readlink,
-  realpath,
-  rename,
-  rm,
-  symlink,
-} from 'node:fs/promises'
 import path from 'node:path'
 import { type Readable, Transform, Writable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
@@ -38,6 +23,7 @@ import {
   type MoveRows,
 } from '../../conversation-move/rows'
 import { botMemorySpaceId } from '../../memory/spaces'
+import { realFs } from '../../real-fs'
 import { deleteLocalMemorySpace, getConversation, getDb, transaction } from '../../store'
 import { hashFile } from '../../transfer-io'
 import { readRunRecords, type LaneRecord } from './routine-runs'
@@ -52,6 +38,24 @@ import {
   writeStoredProfile,
 } from './registry'
 import { InstanceHttpError } from './server'
+
+// A bot's files are plain files, whatever their names: its working folder may hold a `*.asar` one (an installed
+// `electron` package ships `default_app.asar`), which `node:fs` in Electron would take for an archive.
+const { constants: fsConstants, createReadStream, createWriteStream } = realFs
+const {
+  chmod,
+  copyFile,
+  link: hardLink,
+  lstat,
+  mkdir,
+  open,
+  readdir,
+  readlink,
+  realpath,
+  rename,
+  rm,
+  symlink,
+} = realFs.promises
 
 /**
  * Moving a bot to another environment of its server: everything that is the bot's own leaves in one package, a
@@ -1041,4 +1045,8 @@ export async function botMoveStaging(roots: BotRoots): Promise<string> {
   const directory = path.join(root, randomUUID())
   await mkdir(directory, { mode: 0o700 })
   return directory
+}
+/** Removes a package's folder, with what was extracted from it. */
+export async function removeBotMoveStaging(directory: string): Promise<void> {
+  await rm(directory, { recursive: true, force: true })
 }

@@ -134,6 +134,7 @@ export function MoveBotDialog({
   /** Opens the environment the bot moved to. */
   onOpenEnvironment?: (environmentId: string) => void
 }) {
+  const serverId = fleet.serverId
   const { t } = useTranslation('fleet')
   const ids = useId()
   const { environments } = fleet.state.snapshot
@@ -177,7 +178,7 @@ export function MoveBotDialog({
     let timer: ReturnType<typeof setTimeout> | undefined
     const read = () => {
       void window.api
-        .fleetGetBotMove(bot.id)
+        .fleetGetBotMove(serverId, bot.id)
         .then((move) => {
           if (!active) return
           if (move.id === moveId && move.state !== 'running') setResult(move)
@@ -211,7 +212,7 @@ export function MoveBotDialog({
     setBusy(true)
     setError('')
     try {
-      const started = await window.api.fleetMoveBot(bot.id, request)
+      const started = await window.api.fleetMoveBot(serverId, bot.id, request)
       setResult(null)
       setMoveId(started.id)
     } catch (cause) {

@@ -451,6 +451,8 @@ export const fleetBotTurnSchema = z.object({
   /** The tool it uses now, if any. */
   tool: z.string().nullable(),
   cancelling: z.boolean(),
+  /** Its conversation's context is being compacted; absent from older gateways and instances. */
+  compacting: z.boolean().optional(),
 })
 export type FleetBotTurn = z.infer<typeof fleetBotTurnSchema>
 
@@ -845,6 +847,8 @@ export const fleetUserTranscriptItemSchema = z.object({
   routine: routineRef.optional(),
   peer: peerRef.optional(),
   queued: z.boolean(),
+  /** A queued message whose conversation the owner stopped: it waits until they write there or remove it. */
+  stopped: z.boolean().optional(),
   attachmentError: z.enum(['invalid-attachment', 'pdf-unreadable']).optional(),
   memories: z
     .array(z.object({ id: z.string(), title: z.string() }))

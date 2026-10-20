@@ -101,9 +101,12 @@ async function launch(pair = true) {
   }
   if (!pair) {
     // Without an OS keyring (Linux CI) the pairing token lives in memory only, so a relaunch must pair again.
-    const connection = await page.evaluate(() => window.api.fleetGetConnection())
-    if (connection.tokenPersistence === 'memory')
-      await page.evaluate((url) => window.api.fleetConnect({ url, code: 'ABCD-EFGH' }), gateway.url)
+    const [server] = await page.evaluate(() => window.api.fleetServers())
+    if (!server || server.connection.tokenPersistence === 'memory')
+      await page.evaluate(({ url, serverId }) => window.api.fleetConnect({ url, code: 'ABCD-EFGH' }, serverId), {
+        url: gateway.url,
+        serverId: server?.id,
+      })
   }
   await page.getByRole('tab', { name: /^Bots/ }).click()
   await openEnvironment()

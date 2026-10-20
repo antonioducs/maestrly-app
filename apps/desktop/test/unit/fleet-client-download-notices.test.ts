@@ -48,6 +48,7 @@ vi.mock('../../src/main/window-ipc', () => ({ focusMainWindow: state.focus }))
 vi.mock('../../src/main/fleet/client/download-history', () => ({ fleetDownloadPath: state.path }))
 
 import { noticeFleetDownload, setAttendedFleetFiles } from '../../src/main/fleet/client/download-notices'
+import type { FleetServerId } from '../../src/shared/fleet-servers'
 
 function contents() {
   const listeners = new Map<string, () => void>()
@@ -64,6 +65,9 @@ function contents() {
   }
   return value
 }
+const SERVER = 'aaaaaaaa-0000-4000-8000-000000000001' as FleetServerId
+const OTHER_SERVER = 'bbbbbbbb-0000-4000-8000-000000000002' as FleetServerId
+const shown = { serverId: SERVER, botId: 'bot', fileId: 'f-report' }
 const saved = {
   outcome: 'saved' as const,
   botId: 'bot',
@@ -83,49 +87,54 @@ describe('fleet download notices', () => {
   it('stays quiet only while a focused, visible window shows the file', async () => {
     const main = contents()
     state.windows.set(main, { focused: true, visible: true, minimized: false })
-    setAttendedFleetFiles(main as never, [{ botId: 'bot', fileId: 'f-report' }])
-    noticeFleetDownload(saved, 'Scout')
+    setAttendedFleetFiles(main as never, [shown])
+    noticeFleetDownload(SERVER, saved, 'Scout')
     expect(state.notifications).toEqual([])
     // Another bot's file with the same id is not the one shown.
-    noticeFleetDownload({ ...saved, botId: 'other' }, null)
+    noticeFleetDownload(SERVER, { ...saved, botId: 'other' }, null)
     expect(state.notifications).toHaveLength(1)
+    // The same bot and file of another server is not the one shown either.
+    noticeFleetDownload(OTHER_SERVER, saved, null)
+    expect(state.notifications).toHaveLength(2)
+    state.notifications.pop()
     // The owner switched to another app.
     state.windows.set(main, { focused: false, visible: true, minimized: false })
-    noticeFleetDownload(saved, 'Scout')
+    noticeFleetDownload(SERVER, saved, 'Scout')
     expect(state.notifications).toHaveLength(2)
     // The owner left the bot's chat: the window reports what it shows now.
     state.windows.set(main, { focused: true, visible: true, minimized: false })
     setAttendedFleetFiles(main as never, [])
-    noticeFleetDownload(saved, 'Scout')
+    noticeFleetDownload(SERVER, saved, 'Scout')
     expect(state.notifications).toHaveLength(3)
     expect(state.notifications.at(-1)).toMatchObject({
       options: { title: 'Download complete', body: 'report.pdf from Scout' },
       shown: true,
     })
     // A reloaded page shows none of its old cards until they mount again.
-    setAttendedFleetFiles(main as never, [{ botId: 'bot', fileId: 'f-report' }])
+    setAttendedFleetFiles(main as never, [shown])
     main.emit('did-navigate')
-    noticeFleetDownload(saved, 'Scout')
+    noticeFleetDownload(SERVER, saved, 'Scout')
     expect(state.notifications).toHaveLength(4)
     // A closed window no longer counts.
-    setAttendedFleetFiles(main as never, [{ botId: 'bot', fileId: 'f-report' }])
+    setAttendedFleetFiles(main as never, [shown])
     main.destroy()
-    noticeFleetDownload(saved, 'Scout')
+    noticeFleetDownload(SERVER, saved, 'Scout')
     expect(state.notifications).toHaveLength(5)
   })
 
   it('shows the saved file in its folder on click, or brings the app forward for a failure', async () => {
-    noticeFleetDownload(saved, null)
+    noticeFleetDownload(SERVER, saved, null)
     expect(state.notifications[0].options).toEqual({ title: 'Download complete', body: 'report.pdf' })
     state.notifications[0].handlers.get('click')?.()
     await vi.waitFor(() => expect(state.reveal).toHaveBeenCalledExactlyOnceWith('/downloads/report.pdf'))
     expect(state.path).toHaveBeenCalledWith(saved.receipt)
     // A file moved away since: the app comes forward instead.
     state.path.mockRejectedValueOnce(new Error('FLEET_LOCAL_DOWNLOAD_MISSING'))
-    noticeFleetDownload(saved, null)
+    noticeFleetDownload(SERVER, saved, null)
     state.notifications[1].handlers.get('click')?.()
     await vi.waitFor(() => expect(state.focus).toHaveBeenCalledOnce())
     noticeFleetDownload(
+      SERVER,
       { outcome: 'failed', botId: 'bot', fileId: 'f-report', name: null, error: 'FLEET_DOWNLOAD_FAILED' },
       'Scout'
     )

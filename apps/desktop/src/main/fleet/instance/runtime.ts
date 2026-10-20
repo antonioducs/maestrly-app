@@ -92,7 +92,11 @@ import {
   truncateConversationForResend,
   type ChatConversationSlot,
 } from '../../chat/service'
-import { clearCompactionSummarizer, setCompactionSummarizer } from '../../chat/compaction-summarizer'
+import {
+  clearCompactionSummarizer,
+  setCompactionFocus,
+  setCompactionSummarizer,
+} from '../../chat/compaction-summarizer'
 import {
   getConversationContextLimit,
   limitConversationContextWindow,
@@ -113,8 +117,15 @@ import { presentationForTool, presentsOnCompletion, type PresentationRequest } f
 import { setConversationShellEnv, type ConversationShellEnv } from '../../chat/conversation-env'
 import { setConversationScreen, type ScreenArea } from '../../conversation-screen'
 import { INSTANCE_CAPABILITIES, InstanceHttpError, type InstanceEvents, type InstanceFile } from './server'
-import { InstanceInputQueue, conversationQueue, inputRunId, promptForInput, type QueuedInput } from './queue'
-import { START_RETRY_MIN_MS, startRetry } from './turn-retry'
+import {
+  InstanceInputQueue,
+  conversationQueue,
+  inputRunId,
+  promptForInput,
+  threadCompactionFocus,
+  type QueuedInput,
+} from './queue'
+import { START_RETRY_MIN_MS, repeatsReportedFailure, startRetry, type ReportedStartFailure } from './turn-retry'
 import { InstanceHoldManager, registerInstanceHoldGate } from './gate'
 import { InstanceTranscriptExtras, fleetQuestions, toolTarget, permissionTool } from './transcript'
 import { LiveTranscript } from './live-transcript'
@@ -183,6 +194,8 @@ interface ActiveTurn {
   cancelling: boolean
   /** The tool it uses now. */
   tool: { tool: string; target: string | null } | null
+  /** Its conversation's context is being compacted, before the turn's message is saved or during the turn. */
+  compacting: boolean
   /** Resolves once the turn ended. */
   settled: Promise<void>
   settle: () => void
@@ -408,8 +421,10 @@ export class BotRuntime {
   private readonly retries = new Map<string | null, { at: number; failures: number }>()
   /** A usage limit of the bot's accounts: no conversation starts a turn before it. */
   private quotaRetryAt = 0
-  /** The kind of start failure last reported to the owner, for every conversation. */
+  /** The usage limit last reported to the owner, for every conversation: they share the accounts. */
   private reportedStartFailure: string | null = null
+  /** Per conversation, any other start failure last reported there: each conversation tells why it waits. */
+  private readonly reportedStartFailures = new Map<string | null, ReportedStartFailure>()
   private lastSummary: string | null = null
   private lastTurnAt: string | null = null
   private floatAttempted = false
@@ -941,6 +956,11 @@ export class BotRuntime {
         : null
     })
     this.applyRunCompaction(id)
+    const record = lane.record
+    setCompactionFocus(
+      id,
+      record.kind === 'thread' ? threadCompactionFocus(this.stored?.profile.name ?? this.botId, record) : null
+    )
     const stopObserving = observeChatHost(id, (event) => {
       if (event.channel === `chat:delta:${id}`) this.onChatEvent(event.payload as ChatStreamEvent, lane)
     })
@@ -949,6 +969,7 @@ export class BotRuntime {
       stopObserving()
       stopGate()
       clearCompactionSummarizer(id)
+      setCompactionFocus(id, null)
       this.clearTasks(id)
       setConversationContextLimit(id, null)
       clearConversationMemorySpace(id)
@@ -1386,11 +1407,14 @@ export class BotRuntime {
         source: item.input.source,
         preview: summarizeText(item.input.text, FLEET_QUEUE_PREVIEW_MAX),
         runId: inputRunId(item),
+        ...(item.stopped ? { stopped: true } : {}),
       }))
+    // What the owner stopped waits for them: the bot is not working on it.
+    const waiting = queue.filter((item) => !item.stopped).length
     const activity: FleetInstanceStatus['activity'] =
       this.holdManager.state.state !== 'none'
-        ? queue.length
-          ? { kind: 'queued', count: queue.length }
+        ? waiting
+          ? { kind: 'queued', count: waiting }
           : { kind: 'idle', lastTurnSummary: this.lastSummary, lastTurnAt: this.lastTurnAt }
         : pending[0]?.kind === 'permission'
           ? { kind: 'permission', title: pending[0].tool?.name ?? pending[0].title }
@@ -1406,11 +1430,13 @@ export class BotRuntime {
                     ? { kind: 'compacting' }
                     : activeTool
                       ? { kind: 'tool', ...activeTool }
-                      : turns.length
-                        ? { kind: 'thinking' }
-                        : queue.length
-                          ? { kind: 'queued', count: queue.length }
-                          : { kind: 'idle', lastTurnSummary: this.lastSummary, lastTurnAt: this.lastTurnAt }
+                      : turns.some((turn) => turn.compacting)
+                        ? { kind: 'compacting' }
+                        : turns.length
+                          ? { kind: 'thinking' }
+                          : waiting
+                            ? { kind: 'queued', count: waiting }
+                            : { kind: 'idle', lastTurnSummary: this.lastSummary, lastTurnAt: this.lastTurnAt }
     return {
       appVersion: app.getVersion(),
       capabilities: this.host.capabilities?.() ?? [...INSTANCE_CAPABILITIES],
@@ -1437,6 +1463,7 @@ export class BotRuntime {
         inputId: turn.inputId,
         runId: turn.key,
         tool: turn.tool,
+        ...(turn.compacting ? { compacting: true } : {}),
       })),
       hold: this.holdManager.state,
       queue,
@@ -1484,6 +1511,10 @@ export class BotRuntime {
     const runId = received.run?.id ?? received.thread?.id ?? null
     if (received.run) await this.openRun(received)
     const value = received.thread ? await this.openThread(received) : received
+    // The owner writing in a conversation they stopped lets what waits there go on, after their message.
+    const resumes =
+      value.source === 'owner' &&
+      this.queue.list().some((candidate) => candidate.stopped && inputRunId(candidate) === runId)
     const result = await this.queue.enqueue(value)
     // The owner writing again is the moment to check at once whether a turn that could not start now can.
     if (value.source === 'owner') {
@@ -1491,7 +1522,8 @@ export class BotRuntime {
       this.quotaRetryAt = 0
     }
     const item = this.queue.all().find((candidate) => candidate.id === result.inputId)
-    if (item && !item.started)
+    if (resumes) this.publish(runId ? { type: 'reset', runId } : { type: 'reset' })
+    else if (item && !item.started)
       this.publish({
         type: 'transcript.upsert',
         item: {
@@ -1504,6 +1536,7 @@ export class BotRuntime {
           peer: item.input.peer,
           ...(item.input.citation ? { citation: item.input.citation } : {}),
           queued: true,
+          ...(item.stopped ? { stopped: true } : {}),
           memories: [],
           images: this.queue.refs(item),
         },
@@ -1889,6 +1922,8 @@ export class BotRuntime {
       const key = inputRunId(item)
       if (seen.has(key)) continue
       seen.add(key)
+      // A conversation the owner stopped waits, with everything queued in it, until they write there.
+      if (item.stopped) continue
       if (this.turns.has(key) || (this.retries.get(key)?.at ?? 0) > now) continue
       if (key === null && (this.manualCompacting || this.editing)) continue
       if (key !== null && this.sideTurns() >= FLEET_BOT_SIDE_TURNS_MAX) continue
@@ -1910,6 +1945,7 @@ export class BotRuntime {
       lane: null,
       cancelling: false,
       tool: null,
+      compacting: false,
       settled,
       settle,
     }
@@ -1967,6 +2003,7 @@ export class BotRuntime {
       })
       this.retries.delete(runId)
       this.reportedStartFailure = null
+      this.reportedStartFailures.delete(runId)
       await this.queue.cleanup(item.id)
       release = null
       try {
@@ -2054,9 +2091,16 @@ export class BotRuntime {
         .catch(() => {
           console.error(JSON.stringify({ component: 'bot-instance', level: 'error', message: 'Input recovery failed' }))
         })
-      // Each failure alerts the owner's devices: one that repeats the last one reported waits quietly instead.
-      const repeated = retry !== null && retry.key === this.reportedStartFailure
-      if (retry) this.reportedStartFailure = retry.key
+      // Each failure alerts the owner's devices: one that repeats the last one reported waits quietly instead. A usage
+      // limit is the same in every conversation; any other failure is told in each conversation it holds.
+      let repeated = false
+      if (retry?.quota) {
+        repeated = retry.key === this.reportedStartFailure
+        this.reportedStartFailure = retry.key
+      } else if (retry) {
+        repeated = repeatsReportedFailure(this.reportedStartFailures.get(runId), retry.key)
+        if (!repeated) this.reportedStartFailures.set(runId, { key: retry.key, at: Date.now() })
+      }
       if (!repeated) {
         await this.system(
           cancelled ? 'turn_cancelled' : 'turn_failed',
@@ -2100,6 +2144,17 @@ export class BotRuntime {
       summary: null,
       runId,
     })
+  }
+  /**
+   * The owner's Stop: stops the turns as `cancel` does, and holds what waits in their conversations until the owner
+   * writes there, the stopped turn's own input too when its message was not saved yet (stopped while it prepared, such
+   * as during a long compaction). Otherwise that input would go back to the queue and start again on its own.
+   */
+  async stop(conversation?: string | null): Promise<void> {
+    const lanes = conversation === undefined ? [...this.turns.keys()] : [conversation]
+    for (const lane of lanes)
+      if (await this.queue.stop(lane)) this.publish(lane ? { type: 'reset', runId: lane } : { type: 'reset' })
+    await this.cancel(conversation)
   }
   /**
    * Stops turns: every running one (`undefined`), the bot's own conversation's (`null`), or a side conversation's (its
@@ -2393,6 +2448,21 @@ export class BotRuntime {
     const active = () => !this.disposed && !!id && id === this.foregroundConversationId
     // Each conversation's turn tracks its own tool: conversations working at once never mix theirs up.
     const turn = this.turns.get(lane?.runId ?? null)
+    // And whether its conversation compacts: before its message is saved, that is all the turn does, maybe for long.
+    if (turn && event.kind === 'compaction-progress')
+      turn.compacting = event.progress.status === 'running' || event.progress.status === 'retrying'
+    else if (
+      turn?.compacting &&
+      (event.kind === 'compaction' ||
+        event.kind === 'compaction-finished' ||
+        event.kind === 'text-start' ||
+        event.kind === 'reasoning-start' ||
+        event.kind === 'tool-call' ||
+        event.kind === 'finish' ||
+        event.kind === 'aborted' ||
+        event.kind === 'error')
+    )
+      turn.compacting = false
     if (event.kind === 'tool-call') {
       if (turn) turn.tool = { tool: event.toolName, target: toolTarget(event.input) }
       if (event.toolName.startsWith('browser_') && id)

@@ -260,6 +260,149 @@ describe('createCursorStreamMapper', () => {
     expect(mapper.state().openToolCallIds).toEqual([])
   })
 
+  describe('completed tool_call whose result reports a failure', () => {
+    const refusal =
+      'Invalid arguments for "edit": [ { expected: string, code: invalid_type, path: [oldString], message: Invalid input } ]'
+    const completed = (result: unknown): SDKMessage =>
+      ({
+        type: 'tool_call',
+        agent_id: 'a',
+        run_id: 'r',
+        call_id: 'c-fail',
+        name: 'edit',
+        status: 'completed',
+        result,
+      }) as SDKMessage
+
+    it('closes as an error when the SDK nests isError under result.value', () => {
+      const mapper = createCursorStreamMapper('m1')
+      const events = mapper.push(
+        completed({ status: 'success', value: { content: [{ text: refusal }], isError: true } })
+      )
+      expect(events).toEqual([
+        { kind: 'tool-input-start', messageId: 'm1', toolCallId: 'c-fail', toolName: 'edit' },
+        { kind: 'tool-call', messageId: 'm1', toolCallId: 'c-fail', toolName: 'edit', input: {} },
+        { kind: 'tool-state', messageId: 'm1', toolCallId: 'c-fail', state: { status: 'error', error: refusal } },
+      ])
+      expect(mapper.state().openToolCallIds).toEqual([])
+    })
+
+    it('closes as an error when isError sits on the result itself', () => {
+      const mapper = createCursorStreamMapper('m1')
+      const events = mapper.push(completed({ content: [{ type: 'text', text: refusal }], isError: true }))
+      expect(events.at(-1)).toMatchObject({ kind: 'tool-state', state: { status: 'error', error: refusal } })
+    })
+
+    it('closes as an error from the canonical output the bridge recorded', () => {
+      const mapper = createCursorStreamMapper('m1', () => ({ text: refusal, isError: true }))
+      // The provider result alone would read as a success: only the canonical output marks the failure.
+      const events = mapper.push(completed({ status: 'success', value: { content: [{ text: 'ok' }] } }))
+      expect(events.at(-1)).toMatchObject({ kind: 'tool-state', state: { status: 'error', error: refusal } })
+    })
+
+    it('redacts credentials from the error message', () => {
+      const mapper = createCursorStreamMapper('m1')
+      const events = mapper.push(
+        completed({
+          status: 'success',
+          value: { content: [{ text: 'Authorization: Bearer secret-token' }], isError: true },
+        })
+      )
+      const state = events.at(-1)
+      expect(state).toMatchObject({ kind: 'tool-state', state: { status: 'error' } })
+      expect(JSON.stringify(state)).not.toContain('secret-token')
+    })
+
+    it('uses a fallback message when the failed result has no text', () => {
+      const mapper = createCursorStreamMapper('m1')
+      const events = mapper.push(completed({ status: 'success', value: { content: [], isError: true } }))
+      expect(events.at(-1)).toMatchObject({ kind: 'tool-state', state: { status: 'error', error: 'Tool failed' } })
+    })
+
+    it('keeps a successful nested result completed', () => {
+      const mapper = createCursorStreamMapper('m1')
+      const events = mapper.push(
+        completed({ status: 'success', value: { content: [{ text: 'Edited notes.txt' }], isError: false } })
+      )
+      expect(events.at(-1)).toMatchObject({ kind: 'tool-state', state: { status: 'completed' } })
+    })
+
+    it('keeps a successful result with no error flag completed', () => {
+      const mapper = createCursorStreamMapper('m1')
+      const events = mapper.push(completed({ status: 'success', value: { content: [{ text: 'Edited notes.txt' }] } }))
+      expect(events.at(-1)).toMatchObject({ kind: 'tool-state', state: { status: 'completed' } })
+    })
+
+    describe('custom tool that threw while it ran', () => {
+      // How @cursor/sdk 1.0.34 reports it: completed, with the generic message of the Cursor runtime.
+      const thrown = { status: 'error', error: { message: 'Tool execution error' } }
+      const original = 'oldString not found. It must match the target block uniquely; read the file again.'
+
+      it('closes as an error with the message of the result', () => {
+        const mapper = createCursorStreamMapper('m1')
+        const events = mapper.push(completed(thrown))
+        expect(events).toEqual([
+          { kind: 'tool-input-start', messageId: 'm1', toolCallId: 'c-fail', toolName: 'edit' },
+          { kind: 'tool-call', messageId: 'm1', toolCallId: 'c-fail', toolName: 'edit', input: {} },
+          {
+            kind: 'tool-state',
+            messageId: 'm1',
+            toolCallId: 'c-fail',
+            state: { status: 'error', error: 'Tool execution error' },
+          },
+        ])
+        expect(mapper.state().openToolCallIds).toEqual([])
+      })
+
+      it('prefers the original message the bridge recorded', () => {
+        const mapper = createCursorStreamMapper('m1', () => ({ text: original, isError: true }))
+        const events = mapper.push(completed(thrown))
+        expect(events.at(-1)).toMatchObject({ kind: 'tool-state', state: { status: 'error', error: original } })
+      })
+
+      it('reads an error given as a plain string', () => {
+        const mapper = createCursorStreamMapper('m1')
+        const events = mapper.push(completed({ status: 'error', error: 'disk full' }))
+        expect(events.at(-1)).toMatchObject({ kind: 'tool-state', state: { status: 'error', error: 'disk full' } })
+      })
+
+      it('uses a fallback message when the error carries none', () => {
+        for (const result of [{ status: 'error' }, { status: 'error', error: {} }, { status: 'error', error: '  ' }]) {
+          const events = createCursorStreamMapper('m1').push(completed(result))
+          expect(events.at(-1)).toMatchObject({ kind: 'tool-state', state: { status: 'error', error: 'Tool failed' } })
+        }
+      })
+
+      it('redacts credentials and clips the message', () => {
+        const mapper = createCursorStreamMapper('m1')
+        const events = mapper.push(
+          completed({
+            status: 'error',
+            error: { message: `Authorization: Bearer secret-token ${'x'.repeat(120_000)}` },
+          })
+        )
+        const state = events.at(-1)
+        expect(state).toMatchObject({ kind: 'tool-state', state: { status: 'error' } })
+        expect(JSON.stringify(state)).not.toContain('secret-token')
+        expect(JSON.stringify(state).length).toBeLessThan(50_000 + 500)
+      })
+    })
+  })
+
+  it('shows the message of a structured result on an error status', () => {
+    const mapper = createCursorStreamMapper('m1')
+    const events = mapper.push({
+      type: 'tool_call',
+      agent_id: 'a',
+      run_id: 'r',
+      call_id: 'c3',
+      name: 'edit',
+      status: 'error',
+      result: { status: 'error', error: { message: 'permission denied' } },
+    } as SDKMessage)
+    expect(events.at(-1)).toMatchObject({ kind: 'tool-state', state: { status: 'error', error: 'permission denied' } })
+  })
+
   it('preserves a Cursor custom-tool image result as a multimodal tool state', () => {
     const mapper = createCursorStreamMapper('m1')
     const original = mcpResultToChatToolOutput({

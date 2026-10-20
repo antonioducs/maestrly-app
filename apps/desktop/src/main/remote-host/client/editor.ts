@@ -9,7 +9,8 @@ import {
   FLEET_PROTOCOL_HEADER,
   FLEET_PROTOCOL_VERSION,
 } from '@maestrly/bot-fleet-protocol'
-import { type HostId, isRemoteHostId } from '../../../shared/host-key'
+import type { FleetServerId } from '../../../shared/fleet-servers'
+import { type HostId, isRemoteHostId, parseRemoteHostId } from '../../../shared/host-key'
 import type { HostView } from '../../../shared/hosts'
 import { EditorProxy, EditorUnavailable, type EditorUnavailableReason, type EditorUpstream } from './editor-proxy'
 import type { HostConnection } from './host-connection'
@@ -22,7 +23,7 @@ export interface EditorRegistry {
 }
 
 export interface EditorFleet {
-  /** The paired gateway's origin and this device's headers: null while unpaired. */
+  /** The gateway's origin and this device's headers: null while unpaired. */
   hostFilesAccess(): { origin: string; headers: Record<string, string> } | null
   hasFeature(feature: string): boolean
 }
@@ -33,7 +34,11 @@ export interface EditorFleet {
  */
 export function resolveEditorUpstream(
   hostId: HostId,
-  deps: { registry: Pick<EditorRegistry, 'list' | 'directHost'> | null; fleet: EditorFleet }
+  deps: {
+    registry: Pick<EditorRegistry, 'list' | 'directHost'> | null
+    /** The client of a paired server; null for a server this computer is not paired with. */
+    fleet: (serverId: FleetServerId) => EditorFleet | null
+  }
 ): EditorUpstream {
   if (!deps.registry || !isRemoteHostId(hostId)) throw new EditorUnavailable('unknown-host')
   const host = deps.registry.list().find((item) => item.id === hostId)
@@ -50,16 +55,20 @@ export function resolveEditorUpstream(
       }),
     }
   }
+  // The host's own server serves it, whichever server it is.
+  const server = parseRemoteHostId(hostId)?.serverId
+  const fleet = server ? deps.fleet(server) : null
+  if (!fleet) throw new EditorUnavailable('unknown-host')
   const environment = host.environment
   if (environment?.lifecycle !== 'running') throw new EditorUnavailable('offline')
-  if (!deps.fleet.hasFeature(FLEET_HOST_EDITOR_FEATURE)) throw new EditorUnavailable('gateway-update-required')
-  const access = deps.fleet.hostFilesAccess()
+  if (!fleet.hasFeature(FLEET_HOST_EDITOR_FEATURE)) throw new EditorUnavailable('gateway-update-required')
+  const access = fleet.hostFilesAccess()
   if (!access) throw new EditorUnavailable('unauthorized')
   return {
     origin: access.origin,
     prefix: FLEET_GATEWAY_EDITOR_PREFIX.replace(':eid', encodeURIComponent(environment.id)),
     // Read on each request: the device token may be replaced while the editor is open.
-    headers: () => deps.fleet.hostFilesAccess()?.headers ?? access.headers,
+    headers: () => fleet.hostFilesAccess()?.headers ?? access.headers,
   }
 }
 
@@ -83,7 +92,7 @@ export function remoteEditorPartition(hostId: HostId): string {
 
 export interface RemoteEditorsDeps {
   registry(): EditorRegistry | null
-  fleet: EditorFleet
+  fleet: (serverId: FleetServerId) => EditorFleet | null
   /** Where the port of each host's editor is remembered between runs. */
   portsFile: string
   /** The renderer of this computer the editors belong to (the main window): the host's origin for these calls. */

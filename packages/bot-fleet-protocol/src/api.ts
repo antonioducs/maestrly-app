@@ -975,6 +975,8 @@ export const fleetInstanceTurnSchema = z.object({
   /** The side conversation it works in (a routine run or a peer thread); null for the bot's own. */
   runId: fleetIdSchema.nullable(),
   tool: z.object({ tool: z.string(), target: z.string().nullable() }).nullable(),
+  /** Its conversation's context is being compacted, before or during the turn; absent from older instances. */
+  compacting: z.boolean().optional(),
 })
 export type FleetInstanceTurn = z.infer<typeof fleetInstanceTurnSchema>
 export const fleetInstanceStatusSchema = z.object({
@@ -1014,6 +1016,8 @@ export const fleetInstanceStatusSchema = z.object({
       preview: z.string().max(FLEET_QUEUE_PREVIEW_MAX),
       /** The routine run whose conversation it waits for; null for the bot's own. */
       runId: fleetIdSchema.nullable().default(null),
+      /** The owner stopped its conversation: it waits for them to write there, and the bot is not working on it. */
+      stopped: z.boolean().optional(),
     })
   ),
   activity: fleetActivitySchema.nullable(),

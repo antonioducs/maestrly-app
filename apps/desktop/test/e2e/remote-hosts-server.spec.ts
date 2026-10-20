@@ -350,11 +350,11 @@ test('server page sets up workspaces, and the sidebar follows the host through t
     page = await client.firstWindow()
     await page.waitForFunction(() => Boolean((window as any).api))
     await page.getByRole('button', { name: 'Skip', exact: true }).click()
-    const connection = await local('fleetConnect', {
+    const paired = await local('fleetConnect', {
       url: `http://127.0.0.1:${portOf(gateway.server)}`,
       code: 'ABCD-EFGH',
     })
-    expect(connection.features).toContain('workspaces-host')
+    expect(paired.connection.features).toContain('workspaces-host')
 
     // A server with bots only adds no host: the sidebar has no host switcher.
     expect(await local('hostsList')).toHaveLength(1)
@@ -462,7 +462,7 @@ test('server page sets up workspaces, and the sidebar follows the host through t
     // Stopped on the server: the section says so and offers to start it; starting it brings the chat back.
     await page.getByRole('tab', { name: 'Chats' }).click()
     await chats.locator(`[data-host-section="${hostId}"] .conv-item`).click()
-    await local('fleetEnvironmentAction', 'workspaces', 'stop')
+    await local('fleetEnvironmentAction', paired.id, 'workspaces', 'stop')
     await expect(switcher.locator('[data-host-status]')).toHaveAttribute('data-host-status', 'stopped')
     await expect(page.locator('[data-host-overlay="stopped"]')).toBeVisible()
     await expect(chats.locator(`[data-host-section="${hostId}"] .conv-item`)).toHaveCount(1)
@@ -475,7 +475,7 @@ test('server page sets up workspaces, and the sidebar follows the host through t
     await expect(page.locator('.chat-input:visible')).toBeVisible()
 
     // Disconnecting the server removes its host from the window.
-    await local('fleetDisconnect')
+    await local('fleetDisconnect', paired.id)
     await expect.poll(async () => (await local('hostsList')).length).toBe(1)
     await expect(page.locator('[data-host-switcher]')).toHaveCount(0)
     await expect(page.locator('.conv-item')).toHaveCount(0)
@@ -519,11 +519,11 @@ test('server page creates one workspaces environment per scope, each a host name
     page = await client.firstWindow()
     await page.waitForFunction(() => Boolean((window as any).api))
     await page.getByRole('button', { name: 'Skip', exact: true }).click()
-    const connection = await local('fleetConnect', {
+    const paired = await local('fleetConnect', {
       url: `http://127.0.0.1:${portOf(gateway.server)}`,
       code: 'ABCD-EFGH',
     })
-    expect(connection.features).toContain('workspaces-environments')
+    expect(paired.connection.features).toContain('workspaces-environments')
 
     await page.getByRole('tab', { name: 'Bots' }).click()
     await page

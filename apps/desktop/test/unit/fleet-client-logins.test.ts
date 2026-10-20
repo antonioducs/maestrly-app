@@ -128,6 +128,36 @@ describe('Mac remote login flow', () => {
     expect(open).not.toHaveBeenCalled()
     expect(relay.start).not.toHaveBeenCalled()
   })
+  it("ends one server's sign-ins and lets another server's go on", async () => {
+    const pending = (complete: (resolve: (value: FleetLoginAttempt) => void) => void) =>
+      vi
+        .fn()
+        .mockImplementationOnce(() => new Promise<FleetLoginAttempt>(complete))
+        .mockResolvedValue(undefined)
+    let completeA!: (value: FleetLoginAttempt) => void
+    let completeB!: (value: FleetLoginAttempt) => void
+    const callA = pending((resolve) => {
+      completeA = resolve
+    })
+    const callB = pending((resolve) => {
+      completeB = resolve
+    })
+    const serverA = { call: callA } as unknown as FleetClientService
+    const serverB = { call: callB } as unknown as FleetClientService
+    const first = startBotLogin(serverA, 'bot', { kind: 'claude', method: 'browser', slot: 'auto' })
+    const firstRejected = expect(first).rejects.toThrow('cancelled')
+    const second = startBotLogin(serverB, 'bot', { kind: 'claude', method: 'browser', slot: 'auto' })
+    await vi.waitFor(() => {
+      expect(callA).toHaveBeenCalledOnce()
+      expect(callB).toHaveBeenCalledOnce()
+    })
+    await disposeBotLogins(serverA)
+    completeA(attempt('claude'))
+    completeB(attempt('claude'))
+    await firstRejected
+    expect(await second).toMatchObject({ attempt: { loginId: 'l1' }, relay: 'listening' })
+    expect(open).toHaveBeenCalledOnce()
+  })
   it('keeps a new Codex reservation while an older disposal waits for sockets to close', async () => {
     const call = vi.fn().mockResolvedValue(attempt())
     const fleet = { call } as unknown as FleetClientService

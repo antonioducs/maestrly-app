@@ -17,6 +17,7 @@ const state = vi.hoisted(() => ({
   download: vi.fn(),
   reveal: vi.fn(),
   userData: '',
+  progress: [] as unknown[],
 }))
 vi.mock('electron', async (original) => ({
   ...(await original<typeof import('electron')>()),
@@ -68,8 +69,51 @@ vi.mock('../../src/main/fleet/client/events', () => ({
 
 import { FleetClientService } from '../../src/main/fleet/client/service'
 import { FleetClientError } from '../../src/main/fleet/client/api'
-import { parseFleetMediaUrl } from '../../src/main/fleet/client/media-protocol'
-import { readFleetSettings } from '../../src/main/fleet/client/settings'
+import { FleetMediaCache } from '../../src/main/fleet/client/media-cache'
+import { FleetMediaUrls, parseFleetMediaUrl } from '../../src/main/fleet/client/media-protocol'
+import { pairWithGateway } from '../../src/main/fleet/client/pairing'
+import type { TokenPersistence } from '../../src/main/fleet/client/settings'
+import type { FleetServerId } from '../../src/shared/fleet-servers'
+
+const SERVER = 'aaaaaaaa-0000-4000-8000-000000000001' as FleetServerId
+const OTHER_SERVER = 'bbbbbbbb-0000-4000-8000-000000000002' as FleetServerId
+type Credentials = {
+  url: string
+  deviceId: string
+  deviceName: string
+  token: string | null
+  persistence: TokenPersistence
+}
+/** A client of one paired server; its credentials can change between starts, as the registry changes them. */
+function makeClient(
+  options: {
+    serverId?: FleetServerId
+    credentials?: Partial<Credentials>
+    media?: FleetMediaCache
+    mediaUrls?: FleetMediaUrls
+  } = {}
+) {
+  const credentials: Credentials = {
+    url: 'http://127.0.0.1:7443',
+    deviceId: 'device-1',
+    deviceName: 'Mac',
+    token: 'secret',
+    persistence: 'secure',
+    ...options.credentials,
+  }
+  const service = new FleetClientService({
+    serverId: options.serverId ?? SERVER,
+    credentials: () => credentials,
+    media:
+      options.media ??
+      new FleetMediaCache({
+        root: () => join(state.userData, 'fleet-media-cache'),
+        onProgress: (progress) => state.progress.push(progress),
+      }),
+    mediaUrls: options.mediaUrls ?? new FleetMediaUrls(),
+  })
+  return Object.assign(service, { credentials })
+}
 
 const host = {
   hostname: 'fleet-host',
@@ -101,6 +145,7 @@ beforeEach(() => {
   state.secureAvailable = true
   state.events.length = 0
   state.broadcasts.length = 0
+  state.progress.length = 0
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string, init: RequestInit) => {
@@ -135,7 +180,7 @@ describe('fleet client service', () => {
       const secondPath = join(directory, 'report (1).pdf')
       await writeFile(firstPath, 'first')
       await writeFile(secondPath, 'second')
-      const service = new FleetClientService()
+      const service = makeClient()
       Object.assign(service, {
         api: { call: vi.fn(async () => ({ capabilities: ['files'] })) },
         connection: { features: ['files'], deviceId: 'device-1' },
@@ -148,7 +193,7 @@ describe('fleet client service', () => {
       await expect(service.revealDownload('550e8400-e29b-41d4-a716-446655440000')).rejects.toThrow()
       expect(state.reveal).not.toHaveBeenCalled()
       service.stop()
-      const restarted = new FleetClientService()
+      const restarted = makeClient()
       Object.assign(restarted, { connection: { deviceId: 'device-1' } })
       expect(await restarted.getDownload('bot', 'f-file')).toBe(second)
       expect(await restarted.getDownload('other-bot', 'f-file')).toBeNull()
@@ -168,7 +213,7 @@ describe('fleet client service', () => {
     }
   })
   it('cancels active file transfers when this connection is stopped', async () => {
-    const service = new FleetClientService()
+    const service = makeClient()
     Object.assign(service, {
       api: { call: vi.fn(async () => ({ capabilities: ['files'] })) },
       connection: { features: ['files'], deviceId: 'device-1' },
@@ -191,7 +236,7 @@ describe('fleet client service', () => {
       const ref = { id: 'f-clip', name: 'clip.mp4', mediaType: 'video/mp4', byteSize: bytes.length }
       const openFile = vi.fn(async () => ({ ref, response: new Response(new Uint8Array(bytes)) }))
       state.userData = directory
-      const service = new FleetClientService()
+      const service = makeClient()
       Object.assign(service, {
         api: { openFile },
         connection: { features: ['files'], deviceId: 'device-1' },
@@ -199,12 +244,16 @@ describe('fleet client service', () => {
       const url = await service.prepareMedia('bot', 'f-clip')
       const request = parseFleetMediaUrl(url)!
       expect(request).toMatchObject({ botId: 'bot', fileId: 'f-clip' })
-      expect(state.broadcasts.filter((item) => item.channel === 'fleet:mediaProgress').at(-1)?.payload).toEqual({
+      // The cache names the pairing the video came through; the registry turns it into the server for the windows.
+      expect(state.progress.at(-1)).toEqual({
+        scope: 'device-1',
         botId: 'bot',
         fileId: 'f-clip',
         received: bytes.length,
         total: bytes.length,
       })
+      expect(request.serverId).toBe(SERVER)
+      expect(await service.mediaEntry({ ...request, serverId: OTHER_SERVER })).toBeNull()
       expect(await service.mediaEntry({ ...request, capability: '0'.repeat(32) })).toBeNull()
       expect(await service.mediaEntry({ ...request, fileId: 'f-other' })).toBeNull()
       // Offline, a cached copy still plays.
@@ -219,7 +268,7 @@ describe('fleet client service', () => {
       Object.assign(service, { connection: { features: ['files'], deviceId: 'device-1' } })
       // A file the bot no longer has is a 404 for the player, not a failure.
       const urls = (service as unknown as { mediaUrls: { url: (...ids: string[]) => string } }).mediaUrls
-      const missing = parseFleetMediaUrl(urls.url('device-1', 'bot', 'f-gone'))!
+      const missing = parseFleetMediaUrl(urls.url(SERVER, 'device-1', 'bot', 'f-gone'))!
       openFile.mockRejectedValueOnce(new FleetClientError('NOT_FOUND', 404, 'gone'))
       expect(await service.mediaEntry(missing)).toBeNull()
       openFile.mockRejectedValueOnce(new FleetClientError('INTERNAL', 500, 'down'))
@@ -238,7 +287,7 @@ describe('fleet client service', () => {
   })
 
   it('runs one transfer per file, reports its progress to every window, and names the bot in its notice', async () => {
-    const service = new FleetClientService()
+    const service = makeClient()
     const settled = vi.fn()
     service.onDownloadSettled = settled
     Object.assign(service, {
@@ -261,10 +310,8 @@ describe('fleet client service', () => {
     expect(service.getActiveDownload('bot', 'f-file')).toMatchObject({ receivedBytes: 0, totalBytes: 2048 })
     const progress = state.broadcasts.filter((event) => event.channel === 'fleet:download')
     expect(progress.at(-1)?.payload).toMatchObject({
-      type: 'progress',
-      botId: 'bot',
-      fileId: 'f-file',
-      totalBytes: 2048,
+      serverId: service.serverId,
+      event: { type: 'progress', botId: 'bot', fileId: 'f-file', totalBytes: 2048 },
     })
     finish('/downloads/big.zip')
     const receipt = await first
@@ -272,16 +319,17 @@ describe('fleet client service', () => {
     expect(service.getActiveDownload('bot', 'f-file')).toBeNull()
     expect(state.broadcasts.at(-1)).toEqual({
       channel: 'fleet:download',
-      payload: { type: 'saved', botId: 'bot', fileId: 'f-file', receipt },
+      payload: { serverId: service.serverId, event: { type: 'saved', botId: 'bot', fileId: 'f-file', receipt } },
     })
     expect(settled).toHaveBeenCalledExactlyOnceWith(
+      service.serverId,
       expect.objectContaining({ outcome: 'saved', name: 'big.zip', path: '/downloads/big.zip', receipt }),
       'Scout'
     )
   })
 
   it('cancels one transfer on request and marks a file the gateway no longer has', async () => {
-    const service = new FleetClientService()
+    const service = makeClient()
     const settled = vi.fn()
     service.onDownloadSettled = settled
     Object.assign(service, {
@@ -296,18 +344,22 @@ describe('fleet client service', () => {
     await vi.waitFor(() => expect(state.download).toHaveBeenCalledOnce())
     service.cancelDownload('bot', 'f-file')
     await expect(saving).rejects.toThrow('FLEET_DOWNLOAD_CANCELED')
-    expect(state.broadcasts.at(-1)?.payload).toEqual({ type: 'canceled', botId: 'bot', fileId: 'f-file' })
+    expect(state.broadcasts.at(-1)?.payload).toEqual({
+      serverId: service.serverId,
+      event: { type: 'canceled', botId: 'bot', fileId: 'f-file' },
+    })
     expect(settled).not.toHaveBeenCalled()
     state.download.mockRejectedValueOnce(new FleetClientError('NOT_FOUND', 404, 'File expired'))
     await expect(service.downloadFile('bot', 'f-file')).rejects.toThrow('FLEET_FILE_NOT_FOUND')
     expect(settled).toHaveBeenCalledExactlyOnceWith(
+      service.serverId,
       expect.objectContaining({ outcome: 'failed', error: 'FLEET_FILE_NOT_FOUND' }),
       null
     )
   })
 
   it('never starts saving a file if the connection changed during metadata checks', async () => {
-    const service = new FleetClientService()
+    const service = makeClient()
     let finish!: (value: { capabilities: string[] }) => void
     Object.assign(service, {
       api: {
@@ -331,9 +383,9 @@ describe('fleet client service', () => {
       unpaired: vi.fn(async () => {}),
       stop: vi.fn(),
     }
-    const service = new FleetClientService()
+    const service = makeClient()
     service.desktopBridge = bridge
-    await service.connect({ url: 'http://127.0.0.1:7443', code: 'abcd-efgh' })
+    service.start()
     expect(state.events[0].options).toEqual({ desktopBridge: true })
     await state.events[0].onConnected()
     expect(bridge.connected).toHaveBeenCalled()
@@ -356,39 +408,47 @@ describe('fleet client service', () => {
     state.events[0].onEvent(links)
     expect(bridge.handle).toHaveBeenLastCalledWith(links)
     expect(state.broadcasts.filter((event) => event.channel === 'fleet:event').map((event) => event.payload)).toEqual([
-      links,
+      { serverId: SERVER, event: links },
     ])
-    await service.disconnect()
+    await service.unpair()
     expect(bridge.unpaired).toHaveBeenCalledWith('device-1')
     expect(bridge.stop).toHaveBeenCalled()
 
     // Without a bridge this Mac never says it takes desktop calls.
-    const plain = new FleetClientService()
-    await plain.connect({ url: 'http://127.0.0.1:7443', code: 'abcd-efgh' })
+    const plain = makeClient()
+    plain.start()
     expect(state.events.at(-1)?.options).toEqual({ desktopBridge: false })
   })
-  it('refreshes advertised features on connect and every reconnect, defaulting absent metadata to empty', async () => {
+  it('takes the features the gateway advertised while pairing, then reads them on every reconnect', async () => {
     state.features = ['provisioning']
-    const service = new FleetClientService()
-    await service.connect({ url: 'http://127.0.0.1:7443', code: 'abcd-efgh' })
+    const service = makeClient()
+    service.start()
+    expect(service.getConnection().features).toEqual([])
+    service.restart(['provisioning'])
     expect(service.getConnection().features).toEqual(['provisioning'])
     state.features = undefined
-    await state.events[0].onConnected()
+    await state.events.at(-1)!.onConnected()
     expect(service.getConnection().features).toEqual([])
     state.features = ['provisioning']
-    await state.events[0].onConnected()
+    await state.events.at(-1)!.onConnected()
     expect(service.getConnection().features).toEqual(['provisioning'])
-    await service.disconnect()
+    await service.unpair()
     expect(service.getConnection().features).toEqual([])
   })
-  it('pairs, securely stores credentials, refreshes without fetching past activity, and forgets it all', async () => {
-    const service = new FleetClientService()
-    await service.connect({
-      url: 'http://127.0.0.1:7443',
-      code: 'abcd-efgh',
+  it('pairs as a computer, and refuses unsafe addresses before calling the gateway', async () => {
+    await expect(
+      pairWithGateway({ url: 'http://example.com', code: 'ABCDEFGH', deviceName: 'Mac' })
+    ).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled()
+    state.features = ['phones']
+    const paired = await pairWithGateway({ url: 'http://127.0.0.1:7443/', code: 'abcd-efgh', deviceName: 'Mac' })
+    expect(paired).toEqual({
+      origin: 'http://127.0.0.1:7443',
+      deviceId: 'device-1',
       deviceName: 'Mac',
+      token: 'secret',
+      features: ['phones'],
     })
-    expect(service.getConnection().deviceId).toBe('device-1')
     // The computer says what it is, so the server's list of devices can tell it from a phone.
     const pairing = vi.mocked(fetch).mock.calls.find(([url]) => new URL(String(url)).pathname === '/v1/pair')
     expect(JSON.parse(String(pairing?.[1]?.body))).toEqual({
@@ -399,32 +459,75 @@ describe('fleet client service', () => {
         platform: process.platform === 'darwin' ? 'macos' : process.platform === 'win32' ? 'windows' : 'linux',
       },
     })
-    expect(state.broadcasts.find((event) => event.channel === 'fleet:connection')?.payload).toMatchObject({
-      deviceId: 'device-1',
-    })
-    expect(readFleetSettings()).toMatchObject({
-      url: 'http://127.0.0.1:7443',
-      deviceId: 'device-1',
-      token: 'secret',
-      tokenPersistence: 'secure',
+  })
+  it('connects with its stored credentials, refreshes without fetching past activity, and leaves the server', async () => {
+    const service = makeClient()
+    service.start()
+    expect(service.getConnection()).toMatchObject({ deviceId: 'device-1', state: 'connecting' })
+    expect(state.broadcasts.find((event) => event.channel === 'fleet:connection')?.payload).toEqual({
+      serverId: SERVER,
+      connection: expect.objectContaining({ deviceId: 'device-1', state: 'connecting' }),
     })
     await state.events[0].onConnected()
     expect(service.getSnapshot().host?.hostname).toBe('fleet-host')
     // Only live activity reaches the Mac; the history of what it missed is not fetched.
     const paths = vi.mocked(fetch).mock.calls.map(([url]) => new URL(String(url)).pathname)
     expect(paths).not.toContain('/v1/activity')
-    // What older versions kept to summarize the time away is cleared with the rest.
-    state.settings.set('fleet.lastActivitySeq', '12')
-    state.settings.set('fleet.lastSeenAt', '1700000000000')
-    await service.disconnect()
-    expect(service.getConnection().deviceId).toBeNull()
-    expect(readFleetSettings().token).toBeNull()
-    expect([state.settings.get('fleet.lastActivitySeq'), state.settings.get('fleet.lastSeenAt')]).toEqual(['', ''])
+    await service.unpair()
+    expect(paths.concat(vi.mocked(fetch).mock.calls.map(([url]) => new URL(String(url)).pathname))).toContain(
+      '/v1/devices/self'
+    )
+    expect(service.getConnection()).toMatchObject({ deviceId: null, state: 'unconfigured', url: null })
+    expect(state.broadcasts.filter((item) => item.channel === 'fleet:connection').at(-1)?.payload).toEqual({
+      serverId: SERVER,
+      connection: expect.objectContaining({ state: 'unconfigured' }),
+    })
+  })
+
+  it('waits to be paired again when its token was kept for an earlier session only', () => {
+    const service = makeClient({ credentials: { token: null, persistence: 'memory' } })
+    service.start()
+    expect(service.getConnection()).toMatchObject({
+      state: 'unconfigured',
+      url: 'http://127.0.0.1:7443',
+      deviceId: 'device-1',
+      tokenPersistence: 'memory',
+    })
+    expect(state.events).toEqual([])
+  })
+
+  it("deletes only its own pairing's videos when it leaves its server", async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'fleet-media-scopes-'))
+    try {
+      state.userData = directory
+      const media = new FleetMediaCache({ root: () => join(directory, 'fleet-media-cache') })
+      const mediaUrls = new FleetMediaUrls()
+      const bytes = Buffer.from('synthetic video bytes')
+      const ref = { id: 'f-clip', name: 'clip.mp4', mediaType: 'video/mp4', byteSize: bytes.length }
+      const openFile = vi.fn(async () => ({ ref, response: new Response(new Uint8Array(bytes)) }))
+      const first = makeClient({ media, mediaUrls })
+      const second = makeClient({ serverId: OTHER_SERVER, media, mediaUrls })
+      Object.assign(first, { api: { openFile }, connection: { features: ['files'], deviceId: 'device-1' } })
+      Object.assign(second, { api: { openFile }, connection: { features: ['files'], deviceId: 'device-2' } })
+      await first.prepareMedia('bot', 'f-clip')
+      await second.prepareMedia('bot', 'f-clip')
+      const cached = async () =>
+        (await readdir(join(directory, 'fleet-media-cache'))).filter((name) => name.endsWith('.media'))
+      expect(await cached()).toHaveLength(2)
+      Object.assign(first, { api: { openFile, call: vi.fn(async () => undefined) } })
+      await first.unpair()
+      expect(await cached()).toHaveLength(1)
+      const kept = parseFleetMediaUrl(await second.prepareMedia('bot', 'f-clip'))!
+      Object.assign(second, { api: null })
+      expect(await second.mediaEntry(kept)).toMatchObject({ ref })
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 
   it('drops an archived bot from the snapshot whatever the event order', async () => {
-    const service = new FleetClientService()
-    await service.connect({ url: 'http://127.0.0.1:7443', code: 'ABCDEFGH' })
+    const service = makeClient()
+    service.start()
     await state.events[0].onConnected()
     const bot = { id: 'scout', name: 'Scout', lifecycle: 'running' }
     const at = '2026-01-01T00:00:00Z'
@@ -438,10 +541,10 @@ describe('fleet client service', () => {
   })
 
   it('sounds for live bot activity the owner is waiting on', async () => {
-    const service = new FleetClientService()
+    const service = makeClient()
     const alerts: string[] = []
     service.onAlert = (botId, alert) => alerts.push(botId + ':' + alert)
-    await service.connect({ url: 'http://127.0.0.1:7443', code: 'ABCDEFGH' })
+    service.start()
     await state.events[0].onConnected()
     const at = '2026-01-01T00:00:00Z'
     const entry = (
@@ -474,30 +577,12 @@ describe('fleet client service', () => {
     service.stop()
   })
 
-  it('reconnects with the stored credentials after an app restart', async () => {
-    const first = new FleetClientService()
-    await first.connect({ url: 'http://127.0.0.1:7443', code: 'ABCDEFGH' })
-    await state.events[0].onConnected()
-    first.stop()
-    const restarted = new FleetClientService()
-    restarted.start()
-    expect(restarted.getConnection()).toMatchObject({ deviceId: 'device-1', state: 'connecting' })
-    await state.events[1].onConnected()
-    expect(restarted.getSnapshot().host?.hostname).toBe('fleet-host')
-    restarted.stop()
-  })
-
-  it('moves a paired connection to another loopback port, keeping its device and token', async () => {
-    const service = new FleetClientService()
-    await service.connect({ url: 'http://127.0.0.1:7443', code: 'ABCDEFGH', deviceName: 'Mac' })
+  it('reconnects at the address its credentials name now, keeping its device and token', async () => {
+    const service = makeClient()
+    service.start()
     const before = state.events.length
-    service.retarget('http://127.0.0.1:7471')
-    expect(readFleetSettings()).toMatchObject({
-      url: 'http://127.0.0.1:7471',
-      deviceId: 'device-1',
-      token: 'secret',
-      tokenPersistence: 'secure',
-    })
+    service.credentials.url = 'http://127.0.0.1:7471'
+    service.restart()
     expect(service.getConnection()).toMatchObject({ url: 'http://127.0.0.1:7471', deviceId: 'device-1' })
     // A new event stream to the new address, with the same credentials.
     expect(state.events.length).toBe(before + 1)
@@ -507,29 +592,13 @@ describe('fleet client service', () => {
       .mock.calls.map(([url]) => new URL(String(url)).host)
       .slice(-3)
     expect(hosts.every((host) => host === '127.0.0.1:7471')).toBe(true)
-    expect(() => service.retarget('http://example.com')).toThrow()
-    expect(readFleetSettings().url).toBe('http://127.0.0.1:7471')
     service.stop()
   })
 
-  it('keeps token in memory when secure storage is unavailable', async () => {
-    state.secureAvailable = false
-    const service = new FleetClientService()
-    const view = await service.connect({
-      url: 'http://127.0.0.1:7443',
-      code: 'ABCDEFGH',
-    })
-    expect(view.tokenPersistence).toBe('memory')
-    expect(readFleetSettings().token).toBe('secret')
-    expect(state.secure.size).toBe(0)
+  it('keeps how its token is stored in its connection', () => {
+    const service = makeClient({ credentials: { persistence: 'memory' } })
+    service.start()
+    expect(service.getConnection().tokenPersistence).toBe('memory')
     service.stop()
-  })
-
-  it('rejects unsafe URLs before calling the gateway', async () => {
-    const service = new FleetClientService()
-    await expect(service.connect({ url: 'http://example.com', code: 'ABCDEFGH' })).rejects.toMatchObject({
-      code: 'INVALID_REQUEST',
-    })
-    expect(vi.mocked(fetch)).not.toHaveBeenCalled()
   })
 })

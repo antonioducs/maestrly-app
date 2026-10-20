@@ -301,7 +301,7 @@ export function ReviewReceiptCard({
             type="button"
             disabled={busy}
             onClick={() => actions.send(messageId, report)}
-            className={cn(BUTTON, 'bg-foreground text-background hover:bg-foreground/90')}
+            className={cn(BUTTON, 'bg-primary text-primary-foreground hover:bg-primary/90')}
           >
             <Send className="size-3.5" />
             {t('review.receipt.send')}
@@ -340,7 +340,7 @@ export function ReviewReceiptCard({
             BUTTON,
             checked || report.check?.status === 'failed'
               ? 'border border-white/[0.12] text-foreground/85 hover:bg-white/[0.05]'
-              : 'bg-foreground text-background hover:bg-foreground/90'
+              : 'bg-primary text-primary-foreground hover:bg-primary/90'
           )}
         >
           {starting ? (
@@ -387,7 +387,7 @@ export function ReviewReceiptCard({
                     })
                   )
                 }
-                className={cn(BUTTON, 'bg-foreground text-background hover:bg-foreground/90')}
+                className={cn(BUTTON, 'bg-primary text-primary-foreground hover:bg-primary/90')}
               >
                 <Send className="size-3.5" />
                 {t('review.receipt.sendBack', { ids: open.map((result) => result.findingId).join(', ') })}

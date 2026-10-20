@@ -159,7 +159,7 @@ function fakeBot(botId: string, slot: number) {
       itemId: `input:edit-${botId}`,
       queued: true,
     })),
-    cancel: vi.fn(async () => {}),
+    stop: vi.fn(async () => {}),
     resolve: vi.fn(async (_id: string, _value: FleetInteractionResolution) => {}),
     hold: vi.fn(async (reason: 'takeover' | 'paused') => {
       state.hold = reason === 'takeover' ? takeover() : { ...takeover(), reason: 'paused' }
@@ -807,9 +807,9 @@ describe('bot routes', () => {
       status: 200,
     },
     // Without a conversation, every turn stops, as callers that predate parallel turns mean.
-    { method: 'POST', path: 'turn/cancel', call: 'cancel', args: [undefined], status: 204 },
-    { method: 'POST', path: 'turn/cancel?conversation=primary', call: 'cancel', args: [null], status: 204 },
-    { method: 'POST', path: 'turn/cancel?conversation=run-1', call: 'cancel', args: ['run-1'], status: 204 },
+    { method: 'POST', path: 'turn/cancel', call: 'stop', args: [undefined], status: 204 },
+    { method: 'POST', path: 'turn/cancel?conversation=primary', call: 'stop', args: [null], status: 204 },
+    { method: 'POST', path: 'turn/cancel?conversation=run-1', call: 'stop', args: ['run-1'], status: 204 },
     {
       method: 'POST',
       path: 'interactions/i-1/resolve',

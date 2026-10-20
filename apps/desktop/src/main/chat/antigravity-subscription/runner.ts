@@ -365,18 +365,19 @@ export async function runAntigravitySubscriptionChat(
         : { tools: {}, close: async () => {} }
     appClose = app.close
 
-    const { instructions, instructionHash, skills, agents } = await buildAntigravityInstructions({
-      projectId: args.projectId,
-      cwd: args.cwd,
-      conversationId: args.conversationId,
-      mode: args.mode,
-      maestro: args.maestro,
-      modelId: args.selection.modelId,
-      maestrlyUltra: args.maestrlyUltra,
-      harness: args.harness,
-      appToolsEnabled,
-      disabledAppToolGroups: appAccess.disabledGroups,
-    })
+    const { instructions, instructionHash, environment, turnReminder, skills, agents } =
+      await buildAntigravityInstructions({
+        projectId: args.projectId,
+        cwd: args.cwd,
+        conversationId: args.conversationId,
+        mode: args.mode,
+        maestro: args.maestro,
+        modelId: args.selection.modelId,
+        maestrlyUltra: args.maestrlyUltra,
+        harness: args.harness,
+        appToolsEnabled,
+        disabledAppToolGroups: appAccess.disabledGroups,
+      })
 
     const skillTools: ToolSet = skills.length
       ? {
@@ -645,6 +646,8 @@ export async function runAntigravitySubscriptionChat(
       toolCatalog: renderAntigravityToolCatalog(activeToolset.specs),
       seedTranscript: newSession ? buildAntigravitySeedTranscript(history) : '',
       dropImages,
+      environment,
+      turnReminder,
     })
     const pending = client.request<AcpPromptResult>('session/prompt', { sessionId: session.sessionId, prompt })
     let cancelSent = false

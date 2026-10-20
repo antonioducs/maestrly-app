@@ -6,6 +6,7 @@ import { resolveConversationExecutionContext } from '../conversation-context'
 import { ensureStandaloneConversationDirectory } from '../standalone-conversation-service'
 import { nameStandaloneConversationFromText } from '../standalone-conversation-title'
 import { autonomousPolicy } from './autonomous'
+import { PLAN_GUARD_PROMPT, shouldGuardPlanSubmission } from './plan-guard'
 import { emitChatHost } from './host-events'
 import {
   chatSubscribersOf,
@@ -115,6 +116,7 @@ import { harnessFor, resolveHarnessContract } from './harness/execution'
 import { captureHarnessFlags } from './harness/flags'
 import { harnessCompactionSystem } from './harness/host-contracts'
 import { createHarnessSnapshot } from './harness/compatibility'
+import { offeredReasoningEfforts } from './harness/policies'
 import type { ResolvedHarness } from './harness/types'
 import {
   PermissionBroker,
@@ -479,7 +481,7 @@ import {
   type PortableSummaryResult,
 } from './portable-context'
 import { chatDiag } from './diag-log'
-import { getCompactionSummarizer } from './compaction-summarizer'
+import { getCompactionFocus, getCompactionSummarizer } from './compaction-summarizer'
 import { isBotMode } from '../fleet/instance/config'
 import { isAppToolGroup, sanitizeAppToolGroupPatch } from '../../shared/app-tool-groups'
 import {
@@ -3302,17 +3304,19 @@ export async function effectiveModelMeta(
     : effective != null
       ? ({ contextWindow: effective, ...manualContextLimitMeta(limit, effective) } as ChatModelMeta)
       : null
-  if (outMeta?.reasoningEfforts?.includes('ultra')) {
-    try {
-      if (
-        resolveChatHarnessMetadata(providerId, modelId, { flags: captureHarnessFlags() }).harness.reasoning.nativeUltra
-      ) {
-        outMeta.nativeUltraMode = true
-      }
-    } catch {
-      // Missing provider metadata already degrades through the normal selector path.
-    }
+  let reasoning: ResolvedHarness['reasoning'] | null = null
+  try {
+    reasoning = resolveChatHarnessMetadata(providerId, modelId, { flags: captureHarnessFlags() }).harness.reasoning
+  } catch {
+    // Missing provider metadata already degrades through the normal selector path.
   }
+  if (outMeta && reasoning?.manifestEfforts) {
+    // The runner applies the same rule, so the picker never offers a tier the turn would drop.
+    const reasoningEfforts = offeredReasoningEfforts(reasoning, baseMeta?.reasoningEfforts)
+    outMeta.reasoning = reasoningEfforts.length > 0
+    outMeta.reasoningEfforts = reasoningEfforts
+  }
+  if (outMeta?.reasoningEfforts?.includes('ultra') && reasoning?.nativeUltra) outMeta.nativeUltraMode = true
   return { meta: outMeta, providerWindow, catalogWindow, limit }
 }
 
@@ -3871,6 +3875,8 @@ interface StartSendOpts {
   onOutcome?: (outcome: InternalTurnOutcome) => void
   /** How many turns in a row plugin Stop hooks already kept going (this turn is one of them when above zero). */
   stopHookContinuations?: number
+  /** The Plan-mode guard already continued this user turn (this turn is its continuation, or follows it). */
+  planGuardContinued?: boolean
 }
 
 async function startSend(
@@ -5188,6 +5194,7 @@ async function startSend(
     let turnPromise: Promise<{ planSubmitted: boolean }>
     let maestroGuardContinuation: { prompt: string } | null = null
     let stopHookContinuation: { prompt: string; count: number } | null = null
+    let planGuardContinuation: { prompt: string } | null = null
     // A routed loop round takes the admitted-target branch below, which reproduces the frozen axes on each account.
     if (useCodexSubscription && isolated && !loopRouted) {
       const selectedModelId = selection!.modelId
@@ -5956,6 +5963,22 @@ async function startSend(
             }
           }
         }
+        // Plan mode: a turn that ends well without `review_plan` leaves nothing to approve in the Plan tab. Ask
+        // once, for the plan the model just wrote; the continuation never chains another guard.
+        if (
+          shouldGuardPlanSubmission({
+            behavior: turnBehavior,
+            planSubmitted,
+            aborted: controller.signal.aborted,
+            hadError,
+            interrupted: wasInterrupted,
+            alreadyGuarded: opts?.planGuardContinued === true,
+            planReviewAvailable: !isBotMode() && !opts?.botAdmission && !autonomousPolicy(conversationId),
+          })
+        ) {
+          planGuardContinuation = { prompt: PLAN_GUARD_PROMPT }
+          return
+        }
         // A plugin Stop hook may keep the agent going: its reason becomes an internal prompt, at most
         // MAX_STOP_HOOK_CONTINUATIONS turns in a row.
         if (hookTurn && !planSubmitted && !controller.signal.aborted && !hadError && !wasInterrupted) {
@@ -6100,22 +6123,37 @@ async function startSend(
         }
         if (!isolated && !controller.signal.aborted) void maybeScheduleBackgroundCompaction(conversationId)
         if (hookTurn) removeHookTranscript(conversationId)
-        // Host continuations (Maestro's reconciliation guard, a Stop hook asking for more) run as an internal turn
-        // that settles this one when it ends; a Stop continuation keeps the authority this turn was admitted with.
+        // Host continuations (Maestro's reconciliation guard, the Plan guard, a Stop hook asking for more) run as an
+        // internal turn that settles this one when it ends; the latter two keep the authority this turn was admitted
+        // with and the Plan guard's "already continued" mark, so a user turn gets at most one Plan guard.
+        const keptAdmission = {
+          ...(opts?.botAdmission ? { botAdmission: opts.botAdmission } : {}),
+          ...(opts?.remoteAdmission ? { remoteAdmission: true } : {}),
+          ...(opts?.runnerSignal ? { runnerSignal: opts.runnerSignal } : {}),
+        }
         const guard = maestroGuardContinuation
           ? { prompt: maestroGuardContinuation.prompt, failure: 'maestro-guard', opts: {} }
-          : stopHookContinuation
+          : planGuardContinuation
             ? {
-                prompt: stopHookContinuation.prompt,
-                failure: 'stop-hook',
+                prompt: planGuardContinuation.prompt,
+                failure: 'plan-guard',
                 opts: {
-                  stopHookContinuations: stopHookContinuation.count,
-                  ...(opts?.botAdmission ? { botAdmission: opts.botAdmission } : {}),
-                  ...(opts?.remoteAdmission ? { remoteAdmission: true } : {}),
-                  ...(opts?.runnerSignal ? { runnerSignal: opts.runnerSignal } : {}),
+                  planGuardContinued: true,
+                  ...(opts?.stopHookContinuations ? { stopHookContinuations: opts.stopHookContinuations } : {}),
+                  ...keptAdmission,
                 },
               }
-            : null
+            : stopHookContinuation
+              ? {
+                  prompt: stopHookContinuation.prompt,
+                  failure: 'stop-hook',
+                  opts: {
+                    stopHookContinuations: stopHookContinuation.count,
+                    ...(opts?.planGuardContinued ? { planGuardContinued: true } : {}),
+                    ...keptAdmission,
+                  },
+                }
+              : null
         if (guard) {
           const continuation = await startSend(deps, wc, conversationId, guard.prompt, undefined, {
             ...guard.opts,
@@ -7530,10 +7568,11 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
     if (!resolution.ok) return { ok: false, error: 'executor-unavailable' }
     compactHarness = resolution.harness
   }
+  const compactFocus = opts.executionId ? null : getCompactionFocus(conversationId)
   const compactSystem =
-    conv.scope === 'standalone'
+    (conv.scope === 'standalone'
       ? `${COMPACT_SYSTEM}\nThis is a standalone general conversation. Preserve its goals and facts without assuming a project or repository.`
-      : harnessCompactionSystem(COMPACT_SYSTEM, compactHarness)
+      : harnessCompactionSystem(COMPACT_SYSTEM, compactHarness)) + (compactFocus ? `\n\n${compactFocus}` : '')
   const history = opts.historyOverride
     ? [...opts.historyOverride]
     : opts.executionId

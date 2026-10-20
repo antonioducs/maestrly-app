@@ -38,6 +38,11 @@ requested id when the transport confirms none. Matching is exact after trimming:
 prefix stripping or nearby-version inference. `match.aliases` adds more exact ids and
 `match.caseInsensitive` normalizes case, only where the model already relied on it.
 
+Gateways publish the same model under namespaced ids: OpenRouter uses `vendor/model`
+(`google/gemini-4-argon`, `anthropic/claude-opus-5`) and the Gemini API's OpenAI-compatible endpoint
+lists `models/gemini-4-argon`. A profile whose bindings apply on any transport declares those ids in
+`match.aliases`. Profiles pinned to one vendor's transports, such as the OpenAI ones, leave them out.
+
 A model without a folder, or whose folder has no binding for the current transport, runs on the default
 profile. An invalid folder fails validation; it is never a silent fallback.
 

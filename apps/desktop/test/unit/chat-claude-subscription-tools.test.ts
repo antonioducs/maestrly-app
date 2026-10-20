@@ -1,7 +1,12 @@
 import { jsonSchema, tool, type ToolSet } from 'ai'
 import { describe, expect, it, vi } from 'vitest'
 import { toolOutputImages } from '../../src/shared/chat'
-import { buildClaudeToolBridge, CLAUDE_DISALLOWED_NATIVE_TOOLS } from '../../src/main/chat/claude-agent-sdk/tools'
+import { createClaudeStreamMapper } from '../../src/main/chat/claude-agent-sdk/stream-map'
+import {
+  buildClaudeToolBridge,
+  CLAUDE_DISALLOWED_NATIVE_TOOLS,
+  coerceToolInput,
+} from '../../src/main/chat/claude-agent-sdk/tools'
 import { chatToolOutputToAiSdkOutput, mcpResultToChatToolOutput } from '../../src/main/chat/tool-output'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
@@ -508,6 +513,141 @@ describe('Claude in-process MCP bridge', () => {
       { path: '/first' },
       expect.objectContaining({ toolCallId: 'tool-first' })
     )
+  })
+})
+
+/** Shapes of Maestrly tools whose alias calls reached MCP with string arguments. */
+const typedSchema = {
+  type: 'object',
+  properties: {
+    title: { type: 'string' },
+    limit: { type: 'integer' },
+    ratio: { type: ['number', 'null'] },
+    network_idle: { type: 'boolean' },
+    tags: { type: 'array', items: { type: 'string' } },
+    questions: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          question: { type: 'string' },
+          multiSelect: { type: 'boolean' },
+          options: { type: 'array', items: { type: 'object', properties: { label: { type: 'string' } } } },
+        },
+        required: ['question', 'options'],
+      },
+    },
+    mode: { enum: ['fast', 'slow'] },
+    level: { enum: [1, 2, 3] },
+    id: { anyOf: [{ type: 'string' }, { type: 'integer' }] },
+  },
+  required: ['title'],
+  additionalProperties: false,
+} as const
+const questions = [{ question: 'Proceed?', multiSelect: false, options: [{ label: 'Yes' }] }]
+const stringArguments = {
+  title: '42',
+  limit: '50',
+  ratio: 'null',
+  network_idle: 'true',
+  tags: '["eas", "ios"]',
+  questions: JSON.stringify(questions),
+  mode: 'fast',
+  level: '2',
+  id: '7',
+}
+const typedArguments = {
+  title: '42',
+  limit: 50,
+  ratio: null,
+  network_idle: true,
+  tags: ['eas', 'ios'],
+  questions,
+  mode: 'fast',
+  level: 2,
+  id: '7',
+}
+
+describe('Claude alias calls with string arguments', () => {
+  it('restores the types the schema asks for and leaves strings it accepts', () => {
+    expect(coerceToolInput(typedSchema, stringArguments)).toEqual(typedArguments)
+    expect(coerceToolInput(typedSchema, typedArguments)).toEqual(typedArguments)
+    // What does not parse to a kind the schema takes stays for the validator to reject.
+    expect(coerceToolInput(typedSchema, { limit: 'fifty', network_idle: '1', tags: '{"a":1}', level: 'x' })).toEqual({
+      limit: 'fifty',
+      network_idle: '1',
+      tags: '{"a":1}',
+      level: 'x',
+    })
+    expect(
+      coerceToolInput(typedSchema, { questions: `[${JSON.stringify({ ...questions[0], multiSelect: 'true' })}]` })
+    ).toEqual({ questions: [{ ...questions[0], multiSelect: true }] })
+    expect(coerceToolInput(typedSchema, 'not an object')).toBe('not an object')
+  })
+
+  it('runs an alias call through MCP validation with the verified id and the published schema unchanged', async () => {
+    const execute = vi.fn(async () => 'ok')
+    const bridge = await buildClaudeToolBridge(
+      { memory_upsert: tool({ description: 'Save.', inputSchema: jsonSchema(typedSchema), execute }) },
+      new AbortController().signal
+    )
+    await bridge.preToolUseHook.hooks[0](
+      {
+        hook_event_name: 'PreToolUse',
+        tool_name: 'memory_upsert',
+        tool_input: stringArguments,
+        tool_use_id: 'alias-call',
+      } as never,
+      'alias-call',
+      { signal: new AbortController().signal }
+    )
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    const client = new Client({ name: 'claude-alias-call', version: '1' })
+    try {
+      await bridge.server.instance.connect(serverTransport)
+      await client.connect(clientTransport)
+      const [listed] = (await client.listTools()).tools
+      expect(listed.inputSchema.properties).toMatchObject({
+        limit: { type: 'integer' },
+        network_idle: { type: 'boolean' },
+        tags: { type: 'array', items: { type: 'string' } },
+        questions: { type: 'array' },
+      })
+      const result = await client.callTool({ name: 'memory_upsert', arguments: stringArguments })
+      expect(result.isError).toBeFalsy()
+      expect(execute).toHaveBeenCalledWith(typedArguments, expect.objectContaining({ toolCallId: 'alias-call' }))
+    } finally {
+      await client.close()
+      await bridge.server.instance.close()
+    }
+    expect(bridge.inputFromSdk('memory_upsert', stringArguments)).toEqual(typedArguments)
+    expect(bridge.inputFromSdk('mcp__maestrly__memory_upsert', stringArguments)).toEqual(typedArguments)
+    expect(bridge.inputFromSdk('unknown_tool', stringArguments)).toBe(stringArguments)
+  })
+
+  it('records the restored arguments in the streamed tool part', async () => {
+    const bridge = await buildClaudeToolBridge(
+      { ask_question: tool({ description: 'Ask.', inputSchema: jsonSchema(typedSchema), execute: async () => 'ok' }) },
+      new AbortController().signal
+    )
+    const map = createClaudeStreamMapper('assistant-1', bridge.nameFromSdk, bridge.inputFromSdk)
+    const events = map.pushAssistant({
+      type: 'assistant',
+      uuid: 'sdk-assistant-1',
+      parent_tool_use_id: null,
+      message: {
+        id: 'api-message-1',
+        model: 'claude-opus',
+        usage: { input_tokens: 1, output_tokens: 1 },
+        content: [
+          { type: 'tool_use', id: 'alias-call', name: 'ask_question', input: { questions: stringArguments.questions } },
+        ],
+      },
+    } as never)
+    expect(events).toContainEqual(
+      expect.objectContaining({ kind: 'tool-call', toolName: 'ask_question', input: { questions } })
+    )
+    expect(map.tool('alias-call')?.input).toEqual({ questions })
   })
 })
 

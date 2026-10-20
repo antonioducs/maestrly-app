@@ -21,6 +21,7 @@ import type { FleetController } from '@/lib/fleet/use-fleet'
  * this lists the bots archived from an active environment; an archived environment lists its bots itself.
  */
 export function ArchivedBots({ fleet }: { fleet: FleetController }) {
+  const serverId = fleet.serverId
   const { t, i18n } = useTranslation('fleet')
   const environments = hasEnvironments(fleet.state.connection)
   const [archived, setBots] = useState<FleetArchivedBot[] | null>(null)
@@ -39,7 +40,7 @@ export function ArchivedBots({ fleet }: { fleet: FleetController }) {
   useEffect(() => {
     let alive = true
     void window.api
-      .fleetListArchivedBots()
+      .fleetListArchivedBots(serverId)
       .then((result) => alive && setBots(result.bots))
       .catch((cause) => alive && setError(fleetErrorText(cause, t)))
     return () => {
@@ -51,7 +52,7 @@ export function ArchivedBots({ fleet }: { fleet: FleetController }) {
     setBusy(bot.id)
     setError('')
     try {
-      const restored = await window.api.fleetRestoreArchivedBot(bot.id)
+      const restored = await window.api.fleetRestoreArchivedBot(serverId, bot.id)
       fleet.dispatch({ type: 'event', value: { type: 'bot.updated', at: new Date().toISOString(), bot: restored } })
       setBots((current) => current?.filter((item) => item.id !== bot.id) ?? null)
     } catch (cause) {
@@ -66,7 +67,7 @@ export function ArchivedBots({ fleet }: { fleet: FleetController }) {
     setBusy(deleting.id)
     setError('')
     try {
-      await window.api.fleetDeleteArchivedBot(deleting.id)
+      await window.api.fleetDeleteArchivedBot(serverId, deleting.id)
       setBots((current) => current?.filter((item) => item.id !== deleting.id) ?? null)
       setDeleting(null)
     } catch (cause) {

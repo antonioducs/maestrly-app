@@ -5,6 +5,65 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Fixed
+
+- **Stop** in a bot's conversation now stops it. A turn stopped while it was
+  still preparing, for example while it compacted a long conversation, no
+  longer starts again on its own a few seconds later. The messages waiting in
+  that conversation show **Stopped**, with any that arrive meanwhile, and wait
+  until you write there: your message goes first, then theirs. Remove a stopped
+  message to discard it. Stopped messages no longer keep the bot shown as
+  working. It needs a bot server and a bot environment image on this version.
+  See [conversations at once](docs/bot-fleet.md#conversations-at-once).
+- A bot's conversation with another bot, and a routine run, say when the bot is
+  compacting their context. Before, they only showed that the bot was working,
+  with no tool running, sometimes for many minutes.
+- Two bots in a conversation no longer keep answering each other. Each
+  message from the other bot used to tell the bot to reply, so it answered
+  thanks and confirmations too. Now a bot replies only when that moves the work
+  forward (an answer, a decision or what was asked), and ends the exchange by
+  not replying once nothing is left to settle. **Let them go on** lets the bot
+  continue only if its message was held back or something is still open. It
+  needs a bot server and a bot environment image on this version. See
+  [conversations with other bots](docs/bot-fleet.md#conversations-with-other-bots).
+- Compacting a conversation between two bots keeps the questions each bot asked
+  and the answers it got, what they agreed, and what each still owes the other.
+  Before, the summary could keep only the topic, and the bot asked the other bot
+  again what it had already answered.
+- When a conversation of a bot cannot start its turn, it says why in that
+  conversation, even when another conversation of the bot failed the same way.
+  A context that cannot be compacted is reported again every 30 minutes while
+  it keeps failing, with a readable message instead of its error code.
+- The **Send to the agent**, **Check the fixes** and **Send back** buttons on
+  the Code review card show their text again. It was transparent on the
+  button's light background, so they looked like empty light rectangles.
+- A turn in **Plan** mode no longer ends without a plan to approve when the
+  model writes the plan as text. GitHub Copilot, Claude and ChatGPT models
+  sometimes did, and the **Plan** tab never opened. Maestrly now asks the model
+  once, in a hidden message, to submit the plan it just wrote, or to ask you
+  what is missing.
+- **Settings → Updates** shows the release notes of an available version as
+  readable text. On Windows they appeared as raw HTML tags and attributes.
+- The plan of a ChatGPT conversation no longer starts with a `<proposed_plan>`
+  line in the **Plan** tab.
+- Cursor models that call a Maestrly tool with snake_case argument names, such
+  as `old_string` and `new_string` for **Edit**, no longer get the call
+  rejected, so the edit is applied instead of the model falling back to the
+  shell. When a Cursor tool call is still rejected, or fails while it runs, for
+  example an edit whose text is not in the file, its card now shows the error
+  and its message instead of a success such as "Edited notes.txt", and the turn
+  summary counts it as failed.
+- Claude models that call a Maestrly tool by its short name, such as `grep` or
+  `memory_upsert`, no longer get the call rejected for arguments that arrived
+  as text, for example a `limit` of `"50"`. The arguments get their types back
+  before the tool runs, so the call is carried out.
+- A conversation whose Claude model called **Ask question** with its questions
+  as text opens again. It used to show "Something went wrong" instead of the
+  conversation, and the call no longer shows an empty question in a bot's
+  conversation.
+
+## [0.23.0] - 2026-10-19
+
 ### Added
 
 - Let a bot split independent work into tasks that run at the same time: up to
@@ -36,6 +95,30 @@ User-visible changes by version. Downloads are on
   conversations the bot opened with other bots. It needs a bot server and
   environment image that keep them apart. See
   [Mobile app](docs/mobile.md#what-it-does).
+- Gemini 4 Argon and Gemini 3.8 Flash follow instructions written for them,
+  based on Google's prompting guidance for Gemini agents, on every provider
+  that serves them: Google AI (Antigravity), a Gemini API key, OpenRouter,
+  GitHub Copilot and Cursor. With a Gemini API key or OpenRouter they offer
+  Low, Medium and High effort only. Claude Opus 5 and Claude Fable 5.1 on
+  OpenRouter now get the same instructions as on Anthropic.
+- Review a plan from the mobile app. A chat in Plan mode shows its plan as a
+  compact card with its steps, and **Read and review** opens it in a sheet:
+  comment on a part of the plan, edit its Markdown, see what changed since the
+  previous version, and decide at the bottom to approve, request changes,
+  discard, build it **With Maestro** or **In a new conversation**. What you
+  write stays on the phone while the app runs, and a review of the plan on your
+  computer holds it until you hand it off or discard it. Starting a plan review
+  is still done on the computer. A host from before this version takes only the
+  decision and one general comment; the phone writes your line comments into it
+  and hides Edit, Maestro and new conversation. See
+  [Mobile app](docs/mobile.md).
+
+### Changed
+
+- The bot gateway database moves to schema 21 to keep how each bot splits its
+  work into tasks. Older gateways cannot open it, so back up the gateway volume
+  before updating the server. See
+  [compatibility](docs/bot-fleet.md#compatibility).
 
 ### Fixed
 
@@ -47,6 +130,10 @@ User-visible changes by version. Downloads are on
   edit the limit but did not save it, and the other subscriptions hid the
   option. A save that fails now shows an error. See
   [context limit](docs/chat-context.md#context-limit).
+- Google AI (Antigravity) conversations now receive the project's
+  `AGENTS.md` or `CLAUDE.md`, the conversation's pinned memory, the skill and
+  subagent catalogs, and the current date and git branch. Before, the model
+  never saw them.
 - The **Subscription usage** dialog in the desktop sidebar now includes
   connected Google AI (Antigravity) accounts alongside Claude and ChatGPT.
 - In the **Terminal** tab of a conversation on a server's workspaces
@@ -62,6 +149,13 @@ User-visible changes by version. Downloads are on
   subscription conversations find `git` without restarting: refreshing `PATH`
   closes idle Codex background processes so the next turn starts with the
   updated `PATH`, while leaving any turn in progress untouched.
+- File references and mentions in the chat of a conversation on a server's
+  workspaces environment open in the drawer's **Code** tab, as on this
+  computer. Before, clicking them did nothing. Markdown links written as
+  `file:///path/to/file#L10` open too.
+- The buttons that release or pause a bot's chat, in a conversation of a bot on
+  a server's workspaces environment, now act on the right conversation. They
+  passed the window's own key for it instead of the id the host knows.
 
 ## [0.22.0] - 2026-10-19
 

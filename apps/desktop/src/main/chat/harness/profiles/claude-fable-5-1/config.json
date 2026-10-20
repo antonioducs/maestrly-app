@@ -2,6 +2,7 @@
   "schemaVersion": 1,
   "id": "maestrly-fable-5-1",
   "profileVersion": 1,
+  "match": { "aliases": ["anthropic/claude-fable-5.1"] },
   "featureFlag": { "key": "chat.fable51Profile", "default": true },
   "bindings": [
     {

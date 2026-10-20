@@ -178,8 +178,11 @@ export interface InstanceBot {
   deleteInput(id: string): Promise<void>
   /** Edits the owner's last message: the conversation is cut from it and the new text queued (`message-edit`). */
   editInput(id: string, value: FleetEditMessageRequest): Promise<FleetInputReceipt>
-  /** Stops every turn (no argument), the bot's own conversation's (null) or a side conversation's (its id). */
-  cancel(conversation?: string | null): Promise<void>
+  /**
+   * The owner stops every turn (no argument), the bot's own conversation's (null) or a side conversation's (its id);
+   * what waits in a stopped conversation waits for the owner to write there.
+   */
+  stop(conversation?: string | null): Promise<void>
   resolve(id: string, value: FleetInteractionResolution): Promise<void>
   hold(reason: 'takeover' | 'paused'): Promise<FleetInstanceHold>
   release(value: FleetInstanceReleaseRequest): Promise<FleetInstanceHold>
@@ -289,6 +292,12 @@ const errorStatus = (status: number): string =>
 function writeJson(response: ServerResponse, status: number, value: unknown): void {
   response.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
   response.end(JSON.stringify(value))
+}
+/** Logs an error the instance did not expect, which its caller only sees as `Instance request failed.` */
+function logUnexpected(request: IncomingMessage, error: unknown): void {
+  const route = `${request.method ?? ''} ${(request.url ?? '').split('?')[0]}`
+  const reason = (error instanceof Error ? error.message : String(error)).slice(0, 500)
+  console.error(JSON.stringify({ component: 'bot-instance', level: 'error', message: `${route} failed: ${reason}` }))
 }
 const hash = (value: string): Buffer => createHash('sha256').update(value).digest()
 function authorized(input: string | undefined, expected: string): boolean {
@@ -792,7 +801,7 @@ export function createInstanceControlServer(
     botInputSend: ({ params, input }) => bot(params).input(input as FleetInstanceInput),
     botInputDelete: ({ params }) => bot(params).deleteInput(params.inputId),
     botInputEdit: ({ params, input }) => bot(params).editInput(params.inputId, input as FleetEditMessageRequest),
-    botTurnCancel: ({ params, url }) => bot(params).cancel(cancelTarget(url.searchParams)),
+    botTurnCancel: ({ params, url }) => bot(params).stop(cancelTarget(url.searchParams)),
     botInteractionResolve: ({ params, input }) => bot(params).resolve(params.id, input as FleetInteractionResolution),
     botHold: async ({ params, input }) => {
       const hold = await bot(params).hold((input as { reason: 'takeover' | 'paused' }).reason)
@@ -919,6 +928,8 @@ export function createInstanceControlServer(
         response.destroy()
         return
       }
+      // The caller only learns that the request failed: what failed is told here, or nowhere.
+      if (!(error instanceof InstanceHttpError)) logUnexpected(request, error)
       const known =
         error instanceof InstanceHttpError ? error : new InstanceHttpError(500, 'INTERNAL', 'Instance request failed.')
       writeJson(response, known.status, { code: known.code || errorStatus(known.status), message: known.message })

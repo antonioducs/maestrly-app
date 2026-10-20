@@ -594,7 +594,8 @@ export class Lifecycle {
       // `turn` is the bot's own conversation's turn, else the oldest: any turn of an instance of any age.
       status.turn.state !== 'idle' ||
       fleetInstanceTurns(status).length ||
-      status.queue.length ||
+      // What the owner stopped waits for them: the bot is not working on it.
+      status.queue.some((item) => !item.stopped) ||
       bot.compactionState?.progress?.status === 'running' ||
       bot.compactionState?.progress?.status === 'retrying'
     )
@@ -612,6 +613,7 @@ export class Lifecycle {
         startedAt: turn.startedAt,
         tool: turn.tool?.tool ?? null,
         cancelling: turn.state === 'cancelling',
+        ...(turn.compacting ? { compacting: true } : {}),
       }
       if (turn.runId === null) return [{ kind: 'primary', id: null, title: '', ...common }]
       const run = this.store.routineRunById(turn.runId)

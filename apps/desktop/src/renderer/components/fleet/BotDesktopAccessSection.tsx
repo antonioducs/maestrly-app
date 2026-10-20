@@ -12,6 +12,7 @@ import { BotAccessCard } from './BotAccessCard'
 import { SettingsCard, SettingsSection } from './SettingsSection'
 import { hostApi } from '@/lib/hosts/host-context'
 import { LOCAL_HOST_ID } from '../../../shared/host-key'
+import { useFleetServerId } from '@/lib/fleet/server-context'
 
 // A bot reaches this computer's workspaces and providers through its desktop link.
 const localApi = hostApi(LOCAL_HOST_ID)
@@ -23,6 +24,7 @@ const localApi = hostApi(LOCAL_HOST_ID)
  * bot's settings.
  */
 export function BotDesktopAccessSection({ bot, id }: { bot: FleetBot; id: string }) {
+  const serverId = useFleetServerId()
   const { t, i18n } = useTranslation('fleet')
   const [view, setView] = useState<FleetDesktopAccessView | null>(null)
   const [workspaces, setWorkspaces] = useState<BotWorkspaceOption[]>([])
@@ -32,15 +34,15 @@ export function BotDesktopAccessSection({ bot, id }: { bot: FleetBot; id: string
   const [removing, setRemoving] = useState<FleetDesktopLinkView | null>(null)
 
   const refresh = useCallback(async () => {
-    const next = await window.api.fleetDesktopAccess(bot.id)
+    const next = await window.api.fleetDesktopAccess(serverId, bot.id)
     setView(next)
     return next
-  }, [bot.id])
+  }, [serverId, bot.id])
   useEffect(() => {
     let alive = true
     setError('')
     void Promise.all([
-      window.api.fleetDesktopAccess(bot.id),
+      window.api.fleetDesktopAccess(serverId, bot.id),
       localApi.listWorkspaces(),
       localApi.chatExecutionProviders(),
     ])
@@ -56,21 +58,21 @@ export function BotDesktopAccessSection({ bot, id }: { bot: FleetBot; id: string
     return () => {
       alive = false
     }
-  }, [bot.id])
+  }, [serverId, bot.id])
   // Another computer removed this one, the bot was deleted, or this computer reconnected: read it again.
   useEffect(
     () =>
-      window.api.onFleetDesktopAccess(({ botId }) => {
-        if (botId === bot.id) void refresh().catch(() => undefined)
+      window.api.onFleetDesktopAccess((changedServer, botId) => {
+        if (changedServer === serverId && botId === bot.id) void refresh().catch(() => undefined)
       }),
-    [bot.id, refresh]
+    [serverId, bot.id, refresh]
   )
 
   async function remove(link: FleetDesktopLinkView) {
     setBusy(true)
     setError('')
     try {
-      setView(await window.api.fleetDesktopAccessRemoveOther(bot.id, link.desktopId))
+      setView(await window.api.fleetDesktopAccessRemoveOther(serverId, bot.id, link.desktopId))
       setRemoving(null)
     } catch (cause) {
       setError(fleetErrorMessage(cause))
@@ -97,8 +99,8 @@ export function BotDesktopAccessSection({ bot, id }: { bot: FleetBot; id: string
               defaultName={view.defaultName}
               workspaces={workspaces}
               providers={providers}
-              save={(input) => window.api.fleetDesktopAccessSave(bot.id, input)}
-              disable={() => window.api.fleetDesktopAccessDisable(bot.id)}
+              save={(input) => window.api.fleetDesktopAccessSave(serverId, bot.id, input)}
+              disable={() => window.api.fleetDesktopAccessDisable(serverId, bot.id)}
               onView={setView}
             />
 

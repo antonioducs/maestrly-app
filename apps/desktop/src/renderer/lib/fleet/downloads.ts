@@ -3,6 +3,7 @@ import {
   type FleetDownloadFileKey,
   type FleetDownloadProgress,
 } from '../../../shared/fleet-downloads'
+import type { FleetServerId } from '../../../shared/fleet-servers'
 
 type Translate = (key: string, options?: Record<string, unknown>) => string
 
@@ -71,16 +72,16 @@ function report(): void {
     reporting = null
     const files = [...attended.values()]
       .slice(0, FLEET_ATTENDED_FILES_MAX)
-      .map(({ botId, fileId }) => ({ botId, fileId }))
+      .map(({ serverId, botId, fileId }) => ({ serverId, botId, fileId }))
     // Without this list main only notifies more often; it never blocks a download.
     void window.api.fleetAttendDownloads(files).catch(() => undefined)
   }, 0)
 }
 
 /** Tells main this window shows the file, until the returned function runs; one report per render batch. */
-export function attendFleetFile(botId: string, fileId: string): () => void {
-  const key = botId + '\n' + fileId
-  const entry = attended.get(key) ?? { botId, fileId, views: 0 }
+export function attendFleetFile(serverId: FleetServerId, botId: string, fileId: string): () => void {
+  const key = serverId + '\n' + botId + '\n' + fileId
+  const entry = attended.get(key) ?? { serverId, botId, fileId, views: 0 }
   entry.views++
   attended.set(key, entry)
   report()

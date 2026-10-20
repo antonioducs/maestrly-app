@@ -51,7 +51,8 @@ describe('fleet renderer wiring', () => {
     // streaming its computer.
     expect(view).toContain('<ChatWindowHost')
     expect(view).toContain('streaming={active && ')
-    expect(source('components/fleet/PersistentBotViews.tsx')).toContain('active={bot.id === activeView?.botId}')
+    // Only the bot of the server the Bots tab shows is active: a bot of the same id on another server is not.
+    expect(source('components/fleet/PersistentBotViews.tsx')).toContain('active={key === activeKey}')
     expect(source('components/fleet/BotChatHeader.tsx')).toContain('<ChatWindowButton')
     const sheet = source('components/fleet/BotSettingsSheet.tsx')
     expect(sheet).toContain('<BotSettings')
@@ -186,7 +187,7 @@ describe('fleet renderer wiring', () => {
     for (const text of [
       'environmentUpdateState(',
       'updateBlockers(',
-      "fleetEnvironmentUpdate(environment.id, 'now')",
+      "fleetEnvironmentUpdate(serverId, environment.id, 'now')",
       "fleet.updateEnvironment(environment.id, 'idle')",
       'fleet.cancelEnvironmentUpdate(environment.id)',
       "t('updates.cancel')",
@@ -274,28 +275,42 @@ describe('fleet provisioning wiring', () => {
   })
   it('signs a workspaces host in to subscriptions through its environment, which brings the page to this computer', () => {
     const host = {
+      id: 'srv-1/personal',
       remote: true,
       environment: { id: 'personal', lifecycle: 'running' as const, updateAvailable: false },
     }
+    // The sign-in goes through the host's own server.
+    const serverId = 'srv-1'
     expect(environmentSubscriptionLogin('antigravity-subscription', host)).toEqual({
       kind: 'antigravity',
       environmentId: 'personal',
+      serverId,
     })
     expect(environmentSubscriptionLogin('claude-subscription', host)).toEqual({
       kind: 'claude',
       environmentId: 'personal',
+      serverId,
     })
     expect(environmentSubscriptionLogin('codex-subscription', host)).toEqual({
       kind: 'codex',
       environmentId: 'personal',
+      serverId,
     })
-    expect(environmentSubscriptionLogin('grok-subscription', host)).toEqual({ kind: 'grok', environmentId: 'personal' })
+    expect(environmentSubscriptionLogin('grok-subscription', host)).toEqual({
+      kind: 'grok',
+      environmentId: 'personal',
+      serverId,
+    })
     // Their pages call nothing back on this computer: the host signs them in itself.
     expect(environmentSubscriptionLogin('github-copilot-subscription', host)).toBeNull()
     expect(environmentSubscriptionLogin('cursor-subscription', host)).toBeNull()
     // This computer signs itself in, and a host reached without a server has no environment to relay.
-    expect(environmentSubscriptionLogin('antigravity-subscription', { remote: false, environment: null })).toBeNull()
-    expect(environmentSubscriptionLogin('antigravity-subscription', { remote: true, environment: null })).toBeNull()
+    expect(
+      environmentSubscriptionLogin('antigravity-subscription', { id: 'local', remote: false, environment: null })
+    ).toBeNull()
+    expect(
+      environmentSubscriptionLogin('antigravity-subscription', { id: 'direct/host', remote: true, environment: null })
+    ).toBeNull()
     const account = source('components/chat/accounts/SubscriptionAccount.tsx')
     expect(account).toContain('environmentSubscriptionLogin(providerKind, host)')
     expect(account).toMatch(/if \(environmentLogin\) \{\s*setEnvironmentLoginOpen\(true\)\s*return\s*\}/)

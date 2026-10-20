@@ -17,7 +17,7 @@ import {
   Square,
   Trash2,
 } from 'lucide-react'
-import type { FleetBot, FleetPeerThread } from '@maestrly/bot-fleet-protocol'
+import { fleetLaneTurn, type FleetBot, type FleetPeerThread } from '@maestrly/bot-fleet-protocol'
 import { ChatComposer } from '@/components/chat/ChatComposer'
 import { Button } from '@/components/ui/button'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
@@ -159,10 +159,13 @@ export function PeerThreadConversation({
   onOpenMain: () => void
   onDelete: () => void
 }) {
+  const serverId = fleet.serverId
   const { t, i18n } = useTranslation('fleet')
   const state = threadState(thread, bot)
   const own = thread.conversation === 'own'
   const working = threadWorking(thread, bot)
+  // Compacting shows no tool and can take minutes: without this line the thread would only say it works.
+  const compacting = fleetLaneTurn({ turns: bot.turns ?? null, runningRun: bot.runningRun }, thread.id)?.compacting
   const transcript = fleet.state.runTranscripts[runTranscriptKey(bot.id, thread.id)] ?? emptyTranscript
   const { ensureThreadTranscript, loadThreadTranscript, dispatch } = fleet
   useEffect(() => {
@@ -193,7 +196,7 @@ export function PeerThreadConversation({
     setBusy(true)
     setError(null)
     try {
-      await window.api.fleetSendPeerThreadMessage(bot.id, thread.id, value)
+      await window.api.fleetSendPeerThreadMessage(serverId, bot.id, thread.id, value)
       setDraft('')
       setFollow((count) => count + 1)
       await load().catch(() => {})
@@ -206,7 +209,7 @@ export function PeerThreadConversation({
   const patch = async (change: { pinned?: boolean; resume?: true }) => {
     setError(null)
     try {
-      const updated = await window.api.fleetPatchPeerThread(bot.id, thread.id, change)
+      const updated = await window.api.fleetPatchPeerThread(serverId, bot.id, thread.id, change)
       dispatch({ type: 'threads.upsert', botId: bot.id, thread: updated })
     } catch (cause) {
       setError(describe(cause))
@@ -289,7 +292,9 @@ export function PeerThreadConversation({
               className={cn(action, 'border border-border-strong text-foreground')}
               // This bot's turn in the thread stops; its other conversations keep working.
               onClick={() =>
-                void window.api.fleetCancelTurn(bot.id, thread.id).catch((cause) => setError(fleetErrorMessage(cause)))
+                void window.api
+                  .fleetCancelTurn(serverId, bot.id, thread.id)
+                  .catch((cause) => setError(fleetErrorMessage(cause)))
               }
             >
               <Square aria-hidden="true" className="size-3" />
@@ -358,6 +363,12 @@ export function PeerThreadConversation({
         placeholder={own ? undefined : <DeletedThread bot={bot} thread={thread} />}
         footer={
           <>
+            {compacting && (
+              <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Loader2 aria-hidden="true" className="size-3.5 animate-spin motion-reduce:animate-none" />
+                {t('threads.detail.compacting', { name: bot.name })}
+              </p>
+            )}
             {thread.peerWorking && (
               <p className="flex items-center gap-2 text-xs text-muted-foreground">
                 <ArrowRightLeft aria-hidden="true" className="size-3.5" />

@@ -21,14 +21,15 @@ export function BotServerManualSetup({ fleet, onBack }: { fleet: FleetController
     setBusy(true)
     setError(null)
     try {
-      const result = await window.api.fleetConnect({
-        url: url.trim(),
-        code,
-        deviceName: deviceName.trim() || defaultDeviceName,
-      })
-      fleet.dispatch({ type: 'connection', value: result })
+      // A server that refused this computer is paired again under its own id; otherwise a server is added. The
+      // window follows the server list that main broadcasts.
+      const state = fleet.state.connection.state
+      const again = state === 'unauthorized' || state === 'incompatible' ? fleet.serverId : undefined
+      await window.api.fleetConnect(
+        { url: url.trim(), code, deviceName: deviceName.trim() || defaultDeviceName },
+        again
+      )
       setCode('')
-      fleet.dispatch({ type: 'snapshot', value: await window.api.fleetGetSnapshot() })
     } catch (cause) {
       setError(fleetErrorMessage(cause))
     } finally {

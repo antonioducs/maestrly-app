@@ -2,6 +2,7 @@ import { z } from 'zod'
 import type { FleetInstallRecord } from '../../../shared/fleet-installer'
 import { isSecureStorageAvailable, secureGet, secureRemove, secureSet } from '../../secure-store'
 import { getAppSetting, setAppSetting } from '../../store'
+import { isFleetServerId } from '../../../shared/fleet-servers'
 
 /**
  * What Maestrly installed, in app settings (no secret), and its SSH key to a VPS, in the OS keyring. Without secure
@@ -14,6 +15,8 @@ let memoryKey: string | null = null
 const port = z.number().int().min(1).max(65535)
 const recordSchema = z
   .object({
+    /** The paired server this installation is; earlier versions did not name it. */
+    serverId: z.string().refine(isFleetServerId).optional(),
     mode: z.enum(['local', 'remote']),
     version: z.string().min(1).max(128).nullable(),
     port,

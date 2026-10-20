@@ -24,11 +24,13 @@ import {
   useSettingsDraft,
   type EnvironmentSettingsSectionProps,
 } from './shared'
+import { bindFleetServer, useFleetServerId } from '@/lib/fleet/server-context'
 type Server = FleetSettingsOutput<'mcpServer'>
 export function EnvironmentMcp(props: EnvironmentSettingsSectionProps) {
   return <McpPanel key={props.environment.id} {...props} />
 }
 function McpPanel({ environment, fleet, onDirtyChange }: EnvironmentSettingsSectionProps) {
+  const serverId = useFleetServerId()
   const { t } = useTranslation('fleet')
   const resource = useEnvironmentSettingsResource(environment.id, 'mcpServers')
   const [editing, setEditing] = useState<Server | 'new' | null>(null)
@@ -55,8 +57,13 @@ function McpPanel({ environment, fleet, onDirtyChange }: EnvironmentSettingsSect
     void loadAuth()
   }, [loadAuth, resource.data])
   const accounts = useMemo(
-    () => environmentMcpAccounts(environment.id, resource.source, window.api.fleetEnvironmentPlugins),
-    [environment.id, resource.source]
+    () =>
+      environmentMcpAccounts(
+        environment.id,
+        resource.source,
+        bindFleetServer(window.api.fleetEnvironmentPlugins, serverId)
+      ),
+    [serverId, environment.id, resource.source]
   )
   async function act(action: () => Promise<unknown>) {
     if (!online || busy) return

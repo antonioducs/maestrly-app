@@ -640,9 +640,10 @@ test('detached fleet bot keeps its draft and receives transcript and question up
       sendJson(500, { code: 'INTERNAL', message: 'Invalid synthetic gateway fixture' })
     }
   })
+  let paired: { id: string } | undefined
   try {
     await new Promise<void>((resolve) => gateway.listen(0, '127.0.0.1', resolve))
-    await api(page, 'fleetConnect', {
+    paired = await api(page, 'fleetConnect', {
       url: `http://127.0.0.1:${(gateway.address() as { port: number }).port}`,
       code: 'ABCDEFGH',
       deviceName: 'Detached test',
@@ -720,7 +721,7 @@ test('detached fleet bot keeps its draft and receives transcript and question up
     await expect(page.getByText('Fleet incremental complete.', { exact: true })).toBeVisible()
     expect(failures).toEqual([])
   } finally {
-    await api(page, 'fleetDisconnect').catch(() => undefined)
+    if (paired) await api(page, 'fleetDisconnect', paired.id).catch(() => undefined)
     for (const response of streams) response.destroy()
     gateway.closeAllConnections()
     await new Promise<void>((resolve) => gateway.close(() => resolve()))

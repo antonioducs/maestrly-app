@@ -59,6 +59,19 @@ export function resolveReasoningPolicy(input: ResolveReasoningInput): ResolvedRe
 }
 
 /**
+ * Efforts a BYOK turn offers and may send. A profile manifest owns the axis, narrowed by the catalog when the
+ * catalog lists any; without a manifest the catalog stays authoritative. The picker and the runner share it, so
+ * the interface never offers a tier the turn would drop.
+ */
+export function offeredReasoningEfforts(
+  policy: Pick<ResolvedReasoningPolicy, 'manifestEfforts' | 'effectiveEfforts'>,
+  catalogEfforts: readonly string[] | undefined
+): string[] {
+  if (!policy.manifestEfforts) return [...(catalogEfforts ?? [])]
+  return policy.effectiveEfforts.filter((effort) => !catalogEfforts?.length || catalogEfforts.includes(effort))
+}
+
+/**
  * Value actually sent to the provider. Interface resets ('off'/'default') clear the override
  * instead of becoming an effort, and a manifest never serializes a tier it excludes.
  */

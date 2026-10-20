@@ -155,7 +155,7 @@ export function registerBotInstanceTools(
     'bot_peers_send',
     {
       description:
-        'Send a concise message to another bot by bot ID. The owner reads it rendered as Markdown: give a longer message short headings, lists or a table instead of one long paragraph. A message to a bot you are not already talking with here opens a conversation of its own with it, apart from this one, named by topic; its replies come there, and messages you send from it to the same bot stay in it. Use only when coordination is useful; do not keep retrying rate limits.',
+        'Send a concise message to another bot by bot ID. The owner reads it rendered as Markdown: give a longer message short headings, lists or a table instead of one long paragraph. A message to a bot you are not already talking with here opens a conversation of its own with it, apart from this one, named by topic; its replies come there, and messages you send from it to the same bot stay in it. Use only when coordination is useful; do not keep retrying rate limits. Answer another bot only when it moves the work forward, never to thanks or confirmations: not sending ends the exchange.',
       inputSchema: {
         to: fleetBotIdSchema,
         text: fleetPeerTextSchema,

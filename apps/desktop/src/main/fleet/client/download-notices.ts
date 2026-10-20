@@ -1,11 +1,12 @@
 import { BrowserWindow, Notification, shell, type WebContents } from 'electron'
 import type { FleetDownloadFileKey } from '../../../shared/fleet-downloads'
+import type { FleetServerId } from '../../../shared/fleet-servers'
 import { tMain } from '../../i18n'
 import { focusMainWindow } from '../../window-ipc'
 import type { FleetSettledDownload } from './active-downloads'
 import { fleetDownloadPath } from './download-history'
 
-const keyOf = (file: FleetDownloadFileKey) => file.botId + '\n' + file.fileId
+const keyOf = (file: FleetDownloadFileKey) => file.serverId + '\n' + file.botId + '\n' + file.fileId
 /** The files each window shows, as it last reported them. */
 const attended = new Map<WebContents, Set<string>>()
 // Electron drops a notification's click handler once nothing references it.
@@ -34,8 +35,12 @@ function isAttended(file: FleetDownloadFileKey): boolean {
 }
 
 /** A system notification for a bot file that finished while the owner was elsewhere; clicking it shows the file. */
-export function noticeFleetDownload(download: FleetSettledDownload, botName: string | null): void {
-  if (isAttended(download) || !Notification.isSupported()) return
+export function noticeFleetDownload(
+  serverId: FleetServerId,
+  download: FleetSettledDownload,
+  botName: string | null
+): void {
+  if (isAttended({ serverId, botId: download.botId, fileId: download.fileId }) || !Notification.isSupported()) return
   const t = tMain('fleet')
   const name = download.name ?? t('files.notice.unknownFile')
   const notification = new Notification({

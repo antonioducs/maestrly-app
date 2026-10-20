@@ -16,10 +16,12 @@ import { fleetErrorMessage } from '@/lib/fleet/errors'
 import { initialPhoneAddress, phoneAddressError, secondsLeft } from '@/lib/fleet/pair-phone'
 import { cn } from '@/lib/utils'
 import { QrCode } from './QrCode'
+import { useFleetServerId } from '@/lib/fleet/server-context'
 
 const formatTime = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
 
 export function PairPhoneDialog({ serverUrl, onClose }: { serverUrl: string | null; onClose: () => void }) {
+  const serverId = useFleetServerId()
   const { t } = useTranslation('fleet')
   const [address, setAddress] = useState(() => initialPhoneAddress(serverUrl))
   const [touched, setTouched] = useState(false)
@@ -32,7 +34,7 @@ export function PairPhoneDialog({ serverUrl, onClose }: { serverUrl: string | nu
     setBusy(true)
     setError(null)
     try {
-      setPairing(await window.api.fleetCreatePairing())
+      setPairing(await window.api.fleetCreatePairing(serverId))
       setNow(Date.now())
     } catch (cause) {
       const message = fleetErrorMessage(cause)

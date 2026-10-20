@@ -707,7 +707,12 @@ export function SubscriptionAccount({
       {provider && signedIn && <ProviderModelFilter providerId={provider.id} onFilterChanged={onModelFilterChanged} />}
       {environmentLogin && environmentLoginOpen && (
         <BotLoginDialog
-          subject={{ target: { environmentId: environmentLogin.environmentId }, name: host.label, running: true }}
+          subject={{
+            target: { environmentId: environmentLogin.environmentId },
+            name: host.label,
+            running: true,
+            serverId: environmentLogin.serverId,
+          }}
           kind={environmentLogin.kind}
           slot={accountId ?? 'default'}
           open

@@ -36,7 +36,23 @@ import { deleteConversation, getAppSetting, getConversation } from '../../src/ma
 import type { DisplaySurface } from '../../src/main/fleet/instance/displays'
 import type { ScreenSession } from '../../src/main/fleet/instance/screen-session'
 import type { ScreenFocusOwner } from '../../src/main/screen-focus'
+import { realFs } from '../../src/main/real-fs'
 import { closeDb, freshDb } from '../helpers/db'
+
+// Environments run in Electron, whose `node:fs` takes a real `*.asar` file for an archive; `original-fs` does not.
+vi.mock('node:fs', async (importOriginal) =>
+  (await import('../helpers/electron-asar-fs')).electronFs(await importOriginal<typeof import('node:fs')>())
+)
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const { electronFsPromises } = await import('../helpers/electron-asar-fs')
+  const fs = await vi.importActual<typeof import('node:fs')>('node:fs')
+  const promises = electronFsPromises(await importOriginal<typeof import('node:fs/promises')>(), fs)
+  return { ...promises, default: promises }
+})
+vi.mock('../../src/main/real-fs', async () => {
+  const fs = await vi.importActual<typeof import('node:fs')>('node:fs')
+  return { realFs: fs, realFileSystem: () => fs }
+})
 
 const model = {
   providerId: 'synthetic',
@@ -59,6 +75,8 @@ const exists = (file: string) =>
     () => true,
     () => false
   )
+const ASAR = Buffer.from([4, 0, 0, 0, 0x61, 0x73, 0x61, 0x72])
+const ASAR_PATH = ['site', 'node_modules', 'electron', 'dist', 'resources', 'default_app.asar']
 
 let dir = ''
 const runtimes: EnvironmentRuntime[] = []
@@ -169,6 +187,8 @@ async function seededBot(env: Environment) {
     [path.join(cwd, 'site', '.git', 'HEAD')]: 'ref: refs/heads/main\n',
     [path.join(cwd, 'site', '.git', 'config')]: '[core]\n\tbare = false\n',
     [path.join(cwd, 'site', 'node_modules', 'tool', 'cli.js')]: '#!/usr/bin/env node\n',
+    // An installed `electron` package ships an archive, which is a plain file of the bot's like any other.
+    [path.join(cwd, ...ASAR_PATH)]: ASAR,
     [path.join(cwd, 'draft.tmp')]: 'Draft\n',
   }
   for (const [file, content] of Object.entries(files)) {
@@ -260,7 +280,7 @@ afterEach(async () => {
   for (const runtime of runtimes.splice(0)) await runtime.dispose()
   vi.restoreAllMocks()
   closeDb()
-  await rm(dir, { recursive: true, force: true })
+  await realFs.promises.rm(dir, { recursive: true, force: true })
 })
 
 describe('moving a bot between environments', () => {
@@ -279,6 +299,10 @@ describe('moving a bot between environments', () => {
     const pkg = await exported(work, path.join(dir, 'alpha.tar.zst'))
     // The export kept no copy: its staging folder goes once the package was sent.
     await vi.waitFor(async () => expect(await readdir(path.join(work.userData, 'bot-moves'))).toEqual([]))
+    // Once the bot arrived elsewhere, its former copy goes whole, the archive of its working folder too.
+    const former = getConversation(conversationId)!.cwd
+    expect((await work.request('DELETE', '/v1/bots/alpha?purge=1')).status).toBe(204)
+    expect(await exists(former)).toBe(false)
     await leave(work)
 
     const home = await environment('home')
@@ -305,6 +329,7 @@ describe('moving a bot between environments', () => {
     )
     expect(await readFile(path.join(conversation.cwd, 'site', '.git', 'HEAD'), 'utf8')).toBe('ref: refs/heads/main\n')
     expect(await readFile(path.join(conversation.cwd, 'draft.tmp'), 'utf8')).toBe('Draft\n')
+    expect(await realFs.promises.readFile(path.join(conversation.cwd, ...ASAR_PATH))).toEqual(ASAR)
     for (const folder of [['site', '.git', 'refs', 'tags'], ['site', '.git', 'objects', 'pack'], ['uploads']])
       expect((await stat(path.join(conversation.cwd, ...folder))).isDirectory(), folder.join('/')).toBe(true)
     if (process.platform !== 'win32') {

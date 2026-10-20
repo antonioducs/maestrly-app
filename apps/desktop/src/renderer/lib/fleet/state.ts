@@ -10,6 +10,7 @@ import {
   type FleetTranscriptPage,
 } from '@maestrly/bot-fleet-protocol'
 import type { FleetConnectionView, FleetSnapshot } from '../../../preload/api-fleet'
+import type { FleetServerId } from '../../../shared/fleet-servers'
 import { compareByName } from './selectors'
 
 export type TranscriptState = FleetTranscriptPage & {
@@ -471,4 +472,19 @@ export function fleetReducer(state: FleetState, action: FleetAction): FleetState
       }
     }
   }
+}
+
+/** The state of every paired server, by its id. */
+export type FleetServersState = Readonly<Record<string, FleetState>>
+export type FleetServersAction =
+  | { serverId: FleetServerId; action: FleetAction }
+  | { type: 'retain'; ids: readonly FleetServerId[] }
+export function fleetServersReducer(state: FleetServersState, action: FleetServersAction): FleetServersState {
+  if ('type' in action) {
+    const kept = Object.fromEntries(Object.entries(state).filter(([id]) => action.ids.includes(id as FleetServerId)))
+    return Object.keys(kept).length === Object.keys(state).length ? state : kept
+  }
+  const previous = state[action.serverId] ?? initialFleetState
+  const next = fleetReducer(previous, action.action)
+  return next === previous ? state : { ...state, [action.serverId]: next }
 }

@@ -78,6 +78,8 @@ export interface ClaudeToolBridge {
   toolAliases: Record<string, string>
   toolSignature: string
   nameFromSdk: (name: string) => string
+  /** The arguments of a call as the Maestrly tool receives them, with the types an alias call lost restored. */
+  inputFromSdk: (name: string, input: unknown) => unknown
   preToolUseHook: HookCallbackMatcher
   /** Retrieves the canonical host result after the provider-facing projection has been sent. */
   takeToolOutput: (toolCallId: string) => ToolOutput | undefined
@@ -87,6 +89,84 @@ type JsonSchema = Record<string, unknown>
 
 function schemaRecord(value: unknown): JsonSchema {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as JsonSchema) : {}
+}
+
+type JsonKind = 'string' | 'number' | 'boolean' | 'null' | 'array' | 'object'
+
+function jsonKind(value: unknown): JsonKind | null {
+  if (value === null) return 'null'
+  if (Array.isArray(value)) return 'array'
+  const kind = typeof value
+  return kind === 'string' || kind === 'number' || kind === 'boolean' || kind === 'object' ? kind : null
+}
+
+/** The kinds of JSON value a schema accepts, read the way jsonSchemaToZod builds its validator. */
+function schemaKinds(raw: unknown): Set<JsonKind> {
+  const schema = schemaRecord(raw)
+  const kinds = new Set<JsonKind>()
+  const add = (kind: JsonKind | null) => kind && kinds.add(kind)
+  if (schema.const !== undefined) add(jsonKind(schema.const))
+  else if (Array.isArray(schema.enum) && schema.enum.length > 0) for (const value of schema.enum) add(jsonKind(value))
+  else {
+    const alternatives = [
+      ...(Array.isArray(schema.anyOf) ? schema.anyOf : Array.isArray(schema.oneOf) ? schema.oneOf : []),
+      ...(Array.isArray(schema.allOf) ? schema.allOf : []),
+    ]
+    if (alternatives.length)
+      for (const alternative of alternatives) for (const kind of schemaKinds(alternative)) add(kind)
+    else {
+      const types = Array.isArray(schema.type) ? schema.type : [schema.type]
+      for (const type of types) {
+        if (type === 'integer' || type === 'number') add('number')
+        else if (type === 'string' || type === 'boolean' || type === 'null' || type === 'array') add(type)
+        else add('object')
+      }
+    }
+  }
+  if (schema.nullable === true) add('null')
+  return kinds
+}
+
+/**
+ * Restores the JSON types of arguments the Claude API returned as strings. The API types a tool call's arguments only
+ * when the model names a tool it was given; a call by an alias (`bash` for `mcp__maestrly__bash`, which seeded
+ * transcripts and prompts teach the model) arrives with every argument a string: `"limit": "50"`, `"tags": "[\"a\"]"`.
+ * A string the schema accepts stays as it is, and one that does not parse to a kind the schema accepts is left for the
+ * validator to reject.
+ */
+export function coerceToolInput(schema: unknown, value: unknown): unknown {
+  const record = schemaRecord(schema)
+  if (typeof value === 'string') {
+    const kinds = schemaKinds(record)
+    if (kinds.has('string')) return value
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(value)
+    } catch {
+      return value
+    }
+    const kind = jsonKind(parsed)
+    return kind && kinds.has(kind) ? coerceToolInput(record, parsed) : value
+  }
+  if (Array.isArray(value)) {
+    return record.items === undefined ? value : value.map((item) => coerceToolInput(record.items, item))
+  }
+  if (value && typeof value === 'object') {
+    const properties = schemaRecord(record.properties)
+    if (Object.keys(properties).length === 0) return value
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [
+        key,
+        Object.hasOwn(properties, key) ? coerceToolInput(properties[key], entry) : entry,
+      ])
+    )
+  }
+  return value
+}
+
+function withStringCoercion(schema: unknown, type: z.ZodType): z.ZodType {
+  if (schemaKinds(schema).has('string')) return type
+  return z.preprocess((value) => coerceToolInput(schema, value), type)
 }
 
 /**
@@ -144,7 +224,8 @@ function jsonSchemaToZod(raw: unknown): z.ZodType {
       )
       const shape: Record<string, z.ZodType> = {}
       for (const [name, property] of Object.entries(properties)) {
-        const converted = jsonSchemaToZod(property)
+        // The preprocess leaves the JSON Schema the SDK publishes to the model unchanged.
+        const converted = withStringCoercion(property, jsonSchemaToZod(property))
         shape[name] = required.has(name) ? converted : converted.optional()
       }
       const object = z.object(shape)
@@ -199,6 +280,11 @@ export async function buildClaudeToolBridge(
   const definitions: SdkMcpToolDefinition<any>[] = []
   const canonicalOutputs = new Map<string, ToolOutput>()
   const signatureRows: Array<{ name: string; description: string; schema: unknown; eager: boolean }> = []
+  const inputSchemas = new Map<string, unknown>()
+  const inputFromSdk = (sdkName: string, input: unknown): unknown => {
+    const name = stripQualifiedName(sdkName)
+    return inputSchemas.has(name) ? coerceToolInput(inputSchemas.get(name), input) : input
+  }
   const verifiedIds = new Set<string>()
   const verifiedKeys = new Map<string, string>()
   const verifiedByInput = new Map<string, string[]>()
@@ -208,7 +294,8 @@ export async function buildClaudeToolBridge(
     if (!toolCallId || (!journal && verifiedIds.has(toolCallId))) return
     verifiedIds.add(toolCallId)
     const name = stripQualifiedName(sdkName)
-    const key = callKey(name, input)
+    // The MCP callback receives the coerced arguments, so the hook keys the call by them too.
+    const key = callKey(name, inputFromSdk(sdkName, input))
     if (journal) {
       const prior = verifiedKeys.get(toolCallId)
       if (prior && prior !== key) throw new Error(`Conflicting Claude tool call: ${toolCallId}`)
@@ -272,6 +359,7 @@ export async function buildClaudeToolBridge(
     if (!aiTool.execute || !aiTool.inputSchema) continue
     const schema = asSchema(aiTool.inputSchema)
     const jsonSchema = await schema.jsonSchema
+    inputSchemas.set(name, jsonSchema)
     const zodObject = jsonSchemaToZod(jsonSchema)
     const inputShape = zodObject instanceof z.ZodObject ? zodObject.shape : { input: zodObject }
     const description = typeof aiTool.description === 'string' ? aiTool.description : `Maestrly tool ${name}.`
@@ -354,6 +442,7 @@ export async function buildClaudeToolBridge(
     toolAliases,
     toolSignature: createHash('sha256').update(JSON.stringify(signatureRows)).digest('hex'),
     nameFromSdk: stripQualifiedName,
+    inputFromSdk,
     takeToolOutput: (toolCallId) => {
       const output = canonicalOutputs.get(toolCallId)
       canonicalOutputs.delete(toolCallId)

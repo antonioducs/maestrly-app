@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { describe, expect, it, vi } from 'vitest'
 import { ChatWindowManager } from '../../src/main/chat-window-manager'
+import type { ChatWindowTarget } from '../../src/shared/chat-window'
 
 function contents() {
   let handler = (_details: {
@@ -23,8 +24,12 @@ function setup() {
   const owner = contents()
   let now = 0
   const focusSource = vi.fn()
+  const asked: ChatWindowTarget[] = []
   const manager = new ChatWindowManager(owner as never, {
-    targetExists: ({ id }) => id !== 'missing',
+    targetExists: (target) => {
+      asked.push(target)
+      return target.id !== 'missing'
+    },
     workArea: () => ({ x: 0, y: 0, width: 1000, height: 900 }),
     now: () => now,
     focusSource,
@@ -60,6 +65,7 @@ function setup() {
     prepare,
     create,
     focusSource,
+    asked,
     advance: () => {
       now += 15_001
     },
@@ -80,6 +86,18 @@ describe('ChatWindowManager', () => {
     ]) {
       expect(() => s.manager.prepare(s.event, request)).toThrow('target')
     }
+  })
+  it("opens one window per server's bot, keyed by both, and refuses a bot without a valid server", () => {
+    const s = setup()
+    const A = 'aaaaaaaa-0000-4000-8000-000000000001'
+    const B = 'bbbbbbbb-0000-4000-8000-000000000002'
+    const onA = s.manager.prepare(s.event, { kind: 'bot', serverId: A, id: 'alex', title: 'Alex' })
+    const onB = s.manager.prepare(s.event, { kind: 'bot', serverId: B, id: 'alex', title: 'Alex' })
+    expect([onA.key, onB.key]).toEqual([`bot:${A}/alex`, `bot:${B}/alex`])
+    expect(onA.frameName).not.toBe(onB.frameName)
+    expect(s.asked.at(-1)).toMatchObject({ kind: 'bot', serverId: B, id: 'alex' })
+    for (const serverId of [undefined, '', 'Server/1', 7])
+      expect(() => s.manager.prepare(s.event, { kind: 'bot', serverId, id: 'alex', title: 'Alex' })).toThrow('target')
   })
   it('allows exact about:blank once, expires tickets, and bounds pending requests', () => {
     const s = setup()

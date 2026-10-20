@@ -22,8 +22,8 @@ export function useBotUpdates(fleet: FleetController): {
   const { status: installer } = useFleetInstaller()
   const { connection, snapshot } = fleet.state
   const summary = useMemo(
-    () => botUpdateSummary({ installer, connection, snapshot }),
-    [installer, connection, snapshot]
+    () => botUpdateSummary({ installer, connection, snapshot, serverId: fleet.serverId }),
+    [installer, connection, snapshot, fleet.serverId]
   )
   const [starting, setStarting] = useState(false)
   const [error, setError] = useState<string | null>(null)

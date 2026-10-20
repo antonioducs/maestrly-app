@@ -1,4 +1,5 @@
 import type { FleetImageData } from '../../../preload/api-fleet'
+import type { FleetServerId } from '../../../shared/fleet-servers'
 
 type Entry = { url: string; bytes: number; users: number }
 
@@ -68,9 +69,17 @@ export function createFleetImageCache(
 }
 export type FleetImageCache = ReturnType<typeof createFleetImageCache>
 
-export const fleetImageCache: FleetImageCache = createFleetImageCache((botId, imageId, runId) =>
-  window.api.fleetGetImage(botId, imageId, runId)
-)
+const caches = new Map<FleetServerId, FleetImageCache>()
+
+/** The images of one server's bots: two servers may have bots of the same id. */
+export function fleetImageCache(serverId: FleetServerId): FleetImageCache {
+  let cache = caches.get(serverId)
+  if (!cache) {
+    cache = createFleetImageCache((botId, imageId, runId) => window.api.fleetGetImage(serverId, botId, imageId, runId))
+    caches.set(serverId, cache)
+  }
+  return cache
+}
 
 /**
  * Effect body for a component showing one image. Returns the cleanup; it releases the hold exactly once, also when

@@ -72,9 +72,11 @@ export function UserBubble({ item, note }: { item: UserItem; note?: string | nul
           ? t('user.continuation')
           : null
   const queued = item.queued
-    ? bot?.status === 'paused'
-      ? t('user.queuedPaused', { name: bot.name })
-      : t('user.queued')
+    ? item.stopped
+      ? t('user.queuedStopped')
+      : bot?.status === 'paused'
+        ? t('user.queuedPaused', { name: bot.name })
+        : t('user.queued')
     : null
   return (
     <View style={{ alignItems: 'flex-end', gap: 4 }}>

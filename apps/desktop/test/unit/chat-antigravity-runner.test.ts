@@ -98,6 +98,13 @@ const promptText = (entry: Record<string, unknown> | undefined) => {
   const params = entry?.params as { prompt?: Array<{ type: string; text?: string }> } | undefined
   return (params?.prompt ?? []).map((block) => block.text ?? '').join('\n')
 }
+/** A resumed session gets the reminder and the current environment before the message, never the catalog again. */
+const expectResumedPrompt = (prompt: string, message: string) => {
+  expect(prompt).not.toContain('<maestrly_instructions>')
+  expect(prompt).not.toContain('Your only tools are the MCP tools')
+  expect(prompt).toMatch(/^<maestrly_turn_context>\nMaestrly mode: \w+\. .+\nToday's date: \d{4}-\d{2}-\d{2}\./)
+  expect(prompt.endsWith(`</maestrly_turn_context>\n\n${message}`)).toBe(true)
+}
 const firstMcpUrl = (entry: Record<string, unknown> | undefined) => {
   const params = entry?.params as { mcpServers?: Array<{ url: string }> } | undefined
   return params?.mcpServers?.[0]?.url
@@ -240,7 +247,7 @@ describe('Antigravity chat runner', () => {
       fake.requests('session/new').filter((entry) => (entry.params as { mcpServers: unknown[] }).mcpServers.length)
     ).toHaveLength(1)
     expect(fake.requests('session/resume')).toHaveLength(0)
-    expect(promptText(fake.requests('session/prompt').at(-1))).toBe('ECHO two')
+    expectResumedPrompt(promptText(fake.requests('session/prompt').at(-1)), 'ECHO two')
   })
 
   it('starts a new seeded session when the tool set changes', async () => {
@@ -313,7 +320,7 @@ describe('Antigravity chat runner', () => {
     expect(resumedUrl).not.toBe(firstUrl)
     const log = fake.log().map((entry) => entry.method)
     expect(log.lastIndexOf('session/set_config_option')).toBeGreaterThan(log.lastIndexOf('session/resume'))
-    expect(promptText(fake.requests('session/prompt').at(-1))).toBe('ECHO after')
+    expectResumedPrompt(promptText(fake.requests('session/prompt').at(-1)), 'ECHO after')
   })
 
   it('selects the ACP model variant for the requested effort', async () => {

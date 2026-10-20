@@ -1635,7 +1635,7 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
         context = null
         sessionId = ''
         sessionAccepted = false
-        streamMapper = createClaudeStreamMapper(assistantId, runtime!.bridge.nameFromSdk)
+        streamMapper = createClaudeStreamMapper(assistantId, runtime!.bridge.nameFromSdk, runtime!.bridge.inputFromSdk)
         currentAttemptUsageArchived = false
         queryAbortController = new AbortController()
         state.queryAbortController = queryAbortController
@@ -1741,7 +1741,7 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
           closeQuery()
           return true
         }
-        streamMapper = createClaudeStreamMapper(assistantId, runtime.bridge.nameFromSdk)
+        streamMapper = createClaudeStreamMapper(assistantId, runtime.bridge.nameFromSdk, runtime.bridge.inputFromSdk)
         currentAttemptUsageArchived = false
         const applyMappedEvents = (events: readonly ChatStreamEvent[]): void => {
           for (const event of events) {

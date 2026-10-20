@@ -712,6 +712,7 @@ export default {
     environmentNotRunning: 'Este ambiente não está rodando. Inicie-o antes.',
     botNotRunning: 'Este bot não está rodando.',
     screenOffline: 'Esta tela está offline: o bot ou o ambiente dela não está rodando.',
+    serverUnknown: 'Este servidor de bots não está mais pareado.',
   },
   conversation: { recalled: 'Lembrou: {{titles}}' },
   transcript: {
@@ -765,6 +766,9 @@ export default {
       repeated: 'Mesmas instruções da execução anterior',
     },
     queued: 'Na fila',
+    stopped: 'Parada · escreva aqui para continuar',
+    stoppedHint:
+      'Você parou esta conversa. Ela espera até você escrever aqui: sua mensagem vai primeiro, depois esta. Remova para descartar.',
     removeQueued: 'Remover mensagem da fila',
     edit: {
       action: 'Editar e reenviar',
@@ -803,6 +807,12 @@ export default {
       codex: 'Todas as contas Codex da lista de troca atingiram o limite de uso.',
       until: 'O bot tenta de novo às {{time}}; a mensagem continua na fila.',
       queued: 'O bot tenta de novo mais tarde; a mensagem continua na fila.',
+    },
+    contextFailed: {
+      compaction:
+        'Não foi possível compactar o contexto desta conversa. O bot tenta de novo mais tarde; a mensagem continua na fila.',
+      overflow:
+        'Esta conversa não cabe mais no contexto do modelo, nem compactada. O bot tenta de novo mais tarde; a mensagem continua na fila.',
     },
   },
   interaction: {
@@ -1840,6 +1850,7 @@ export default {
     summary: {
       running: 'Rodando · {{activity}}',
       runningStart: 'Rodando',
+      compacting: 'Compactando o contexto',
       queued: 'Aguarda o turno em andamento',
       deleted: 'Conversa excluída.',
       cancelled: 'Você interrompeu esta execução.',
@@ -2046,6 +2057,7 @@ export default {
       hops: '{{used}} de {{count}} mensagens sem você',
       hopsTitle: 'Mensagens seguidas entre os bots sem uma sua. Em {{count}}, a conversa pausa e espera você.',
       peerWorking: '{{peer}} está respondendo na própria conversa.',
+      compacting: '{{name}} está compactando o contexto desta conversa antes de seguir.',
       transcriptFailed: 'Não foi possível carregar esta conversa.',
     },
     actions: {

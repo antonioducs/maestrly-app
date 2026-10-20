@@ -5,6 +5,7 @@ vi.mock('../../src/main/platform', () => ({ playSound }))
 
 import { AgentRegistry } from '../../src/main/agent-registry'
 import { coerceSoundSettings, DEFAULT_SOUND_SETTINGS } from '../../src/shared/sound'
+import { fleetKey, type FleetServerId } from '../../src/shared/fleet-servers'
 
 describe('AgentRegistry Chat-only', () => {
   beforeEach(() => playSound.mockClear())
@@ -66,6 +67,15 @@ describe('AgentRegistry Chat-only', () => {
     registry.setSoundSettings({ ...DEFAULT_SOUND_SETTINGS, muted: true })
     registry.playBotAlert('crm', 'ready')
     expect(playSound).toHaveBeenCalledTimes(3)
+  })
+
+  it('keeps apart the alerts of bots of the same id on two servers', () => {
+    const registry = new AgentRegistry()
+    registry.setSoundSettings(DEFAULT_SOUND_SETTINGS)
+    playSound.mockClear()
+    registry.playBotAlert(fleetKey('aaaaaaaa-0000-4000-8000-000000000001' as FleetServerId, 'alex'), 'ready')
+    registry.playBotAlert(fleetKey('bbbbbbbb-0000-4000-8000-000000000002' as FleetServerId, 'alex'), 'ready')
+    expect(playSound).toHaveBeenCalledTimes(2)
   })
 
   it('reads the bot switch from stored settings, on unless turned off', () => {

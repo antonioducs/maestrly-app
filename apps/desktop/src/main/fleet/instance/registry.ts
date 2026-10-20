@@ -1,4 +1,3 @@
-import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import {
   FLEET_ENVIRONMENT_LIMITS,
@@ -7,8 +6,12 @@ import {
   type FleetInstanceProfile,
 } from '@maestrly/bot-fleet-protocol'
 import { z } from 'zod'
+import { realFs } from '../../real-fs'
 import { getAppSetting, getDb, setAppSetting, transaction } from '../../store'
 import { secureGet, secureSet } from '../../secure-store'
+
+// A bot's folders may hold files named `*.asar`: removing them must not take those for archives.
+const fs = realFs.promises
 
 /**
  * What an environment remembers about its bots. The installed list is the commit point of a bot's membership: a bot

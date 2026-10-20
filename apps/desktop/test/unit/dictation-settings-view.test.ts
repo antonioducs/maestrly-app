@@ -7,7 +7,12 @@ import {
   type DictationSettingsApi,
 } from '../../src/renderer/components/chat/dictation-settings-model'
 import enChat from '../../src/shared/i18n/en/chat'
+import type { FleetServerId } from '../../src/shared/fleet-servers'
 import ptBrChat from '../../src/shared/i18n/pt-BR/chat'
+
+const SERVER = 'aaaaaaaa-0000-4000-8000-000000000001' as FleetServerId
+const servers = (state: string, features: string[]) =>
+  vi.fn(async () => [{ id: SERVER, installed: false, connection: { state, features } }])
 
 function fakeApi(overrides: Partial<DictationSettingsApi> = {}): DictationSettingsApi {
   return {
@@ -15,7 +20,7 @@ function fakeApi(overrides: Partial<DictationSettingsApi> = {}): DictationSettin
     chatSetDictationEngine: vi.fn(async () => ({ ok: true })),
     chatSetDictationKey: vi.fn(async () => ({ ok: true as const, storage: 'secure' as const })),
     chatClearDictationKey: vi.fn(async () => ({ ok: true })),
-    fleetGetConnection: vi.fn(async () => ({ state: 'connected', features: ['dictation'] })),
+    fleetServers: servers('connected', ['dictation']),
     fleetDictation: vi.fn(async () => ({ configured: false, provider: null, keyHint: null })),
     fleetDictationUseLocal: vi.fn(async () => ({ provider: 'openai' as const, keyHint: '1234' })),
     fleetDictationRemove: vi.fn(async () => {}),
@@ -53,14 +58,10 @@ describe('dictation settings', () => {
   })
 
   it('hides the phone section without a connected server that supports dictation', async () => {
-    expect(
-      await loadDictationServer(
-        fakeApi({ fleetGetConnection: vi.fn(async () => ({ state: 'unconfigured', features: [] })) })
-      )
-    ).toEqual({
+    expect(await loadDictationServer(fakeApi({ fleetServers: servers('unconfigured', []) }))).toEqual({
       kind: 'none',
     })
-    const old = fakeApi({ fleetGetConnection: vi.fn(async () => ({ state: 'connected', features: ['phones'] })) })
+    const old = fakeApi({ fleetServers: servers('connected', ['phones']) })
     expect(await loadDictationServer(old)).toEqual({ kind: 'old' })
     expect(old.fleetDictation).not.toHaveBeenCalled()
     expect(dictationSettingsModel(openaiKey, { kind: 'none' }).phone).toBe('none')
@@ -72,6 +73,7 @@ describe('dictation settings', () => {
     const api = fakeApi({ fleetDictation: vi.fn(async () => status) })
     const server = await loadDictationServer(api)
     expect(server).toEqual({ kind: 'ready', status })
+    expect(api.fleetDictation).toHaveBeenCalledExactlyOnceWith(SERVER)
     expect(dictationSettingsModel(openaiKey, server)).toEqual({
       phone: 'ready',
       useOnPhone: true,
@@ -79,7 +81,7 @@ describe('dictation settings', () => {
       state: { key: 'settings.dictationServerState', provider: 'openai', hint: '1234' },
     })
     await createDictationSettingsActions(api).removeFromServer()
-    expect(api.fleetDictationRemove).toHaveBeenCalledOnce()
+    expect(api.fleetDictationRemove).toHaveBeenCalledExactlyOnceWith(SERVER)
   })
 
   it('offers to use the key on the phone only with an API engine and its key', () => {

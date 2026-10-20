@@ -61,7 +61,8 @@ function toolResultText(content: unknown): string {
  */
 export function createClaudeStreamMapper(
   messageId: string,
-  normalizeToolName: (toolName: string) => string
+  normalizeToolName: (toolName: string) => string,
+  normalizeToolInput: (toolName: string, input: unknown) => unknown = (_toolName, input) => input
 ): ClaudeStreamMapper {
   const startedText = new Set<string>()
   const startedReasoning = new Set<string>()
@@ -74,9 +75,10 @@ export function createClaudeStreamMapper(
   let lastAssistantModelId: string | null = null
   let latestAssistantUsage: NormalizedClaudeUsage | null = null
 
-  const ensureTool = (toolCallId: string, toolName: string, input: unknown): ChatStreamEvent[] => {
+  const ensureTool = (toolCallId: string, toolName: string, rawInput: unknown): ChatStreamEvent[] => {
     if (toolCalls.has(toolCallId)) return []
     const normalized = normalizeToolName(toolName)
+    const input = normalizeToolInput(toolName, rawInput)
     toolCalls.set(toolCallId, { name: normalized, json: '', input })
     return [
       { kind: 'tool-input-start', messageId, toolCallId, toolName: normalized },

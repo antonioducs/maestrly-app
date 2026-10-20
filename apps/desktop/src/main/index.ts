@@ -241,7 +241,7 @@ import { cleanupToolOutputs } from './chat/tool-output-store'
 import { clearAttachmentPreviews } from './chat/attachment-artifacts'
 import { registerRuntimeAssetIpc } from './runtime-assets/ipc'
 import { registerBotIpc } from './bot/ipc'
-import { registerFleetClientIpc } from './fleet/client/ipc'
+import { fleetScopedRegistrar, registerFleetClientIpc } from './fleet/client/ipc'
 import { registerFleetDesktopBridgeIpc } from './fleet/client/desktop-bridge-ipc'
 import { registerFleetInstallerIpc } from './fleet/installer/ipc'
 import { fleetInstallerService } from './fleet/installer/service'
@@ -249,7 +249,8 @@ import { ServerArtifacts } from './artifacts/server-artifacts'
 import { createDesktopSources, serverUnavailable } from './artifacts/sources'
 import { botArtifactSource, createBotSources } from './fleet/instance/artifacts'
 import { botRuntimeForConversation } from './fleet/instance'
-import { fleetClientService } from './fleet/client/service'
+import { fleetServers } from './fleet/client/servers'
+import { fleetKey } from '../shared/fleet-servers'
 import { handleFleetMediaProtocol } from './fleet/client/media-scheme'
 import { appPolicyHeaders } from './content-security-policy'
 import { isGenUiWidgetUrl } from '../shared/genui-widget'
@@ -345,8 +346,9 @@ let legacyArtifacts: LegacyArtifacts | null = null
 function initArtifacts(): void {
   let thumbnails: ThumbnailQueue | null = null
   const vault = new InviteVault()
+  // Artifacts go to the default server: the installed one, else the first paired.
   const server = new ServerArtifacts({
-    fleet: fleetClientService,
+    fleet: () => fleetServers.default(),
     viewerPort: () => fleetInstallerService.artifactsViewerPort(),
   })
   if (!isBotMode()) {
@@ -376,17 +378,23 @@ function initArtifacts(): void {
         })
   const onArtifactEvent = createArtifactEventHandler({ broadcast, soundSettings: getSoundSettings, playSound })
   if (!isBotMode())
-    fleetClientService.onArtifactEvent = (event) => {
-      void server.refresh().then(() => broadcast('artifacts:changed'))
-      if ('artifactId' in event) onArtifactEvent(event)
-      else broadcast('artifacts:changed')
-    }
+    fleetServers.setupClients((client) => {
+      client.onArtifactEvent = (event) => {
+        void server.refresh().then(() => broadcast('artifacts:changed'))
+        if ('artifactId' in event) onArtifactEvent(event)
+        else broadcast('artifacts:changed')
+      }
+    })
   const service = new ArtifactsService({
     sources,
     emitChanged: () => broadcast('artifacts:changed'),
     server: isHeadlessInstance() ? undefined : server,
     legacy: legacyArtifacts ?? undefined,
-    botName: (id) => fleetClientService.getSnapshot().bots.find((bot) => bot.id === id)?.name,
+    botName: (id) =>
+      fleetServers
+        .default()
+        ?.getSnapshot()
+        .bots.find((bot) => bot.id === id)?.name,
     vault,
     getConversation,
     workspaceName: (id) => getWorkspace(id)?.name,
@@ -683,7 +691,10 @@ async function createWindow(): Promise<void> {
   chatWindowManager = new ChatWindowManager(wc, {
     targetExists: (target) =>
       target.kind === 'bot'
-        ? fleetClientService.getSnapshot().bots.some((bot) => bot.id === target.id && bot.lifecycle !== 'archived')
+        ? (fleetServers
+            .get(target.serverId)
+            ?.getSnapshot()
+            .bots.some((bot) => bot.id === target.id && bot.lifecycle !== 'archived') ?? false)
         : !!getConversation(target.id),
     focusSource: focusMainWindow,
     workArea: (bounds) =>
@@ -967,11 +978,13 @@ function registerIpc(): void {
   registerRuntimeAssetIpc(reg, { emitChanged: (info) => broadcast('runtime-assets:changed', info) })
   registerBotIpc(reg)
   // Set before the client starts, so that the first live event already sounds.
-  fleetClientService.onAlert = (botId, alert) => registry.playBotAlert(botId, alert)
-  fleetClientService.onDownloadSettled = noticeFleetDownload
+  fleetServers.setupClients((client) => {
+    client.onAlert = (botId, alert) => registry.playBotAlert(fleetKey(client.serverId, botId), alert)
+    client.onDownloadSettled = noticeFleetDownload
+  })
   registerFleetInstallerIpc(reg)
   // Set before the client starts, so that its first stream already answers bots' desktop calls.
-  registerFleetDesktopBridgeIpc(reg, fleetClientService)
+  registerFleetDesktopBridgeIpc(fleetScopedRegistrar(reg), fleetServers)
   // On a workspaces host, the owner's computers give the bots of its server access to its projects.
   registerEnvironmentBotAccessIpc(reg, hostBotAccess)
   registerFleetClientIpc(reg)
@@ -999,7 +1012,7 @@ function registerIpc(): void {
   registerHostsIpc(reg)
   remoteEditors = new RemoteEditors({
     registry: hostRegistry,
-    fleet: fleetClientService,
+    fleet: (serverId) => fleetServers.get(serverId),
     portsFile: path.join(app.getPath('userData'), 'remote-editor-ports.json'),
     origin: () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents.id : null),
   })
@@ -1130,7 +1143,7 @@ app.whenReady().then(async () => {
   setupSessionPermissions()
   hardenBrowserSession()
   applyProdCsp()
-  handleFleetMediaProtocol(fleetClientService)
+  handleFleetMediaProtocol((serverId) => fleetServers.get(serverId))
   handleGenUiWidgetProtocol()
   registry.on('status', broadcastStatus)
   registry.setSoundSettings(getSoundSettings())

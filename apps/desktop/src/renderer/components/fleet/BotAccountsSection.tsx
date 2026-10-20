@@ -8,6 +8,7 @@ import { fleetErrorMessage } from '@/lib/fleet/errors'
 import { isEnvironmentTarget, provisioningHintKey, type ProvisioningSubject } from '@/lib/fleet/environments'
 import { MacImportDialog } from './MacImportDialog'
 import { BotLoginDialog } from './BotLoginDialog'
+import { useFleetServerId } from '@/lib/fleet/server-context'
 
 const groups = ['accounts'] as Array<'accounts'>
 /** The accounts of an environment (shared by its bots) or, before environments, of a bot. */
@@ -24,6 +25,7 @@ export function BotAccountsSection({
   children: ReactNode
   onChanged: () => Promise<void>
 }) {
+  const serverId = useFleetServerId()
   const { t } = useTranslation('fleet')
   const shared = isEnvironmentTarget(subject.target)
   const [importing, setImporting] = useState(false)
@@ -84,7 +86,7 @@ export function BotAccountsSection({
                   onClick={() =>
                     setConfirm({
                       name: item.name,
-                      remove: () => window.api.fleetRemoveAccount(subject.target, item.providerId),
+                      remove: () => window.api.fleetRemoveAccount(serverId, subject.target, item.providerId),
                     })
                   }
                 >
@@ -122,7 +124,12 @@ export function BotAccountsSection({
                     setConfirm({
                       name: item.label,
                       remove: () =>
-                        window.api.fleetRemoveBotSubscription(subject.target, item.kind, item.accountId ?? 'default'),
+                        window.api.fleetRemoveBotSubscription(
+                          serverId,
+                          subject.target,
+                          item.kind,
+                          item.accountId ?? 'default'
+                        ),
                     })
                   }
                 >

@@ -23,6 +23,7 @@ import type { MacInventory, MacImportSelection } from '../../../shared/fleet-pro
 import type { FleetController } from './use-fleet'
 import { fleetErrorMessage } from './errors'
 import { environmentOf } from './selectors'
+import { useFleetServerId } from './server-context'
 
 export type ImportGroup = 'accounts' | 'skills' | 'mcp'
 export const importGroups: ImportGroup[] = ['accounts', 'skills', 'mcp']
@@ -222,6 +223,7 @@ export function useMacInventory(enabled = true) {
 }
 /** The accounts, skills and MCP servers of an environment (shared by its bots) or a bot; a bare string is a bot. */
 export function useFleetProvisioning(target: FleetProvisioningTargetInput, enabled = true) {
+  const serverId = useFleetServerId()
   // Primitive dependencies: a target object rebuilt on every render must not refetch.
   const scope = typeof target === 'object' && 'environmentId' in target ? 'environment' : 'bot'
   const id = typeof target === 'string' ? target : 'environmentId' in target ? target.environmentId : target.botId
@@ -240,9 +242,9 @@ export function useFleetProvisioning(target: FleetProvisioningTargetInput, enabl
     const request: FleetProvisioningTarget = scope === 'environment' ? { environmentId: id } : { botId: id }
     setError('')
     void Promise.all([
-      window.api.fleetBotAccounts(request),
-      window.api.fleetBotSkills(request),
-      window.api.fleetBotMcpServers(request),
+      window.api.fleetBotAccounts(serverId, request),
+      window.api.fleetBotSkills(serverId, request),
+      window.api.fleetBotMcpServers(serverId, request),
     ])
       .then(([accounts, skills, mcp]) => {
         if (alive) setValue({ key: fleetTargetKey(request), accounts, skills: skills.skills, mcpServers: mcp.servers })
@@ -253,7 +255,7 @@ export function useFleetProvisioning(target: FleetProvisioningTargetInput, enabl
     return () => {
       alive = false
     }
-  }, [scope, id, enabled, revision])
+  }, [serverId, scope, id, enabled, revision])
   const current = value?.key === fleetTargetKey(target) && enabled ? value : null
   return { accounts: current?.accounts, skills: current?.skills, mcpServers: current?.mcpServers, error, refresh }
 }

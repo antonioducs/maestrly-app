@@ -3,29 +3,35 @@ import { open } from 'node:fs/promises'
 import { Readable } from 'node:stream'
 import { fleetBotIdSchema, fleetFileIdSchema } from '@maestrly/bot-fleet-protocol'
 import { FLEET_MEDIA_SCHEME } from '../../../shared/fleet-media'
+import { type FleetServerId, isFleetServerId } from '../../../shared/fleet-servers'
 import type { FleetMediaEntry } from './media-cache'
 
-export type FleetMediaRequest = { botId: string; fileId: string; capability: string }
+export type FleetMediaRequest = { serverId: FleetServerId; botId: string; fileId: string; capability: string }
 
 /**
- * Media URLs carry an unguessable capability bound to this run, the pairing, the bot and the file: other pages of
- * the app's session cannot name a video the owner did not open, and a URL stops working when the app restarts.
+ * Media URLs name the server and carry an unguessable capability bound to this run, the server, the pairing, the bot
+ * and the file: other pages of the app's session cannot name a video the owner did not open, and a URL stops working
+ * when the app restarts.
  */
 export class FleetMediaUrls {
   private readonly secret = randomBytes(32)
 
-  private capability(scope: string, botId: string, fileId: string): Buffer {
-    return createHmac('sha256', this.secret).update(`${scope}\0${botId}\0${fileId}`).digest().subarray(0, 16)
+  private capability(serverId: FleetServerId, scope: string, botId: string, fileId: string): Buffer {
+    return createHmac('sha256', this.secret)
+      .update(`${serverId}\0${scope}\0${botId}\0${fileId}`)
+      .digest()
+      .subarray(0, 16)
   }
 
-  url(scope: string, botId: string, fileId: string): string {
-    const capability = this.capability(scope, botId, fileId).toString('hex')
-    return `${FLEET_MEDIA_SCHEME}://fleet/${botId}/${fileId}/${capability}`
+  url(serverId: FleetServerId, scope: string, botId: string, fileId: string): string {
+    const capability = this.capability(serverId, scope, botId, fileId).toString('hex')
+    return `${FLEET_MEDIA_SCHEME}://fleet/${serverId}/${botId}/${fileId}/${capability}`
   }
 
-  verify(scope: string, request: FleetMediaRequest): boolean {
+  verify(serverId: FleetServerId, scope: string, request: FleetMediaRequest): boolean {
+    if (request.serverId !== serverId) return false
     const given = Buffer.from(request.capability, 'hex')
-    const expected = this.capability(scope, request.botId, request.fileId)
+    const expected = this.capability(serverId, scope, request.botId, request.fileId)
     return given.length === expected.length && timingSafeEqual(given, expected)
   }
 }
@@ -39,15 +45,16 @@ export function parseFleetMediaUrl(value: string): FleetMediaRequest | null {
   }
   if (url.protocol !== `${FLEET_MEDIA_SCHEME}:` || url.hostname !== 'fleet' || url.search || url.username) return null
   const parts = url.pathname.split('/')
-  if (parts.length !== 4 || parts[0] !== '') return null
-  const [, botId, fileId, capability] = parts as [string, string, string, string]
+  if (parts.length !== 5 || parts[0] !== '') return null
+  const [, serverId, botId, fileId, capability] = parts as [string, string, string, string, string]
   if (
+    !isFleetServerId(serverId) ||
     !fleetBotIdSchema.safeParse(botId).success ||
     !fleetFileIdSchema.safeParse(fileId).success ||
     !/^[0-9a-f]{32}$/.test(capability)
   )
     return null
-  return { botId, fileId, capability }
+  return { serverId, botId, fileId, capability }
 }
 
 /**

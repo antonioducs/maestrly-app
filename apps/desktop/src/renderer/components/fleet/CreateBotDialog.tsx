@@ -208,6 +208,7 @@ export function CreateBotDialog({
   /** Opened from an environment: the new bot joins it unless the owner picks otherwise. */
   initialEnvironmentId?: string | null
 }) {
+  const serverId = fleet.serverId
   const { t, i18n } = useTranslation('fleet')
   const [artifactServer, setArtifactServer] = useState<ArtifactServerStatus | null>(null)
   const [publishArtifacts, setPublishArtifacts] = useState(true)
@@ -350,7 +351,7 @@ export function CreateBotDialog({
       await prepareBotEnvironment(window.api, () => setPreparing(true))
       preparingEnvironment = false
       setPreparing(false)
-      const bot = await window.api.fleetCreateBot({
+      const bot = await window.api.fleetCreateBot(serverId, {
         name: name.trim(),
         instructions: instructions.trim(),
         ceiling,

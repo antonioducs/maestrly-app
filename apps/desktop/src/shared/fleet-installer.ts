@@ -3,6 +3,7 @@
  * Electron imports): the main process owns installs; the renderer only mirrors `FleetInstallerStatus`.
  */
 import { compareSemver, parseSemver } from './update'
+import type { FleetServerId } from './fleet-servers'
 
 /** Where Maestrly installed the bot server: this computer's Docker, or a VPS reached over SSH. */
 export type FleetInstallMode = 'local' | 'remote'
@@ -18,6 +19,8 @@ export interface FleetRemoteTarget {
 
 /** What Maestrly installed and how it reaches it. Kept in app settings; never holds a secret. */
 export interface FleetInstallRecord {
+  /** The paired server this installation is; absent from records of earlier versions until they are linked. */
+  serverId?: FleetServerId
   mode: FleetInstallMode
   /** The version of the images the server runs; null when unknown (a tag that is not a version). */
   version: string | null

@@ -1,3 +1,4 @@
+import { readdirSync, readFileSync } from 'node:fs'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
@@ -164,6 +165,50 @@ describe('review receipt', () => {
     expect(render({ report: { ...report, target: 'plan', handoff: { state: 'approved', at: 1 } } })).toContain(
       'Plan approved as written.'
     )
+  })
+})
+
+describe('review receipt primary buttons', () => {
+  // --background is transparent in styles.css, so `text-background` on a solid fill paints invisible text.
+  const OPAQUE_PRIMARY = 'bg-primary text-primary-foreground hover:bg-primary/90'
+  const openCheck = {
+    status: 'completed' as const,
+    startedAt: 1,
+    finishedAt: 2,
+    results: [
+      { findingId: 'F1', state: 'open' as const },
+      { findingId: 'F2', state: 'resolved' as const },
+    ],
+  }
+
+  it('paints Send, Check and Send back with the opaque primary pair', () => {
+    const states = {
+      send: render({ report: { ...report, handoff: { state: 'saved', at: 1 } } }),
+      check: render(),
+      sendBack: render({ report: { ...report, check: openCheck } }),
+    }
+    expect(states.send).toContain('Send to the agent')
+    expect(states.check).toContain('Check the fixes')
+    expect(states.sendBack).toContain('Send F1 back to the agent')
+    for (const html of Object.values(states)) {
+      expect(html).toContain(OPAQUE_PRIMARY)
+      expect(html).not.toContain('text-background')
+    }
+  })
+
+  it('keeps text-background off every renderer source', () => {
+    const offenders: string[] = []
+    const walk = (dir: URL) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const child = new URL(entry.name + (entry.isDirectory() ? '/' : ''), dir)
+        if (entry.isDirectory()) walk(child)
+        else if (/\.(tsx?|css)$/.test(entry.name) && readFileSync(child, 'utf8').includes('text-background')) {
+          offenders.push(entry.name)
+        }
+      }
+    }
+    walk(new URL('../../src/renderer/', import.meta.url))
+    expect(offenders).toEqual([])
   })
 })
 

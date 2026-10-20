@@ -177,6 +177,7 @@ export class LiveTranscript {
       routine: entry.input.routine,
       peer: entry.input.peer,
       queued,
+      ...(queued && entry.stopped ? { stopped: true } : {}),
       ...(entry.attachmentError ? { attachmentError: entry.attachmentError } : {}),
       memories: [],
       images: queue.refs(entry),

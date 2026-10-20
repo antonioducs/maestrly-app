@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatMessage } from '../../src/shared/chat'
 import {
+  ANTIGRAVITY_MESSAGE_ANCHOR,
   buildAntigravityPromptBlocks,
   buildAntigravitySeedTranscript,
   hashAntigravityInstructions,
@@ -35,8 +36,62 @@ describe('Antigravity prompt blocks', () => {
     })
     expect(block).toEqual({
       type: 'text',
-      text: '<maestrly_instructions>\nBe helpful.\n</maestrly_instructions>\n\n<maestrly_tools>\n- maestrly_echo: Echo\n</maestrly_tools>\n\nECHO hi',
+      text: `<maestrly_instructions>\nBe helpful.\n</maestrly_instructions>\n\n<maestrly_tools>\n- maestrly_echo: Echo\n</maestrly_tools>\n\n${ANTIGRAVITY_MESSAGE_ANCHOR}\n\nECHO hi`,
     })
+  })
+
+  it('puts the context first and the message last: seed, current environment, then the bridge to the message', () => {
+    const history = [
+      user([text('first question')], 'u0'),
+      { id: 'a0', conversationId: 'c1', role: 'assistant', parts: [text('first answer')], createdAt: 2 } as ChatMessage,
+      user([text('follow-up')]),
+    ]
+    const [block] = buildAntigravityPromptBlocks({
+      conversationId: 'c1',
+      message: history[2],
+      newSession: true,
+      instructions: 'i',
+      toolCatalog: '<maestrly_tools></maestrly_tools>',
+      seedTranscript: buildAntigravitySeedTranscript(history),
+      dropImages: false,
+      environment: "Today's date: 2026-10-19.",
+      turnReminder: 'REMINDER',
+    })
+    const value = (block as { text: string }).text
+    const order = [
+      '<maestrly_instructions>',
+      '<maestrly_tools>',
+      'first answer',
+      "Today's date",
+      ANTIGRAVITY_MESSAGE_ANCHOR,
+    ]
+    const positions = order.map((marker) => value.indexOf(marker))
+    expect(positions.every((position) => position >= 0)).toBe(true)
+    expect(positions).toEqual([...positions].sort((a, b) => a - b))
+    // The full instructions already carry what the reminder restates.
+    expect(value).not.toContain('REMINDER')
+    expect(value.endsWith(`${ANTIGRAVITY_MESSAGE_ANCHOR}\n\nfollow-up`)).toBe(true)
+  })
+
+  it('gives a continuing session the reminder and the current environment before the message', () => {
+    expect(
+      buildAntigravityPromptBlocks({
+        conversationId: 'c1',
+        message: user([text('next')]),
+        newSession: false,
+        instructions: 'Be helpful.',
+        toolCatalog: '<maestrly_tools></maestrly_tools>',
+        seedTranscript: '',
+        dropImages: false,
+        environment: "Today's date: 2026-10-20.",
+        turnReminder: 'Maestrly mode: agent.',
+      })
+    ).toEqual([
+      {
+        type: 'text',
+        text: "<maestrly_turn_context>\nMaestrly mode: agent.\nToday's date: 2026-10-20.\n</maestrly_turn_context>\n\nnext",
+      },
+    ])
   })
 
   it('sends only the message to a continuing session', () => {

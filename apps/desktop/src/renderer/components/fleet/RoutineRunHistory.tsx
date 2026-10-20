@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { FleetBot, FleetRoutineRun } from '@maestrly/bot-fleet-protocol'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
+import { useFleetServerId } from '@/lib/fleet/server-context'
 
 export function RoutineRunHistory({
   bot,
@@ -12,6 +13,7 @@ export function RoutineRunHistory({
   routineId: string
   refreshKey: number
 }) {
+  const serverId = useFleetServerId()
   const { t, i18n } = useTranslation('fleet')
   const [runs, setRuns] = useState<FleetRoutineRun[] | null>(null)
   const [error, setError] = useState('')
@@ -19,7 +21,7 @@ export function RoutineRunHistory({
   useEffect(() => {
     let alive = true
     void window.api
-      .fleetListRoutineRuns(bot.id, routineId)
+      .fleetListRoutineRuns(serverId, bot.id, routineId)
       .then((value) => {
         if (alive) {
           setRuns(value.runs)

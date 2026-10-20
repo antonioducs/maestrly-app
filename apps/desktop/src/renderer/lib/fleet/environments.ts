@@ -9,6 +9,7 @@ import {
 import type { FleetProvisioningTargetInput } from '../../../shared/fleet-targets'
 import { compareByName, groupBotsByEnvironment, type FleetEnvironmentGroup } from './selectors'
 import type { FleetController } from './use-fleet'
+import type { FleetServerId } from '../../../shared/fleet-servers'
 
 /** Whether the connected gateway groups bots in environments; without it the Mac keeps the UI from before them. */
 export function hasEnvironments(connection: { features: string[] }): boolean {
@@ -253,7 +254,13 @@ export function finishLaterKey(target: FleetProvisioningTargetInput): string {
 }
 
 /** Who a provisioning view acts on: its target (an environment, or a bot before environments) and its name. */
-export type ProvisioningSubject = { target: FleetProvisioningTargetInput; name: string; running: boolean }
+/** `serverId` names the subject's server when it is not the one the view shows, as for a workspaces host's. */
+export type ProvisioningSubject = {
+  target: FleetProvisioningTargetInput
+  name: string
+  running: boolean
+  serverId?: FleetServerId
+}
 
 /** A target as primitives, so effects keyed on it survive renders that rebuild the target object. */
 export function targetParts(target: FleetProvisioningTargetInput): { scope: 'environment' | 'bot'; id: string } {

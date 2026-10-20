@@ -18,9 +18,8 @@ const chatService = await import('../../src/main/chat/service')
 const { saveGeneratedImage } = await import('../../src/main/chat/generated-images')
 const { createStandaloneConversation } = await import('../../src/main/standalone-conversation-service')
 const { deleteConversation } = await import('../../src/main/workspace-service')
-const { InstanceInputQueue, conversationQueue, inputRunId, promptForInput, RUN_CONVERSATION_NOTE } = await import(
-  '../../src/main/fleet/instance/queue'
-)
+const { InstanceInputQueue, conversationQueue, inputRunId, promptForInput, PEER_REPLY_NOTE, RUN_CONVERSATION_NOTE } =
+  await import('../../src/main/fleet/instance/queue')
 const { InstanceTranscriptExtras } = await import('../../src/main/fleet/instance/transcript')
 const { FleetImageStore } = await import('../../src/main/fleet/instance/images')
 const { LiveTranscript } = await import('../../src/main/fleet/instance/live-transcript')
@@ -38,6 +37,7 @@ const { conversationShellEnv } = await import('../../src/main/chat/conversation-
 const { laneKeptFolder, runKeptFolder } = await import('../../src/main/fleet/instance/run-files')
 const { BotRuntime, openingContext } = await import('../../src/main/fleet/instance/runtime')
 const { APP_TOOL_POLICY } = await import('../../src/main/chat/tool-policy')
+const { getCompactionFocus } = await import('../../src/main/chat/compaction-summarizer')
 
 const PNG_1X1_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
@@ -129,6 +129,7 @@ async function bot() {
     retries: new Map(),
     quotaRetryAt: 0,
     reportedStartFailure: null,
+    reportedStartFailures: new Map(),
     interrupted: new Set(),
     releaseKeys: new Map(),
     floatTimers: new Set(),
@@ -453,6 +454,11 @@ describe('threads with other bots in conversations of their own', () => {
     const prompt = promptForInput(peerInput(threadId))
     expect(prompt).toContain('a conversation of its own')
     expect(prompt).toContain('bot_peers_send to nina')
+    // It replies only when that moves the work forward: thanks and confirmations end the exchange instead.
+    expect(prompt).toContain(PEER_REPLY_NOTE)
+    expect(PEER_REPLY_NOTE).toContain('Do not reply to thanks')
+    expect(PEER_REPLY_NOTE).toContain('end your turn without sending anything')
+    expect(prompt).not.toMatch(/^Reply with bot_peers_send/m)
     await runtime.input(peerInput(threadId, 'One more thing'))
     expect(runs.list()).toHaveLength(1)
     // The owner writes only in a thread that is here; a thread is never a run, nor a run a thread.
@@ -477,6 +483,58 @@ describe('threads with other bots in conversations of their own', () => {
     const runId = randomUUID()
     await runtime.input(routineInput(runId))
     await expect(runtime.input(peerInput(runId))).rejects.toMatchObject({ status: 400 })
+  })
+
+  it('holds a thread its owner stopped while its context compacted, and compacts it keeping what the bots settled', async () => {
+    const { runtime, runs, queue, published } = await bot()
+    const threadId = randomUUID()
+    await runtime.input(peerInput(threadId, 'Which build should I test?'))
+    const record = runs.thread(threadId)!
+    const prompts: string[] = []
+    const focuses: Array<string | null> = []
+    vi.spyOn(chatService, 'acquireChatConversationSlot').mockResolvedValue({
+      release: () => {},
+      operation: {},
+    } as never)
+    vi.spyOn(chatService, 'stopChatAndWait').mockResolvedValue(true)
+    vi.spyOn(chatService, 'startExecutorChatTurn').mockImplementation((input) => {
+      prompts.push(input.prompt)
+      focuses.push(getCompactionFocus(input.conversationId))
+      // Still compacting the thread's context when the owner stops it: its message is never saved.
+      return new Promise((_resolve, reject) =>
+        input.signal.addEventListener('abort', () => reject(new Error('context-compaction-failed')), { once: true })
+      )
+    })
+    const running = turn(runtime)
+    await vi.waitFor(() => expect(prompts).toHaveLength(1))
+    // A compaction of the thread keeps who asked what and what was answered, not only its topic.
+    expect(focuses[0]).toContain('"Atlas"')
+    expect(focuses[0]).toContain('"Nina"')
+    expect(focuses[0]).toContain('marked as answered')
+    expect(getCompactionFocus(runtime.primaryConversationId!)).toBeNull()
+    await runtime.stop(threadId)
+    await running
+    expect(queue.list().map((item) => [inputRunId(item), item.stopped])).toEqual([[threadId, true]])
+    expect((await runtime.runTranscript(threadId, null, 50)).items).toContainEqual(
+      expect.objectContaining({ text: 'Which build should I test?', queued: true, stopped: true })
+    )
+    ;(runtime as unknown as { retries: Map<string | null, unknown> }).retries.clear()
+    await turn(runtime)
+    expect(prompts).toHaveLength(1)
+    // The owner steers the thread: it goes on from their message.
+    await runtime.input({
+      idempotencyKey: randomUUID(),
+      source: 'owner',
+      text: 'Test build 912, Nina already said so.',
+      thread: { id: threadId, title: record.title },
+      attachments: [],
+    })
+    expect(published).toContainEqual(expect.objectContaining({ type: 'reset', runId: threadId }))
+    const next = turn(runtime)
+    await vi.waitFor(() => expect(prompts).toHaveLength(2))
+    expect(prompts[1]).toBe('Test build 912, Nina already said so.')
+    await runtime.cancel(threadId)
+    await next
   })
 
   it("keeps a queued message of a thread in the thread's conversation after a restart", async () => {

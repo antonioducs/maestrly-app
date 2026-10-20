@@ -227,6 +227,7 @@ export function TranscriptRow({
   /** Removes a queued message; a run's conversation removes its own. */
   removeQueuedMessage?: (inputId: string) => Promise<void>
 }) {
+  const serverId = fleet.serverId
   const { t, i18n } = useTranslation('fleet')
   const at = new Date(item.at).toLocaleTimeString(i18n.language, {
     hour: '2-digit',
@@ -249,7 +250,7 @@ export function TranscriptRow({
       removeQueuedMessage
         ? removeQueuedMessage(item.id.replace(/^input:/, ''))
         : window.api
-            .fleetRemoveQueuedMessage(bot.id, item.id.replace(/^input:/, ''))
+            .fleetRemoveQueuedMessage(serverId, bot.id, item.id.replace(/^input:/, ''))
             .then(() => fleet.loadTranscript(bot.id))
     ).catch(() => {})
   const fleetBot = (id: string | undefined) => fleet.state.snapshot.bots.find((peer) => peer.id === id)
@@ -262,7 +263,23 @@ export function TranscriptRow({
           to={bot}
           at={at}
           text={item.text}
-          meta={item.queued ? t('transcript.queued') : undefined}
+          meta={
+            item.stopped ? (
+              <span title={t('transcript.stoppedHint')} className="inline-flex items-center gap-1 text-amber-300">
+                {t('transcript.stopped')}
+                <button
+                  type="button"
+                  aria-label={t('transcript.removeQueued')}
+                  className="rounded p-0.5 text-muted-foreground hover:text-destructive"
+                  onClick={removeQueued}
+                >
+                  <X className="size-3" />
+                </button>
+              </span>
+            ) : item.queued ? (
+              t('transcript.queued')
+            ) : undefined
+          }
           footer={
             item.memories.length > 0 &&
             t('conversation.recalled', { titles: item.memories.map((memory) => memory.title).join(', ') })
@@ -284,6 +301,7 @@ export function TranscriptRow({
           repeated={repeatedRoutine}
           memories={item.memories}
           queued={item.queued}
+          stopped={item.stopped}
           onRemoveQueued={removeQueued}
           onExpand={onExpand}
           searchQuery={searchQuery}
@@ -345,7 +363,13 @@ export function TranscriptRow({
           {at}
           {item.queued && (
             <>
-              {t(item.attachmentError ? 'files.notSent' : 'transcript.queued')}
+              {item.stopped ? (
+                <span title={t('transcript.stoppedHint')} className="text-amber-300">
+                  {t('transcript.stopped')}
+                </span>
+              ) : (
+                t(item.attachmentError ? 'files.notSent' : 'transcript.queued')
+              )}
               <button
                 type="button"
                 aria-label={t('transcript.removeQueued')}
@@ -495,7 +519,11 @@ export function TranscriptRow({
             ? t('files.unreadablePdf')
             : item.text === 'invalid-attachment'
               ? t('files.invalidAttachment')
-              : (exhaustedText(item.text) ?? item.text)}
+              : item.text === 'context-compaction-failed'
+                ? t('transcript.contextFailed.compaction')
+                : item.text === 'context-overflow'
+                  ? t('transcript.contextFailed.overflow')
+                  : (exhaustedText(item.text) ?? item.text)}
         </span>
       )}
     </div>
@@ -588,9 +616,10 @@ export function BotConversation({
   citation?: FleetRoutineRun | null
   onClearCitation?: () => void
 }) {
+  const serverId = fleet.serverId
   const { t } = useTranslation('fleet')
   const transcript = fleet.state.transcripts[bot.id]
-  const imageCache = fleetImageCache
+  const imageCache = fleetImageCache(serverId)
   const [error, setError] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
@@ -671,7 +700,7 @@ export function BotConversation({
     setEditing(null)
     setSentEdit({ itemId, text })
     try {
-      await window.api.fleetEditMessage(bot.id, itemId.replace(/^input:/, ''), text)
+      await window.api.fleetEditMessage(serverId, bot.id, itemId.replace(/^input:/, ''), text)
       await fleet.loadTranscript(bot.id).catch(() => {})
     } catch (cause) {
       setEditing({ itemId, draft })
@@ -721,7 +750,7 @@ export function BotConversation({
     if (!hasRoutineRuns) return
     let alive = true
     void window.api
-      .fleetListRoutines(bot.id)
+      .fleetListRoutines(serverId, bot.id)
       .then((result) => {
         if (alive) setRoutines({ botId: bot.id, list: result.routines })
       })
@@ -748,7 +777,7 @@ export function BotConversation({
     (text: string) => {
       setError(null)
       void window.api
-        .fleetSendMessage(bot.id, text)
+        .fleetSendMessage(serverId, bot.id, text)
         .then(() => fleet.loadTranscript(bot.id))
         .catch((cause) => setError(fleetErrorMessage(cause)))
     },

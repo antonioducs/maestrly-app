@@ -11,6 +11,7 @@ import { fleetErrorMessage, fleetErrorText } from '@/lib/fleet/errors'
 import { hasImportChoice, importGroups, provisioningErrorText, type ImportChoice } from '@/lib/fleet/provisioning'
 import { cn } from '@/lib/utils'
 import { BotLoginCard, type LoginCardStage } from './BotLoginCard'
+import { useFleetServerId } from '@/lib/fleet/server-context'
 
 type ImportState =
   | { kind: 'waiting' }
@@ -56,6 +57,7 @@ export function CreateBotProgress({
   onOpen: () => void
   onClose: () => void
 }) {
+  const serverId = useFleetServerId()
   const { t, i18n } = useTranslation('fleet')
   const steps = creationSteps(joined)
   const ready = bot.setup.step === 'ready'
@@ -77,7 +79,7 @@ export function CreateBotProgress({
     setState({ kind: 'sending', retry: previous ? copyCount(selection) : null })
     try {
       const { loginIds: _logins, ...request } = selection
-      const report = await window.api.fleetImportFromMac(subject.target, request)
+      const report = await window.api.fleetImportFromMac(serverId, subject.target, request)
       if (alive.current) setState({ kind: 'done', report: previous ? mergeImportReport(previous, report) : report })
     } catch (cause) {
       if (alive.current) setState({ kind: 'error', message: fleetErrorMessage(cause) })

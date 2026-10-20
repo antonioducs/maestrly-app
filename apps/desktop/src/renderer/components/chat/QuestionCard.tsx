@@ -1,14 +1,12 @@
 import { useTranslation } from 'react-i18next'
 import { MessageCircleQuestion } from 'lucide-react'
-import { toolOutputText, type ChatQuestion, type MessagePart } from '../../../shared/chat'
+import { chatQuestionsFromInput, toolOutputText, type MessagePart } from '../../../shared/chat'
 
 type ToolPart = Extract<MessagePart, { type: 'tool' }>
 
 export function QuestionCard({ part }: { part: ToolPart }) {
   const { t } = useTranslation('chat')
-  const questions = (((part.input as { questions?: unknown })?.questions as ChatQuestion[] | undefined) ?? []).filter(
-    (q): q is ChatQuestion => !!q && Array.isArray(q.options)
-  )
+  const questions = chatQuestionsFromInput(part.input)
   if (questions.length === 0) return null
 
   if (part.state.status === 'running' || part.state.status === 'pending') {
