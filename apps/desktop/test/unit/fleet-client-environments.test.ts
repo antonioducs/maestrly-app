@@ -49,18 +49,26 @@ vi.mock('../../src/main/fleet/client/events', () => ({
   },
 }))
 vi.mock('../../src/main/fleet/client/provisioning/login-relay', () => ({ LoginRelay: { start: mocks.relayStart } }))
-vi.mock('../../src/main/fleet/client/service', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../src/main/fleet/client/service')>()
+vi.mock('../../src/main/fleet/client/servers', () => {
+  const client = {
+    serverId: 'aaaaaaaa-0000-4000-8000-000000000001',
+    start: vi.fn(),
+    stop: vi.fn(),
+    call: mocks.call,
+    hasFeature: (feature: string) => features.list.includes(feature),
+    getImage: vi.fn(),
+    screens: { openScreen: mocks.openScreen, send: vi.fn(), close: vi.fn() },
+    idempotencyKey: () => '550e8400-e29b-41d4-a716-446655440000',
+  }
   return {
-    ...actual,
-    fleetClientService: {
+    fleetServers: {
       start: vi.fn(),
       stop: vi.fn(),
-      call: mocks.call,
-      hasFeature: (feature: string) => features.list.includes(feature),
-      getImage: vi.fn(),
-      screens: { openScreen: mocks.openScreen, send: vi.fn(), close: vi.fn() },
-      idempotencyKey: () => '550e8400-e29b-41d4-a716-446655440000',
+      list: () => [],
+      require: (serverId: string) => {
+        if (serverId !== client.serverId) throw new Error('FLEET_SERVER_UNKNOWN')
+        return client
+      },
     },
   }
 })
@@ -108,6 +116,11 @@ import {
 import { FleetScreenChannel, type ScreenApi } from '../../src/renderer/lib/fleet/screen-channel'
 import type { FleetController } from '../../src/renderer/lib/fleet/use-fleet'
 import { fleetApi } from '../../src/preload/api-fleet'
+import type { FleetServerId } from '../../src/shared/fleet-servers'
+import { FleetMediaCache } from '../../src/main/fleet/client/media-cache'
+import { FleetMediaUrls } from '../../src/main/fleet/client/media-protocol'
+
+const SERVER = 'aaaaaaaa-0000-4000-8000-000000000001' as FleetServerId
 
 const at = '2026-09-26T00:00:00.000Z'
 const KEY = '550e8400-e29b-41d4-a716-446655440000'
@@ -216,6 +229,23 @@ describe('environments in the Mac snapshot', () => {
     botImageVersion: null,
     dockerVersion: null,
   }
+  /** A client of a paired server, connecting with its stored token as it does at start. */
+  function startedClient(): FleetClientService {
+    const service = new FleetClientService({
+      serverId: SERVER,
+      credentials: () => ({
+        url: 'http://127.0.0.1:7443',
+        deviceId: 'device-1',
+        deviceName: 'Mac',
+        token: 'synthetic-token',
+        persistence: 'secure',
+      }),
+      media: new FleetMediaCache({ root: () => '/nonexistent/fleet-media-cache' }),
+      mediaUrls: new FleetMediaUrls(),
+    })
+    service.start()
+    return service
+  }
   function stubGateway(meta: { features: string[] }) {
     const paths: string[] = []
     vi.stubGlobal(
@@ -249,8 +279,7 @@ describe('environments in the Mac snapshot', () => {
   it('lists environments only from gateways that advertise them and keeps an empty list for older ones', async () => {
     const meta = { features: ['provisioning'] }
     const paths = stubGateway(meta)
-    const service = new FleetClientService()
-    await service.connect({ url: 'http://127.0.0.1:7443', code: 'ABCDEFGH' })
+    const service = startedClient()
     await mocks.events[0].onConnected()
     expect(service.hasFeature('environments')).toBe(false)
     expect(service.getSnapshot().environments).toEqual([])
@@ -264,8 +293,7 @@ describe('environments in the Mac snapshot', () => {
 
   it('applies environment events and never keeps an archived or removed environment or its bots', async () => {
     stubGateway({ features: ['environments'] })
-    const service = new FleetClientService()
-    await service.connect({ url: 'http://127.0.0.1:7443', code: 'ABCDEFGH' })
+    const service = startedClient()
     await mocks.events[0].onConnected()
     const emit = mocks.events[0].onEvent
     emit({ type: 'environment.updated', at, environment: environment('home', 'Home', { botIds: ['scout'] }) })
@@ -327,27 +355,27 @@ describe('environment IPC', () => {
     expect(ipc.reads.has('fleet:listArchivedEnvironments')).toBe(true)
     expect(ipc.reads.has('fleet:environmentSelections')).toBe(true)
     expect(ipc.mutations.has('fleet:environmentSelections')).toBe(false)
-    expect(() => ipc.read('fleet:environmentSelections', '../work')).toThrow()
-    expect(() => ipc.mutate('fleet:patchEnvironment', 'work', { compaction: { modelId: 'x' } })).toThrow()
-    expect(() => ipc.mutate('fleet:environmentAction', '../work', 'restart')).toThrow()
-    expect(() => ipc.mutate('fleet:environmentAction', 'work', 'pause')).toThrow()
-    expect(() => ipc.mutate('fleet:patchEnvironment', 'work', {})).toThrow()
-    expect(() => ipc.mutate('fleet:patchEnvironment', 'work', { memoryLimitBytes: 1024 })).toThrow()
-    expect(() => ipc.mutate('fleet:patchEnvironment', 'work', { name: '' })).toThrow()
-    expect(() => ipc.mutate('fleet:environmentUiOpen', 'work', 'terminal')).toThrow()
-    expect(() => ipc.mutate('fleet:restoreArchivedEnvironment', undefined)).toThrow()
-    expect(() => ipc.mutate('fleet:deleteArchivedEnvironment', 'Work!')).toThrow()
+    expect(() => ipc.read('fleet:environmentSelections', SERVER, '../work')).toThrow()
+    expect(() => ipc.mutate('fleet:patchEnvironment', SERVER, 'work', { compaction: { modelId: 'x' } })).toThrow()
+    expect(() => ipc.mutate('fleet:environmentAction', SERVER, '../work', 'restart')).toThrow()
+    expect(() => ipc.mutate('fleet:environmentAction', SERVER, 'work', 'pause')).toThrow()
+    expect(() => ipc.mutate('fleet:patchEnvironment', SERVER, 'work', {})).toThrow()
+    expect(() => ipc.mutate('fleet:patchEnvironment', SERVER, 'work', { memoryLimitBytes: 1024 })).toThrow()
+    expect(() => ipc.mutate('fleet:patchEnvironment', SERVER, 'work', { name: '' })).toThrow()
+    expect(() => ipc.mutate('fleet:environmentUiOpen', SERVER, 'work', 'terminal')).toThrow()
+    expect(() => ipc.mutate('fleet:restoreArchivedEnvironment', SERVER, undefined)).toThrow()
+    expect(() => ipc.mutate('fleet:deleteArchivedEnvironment', SERVER, 'Work!')).toThrow()
     expect(mocks.call).not.toHaveBeenCalled()
-    await ipc.mutate('fleet:environmentAction', 'work', 'restart')
-    await ipc.mutate('fleet:environmentAction', 'work', 'archive')
-    await ipc.mutate('fleet:patchEnvironment', 'work', { name: 'Work', memoryLimitBytes: 8 * 1024 ** 3 })
-    await ipc.mutate('fleet:patchEnvironment', 'work', { memoryLimitBytes: null })
-    await ipc.read('fleet:listArchivedEnvironments')
-    await ipc.mutate('fleet:restoreArchivedEnvironment', 'work')
-    await ipc.mutate('fleet:deleteArchivedEnvironment', 'work')
-    await ipc.mutate('fleet:environmentUiOpen', 'work', 'accounts')
-    await ipc.read('fleet:environmentSelections', 'work')
-    await ipc.mutate('fleet:patchEnvironment', 'work', { compaction: null })
+    await ipc.mutate('fleet:environmentAction', SERVER, 'work', 'restart')
+    await ipc.mutate('fleet:environmentAction', SERVER, 'work', 'archive')
+    await ipc.mutate('fleet:patchEnvironment', SERVER, 'work', { name: 'Work', memoryLimitBytes: 8 * 1024 ** 3 })
+    await ipc.mutate('fleet:patchEnvironment', SERVER, 'work', { memoryLimitBytes: null })
+    await ipc.read('fleet:listArchivedEnvironments', SERVER)
+    await ipc.mutate('fleet:restoreArchivedEnvironment', SERVER, 'work')
+    await ipc.mutate('fleet:deleteArchivedEnvironment', SERVER, 'work')
+    await ipc.mutate('fleet:environmentUiOpen', SERVER, 'work', 'accounts')
+    await ipc.read('fleet:environmentSelections', SERVER, 'work')
+    await ipc.mutate('fleet:patchEnvironment', SERVER, 'work', { compaction: null })
     expect(calls()).toEqual([
       ['environmentRestart', { params: { eid: 'work' } }],
       ['environmentArchive', { params: { eid: 'work' } }],
@@ -370,16 +398,16 @@ describe('environment IPC', () => {
       expect(ipc.reads.has(channel)).toBe(false)
     }
     // Environments alone are not enough: an older gateway has no update routes.
-    expect(() => ipc.mutate('fleet:environmentUpdate', 'work', 'idle')).toThrow(FLEET_UPDATES_UNSUPPORTED)
-    expect(() => ipc.mutate('fleet:environmentUpdateCancel', 'work')).toThrow(FLEET_UPDATES_UNSUPPORTED)
+    expect(() => ipc.mutate('fleet:environmentUpdate', SERVER, 'work', 'idle')).toThrow(FLEET_UPDATES_UNSUPPORTED)
+    expect(() => ipc.mutate('fleet:environmentUpdateCancel', SERVER, 'work')).toThrow(FLEET_UPDATES_UNSUPPORTED)
     features.list = ['environments', 'environment-updates']
-    expect(() => ipc.mutate('fleet:environmentUpdate', 'work', 'later')).toThrow()
-    expect(() => ipc.mutate('fleet:environmentUpdate', '../work', 'idle')).toThrow()
-    expect(() => ipc.mutate('fleet:environmentUpdateCancel', 'Work!')).toThrow()
+    expect(() => ipc.mutate('fleet:environmentUpdate', SERVER, 'work', 'later')).toThrow()
+    expect(() => ipc.mutate('fleet:environmentUpdate', SERVER, '../work', 'idle')).toThrow()
+    expect(() => ipc.mutate('fleet:environmentUpdateCancel', SERVER, 'Work!')).toThrow()
     expect(mocks.call).not.toHaveBeenCalled()
-    await ipc.mutate('fleet:environmentUpdate', 'acme', 'idle')
-    await ipc.mutate('fleet:environmentUpdate', 'acme', 'now')
-    await ipc.mutate('fleet:environmentUpdateCancel', 'acme')
+    await ipc.mutate('fleet:environmentUpdate', SERVER, 'acme', 'idle')
+    await ipc.mutate('fleet:environmentUpdate', SERVER, 'acme', 'now')
+    await ipc.mutate('fleet:environmentUpdateCancel', SERVER, 'acme')
     expect(calls()).toEqual([
       ['environmentUpdate', { params: { eid: 'acme' }, body: { when: 'idle' } }],
       ['environmentUpdate', { params: { eid: 'acme' }, body: { when: 'now' } }],
@@ -393,11 +421,13 @@ describe('environment IPC', () => {
     const ipc = register()
     expect(ipc.mutations.has('fleet:environmentRuntimesCheck')).toBe(true)
     expect(ipc.reads.has('fleet:environmentRuntimesCheck')).toBe(false)
-    expect(() => ipc.mutate('fleet:environmentRuntimesCheck', 'work')).toThrow(FLEET_RUNTIME_UPDATES_UNSUPPORTED)
+    expect(() => ipc.mutate('fleet:environmentRuntimesCheck', SERVER, 'work')).toThrow(
+      FLEET_RUNTIME_UPDATES_UNSUPPORTED
+    )
     features.list = ['environments', 'runtime-updates']
-    expect(() => ipc.mutate('fleet:environmentRuntimesCheck', '../work')).toThrow()
+    expect(() => ipc.mutate('fleet:environmentRuntimesCheck', SERVER, '../work')).toThrow()
     expect(mocks.call).not.toHaveBeenCalled()
-    await ipc.mutate('fleet:environmentRuntimesCheck', 'acme')
+    await ipc.mutate('fleet:environmentRuntimesCheck', SERVER, 'acme')
     expect(calls()).toEqual([['environmentRuntimesCheck', { params: { eid: 'acme' } }]])
   })
 
@@ -428,33 +458,33 @@ describe('environment IPC', () => {
       ['fleet:environmentUiOpen', 'work', 'main'],
     ]
     for (const [channel, ...args] of refused)
-      expect(() => ipc.mutate(channel, ...args)).toThrow(FLEET_ENVIRONMENTS_UNSUPPORTED)
-    expect(() => ipc.read('fleet:environmentSelections', 'work')).toThrow(FLEET_ENVIRONMENTS_UNSUPPORTED)
-    await expect(ipc.read('fleet:listArchivedEnvironments')).resolves.toEqual({ environments: [] })
+      expect(() => ipc.mutate(channel, SERVER, ...args)).toThrow(FLEET_ENVIRONMENTS_UNSUPPORTED)
+    expect(() => ipc.read('fleet:environmentSelections', SERVER, 'work')).toThrow(FLEET_ENVIRONMENTS_UNSUPPORTED)
+    await expect(ipc.read('fleet:listArchivedEnvironments', SERVER)).resolves.toEqual({ environments: [] })
     expect(mocks.call).not.toHaveBeenCalled()
   })
 
   it('creates a bot in an existing or a new environment only on gateways that have environments', async () => {
     const base = { name: 'Scout', instructions: '', ceiling: 'ask', talksTo: [] }
     const ipc = register()
-    expect(() => ipc.mutate('fleet:createBot', { ...base, environmentId: 'work' })).toThrow(
+    expect(() => ipc.mutate('fleet:createBot', SERVER, { ...base, environmentId: 'work' })).toThrow(
       FLEET_ENVIRONMENTS_UNSUPPORTED
     )
-    expect(() => ipc.mutate('fleet:createBot', { ...base, environment: { name: 'Work' } })).toThrow(
+    expect(() => ipc.mutate('fleet:createBot', SERVER, { ...base, environment: { name: 'Work' } })).toThrow(
       FLEET_ENVIRONMENTS_UNSUPPORTED
     )
     features.list = ['environments']
     expect(() =>
-      ipc.mutate('fleet:createBot', { ...base, environmentId: 'work', environment: { name: 'Work' } })
+      ipc.mutate('fleet:createBot', SERVER, { ...base, environmentId: 'work', environment: { name: 'Work' } })
     ).toThrow()
-    expect(() => ipc.mutate('fleet:createBot', { ...base, environmentId: '../work' })).toThrow()
+    expect(() => ipc.mutate('fleet:createBot', SERVER, { ...base, environmentId: '../work' })).toThrow()
     expect(() =>
-      ipc.mutate('fleet:createBot', { ...base, environment: { name: 'Work', memoryLimitBytes: 1024 } })
+      ipc.mutate('fleet:createBot', SERVER, { ...base, environment: { name: 'Work', memoryLimitBytes: 1024 } })
     ).toThrow()
     expect(mocks.call).not.toHaveBeenCalled()
-    await ipc.mutate('fleet:createBot', { ...base, environmentId: 'work' })
-    await ipc.mutate('fleet:createBot', { ...base, environment: { name: 'Work' } })
-    await ipc.mutate('fleet:createBot', base)
+    await ipc.mutate('fleet:createBot', SERVER, { ...base, environmentId: 'work' })
+    await ipc.mutate('fleet:createBot', SERVER, { ...base, environment: { name: 'Work' } })
+    await ipc.mutate('fleet:createBot', SERVER, base)
     expect(calls()).toEqual([
       ['botsCreate', { body: { ...base, environmentId: 'work', idempotencyKey: KEY } }],
       ['botsCreate', { body: { ...base, environment: { name: 'Work', memoryLimitBytes: null }, idempotencyKey: KEY } }],
@@ -464,8 +494,10 @@ describe('environment IPC', () => {
 
   it('moves a bot only through a gateway that moves bots, to an existing environment or a named new one', async () => {
     const ipc = register()
-    expect(() => ipc.mutate('fleet:moveBot', 'scout', { environmentId: 'home' })).toThrow(FLEET_BOT_MOVE_UNSUPPORTED)
-    expect(() => ipc.read('fleet:botMove', 'scout')).toThrow(FLEET_BOT_MOVE_UNSUPPORTED)
+    expect(() => ipc.mutate('fleet:moveBot', SERVER, 'scout', { environmentId: 'home' })).toThrow(
+      FLEET_BOT_MOVE_UNSUPPORTED
+    )
+    expect(() => ipc.read('fleet:botMove', SERVER, 'scout')).toThrow(FLEET_BOT_MOVE_UNSUPPORTED)
     features.list = ['environments', 'bot-move']
     for (const input of [
       {},
@@ -474,12 +506,12 @@ describe('environment IPC', () => {
       { newEnvironment: { name: '' } },
       { environmentId: 'home', slot: 2 },
     ])
-      expect(() => ipc.mutate('fleet:moveBot', 'scout', input), JSON.stringify(input)).toThrow()
-    expect(() => ipc.mutate('fleet:moveBot', '../scout', { environmentId: 'home' })).toThrow()
+      expect(() => ipc.mutate('fleet:moveBot', SERVER, 'scout', input), JSON.stringify(input)).toThrow()
+    expect(() => ipc.mutate('fleet:moveBot', SERVER, '../scout', { environmentId: 'home' })).toThrow()
     expect(mocks.call).not.toHaveBeenCalled()
-    await ipc.mutate('fleet:moveBot', 'scout', { environmentId: 'home' })
-    await ipc.mutate('fleet:moveBot', 'scout', { newEnvironment: { name: 'Lab' } })
-    await ipc.read('fleet:botMove', 'scout')
+    await ipc.mutate('fleet:moveBot', SERVER, 'scout', { environmentId: 'home' })
+    await ipc.mutate('fleet:moveBot', SERVER, 'scout', { newEnvironment: { name: 'Lab' } })
+    await ipc.read('fleet:botMove', SERVER, 'scout')
     expect(calls()).toEqual([
       ['botMove', { params: { id: 'scout' }, body: { environmentId: 'home', idempotencyKey: KEY } }],
       ['botMove', { params: { id: 'scout' }, body: { newEnvironment: { name: 'Lab' }, idempotencyKey: KEY } }],
@@ -490,20 +522,22 @@ describe('environment IPC', () => {
   it('sends owner memory scopes only to gateways that have environments', async () => {
     const ipc = register()
     expect(() =>
-      ipc.mutate('fleet:ownerMemoryCreate', { content: 'Uses the staging VPN.', environmentId: 'work' })
+      ipc.mutate('fleet:ownerMemoryCreate', SERVER, { content: 'Uses the staging VPN.', environmentId: 'work' })
     ).toThrow(FLEET_ENVIRONMENTS_UNSUPPORTED)
-    expect(() => ipc.mutate('fleet:ownerMemoryUpdate', 'm1', { environmentId: 'work' })).toThrow(
+    expect(() => ipc.mutate('fleet:ownerMemoryUpdate', SERVER, 'm1', { environmentId: 'work' })).toThrow(
       FLEET_ENVIRONMENTS_UNSUPPORTED
     )
-    expect(() => ipc.mutate('fleet:ownerMemoryUpdate', 'm1', { environmentId: null })).toThrow(
+    expect(() => ipc.mutate('fleet:ownerMemoryUpdate', SERVER, 'm1', { environmentId: null })).toThrow(
       FLEET_ENVIRONMENTS_UNSUPPORTED
     )
-    await ipc.mutate('fleet:ownerMemoryCreate', { content: 'Prefers short answers.' })
+    await ipc.mutate('fleet:ownerMemoryCreate', SERVER, { content: 'Prefers short answers.' })
     features.list = ['environments']
-    expect(() => ipc.mutate('fleet:ownerMemoryCreate', { content: 'Uses the VPN.', environmentId: 'Work' })).toThrow()
-    await ipc.mutate('fleet:ownerMemoryCreate', { content: 'Uses the staging VPN.', environmentId: 'work' })
-    await ipc.mutate('fleet:ownerMemoryUpdate', 'm1', { environmentId: null })
-    await ipc.mutate('fleet:ownerMemoryUpdate', 'm2', { content: 'Deploys on Fridays.', environmentId: 'work' })
+    expect(() =>
+      ipc.mutate('fleet:ownerMemoryCreate', SERVER, { content: 'Uses the VPN.', environmentId: 'Work' })
+    ).toThrow()
+    await ipc.mutate('fleet:ownerMemoryCreate', SERVER, { content: 'Uses the staging VPN.', environmentId: 'work' })
+    await ipc.mutate('fleet:ownerMemoryUpdate', SERVER, 'm1', { environmentId: null })
+    await ipc.mutate('fleet:ownerMemoryUpdate', SERVER, 'm2', { content: 'Deploys on Fridays.', environmentId: 'work' })
     expect(calls()).toEqual([
       ['ownerMemoryCreate', { body: { content: 'Prefers short answers.', environmentId: null, idempotencyKey: KEY } }],
       ['ownerMemoryCreate', { body: { content: 'Uses the staging VPN.', environmentId: 'work', idempotencyKey: KEY } }],
@@ -532,25 +566,25 @@ describe('environment IPC', () => {
         : undefined
     )
     for (const target of [{ environmentId: 'work' }, { botId: 'scout' }, 'scout']) {
-      const accounts = (await ipc.read('fleet:bot:accounts', target)) as FleetBotAccounts
+      const accounts = (await ipc.read('fleet:bot:accounts', SERVER, target)) as FleetBotAccounts
       expect(accounts.apiKeys[0].baseURL).toBe('https://example.test/v1')
       expect(JSON.stringify(accounts)).not.toContain('synthetic-secret')
     }
     const work = { environmentId: 'work' }
-    await ipc.read('fleet:bot:skills', work)
-    await ipc.read('fleet:bot:mcp-servers', work)
-    await ipc.mutate('fleet:bot:skill-remove', work, 'review')
-    await ipc.mutate('fleet:bot:mcp-remove', work, 'm1')
-    await ipc.mutate('fleet:bot:subscription-remove', work, 'codex', 'default')
-    await ipc.mutate('fleet:add-api-key-account', work, {
+    await ipc.read('fleet:bot:skills', SERVER, work)
+    await ipc.read('fleet:bot:mcp-servers', SERVER, work)
+    await ipc.mutate('fleet:bot:skill-remove', SERVER, work, 'review')
+    await ipc.mutate('fleet:bot:mcp-remove', SERVER, work, 'm1')
+    await ipc.mutate('fleet:bot:subscription-remove', SERVER, work, 'codex', 'default')
+    await ipc.mutate('fleet:add-api-key-account', SERVER, work, {
       kind: 'openai',
       name: 'Synthetic',
       key: 'synthetic-api-secret',
       baseURL: null,
     })
-    await ipc.mutate('fleet:remove-account', work, 'p1')
-    await ipc.mutate('fleet:bot:skill-remove', { botId: 'scout' }, 'review')
-    await ipc.mutate('fleet:remove-account', 'scout', 'p1')
+    await ipc.mutate('fleet:remove-account', SERVER, work, 'p1')
+    await ipc.mutate('fleet:bot:skill-remove', SERVER, { botId: 'scout' }, 'review')
+    await ipc.mutate('fleet:remove-account', SERVER, 'scout', 'p1')
     expect(mocks.call.mock.calls.map(([key, options]) => [key, options?.params])).toEqual([
       ['environmentAccountsList', { eid: 'work' }],
       ['botAccountsList', { id: 'scout' }],
@@ -571,13 +605,15 @@ describe('environment IPC', () => {
     const ipc = register()
     const work = { environmentId: 'work' }
     const selection = { apiKeyIds: [], copyIds: [], skillNames: ['review'], mcpServerIds: [] }
-    expect(() => ipc.mutate('fleet:bot:skill-remove', work, 'review')).toThrow(FLEET_ENVIRONMENTS_UNSUPPORTED)
-    expect(() => ipc.mutate('fleet:login:start', work, { kind: 'codex', method: 'browser' })).toThrow(
+    expect(() => ipc.mutate('fleet:bot:skill-remove', SERVER, work, 'review')).toThrow(FLEET_ENVIRONMENTS_UNSUPPORTED)
+    expect(() => ipc.mutate('fleet:login:start', SERVER, work, { kind: 'codex', method: 'browser' })).toThrow(
       FLEET_ENVIRONMENTS_UNSUPPORTED
     )
-    expect(() => ipc.mutate('fleet:provisioning:import', work, selection)).toThrow(FLEET_ENVIRONMENTS_UNSUPPORTED)
-    expect(() => ipc.read('fleet:bot:skills', work)).toThrow(FLEET_ENVIRONMENTS_UNSUPPORTED)
-    await expect(Promise.resolve().then(() => ipc.read('fleet:bot:accounts', work))).rejects.toThrow(
+    expect(() => ipc.mutate('fleet:provisioning:import', SERVER, work, selection)).toThrow(
+      FLEET_ENVIRONMENTS_UNSUPPORTED
+    )
+    expect(() => ipc.read('fleet:bot:skills', SERVER, work)).toThrow(FLEET_ENVIRONMENTS_UNSUPPORTED)
+    await expect(Promise.resolve().then(() => ipc.read('fleet:bot:accounts', SERVER, work))).rejects.toThrow(
       FLEET_ENVIRONMENTS_UNSUPPORTED
     )
     features.list = ['environments']
@@ -589,10 +625,10 @@ describe('environment IPC', () => {
       42,
       null,
     ]) {
-      expect(() => ipc.mutate('fleet:bot:skill-remove', target, 'review')).toThrow()
-      expect(() => ipc.mutate('fleet:login:cancel', target, 'l1')).toThrow()
+      expect(() => ipc.mutate('fleet:bot:skill-remove', SERVER, target, 'review')).toThrow()
+      expect(() => ipc.mutate('fleet:login:cancel', SERVER, target, 'l1')).toThrow()
       expect(() =>
-        ipc.mutate('fleet:add-api-key-account', target, { kind: 'openai', name: 'A', key: 'k', baseURL: null })
+        ipc.mutate('fleet:add-api-key-account', SERVER, target, { kind: 'openai', name: 'A', key: 'k', baseURL: null })
       ).toThrow()
     }
     expect(mocks.call).not.toHaveBeenCalled()
@@ -604,15 +640,15 @@ describe('environment IPC', () => {
     for (const features_ of [[], ['environments']]) {
       features.list = features_
       for (const target of ['scout', { botId: 'scout', surface: 'apps' }, { environmentId: 'work' }])
-        expect(() => ipc.mutate('fleet:screenOpen', target, 'view')).toThrow(FLEET_SCREEN_UPDATE_REQUIRED)
+        expect(() => ipc.mutate('fleet:screenOpen', SERVER, target, 'view')).toThrow(FLEET_SCREEN_UPDATE_REQUIRED)
     }
     expect(mocks.openScreen).not.toHaveBeenCalled()
     features.list = ['environments', 'video-screens']
     // A bare bot id is that bot's browser area, as the views from before environments open it.
-    await ipc.mutate('fleet:screenOpen', 'scout', 'view')
-    await ipc.mutate('fleet:screenOpen', { botId: 'scout', surface: 'browser' }, 'control')
-    await ipc.mutate('fleet:screenOpen', { botId: 'scout', surface: 'apps' }, 'control')
-    await ipc.mutate('fleet:screenOpen', { environmentId: 'work' }, 'control')
+    await ipc.mutate('fleet:screenOpen', SERVER, 'scout', 'view')
+    await ipc.mutate('fleet:screenOpen', SERVER, { botId: 'scout', surface: 'browser' }, 'control')
+    await ipc.mutate('fleet:screenOpen', SERVER, { botId: 'scout', surface: 'apps' }, 'control')
+    await ipc.mutate('fleet:screenOpen', SERVER, { environmentId: 'work' }, 'control')
     for (const [target, mode] of [
       [{ botId: 'scout', surface: 'desktop' }, 'view'],
       [{ botId: 'scout' }, 'view'],
@@ -620,7 +656,7 @@ describe('environment IPC', () => {
       [{ environmentId: 'work' }, 'drive'],
       ['../scout', 'view'],
     ])
-      expect(() => ipc.mutate('fleet:screenOpen', target, mode)).toThrow()
+      expect(() => ipc.mutate('fleet:screenOpen', SERVER, target, mode)).toThrow()
     expect(mocks.openScreen.mock.calls.map(([, target, mode]) => [target, mode])).toEqual([
       [{ botId: 'scout', surface: 'browser' }, 'view'],
       [{ botId: 'scout', surface: 'browser' }, 'control'],
@@ -634,18 +670,28 @@ describe('environment IPC', () => {
     const conversationId = '3f2b5c1e-8a4d-4f6b-9c2e-1a2b3c4d5e6f'
     features.list = ['environments']
     expect(() =>
-      ipc.mutate('fleet:screenOpen', { environmentId: 'workspaces', conversationId, surface: 'apps' }, 'view')
+      ipc.mutate('fleet:screenOpen', SERVER, { environmentId: 'workspaces', conversationId, surface: 'apps' }, 'view')
     ).toThrow(FLEET_SCREEN_UPDATE_REQUIRED)
     features.list = ['environments', 'video-screens']
-    await ipc.mutate('fleet:screenOpen', { environmentId: 'workspaces', conversationId, surface: 'apps' }, 'control')
-    await ipc.mutate('fleet:screenOpen', { environmentId: 'workspaces', conversationId, surface: 'browser' }, 'view')
+    await ipc.mutate(
+      'fleet:screenOpen',
+      SERVER,
+      { environmentId: 'workspaces', conversationId, surface: 'apps' },
+      'control'
+    )
+    await ipc.mutate(
+      'fleet:screenOpen',
+      SERVER,
+      { environmentId: 'workspaces', conversationId, surface: 'browser' },
+      'view'
+    )
     for (const target of [
       { environmentId: 'workspaces', conversationId: 'ação', surface: 'apps' },
       { environmentId: 'workspaces', conversationId, surface: 'desktop' },
       { environmentId: 'workspaces', conversationId, surface: 'apps', extra: 1 },
       { environmentId: 'Work Space', conversationId, surface: 'apps' },
     ])
-      expect(() => ipc.mutate('fleet:screenOpen', target, 'view')).toThrow()
+      expect(() => ipc.mutate('fleet:screenOpen', SERVER, target, 'view')).toThrow()
     expect(mocks.openScreen.mock.calls.map(([, target, mode]) => [target, mode])).toEqual([
       [{ environmentId: 'workspaces', conversationId, surface: 'apps' }, 'control'],
       [{ environmentId: 'workspaces', conversationId, surface: 'browser' }, 'view'],
@@ -657,14 +703,14 @@ describe('environment IPC', () => {
     const ipc = register()
     const target = { environmentId: 'workspaces', conversationId: 'c-1', surface: 'apps' }
     mocks.openScreen.mockRejectedValueOnce(new FleetClientError('NOT_FOUND', 404, 'Route not found'))
-    await expect(ipc.mutate('fleet:screenOpen', target, 'view')).rejects.toThrow(FLEET_SCREEN_UPDATE_REQUIRED)
+    await expect(ipc.mutate('fleet:screenOpen', SERVER, target, 'view')).rejects.toThrow(FLEET_SCREEN_UPDATE_REQUIRED)
     mocks.openScreen.mockRejectedValueOnce(new FleetClientError('CONFLICT', 409, GATEWAY_RESTART_TO_OPEN_SCREEN))
-    await expect(ipc.mutate('fleet:screenOpen', target, 'view')).rejects.toThrow(FLEET_SCREEN_RESTART_REQUIRED)
+    await expect(ipc.mutate('fleet:screenOpen', SERVER, target, 'view')).rejects.toThrow(FLEET_SCREEN_RESTART_REQUIRED)
     // A missing environment is not an old gateway, nor is a bot's missing route.
     mocks.openScreen.mockRejectedValueOnce(new FleetClientError('NOT_FOUND', 404, 'Environment not found'))
-    await expect(ipc.mutate('fleet:screenOpen', target, 'view')).rejects.toThrow('Environment not found')
+    await expect(ipc.mutate('fleet:screenOpen', SERVER, target, 'view')).rejects.toThrow('Environment not found')
     mocks.openScreen.mockRejectedValueOnce(new FleetClientError('NOT_FOUND', 404, 'Route not found'))
-    await expect(ipc.mutate('fleet:screenOpen', { botId: 'scout', surface: 'apps' }, 'view')).rejects.toThrow(
+    await expect(ipc.mutate('fleet:screenOpen', SERVER, { botId: 'scout', surface: 'apps' }, 'view')).rejects.toThrow(
       'Route not found'
     )
   })
@@ -673,18 +719,18 @@ describe('environment IPC', () => {
     features.list = ['environments', 'video-screens']
     const ipc = register()
     mocks.openScreen.mockRejectedValueOnce(new FleetClientError('CONFLICT', 409, GATEWAY_SCREEN_CONTROLLED))
-    await expect(ipc.mutate('fleet:screenOpen', { environmentId: 'work' }, 'control')).rejects.toThrow(
+    await expect(ipc.mutate('fleet:screenOpen', SERVER, { environmentId: 'work' }, 'control')).rejects.toThrow(
       FLEET_SCREEN_CONFLICT
     )
     // An environment on an image from before environments refuses with 409 too: that is no conflict.
     mocks.openScreen.mockRejectedValueOnce(new FleetClientError('CONFLICT', 409, GATEWAY_RESTART_TO_OPEN_SCREEN))
-    await expect(ipc.mutate('fleet:screenOpen', { botId: 'scout', surface: 'apps' }, 'view')).rejects.toThrow(
+    await expect(ipc.mutate('fleet:screenOpen', SERVER, { botId: 'scout', surface: 'apps' }, 'view')).rejects.toThrow(
       FLEET_SCREEN_RESTART_REQUIRED
     )
     mocks.openScreen.mockRejectedValueOnce(new FleetClientError('FORBIDDEN', 403, 'Takeover required for control'))
-    await expect(ipc.mutate('fleet:screenOpen', { botId: 'scout', surface: 'apps' }, 'control')).rejects.toThrow(
-      'Takeover required for control'
-    )
+    await expect(
+      ipc.mutate('fleet:screenOpen', SERVER, { botId: 'scout', surface: 'apps' }, 'control')
+    ).rejects.toThrow('Takeover required for control')
   })
 })
 
@@ -841,19 +887,21 @@ describe('environment screens', () => {
   it('opens a renderer screen channel for any target', async () => {
     vi.stubGlobal('WebSocket', { CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3 })
     const api = {
-      fleetScreenOpen: vi.fn(async (_target: unknown, _mode: string) => ({ channelId: 'c1' })),
+      fleetScreenOpen: vi.fn(async (_serverId: FleetServerId, _target: unknown, _mode: string) => ({
+        channelId: 'c1',
+      })),
       fleetScreenSend: vi.fn(async () => {}),
       fleetScreenClose: vi.fn(async () => {}),
       onFleetScreenState: vi.fn(() => vi.fn()),
       onFleetScreenData: vi.fn(() => vi.fn()),
     } satisfies ScreenApi
-    await FleetScreenChannel.open(api, { environmentId: 'work' }, 'control')
-    await FleetScreenChannel.open(api, { botId: 'scout', surface: 'apps' }, 'view')
-    await FleetScreenChannel.open(api, 'scout', 'view')
+    await FleetScreenChannel.open(api, SERVER, { environmentId: 'work' }, 'control')
+    await FleetScreenChannel.open(api, SERVER, { botId: 'scout', surface: 'apps' }, 'view')
+    await FleetScreenChannel.open(api, SERVER, 'scout', 'view')
     expect(api.fleetScreenOpen.mock.calls).toEqual([
-      [{ environmentId: 'work' }, 'control'],
-      [{ botId: 'scout', surface: 'apps' }, 'view'],
-      ['scout', 'view'],
+      [SERVER, { environmentId: 'work' }, 'control'],
+      [SERVER, { botId: 'scout', surface: 'apps' }, 'view'],
+      [SERVER, 'scout', 'view'],
     ])
   })
 })
@@ -978,12 +1026,12 @@ describe('workspaces environment', () => {
   it('is created as one environment of its own kind, on a server that can host it', async () => {
     const { mutate } = register()
     features.list = ['environments']
-    expect(() => mutate('fleet:createWorkspaces')).toThrow('Update the server to run workspaces on it.')
+    expect(() => mutate('fleet:createWorkspaces', SERVER)).toThrow('Update the server to run workspaces on it.')
     expect(mocks.call).not.toHaveBeenCalled()
 
     features.list = ['environments', 'workspaces-host']
     mocks.call.mockResolvedValueOnce(host)
-    expect(await mutate('fleet:createWorkspaces')).toBe(host)
+    expect(await mutate('fleet:createWorkspaces', SERVER)).toBe(host)
     expect(calls()).toEqual([
       [
         'environmentsCreate',
@@ -997,9 +1045,9 @@ describe('workspaces environment', () => {
     const input = { name: 'Company A', tint: '#4c9a87', memoryLimitBytes: null, cpuLimit: 2, idleStopMinutes: 60 }
     features.list = ['environments', 'workspaces-host']
     mocks.call.mockResolvedValue(host)
-    await mutate('fleet:createWorkspaces', input)
+    await mutate('fleet:createWorkspaces', SERVER, input)
     features.list = ['environments', 'workspaces-host', 'workspaces-environments']
-    await mutate('fleet:createWorkspaces', input)
+    await mutate('fleet:createWorkspaces', SERVER, input)
     expect(calls()).toEqual([
       [
         'environmentsCreate',
@@ -1026,29 +1074,29 @@ describe('workspaces environment', () => {
       { name: 'X', idleStopMinutes: 5 },
       { name: 'X', root: '/' },
     ])
-      expect(() => mutate('fleet:createWorkspaces', bad), JSON.stringify(bad)).toThrow()
+      expect(() => mutate('fleet:createWorkspaces', SERVER, bad), JSON.stringify(bad)).toThrow()
   })
 
   it('changes the settings of scopes only on a server that has them', async () => {
     const { mutate } = register()
     features.list = ['environments', 'workspaces-host']
     for (const patch of [{ cpuLimit: 2 }, { idleStopMinutes: 60 }, { tint: '#4c9a87' }, { hostFolder: 'own' }])
-      expect(() => mutate('fleet:patchEnvironment', 'work', patch), JSON.stringify(patch)).toThrow(
+      expect(() => mutate('fleet:patchEnvironment', SERVER, 'work', patch), JSON.stringify(patch)).toThrow(
         'FLEET_SCOPES_UNSUPPORTED'
       )
     expect(mocks.call).not.toHaveBeenCalled()
     features.list = ['environments', 'workspaces-host', 'workspaces-environments']
     mocks.call.mockResolvedValue(host)
-    await mutate('fleet:patchEnvironment', 'work', { hostFolder: 'own' })
+    await mutate('fleet:patchEnvironment', SERVER, 'work', { hostFolder: 'own' })
     expect(calls()).toEqual([['environmentPatch', { params: { eid: 'work' }, body: { hostFolder: 'own' } }]])
   })
 
   it('reaches its IPC channel from the preload', async () => {
     const invoke = vi.spyOn(ipcRenderer, 'invoke').mockResolvedValue(host)
-    expect(await fleetApi.fleetCreateWorkspaces()).toBe(host)
-    expect(invoke).toHaveBeenCalledWith('fleet:createWorkspaces')
-    expect(await fleetApi.fleetCreateWorkspaces({ name: 'Personal' })).toBe(host)
-    expect(invoke).toHaveBeenLastCalledWith('fleet:createWorkspaces', { name: 'Personal' })
+    expect(await fleetApi.fleetCreateWorkspaces(SERVER)).toBe(host)
+    expect(invoke).toHaveBeenCalledWith('fleet:createWorkspaces', SERVER)
+    expect(await fleetApi.fleetCreateWorkspaces(SERVER, { name: 'Personal' })).toBe(host)
+    expect(invoke).toHaveBeenLastCalledWith('fleet:createWorkspaces', SERVER, { name: 'Personal' })
     invoke.mockRestore()
   })
 })
@@ -1240,46 +1288,47 @@ describe('environment preload API', () => {
   it('forwards environment calls and targets to their channels in order', async () => {
     const invoke = vi.spyOn(ipcRenderer, 'invoke').mockResolvedValue(undefined)
     try {
-      await fleetApi.fleetEnvironmentAction('work', 'restart')
-      await fleetApi.fleetPatchEnvironment('work', { memoryLimitBytes: null })
-      await fleetApi.fleetListArchivedEnvironments()
-      await fleetApi.fleetRestoreArchivedEnvironment('work')
-      await fleetApi.fleetDeleteArchivedEnvironment('work')
-      await fleetApi.fleetEnvironmentUiOpen('work', 'skills')
-      await fleetApi.fleetEnvironmentSelections('work')
-      await fleetApi.fleetScreenOpen({ environmentId: 'work' }, 'control')
-      await fleetApi.fleetBotSkills({ environmentId: 'work' })
-      await fleetApi.fleetLoginCancel({ environmentId: 'work' }, 'l1')
-      await fleetApi.fleetCreateBot({
+      await fleetApi.fleetEnvironmentAction(SERVER, 'work', 'restart')
+      await fleetApi.fleetPatchEnvironment(SERVER, 'work', { memoryLimitBytes: null })
+      await fleetApi.fleetListArchivedEnvironments(SERVER)
+      await fleetApi.fleetRestoreArchivedEnvironment(SERVER, 'work')
+      await fleetApi.fleetDeleteArchivedEnvironment(SERVER, 'work')
+      await fleetApi.fleetEnvironmentUiOpen(SERVER, 'work', 'skills')
+      await fleetApi.fleetEnvironmentSelections(SERVER, 'work')
+      await fleetApi.fleetScreenOpen(SERVER, { environmentId: 'work' }, 'control')
+      await fleetApi.fleetBotSkills(SERVER, { environmentId: 'work' })
+      await fleetApi.fleetLoginCancel(SERVER, { environmentId: 'work' }, 'l1')
+      await fleetApi.fleetCreateBot(SERVER, {
         name: 'Scout',
         instructions: '',
         ceiling: 'ask',
         talksTo: [],
         environment: { name: 'Work' },
       })
-      await fleetApi.fleetOwnerMemoryCreate({ content: 'Uses the staging VPN.', environmentId: 'work' })
-      await fleetApi.fleetEnvironmentUpdate('work', 'idle')
-      await fleetApi.fleetEnvironmentUpdateCancel('work')
-      await fleetApi.fleetEnvironmentRuntimesCheck('work')
+      await fleetApi.fleetOwnerMemoryCreate(SERVER, { content: 'Uses the staging VPN.', environmentId: 'work' })
+      await fleetApi.fleetEnvironmentUpdate(SERVER, 'work', 'idle')
+      await fleetApi.fleetEnvironmentUpdateCancel(SERVER, 'work')
+      await fleetApi.fleetEnvironmentRuntimesCheck(SERVER, 'work')
       expect(invoke.mock.calls).toEqual([
-        ['fleet:environmentAction', 'work', 'restart'],
-        ['fleet:patchEnvironment', 'work', { memoryLimitBytes: null }],
-        ['fleet:listArchivedEnvironments'],
-        ['fleet:restoreArchivedEnvironment', 'work'],
-        ['fleet:deleteArchivedEnvironment', 'work'],
-        ['fleet:environmentUiOpen', 'work', 'skills'],
-        ['fleet:environmentSelections', 'work'],
-        ['fleet:screenOpen', { environmentId: 'work' }, 'control'],
-        ['fleet:bot:skills', { environmentId: 'work' }],
-        ['fleet:login:cancel', { environmentId: 'work' }, 'l1'],
+        ['fleet:environmentAction', SERVER, 'work', 'restart'],
+        ['fleet:patchEnvironment', SERVER, 'work', { memoryLimitBytes: null }],
+        ['fleet:listArchivedEnvironments', SERVER],
+        ['fleet:restoreArchivedEnvironment', SERVER, 'work'],
+        ['fleet:deleteArchivedEnvironment', SERVER, 'work'],
+        ['fleet:environmentUiOpen', SERVER, 'work', 'skills'],
+        ['fleet:environmentSelections', SERVER, 'work'],
+        ['fleet:screenOpen', SERVER, { environmentId: 'work' }, 'control'],
+        ['fleet:bot:skills', SERVER, { environmentId: 'work' }],
+        ['fleet:login:cancel', SERVER, { environmentId: 'work' }, 'l1'],
         [
           'fleet:createBot',
+          SERVER,
           { name: 'Scout', instructions: '', ceiling: 'ask', talksTo: [], environment: { name: 'Work' } },
         ],
-        ['fleet:ownerMemoryCreate', { content: 'Uses the staging VPN.', environmentId: 'work' }],
-        ['fleet:environmentUpdate', 'work', 'idle'],
-        ['fleet:environmentUpdateCancel', 'work'],
-        ['fleet:environmentRuntimesCheck', 'work'],
+        ['fleet:ownerMemoryCreate', SERVER, { content: 'Uses the staging VPN.', environmentId: 'work' }],
+        ['fleet:environmentUpdate', SERVER, 'work', 'idle'],
+        ['fleet:environmentUpdateCancel', SERVER, 'work'],
+        ['fleet:environmentRuntimesCheck', SERVER, 'work'],
       ])
     } finally {
       invoke.mockRestore()

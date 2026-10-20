@@ -712,6 +712,7 @@ export default {
     environmentNotRunning: 'Este ambiente não está rodando. Inicie-o antes.',
     botNotRunning: 'Este bot não está rodando.',
     screenOffline: 'Esta tela está offline: o bot ou o ambiente dela não está rodando.',
+    serverUnknown: 'Este servidor de bots não está mais pareado.',
   },
   conversation: { recalled: 'Lembrou: {{titles}}' },
   transcript: {

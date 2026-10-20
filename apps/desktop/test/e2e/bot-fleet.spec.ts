@@ -1263,13 +1263,14 @@ async function runFleetScenario(workspaceOnly: boolean) {
     await page.getByRole('button', { name: 'Fechar', exact: true }).first().click()
     const rendererProvisioning = await page.evaluate(async () => {
       const inventory = await window.api.fleetProvisioningInventory()
-      const report = await window.api.fleetImportFromMac('privacy-check', {
+      const [server] = await window.api.fleetServers()
+      const report = await window.api.fleetImportFromMac(server.id, 'privacy-check', {
         apiKeyIds: inventory.apiKeys.filter((item) => item.name === 'Mac fixture key').map((item) => item.id),
         copyIds: [],
         skillNames: ['e2e-notes'],
         mcpServerIds: inventory.mcpServers.filter((item) => item.name === 'Mac fixture MCP').map((item) => item.id),
       })
-      const accounts = await window.api.fleetBotAccounts('privacy-check')
+      const accounts = await window.api.fleetBotAccounts(server.id, 'privacy-check')
       return { inventory, report, accounts }
     })
     expect(rendererProvisioning.report.accounts[0].outcome).toBe('added')
@@ -1894,7 +1895,7 @@ async function runFleetScenario(workspaceOnly: boolean) {
         data: {},
       },
     })
-    await page.evaluate(() => window.api.fleetRefresh())
+    await page.evaluate(async () => window.api.fleetRefresh((await window.api.fleetServers())[0].id))
     expect(requests.filter((item) => item.key === 'activity')).toEqual([])
     await page.getByRole('button', { name: 'Fechar ajustes', exact: true }).click()
     const setupScout = fleetBotSchema.parse({
@@ -2323,7 +2324,11 @@ async function runFleetScenario(workspaceOnly: boolean) {
       baseURL: 'http://fake-model:8080/v1',
     })
     await expect(accountsSection.getByText(/Fake model.*fake-model:8080.*…-123/)).toBeVisible()
-    expect(JSON.stringify(await page.evaluate(() => window.api.fleetBotAccounts('new-bot')))).not.toContain(apiKey)
+    expect(
+      JSON.stringify(
+        await page.evaluate(async () => window.api.fleetBotAccounts((await window.api.fleetServers())[0].id, 'new-bot'))
+      )
+    ).not.toContain(apiKey)
     expect(await page.content()).not.toContain(apiKey)
     await expect(page.getByLabel('Chave de API')).toHaveValue('')
     await page.getByRole('button', { name: 'Remover', exact: true }).click()
@@ -3095,7 +3100,11 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
       .toBe('/v1/environments/acme/accounts/api-key')
     await expect(environmentAccounts.getByText(/Shared model.*…-456/)).toBeVisible()
     expect(
-      JSON.stringify(await page.evaluate(() => window.api.fleetBotAccounts({ environmentId: 'acme' })))
+      JSON.stringify(
+        await page.evaluate(async () =>
+          window.api.fleetBotAccounts((await window.api.fleetServers())[0].id, { environmentId: 'acme' })
+        )
+      )
     ).not.toContain(environmentKey)
     expect(await page.content()).not.toContain(environmentKey)
     // The page's markup never holds a field's value: check the fields themselves.

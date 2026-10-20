@@ -3,6 +3,9 @@ import { describe, expect, it, vi } from 'vitest'
 import type { FleetBot } from '@maestrly/bot-fleet-protocol'
 import type { HostApi } from '../../src/preload'
 import { botChatComposerSource, localChatComposerSource } from '../../src/renderer/components/chat/chat-composer-source'
+import type { FleetServerId } from '../../src/shared/fleet-servers'
+
+const COMPOSER_SERVER = 'aaaaaaaa-0000-4000-8000-000000000001' as FleetServerId
 
 const sourceFile = (name: string) => readFileSync(`src/renderer/components/${name}`, 'utf8')
 
@@ -63,7 +66,7 @@ describe('chat composer data sources', () => {
       fleetUiOpen: vi.fn(),
     }
     vi.stubGlobal('window', { api })
-    const source = botChatComposerSource({ id: 'bot-1', ceiling: 'auto' }, vi.fn(), () => 'human')
+    const source = botChatComposerSource(COMPOSER_SERVER, { id: 'bot-1', ceiling: 'auto' }, vi.fn(), () => 'human')
     await source.chatConfig()
     await source.chatGetConvTools()
     await source.chatSetConvTools({ app: true })
@@ -78,19 +81,19 @@ describe('chat composer data sources', () => {
     await source.chatCompact()
     await source.chatBackgroundCompactionRetry()
     expect(api.fleetConversationCall.mock.calls).toEqual([
-      ['bot-1', 'chatConfig'],
-      ['bot-1', 'chatGetConvTools'],
-      ['bot-1', 'chatSetConvTools', { app: true }],
-      ['bot-1', 'chatSubagentProfilesGetConversation'],
-      ['bot-1', 'chatSubagentProfilesSetConversationEnabled', true],
-      ['bot-1', 'chatSubagentsSetConversationEnabled', true],
-      ['bot-1', 'chatSkillsState'],
-      ['bot-1', 'chatSkillSetOverride', 'skill', 'on'],
-      ['bot-1', 'chatSkillResetOverrides'],
-      ['bot-1', 'chatSkillSetSelection', { kind: 'all' }],
-      ['bot-1', 'chatCommands'],
-      ['bot-1', 'chatCompact'],
-      ['bot-1', 'chatBackgroundCompactionRetry'],
+      [COMPOSER_SERVER, 'bot-1', 'chatConfig'],
+      [COMPOSER_SERVER, 'bot-1', 'chatGetConvTools'],
+      [COMPOSER_SERVER, 'bot-1', 'chatSetConvTools', { app: true }],
+      [COMPOSER_SERVER, 'bot-1', 'chatSubagentProfilesGetConversation'],
+      [COMPOSER_SERVER, 'bot-1', 'chatSubagentProfilesSetConversationEnabled', true],
+      [COMPOSER_SERVER, 'bot-1', 'chatSubagentsSetConversationEnabled', true],
+      [COMPOSER_SERVER, 'bot-1', 'chatSkillsState'],
+      [COMPOSER_SERVER, 'bot-1', 'chatSkillSetOverride', 'skill', 'on'],
+      [COMPOSER_SERVER, 'bot-1', 'chatSkillResetOverrides'],
+      [COMPOSER_SERVER, 'bot-1', 'chatSkillSetSelection', { kind: 'all' }],
+      [COMPOSER_SERVER, 'bot-1', 'chatCommands'],
+      [COMPOSER_SERVER, 'bot-1', 'chatCompact'],
+      [COMPOSER_SERVER, 'bot-1', 'chatBackgroundCompactionRetry'],
     ])
     vi.unstubAllGlobals()
   })
@@ -106,15 +109,15 @@ describe('chat composer data sources', () => {
     vi.stubGlobal('window', { api })
     let state: FleetBot['takeover']['state'] = 'none'
     const openScreen = vi.fn()
-    const source = botChatComposerSource({ id: 'bot-1', ceiling: 'ask' }, openScreen, () => state)
+    const source = botChatComposerSource(COMPOSER_SERVER, { id: 'bot-1', ceiling: 'ask' }, openScreen, () => state)
     await source.bot?.manage('skills')
     expect(api.fleetTakeover).toHaveBeenCalledTimes(1)
     state = 'human'
     await source.bot?.manage('mcp')
     expect(api.fleetTakeover).toHaveBeenCalledTimes(1)
     expect(api.fleetUiOpen.mock.calls).toEqual([
-      ['bot-1', { target: 'skills' }],
-      ['bot-1', { target: 'mcp' }],
+      [COMPOSER_SERVER, 'bot-1', { target: 'skills' }],
+      [COMPOSER_SERVER, 'bot-1', { target: 'mcp' }],
     ])
     expect(openScreen).toHaveBeenCalledTimes(2)
     vi.unstubAllGlobals()
@@ -145,7 +148,7 @@ describe('chat composer data sources', () => {
   it('keeps the bot source stable across status and usage updates', () => {
     const composer = sourceFile('fleet/BotComposer.tsx')
     // A source rebuilt on every `bot.updated` event would reload commands over the network several times a second.
-    expect(composer).toMatch(/\[bot\.id, bot\.ceiling\]\s*\)/)
+    expect(composer).toMatch(/\[serverId, bot\.id, bot\.ceiling\]\s*\)/)
     expect(composer).not.toMatch(/botChatComposerSource\([^)]*\), \[bot\]\)/)
   })
 

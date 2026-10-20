@@ -32,6 +32,7 @@ function PreferencesEditor({
   onDirtyChange,
   initial,
 }: EnvironmentSettingsSectionProps & { initial: FleetSettingsOutput<'preferences'> }) {
+  const serverId = fleet.serverId
   const { t } = useTranslation('fleet')
   const source = useEnvironmentSettingsSource(environment.id)
   const updateDirty = useCombinedSettingsDraft(onDirtyChange)
@@ -62,7 +63,7 @@ function PreferencesEditor({
       const renames = draft.name !== savedName.current
       const recolors = tinted && draft.tint !== savedTint.current
       if (renames || recolors) {
-        const updated = await window.api.fleetPatchEnvironment(environment.id, {
+        const updated = await window.api.fleetPatchEnvironment(serverId, environment.id, {
           ...(renames ? { name: draft.name, expected: { name: savedName.current } } : {}),
           ...(recolors ? { tint: draft.tint } : {}),
         })

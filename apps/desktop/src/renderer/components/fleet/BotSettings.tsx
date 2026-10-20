@@ -185,6 +185,7 @@ export function BotSettings({
   /** Set while the settings are open, for the view around them to ask before leaving. */
   leaveGuard?: MutableRefObject<SettingsLeaveGuard | null>
 }) {
+  const serverId = fleet.serverId
   const { t, i18n } = useTranslation('fleet')
   // With environments, accounts, skills, MCP servers and resources belong to the bot's environment and are managed
   // there; without them, a bot keeps every section it had.
@@ -307,7 +308,7 @@ export function BotSettings({
   useEffect(() => {
     let alive = true
     void window.api
-      .fleetListSelections(bot.id)
+      .fleetListSelections(serverId, bot.id)
       .then((models) => {
         if (alive) setOptions(models.options)
       })
@@ -356,7 +357,11 @@ export function BotSettings({
     setBusy(true)
     setSaveError('')
     try {
-      const updated = await window.api.fleetUpdateBot(bot.id, botSettingsPatch(bot, draft, inheritable, options))
+      const updated = await window.api.fleetUpdateBot(
+        serverId,
+        bot.id,
+        botSettingsPatch(bot, draft, inheritable, options)
+      )
       fleet.dispatch({ type: 'event', value: { type: 'bot.updated', at: new Date().toISOString(), bot: updated } })
       setDraft(botSettingsDraft(updated, inheritable))
       setNameTouched(false)
@@ -405,17 +410,17 @@ export function BotSettings({
   }, [])
 
   async function refreshBot() {
-    const updated = await window.api.fleetGetBot(bot.id)
+    const updated = await window.api.fleetGetBot(serverId, bot.id)
     fleet.dispatch({ type: 'event', value: { type: 'bot.updated', at: new Date().toISOString(), bot: updated } })
-    const models = await window.api.fleetListSelections(bot.id)
+    const models = await window.api.fleetListSelections(serverId, bot.id)
     setOptions(models.options)
   }
   async function logInOnScreen() {
     setScreenBusy(true)
     setScreenError('')
     try {
-      if (bot.takeover.state !== 'human') await window.api.fleetTakeover(bot.id)
-      await window.api.fleetUiOpen(bot.id, { target: 'accounts' })
+      if (bot.takeover.state !== 'human') await window.api.fleetTakeover(serverId, bot.id)
+      await window.api.fleetUiOpen(serverId, bot.id, { target: 'accounts' })
       onOpenScreen()
     } catch {
       setScreenError(t('botSettings.screenLoginFailed'))
@@ -427,7 +432,7 @@ export function BotSettings({
     setArchiveBusy(true)
     setError('')
     try {
-      const archived = await window.api.fleetBotAction(bot.id, 'archive')
+      const archived = await window.api.fleetBotAction(serverId, bot.id, 'archive')
       if (archived)
         fleet.dispatch({ type: 'event', value: { type: 'bot.updated', at: new Date().toISOString(), bot: archived } })
       onArchived()

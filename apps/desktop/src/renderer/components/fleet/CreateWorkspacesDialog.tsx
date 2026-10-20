@@ -108,6 +108,7 @@ export function CreateWorkspacesDialog({
   onClose: () => void
   onCreated: (environment: FleetEnvironment) => void
 }) {
+  const serverId = fleet.serverId
   const { t } = useTranslation('fleet')
   const id = useId()
   const { environments, host } = fleet.state.snapshot
@@ -131,7 +132,7 @@ export function CreateWorkspacesDialog({
     setBusy(true)
     setError('')
     try {
-      const environment = await window.api.fleetCreateWorkspaces({
+      const environment = await window.api.fleetCreateWorkspaces(serverId, {
         name: trimmed,
         memoryLimitBytes: memoryLimitFromValue(memory),
         ...(scoped ? { tint, cpuLimit: cpuLimitFromValue(cpus), idleStopMinutes: idleStopFromValue(idle) } : {}),

@@ -104,7 +104,12 @@ export class FleetDesktopBridge {
     private readonly notify: (botId: string) => void = () => {},
     private readonly now: () => number = Date.now,
     /** How a bot is told what failed here: on a computer, or on a workspaces host. */
-    private readonly place: DesktopBridgePlace = COMPUTER_PLACE
+    private readonly place: DesktopBridgePlace = COMPUTER_PLACE,
+    /**
+     * The device ids of every pairing this computer still has, one per server: the access given through any of them
+     * stays. Alone, a bridge keeps only its own pairing's.
+     */
+    private readonly pairedDeviceIds?: () => ReadonlySet<string>
   ) {}
 
   /** The connection this computer holds for a bot through its current pairing, if any. */
@@ -261,17 +266,19 @@ export class FleetDesktopBridge {
   }
 
   /**
-   * Once connected: connections of an earlier pairing of this computer are revoked, and each bot this computer gives access to
-   * is checked against the server, which may have removed it while this computer was away.
+   * Once connected: connections of a pairing this computer no longer has are revoked, and each bot this computer gives
+   * access to is checked against the server, which may have removed it while this computer was away.
    */
   async connected(): Promise<void> {
     const deviceId = this.gateway.deviceId()
     if (!deviceId) return
     this.selfLinks.clear()
     const current = `fleet:${deviceId}:`
+    const paired = this.pairedDeviceIds?.() ?? new Set([deviceId])
     const live = this.host.fleetConnections('fleet:').filter((connection) => !connection.revokedAt)
     for (const connection of live)
-      if (!connection.clientId.startsWith(current)) await this.host.revokeFleetConnection(connection.id)
+      if (!paired.has(connection.clientId.split(':')[1] ?? '') && !connection.clientId.startsWith(current))
+        await this.host.revokeFleetConnection(connection.id)
     const bots = new Set(
       live.filter((connection) => connection.clientId.startsWith(current)).map((c) => botOfClientId(c.clientId))
     )

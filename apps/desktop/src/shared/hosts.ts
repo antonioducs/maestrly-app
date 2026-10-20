@@ -1,3 +1,4 @@
+import type { FleetServerId } from './fleet-servers'
 import type { HostId } from './host-key'
 import type { RemoteOs } from './remote-bridge'
 
@@ -26,6 +27,8 @@ export interface HostView {
   label: string
   /** The name of the server a remote host runs on; empty for this computer and for a host reached without a server. */
   server: string
+  /** The paired server a remote host runs on; null for this computer and for a host reached without a server. */
+  serverId: FleetServerId | null
   /** The color the owner chose for a remote host's environment; null when none, and for this computer. */
   tint: string | null
   state: HostConnectionState

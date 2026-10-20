@@ -33,7 +33,9 @@ import { AboutModal } from '@/components/AboutModal'
 import { useDrawerState } from '@/lib/use-drawer-state'
 import { useWorkspaces } from '@/lib/use-workspaces'
 import { useMainPanels, type FleetView } from '@/lib/use-main-panels'
-import { useFleet } from '@/lib/fleet/use-fleet'
+import { useFleets, type FleetServers } from '@/lib/fleet/use-fleet'
+import { FleetServerProvider } from '@/lib/fleet/server-context'
+import { defaultFleetServer, type FleetServerId, NO_FLEET_SERVER } from '../shared/fleet-servers'
 import { useBotUpdates } from '@/lib/fleet/use-bot-updates'
 import { PersistentBotViews } from '@/components/fleet/PersistentBotViews'
 import { EnvironmentView } from '@/components/fleet/EnvironmentView'
@@ -73,6 +75,29 @@ import { type HostId, hostKey, LOCAL_HOST_ID } from '../shared/host-key'
 import type { HostView } from '../shared/hosts'
 
 export function DesktopApp() {
+  const fleets = useFleets()
+  // The Bots tab shows one server: the one chosen while it is paired, else the default one.
+  const [chosenServer, setChosenServer] = useState<FleetServerId | null>(null)
+  const botsServer =
+    chosenServer && fleets.servers.some((server) => server.id === chosenServer)
+      ? chosenServer
+      : (defaultFleetServer(fleets.servers)?.id ?? NO_FLEET_SERVER)
+  return (
+    <FleetServerProvider serverId={botsServer}>
+      <DesktopShell fleets={fleets} botsServer={botsServer} onBotsServer={setChosenServer} />
+    </FleetServerProvider>
+  )
+}
+
+function DesktopShell({
+  fleets,
+  botsServer,
+  onBotsServer,
+}: {
+  fleets: FleetServers
+  botsServer: FleetServerId
+  onBotsServer: (serverId: FleetServerId) => void
+}) {
   const api = hostApi(LOCAL_HOST_ID)
   const { t } = useTranslation('ui')
   const [active, setActive] = useState<Conversation | null>(null)
@@ -305,7 +330,7 @@ export function DesktopApp() {
     refreshWorkspaces,
     refreshHostWorkspaces,
   })
-  const fleet = useFleet()
+  const fleet = fleets.controller(botsServer)
   const botUpdates = useBotUpdates(fleet)
   const [fleetTabRequest, setFleetTabRequest] = useState(0)
   const openFleetView = useCallback(
@@ -762,20 +787,23 @@ export function DesktopApp() {
   )
 
   const retryHost = useCallback((hostId: HostId) => void window.api.hostsRetry(hostId), [])
+  // A host's environment is its own server's, whichever server the Bots tab shows.
   const startHost = useCallback(
     (host: HostView) => {
-      if (host.environment) void fleet.environmentAction(host.environment.id, 'start')
+      if (host.environment && host.serverId)
+        void fleets.controller(host.serverId).environmentAction(host.environment.id, 'start')
     },
-    [fleet.environmentAction]
+    [fleets]
   )
   const openServerPage = useCallback(() => openFleetView({ kind: 'server' }), [openFleetView])
   // A host's environment page has its lifecycle, settings and isolation; a host reached without a server has none.
   const manageHost = useCallback(
-    (host: HostView) =>
-      host.environment
-        ? openFleetView({ kind: 'environment', environmentId: host.environment.id, tab: 'overview' })
-        : openServerPage(),
-    [openFleetView, openServerPage]
+    (host: HostView) => {
+      if (host.serverId) onBotsServer(host.serverId)
+      if (host.environment) openFleetView({ kind: 'environment', environmentId: host.environment.id, tab: 'overview' })
+      else openServerPage()
+    },
+    [onBotsServer, openFleetView, openServerPage]
   )
   const hostSections: SidebarHostSection[] = remoteHosts.map((host) => ({
     host,
@@ -1033,7 +1061,13 @@ export function DesktopApp() {
                   onOpenSettings={() => openSettings('artifacts')}
                 />
               )}
-              <PersistentBotViews view={fleetView} fleet={fleet} onView={openFleetView} onOpenBot={openFleetBot} />
+              <PersistentBotViews
+                fleets={fleets}
+                view={fleetView}
+                fleet={fleet}
+                onView={openFleetView}
+                onOpenBot={openFleetBot}
+              />
               {fleetView?.kind === 'environment' &&
                 fleet.state.snapshot.environments.some((environment) => environment.id === fleetView.environmentId) && (
                   <EnvironmentView

@@ -1,16 +1,12 @@
 import type { ArtifactHostEvent } from '@maestrly/artifact-host'
 import { disposeBotLogins } from './provisioning/logins'
-import os from 'node:os'
-import path from 'node:path'
-import { app, shell } from 'electron'
+import { shell } from 'electron'
 import { randomUUID } from 'node:crypto'
 import {
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_FILES_FEATURE,
-  FLEET_PROTOCOL_VERSION,
   fleetMetaFeatures,
   isAllowedFleetUrl,
-  normalizePairingCode,
   type FleetBot,
   type FleetEnvironment,
   type FleetGatewayEvent,
@@ -21,32 +17,19 @@ import {
 import { broadcast } from '../../window-ipc'
 import { fleetAlertFor, type FleetAlert } from './alerts'
 import { FleetApiClient, FleetClientError } from './api'
-import { FleetEvents, type FleetConnectionState } from './events'
-import {
-  clearFleetCredentials,
-  readFleetSettings,
-  saveFleetCredentials,
-  saveFleetUrl,
-  type TokenPersistence,
-} from './settings'
+import type { FleetConnectionView, FleetServerId } from '../../../shared/fleet-servers'
+import { FleetEvents } from './events'
+import type { TokenPersistence } from './settings'
 import { FleetScreenBridge } from './screen-bridge'
 import { isHeadlessInstance } from '../../remote-host/server/config'
 import { saveFleetFile } from './downloads'
 import { findFleetDownload, fleetDownloadPath, rememberFleetDownload } from './download-history'
-import { FleetMediaCache, type FleetMediaEntry } from './media-cache'
-import { FleetMediaUrls, type FleetMediaRequest } from './media-protocol'
+import type { FleetMediaCache, FleetMediaEntry } from './media-cache'
+import type { FleetMediaUrls, FleetMediaRequest } from './media-protocol'
 import { FleetActiveDownloads, type FleetSettledDownload } from './active-downloads'
 import type { FleetDownloadProgress } from '../../../shared/fleet-downloads'
 
-export type FleetConnectionView = {
-  features: string[]
-  state: FleetConnectionState
-  deviceId: string | null
-  url: string | null
-  hostname: string | null
-  error: string | null
-  tokenPersistence: TokenPersistence
-}
+export type { FleetConnectionView } from '../../../shared/fleet-servers'
 export type FleetSnapshot = {
   host: FleetHostInfo | null
   bots: FleetBot[]
@@ -55,14 +38,33 @@ export type FleetSnapshot = {
   inbox: FleetInboxItem[]
   peerMessages: FleetPeerMessage[]
 }
-const emptySnapshot = (): FleetSnapshot => ({ host: null, bots: [], environments: [], inbox: [], peerMessages: [] })
-
-/** The platform this computer pairs as, so the server's list of devices can tell computers apart. */
-function devicePlatform(): 'macos' | 'windows' | 'linux' {
-  return process.platform === 'darwin' ? 'macos' : process.platform === 'win32' ? 'windows' : 'linux'
+/** Shows a saved bot file in its folder, whichever server's bot shared it: the receipt names the file. */
+export async function revealFleetDownload(receipt: string): Promise<void> {
+  shell.showItemInFolder(await fleetDownloadPath(receipt))
 }
 
+const emptySnapshot = (): FleetSnapshot => ({ host: null, bots: [], environments: [], inbox: [], peerMessages: [] })
+
+/** What a client of one server is given: its id, its record and token, and what every client shares. */
+export interface FleetClientDeps {
+  serverId: FleetServerId
+  /** Read on every start: pairing again or a new address replaces them. */
+  credentials(): {
+    url: string
+    deviceId: string
+    deviceName: string
+    token: string | null
+    persistence: TokenPersistence
+  } | null
+  media: FleetMediaCache
+  mediaUrls: FleetMediaUrls
+}
+
+/** This computer's connection to one paired bot server. */
 export class FleetClientService {
+  readonly serverId: FleetServerId
+  readonly media: FleetMediaCache
+  private readonly mediaUrls: FleetMediaUrls
   private api: FleetApiClient | null = null
   private events: FleetEvents | null = null
   readonly screens = new FleetScreenBridge(() => this.requireApi())
@@ -78,22 +80,34 @@ export class FleetClientService {
   private snapshot: FleetSnapshot = emptySnapshot()
   private generation = 0
   private downloads = new AbortController()
-  private readonly mediaUrls = new FleetMediaUrls()
-  readonly media = new FleetMediaCache({
-    root: () => path.join(app.getPath('userData'), 'fleet-media-cache'),
-    onProgress: (progress) => broadcast('fleet:mediaProgress', progress),
-  })
   private readonly transfers = new FleetActiveDownloads({
-    emit: (event) => broadcast('fleet:download', event),
+    emit: (event) => broadcast('fleet:download', { serverId: this.serverId, event }),
     settled: (download) =>
-      this.onDownloadSettled?.(download, this.snapshot.bots.find((bot) => bot.id === download.botId)?.name ?? null),
+      this.onDownloadSettled?.(
+        this.serverId,
+        download,
+        this.snapshot.bots.find((bot) => bot.id === download.botId)?.name ?? null
+      ),
   })
   /** Plays a bot's alert; set by the main process, which owns the sound settings. */
   onArtifactEvent: ((event: ArtifactHostEvent | { type: 'changed' }) => void) | null = null
   onAlert: ((botId: string, alert: FleetAlert) => void) | null = null
   /** Tells the owner a bot file finished saving or failed; set by the main process, which shows the notice. */
-  onDownloadSettled: ((download: FleetSettledDownload, botName: string | null) => void) | null = null
+  onDownloadSettled:
+    | ((serverId: FleetServerId, download: FleetSettledDownload, botName: string | null) => void)
+    | null = null
   private readonly listeners = new Set<() => void>()
+
+  constructor(private readonly deps: FleetClientDeps) {
+    this.serverId = deps.serverId
+    this.media = deps.media
+    this.mediaUrls = deps.mediaUrls
+  }
+
+  /** The name this computer has on the server. */
+  deviceName(): string | null {
+    return this.deps.credentials()?.deviceName ?? null
+  }
 
   /** Calls back after the connection or what is known of the server changed; returns the function that stops it. */
   onChange(listener: () => void): () => void {
@@ -123,25 +137,34 @@ export class FleetClientService {
 
   start(): void {
     if (isHeadlessInstance()) return
-    const settings = readFleetSettings()
-    if (settings.url && settings.token) {
-      const allowed = isAllowedFleetUrl(settings.url)
-      if (allowed.ok) this.useCredentials(allowed.origin, settings.token, settings.tokenPersistence)
-    } else if (settings.url) {
-      const allowed = isAllowedFleetUrl(settings.url)
-      if (allowed.ok)
-        this.setConnection({
-          url: allowed.origin,
-          deviceId: settings.deviceId,
-          tokenPersistence: settings.tokenPersistence,
-        })
-    }
+    const credentials = this.deps.credentials()
+    const allowed = credentials ? isAllowedFleetUrl(credentials.url) : null
+    if (!credentials || !allowed?.ok) return
+    if (credentials.token) this.useCredentials(allowed.origin, credentials.token, credentials.persistence)
+    // A token kept only for the last session is gone: the server waits to be paired again.
+    else
+      this.setConnection({
+        state: 'unconfigured',
+        url: allowed.origin,
+        deviceId: credentials.deviceId,
+        tokenPersistence: credentials.persistence,
+      })
+  }
+
+  /**
+   * Reconnects with the credentials stored now, as after pairing again or moving to another address; `features` are
+   * what the gateway advertised while pairing, known before its stream opens.
+   */
+  restart(features?: string[]): void {
+    this.stop()
+    this.start()
+    if (features && this.api) this.setConnection({ features })
   }
 
   stop(): void {
     this.downloads.abort()
     this.downloads = new AbortController()
-    void disposeBotLogins()
+    void disposeBotLogins(this)
     this.generation++
     this.events?.stop()
     this.events = null
@@ -155,7 +178,7 @@ export class FleetClientService {
       this.downloads = new AbortController()
     }
     this.connection = { ...this.connection, ...patch }
-    broadcast('fleet:connection', this.connection)
+    broadcast('fleet:connection', { serverId: this.serverId, connection: this.connection })
     this.changed()
     if (patch.state || patch.features) this.onArtifactEvent?.({ type: 'changed' })
   }
@@ -226,13 +249,13 @@ export class FleetClientService {
     const deviceId = this.connection.deviceId
     if (!deviceId) throw new Error('Fleet is not paired')
     await this.mediaFile(deviceId, botId, fileId)
-    return this.mediaUrls.url(deviceId, botId, fileId)
+    return this.mediaUrls.url(this.serverId, deviceId, botId, fileId)
   }
 
   /** The cached video a `maestrly-media:` URL names, fetched again if the cache let it go since. */
   async mediaEntry(request: FleetMediaRequest): Promise<FleetMediaEntry | null> {
     const deviceId = this.connection.deviceId
-    if (!deviceId || !this.mediaUrls.verify(deviceId, request)) return null
+    if (!deviceId || !this.mediaUrls.verify(this.serverId, deviceId, request)) return null
     try {
       return await this.mediaFile(deviceId, request.botId, request.fileId)
     } catch (error) {
@@ -247,7 +270,7 @@ export class FleetClientService {
   }
 
   async revealDownload(receipt: string): Promise<void> {
-    shell.showItemInFolder(await fleetDownloadPath(receipt))
+    await revealFleetDownload(receipt)
   }
 
   private useCredentials(url: string, token: string, tokenPersistence: TokenPersistence): void {
@@ -257,7 +280,7 @@ export class FleetClientService {
     this.setConnection({
       features: [],
       state: 'connecting',
-      deviceId: readFleetSettings().deviceId,
+      deviceId: this.deps.credentials()?.deviceId ?? null,
       url,
       hostname: null,
       error: null,
@@ -288,40 +311,12 @@ export class FleetClientService {
     this.events.start()
   }
 
-  async connect(input: { url: string; code: string; deviceName?: string }): Promise<FleetConnectionView> {
-    const allowed = isAllowedFleetUrl(input.url)
-    if (!allowed.ok) throw new FleetClientError('INVALID_REQUEST', 400, allowed.reason)
-    const code = normalizePairingCode(input.code)
-    if (!code) throw new FleetClientError('INVALID_REQUEST', 400, 'Invalid pairing code')
-    const deviceName = input.deviceName?.trim() || os.hostname()
-    const unauthenticated = new FleetApiClient(allowed.origin)
-    const meta = await unauthenticated.call('meta')
-    if (meta.protocol !== FLEET_PROTOCOL_VERSION)
-      throw new FleetClientError('PROTOCOL_INCOMPATIBLE', 426, 'Incompatible fleet protocol')
-    const paired = await unauthenticated.call('pair', {
-      body: { code, deviceName, client: { kind: 'computer', platform: devicePlatform() } },
-    })
-    const persistence = saveFleetCredentials(allowed.origin, paired.deviceId, deviceName, paired.token)
-    this.useCredentials(allowed.origin, paired.token, persistence)
-    this.setConnection({ features: fleetMetaFeatures(meta) })
-    return this.connection
-  }
-
   /**
-   * Keeps the pairing but reaches the gateway at another address, as when the local end of the SSH tunnel to a VPS
-   * moves to another port. The device, its token and where the token is kept stay the same.
+   * Leaves the server: its sign-ins end, the access this pairing gave bots ends, the server forgets this device, and
+   * the videos cached through it are deleted. The record of the server is the registry's to remove.
    */
-  retarget(url: string): void {
-    const allowed = isAllowedFleetUrl(url)
-    if (!allowed.ok) throw new FleetClientError('INVALID_REQUEST', 400, allowed.reason)
-    saveFleetUrl(allowed.origin)
-    const settings = readFleetSettings()
-    if (settings.token) this.useCredentials(allowed.origin, settings.token, settings.tokenPersistence)
-    else this.setConnection({ url: allowed.origin })
-  }
-
-  async disconnect(): Promise<void> {
-    await disposeBotLogins()
+  async unpair(): Promise<void> {
+    await disposeBotLogins(this)
     const api = this.api
     const deviceId = this.connection.deviceId
     this.stop()
@@ -333,9 +328,8 @@ export class FleetClientService {
     } catch {
       /* Local disconnect still takes effect. */
     }
-    clearFleetCredentials()
     // A new pairing gets a new device id, so nothing cached under this one could be reached again.
-    await this.media.clear().catch(() => undefined)
+    if (deviceId) await this.media.purgeScope(deviceId).catch(() => undefined)
     this.snapshot = emptySnapshot()
     this.setConnection({
       features: [],
@@ -440,7 +434,7 @@ export class FleetClientService {
         break
       }
     }
-    broadcast('fleet:event', event)
+    broadcast('fleet:event', { serverId: this.serverId, event })
     this.changed()
   }
 
@@ -462,5 +456,3 @@ export class FleetClientService {
     return randomUUID()
   }
 }
-
-export const fleetClientService = new FleetClientService()

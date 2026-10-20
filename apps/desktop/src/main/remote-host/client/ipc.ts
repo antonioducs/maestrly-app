@@ -4,8 +4,7 @@ import { FLEET_INSTANCE_BRIDGE_PATH, FLEET_PROTOCOL_HEADER, FLEET_PROTOCOL_VERSI
 import { WebSocket as NodeWebSocket } from 'ws'
 import { type HostId, isValidHostId, parseHostKey } from '../../../shared/host-key'
 import { REMOTE_BRIDGE_LIMITS, type RemoteOriginRole, type RemoteOs } from '../../../shared/remote-bridge'
-import { fleetClientService } from '../../fleet/client/service'
-import { fleetServerId, readFleetSettings } from '../../fleet/client/settings'
+import { fleetServers } from '../../fleet/client/servers'
 import type { IpcRegistrar } from '../../ipc-registrar'
 import { getLocale } from '../../store'
 import { isE2E } from '../../test-mode'
@@ -66,17 +65,23 @@ export function registerHostsIpc(reg: IpcRegistrar): void {
   const headless = isHeadlessInstance()
   const direct = headless ? null : parseDirectHost(process.env.MAESTRLY_DEV_DIRECT_HOST, !app.isPackaged || isE2E())
   const hosts = new HostRegistry({
-    fleet: {
-      getConnection: () => fleetClientService.getConnection(),
-      getSnapshot: () => (headless ? { environments: [] } : fleetClientService.getSnapshot()),
-      onChange: (listener) => fleetClientService.onChange(listener),
-      bridgeTicket: (eid) => fleetClientService.call('environmentBridgeTicket', { params: { eid }, body: {} }),
+    servers: {
+      list: () =>
+        headless
+          ? []
+          : fleetServers.clients().map((client) => ({
+              id: client.serverId,
+              getConnection: () => client.getConnection(),
+              getSnapshot: () => client.getSnapshot(),
+              bridgeTicket: (eid: string) => client.call('environmentBridgeTicket', { params: { eid }, body: {} }),
+              deviceName: () => client.deviceName(),
+            })),
+      onChange: (listener) => fleetServers.onChange(listener),
     },
-    serverId: fleetServerId,
     appVersion: app.getVersion(),
     local: { os: localOs(), homeDir: os.homedir() },
     client: () => ({
-      deviceName: (readFleetSettings().deviceName ?? os.hostname()).slice(0, 128),
+      deviceName: os.hostname().slice(0, 128),
       os: localOs(),
       locale: getLocale(),
     }),

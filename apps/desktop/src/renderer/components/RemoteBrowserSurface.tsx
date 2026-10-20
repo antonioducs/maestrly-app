@@ -21,6 +21,7 @@ import { keyUpInput, routeKeyDown, type KeyInput, type KeyOs } from '@/lib/remot
 import { fitFrame, toFramePoint, toSurfaceRect, wheelPixels, type FrameFit } from '@/lib/remote-browser-view'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger } from '@/components/ui/select'
+import { parseRemoteHostId } from '../../shared/host-key'
 
 /**
  * The browser of a conversation that runs on a remote host, drawn from the frames the host streams (see
@@ -94,6 +95,7 @@ export function RemoteBrowserSurface({ convId, active, onFocusAddress }: Props) 
   const host = useHostInfo()
   const online = host.state === 'online'
   const environmentId = host.environment?.id ?? null
+  const screenServer = parseRemoteHostId(host.id)?.serverId ?? null
   const os = osOf()
 
   const containerRef = useRef<HTMLDivElement>(null)
@@ -225,11 +227,12 @@ export function RemoteBrowserSurface({ convId, active, onFocusAddress }: Props) 
       }
     }
     const startVideo = async () => {
-      if (!environmentId) return onVideo({ type: 'video-error' })
+      if (!environmentId || !screenServer) return onVideo({ type: 'video-error' })
       let channel: FleetScreenChannel
       try {
         channel = await FleetScreenChannel.open(
           window.api,
+          screenServer,
           { environmentId, conversationId: convId, surface: 'browser' },
           'view'
         )
@@ -393,6 +396,7 @@ export function RemoteBrowserSurface({ convId, active, onFocusAddress }: Props) 
     surfaceReady,
     host.epoch,
     environmentId,
+    screenServer,
     retry,
     surfaceSize,
     paint,

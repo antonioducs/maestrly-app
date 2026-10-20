@@ -10,12 +10,16 @@ import {
 } from '../../src/main/fleet/client/media-protocol'
 import type { FleetMediaEntry } from '../../src/main/fleet/client/media-cache'
 import { fleetVideoMediaType, isFleetVideo } from '../../src/shared/fleet-media'
+import type { FleetServerId } from '../../src/shared/fleet-servers'
+
+const SERVER = 'aaaaaaaa-0000-4000-8000-000000000001' as FleetServerId
+const OTHER_SERVER = 'bbbbbbbb-0000-4000-8000-000000000002' as FleetServerId
 
 let folder: string
 let entry: FleetMediaEntry
 const bytes = Buffer.from(Array.from({ length: 100 }, (_, index) => index))
 const capability = 'a'.repeat(32)
-const url = `maestrly-media://fleet/bot/f-clip/${capability}`
+const url = `maestrly-media://fleet/aaaaaaaa-0000-4000-8000-000000000001/bot/f-clip/${capability}`
 
 beforeAll(async () => {
   folder = await mkdtemp(path.join(os.tmpdir(), 'fleet-media-protocol-'))
@@ -55,28 +59,35 @@ describe('fleet video detection', () => {
 })
 
 describe('fleet media URLs', () => {
-  it('binds a capability to the pairing, the bot and the file', () => {
+  it('names the server and binds a capability to it, the pairing, the bot and the file', () => {
     const urls = new FleetMediaUrls()
-    const parsed = parseFleetMediaUrl(urls.url('device', 'bot', 'f-clip'))
-    expect(parsed).toMatchObject({ botId: 'bot', fileId: 'f-clip' })
-    expect(urls.verify('device', parsed!)).toBe(true)
-    expect(urls.verify('other-device', parsed!)).toBe(false)
-    expect(urls.verify('device', { ...parsed!, botId: 'other' })).toBe(false)
-    expect(urls.verify('device', { ...parsed!, fileId: 'f-other' })).toBe(false)
-    expect(urls.verify('device', { ...parsed!, capability: '0'.repeat(32) })).toBe(false)
+    const url = urls.url(SERVER, 'device', 'bot', 'f-clip')
+    expect(url).toMatch(new RegExp(`^maestrly-media://fleet/${SERVER}/bot/f-clip/[0-9a-f]{32}$`))
+    const parsed = parseFleetMediaUrl(url)
+    expect(parsed).toMatchObject({ serverId: SERVER, botId: 'bot', fileId: 'f-clip' })
+    expect(urls.verify(SERVER, 'device', parsed!)).toBe(true)
+    expect(urls.verify(SERVER, 'other-device', parsed!)).toBe(false)
+    // A bot of the same id on another server cannot use it.
+    expect(urls.verify(OTHER_SERVER, 'device', parsed!)).toBe(false)
+    expect(urls.verify(OTHER_SERVER, 'device', { ...parsed!, serverId: OTHER_SERVER })).toBe(false)
+    expect(urls.verify(SERVER, 'device', { ...parsed!, botId: 'other' })).toBe(false)
+    expect(urls.verify(SERVER, 'device', { ...parsed!, fileId: 'f-other' })).toBe(false)
+    expect(urls.verify(SERVER, 'device', { ...parsed!, capability: '0'.repeat(32) })).toBe(false)
     // Another run of the app cannot reuse a URL.
-    expect(new FleetMediaUrls().verify('device', parsed!)).toBe(false)
+    expect(new FleetMediaUrls().verify(SERVER, 'device', parsed!)).toBe(false)
   })
 
   it.each([
-    'maestrly-media://fleet/bot/f-clip',
-    'maestrly-media://fleet/bot/f-clip/short',
-    `maestrly-media://other/bot/f-clip/${capability}`,
-    `maestrly-media://fleet/Bad_Bot/f-clip/${capability}`,
-    `maestrly-media://fleet/bot/..%2Fsecret/${capability}`,
-    `maestrly-media://fleet/bot/f-clip/${capability}/extra`,
-    `maestrly-media://fleet/bot/f-clip/${capability}?x=1`,
-    `https://fleet/bot/f-clip/${capability}`,
+    `maestrly-media://fleet/${SERVER}/bot/f-clip`,
+    `maestrly-media://fleet/${SERVER}/bot/f-clip/short`,
+    `maestrly-media://fleet/bot/f-clip/${capability}`,
+    `maestrly-media://fleet/Bad_Server/bot/f-clip/${capability}`,
+    `maestrly-media://other/${SERVER}/bot/f-clip/${capability}`,
+    `maestrly-media://fleet/${SERVER}/Bad_Bot/f-clip/${capability}`,
+    `maestrly-media://fleet/${SERVER}/bot/..%2Fsecret/${capability}`,
+    `maestrly-media://fleet/${SERVER}/bot/f-clip/${capability}/extra`,
+    `maestrly-media://fleet/${SERVER}/bot/f-clip/${capability}?x=1`,
+    `https://fleet/${SERVER}/bot/f-clip/${capability}`,
     'not a url',
   ])('rejects %s', (value) => {
     expect(parseFleetMediaUrl(value)).toBeNull()
@@ -112,7 +123,7 @@ describe('serving cached videos', () => {
     const { response, body, resolve } = await serve()
     expect(response.status).toBe(200)
     expect(body).toEqual(bytes)
-    expect(resolve).toHaveBeenCalledWith({ botId: 'bot', fileId: 'f-clip', capability })
+    expect(resolve).toHaveBeenCalledWith({ serverId: SERVER, botId: 'bot', fileId: 'f-clip', capability })
     expect(Object.fromEntries(response.headers)).toMatchObject({
       'content-type': 'video/mp4',
       'content-length': '100',

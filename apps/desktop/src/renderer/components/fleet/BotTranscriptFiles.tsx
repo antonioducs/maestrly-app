@@ -5,6 +5,7 @@ import type { FleetFileRef } from '@maestrly/bot-fleet-protocol'
 import { FLEET_DOWNLOAD_CANCELED, type FleetDownloadProgress } from '../../../shared/fleet-downloads'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
 import { attendFleetFile, downloadStatusLabel, fileSizeLabel } from '@/lib/fleet/downloads'
+import { useFleetServerId } from '@/lib/fleet/server-context'
 import { isFleetVideo } from '../../../shared/fleet-media'
 import { VideoPreview } from './BotTranscriptVideo'
 
@@ -30,6 +31,7 @@ function failureState(message: string): FleetFileTransfer['state'] {
 
 /** Saving a shared file to Downloads; a video's card and its player share one, so both show the same state. */
 function useFleetFileTransfer(botId: string, fileId: string): FleetFileTransfer {
+  const serverId = useFleetServerId()
   const [state, setState] = useState<FleetFileTransfer['state']>('idle')
   const [progress, setProgress] = useState<FleetDownloadProgress | null>(null)
   const [receipt, setReceipt] = useState<string | null>(null)
@@ -40,7 +42,7 @@ function useFleetFileTransfer(botId: string, fileId: string): FleetFileTransfer 
   /** Bumped whenever a transfer ends, so a reply that arrives after its event changes nothing. */
   const attempt = useRef(0)
   const finish = useRef((_outcome: Outcome) => {})
-  useEffect(() => attendFleetFile(botId, fileId), [botId, fileId])
+  useEffect(() => attendFleetFile(serverId, botId, fileId), [serverId, botId, fileId])
   useEffect(() => {
     let disposed = false
     let settled = false
@@ -54,7 +56,7 @@ function useFleetFileTransfer(botId: string, fileId: string): FleetFileTransfer 
       if (downloading.current) return
       const current = ++revision.current
       try {
-        const saved = await window.api.fleetGetDownload(botId, fileId)
+        const saved = await window.api.fleetGetDownload(serverId, botId, fileId)
         if (disposed || current !== revision.current) return
         setReceipt(saved)
         setState((previous) => (previous === 'idle' || previous === 'saved' ? (saved ? 'saved' : 'idle') : previous))
@@ -79,15 +81,15 @@ function useFleetFileTransfer(botId: string, fileId: string): FleetFileTransfer 
       }
     }
     // Another card, or this chat before it was left, may have started the transfer: follow it to its end.
-    const off = window.api.onFleetDownload((event) => {
-      if (event.botId !== botId || event.fileId !== fileId) return
+    const off = window.api.onFleetDownload((eventServerId, event) => {
+      if (eventServerId !== serverId || event.botId !== botId || event.fileId !== fileId) return
       if (event.type === 'progress') follow(event)
       else {
         settled = true
         finish.current(event)
       }
     })
-    void window.api.fleetGetActiveDownload(botId, fileId).then(
+    void window.api.fleetGetActiveDownload(serverId, botId, fileId).then(
       (snapshot) => {
         if (snapshot && !disposed && !settled && !downloading.current) follow(snapshot)
       },
@@ -100,7 +102,7 @@ function useFleetFileTransfer(botId: string, fileId: string): FleetFileTransfer 
       off()
       window.removeEventListener('focus', refresh)
     }
-  }, [botId, fileId])
+  }, [serverId, botId, fileId])
   const download = async () => {
     if (downloading.current) return
     const mine = ++attempt.current
@@ -110,7 +112,7 @@ function useFleetFileTransfer(botId: string, fileId: string): FleetFileTransfer 
     setProgress(null)
     let outcome: Outcome
     try {
-      outcome = { type: 'saved', receipt: await window.api.fleetDownloadFile(botId, fileId) }
+      outcome = { type: 'saved', receipt: await window.api.fleetDownloadFile(serverId, botId, fileId) }
     } catch (error) {
       const message = fleetErrorMessage(error)
       outcome = message.includes(FLEET_DOWNLOAD_CANCELED) ? { type: 'canceled' } : { type: 'failed', error: message }
@@ -119,7 +121,7 @@ function useFleetFileTransfer(botId: string, fileId: string): FleetFileTransfer 
     if (attempt.current === mine) finish.current(outcome)
   }
   const cancel = () => {
-    void window.api.fleetCancelDownload(botId, fileId).catch(() => undefined)
+    void window.api.fleetCancelDownload(serverId, botId, fileId).catch(() => undefined)
   }
   const reveal = async () => {
     if (!receipt) return

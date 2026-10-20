@@ -4,6 +4,7 @@ import type {
   FleetEnvironmentSettingsClient,
   FleetSettingsOutput,
 } from '@maestrly/bot-fleet-protocol'
+import { bindFleetServer, useFleetServerId } from './server-context'
 
 /** Bind once per mounted environment. No operation can fall back to local settings. */
 export function createEnvironmentSettingsSource(
@@ -24,10 +25,16 @@ export function createEnvironmentSettingsSource(
   ) as FleetEnvironmentSettingsClient
 }
 export function useEnvironmentSettingsSource(environmentId: string) {
-  const lifetime = useMemo(() => ({ active: true }), [environmentId])
+  const serverId = useFleetServerId()
+  const lifetime = useMemo(() => ({ active: true }), [serverId, environmentId])
   const source = useMemo(
-    () => createEnvironmentSettingsSource(environmentId, window.api.fleetEnvironmentSettings, () => lifetime.active),
-    [environmentId, lifetime]
+    () =>
+      createEnvironmentSettingsSource(
+        environmentId,
+        bindFleetServer(window.api.fleetEnvironmentSettings, serverId),
+        () => lifetime.active
+      ),
+    [serverId, environmentId, lifetime]
   )
   useEffect(() => {
     lifetime.active = true

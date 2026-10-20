@@ -7,6 +7,7 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
 import { cn } from '@/lib/utils'
 import { SavesNowTag, SettingsSection } from './SettingsSection'
+import { useFleetServerId } from '@/lib/fleet/server-context'
 
 /** Long enough that three lines may hide part of it. */
 const longMemory = (memory: FleetBotMemory) =>
@@ -16,6 +17,7 @@ const iconButton =
   'flex size-[30px] shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50'
 
 export function BotMemorySection({ bot, id = 'fleet-bot-memory' }: { bot: FleetBot; id?: string }) {
+  const serverId = useFleetServerId()
   const { t, i18n } = useTranslation('fleet')
   const [memories, setMemories] = useState<FleetBotMemory[] | null>(null)
   const [showArchived, setShowArchived] = useState(false)
@@ -27,7 +29,7 @@ export function BotMemorySection({ bot, id = 'fleet-bot-memory' }: { bot: FleetB
   useEffect(() => {
     let alive = true
     void window.api
-      .fleetListBotMemories(bot.id, showArchived ? 'all' : 'active')
+      .fleetListBotMemories(serverId, bot.id, showArchived ? 'all' : 'active')
       .then((value) => {
         if (alive) {
           setMemories(value.memories)
@@ -141,7 +143,9 @@ export function BotMemorySection({ bot, id = 'fleet-bot-memory' }: { bot: FleetB
                       title={t(memory.pinned ? 'botMemory.unpin' : 'botMemory.pin')}
                       disabled={busy}
                       onClick={() =>
-                        void mutate(() => window.api.fleetPatchBotMemory(bot.id, memory.id, { pinned: !memory.pinned }))
+                        void mutate(() =>
+                          window.api.fleetPatchBotMemory(serverId, bot.id, memory.id, { pinned: !memory.pinned })
+                        )
                       }
                     >
                       {memory.pinned ? (
@@ -158,7 +162,9 @@ export function BotMemorySection({ bot, id = 'fleet-bot-memory' }: { bot: FleetB
                       disabled={busy}
                       onClick={() =>
                         void mutate(() =>
-                          window.api.fleetPatchBotMemory(bot.id, memory.id, { status: active ? 'archived' : 'active' })
+                          window.api.fleetPatchBotMemory(serverId, bot.id, memory.id, {
+                            status: active ? 'archived' : 'active',
+                          })
                         )
                       }
                     >
@@ -200,7 +206,7 @@ export function BotMemorySection({ bot, id = 'fleet-bot-memory' }: { bot: FleetB
           onCancel={() => {
             if (!busy) setConfirm(null)
           }}
-          onConfirm={() => void mutate(() => window.api.fleetDeleteBotMemory(bot.id, confirm.id))}
+          onConfirm={() => void mutate(() => window.api.fleetDeleteBotMemory(serverId, bot.id, confirm.id))}
         />
       )}
     </SettingsSection>

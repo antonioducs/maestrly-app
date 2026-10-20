@@ -72,6 +72,15 @@ import { importFromMac } from '../../src/main/fleet/client/provisioning/export'
 import { registerFleetProvisioningIpc } from '../../src/main/fleet/client/provisioning/ipc'
 import type { FleetClientService } from '../../src/main/fleet/client/service'
 import type { IpcRegistrar } from '../../src/main/ipc-registrar'
+import { fleetIpcRegistrar } from '../../src/main/fleet/client/scoped-ipc'
+const SERVER = 'aaaaaaaa-0000-4000-8000-000000000001'
+/** The registrar that resolves the test's server to its client, as main resolves a paired one. */
+function scopedTo(reg: IpcRegistrar, client: Partial<FleetClientService>) {
+  return fleetIpcRegistrar(reg, (serverId) => {
+    if (serverId !== SERVER) throw new Error('FLEET_SERVER_UNKNOWN')
+    return client as FleetClientService
+  })
+}
 const selection = {
   apiKeyIds: ['p1'],
   copyIds: ['github-copilot:default', 'cursor:default'],
@@ -161,16 +170,19 @@ describe('Mac provisioning', () => {
   it('validates mutation input before dispatch', () => {
     const mutations = new Map<string, (...args: unknown[]) => unknown>()
     const call = vi.fn()
-    registerFleetProvisioningIpc(
-      {
-        handle: vi.fn(),
-        mhandle: (channel: string, fn: (...args: unknown[]) => unknown) => mutations.set(channel, fn),
-      } as unknown as IpcRegistrar,
-      { call } as unknown as FleetClientService
+    const reg = {
+      handle: vi.fn(),
+      mhandle: (channel: string, fn: (...args: unknown[]) => unknown) => mutations.set(channel, fn),
+    } as unknown as IpcRegistrar
+    registerFleetProvisioningIpc(reg, scopedTo(reg, { call }))
+    expect(() => mutations.get('fleet:provisioning:import')?.({}, 'other', 'bot', selection)).toThrow(
+      'FLEET_SERVER_UNKNOWN'
     )
-    expect(() => mutations.get('fleet:bot:subscription-remove')?.({}, 'bot', 'bogus', 'default')).toThrow()
-    expect(() => mutations.get('fleet:bot:subscription-remove')?.({}, 'bot', 'codex', '../x')).toThrow()
-    expect(() => mutations.get('fleet:provisioning:import')?.({}, 'bot', { ...selection, apiKeyIds: 'p1' })).toThrow()
+    expect(() => mutations.get('fleet:bot:subscription-remove')?.({}, SERVER, 'bot', 'bogus', 'default')).toThrow()
+    expect(() => mutations.get('fleet:bot:subscription-remove')?.({}, SERVER, 'bot', 'codex', '../x')).toThrow()
+    expect(() =>
+      mutations.get('fleet:provisioning:import')?.({}, SERVER, 'bot', { ...selection, apiKeyIds: 'p1' })
+    ).toThrow()
     expect(call).not.toHaveBeenCalled()
   })
 })
@@ -355,14 +367,12 @@ it.each([
   const account = { providerId: 'p1', name: 'Synthetic', kind: 'openai', baseURL, keyHint: null }
   const response = { apiKeys: [account], subscriptions: [] }
   const call = vi.fn(async () => response)
-  registerFleetProvisioningIpc(
-    {
-      handle: (channel: string, fn: (...args: unknown[]) => unknown) => handlers.set(channel, fn),
-      mhandle: vi.fn(),
-    } as unknown as IpcRegistrar,
-    { call } as unknown as FleetClientService
-  )
-  expect(await handlers.get('fleet:bot:accounts')!({}, 'bot')).toEqual({
+  const reg = {
+    handle: (channel: string, fn: (...args: unknown[]) => unknown) => handlers.set(channel, fn),
+    mhandle: vi.fn(),
+  } as unknown as IpcRegistrar
+  registerFleetProvisioningIpc(reg, scopedTo(reg, { call }))
+  expect(await handlers.get('fleet:bot:accounts')!({}, SERVER, 'bot')).toEqual({
     apiKeys: [{ ...account, baseURL: expected }],
     subscriptions: [],
   })

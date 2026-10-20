@@ -162,6 +162,30 @@ function setup(deviceId = 'device-a') {
 }
 
 describe('fleet desktop bridge', () => {
+  it("keeps the access given through this computer's other pairings and revokes only an old pairing's", async () => {
+    const service = new LocalBotService()
+    const { host, revoked } = hostOf(service)
+    const paired = () => new Set(['device-a', 'device-b'])
+    const bridgeOf = (
+      deviceId: string,
+      pairedDeviceIds?: () => ReadonlySet<string>,
+      gateway = gatewayOf(deviceId).gateway
+    ) => new FleetDesktopBridge(gateway, host, () => {}, undefined, undefined, pairedDeviceIds)
+    await bridgeOf('device-old').save(BOT, access)
+    const gatewayA = gatewayOf('device-a').gateway
+    const serverA = bridgeOf('device-a', paired, gatewayA)
+    await serverA.save(BOT, access)
+    await bridgeOf('device-b', paired).save(BOT, access)
+    const [old] = service.connectionsByClientPrefix(fleetClientPrefix('device-old', BOT))
+    const [onB] = service.connectionsByClientPrefix(fleetClientPrefix('device-b', BOT))
+    revoked.length = 0
+    await serverA.connected()
+    expect(revoked).toEqual([old.id])
+    // Alone, a bridge keeps only its own pairing's access.
+    await bridgeOf('device-a', undefined, gatewayA).connected()
+    expect(revoked).toEqual([old.id, onB.id])
+  })
+
   it('gives a bot access under a name of its own, and holds it as a connection of that pairing', async () => {
     const { bridge, service, state } = setup()
     const view = await bridge.save(BOT, access)

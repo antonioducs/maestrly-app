@@ -21,6 +21,7 @@ import {
 } from '../../src/shared/fleet-targets'
 import en from '../../src/shared/i18n/en/fleet'
 import pt from '../../src/shared/i18n/pt-BR/fleet'
+import { FLEET_SERVER_UNKNOWN } from '../../src/shared/fleet-servers'
 
 /** A message the gateway exports as a constant, read from its source so a reworded refusal fails here. */
 function gatewayMessage(file: string, name: string): string {
@@ -104,6 +105,7 @@ describe('fleet renderer errors', () => {
       [FLEET_SCREEN_RESTART_REQUIRED, 'screen.restartEnvironment'],
       [FLEET_SCREEN_UPDATE_REQUIRED, 'screen.updateServer'],
       [FLEET_SCREEN_OFFLINE, 'errors.screenOffline'],
+      [FLEET_SERVER_UNKNOWN, 'errors.serverUnknown'],
     ]
     for (const catalog of [en, pt]) {
       const t = translator(catalog)

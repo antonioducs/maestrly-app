@@ -30,10 +30,14 @@ type ActiveLogin = {
   browserStart?: Promise<void>
 }
 const active = new Set<ActiveLogin>()
-const reservations = new Set<() => void>()
+/** The turns sign-ins wait for in the Codex queue, with the server each one is for. */
+const reservations = new Set<{ fleet: object; release: () => void }>()
 // Codex always redirects to port 1455 on this Mac: browser sign-ins run one at a time, whatever their target.
 let codexQueue = Promise.resolve()
 let generation = 0
+/** Bumped when one server's sign-ins end: the other servers' go on. */
+const generations = new WeakMap<object, number>()
+const generationOf = (fleet: object) => generations.get(fleet) ?? 0
 const unexpected = 'The bot returned a sign-in page that is not from the provider.'
 function validate(attempt: FleetLoginAttempt): void {
   const urls = [attempt.browser?.authUrl, attempt.device?.verificationUrl, attempt.manual?.url]
@@ -93,15 +97,21 @@ export async function startBotLogin(
   const target = resolveProvisioningTarget(fleet, rawTarget)
   const body = fleetLoginStartRequestSchema.parse(request)
   const epoch = generation
+  const fleetEpoch = generationOf(fleet)
+  const cancelled = () => epoch !== generation || fleetEpoch !== generationOf(fleet)
   let release = (): void => {}
   if (body.kind === 'codex' && body.method === 'browser') {
     const previous = codexQueue
     codexQueue = new Promise<void>((resolve) => {
-      release = () => {
-        reservations.delete(release)
-        resolve()
+      const reservation = {
+        fleet,
+        release: () => {
+          reservations.delete(reservation)
+          resolve()
+        },
       }
-      reservations.add(release)
+      release = reservation.release
+      reservations.add(reservation)
     })
     await previous
   }
@@ -113,12 +123,12 @@ export async function startBotLogin(
     return fleet.call(route.key, { params: route.params })
   }
   try {
-    if (epoch !== generation) throw macProvisioningError('login-cancelled', 'Sign-in was cancelled.')
+    if (cancelled()) throw macProvisioningError('login-cancelled', 'Sign-in was cancelled.')
     const start = provisioningRoute(target, 'loginStart')
     attempt = fleetLoginAttemptSchema.parse(await fleet.call(start.key, { params: start.params, body }))
     validate(attempt)
     if (attempt.kind !== body.kind) throw macProvisioningError('login-unexpected-page', unexpected)
-    if (epoch !== generation) throw macProvisioningError('login-cancelled', 'Sign-in was cancelled.')
+    if (cancelled()) throw macProvisioningError('login-cancelled', 'Sign-in was cancelled.')
     let relayState: 'listening' | 'unavailable' | 'none' = 'none'
     if (attempt.browser) {
       const { callback } = attempt.browser
@@ -148,7 +158,7 @@ export async function startBotLogin(
           await cancelAttempt(attempt.loginId)
           attempt = undefined
           release()
-          if (epoch !== generation) throw macProvisioningError('login-cancelled', 'Sign-in was cancelled.')
+          if (cancelled()) throw macProvisioningError('login-cancelled', 'Sign-in was cancelled.')
           return await startBotLogin(fleet, target, { ...body, method: 'device' })
         }
         if (attempt.kind === 'antigravity')
@@ -159,7 +169,7 @@ export async function startBotLogin(
         relayState = 'unavailable'
       }
     }
-    if (epoch !== generation) throw macProvisioningError('login-cancelled', 'Sign-in was cancelled.')
+    if (cancelled()) throw macProvisioningError('login-cancelled', 'Sign-in was cancelled.')
     const current = attempt
     const timer = setTimeout(
       () => {
@@ -296,10 +306,14 @@ export async function reopenBotLogin(
   if (!url) throw macProvisioningError('login-page-unavailable', 'This sign-in page is unavailable.')
   await shell.openExternal(url)
 }
-export async function disposeBotLogins(): Promise<void> {
-  generation++
-  const pending = [...reservations]
-  codexQueue = Promise.resolve()
-  await Promise.all([...active].map(finish))
-  for (const release of pending) release()
+/** Ends the sign-ins of one server, as when it disconnects; without one, every sign-in ends, as when the app quits. */
+export async function disposeBotLogins(fleet?: object): Promise<void> {
+  if (fleet) generations.set(fleet, generationOf(fleet) + 1)
+  else {
+    generation++
+    codexQueue = Promise.resolve()
+  }
+  const pending = [...reservations].filter((reservation) => !fleet || reservation.fleet === fleet)
+  await Promise.all([...active].filter((login) => !fleet || login.fleet === fleet).map(finish))
+  for (const reservation of pending) reservation.release()
 }

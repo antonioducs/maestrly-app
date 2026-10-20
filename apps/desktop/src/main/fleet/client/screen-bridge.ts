@@ -19,8 +19,21 @@ const MAX_CLIPBOARD_TEXT = 1_048_576
 /** The gateway takes WebSocket messages of at most 256 KiB; the screen stream reassembles pieces of any size. */
 const MAX_SOCKET_MESSAGE = 64 * 1024
 
+/** The bridge that opened each channel: every server's client has its own, and a channel id names one of them. */
+const owners = new Map<string, FleetScreenBridge>()
+
 export class FleetScreenBridge {
   private readonly channels = new Map<string, ScreenChannel>()
+
+  /** The bridge of the client that opened a channel, whichever server it reaches. */
+  static forChannel(channelId: string): FleetScreenBridge | null {
+    return owners.get(channelId) ?? null
+  }
+
+  private forget(channelId: string): void {
+    this.channels.delete(channelId)
+    if (owners.get(channelId) === this) owners.delete(channelId)
+  }
   private pending = 0
   private generation = 0
   constructor(
@@ -71,6 +84,7 @@ export class FleetScreenBridge {
       if (!owner.isDestroyed()) owner.send('fleet:screen:state', { channelId, ...payload })
     }
     this.channels.set(channelId, { socket, owner, mode })
+    owners.set(channelId, this)
     owner.once('destroyed', () => this.closeOwner(owner))
     state({ state: 'connecting' })
     socket.addEventListener('open', () => state({ state: 'open' }))
@@ -86,7 +100,7 @@ export class FleetScreenBridge {
     })
     socket.addEventListener('error', () => state({ state: 'error' }))
     socket.addEventListener('close', (event: Event) => {
-      this.channels.delete(channelId)
+      this.forget(channelId)
       const close = event as Event & { code: number; reason: string }
       state({ state: 'closed', code: close.code, reason: close.reason })
     })
@@ -140,14 +154,14 @@ export class FleetScreenBridge {
   close(owner: WebContents, channelId: string): void {
     const channel = this.channels.get(channelId)
     if (!channel || channel.owner !== owner) throw new Error('Screen channel unavailable')
-    this.channels.delete(channelId)
+    this.forget(channelId)
     channel.socket.close()
   }
 
   closeOwner(owner: WebContents): void {
     for (const [id, channel] of this.channels) {
       if (channel.owner === owner) {
-        this.channels.delete(id)
+        this.forget(id)
         channel.socket.close()
       }
     }
@@ -155,7 +169,9 @@ export class FleetScreenBridge {
 
   closeAll(): void {
     this.generation++
-    for (const channel of this.channels.values()) channel.socket.close()
-    this.channels.clear()
+    for (const [id, channel] of [...this.channels]) {
+      this.forget(id)
+      channel.socket.close()
+    }
   }
 }

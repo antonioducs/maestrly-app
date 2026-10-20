@@ -18,6 +18,7 @@ import {
 } from '@/lib/fleet/provisioning'
 import { MacImportPicker } from './MacImportPicker'
 import { BotLoginDialog } from './BotLoginDialog'
+import { useFleetServerId } from '@/lib/fleet/server-context'
 
 export function MacImportFlow({
   subject,
@@ -32,6 +33,7 @@ export function MacImportFlow({
   autoStart?: boolean
   onDone: () => void
 }) {
+  const serverId = useFleetServerId()
   const { t } = useTranslation('fleet')
   const [report, setReport] = useState<MacImportReport | null>(null)
   const [busy, setBusy] = useState(false)
@@ -54,7 +56,7 @@ export function MacImportFlow({
     setError('')
     const { loginIds: _, ...selection } = choice
     await settleMacImport(
-      () => window.api.fleetImportFromMac(subject.target, selection),
+      () => window.api.fleetImportFromMac(serverId, subject.target, selection),
       (result) => {
         if (alive.current) setReport(result)
       },

@@ -8,6 +8,10 @@ import {
   serverUpdate,
   updateBlockers,
 } from '../../src/renderer/lib/fleet/updates'
+import type { FleetServerId } from '../../src/shared/fleet-servers'
+
+const SERVER = 'aaaaaaaa-0000-4000-8000-000000000001' as FleetServerId
+const OTHER_SERVER = 'bbbbbbbb-0000-4000-8000-000000000002' as FleetServerId
 
 const at = '2026-09-29T10:00:00.000Z'
 const record = (patch: Partial<FleetInstallRecord> = {}): FleetInstallRecord => ({
@@ -93,24 +97,34 @@ const job = (kind: 'update' | 'private-network'): FleetInstallerJob => ({
 
 describe('the bot server update', () => {
   it('offers an update for a server this app installed that is older than the app', () => {
-    expect(serverUpdate(installer(), host('0.9.3'))).toBe('update')
-    expect(serverUpdate(installer(), null)).toBe('update')
+    expect(serverUpdate(installer(), host('0.9.3'), SERVER)).toBe('update')
+    expect(serverUpdate(installer(), null, SERVER)).toBe('update')
   })
 
   it('never offers to move back a server the gateway reports as newer, whatever was recorded', () => {
-    expect(serverUpdate(installer(), host('0.9.9'))).toBe('newer')
-    expect(serverUpdate(installer({ record: record({ version: '0.9.4' }) }), host('0.9.4'))).toBe('current')
+    expect(serverUpdate(installer(), host('0.9.9'), SERVER)).toBe('newer')
+    expect(serverUpdate(installer({ record: record({ version: '0.9.4' }) }), host('0.9.4'), SERVER)).toBe('current')
     // Not a release version: the recorded one counts.
-    expect(serverUpdate(installer(), host('test'))).toBe('update')
+    expect(serverUpdate(installer(), host('test'), SERVER)).toBe('update')
   })
 
   it('tells about a server this app did not install when its gateway is older than the app', () => {
-    expect(serverUpdate(installer({ record: null }), host('0.9.3'))).toBe('behind')
-    expect(serverUpdate(installer({ record: null }), host('0.9.4'))).toBe('current')
-    expect(serverUpdate(installer({ record: null }), host('0.1.0-dev'))).toBe('behind')
-    expect(serverUpdate(installer({ record: null }), host('local'))).toBe('current')
-    expect(serverUpdate(installer({ record: null }), null)).toBe('current')
-    expect(serverUpdate(null, host('0.9.3'))).toBe('current')
+    expect(serverUpdate(installer({ record: null }), host('0.9.3'), SERVER)).toBe('behind')
+    expect(serverUpdate(installer({ record: null }), host('0.9.4'), SERVER)).toBe('current')
+    expect(serverUpdate(installer({ record: null }), host('0.1.0-dev'), SERVER)).toBe('behind')
+    expect(serverUpdate(installer({ record: null }), host('local'), SERVER)).toBe('current')
+    expect(serverUpdate(installer({ record: null }), null, SERVER)).toBe('current')
+    expect(serverUpdate(null, host('0.9.3'), SERVER)).toBe('current')
+  })
+})
+
+describe('the update of one of several servers', () => {
+  it('follows the install record only on the server this app installed', () => {
+    const named = installer({ record: record({ serverId: SERVER }) })
+    expect(serverUpdate(named, host('0.9.3'), SERVER)).toBe('update')
+    // Another server reports its own version, as one this app did not install.
+    expect(serverUpdate(named, host('0.9.3'), OTHER_SERVER)).toBe('behind')
+    expect(serverUpdate(named, host('0.9.4'), OTHER_SERVER)).toBe('current')
   })
 })
 
@@ -155,7 +169,12 @@ describe('the bot update summary', () => {
   const available = environment('work', { update: { available: true, pendingSince: null } })
 
   it('offers one click when the server or an environment can be updated', () => {
-    const server = botUpdateSummary({ installer: installer(), connection: connection(), snapshot: snapshot() })
+    const server = botUpdateSummary({
+      installer: installer(),
+      connection: connection(),
+      snapshot: snapshot(),
+      serverId: SERVER,
+    })
     expect(server).toEqual({
       server: 'update',
       environments: {},
@@ -168,6 +187,7 @@ describe('the bot update summary', () => {
       installer: installer({ record: record({ version: '0.9.4' }) }),
       connection: connection(),
       snapshot: snapshot({ host: host('0.9.4', '0.9.4'), environments: [available] }),
+      serverId: SERVER,
     })
     expect(environments).toMatchObject({
       server: 'current',
@@ -180,14 +200,19 @@ describe('the bot update summary', () => {
       installer: installer({ record: record({ version: '0.9.4' }) }),
       connection: connection(),
       snapshot: snapshot({ host: host('0.9.4'), environments: [environment('work')] }),
+      serverId: SERVER,
     })
     expect(nothing).toMatchObject({ available: false, pending: false, canUpdate: false })
   })
 
   it('offers no click while disconnected, busy, unreachable, or for environments the gateway cannot schedule', () => {
     const input = { installer: installer(), connection: connection(), snapshot: snapshot() }
-    expect(botUpdateSummary({ ...input, connection: connection({ state: 'reconnecting' }) }).canUpdate).toBe(false)
-    expect(botUpdateSummary({ ...input, installer: installer({ job: job('private-network') }) }).canUpdate).toBe(false)
+    expect(
+      botUpdateSummary({ ...input, connection: connection({ state: 'reconnecting' }), serverId: SERVER }).canUpdate
+    ).toBe(false)
+    expect(
+      botUpdateSummary({ ...input, installer: installer({ job: job('private-network') }), serverId: SERVER }).canUpdate
+    ).toBe(false)
     const remote = installer({
       record: record({
         mode: 'remote',
@@ -195,8 +220,10 @@ describe('the bot update summary', () => {
       }),
       tunnel: 'reconnecting',
     })
-    expect(botUpdateSummary({ ...input, installer: remote }).canUpdate).toBe(false)
-    expect(botUpdateSummary({ ...input, installer: { ...remote, tunnel: 'connected' } }).canUpdate).toBe(true)
+    expect(botUpdateSummary({ ...input, installer: remote, serverId: SERVER }).canUpdate).toBe(false)
+    expect(
+      botUpdateSummary({ ...input, installer: { ...remote, tunnel: 'connected' }, serverId: SERVER }).canUpdate
+    ).toBe(true)
     // An older gateway: environments keep their own Update button, the banner offers nothing.
     const legacy = botUpdateSummary({
       installer: installer({ record: null }),
@@ -205,6 +232,7 @@ describe('the bot update summary', () => {
         host: host('0.9.4', '0.9.4'),
         environments: [environment('work', { update: null, appVersion: '0.9.3' })],
       }),
+      serverId: SERVER,
     })
     expect(legacy).toMatchObject({ environments: { work: 'available' }, available: true, canUpdate: false })
   })
@@ -214,6 +242,7 @@ describe('the bot update summary', () => {
       installer: installer({ job: job('update') }),
       connection: connection(),
       snapshot: snapshot(),
+      serverId: SERVER,
     })
     expect(updating).toMatchObject({ pending: true, canUpdate: false })
     const waiting = botUpdateSummary({
@@ -223,6 +252,7 @@ describe('the bot update summary', () => {
         host: host('0.9.4'),
         environments: [environment('work', { update: { available: true, pendingSince: at } })],
       }),
+      serverId: SERVER,
     })
     expect(waiting).toMatchObject({ environments: { work: 'pending' }, pending: true, available: false })
   })
@@ -232,6 +262,7 @@ describe('the bot update summary', () => {
       installer: installer({ record: null }),
       connection: connection(),
       snapshot: snapshot({ host: host('0.9.3') }),
+      serverId: SERVER,
     })
     expect(behind).toMatchObject({ server: 'behind', available: true, canUpdate: false })
   })

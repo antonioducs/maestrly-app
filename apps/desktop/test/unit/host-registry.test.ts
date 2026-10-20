@@ -4,11 +4,13 @@ import { describe, expect, it, vi } from 'vitest'
 import { encodeBridgeFrame } from '../../src/main/remote-host/bridge-codec'
 import type { BridgeClientSocket } from '../../src/main/remote-host/client/host-connection'
 import { DIRECT_HOST_ID, HostRegistry, parseDirectHost } from '../../src/main/remote-host/client/host-registry'
+import type { FleetServerId } from '../../src/shared/fleet-servers'
 import type { HostView } from '../../src/shared/hosts'
 import type { BridgeClientFrame, BridgeHostFrame } from '../../src/shared/remote-bridge'
 
 const SERVER = '3f0c7a52-7d0e-4c55-9a53-0e6f4d1d2a10'
 const HOST = `${SERVER}/workspaces`
+const SERVER_B = '7a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d'
 
 /** A bridge socket whose host end the test plays. */
 class FakeSocket extends EventEmitter {
@@ -62,37 +64,63 @@ const environment = (patch: Partial<FleetEnvironment> = {}): FleetEnvironment =>
     ...patch,
   }) as FleetEnvironment
 
-function setup(options: { direct?: boolean } = {}) {
-  const fleet = {
+/** A paired server the test plays: where it is, its environments, and the tickets this computer asked for. */
+function fakeServer(id: string, listeners: Set<() => void>, deviceName: string | null = null) {
+  return {
+    id: id as FleetServerId,
+    deviceName,
     connection: { url: null as string | null, hostname: null as string | null },
     environments: [] as FleetEnvironment[],
-    listeners: new Set<() => void>(),
     tickets: [] as string[],
     ticketPath: '/v1/bridge?ticket=abc_DEF-123',
     change(patch: { url?: string | null; hostname?: string | null; environments?: FleetEnvironment[] }) {
       if ('url' in patch) this.connection.url = patch.url ?? null
       if ('hostname' in patch) this.connection.hostname = patch.hostname ?? null
       if (patch.environments) this.environments = patch.environments
-      for (const listener of [...this.listeners]) listener()
+      for (const listener of [...listeners]) listener()
+    },
+  }
+}
+
+function setup(options: { direct?: boolean } = {}) {
+  const listeners = new Set<() => void>()
+  const fleet = fakeServer(SERVER, listeners)
+  const paired = [fleet]
+  const servers = {
+    paired,
+    add(server: ReturnType<typeof fakeServer>) {
+      paired.push(server)
+      for (const listener of [...listeners]) listener()
+    },
+    remove(id: string) {
+      paired.splice(
+        paired.findIndex((server) => server.id === id),
+        1
+      )
+      for (const listener of [...listeners]) listener()
     },
   }
   const sockets: FakeSocket[] = []
   const changes: HostView[][] = []
   const events: unknown[][] = []
   const registry = new HostRegistry({
-    fleet: {
-      getConnection: () => fleet.connection,
-      getSnapshot: () => ({ environments: fleet.environments }),
+    servers: {
+      list: () =>
+        paired.map((server) => ({
+          id: server.id,
+          getConnection: () => server.connection,
+          getSnapshot: () => ({ environments: server.environments }),
+          bridgeTicket: async (environmentId: string) => {
+            server.tickets.push(environmentId)
+            return { path: server.ticketPath }
+          },
+          deviceName: () => server.deviceName,
+        })),
       onChange: (listener) => {
-        fleet.listeners.add(listener)
-        return () => void fleet.listeners.delete(listener)
-      },
-      bridgeTicket: async (environmentId) => {
-        fleet.tickets.push(environmentId)
-        return { path: fleet.ticketPath }
+        listeners.add(listener)
+        return () => void listeners.delete(listener)
       },
     },
-    serverId: () => SERVER,
     appVersion: '1.2.3',
     local: { os: 'mac', homeDir: '/Users/me' },
     client: () => ({ deviceName: 'Laptop', os: 'mac', locale: 'en' }),
@@ -117,7 +145,7 @@ function setup(options: { direct?: boolean } = {}) {
   })
   registry.start()
   const remote = () => registry.list().find((host) => host.id === HOST)
-  return { fleet, sockets, changes, events, registry, remote }
+  return { fleet, servers, listeners, sockets, changes, events, registry, remote }
 }
 const paired = { url: 'http://127.0.0.1:7443', hostname: 'vps-1' }
 
@@ -130,6 +158,7 @@ describe('host registry', () => {
         remote: false,
         label: '',
         server: '',
+        serverId: null,
         tint: null,
         state: 'online',
         epoch: 0,
@@ -176,6 +205,7 @@ describe('host registry', () => {
       remote: true,
       label: 'Workspaces',
       server: 'vps-1',
+      serverId: SERVER,
       tint: null,
       state: 'online',
       epoch: 1,
@@ -343,6 +373,50 @@ describe('host registry', () => {
     h.fleet.change({ environments: [environment({ id: 'personal', name: 'Personal', tint: '#4c9a87' })] })
     expect(h.registry.list().map((host) => host.id)).toEqual(['local', `${SERVER}/personal`])
     expect(h.sockets.filter((socket) => socket.closed)).toHaveLength(1)
+  })
+
+  it('lists the workspaces hosts of every paired server, each dialed through its own server', async () => {
+    const h = setup()
+    const other = fakeServer(SERVER_B, h.listeners, 'Work laptop')
+    h.servers.add(other)
+    h.fleet.change({ ...paired, environments: [environment({ id: 'personal', name: 'Personal' })] })
+    other.change({
+      url: 'https://vps-2.example',
+      hostname: 'vps-2',
+      environments: [environment({ id: 'personal', name: 'Personal' })],
+    })
+    // Two servers may name their environments alike: the server tells their hosts apart.
+    expect(h.registry.list().map((host) => [host.id, host.serverId, host.server])).toEqual([
+      ['local', null, ''],
+      [`${SERVER}/personal`, SERVER, 'vps-1'],
+      [`${SERVER_B}/personal`, SERVER_B, 'vps-2'],
+    ])
+    await vi.waitFor(() => expect(h.sockets).toHaveLength(2))
+    expect(h.fleet.tickets).toEqual(['personal'])
+    expect(other.tickets).toEqual(['personal'])
+    expect(h.sockets.map((socket) => socket.url).sort()).toEqual([
+      'ws://127.0.0.1:7443/v1/bridge?ticket=abc_DEF-123',
+      'wss://vps-2.example/v1/bridge?ticket=abc_DEF-123',
+    ])
+    // Each host sees this computer under the name it has on that host's server.
+    const second = h.sockets.find((socket) => socket.url.startsWith('wss://vps-2.example'))!
+    second.welcome()
+    expect(second.sent[0]).toMatchObject({ t: 'hello', client: { deviceName: 'Work laptop' } })
+    // A server that leaves takes its hosts only.
+    h.servers.remove(SERVER_B)
+    expect(second.closed).toBe(true)
+    expect(h.registry.list().map((host) => host.id)).toEqual(['local', `${SERVER}/personal`])
+  })
+
+  it('lists no host for a server that is not paired any more, and none of its kind for the development host', () => {
+    const h = setup({ direct: true })
+    const unpaired = fakeServer(SERVER_B, h.listeners)
+    h.servers.add(unpaired)
+    unpaired.change({ environments: [environment()] })
+    expect(h.registry.list().map((host) => [host.id, host.serverId])).toEqual([
+      ['local', null],
+      ['direct/host', null],
+    ])
   })
 
   it('reaches a development host directly, beside the server’s', async () => {

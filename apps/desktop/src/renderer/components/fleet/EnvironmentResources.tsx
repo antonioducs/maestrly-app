@@ -40,6 +40,7 @@ export function EnvironmentResources({
   environment: FleetEnvironment
   fleet: FleetController
 }) {
+  const serverId = fleet.serverId
   const { t } = useTranslation('fleet')
   const { memoryBytes, cpuPercent, startedAt } = environment.resources
   // The limit Docker reports for the running container; the owner's choice until it reports one.
@@ -66,7 +67,7 @@ export function EnvironmentResources({
     setSaved(false)
     setError('')
     try {
-      const updated = await window.api.fleetPatchEnvironment(environment.id, patch)
+      const updated = await window.api.fleetPatchEnvironment(serverId, environment.id, patch)
       fleet.dispatch({
         type: 'event',
         value: { type: 'environment.updated', at: new Date().toISOString(), environment: updated },

@@ -14,7 +14,8 @@ import {
   fleetHostFileErrorReason,
 } from '@maestrly/bot-fleet-protocol'
 import type { z } from 'zod'
-import { type HostId, isRemoteHostId } from '../../shared/host-key'
+import type { FleetServerId } from '../../shared/fleet-servers'
+import { type HostId, isRemoteHostId, parseRemoteHostId } from '../../shared/host-key'
 import type { HostTransferError } from '../../shared/host-transfers'
 import type { HostView } from '../../shared/hosts'
 import type { DirectHost } from '../remote-host/client/host-registry'
@@ -138,17 +139,18 @@ export function httpHostFilesEndpoint(target: {
 }
 
 /**
- * Where a host's files are reached: a server's workspaces through its paired gateway, with this device's
- * credentials, or the development host straight at its control server.
+ * Where a host's files are reached: a server's workspaces through that server's gateway, with this device's
+ * credentials there, or the development host straight at its control server.
  */
 export function resolveHostFilesEndpoint(
   hostId: HostId,
   deps: {
     registry: { list(): HostView[]; directHost(): DirectHost | null } | null
-    fleet: {
+    /** The client of a paired server; null for a server this computer is not paired with. */
+    fleet: (serverId: FleetServerId) => {
       hostFilesAccess(): { origin: string; headers: Record<string, string> } | null
       hasFeature(feature: string): boolean
-    }
+    } | null
   }
 ): HostFilesEndpoint {
   if (!deps.registry || !isRemoteHostId(hostId)) throw new TransferFailure('unknown-host')
@@ -164,18 +166,20 @@ export function resolveHostFilesEndpoint(
       path: (key, params) => buildPath(FLEET_INSTANCE_ROUTES[key].path, params),
     })
   }
+  const server = parseRemoteHostId(hostId)?.serverId
+  const fleet = server ? deps.fleet(server) : null
   const environment = deps.registry.list().find((host) => host.id === hostId)?.environment
-  if (!environment) throw new TransferFailure('unknown-host')
+  if (!environment || !fleet) throw new TransferFailure('unknown-host')
   if (environment.lifecycle !== 'running') throw new TransientFailure(FLEET_HOST_FILE_GATEWAY_ERRORS.notRunning)
-  if (!deps.fleet.hasFeature(FLEET_HOST_FILES_FEATURE)) throw new TransferFailure('gateway-update-required')
-  const access = deps.fleet.hostFilesAccess()
+  if (!fleet.hasFeature(FLEET_HOST_FILES_FEATURE)) throw new TransferFailure('gateway-update-required')
+  const access = fleet.hostFilesAccess()
   if (!access) throw new TransferFailure('unauthorized')
   return httpHostFilesEndpoint({
     origin: access.origin,
     // Read on each request: the device token may be replaced while a transfer runs.
-    headers: () => deps.fleet.hostFilesAccess()?.headers ?? access.headers,
+    headers: () => fleet.hostFilesAccess()?.headers ?? access.headers,
     path: (key, params) => buildPath(FLEET_GATEWAY_ROUTES[key].path, { eid: environment.id, ...params }),
-    folders: deps.fleet.hasFeature(FLEET_HOST_FILES_FOLDERS_FEATURE),
+    folders: fleet.hasFeature(FLEET_HOST_FILES_FOLDERS_FEATURE),
   })
 }
 

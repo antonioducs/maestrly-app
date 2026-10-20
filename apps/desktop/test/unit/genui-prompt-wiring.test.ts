@@ -114,7 +114,7 @@ describe('generated interfaces in every transcript', () => {
     const bot = source('components/fleet/BotConversation.tsx')
     expect(bot).toContain('<GenUiContext.Provider value={transcriptHost}>')
     expect(bot).toContain('streaming={!!item.streaming}')
-    expect(bot).toMatch(/\.fleetSendMessage\(bot\.id, text\)/)
+    expect(bot).toMatch(/\.fleetSendMessage\(serverId, bot\.id, text\)/)
     expect(bot).toContain('const interfaceSend = locked ? undefined : sendFromInterface')
   })
 })

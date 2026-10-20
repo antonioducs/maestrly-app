@@ -4,6 +4,7 @@ import {
   type FleetDictationStatus,
 } from '@maestrly/bot-fleet-protocol'
 import type { DictationApiProvider, DictationConfig, DictationEngine } from '../../../shared/dictation'
+import { defaultFleetServer, type FleetServerId } from '../../../shared/fleet-servers'
 
 /** What the Dictation settings use of the preload API; the keys themselves never come back from it. */
 export interface DictationSettingsApi {
@@ -14,10 +15,23 @@ export interface DictationSettingsApi {
     key: string
   ): Promise<{ ok: true; storage: 'secure' | 'memory' } | { ok: false; error: 'key-rejected' | 'unchecked' }>
   chatClearDictationKey(provider: DictationApiProvider): Promise<{ ok: boolean }>
-  fleetGetConnection(): Promise<{ state: string; features: string[] }>
-  fleetDictation(): Promise<FleetDictationStatus | null>
-  fleetDictationUseLocal(): Promise<FleetDictationKeyResponse>
-  fleetDictationRemove(): Promise<void>
+  fleetServers(): Promise<
+    Array<{ id: FleetServerId; installed: boolean; connection: { state: string; features: string[] } }>
+  >
+  fleetDictation(serverId: FleetServerId): Promise<FleetDictationStatus | null>
+  fleetDictationUseLocal(serverId: FleetServerId): Promise<FleetDictationKeyResponse>
+  fleetDictationRemove(serverId: FleetServerId): Promise<void>
+}
+
+/** The server whose phones dictate with this computer's key: the default one, the installed or else the first paired. */
+async function dictationServer(api: DictationSettingsApi) {
+  return defaultFleetServer(await api.fleetServers().catch(() => []))
+}
+
+async function requireDictationServer(api: DictationSettingsApi): Promise<FleetServerId> {
+  const server = await dictationServer(api)
+  if (!server) throw new Error('No bot server is paired')
+  return server.id
 }
 
 /** The bot server as Dictation settings see it: absent, too old to dictate through, or with its key's state. */
@@ -30,10 +44,10 @@ export type DictationSettingsNotice = {
 }
 
 export async function loadDictationServer(api: DictationSettingsApi): Promise<DictationServerView> {
-  const connection = await api.fleetGetConnection().catch(() => null)
-  if (connection?.state !== 'connected') return { kind: 'none' }
-  if (!connection.features.includes(FLEET_DICTATION_FEATURE)) return { kind: 'old' }
-  const status = await api.fleetDictation().catch(() => null)
+  const server = await dictationServer(api)
+  if (server?.connection.state !== 'connected') return { kind: 'none' }
+  if (!server.connection.features.includes(FLEET_DICTATION_FEATURE)) return { kind: 'old' }
+  const status = await api.fleetDictation(server.id).catch(() => null)
   return status ? { kind: 'ready', status } : { kind: 'none' }
 }
 
@@ -53,11 +67,11 @@ export function createDictationSettingsActions(api: DictationSettingsApi) {
       return null
     },
     async useOnPhone(): Promise<DictationSettingsNotice | null> {
-      const result = await api.fleetDictationUseLocal()
+      const result = await api.fleetDictationUseLocal(await requireDictationServer(api))
       return 'error' in result ? { scope: 'server', kind: result.error } : null
     },
     async removeFromServer(): Promise<DictationSettingsNotice | null> {
-      await api.fleetDictationRemove()
+      await api.fleetDictationRemove(await requireDictationServer(api))
       return null
     },
   }

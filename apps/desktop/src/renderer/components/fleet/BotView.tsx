@@ -266,7 +266,7 @@ function BotViewContent({ bot, view, fleet, onView, onOpenBot, onDetachedChange,
               }
             />
             <ChatWindowHost
-              target={{ kind: 'bot', id: bot.id }}
+              target={{ kind: 'bot', serverId: fleet.serverId, id: bot.id }}
               title={bot.name}
               onDetachedChange={handleDetachedChange}
               onReattach={() => go(botView('conversation'))}

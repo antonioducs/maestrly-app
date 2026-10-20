@@ -413,6 +413,7 @@ function LegacySharedSetup({
   bots: FleetBot[]
   onOpenScreen: () => void
 }) {
+  const serverId = fleet.serverId
   const { t } = useTranslation('fleet')
   const workspaces = isWorkspacesEnvironment(environment)
   const running = environment.lifecycle === 'running'
@@ -437,7 +438,7 @@ function LegacySharedSetup({
     setScreenBusy(true)
     setScreenError('')
     try {
-      await window.api.fleetEnvironmentUiOpen(environment.id, 'accounts')
+      await window.api.fleetEnvironmentUiOpen(serverId, environment.id, 'accounts')
       onOpenScreen()
     } catch {
       setScreenError(t('environment.screenLoginFailed'))

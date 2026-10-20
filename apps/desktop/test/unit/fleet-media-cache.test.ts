@@ -41,7 +41,7 @@ describe('fleet media cache', () => {
     expect(second).toEqual(first)
     expect(first).toMatchObject({ ref: clip.ref, mediaType: 'video/mp4' })
     expect(await readFile(first.path)).toEqual(clip.bytes)
-    expect(progress.at(-1)).toEqual({ botId: 'bot', fileId: 'f-clip', received: 4096, total: 4096 })
+    expect(progress.at(-1)).toEqual({ scope: 'device', botId: 'bot', fileId: 'f-clip', received: 4096, total: 4096 })
     // A new instance, as after a restart, reads the sidecar instead of the gateway.
     const restarted = new FleetMediaCache({ root: () => root, now })
     const reopen = opener(clip)
@@ -146,6 +146,15 @@ describe('fleet media cache', () => {
     expect(await readdir(root)).toContain(path.basename(kept.path))
     await cache.clear()
     await expect(readdir(root)).rejects.toThrow()
+  })
+
+  it("forgets one pairing's videos and keeps the others'", async () => {
+    const cache = new FleetMediaCache({ root: () => root, now })
+    await cache.prepare('dev-a', 'bot', 'f-a', opener(video('f-a', 8)))
+    const kept = await cache.prepare('dev-b', 'bot', 'f-a', opener(video('f-a', 8)))
+    await cache.purgeScope('dev-a')
+    const media = (await readdir(root)).filter((name) => name.endsWith('.media'))
+    expect(media).toEqual([path.basename(kept.path)])
   })
 
   it('stops a download when its signal aborts', async () => {

@@ -5,12 +5,14 @@ import type { FleetDevice } from '@maestrly/bot-fleet-protocol'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
+import { useFleetServerId } from '@/lib/fleet/server-context'
 
 /**
  * The phones and computers paired with the bot server, as `maestrly-bot-gateway devices list` shows them: any of them
  * can remove another one, which can then no longer reach the server.
  */
 export function DevicesSection({ revision }: { revision: number }) {
+  const serverId = useFleetServerId()
   const { t, i18n } = useTranslation('fleet')
   const [devices, setDevices] = useState<FleetDevice[] | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -24,7 +26,7 @@ export function DevicesSection({ revision }: { revision: number }) {
   const load = useCallback(async () => {
     setError(null)
     try {
-      setDevices((await window.api.fleetDevices()).devices)
+      setDevices((await window.api.fleetDevices(serverId)).devices)
     } catch (cause) {
       setError(fleetErrorMessage(cause))
     }
@@ -37,7 +39,7 @@ export function DevicesSection({ revision }: { revision: number }) {
     if (!removing) return
     setBusy(true)
     try {
-      await window.api.fleetRevokeDevice(removing.id)
+      await window.api.fleetRevokeDevice(serverId, removing.id)
       setRemoving(null)
       await load()
     } catch (cause) {

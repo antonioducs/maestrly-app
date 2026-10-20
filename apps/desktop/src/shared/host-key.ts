@@ -1,3 +1,5 @@
+import type { FleetServerId } from './fleet-servers'
+
 /**
  * A host is a Maestrly main process with its own profile: this computer, or a workspaces host on a server. One window
  * shows conversations of several hosts, whose ids are only unique within their host.
@@ -26,4 +28,14 @@ export const hostKey = (hostId: HostId, id: string): string =>
 export function parseHostKey(key: string): { hostId: HostId; id: string } {
   const at = key.indexOf(HOST_KEY_SEPARATOR)
   return at < 0 ? { hostId: LOCAL_HOST_ID, id: key } : { hostId: key.slice(0, at), id: key.slice(at + 1) }
+}
+
+/**
+ * The server and environment of a server's workspaces host; null for this computer. The development host
+ * (`direct/host`) parses too: check it first.
+ */
+export function parseRemoteHostId(hostId: HostId): { serverId: FleetServerId; environmentId: string } | null {
+  if (!REMOTE_HOST_ID_RE.test(hostId)) return null
+  const at = hostId.indexOf('/')
+  return { serverId: hostId.slice(0, at) as FleetServerId, environmentId: hostId.slice(at + 1) }
 }

@@ -20,7 +20,10 @@ const isLoopbackOrigin = (origin: string): boolean => {
   }
 }
 
-/** The paired server's settings and transport; a reconnect never reuses a previous device's authority. */
+/**
+ * The settings and transport of the server artifacts are published to; a reconnect, or another server, never reuses a
+ * previous device's authority.
+ */
 export class ServerArtifacts {
   private cached: FleetArtifactHost | null = null
   private identity: string | null = null
@@ -29,13 +32,20 @@ export class ServerArtifacts {
   private revision = 0
   constructor(
     private readonly deps: {
-      fleet: Pick<FleetClientService, 'call' | 'hasFeature' | 'getConnection'>
+      /** The server artifacts go to now; null while none is paired. */
+      fleet: () => Pick<FleetClientService, 'call' | 'hasFeature' | 'getConnection'> | null
       viewerPort: () => number | null
     }
   ) {}
+  private connection() {
+    return this.deps.fleet()?.getConnection() ?? null
+  }
+  private has(feature: string): boolean {
+    return this.deps.fleet()?.hasFeature(feature) ?? false
+  }
   private currentIdentity(): string | null {
-    const c = this.deps.fleet.getConnection()
-    return c.url && c.deviceId ? `${c.url}\n${c.deviceId}` : null
+    const c = this.connection()
+    return c?.url && c.deviceId ? `${c.url}\n${c.deviceId}` : null
   }
   /**
    * Where this computer opens the server's viewer. A gateway that serves it answers at the paired address, which
@@ -45,25 +55,24 @@ export class ServerArtifacts {
    */
   private base(): string | null {
     const publicAddress = this.cached?.settings.publicAddress || null
-    if (this.deps.fleet.hasFeature(FLEET_ARTIFACTS_GATEWAY_VIEWER_FEATURE)) {
-      const gateway = this.deps.fleet.getConnection().url
+    if (this.has(FLEET_ARTIFACTS_GATEWAY_VIEWER_FEATURE)) {
+      const gateway = this.connection()?.url
       if (gateway && (isLoopbackOrigin(gateway) || gateway === publicAddress)) return gateway
     }
     const port = this.deps.viewerPort()
     return port ? `http://127.0.0.1:${port}` : publicAddress
   }
   status(): ArtifactServerStatus {
-    const c = this.deps.fleet.getConnection()
-    if (!c.url || !c.deviceId) return { state: 'absent' }
+    const c = this.connection()
+    if (!c?.url || !c.deviceId) return { state: 'absent' }
     if (c.state !== 'connected') return { state: 'unreachable' }
-    if (!this.deps.fleet.hasFeature(FLEET_ARTIFACTS_FEATURE)) return { state: 'unsupported' }
+    if (!this.has(FLEET_ARTIFACTS_FEATURE)) return { state: 'unsupported' }
     if (this.failed || !this.cached || this.identity !== this.currentIdentity()) return { state: 'unreachable' }
-    if (!this.cached.settings.enabled)
-      return { state: 'off', canMove: this.deps.fleet.hasFeature(FLEET_ARTIFACTS_TRANSFER_FEATURE) }
+    if (!this.cached.settings.enabled) return { state: 'off', canMove: this.has(FLEET_ARTIFACTS_TRANSFER_FEATURE) }
     return {
       state: 'ready',
       canOpen: this.cached.status.state === 'running' && !!this.base(),
-      canMove: this.deps.fleet.hasFeature(FLEET_ARTIFACTS_TRANSFER_FEATURE),
+      canMove: this.has(FLEET_ARTIFACTS_TRANSFER_FEATURE),
       artifactCount: this.cached.status.artifactCount,
       storageBytes: this.cached.status.storageBytes,
       quotaBytes: this.cached.status.quotaBytes,
@@ -87,14 +96,11 @@ export class ServerArtifacts {
       this.cached = null
       this.identity = identity
     }
-    if (
-      !identity ||
-      this.deps.fleet.getConnection().state !== 'connected' ||
-      !this.deps.fleet.hasFeature(FLEET_ARTIFACTS_FEATURE)
-    )
+    const fleet = this.deps.fleet()
+    if (!identity || !fleet || fleet.getConnection().state !== 'connected' || !this.has(FLEET_ARTIFACTS_FEATURE))
       return this.status()
     try {
-      const host = fleetArtifactHostSchema.parse(await this.deps.fleet.call('artifactHost'))
+      const host = fleetArtifactHostSchema.parse(await fleet.call('artifactHost'))
       if (identity === this.currentIdentity() && revision === this.revision) {
         this.cached = host
         this.failed = false
@@ -106,10 +112,11 @@ export class ServerArtifacts {
   }
   async update(patch: FleetArtifactSettingsPatch): Promise<FleetArtifactHost> {
     const identity = this.currentIdentity()
-    if (!identity || !this.deps.fleet.hasFeature(FLEET_ARTIFACTS_FEATURE)) throw serverUnavailable()
+    const fleet = this.deps.fleet()
+    if (!identity || !fleet || !this.has(FLEET_ARTIFACTS_FEATURE)) throw serverUnavailable()
     this.revision++
     try {
-      const host = fleetArtifactHostSchema.parse(await this.deps.fleet.call('artifactHostPatch', { body: patch }))
+      const host = fleetArtifactHostSchema.parse(await fleet.call('artifactHostPatch', { body: patch }))
       if (identity !== this.currentIdentity()) throw serverUnavailable()
       this.identity = identity
       this.cached = host
@@ -131,7 +138,10 @@ export class ServerArtifacts {
     const status = this.status()
     if (status.state !== 'ready' || status.problem) return null
     const identity = this.currentIdentity()
-    const owner = { kind: 'device' as const, id: this.deps.fleet.getConnection().deviceId! }
+    const fleet = this.deps.fleet()
+    const deviceId = this.connection()?.deviceId
+    if (!fleet || !deviceId) return null
+    const owner = { kind: 'device' as const, id: deviceId }
     const validate = () => {
       if (identity !== this.currentIdentity() || this.status().state !== 'ready' || this.unavailable())
         throw this.unavailable() ?? serverUnavailable()
@@ -141,7 +151,7 @@ export class ServerArtifacts {
       owner,
       admin: async () => {
         validate()
-        return createFleetAdmin(this.deps.fleet, validate)
+        return createFleetAdmin(fleet, validate)
       },
       ready: () => identity === this.currentIdentity() && this.status().state === 'ready' && !this.unavailable(),
       viewerBase: () => (identity === this.currentIdentity() ? this.base() : null),

@@ -6,6 +6,7 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import type { BotProvisioning, ImportGroup } from '@/lib/fleet/provisioning'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
 import { MacImportDialog } from './MacImportDialog'
+import { useFleetServerId } from '@/lib/fleet/server-context'
 
 const groups: ImportGroup[] = ['skills', 'mcp']
 /** The skills and MCP servers of an environment (shared by its bots) or, before environments, of a bot. */
@@ -18,6 +19,7 @@ export function BotSkillsMcpSection({
   lists: BotProvisioning
   availability: 'ready' | 'update-server' | 'restart-bot' | 'restart-environment'
 }) {
+  const serverId = useFleetServerId()
   const { t } = useTranslation('fleet')
   const shared = isEnvironmentTarget(subject.target)
   const [importing, setImporting] = useState(false)
@@ -67,7 +69,7 @@ export function BotSkillsMcpSection({
                   onClick={() =>
                     setConfirm({
                       name: item.name,
-                      remove: () => window.api.fleetRemoveBotSkill(subject.target, item.name),
+                      remove: () => window.api.fleetRemoveBotSkill(serverId, subject.target, item.name),
                     })
                   }
                 >
@@ -96,7 +98,7 @@ export function BotSkillsMcpSection({
                   onClick={() =>
                     setConfirm({
                       name: item.name,
-                      remove: () => window.api.fleetRemoveBotMcpServer(subject.target, item.id),
+                      remove: () => window.api.fleetRemoveBotMcpServer(serverId, subject.target, item.id),
                     })
                   }
                 >

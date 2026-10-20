@@ -139,6 +139,7 @@ export function RoutineRunConversation({
   onCite: () => void
   onDelete: () => void
 }) {
+  const serverId = fleet.serverId
   const { t, i18n } = useTranslation('fleet')
   const state = runState(run, bot)
   const working = runWorking(state)
@@ -170,7 +171,7 @@ export function RoutineRunConversation({
     setBusy(true)
     setError(null)
     try {
-      await window.api.fleetSendRunMessage(bot.id, run.id, value)
+      await window.api.fleetSendRunMessage(serverId, bot.id, run.id, value)
       setDraft('')
       setFollow((value) => value + 1)
       await loadRunTranscript(bot.id, run.id).catch(() => {})
@@ -189,7 +190,7 @@ export function RoutineRunConversation({
   const pin = async () => {
     setError(null)
     try {
-      const updated = await window.api.fleetPinRun(bot.id, run.id, !run.pinned)
+      const updated = await window.api.fleetPinRun(serverId, bot.id, run.id, !run.pinned)
       fleet.dispatch({ type: 'runs.upsert', botId: bot.id, run: updated })
     } catch (cause) {
       setError(fleetErrorMessage(cause))
@@ -275,8 +276,8 @@ export function RoutineRunConversation({
                 // The run's own turn stops; the bot's conversation and its other runs keep working.
                 void (
                   fleet.state.connection.features.includes(FLEET_PARALLEL_TURNS_FEATURE)
-                    ? window.api.fleetCancelTurn(bot.id, run.id)
-                    : window.api.fleetBotAction(bot.id, 'cancel')
+                    ? window.api.fleetCancelTurn(serverId, bot.id, run.id)
+                    : window.api.fleetBotAction(serverId, bot.id, 'cancel')
                 ).catch((cause) => setError(fleetErrorMessage(cause)))
               }
             >

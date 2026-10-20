@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FleetInstallRecord } from '../../src/shared/fleet-installer'
+import type { FleetServerId } from '../../src/shared/fleet-servers'
 
 const settings = vi.hoisted(() => new Map<string, string>())
 vi.mock('../../src/main/store', () => ({
@@ -40,6 +41,15 @@ describe('installer record compatibility', () => {
     expect(() => writeInstallRecord({ ...legacy, artifactsPort: 65536 })).toThrow()
     expect(readInstallRecord()).toEqual(legacy)
     settings.set('fleet.installer', JSON.stringify({ ...legacy, artifactsOnly: 'yes' }))
+    expect(readInstallRecord()).toBeNull()
+  })
+
+  it('names the paired server it installed, and refuses an invalid one', () => {
+    const named = { ...legacy, serverId: 'aaaaaaaa-0000-4000-8000-000000000001' as FleetServerId }
+    writeInstallRecord(named)
+    expect(readInstallRecord()).toEqual(named)
+    expect(() => writeInstallRecord({ ...legacy, serverId: 'Server/1' as FleetServerId })).toThrow()
+    settings.set('fleet.installer', JSON.stringify({ ...legacy, serverId: '../x' }))
     expect(readInstallRecord()).toBeNull()
   })
 })

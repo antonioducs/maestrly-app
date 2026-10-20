@@ -11,6 +11,7 @@ import {
   pullDetail,
   type FleetInstallerDeps,
   type FleetInstallerFleet,
+  type FleetInstallerServers,
   type InstallerSession,
   type InstallerTunnel,
 } from '../../src/main/fleet/installer/service'
@@ -19,6 +20,10 @@ import { startFakeSshServer } from '../fixtures/fake-ssh-server'
 import { SshTunnel, type TunnelOptions } from '../../src/main/fleet/installer/tunnel'
 import type { FleetInstallRecord, FleetInstallerStatus, FleetTunnelState } from '../../src/shared/fleet-installer'
 import { FakeRunner, fail, ok } from '../fixtures/fleet-installer-fakes'
+import type { FleetServerId } from '../../src/shared/fleet-servers'
+
+/** The server these tests install and pair. */
+const SERVER = 'aaaaaaaa-0000-4000-8000-000000000001' as FleetServerId
 
 const at = '2026-09-27T12:00:00.000Z'
 const localDir = path.join('/profile', 'bot-server')
@@ -122,7 +127,12 @@ function setup(options: SetupOptions = {}) {
       ...options.connection,
     } as FleetConnectionView,
     connects: [] as Array<{ url: string; code: string; deviceName?: string }>,
+    /** The server each pairing named, to pair it again; null for a new one. */
+    pairedAgain: [] as Array<FleetServerId | null>,
+    removed: [] as FleetServerId[],
     disconnects: 0,
+    /** Called as a server leaves the list, after what its removal waited on. */
+    onLeave: null as (() => void) | null,
     retargets: [] as string[],
     calls: [] as Array<[string, unknown]>,
     /** Every gateway call a test expects, by route: a value, or a function of the call's options. Others fail. */
@@ -136,17 +146,8 @@ function setup(options: SetupOptions = {}) {
     },
   }
   const fleet = {
+    serverId: SERVER,
     getConnection: () => fleetState.connection,
-    async connect(input: { url: string; code: string; deviceName?: string }) {
-      fleetState.connects.push(input)
-      fleetState.connection = { ...fleetState.connection, url: input.url, deviceId: 'device-1', state: 'connected' }
-      return fleetState.connection
-    },
-    async disconnect() {
-      fleetState.disconnects++
-      fleetState.connection = { ...fleetState.connection, url: null, deviceId: null, state: 'unconfigured' }
-    },
-    retarget: (url: string) => fleetState.retargets.push(url),
     hasFeature: (feature: string) => fleetState.connection.features.includes(feature),
     getSnapshot: () => fleetState.snapshot,
     async call(key: string, callOptions?: unknown) {
@@ -156,6 +157,29 @@ function setup(options: SetupOptions = {}) {
       return typeof response === 'function' ? response(callOptions) : response
     },
   } as unknown as FleetInstallerFleet
+  // One paired server at most: the one these tests install, reached at the connection's address.
+  const servers: FleetInstallerServers = {
+    get: (id) => (id === SERVER && fleetState.connection.url !== null ? fleet : null),
+    default: () => (fleetState.connection.url !== null ? fleet : null),
+    findByUrl: (url) => (fleetState.connection.url === url ? SERVER : null),
+    async pair(input, id) {
+      fleetState.connects.push(input)
+      fleetState.pairedAgain.push(id ?? null)
+      fleetState.connection = { ...fleetState.connection, url: input.url, deviceId: 'device-1', state: 'connected' }
+      return { id: SERVER, installed: false, connection: fleetState.connection }
+    },
+    retarget: (_id, url) => fleetState.retargets.push(url),
+    async remove(id, leaving) {
+      fleetState.disconnects++
+      fleetState.connection = { ...fleetState.connection, url: null, deviceId: null, state: 'unconfigured' }
+      try {
+        await leaving?.()
+      } finally {
+        fleetState.removed.push(id)
+        fleetState.onLeave?.()
+      }
+    },
+  }
   const connections: Array<{ credentials: { kind: string }; expectedHostKey: string | null }> = []
   const tunnels: Array<{ options: TunnelOptions; stopped: boolean }> = []
   const broadcasts: FleetInstallerStatus[] = []
@@ -207,7 +231,7 @@ function setup(options: SetupOptions = {}) {
         lastForwardError: null,
       }
     },
-    fleet,
+    servers,
     store: {
       readRecord: () => (stored.record ? structuredClone(stored.record) : null),
       writeRecord: (record) => {
@@ -315,7 +339,10 @@ describe('installing on this computer', () => {
     expect(local.commands(['compose', 'up'])).toEqual([['compose', 'up', '-d', '--no-build']])
     expect(metaOrigins).toEqual(['http://127.0.0.1:7443'])
     expect(fleetState.connects).toEqual([{ url: 'http://127.0.0.1:7443', code: 'ABCD-EFGH', deviceName: 'Mac' }])
+    // A new server: the record names the one it paired.
+    expect(fleetState.pairedAgain).toEqual([null])
     expect(stored.record).toEqual({
+      serverId: SERVER,
       mode: 'local',
       artifactsPort: 4011,
       version: '0.9.4',
@@ -489,6 +516,7 @@ describe('installing on a VPS', () => {
     expect(stored.key).toContain('OPENSSH PRIVATE KEY')
     expect(persistent.options.privateKey()).toBe(stored.key)
     expect(stored.record).toEqual({
+      serverId: SERVER,
       mode: 'remote',
       artifactsPort: 4011,
       remoteArtifactsPort: 4010,
@@ -963,12 +991,19 @@ describe('updating bots in one click', () => {
 describe('leaving and removing the server', () => {
   it('unpairs, revokes Maestrly’s key on the VPS, and forgets the install', async () => {
     const { service, keySession, fleetState, stored, tunnels } = setup({
-      record: remoteRecord(),
+      record: { ...remoteRecord(), serverId: SERVER },
       key: 'synthetic-private-key',
+      connection: { url: 'http://127.0.0.1:7443', deviceId: 'device-1', state: 'connected' },
     })
     await service.start()
+    // The server leaves the list last: until then its settings show it, and no new install can start under it.
+    let left: unknown = null
+    fleetState.onLeave = () => {
+      left = { revoked: keySession.commands.some((item) => item.input.includes('revoke-key')), stored: { ...stored } }
+    }
     const status = await service.disconnect()
-    expect(fleetState.disconnects).toBe(1)
+    expect(fleetState.removed).toEqual([SERVER])
+    expect(left).toEqual({ revoked: true, stored: { record: null, key: null } })
     const revoke = keySession.commands.find((item) => item.input.startsWith('# maestrly-bot-server:revoke-key\n'))
     expect(revoke?.command).toBe("sh -s -- 'maestrly-bbbbbbbbbbbb'")
     expect(tunnels[0].stopped).toBe(true)
@@ -1065,12 +1100,42 @@ describe('leaving and removing the server', () => {
   })
 })
 
+describe('the installed server', () => {
+  // Where `localRecord()` is reached.
+  const pairedAt = { url: 'http://127.0.0.1:7450', deviceId: 'device-1' }
+  it('links a record of an earlier version to the server paired at its address', () => {
+    const { service, stored } = setup({ record: localRecord(), connection: { ...pairedAt, state: 'connected' } })
+    expect(stored.record?.serverId).toBeUndefined()
+    expect(service.status().record?.serverId).toBe(SERVER)
+    expect(stored.record?.serverId).toBe(SERVER)
+    const unpaired = setup({ record: localRecord() })
+    expect(unpaired.service.status().record?.serverId).toBeUndefined()
+  })
+
+  it('pairs its server again under its id when the server refused this computer', async () => {
+    const { service, local, fleetState, stored } = setup({
+      record: { ...localRecord(), serverId: SERVER },
+      connection: { ...pairedAt, state: 'unauthorized' },
+    })
+    local.on(['compose', 'exec'], () => ok('ABCD-EFGH\n'))
+    await service.installLocal({ deviceName: 'Mac', allowPrivateNetwork: false })
+    expect(fleetState.pairedAgain).toEqual([SERVER])
+    expect(stored.record?.serverId).toBe(SERVER)
+  })
+
+  it('refuses to remove a server that is not paired any more', async () => {
+    const { service } = setup({ record: { ...localRecord(), serverId: SERVER } })
+    await expect(service.remove()).rejects.toMatchObject({ code: 'not-connected' })
+  })
+})
+
 describe('the tunnel at startup', () => {
   it('opens the tunnel of a VPS install and follows it to another port', async () => {
     const { service, tunnels, stored, fleetState } = setup({
-      record: remoteRecord(),
+      record: { ...remoteRecord(), serverId: SERVER },
       key: 'synthetic-private-key',
       tunnelPort: () => 7471,
+      connection: { url: 'http://127.0.0.1:7443', deviceId: 'device-1', state: 'connected' },
     })
     await service.start()
     expect(tunnels).toHaveLength(1)

@@ -18,6 +18,7 @@ import type { FleetController } from '@/lib/fleet/use-fleet'
 
 /** Archived environments: restore one with its bots on its kept files, or delete it and its bots forever. */
 export function ArchivedEnvironments({ fleet }: { fleet: FleetController }) {
+  const serverId = fleet.serverId
   const { t, i18n } = useTranslation('fleet')
   const [environments, setEnvironments] = useState<FleetArchivedEnvironment[] | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
@@ -30,7 +31,7 @@ export function ArchivedEnvironments({ fleet }: { fleet: FleetController }) {
   useEffect(() => {
     let alive = true
     void window.api
-      .fleetListArchivedEnvironments()
+      .fleetListArchivedEnvironments(serverId)
       .then((result) => alive && setEnvironments(result.environments))
       .catch((cause) => alive && setError(fleetErrorText(cause, t)))
     return () => {
@@ -42,7 +43,7 @@ export function ArchivedEnvironments({ fleet }: { fleet: FleetController }) {
     setBusy(environment.id)
     setError('')
     try {
-      const restored = await window.api.fleetRestoreArchivedEnvironment(environment.id)
+      const restored = await window.api.fleetRestoreArchivedEnvironment(serverId, environment.id)
       fleet.dispatch({
         type: 'event',
         value: { type: 'environment.updated', at: new Date().toISOString(), environment: restored },
@@ -62,7 +63,7 @@ export function ArchivedEnvironments({ fleet }: { fleet: FleetController }) {
     setBusy(deleting.id)
     setError('')
     try {
-      await window.api.fleetDeleteArchivedEnvironment(deleting.id)
+      await window.api.fleetDeleteArchivedEnvironment(serverId, deleting.id)
       setEnvironments((current) => current?.filter((item) => item.id !== deleting.id) ?? null)
       setDeleting(null)
     } catch (cause) {

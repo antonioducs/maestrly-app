@@ -1,3 +1,5 @@
+import type { FleetServerId } from './fleet-servers'
+
 /** A bot file this computer is saving to Downloads. Main runs at most one transfer per bot and file. */
 export interface FleetDownloadProgress {
   botId: string
@@ -25,6 +27,7 @@ export type FleetDownloadEvent =
 
 /** A file a window shows; while that window has focus, its downloads finish without a system notification. */
 export interface FleetDownloadFileKey {
+  serverId: FleetServerId
   botId: string
   fileId: string
 }

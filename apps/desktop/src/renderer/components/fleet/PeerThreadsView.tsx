@@ -11,12 +11,14 @@ import { threadExpiresInDays, threadGroups, threadSettingsOf, threadState, threa
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import { cn } from '@/lib/utils'
 import { PeerThreadConversation } from './PeerThreadConversation'
+import { useFleetServerId } from '@/lib/fleet/server-context'
 
 const RETENTION_DAYS = [30, 60, 90] as const
 const HOP_LIMITS = [4, 8, 16] as const
 
 /** A bot's settings for its conversations with other bots: saved as each one changes. */
 function ThreadSettingsDialog({ bot, open, onClose }: { bot: FleetBot; open: boolean; onClose: () => void }) {
+  const serverId = useFleetServerId()
   const { t } = useTranslation('fleet')
   const [settings, setSettings] = useState<FleetPeerThreadSettings>(() => threadSettingsOf(bot))
   const [saved, setSaved] = useState(false)
@@ -37,7 +39,7 @@ function ThreadSettingsDialog({ bot, open, onClose }: { bot: FleetBot; open: boo
     setSaved(false)
     setError(null)
     try {
-      await window.api.fleetSetPeerThreadSettings(bot.id, next)
+      await window.api.fleetSetPeerThreadSettings(serverId, bot.id, next)
       setSaved(true)
     } catch (cause) {
       setSettings(previous)
@@ -311,6 +313,7 @@ export function PeerThreadsView({
   onOpenMain: () => void
   visible: boolean
 }) {
+  const serverId = fleet.serverId
   const { t } = useTranslation('fleet')
   const threadsState = fleet.state.threads[bot.id] ?? emptyThreads
   const { ensureThreads, loadThreads, dispatch } = fleet
@@ -343,7 +346,7 @@ export function PeerThreadsView({
   const deleteConversation = async (thread: FleetPeerThread) => {
     setError(null)
     try {
-      const updated = await window.api.fleetDeletePeerThreadConversation(bot.id, thread.id)
+      const updated = await window.api.fleetDeletePeerThreadConversation(serverId, bot.id, thread.id)
       dispatch({ type: 'threads.upsert', botId: bot.id, thread: updated })
     } catch (cause) {
       setError(

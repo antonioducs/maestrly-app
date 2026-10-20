@@ -34,6 +34,10 @@ import { hostFsApi } from '../../src/preload/api-host-fs'
 import { artifactsApi } from '../../src/preload/api-artifacts'
 import { transfersApi } from '../../src/preload/api-transfers'
 import { conversationMoveApi } from '../../src/preload/api-conversation-move'
+import type { FleetServerId } from '../../src/shared/fleet-servers'
+
+/** A paired bot server, as the fleet preload calls name it first. */
+const SERVER = 'aaaaaaaa-0000-4000-8000-000000000001'
 
 type Fn = (...args: unknown[]) => unknown
 type Api = Record<string, Fn>
@@ -139,7 +143,8 @@ const collectMainChannelFiles = (re: RegExp): Map<string, string[]> => {
   return out
 }
 
-const MAIN_REGISTRATION_RE = /(?:ipcMain\.(?:handle|on)|\breg\.(?:handle|on)|\bmhandle|\bmon)\(\s*'([^']+)'/g
+// `scoped` registers the fleet channels that name their server first (main/fleet/client/scoped-ipc.ts).
+const MAIN_REGISTRATION_RE = /(?:ipcMain\.(?:handle|on)|\b(?:reg|scoped)\.(?:handle|on)|\bmhandle|\bmon)\(\s*'([^']+)'/g
 const PRELOAD_API_CHANNEL_RE = /ipcRenderer\.(?:invoke|send)\(\s*'([^']+)'/g
 const PRELOAD_LISTENER_CHANNEL_RE = /ipcRenderer\.on\(\s*'([^']+)'/g
 
@@ -233,21 +238,21 @@ describe('preload API — exposure', () => {
   })
 
   it('forwards archived bot calls to their channels', async () => {
-    await api.fleetListArchivedBots()
-    await api.fleetRestoreArchivedBot('scout')
-    await api.fleetDeleteArchivedBot('scout')
-    expect(invokeSpy).toHaveBeenCalledWith('fleet:listArchivedBots')
-    expect(invokeSpy).toHaveBeenCalledWith('fleet:restoreArchivedBot', 'scout')
-    expect(invokeSpy).toHaveBeenCalledWith('fleet:deleteArchivedBot', 'scout')
+    await api.fleetListArchivedBots(SERVER)
+    await api.fleetRestoreArchivedBot(SERVER, 'scout')
+    await api.fleetDeleteArchivedBot(SERVER, 'scout')
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:listArchivedBots', SERVER)
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:restoreArchivedBot', SERVER, 'scout')
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:deleteArchivedBot', SERVER, 'scout')
   })
 
   it('forwards a bot move and the read of its outcome to their channels', async () => {
-    await api.fleetMoveBot('scout', { environmentId: 'home' })
-    await api.fleetMoveBot('scout', { newEnvironment: { name: 'Lab' } })
-    await api.fleetGetBotMove('scout')
-    expect(invokeSpy).toHaveBeenCalledWith('fleet:moveBot', 'scout', { environmentId: 'home' })
-    expect(invokeSpy).toHaveBeenCalledWith('fleet:moveBot', 'scout', { newEnvironment: { name: 'Lab' } })
-    expect(invokeSpy).toHaveBeenCalledWith('fleet:botMove', 'scout')
+    await api.fleetMoveBot(SERVER, 'scout', { environmentId: 'home' })
+    await api.fleetMoveBot(SERVER, 'scout', { newEnvironment: { name: 'Lab' } })
+    await api.fleetGetBotMove(SERVER, 'scout')
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:moveBot', SERVER, 'scout', { environmentId: 'home' })
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:moveBot', SERVER, 'scout', { newEnvironment: { name: 'Lab' } })
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:botMove', SERVER, 'scout')
   })
 
   it("hides a bot's settings window through main instead of closing it", async () => {
@@ -256,25 +261,27 @@ describe('preload API — exposure', () => {
   })
 
   it('forwards fleet conversation op arguments without a caller conversation id', async () => {
-    await api.fleetConversationCall('bot', 'chatSetConvTools', { imageGen: false })
-    expect(invokeSpy).toHaveBeenCalledWith('fleet:conversationCall', 'bot', 'chatSetConvTools', [{ imageGen: false }])
+    await api.fleetConversationCall(SERVER, 'bot', 'chatSetConvTools', { imageGen: false })
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:conversationCall', SERVER, 'bot', 'chatSetConvTools', [
+      { imageGen: false },
+    ])
   })
 
   it('forwards provisioning and login arguments in order', async () => {
     const selection = { apiKeyIds: ['p1'], copyIds: [], skillNames: [], mcpServerIds: [] }
     const request = { kind: 'codex', method: 'browser', slot: 'auto' }
-    await api.fleetImportFromMac('bot', selection)
-    await api.fleetLoginStart('bot', request)
-    await api.fleetLoginStatus('bot', 'l1')
-    await api.fleetLoginSubmitCode('bot', 'l1', 'code')
-    await api.fleetLoginCancel('bot', 'l1')
-    await api.fleetLoginOpen('bot', 'l1', 'manual')
-    expect(invokeSpy).toHaveBeenCalledWith('fleet:provisioning:import', 'bot', selection)
-    expect(invokeSpy).toHaveBeenCalledWith('fleet:login:start', 'bot', request)
-    expect(invokeSpy).toHaveBeenCalledWith('fleet:login:status', 'bot', 'l1')
-    expect(invokeSpy).toHaveBeenCalledWith('fleet:login:code', 'bot', 'l1', 'code')
-    expect(invokeSpy).toHaveBeenCalledWith('fleet:login:cancel', 'bot', 'l1')
-    expect(invokeSpy).toHaveBeenCalledWith('fleet:login:open', 'bot', 'l1', 'manual')
+    await api.fleetImportFromMac(SERVER, 'bot', selection)
+    await api.fleetLoginStart(SERVER, 'bot', request)
+    await api.fleetLoginStatus(SERVER, 'bot', 'l1')
+    await api.fleetLoginSubmitCode(SERVER, 'bot', 'l1', 'code')
+    await api.fleetLoginCancel(SERVER, 'bot', 'l1')
+    await api.fleetLoginOpen(SERVER, 'bot', 'l1', 'manual')
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:provisioning:import', SERVER, 'bot', selection)
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:login:start', SERVER, 'bot', request)
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:login:status', SERVER, 'bot', 'l1')
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:login:code', SERVER, 'bot', 'l1', 'code')
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:login:cancel', SERVER, 'bot', 'l1')
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:login:open', SERVER, 'bot', 'l1', 'manual')
   })
   it('forwards bot server installer calls to their channels', async () => {
     const remote = {
@@ -351,7 +358,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(640)
+    expect(keys).toHaveLength(642)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -422,23 +429,24 @@ describe('preload API — exposure', () => {
     const input = { expectedRevision: 'synthetic-revision' }
     for (const [name, method] of Object.entries(fleetEnvironmentSettings)) {
       invokeSpy.mockClear()
-      method('synthetic-environment', input as never)
-      expect(invokeSpy).toHaveBeenCalledWith('fleet:settings:' + name, 'synthetic-environment', input)
+      method(SERVER as FleetServerId, 'synthetic-environment', input as never)
+      expect(invokeSpy).toHaveBeenCalledWith('fleet:settings:' + name, SERVER, 'synthetic-environment', input)
     }
   })
 
   it('brings plugins and signs in to environment servers through main-process channels', () => {
     expect(api.fleetEnvironmentPlugins).toBe(fleetEnvironmentPlugins)
-    fleetEnvironmentPlugins.bring('env-1', 'demo@market')
-    expect(invokeSpy).toHaveBeenLastCalledWith('fleet:plugins:bring', 'env-1', 'demo@market')
-    fleetEnvironmentPlugins.mcpOAuthConnect('env-1', 'mcp_1')
-    expect(invokeSpy).toHaveBeenLastCalledWith('fleet:mcp-oauth:connect', 'env-1', 'mcp_1', undefined)
-    fleetEnvironmentPlugins.mcpOAuthConnect('env-1', 'mcp_1', { accountId: 'acc_000000000001' })
-    expect(invokeSpy).toHaveBeenLastCalledWith('fleet:mcp-oauth:connect', 'env-1', 'mcp_1', {
+    const server = SERVER as FleetServerId
+    fleetEnvironmentPlugins.bring(server, 'env-1', 'demo@market')
+    expect(invokeSpy).toHaveBeenLastCalledWith('fleet:plugins:bring', SERVER, 'env-1', 'demo@market')
+    fleetEnvironmentPlugins.mcpOAuthConnect(server, 'env-1', 'mcp_1')
+    expect(invokeSpy).toHaveBeenLastCalledWith('fleet:mcp-oauth:connect', SERVER, 'env-1', 'mcp_1', undefined)
+    fleetEnvironmentPlugins.mcpOAuthConnect(server, 'env-1', 'mcp_1', { accountId: 'acc_000000000001' })
+    expect(invokeSpy).toHaveBeenLastCalledWith('fleet:mcp-oauth:connect', SERVER, 'env-1', 'mcp_1', {
       accountId: 'acc_000000000001',
     })
-    fleetEnvironmentPlugins.mcpOAuthCancel('env-1', 'mcp_1')
-    expect(invokeSpy).toHaveBeenLastCalledWith('fleet:mcp-oauth:cancel', 'env-1', 'mcp_1')
+    fleetEnvironmentPlugins.mcpOAuthCancel(server, 'env-1', 'mcp_1')
+    expect(invokeSpy).toHaveBeenLastCalledWith('fleet:mcp-oauth:cancel', SERVER, 'env-1', 'mcp_1')
   })
 
   it('composes disjoint slices whose union equals the exposed API', () => {
@@ -1696,7 +1704,8 @@ describe('global preload/main IPC contract (#625/F2+)', () => {
 
   it('main registrations use literal channels except for internal guarded wrapper delegation', () => {
     const nonLiteralRegistrationRe = /(?:ipcMain\.(?:handle|on)|\breg\.(?:handle|on)|\bmhandle|\bmon)\(\s*[^'\s][^\n]*/g
-    const allowedGuardDelegationRe = /ipcMain\.(?:handle|on)\(\s*channel,\s*(?:guard(?:Handle|On)\(fn\)|fn)\s*\)/
+    const allowedGuardDelegationRe =
+      /(?:ipcMain\.(?:handle|on)\(\s*channel,\s*(?:guard(?:Handle|On)\(fn\)|fn)\s*\)|(?:reg\.handle|mhandle)\(\s*channel,\s*scoped\(fn\)\s*\))/
     const dynamicRegistrations: string[] = []
 
     for (const [file, text] of mainFiles) {

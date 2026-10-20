@@ -5,6 +5,7 @@ import {
   isValidHostId,
   LOCAL_HOST_ID,
   parseHostKey,
+  parseRemoteHostId,
   remoteHostId,
 } from '../../src/shared/host-key'
 
@@ -32,5 +33,11 @@ describe('host keys', () => {
     expect(isValidHostId('direct/dev')).toBe(true)
     for (const invalid of ['a#b/c', '../x', 'a/b/c', 'server', 'Server/env', '', 'a/', '/b', 'a/b#c'])
       expect(isValidHostId(invalid)).toBe(false)
+  })
+
+  it('parses the server and environment of a remote host id', () => {
+    expect(parseRemoteHostId('local')).toBeNull()
+    expect(parseRemoteHostId('srv-1/personal')).toEqual({ serverId: 'srv-1', environmentId: 'personal' })
+    expect(parseRemoteHostId('srv-1/a#b')).toBeNull()
   })
 })

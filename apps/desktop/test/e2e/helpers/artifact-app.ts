@@ -180,7 +180,7 @@ export async function launchArtifactApp(options: {
         code: gateway.issueCode(),
         deviceName: 'Artifact owner',
       })
-      expect(connected.features).toContain('artifacts')
+      expect(connected.connection.features).toContain('artifacts')
       await artifacts('setServerHost', { enabled: true, ownerName: 'Antonio' })
       await expect.poll(async () => (await artifacts('serverStatus')).state).toBe('ready')
     }

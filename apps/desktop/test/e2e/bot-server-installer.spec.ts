@@ -253,12 +253,14 @@ test('sets up a VPS over SSH, joins it again at an older version, and updates it
     await expect.poll(() => server.connections).toBeGreaterThan(connections)
     await expect
       .poll(() =>
-        page.evaluate(() =>
-          window.api.fleetRefresh().then(
+        page.evaluate(async () => {
+          const [server] = await window.api.fleetServers()
+          if (!server) return 'not paired'
+          return window.api.fleetRefresh(server.id).then(
             (snapshot) => snapshot.host?.hostname ?? null,
             (error: unknown) => String(error)
           )
-        )
+        })
       )
       .toBe('fleet-vps')
 
