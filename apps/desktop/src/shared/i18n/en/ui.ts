@@ -634,7 +634,7 @@ export default {
     progressLabel: 'Project setup progress',
     cancelOperation: 'Cancel operation',
     initializeExisting:
-      'This folder has no usable Git history. Initialize Git on main if needed and create an empty Initial commit? Existing files stay untouched and untracked.',
+      'This folder has no usable Git history. Initialize Git on main and commit the current files as the Initial commit? Files ignored by .gitignore, dependency folders, likely secrets such as .env, and files of 50 MB or more stay out of the commit, untouched.',
     initializeAction: 'Initialize Git in this folder',
     emptyRemote:
       'This remote is empty. Create README.md and an Initial commit locally on main? Nothing will be pushed automatically.',

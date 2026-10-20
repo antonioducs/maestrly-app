@@ -4,10 +4,18 @@ import os from 'node:os'
 import path from 'node:path'
 import type { ProjectSetupErrorCode, ProjectSetupProgress, ProjectSetupPhase } from '../../shared/project-setup'
 import { retryWhenGitAppears } from '../git-command'
+import {
+  INITIAL_COMMIT_EXCLUDED_DIRECTORIES,
+  isExcludedFromInitialCommit,
+  isTooLargeForInitialCommit,
+} from './initial-commit-exclusions'
 
 const MAX_CAPTURE_BYTES = 64 * 1024
 const DEFAULT_GIT_TIMEOUT_MS = 30_000
 const CLONE_TIMEOUT_MS = 60 * 60_000
+// Staging and committing a large existing folder takes far longer than the default for a single command.
+const INITIAL_COMMIT_FILES_TIMEOUT_MS = 30 * 60_000
+const STAT_CONCURRENCY = 32
 const COMMIT_NAME = 'Maestrly'
 const COMMIT_EMAIL = 'noreply@maestrly.com'
 
@@ -24,6 +32,10 @@ interface RunGitOptions {
   signal?: AbortSignal
   env?: NodeJS.ProcessEnv
   timeoutMs?: number
+  /** Written to the command's standard input, which is closed afterwards. */
+  input?: Buffer | string
+  /** Receives all of the output as it arrives; `stdout` in the result keeps only the first bytes. */
+  onStdout?: (chunk: Buffer) => void
   onStderr?: (chunk: Buffer) => void
 }
 
@@ -140,7 +152,7 @@ function spawnGitProcess(options: RunGitOptions): Promise<CommandResult> {
     const child = spawn('git', options.args, {
       cwd: options.cwd,
       shell: false,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: [options.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
       windowsHide: true,
       detached: process.platform !== 'win32',
       ...(options.env ? { env: { ...process.env, ...options.env } } : {}),
@@ -177,11 +189,17 @@ function spawnGitProcess(options: RunGitOptions): Promise<CommandResult> {
 
     child.stdout?.on('data', (chunk: Buffer) => {
       stdout = appendLimited(stdout, chunk)
+      options.onStdout?.(chunk)
     })
     child.stderr?.on('data', (chunk: Buffer) => {
       stderr = appendTailLimited(stderr, chunk)
       options.onStderr?.(chunk)
     })
+    if (options.input !== undefined) {
+      // Git may exit before reading everything (EPIPE); the exit code of the process reports why.
+      child.stdin?.on('error', () => {})
+      child.stdin?.end(options.input)
+    }
     child.once('error', (error: NodeJS.ErrnoException) => {
       if (stopping) return
       finish(() =>
@@ -271,20 +289,176 @@ export async function createReadme(cwd: string, projectName: string): Promise<vo
   await fs.writeFile(path.join(cwd, 'README.md'), `# ${projectName}\n`, { flag: 'wx' })
 }
 
+async function requireGitProcess(options: RunGitOptions): Promise<void> {
+  const result = await runGitProcess(options)
+  if (result.code !== 0) throw new ProjectSetupGitError(options.errorCode)
+}
+
+/** Runs a Git command that prints NUL-terminated records and hands each one over as it arrives. */
+async function readNulRecords(options: RunGitOptions, onRecord: (record: string) => void): Promise<void> {
+  let pending: Buffer<ArrayBufferLike> = Buffer.alloc(0)
+  const result = await runGitProcess({
+    ...options,
+    onStdout: (chunk) => {
+      const data = pending.length > 0 ? Buffer.concat([pending, chunk]) : chunk
+      let start = 0
+      for (let end = data.indexOf(0, start); end !== -1; end = data.indexOf(0, start)) {
+        const record = data.toString('utf8', start, end)
+        start = end + 1
+        // A name that is not valid UTF-8 cannot make the round trip through a string, so it is left alone.
+        if (!record.includes('\uFFFD')) onRecord(record)
+      }
+      pending = Buffer.from(data.subarray(start))
+    },
+  })
+  if (result.code !== 0) throw new ProjectSetupGitError(options.errorCode)
+}
+
+async function pathExists(target: string): Promise<boolean> {
+  return fs.lstat(target).then(
+    () => true,
+    () => false
+  )
+}
+
+/** Resolves whether a directory, relative to the folder, is or sits inside a repository of its own. */
+function nestedRepositoryDetector(root: string): (relativeDirectory: string) => Promise<boolean> {
+  const known = new Map<string, Promise<boolean>>()
+  const inside = (relativeDirectory: string): Promise<boolean> => {
+    // The folder itself is the repository being initialized.
+    if (relativeDirectory === '.' || relativeDirectory === '') return Promise.resolve(false)
+    let answer = known.get(relativeDirectory)
+    if (!answer) {
+      answer = pathExists(path.join(root, relativeDirectory, '.git')).then(
+        (owned) => owned || inside(path.posix.dirname(relativeDirectory))
+      )
+      known.set(relativeDirectory, answer)
+    }
+    return answer
+  }
+  return inside
+}
+
+async function forEachLimited<T>(
+  items: readonly T[],
+  limit: number,
+  visit: (item: T) => Promise<void>,
+  signal?: AbortSignal
+): Promise<void> {
+  let next = 0
+  const worker = async () => {
+    while (next < items.length) {
+      if (signal?.aborted) throw new ProjectSetupGitError('initial-commit-failed', true)
+      await visit(items[next++])
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+}
+
+const toNulSeparated = (paths: readonly string[]): Buffer => Buffer.from(`${paths.join('\0')}\0`, 'utf8')
+
+/**
+ * Stages the files of an existing folder in the real index, so `git status` is clean for everything committed.
+ * Files Git ignores never enter. Those that `initial-commit-exclusions` names, nested repositories, files too
+ * large and files that cannot be read stay out, whether untracked or staged earlier in an unborn repository.
+ */
+async function stageFolderFiles(cwd: string, signal?: AbortSignal): Promise<void> {
+  const base = {
+    cwd,
+    errorCode: 'initial-commit-failed',
+    signal,
+    timeoutMs: INITIAL_COMMIT_FILES_TIMEOUT_MS,
+  } as const
+  const unstage: string[] = []
+  const candidates: Array<{ path: string; staged: boolean }> = []
+
+  // Entries already in the index of an unborn repository: `<mode> <object> <stage>\t<path>`.
+  await readNulRecords({ ...base, args: ['ls-files', '--stage', '-z'] }, (record) => {
+    const tab = record.indexOf('\t')
+    if (tab === -1) return
+    const entryPath = record.slice(tab + 1)
+    const isGitlink = record.startsWith('160000 ')
+    if (isGitlink || isExcludedFromInitialCommit(entryPath)) unstage.push(entryPath)
+    else candidates.push({ path: entryPath, staged: true })
+  })
+  // `--exclude-standard` is Git's own set for `git add`: .gitignore files, .git/info/exclude and the user's global
+  // excludes. The directories are also pruned here so a huge node_modules is never walked.
+  await readNulRecords(
+    {
+      ...base,
+      args: [
+        'ls-files',
+        '--others',
+        '--exclude-standard',
+        ...INITIAL_COMMIT_EXCLUDED_DIRECTORIES.flatMap((directory) => ['--exclude', `${directory}/`]),
+        '-z',
+      ],
+    },
+    (record) => {
+      // Git lists a nested repository as a single `directory/` entry.
+      if (record.endsWith('/') || isExcludedFromInitialCommit(record)) return
+      candidates.push({ path: record, staged: false })
+    }
+  )
+
+  const stage: string[] = []
+  const insideNestedRepository = nestedRepositoryDetector(cwd)
+  await forEachLimited(
+    candidates,
+    STAT_CONCURRENCY,
+    async (candidate) => {
+      const staysOut = await insideNestedRepository(path.posix.dirname(candidate.path)).then(async (nested) => {
+        if (nested) return true
+        const absolute = path.join(cwd, candidate.path)
+        const size = await fs.lstat(absolute).then(
+          (stat) => stat.size,
+          // Gone since it was listed: the update below drops it from the index if it was staged.
+          () => 0
+        )
+        if (isTooLargeForInitialCommit(size)) return true
+        return fs.access(absolute, fs.constants.R_OK).then(
+          () => false,
+          (error: NodeJS.ErrnoException) => error.code === 'EACCES' || error.code === 'EPERM'
+        )
+      })
+      if (!staysOut) stage.push(candidate.path)
+      else if (candidate.staged) unstage.push(candidate.path)
+    },
+    signal
+  )
+
+  // The files stay on disk; only the index changes.
+  if (unstage.length > 0) {
+    await requireGitProcess({
+      ...base,
+      args: ['update-index', '--force-remove', '-z', '--stdin'],
+      input: toNulSeparated(unstage),
+    })
+  }
+  if (stage.length > 0) {
+    await requireGitProcess({
+      ...base,
+      args: ['update-index', '--add', '--remove', '-z', '--stdin'],
+      input: toNulSeparated(stage),
+    })
+  }
+}
+
+/**
+ * Creates the "Initial commit" on the current (unborn) branch. A new project commits only its README. An existing
+ * folder commits its files, except what Git ignores and what `initial-commit-exclusions` leaves out; with nothing
+ * to commit the commit is empty.
+ */
 export async function createInitialCommit(
   cwd: string,
   options: { includeReadme: boolean; signal?: AbortSignal }
 ): Promise<void> {
   const hooksDir = await fs.mkdtemp(path.join(os.tmpdir(), 'maestrly-hooks-'))
-  const indexDir = options.includeReadme ? null : await fs.mkdtemp(path.join(os.tmpdir(), 'maestrly-index-'))
-  const commitEnv = indexDir ? { GIT_INDEX_FILE: path.join(indexDir, 'index') } : undefined
   try {
     if (options.includeReadme) {
       await requireGit(cwd, ['add', '--', 'README.md'], 'initial-commit-failed', options.signal)
     } else {
-      // Use an ephemeral index so an unborn repository's staged files cannot enter the intended empty
-      // commit.
-      await requireGit(cwd, ['read-tree', '--empty'], 'initial-commit-failed', options.signal, commitEnv)
+      await stageFolderFiles(cwd, options.signal)
     }
     const args = [
       '-c',
@@ -301,12 +475,15 @@ export async function createInitialCommit(
       '-m',
       'Initial commit',
     ]
-    await requireGit(cwd, args, 'initial-commit-failed', options.signal, commitEnv)
+    await requireGitProcess({
+      cwd,
+      args,
+      errorCode: 'initial-commit-failed',
+      signal: options.signal,
+      ...(options.includeReadme ? {} : { timeoutMs: INITIAL_COMMIT_FILES_TIMEOUT_MS }),
+    })
   } finally {
-    await Promise.all([
-      fs.rm(hooksDir, { recursive: true, force: true }).catch(() => {}),
-      indexDir ? fs.rm(indexDir, { recursive: true, force: true }).catch(() => {}) : Promise.resolve(),
-    ])
+    await fs.rm(hooksDir, { recursive: true, force: true }).catch(() => {})
   }
 }
 
