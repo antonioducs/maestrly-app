@@ -80,4 +80,6 @@ export const REMOTE_BRIDGE_CLOSE = {
   badFrame: 4002,
   refused: 4003,
   slowClient: 4008,
+  /** The host removed this computer from the ones it lets use it. */
+  removed: 4010,
 } as const

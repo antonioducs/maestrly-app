@@ -8,11 +8,6 @@ import {
   fleetSettingsRouteKey,
   parseFleetInstanceEditorPath,
   type FleetEnvironmentSettingsService,
-  type FleetHostFileArchiveRequest,
-  type FleetHostFileDigestRequest,
-  type FleetHostFileStatRequest,
-  type FleetHostFileUploadBegin,
-  type FleetHostFileUploadCommit,
   type FleetDesktopCallResult,
   type FleetHostDesktopCallRequest,
   type FleetHostDesktopLinksChanged,
@@ -100,20 +95,23 @@ import {
   type ScreenMode,
 } from '@maestrly/bot-fleet-protocol'
 import type { z } from 'zod'
-import type { HostFiles } from '../../remote-host/server/host-files'
 import type { BotInstanceConfig } from './config'
 import type { DisplaySurface, ScreenLease } from './displays'
+import { type HostFilesRoutes, isHostFilesRoute, serveHostFilesRoute } from './host-files-http'
+import {
+  body,
+  DEFAULT_BODY_MAX,
+  InstanceHttpError,
+  type RouteKey,
+  rejectUpgrade,
+  routeFor,
+  sendInstanceError,
+  writeJson,
+} from './http'
 import type { ScreenClientHandle } from './screen-session'
 
-export class InstanceHttpError extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: string,
-    message: string
-  ) {
-    super(message)
-  }
-}
+export { InstanceHttpError } from './http'
+export type { HostFilesRoutes } from './host-files-http'
 
 /**
  * What this instance offers: provisioning of its environment (accounts, skills, MCP servers, sign-ins), several bots,
@@ -278,21 +276,6 @@ export class InstanceEvents {
     }
   }
 }
-const errorStatus = (status: number): string =>
-  (
-    ({
-      400: 'INVALID_REQUEST',
-      401: 'UNAUTHORIZED',
-      403: 'FORBIDDEN',
-      404: 'NOT_FOUND',
-      409: 'CONFLICT',
-      426: 'PROTOCOL_INCOMPATIBLE',
-    }) as Record<number, string>
-  )[status] ?? 'INTERNAL'
-function writeJson(response: ServerResponse, status: number, value: unknown): void {
-  response.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
-  response.end(JSON.stringify(value))
-}
 /** Logs an error the instance did not expect, which its caller only sees as `Instance request failed.` */
 function logUnexpected(request: IncomingMessage, error: unknown): void {
   const route = `${request.method ?? ''} ${(request.url ?? '').split('?')[0]}`
@@ -304,28 +287,7 @@ function authorized(input: string | undefined, expected: string): boolean {
   if (!input?.startsWith('Bearer ')) return false
   return timingSafeEqual(hash(input.slice(7)), hash(expected))
 }
-const DEFAULT_BODY_MAX = 1_048_576
-async function body(request: IncomingMessage, schema: z.ZodType | null, maxBytes: number): Promise<unknown> {
-  if (schema && !request.headers['content-type']?.startsWith('application/json'))
-    throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Expected a JSON request body.')
-  let size = 0
-  const chunks: Buffer[] = []
-  for await (const chunk of request) {
-    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
-    size += bytes.length
-    if (size > maxBytes) throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Request body too large.')
-    chunks.push(bytes)
-  }
-  if (!schema) return undefined
-  try {
-    return schema.parse(JSON.parse(Buffer.concat(chunks).toString('utf8')))
-  } catch (error) {
-    if (error instanceof InstanceHttpError) throw error
-    throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Invalid request body.')
-  }
-}
 
-type RouteKey = keyof typeof FLEET_INSTANCE_ROUTES
 /** Routes whose bodies may be larger than 1 MiB: a skill's files, and a message's images. */
 const BODY_LIMITS: Partial<Record<RouteKey, number>> = {
   skillInstall: FLEET_SKILL_BODY_MAX,
@@ -352,33 +314,6 @@ const WITHOUT_INSTALLED_BOT: ReadonlySet<RouteKey> = new Set<RouteKey>([
   'botExport',
   'botImport',
 ])
-const COMPILED_ROUTES = (Object.keys(FLEET_INSTANCE_ROUTES) as RouteKey[]).map((key) => {
-  const route = FLEET_INSTANCE_ROUTES[key]
-  const names: string[] = []
-  const pattern = route.path.replace(/:([A-Za-z][A-Za-z0-9_]*)/g, (_match, name: string) => {
-    names.push(name)
-    return '([^/]+)'
-  })
-  return { key, method: route.method as string, pattern: new RegExp('^' + pattern + '$'), names }
-})
-/** The route of a request with its decoded parameters, or null when none matches or a parameter is malformed. */
-function routeFor(method: string, pathname: string): { key: RouteKey; params: Record<string, string> } | null {
-  for (const route of COMPILED_ROUTES) {
-    if (route.method !== method) continue
-    const match = route.pattern.exec(pathname)
-    if (!match) continue
-    const params: Record<string, string> = {}
-    try {
-      route.names.forEach((name, index) => {
-        params[name] = decodeURIComponent(match[index + 1])
-      })
-    } catch {
-      return null
-    }
-    return { key: route.key, params }
-  }
-  return null
-}
 const isBotId = (value: string | undefined): value is string =>
   value !== undefined && fleetBotIdSchema.safeParse(value).success
 const botNotFound = (): InstanceHttpError => new InstanceHttpError(404, 'NOT_FOUND', 'Bot does not exist.')
@@ -512,21 +447,6 @@ type Handler = (request: { params: Record<string, string>; url: URL; input: unkn
  * apps display is separate. A bot's screens need that bot's takeover for control, and its controls end when its
  * takeover does; the environment screen needs none.
  */
-/** What the control server needs of a workspaces host's files; only a workspaces host passes them. */
-export type HostFilesRoutes = Pick<
-  HostFiles,
-  | 'stat'
-  | 'digest'
-  | 'content'
-  | 'beginUpload'
-  | 'uploadChunk'
-  | 'commitUpload'
-  | 'abortUpload'
-  | 'beginArchive'
-  | 'archiveStatus'
-  | 'releaseArchive'
->
-
 /** Takes over an authenticated upgrade of the bridge path; a workspaces host passes its remote UI hub. */
 export interface BridgeUpgrade {
   handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer): void
@@ -814,15 +734,6 @@ export function createInstanceControlServer(
       return hold
     },
     botConversationCall: ({ params, input }) => bot(params).conversationCall(input as FleetConversationCallRequest),
-    hostFileStat: ({ input }) => hostFiles().stat(input as FleetHostFileStatRequest),
-    hostFileDigest: ({ input }) => hostFiles().digest(input as FleetHostFileDigestRequest),
-    hostFileUploadBegin: ({ input }) => hostFiles().beginUpload(input as FleetHostFileUploadBegin),
-    hostFileUploadCommit: ({ params, input }) =>
-      hostFiles().commitUpload(params.uploadId, input as FleetHostFileUploadCommit),
-    hostFileUploadAbort: ({ params }) => hostFiles().abortUpload(params.uploadId),
-    hostFileArchiveBegin: ({ input }) => hostFiles().beginArchive(input as FleetHostFileArchiveRequest),
-    hostFileArchiveStatus: ({ params }) => hostFiles().archiveStatus(params.archiveId),
-    hostFileArchiveRelease: ({ params }) => hostFiles().releaseArchive(params.archiveId),
     hostDesktopCall: ({ input }) => desktopCalls().call(input as FleetHostDesktopCallRequest),
     hostDesktopLinksChanged: async ({ input }) => {
       await desktopCalls().linksChanged((input as FleetHostDesktopLinksChanged).botId)
@@ -847,12 +758,9 @@ export function createInstanceControlServer(
       if (match.key === 'events') return streamEvents(request, response, url, environment.events)
       // An environment without host files refuses their routes before reading a body, as it does unknown routes; the
       // same for bots' calls on an environment that takes none.
-      if (match.key.startsWith('hostFile')) hostFiles()
+      if (isHostFilesRoute(match.key))
+        return await serveHostFilesRoute(hostFiles(), { key: match.key, params: match.params }, request, response, url)
       if (match.key.startsWith('hostDesktop')) desktopCalls()
-      // Content and chunks stream their bodies: they never go through the JSON body reader below.
-      if (match.key === 'hostFileContent') return await hostFiles().content(request, response, url)
-      if (match.key === 'hostFileUploadChunk')
-        return await hostFiles().uploadChunk(request, response, match.params.uploadId, url)
       // A bot's package streams both ways as raw bytes.
       if (match.key === 'botExport' || match.key === 'botImport') {
         if (!isBotId(match.params.botId)) throw botNotFound()
@@ -924,15 +832,10 @@ export function createInstanceControlServer(
         response.end()
       }
     } catch (error) {
-      if (response.headersSent || response.destroyed) {
-        response.destroy()
-        return
-      }
       // The caller only learns that the request failed: what failed is told here, or nowhere.
-      if (!(error instanceof InstanceHttpError)) logUnexpected(request, error)
-      const known =
-        error instanceof InstanceHttpError ? error : new InstanceHttpError(500, 'INTERNAL', 'Instance request failed.')
-      writeJson(response, known.status, { code: known.code || errorStatus(known.status), message: known.message })
+      const answering = !response.headersSent && !response.destroyed
+      if (answering && !(error instanceof InstanceHttpError)) logUnexpected(request, error)
+      sendInstanceError(response, error)
     }
   })
   // A bot's package arrives in one request, which may take longer than Node's default of five minutes.
@@ -952,13 +855,7 @@ export function createInstanceControlServer(
 
   server.on('upgrade', (request: IncomingMessage, socket: Duplex, head: Buffer) => {
     socket.on('error', () => undefined)
-    const reject = (status: number, code: string, message: string): void => {
-      if (socket.destroyed) return
-      const text = JSON.stringify({ code, message })
-      socket.end(
-        `HTTP/1.1 ${status} Error\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(text)}\r\n\r\n${text}`
-      )
-    }
+    const reject = (status: number, code: string, message: string): void => rejectUpgrade(socket, status, code, message)
     let tunnel: Tunnel | null = null
     // Gives back what an accepted tunnel holds, then answers; a tunnel that already ended has no one to answer.
     const fail = (status: number, code: string, message: string): void => {

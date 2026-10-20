@@ -12,6 +12,9 @@ import {
 import type { FleetServerId } from '../../../shared/fleet-servers'
 import { type HostId, isRemoteHostId, parseRemoteHostId } from '../../../shared/host-key'
 import type { HostView } from '../../../shared/hosts'
+import { peerDeviceId } from '../../../shared/peer'
+import { pinnedTls } from '../../peer/http'
+import type { PeerEndpoint } from '../../peer/peer-hosts'
 import { EditorProxy, EditorUnavailable, type EditorUnavailableReason, type EditorUpstream } from './editor-proxy'
 import type { HostConnection } from './host-connection'
 import { DIRECT_HOST_ID, type DirectHost } from './host-registry'
@@ -19,6 +22,8 @@ import { DIRECT_HOST_ID, type DirectHost } from './host-registry'
 export interface EditorRegistry {
   list(): HostView[]
   directHost(): DirectHost | null
+  /** Where a paired computer is reached; the registry of the main process always has it. */
+  peerEndpoint?(hostId: HostId): PeerEndpoint | null
   use(hostId: HostId, origin: number, role: () => { role: 'main' }): Pick<HostConnection, 'invoke'>
 }
 
@@ -30,12 +35,13 @@ export interface EditorFleet {
 
 /**
  * Where a host's editor is reached: a server's workspaces environment through its paired gateway, with this device's
- * credentials, or the development host straight at its control server. Throws EditorUnavailable when it cannot be.
+ * credentials, a paired computer straight at its peer server over its pinned certificate, or the development host
+ * straight at its control server. Throws EditorUnavailable when it cannot be.
  */
 export function resolveEditorUpstream(
   hostId: HostId,
   deps: {
-    registry: Pick<EditorRegistry, 'list' | 'directHost'> | null
+    registry: Pick<EditorRegistry, 'list' | 'directHost' | 'peerEndpoint'> | null
     /** The client of a paired server; null for a server this computer is not paired with. */
     fleet: (serverId: FleetServerId) => EditorFleet | null
   }
@@ -53,6 +59,18 @@ export function resolveEditorUpstream(
         [FLEET_PROTOCOL_HEADER]: String(FLEET_PROTOCOL_VERSION),
         Authorization: `Bearer ${direct.token}`,
       }),
+    }
+  }
+  // Before the server's hosts: a paired computer's id is not one of a server's.
+  if (peerDeviceId(hostId)) {
+    if (host.state !== 'online') throw new EditorUnavailable('offline')
+    const peer = deps.registry.peerEndpoint?.(hostId) ?? null
+    if (!peer) throw new EditorUnavailable('unknown-host')
+    return {
+      origin: peer.origin,
+      prefix: FLEET_INSTANCE_EDITOR_PREFIX,
+      headers: peer.headers,
+      tls: pinnedTls(peer.certPem),
     }
   }
   // The host's own server serves it, whichever server it is.

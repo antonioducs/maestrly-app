@@ -2,7 +2,9 @@ import type { FleetEnvironment } from '@maestrly/bot-fleet-protocol'
 import type { FleetServerId } from '../../../shared/fleet-servers'
 import { type HostId, isValidHostId, LOCAL_HOST_ID, remoteHostId } from '../../../shared/host-key'
 import type { HostView } from '../../../shared/hosts'
+import { peerHostId } from '../../../shared/peer'
 import type { RemoteOriginRole, RemoteOs } from '../../../shared/remote-bridge'
+import type { PeerEndpoint, PeerHosts } from '../../peer/peer-hosts'
 import { type BridgeClientSocket, HostConnection, type HostConnectionTimings } from './host-connection'
 
 /** One paired server, as the registry reads it: where it is, its environments, and this computer's name there. */
@@ -51,6 +53,8 @@ export interface HostRegistryDeps {
   client: () => { deviceName: string; os: RemoteOs; locale: string }
   openSocket: (url: string) => BridgeClientSocket
   direct?: { host: DirectHost; openSocket: (host: DirectHost) => BridgeClientSocket } | null
+  /** The owner's other computers this one paired with, reached straight over the network. */
+  peers?: Pick<PeerHosts, 'list' | 'problem' | 'onChange' | 'connect' | 'endpoint'> | null
   onChanged: (hosts: HostView[]) => void
   onEvent: (hostId: HostId, origin: number, channel: string, args: unknown[]) => void
   timings?: Partial<HostConnectionTimings>
@@ -66,17 +70,22 @@ type Remote = {
   server: string
   serverId: FleetServerId | null
   environment: FleetEnvironment | null
+  /** The device id of a paired computer; null for a server's hosts and the development host. */
+  peer: string | null
+  tint: string | null
 }
 
 /**
- * The hosts this computer's windows can show: this computer, and the workspaces environments of every paired server,
- * one per scope of the owner's work, each named after its environment.
+ * The hosts this computer's windows can show: this computer, the owner's other computers it paired with, and the
+ * workspaces environments of every paired server, one per scope of the owner's work, each named after its environment.
  * A remote host has a connection while its environment runs; stopped, starting or failed, it stays listed as offline
- * with its environment's state, so the window can offer to start it.
+ * with its environment's state, so the window can offer to start it. A paired computer is dialed until it says it
+ * removed this one.
  */
 export class HostRegistry {
   private readonly remotes = new Map<HostId, Remote>()
   private stopFleet: (() => void) | null = null
+  private stopPeers: (() => void) | null = null
   private last = ''
 
   constructor(private readonly deps: HostRegistryDeps) {}
@@ -91,16 +100,22 @@ export class HostRegistry {
         server: '',
         serverId: null,
         environment: null,
+        peer: null,
+        tint: null,
       })
       connection.start()
     }
     this.stopFleet = this.deps.servers.onChange(() => this.sync())
+    this.stopPeers = this.deps.peers?.onChange(() => this.syncPeers()) ?? null
+    this.syncPeers()
     this.sync()
   }
 
   stop(): void {
     this.stopFleet?.()
     this.stopFleet = null
+    this.stopPeers?.()
+    this.stopPeers = null
     for (const remote of this.remotes.values()) remote.connection.stop()
     this.remotes.clear()
   }
@@ -123,9 +138,12 @@ export class HostRegistry {
       computer: false,
       folderTransfers: false,
       environment: null,
+      peer: null,
       hostVersion: null,
     }
-    return [local, ...[...this.remotes].map(([id, remote]) => this.view(id, remote))]
+    // The owner's own computers come first; the rest keep the order they were added in.
+    const remotes = [...this.remotes].sort(([, a], [, b]) => (a.peer ? 0 : 1) - (b.peer ? 0 : 1))
+    return [local, ...remotes.map(([id, remote]) => this.view(id, remote))]
   }
 
   private view(id: HostId, remote: Remote): HostView {
@@ -137,7 +155,7 @@ export class HostRegistry {
       label: remote.label,
       server: remote.server,
       serverId: remote.serverId,
-      tint: environment?.tint ?? null,
+      tint: environment?.tint ?? remote.tint ?? null,
       state,
       epoch,
       os: info?.os ?? 'linux',
@@ -152,6 +170,7 @@ export class HostRegistry {
         lifecycle: environment.lifecycle,
         updateAvailable: environment.update?.available === true,
       },
+      peer: remote.peer ? { deviceId: remote.peer, problem: this.deps.peers?.problem(remote.peer) ?? null } : null,
       hostVersion,
     }
   }
@@ -159,6 +178,12 @@ export class HostRegistry {
   /** The development host reached without a server, when this window has one. */
   directHost(): DirectHost | null {
     return this.deps.direct?.host ?? null
+  }
+
+  /** Where a paired computer's files and editor are reached; null for any other host. */
+  peerEndpoint(hostId: HostId): PeerEndpoint | null {
+    const remote = this.remotes.get(hostId)
+    return remote?.peer ? (this.deps.peers?.endpoint(remote.peer) ?? null) : null
   }
 
   /** The connection of a remote host that is listed, whatever its state. */
@@ -232,7 +257,7 @@ export class HostRegistry {
       }
     }
     for (const [id, remote] of [...this.remotes]) {
-      if (id === DIRECT_HOST_ID || wanted.has(id)) continue
+      if (id === DIRECT_HOST_ID || remote.peer || wanted.has(id)) continue
       remote.connection.stop()
       this.remotes.delete(id)
     }
@@ -246,6 +271,8 @@ export class HostRegistry {
           server: name,
           serverId: server.id,
           environment,
+          peer: null,
+          tint: null,
         }
         this.remotes.set(id, remote)
       }
@@ -256,6 +283,43 @@ export class HostRegistry {
       // A bridge exists only while the environment runs: restarted or updated, it is dialed again from scratch.
       if (environment.lifecycle === 'running') remote.connection.start()
       else remote.connection.stop()
+    }
+    this.changed()
+  }
+
+  /** Follows the paired computers: each is a host, dialed until it says it removed this one. */
+  private syncPeers(): void {
+    const peers = this.deps.peers
+    if (!peers) return
+    const wanted = new Map<HostId, ReturnType<typeof peers.list>[number]>()
+    for (const record of peers.list()) {
+      const id = peerHostId(record.deviceId)
+      if (isValidHostId(id)) wanted.set(id, record)
+    }
+    for (const [id, remote] of [...this.remotes]) {
+      if (!remote.peer || wanted.has(id)) continue
+      remote.connection.stop()
+      this.remotes.delete(id)
+    }
+    for (const [id, record] of wanted) {
+      let remote = this.remotes.get(id)
+      if (!remote) {
+        const deviceId = record.deviceId
+        remote = {
+          connection: this.connection(id, () => peers.connect(deviceId)),
+          label: record.name,
+          server: '',
+          serverId: null,
+          environment: null,
+          peer: deviceId,
+          tint: record.tint,
+        }
+        this.remotes.set(id, remote)
+      }
+      remote.label = record.name
+      remote.tint = record.tint
+      if (peers.problem(record.deviceId) === 'removed') remote.connection.stop()
+      else remote.connection.start()
     }
     this.changed()
   }

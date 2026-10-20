@@ -87,6 +87,24 @@ The complete license and attribution are distributed with the `ws` package in
 `node_modules/ws/LICENSE`, inside the gateway image and inside the packaged
 desktop app.
 
+## noble-curves
+
+The desktop app includes [noble-curves](https://github.com/paulmillr/noble-curves)
+2.4.0 for the P-256 arithmetic of the pairing code exchange between the owner's
+computers, with its dependency [noble-hashes](https://github.com/paulmillr/noble-hashes)
+2.4.0. Both are licensed under the MIT License, Copyright (c) 2022 Paul Miller.
+The complete licenses are distributed with the packages in
+`node_modules/@noble/curves/LICENSE` and `node_modules/@noble/hashes/LICENSE`.
+
+## node-forge
+
+The desktop app includes [node-forge](https://github.com/digitalbazaar/forge)
+1.4.0 to sign the self-signed certificate a computer presents to the owner's
+other computers. It is dual-licensed under the BSD-3-Clause License and the GNU
+GPL 2.0; Maestrly uses it under the BSD-3-Clause License, Copyright (c) 2010,
+Digital Bazaar, Inc. The complete license is distributed with the package in
+`node_modules/node-forge/LICENSE`.
+
 ## uqr
 
 The desktop app includes [uqr](https://github.com/unjs/uqr) 0.1.3 to draw the QR

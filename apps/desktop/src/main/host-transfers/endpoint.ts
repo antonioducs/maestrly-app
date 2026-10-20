@@ -18,6 +18,9 @@ import type { FleetServerId } from '../../shared/fleet-servers'
 import { type HostId, isRemoteHostId, parseRemoteHostId } from '../../shared/host-key'
 import type { HostTransferError } from '../../shared/host-transfers'
 import type { HostView } from '../../shared/hosts'
+import { peerDeviceId } from '../../shared/peer'
+import { pinnedFetch } from '../peer/http'
+import type { PeerEndpoint } from '../peer/peer-hosts'
 import type { DirectHost } from '../remote-host/client/host-registry'
 
 const CALL_TIMEOUT_MS = 30_000
@@ -91,7 +94,10 @@ export function httpHostFilesEndpoint(target: {
   path: (key: FleetHostFileRouteKey, params: Record<string, string>) => string
   /** False when the way to the host does not pass the folder-archive routes: they fail before they are sent. */
   folders?: boolean
+  /** How requests are sent: the global fetch, or one pinned to a paired computer's certificate. */
+  fetch?: typeof fetch
 }): HostFilesEndpoint {
+  const request = target.fetch ?? fetch
   const send = async (key: FleetHostFileRouteKey, init: SendInit): Promise<Response> => {
     if (target.folders === false && FOLDER_KEYS.has(key)) throw new TransferFailure('gateway-update-required')
     const query = init.query
@@ -102,7 +108,7 @@ export function httpHostFilesEndpoint(target: {
       : ''
     let response: Response
     try {
-      response = await fetch(target.origin + target.path(key, init.params ?? {}) + query, {
+      response = await request(target.origin + target.path(key, init.params ?? {}) + query, {
         method: FLEET_INSTANCE_ROUTES[key].method,
         headers: { ...target.headers(), ...init.headers },
         body: init.body as RequestInit['body'],
@@ -140,12 +146,17 @@ export function httpHostFilesEndpoint(target: {
 
 /**
  * Where a host's files are reached: a server's workspaces through that server's gateway, with this device's
- * credentials there, or the development host straight at its control server.
+ * credentials there, a paired computer straight at its peer server over its pinned certificate, or the development
+ * host straight at its control server.
  */
 export function resolveHostFilesEndpoint(
   hostId: HostId,
   deps: {
-    registry: { list(): HostView[]; directHost(): DirectHost | null } | null
+    registry: {
+      list(): HostView[]
+      directHost(): DirectHost | null
+      peerEndpoint?(hostId: HostId): PeerEndpoint | null
+    } | null
     /** The client of a paired server; null for a server this computer is not paired with. */
     fleet: (serverId: FleetServerId) => {
       hostFilesAccess(): { origin: string; headers: Record<string, string> } | null
@@ -164,6 +175,17 @@ export function resolveHostFilesEndpoint(
         Authorization: `Bearer ${direct.token}`,
       }),
       path: (key, params) => buildPath(FLEET_INSTANCE_ROUTES[key].path, params),
+    })
+  }
+  // Before the server's hosts: a paired computer's id is not one of a server's.
+  if (peerDeviceId(hostId)) {
+    const peer = deps.registry.peerEndpoint?.(hostId) ?? null
+    if (!peer) throw new TransferFailure('unknown-host')
+    return httpHostFilesEndpoint({
+      origin: peer.origin,
+      headers: peer.headers,
+      path: (key, params) => buildPath(FLEET_INSTANCE_ROUTES[key].path, params),
+      fetch: pinnedFetch(peer.certPem),
     })
   }
   const server = parseRemoteHostId(hostId)?.serverId

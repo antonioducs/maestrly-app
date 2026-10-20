@@ -9,8 +9,12 @@ import https from 'node:https'
 import type { AddressInfo } from 'node:net'
 import type { Duplex } from 'node:stream'
 import { FLEET_HOST_EDITOR_FORWARDED_HOST, FLEET_HOST_EDITOR_ORIGIN_HOST } from '@maestrly/bot-fleet-protocol'
+import type { PinnedTls } from '../../peer/http'
 
-/** Where a host's editor is reached from this computer: under the gateway's editor prefix, or a development host's. */
+/**
+ * Where a host's editor is reached from this computer: under the gateway's editor prefix, a paired computer's, or a
+ * development host's.
+ */
 export interface EditorUpstream {
   /** `http(s)://host[:port]` */
   origin: string
@@ -18,6 +22,8 @@ export interface EditorUpstream {
   prefix: string
   /** The credentials and protocol version the upstream requires, read for each request. */
   headers(): Record<string, string>
+  /** The certificate a paired computer showed when it paired: only it is accepted. */
+  tls?: PinnedTls
 }
 
 export type EditorUnavailableReason =
@@ -236,6 +242,7 @@ export class EditorProxy {
       path: upstream.prefix + (request.url ?? '/'),
       headers,
       agent: false as const,
+      ...(upstream.tls ?? {}),
     }
     return target.protocol === 'https:' ? https.request(options) : http.request(options)
   }

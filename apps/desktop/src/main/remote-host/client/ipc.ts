@@ -6,6 +6,7 @@ import { type HostId, isValidHostId, parseHostKey } from '../../../shared/host-k
 import { REMOTE_BRIDGE_LIMITS, type RemoteOriginRole, type RemoteOs } from '../../../shared/remote-bridge'
 import { fleetServers } from '../../fleet/client/servers'
 import type { IpcRegistrar } from '../../ipc-registrar'
+import { peerHosts } from '../../peer/service'
 import { getLocale } from '../../store'
 import { isE2E } from '../../test-mode'
 import { broadcast, getPanelTargetMetadata } from '../../window-ipc'
@@ -87,6 +88,7 @@ export function registerHostsIpc(reg: IpcRegistrar): void {
     }),
     openSocket: (url) => new WebSocket(url),
     direct: direct && { host: direct, openSocket: openDirectSocket },
+    peers: headless ? null : peerHosts(),
     onChanged: (list) => {
       broadcast('hosts:changed', list)
       for (const listener of hostsListeners) listener()

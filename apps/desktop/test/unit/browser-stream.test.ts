@@ -199,11 +199,12 @@ async function started(convId = 'conv-1', sender = viewer()) {
 }
 
 describe('remote browser stream', () => {
-  it('serves only renderers of another computer on a workspaces host', () => {
+  it('serves only renderers of another computer', () => {
     expect(() => startBrowserStream({ id: 1 }, 'conv-1', 800, 600)).toThrow(/remote viewers/)
     const sender = viewer()
+    // A desktop shared with the owner's other computers streams too, outside server mode.
     h.serverMode.value = false
-    expect(() => startBrowserStream(sender, 'conv-1', 800, 600)).toThrow(/remote viewers/)
+    expect(() => startBrowserStream(sender, 'not-a-conversation', 800, 600)).toThrow(/Unknown conversation/)
     h.serverMode.value = true
     expect(() => startBrowserStream(sender, 'not-a-conversation', 800, 600)).toThrow(/Unknown conversation/)
     expect(h.present).not.toHaveBeenCalled()

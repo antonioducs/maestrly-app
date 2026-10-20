@@ -335,4 +335,37 @@ describe('remote UI hub', () => {
       expect(isRemoteUiTarget).toBeDefined()
     })
   })
+
+  describe('computers it knows by device', () => {
+    it('lists the devices connected and closes the sessions of one with the removed code', () => {
+      const changed = vi.fn()
+      const hub = new RemoteUiHub({
+        table: new IpcHandlerTable(),
+        appVersion: '1.2.3',
+        hostInfo: () => hostInfo,
+        applyLocale: vi.fn(),
+        log: vi.fn(),
+        onSessionsChanged: changed,
+      })
+      const a = new FakeSocket()
+      const b = new FakeSocket()
+      const untagged = new FakeSocket()
+      hub.attach(a, 'a')
+      hub.attach(b, 'b')
+      hub.attach(untagged)
+      expect(changed).toHaveBeenCalledTimes(3)
+      expect(hub.tags()).toEqual(['a', 'b'])
+      hub.closeTagged('a')
+      expect(a.closed?.[0]).toBe(REMOTE_BRIDGE_CLOSE.removed)
+      expect(REMOTE_BRIDGE_CLOSE.removed).toBe(4010)
+      expect(b.closed).toBeNull()
+      expect(untagged.closed).toBeNull()
+      expect(hub.tags()).toEqual(['b'])
+      expect(changed).toHaveBeenCalledTimes(4)
+      b.close(1000, 'bye')
+      expect(hub.tags()).toEqual([])
+      expect(changed).toHaveBeenCalledTimes(5)
+      hub.closeAll()
+    })
+  })
 })

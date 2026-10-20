@@ -1,6 +1,7 @@
 import { once } from 'node:events'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import http from 'node:http'
+import https from 'node:https'
 import type { AddressInfo } from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
@@ -18,8 +19,10 @@ import {
   remoteEditorPartition,
   resolveEditorUpstream,
 } from '../../src/main/remote-host/client/editor'
+import { pinnedTls } from '../../src/main/peer/http'
 import type { HostView } from '../../src/shared/hosts'
 import type { FleetServerId } from '../../src/shared/fleet-servers'
+import { testIdentity } from './peer-helpers'
 
 const closers: Array<() => void | Promise<void>> = []
 afterEach(async () => {
@@ -160,6 +163,35 @@ describe("this computer's door to a host's editor", () => {
     expect(seen.headers['x-maestrly-editor-host']).toBe(`127.0.0.1:${h.port}`)
   })
 
+  it('reaches a paired computer only over the certificate pinned at pairing', async () => {
+    const A = testIdentity('A')
+    const B = testIdentity('B')
+    const server = https.createServer({ key: A.keyPem, cert: A.certPem }, (_request, response) => {
+      response.writeHead(200, { 'content-type': 'text/html' })
+      response.end('workbench over tls')
+    })
+    const upstreamPort = await listen(server)
+    const through = async (certPem: string) => {
+      const proxy = new EditorProxy({
+        upstream: () => ({
+          origin: `https://127.0.0.1:${upstreamPort}`,
+          prefix: '/v1/editor',
+          headers: () => ({ authorization: 'Bearer from-a' }),
+          tls: pinnedTls(certPem),
+        }),
+        preferredPort: null,
+        onPort: vi.fn(),
+      })
+      closers.push(() => proxy.close())
+      const port = await proxy.start()
+      return get(port, '/', { cookie: `${EDITOR_ACCESS_COOKIE}=${proxy.access}` })
+    }
+    const pinned = await through(A.certPem)
+    expect(pinned.statusCode).toBe(200)
+    expect(pinned.body).toBe('workbench over tls')
+    expect((await through(B.certPem)).statusCode).toBe(502)
+  })
+
   it('answers 503 while the host cannot be reached', async () => {
     const h = await setup({ unavailable: true })
     expect((await get(h.port, '/', { cookie: h.access })).statusCode).toBe(503)
@@ -198,6 +230,7 @@ const host = (patch: Partial<HostView>): HostView => ({
   computer: false,
   folderTransfers: false,
   environment: { id: 'workspaces', lifecycle: 'running', updateAvailable: false },
+  peer: null,
   hostVersion: null,
   ...patch,
 })
@@ -279,6 +312,39 @@ describe("where a host's editor is reached", () => {
     expect(editorFailureReason(Object.assign(new Error('x'), { code: 'connection-lost' }))).toBe('offline')
     expect(editorFailureReason(Object.assign(new Error('x'), { code: 'unknown-channel' }))).toBe('host-update-required')
     expect(editorFailureReason(new Error('x'))).toBe('failed')
+  })
+
+  it('goes straight to a paired computer, over the certificate pinned at pairing', () => {
+    const A = testIdentity('A')
+    const PEER = `peer/${A.deviceId}`
+    const endpoint = {
+      origin: 'https://10.0.0.5:7690',
+      headers: () => ({ 'X-Maestrly-Fleet-Protocol': '1', Authorization: 'Bearer from-a' }),
+      certPem: A.certPem,
+    }
+    const peerRegistry = (state: HostView['state'], found = true) => ({
+      list: () => [host({ id: PEER, environment: null, state })],
+      directHost: () => null,
+      peerEndpoint: () => (found ? endpoint : null),
+    })
+    const upstream = resolveEditorUpstream(PEER, { registry: peerRegistry('online'), fleet: fleet([]) })
+    expect(upstream).toMatchObject({ origin: 'https://10.0.0.5:7690', prefix: '/v1/editor' })
+    expect(upstream.headers()).toEqual({ 'X-Maestrly-Fleet-Protocol': '1', Authorization: 'Bearer from-a' })
+    expect(upstream.tls?.ca).toBe(A.certPem)
+    const reason = (run: () => unknown) => {
+      try {
+        run()
+        return null
+      } catch (error) {
+        return editorFailureReason(error)
+      }
+    }
+    expect(reason(() => resolveEditorUpstream(PEER, { registry: peerRegistry('offline'), fleet: fleet([]) }))).toBe(
+      'offline'
+    )
+    expect(
+      reason(() => resolveEditorUpstream(PEER, { registry: peerRegistry('online', false), fleet: fleet([]) }))
+    ).toBe('unknown-host')
   })
 
   it("keeps each host's editor in a session of its own", () => {
