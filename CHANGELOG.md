@@ -5,6 +5,20 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Changed
+
+- **Initialize Git in this folder**, when you open a folder that has no Git
+  history, now makes the Initial commit with the folder's files instead of an
+  empty one. Conversations in a worktree of that project start with your files
+  rather than an empty folder, so the agent can work on them. Files that
+  `.gitignore` or your global Git excludes list stay out, and so do dependency
+  and cache folders (`node_modules`, `.venv`, `venv`, `__pycache__`), `.DS_Store`
+  and `Thumbs.db`, likely secrets (`.env` and `.env.*` except `.env.example`,
+  `.env.sample` and `.env.template`, and `*.pem`, `*.key`, `*.p12`, `*.pfx`,
+  `id_rsa*` and `id_ed25519*`), files of 50 MB or more, files Git cannot read,
+  and folders that hold a Git repository of their own. They stay in your folder,
+  untouched. A new project still starts with only its `README.md`.
+
 ### Fixed
 
 - **Stop** in a bot's conversation now stops it. A turn stopped while it was

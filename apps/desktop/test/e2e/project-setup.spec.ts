@@ -100,7 +100,9 @@ test('Sidebar: opens and deduplicates Git projects, initializes existing folders
     expect(existsSync(path.join(customer, '.git'))).toBe(false)
     await win.getByRole('button', { name: 'Initialize Git in this folder' }).click()
     await waitForWorkspace(win, 'customer-folder')
-    expect(git(customer, ['status', '--porcelain'])).toBe('?? keep.txt')
+    expect(git(customer, ['show', '--pretty=', '--name-only', 'HEAD'])).toBe('keep.txt')
+    expect(git(customer, ['status', '--porcelain'])).toBe('')
+    expect(readFileSync(path.join(customer, 'keep.txt'), 'utf8')).toBe('keep')
 
     await openSetupFromSidebar(win)
     await win.getByRole('button', { name: 'Create new' }).click()

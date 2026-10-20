@@ -79,10 +79,12 @@ describe('project setup service', () => {
     expect(addWorkspace).not.toHaveBeenCalled()
   })
 
-  it('opening a non-Git folder leaves it unchanged; confirmation creates an empty commit and preserves files', async () => {
+  it('opening a non-Git folder leaves it unchanged; confirmation commits its files and keeps them in place', async () => {
     const dir = path.join(root, 'customer')
-    mkdirSync(dir)
+    mkdirSync(path.join(dir, 'node_modules'), { recursive: true })
     writeFileSync(path.join(dir, 'source.txt'), 'user data')
+    writeFileSync(path.join(dir, '.env'), 'TOKEN=secret')
+    writeFileSync(path.join(dir, 'node_modules', 'dep.js'), 'dep')
     const { service, addWorkspace } = serviceFixture()
 
     const inspection = await service.execute(
@@ -93,15 +95,64 @@ describe('project setup service', () => {
     expect(existsSync(path.join(dir, '.git'))).toBe(false)
     expect(addWorkspace).not.toHaveBeenCalled()
 
+    const { ctx, phases } = context()
     const initialized = await service.execute(
+      { operationId: crypto.randomUUID(), kind: 'initialize-existing', path: dir },
+      ctx
+    )
+    expect(initialized.status).toBe('success')
+    expect(phases).toEqual(
+      expect.arrayContaining(['initializing-git', 'creating-initial-commit', 'registering', 'completed'])
+    )
+    expect(ctx.markCommitted).toHaveBeenCalledOnce()
+    expect(git(dir, ['branch', '--show-current'])).toBe('main')
+    expect(git(dir, ['log', '-1', '--pretty=%s'])).toBe('Initial commit')
+    expect(git(dir, ['show', '--pretty=', '--name-only', 'HEAD'])).toBe('source.txt')
+    expect(git(dir, ['status', '--porcelain']).split('\n').sort()).toEqual(['?? .env', '?? node_modules/'])
+    expect(readFileSync(path.join(dir, 'source.txt'), 'utf8')).toBe('user data')
+    expect(readFileSync(path.join(dir, '.env'), 'utf8')).toBe('TOKEN=secret')
+
+    // The reported symptom: a conversation in a worktree starts with the person's files.
+    const worktree = path.join(root, 'customer-worktree')
+    git(dir, ['worktree', 'add', '-q', '-b', 'card/test', worktree, 'main'])
+    expect(readdirSync(worktree).sort()).toEqual(['.git', 'source.txt'])
+    expect(readFileSync(path.join(worktree, 'source.txt'), 'utf8')).toBe('user data')
+  })
+
+  it('initializes an empty folder with an empty Initial commit', async () => {
+    const dir = path.join(root, 'blank')
+    mkdirSync(dir)
+    const { service, addWorkspace } = serviceFixture()
+
+    const result = await service.execute(
       { operationId: crypto.randomUUID(), kind: 'initialize-existing', path: dir },
       context().ctx
     )
-    expect(initialized.status).toBe('success')
+
+    expect(result.status).toBe('success')
+    expect(addWorkspace).toHaveBeenCalledOnce()
+    expect(git(dir, ['log', '-1', '--pretty=%s'])).toBe('Initial commit')
+    expect(git(dir, ['ls-tree', '-r', 'HEAD'])).toBe('')
+  })
+
+  it('commits the files of a folder inside a repository that has no commit yet and keeps the repository', async () => {
+    const dir = path.join(root, 'unborn')
+    mkdirSync(dir)
+    git(dir, ['init', '-q', '-b', 'trunk'])
+    writeFileSync(path.join(dir, 'app.py'), 'print()')
+    git(dir, ['add', 'app.py'])
+    writeFileSync(path.join(dir, 'dados.txt'), 'dados')
+    const { service } = serviceFixture()
+
+    const result = await service.execute(
+      { operationId: crypto.randomUUID(), kind: 'initialize-existing', path: dir },
+      context().ctx
+    )
+
+    expect(result.status).toBe('success')
     expect(git(dir, ['branch', '--show-current'])).toBe('main')
-    expect(git(dir, ['show', '--pretty=', '--name-only', 'HEAD'])).toBe('')
-    expect(git(dir, ['status', '--porcelain'])).toBe('?? source.txt')
-    expect(readFileSync(path.join(dir, 'source.txt'), 'utf8')).toBe('user data')
+    expect(git(dir, ['ls-tree', '-r', '--name-only', 'HEAD']).split('\n')).toEqual(['app.py', 'dados.txt'])
+    expect(git(dir, ['status', '--porcelain'])).toBe('')
   })
 
   it('persists the project last and provides an immediately usable worktree', async () => {

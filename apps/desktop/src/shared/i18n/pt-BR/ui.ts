@@ -642,7 +642,7 @@ export default {
     progressLabel: 'Progresso da configuração do projeto',
     cancelOperation: 'Cancelar operação',
     initializeExisting:
-      'Esta pasta não tem histórico Git utilizável. Inicializar Git na main se necessário e criar um commit vazio “Initial commit”? Os arquivos existentes ficam intactos e não rastreados.',
+      'Esta pasta não tem histórico Git utilizável. Inicializar o Git na main e fazer o commit dos arquivos atuais como “Initial commit”? Arquivos ignorados pelo .gitignore, pastas de dependências, prováveis segredos como o .env e arquivos de 50 MB ou mais ficam fora do commit, intactos.',
     initializeAction: 'Inicializar Git nesta pasta',
     emptyRemote:
       'Este remoto está vazio. Criar README.md e um “Initial commit” somente na cópia local, na main? Nada será enviado automaticamente.',
