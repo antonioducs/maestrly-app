@@ -15,6 +15,7 @@ import { BotServerManualSetup } from './bot-server/BotServerManualSetup'
 import { BotServerProgress } from './bot-server/BotServerProgress'
 import { BotServerPanel } from './bot-server/BotServerPanel'
 import { NO_FLEET_SERVER } from '../../../shared/fleet-servers'
+import { installedRecord } from '@/lib/fleet/updates'
 
 type SetupScreen = 'choice' | 'local' | 'remote' | 'manual'
 
@@ -71,7 +72,8 @@ export function FleetSettings({
   const disconnect = async () => {
     setError(null)
     try {
-      if (status?.record) await window.api.fleetInstallerDisconnect()
+      // The installed server leaves through the installer, which also forgets its install; any other is unpaired.
+      if (status && installedRecord(status, serverId)) await window.api.fleetInstallerDisconnect()
       else await window.api.fleetDisconnect(serverId)
       await refresh()
       await refreshFleet(true)
@@ -83,8 +85,10 @@ export function FleetSettings({
   const job = status?.job
   const progress =
     job && (job.state === 'running' || job.state === 'failed' || job.state === 'cancelled') && job.id !== dismissedJobId
+  // The installer's controls are for the server it installed.
+  const panelStatus = status && { ...status, record: installedRecord(status, serverId) }
   const installed =
-    status?.record ||
+    panelStatus?.record ||
     (connection.state !== 'unconfigured' && connection.state !== 'unauthorized' && connection.state !== 'incompatible')
 
   return (
@@ -115,7 +119,7 @@ export function FleetSettings({
         />
       ) : installed && screen !== 'remote' ? (
         <BotServerPanel
-          status={status}
+          status={panelStatus!}
           connection={connection}
           reportedVersion={fleet.state.snapshot.host?.gatewayVersion ?? null}
           onAction={(action, allow) => {

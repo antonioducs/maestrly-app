@@ -10,6 +10,7 @@ import {
   type FleetServerView,
 } from '../../../shared/fleet-servers'
 import { broadcast } from '../../window-ipc'
+import { readInstallRecord } from '../installer/store'
 import { FleetClientError } from './api'
 import { FleetMediaCache } from './media-cache'
 import { FleetMediaUrls } from './media-protocol'
@@ -251,7 +252,7 @@ export const fleetServers: FleetServers = new FleetServers({
   },
   pair: pairWithGateway,
   createClient: (deps) => new FleetClientService(deps),
-  installedServerId: () => null,
+  installedServerId: () => readInstallRecord()?.serverId ?? null,
   emit: broadcast,
   hostname: () => os.hostname(),
   now: () => new Date().toISOString(),
