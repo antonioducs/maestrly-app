@@ -480,6 +480,15 @@ export function chatTodosFromInput(input: unknown): ChatTodo[] {
   )
 }
 
+/** The valid questions of an ask_question input: a call rejected by validation can carry `questions` as a JSON string. */
+export function chatQuestionsFromInput(input: unknown): ChatQuestion[] {
+  const questions = (input as { questions?: unknown } | null)?.questions
+  return (Array.isArray(questions) ? questions : []).filter(
+    (q: unknown): q is ChatQuestion =>
+      typeof q === 'object' && q !== null && Array.isArray((q as { options?: unknown }).options)
+  )
+}
+
 export type MessagePart =
   | {
       type: 'text'
@@ -1066,16 +1075,7 @@ export function findPendingChatQuestion(messages: readonly ChatMessage[]): Pendi
       const unwrapped = unwrapCursorMcpToolCall(part.toolName, part.input)
       if (unwrapped.toolName !== 'ask_question') continue
       if (part.state.status !== 'running' && part.state.status !== 'pending') continue
-      const rawQuestions =
-        typeof unwrapped.input === 'object' && unwrapped.input !== null
-          ? (unwrapped.input as { questions?: unknown }).questions
-          : undefined
-      const questions = Array.isArray(rawQuestions)
-        ? rawQuestions.filter(
-            (question): question is ChatQuestion =>
-              !!question && typeof question === 'object' && Array.isArray((question as { options?: unknown }).options)
-          )
-        : []
+      const questions = chatQuestionsFromInput(unwrapped.input)
       if (questions.length > 0) return { messageId: message.id, toolCallId: part.toolCallId, questions }
     }
     break

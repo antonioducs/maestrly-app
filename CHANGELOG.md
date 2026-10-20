@@ -53,6 +53,14 @@ User-visible changes by version. Downloads are on
   example an edit whose text is not in the file, its card now shows the error
   and its message instead of a success such as "Edited notes.txt", and the turn
   summary counts it as failed.
+- Claude models that call a Maestrly tool by its short name, such as `grep` or
+  `memory_upsert`, no longer get the call rejected for arguments that arrived
+  as text, for example a `limit` of `"50"`. The arguments get their types back
+  before the tool runs, so the call is carried out.
+- A conversation whose Claude model called **Ask question** with its questions
+  as text opens again. It used to show "Something went wrong" instead of the
+  conversation, and the call no longer shows an empty question in a bot's
+  conversation.
 
 ## [0.23.0] - 2026-10-19
 
