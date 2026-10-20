@@ -309,27 +309,50 @@ test('macOS updater floor is the Darwin release of the app bundle minimum', asyn
 // depends on Rosetta; scripts/after-pack.mjs rejects such a package, and this catches the configuration earlier.
 test('macOS packages keep only the node-pty prebuild of their own architecture', async () => {
   const { getConfig } = desktopRequire('app-builder-lib/out/util/config/config')
-  const { getNodeModuleFileMatcher } = desktopRequire('app-builder-lib/out/fileMatcher')
+  const { getMainFileMatchers, getNodeModuleFileMatcher } = desktopRequire('app-builder-lib/out/fileMatcher')
   const { expandMacro } = desktopRequire('app-builder-lib/out/util/macroExpander')
   const prebuilds = 'node_modules/node-pty/prebuilds'
-  for (const file of readdirSync(desktop).filter((name) => /^electron-builder(\..+)?\.yml$/.test(name))) {
-    const config = await getConfig(desktop, path.join(desktop, file), null)
+  const file = (relative) => path.join(desktop, relative)
+  const regular = { isDirectory: () => false }
+  for (const name of readdirSync(desktop).filter((entry) => /^electron-builder(\..+)?\.yml$/.test(entry))) {
+    const config = await getConfig(desktop, file(name), null)
+    // A `files` list under a platform becomes a second matcher that ignores the shared exclusions and packs the
+    // whole source tree, so every exclusion belongs in the shared list.
+    for (const platform of ['mac', 'win', 'linux'])
+      assert.equal(config[platform]?.files, undefined, `${name} ${platform}`)
     for (const [arch, other] of [
       ['arm64', 'x64'],
       ['x64', 'arm64'],
     ]) {
       const expand = (pattern) => expandMacro(pattern, arch, {}, { os: 'mac' })
-      const packager = { config, debugLogger: { isEnabled: false } }
-      const filter = getNodeModuleFileMatcher(desktop, desktop, expand, config.mac ?? {}, packager).createFilter()
+      const label = `${name} (${arch})`
+      const packager = { config, debugLogger: { isEnabled: false }, projectDir: desktop, buildResourcesDir: 'build' }
+      const platformPackager = { info: packager }
+      const matchers = getMainFileMatchers(
+        desktop,
+        '/app',
+        expand,
+        config.mac ?? {},
+        platformPackager,
+        file('dist'),
+        false
+      )
+      assert.equal(matchers.length, 1, label)
+      const sources = matchers[0].createFilter()
+      assert.equal(sources(file('out/main/index.js'), regular), true, label)
+      assert.equal(sources(file('resources/sounds/done.mp3'), regular), false, label)
+      assert.equal(sources(file('src/main/index.ts'), regular), false, label)
+
+      const modules = getNodeModuleFileMatcher(desktop, desktop, expand, config.mac ?? {}, packager).createFilter()
       // electron-builder matches each node_modules file by its path inside the app.
-      const packaged = (relative) =>
-        filter(path.join(desktop, relative), { isDirectory: () => false, moduleFullFilePath: relative })
-      const label = `${file} (${arch})`
+      const packaged = (relative) => modules(file(relative), { isDirectory: () => false, moduleFullFilePath: relative })
       assert.equal(packaged(`${prebuilds}/darwin-${other}/spawn-helper`), false, label)
-      assert.equal(packaged(`${prebuilds}/win32-${arch}/pty.node`), false, label)
+      assert.equal(packaged(`${prebuilds}/darwin-${other}/pty.node`), false, label)
       assert.equal(packaged(`${prebuilds}/darwin-${arch}/spawn-helper`), true, label)
       assert.equal(packaged('node_modules/node-pty/build/Release/spawn-helper'), true, label)
       assert.equal(packaged('node_modules/node-pty/lib/index.js'), true, label)
+      // Windows prebuilds are never exposed to this pattern: it only names darwin directories.
+      assert.equal(packaged(`${prebuilds}/win32-${arch}/conpty.node`), true, label)
     }
   }
 })
