@@ -76,16 +76,28 @@ import type { HostView } from '../shared/hosts'
 
 export function DesktopApp() {
   const fleets = useFleets()
-  // The Bots tab shows one server: the default one, the installed or else the first paired.
-  const botsServer = defaultFleetServer(fleets.servers)?.id ?? NO_FLEET_SERVER
+  // The Bots tab shows one server: the one chosen while it is paired, else the default one.
+  const [chosenServer, setChosenServer] = useState<FleetServerId | null>(null)
+  const botsServer =
+    chosenServer && fleets.servers.some((server) => server.id === chosenServer)
+      ? chosenServer
+      : (defaultFleetServer(fleets.servers)?.id ?? NO_FLEET_SERVER)
   return (
     <FleetServerProvider serverId={botsServer}>
-      <DesktopShell fleets={fleets} botsServer={botsServer} />
+      <DesktopShell fleets={fleets} botsServer={botsServer} onBotsServer={setChosenServer} />
     </FleetServerProvider>
   )
 }
 
-function DesktopShell({ fleets, botsServer }: { fleets: FleetServers; botsServer: FleetServerId }) {
+function DesktopShell({
+  fleets,
+  botsServer,
+  onBotsServer,
+}: {
+  fleets: FleetServers
+  botsServer: FleetServerId
+  onBotsServer: (serverId: FleetServerId) => void
+}) {
   const api = hostApi(LOCAL_HOST_ID)
   const { t } = useTranslation('ui')
   const [active, setActive] = useState<Conversation | null>(null)
@@ -775,20 +787,23 @@ function DesktopShell({ fleets, botsServer }: { fleets: FleetServers; botsServer
   )
 
   const retryHost = useCallback((hostId: HostId) => void window.api.hostsRetry(hostId), [])
+  // A host's environment is its own server's, whichever server the Bots tab shows.
   const startHost = useCallback(
     (host: HostView) => {
-      if (host.environment) void fleet.environmentAction(host.environment.id, 'start')
+      if (host.environment && host.serverId)
+        void fleets.controller(host.serverId).environmentAction(host.environment.id, 'start')
     },
-    [fleet.environmentAction]
+    [fleets]
   )
   const openServerPage = useCallback(() => openFleetView({ kind: 'server' }), [openFleetView])
   // A host's environment page has its lifecycle, settings and isolation; a host reached without a server has none.
   const manageHost = useCallback(
-    (host: HostView) =>
-      host.environment
-        ? openFleetView({ kind: 'environment', environmentId: host.environment.id, tab: 'overview' })
-        : openServerPage(),
-    [openFleetView, openServerPage]
+    (host: HostView) => {
+      if (host.serverId) onBotsServer(host.serverId)
+      if (host.environment) openFleetView({ kind: 'environment', environmentId: host.environment.id, tab: 'overview' })
+      else openServerPage()
+    },
+    [onBotsServer, openFleetView, openServerPage]
   )
   const hostSections: SidebarHostSection[] = remoteHosts.map((host) => ({
     host,

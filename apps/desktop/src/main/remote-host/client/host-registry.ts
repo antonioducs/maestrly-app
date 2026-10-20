@@ -1,16 +1,25 @@
 import type { FleetEnvironment } from '@maestrly/bot-fleet-protocol'
+import type { FleetServerId } from '../../../shared/fleet-servers'
 import { type HostId, isValidHostId, LOCAL_HOST_ID, remoteHostId } from '../../../shared/host-key'
 import type { HostView } from '../../../shared/hosts'
 import type { RemoteOriginRole, RemoteOs } from '../../../shared/remote-bridge'
 import { type BridgeClientSocket, HostConnection, type HostConnectionTimings } from './host-connection'
 
-/** What the registry reads from the fleet client: the paired server and its environments. */
-export interface HostRegistryFleet {
+/** One paired server, as the registry reads it: where it is, its environments, and this computer's name there. */
+export interface HostRegistryServer {
+  id: FleetServerId
   getConnection(): { url: string | null; hostname: string | null }
   getSnapshot(): { environments: FleetEnvironment[] }
-  onChange(listener: () => void): () => void
   /** Asks the server for a one-use ticket to the bridge of a workspaces environment. */
   bridgeTicket(environmentId: string): Promise<{ path: string }>
+  /** The name this computer has on the server, which its hosts show while it is connected. */
+  deviceName(): string | null
+}
+
+/** Every paired server, and a call back whenever one is paired, removed, or changes. */
+export interface HostRegistryServers {
+  list(): HostRegistryServer[]
+  onChange(listener: () => void): () => void
 }
 
 /** A host reached without a server, for development and tests: its control server's address and token. */
@@ -36,9 +45,7 @@ export function parseDirectHost(value: string | undefined, allowed: boolean): Di
 }
 
 export interface HostRegistryDeps {
-  fleet: HostRegistryFleet
-  /** This computer's id for the paired server. */
-  serverId: () => string
+  servers: HostRegistryServers
   appVersion: string
   local: { os: RemoteOs; homeDir: string }
   client: () => { deviceName: string; os: RemoteOs; locale: string }
@@ -53,11 +60,17 @@ export const DIRECT_HOST_ID: HostId = 'direct/host'
 
 const TICKET_PATH = /^\/v1\/bridge\?ticket=[A-Za-z0-9_-]+$/
 
-type Remote = { connection: HostConnection; label: string; server: string; environment: FleetEnvironment | null }
+type Remote = {
+  connection: HostConnection
+  label: string
+  server: string
+  serverId: FleetServerId | null
+  environment: FleetEnvironment | null
+}
 
 /**
- * The hosts this computer's windows can show: this computer, and the workspaces environments of the paired server, one
- * per scope of the owner's work, each named after its environment.
+ * The hosts this computer's windows can show: this computer, and the workspaces environments of every paired server,
+ * one per scope of the owner's work, each named after its environment.
  * A remote host has a connection while its environment runs; stopped, starting or failed, it stays listed as offline
  * with its environment's state, so the window can offer to start it.
  */
@@ -76,11 +89,12 @@ export class HostRegistry {
         connection,
         label: new URL(direct.host.origin).host,
         server: '',
+        serverId: null,
         environment: null,
       })
       connection.start()
     }
-    this.stopFleet = this.deps.fleet.onChange(() => this.sync())
+    this.stopFleet = this.deps.servers.onChange(() => this.sync())
     this.sync()
   }
 
@@ -97,6 +111,7 @@ export class HostRegistry {
       remote: false,
       label: '',
       server: '',
+      serverId: null,
       tint: null,
       state: 'online',
       epoch: 0,
@@ -121,6 +136,7 @@ export class HostRegistry {
       remote: true,
       label: remote.label,
       server: remote.server,
+      serverId: remote.serverId,
       tint: environment?.tint ?? null,
       state,
       epoch,
@@ -167,40 +183,52 @@ export class HostRegistry {
     for (const remote of this.remotes.values()) remote.connection.closeOrigin(origin)
   }
 
-  private connection(hostId: HostId, connect: () => Promise<BridgeClientSocket>): HostConnection {
+  private connection(
+    hostId: HostId,
+    connect: () => Promise<BridgeClientSocket>,
+    serverId: FleetServerId | null = null
+  ): HostConnection {
     return new HostConnection({
       connect,
       appVersion: this.deps.appVersion,
-      client: this.deps.client,
+      // A host sees this computer under the name it has on the host's server.
+      client: () => {
+        const client = this.deps.client()
+        const name = serverId ? this.server(serverId)?.deviceName() : null
+        return name ? { ...client, deviceName: name.slice(0, 128) } : client
+      },
       onChange: () => this.changed(),
       onEvent: (origin, channel, args) => this.deps.onEvent(hostId, origin, channel, args),
       timings: this.deps.timings,
     })
   }
 
-  private async gatewaySocket(environmentId: string): Promise<BridgeClientSocket> {
-    const ticket = await this.deps.fleet.bridgeTicket(environmentId)
+  private server(serverId: FleetServerId): HostRegistryServer | null {
+    return this.deps.servers.list().find((server) => server.id === serverId) ?? null
+  }
+
+  /** Dials a host through its own server, looked up when it dials: the server may have moved or left since. */
+  private async gatewaySocket(serverId: FleetServerId, environmentId: string): Promise<BridgeClientSocket> {
+    const server = this.server(serverId)
+    if (!server?.getConnection().url) throw new Error('The server is not connected.')
+    const ticket = await server.bridgeTicket(environmentId)
     if (!TICKET_PATH.test(ticket.path)) throw new Error('Invalid bridge ticket path')
-    const origin = this.deps.fleet.getConnection().url
+    const origin = server.getConnection().url
     if (!origin) throw new Error('The server is not connected.')
     const url = new URL(origin)
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
     return this.deps.openSocket(url.origin + ticket.path)
   }
 
-  /** Follows the paired server: its workspaces environments become hosts, and leave with it. */
+  /** Follows every paired server: the workspaces environments of each become hosts, and leave with it. */
   private sync(): void {
-    const { fleet } = this.deps
-    const paired = fleet.getConnection().url !== null
-    const environments = paired
-      ? fleet.getSnapshot().environments.filter((environment) => environment.kind === 'workspaces')
-      : []
-    const wanted = new Map<HostId, FleetEnvironment>()
-    if (environments.length) {
-      const serverId = this.deps.serverId()
-      for (const environment of environments) {
-        const id = remoteHostId(serverId, environment.id)
-        if (isValidHostId(id)) wanted.set(id, environment)
+    const wanted = new Map<HostId, { server: HostRegistryServer; environment: FleetEnvironment }>()
+    for (const server of this.deps.servers.list()) {
+      if (server.getConnection().url === null) continue
+      for (const environment of server.getSnapshot().environments) {
+        if (environment.kind !== 'workspaces') continue
+        const id = remoteHostId(server.id, environment.id)
+        if (isValidHostId(id)) wanted.set(id, { server, environment })
       }
     }
     for (const [id, remote] of [...this.remotes]) {
@@ -208,21 +236,22 @@ export class HostRegistry {
       remote.connection.stop()
       this.remotes.delete(id)
     }
-    const server = fleet.getConnection().hostname ?? ''
-    for (const [id, environment] of wanted) {
+    for (const [id, { server, environment }] of wanted) {
+      const name = server.getConnection().hostname ?? ''
       let remote = this.remotes.get(id)
       if (!remote) {
         remote = {
-          connection: this.connection(id, () => this.gatewaySocket(environment.id)),
+          connection: this.connection(id, () => this.gatewaySocket(server.id, environment.id), server.id),
           label: environment.name,
-          server,
+          server: name,
+          serverId: server.id,
           environment,
         }
         this.remotes.set(id, remote)
       }
       // A server holds several environments, one per scope: each host is named after its own.
       remote.label = environment.name
-      remote.server = server
+      remote.server = name
       remote.environment = environment
       // A bridge exists only while the environment runs: restarted or updated, it is dialed again from scratch.
       if (environment.lifecycle === 'running') remote.connection.start()

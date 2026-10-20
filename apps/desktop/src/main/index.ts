@@ -1013,11 +1013,7 @@ function registerIpc(): void {
   registerHostsIpc(reg)
   remoteEditors = new RemoteEditors({
     registry: hostRegistry,
-    // Until the editor follows every server, the default one's gateway serves it.
-    fleet: {
-      hostFilesAccess: () => fleetServers.default()?.hostFilesAccess() ?? null,
-      hasFeature: (feature) => fleetServers.default()?.hasFeature(feature) ?? false,
-    },
+    fleet: (serverId) => fleetServers.get(serverId),
     portsFile: path.join(app.getPath('userData'), 'remote-editor-ports.json'),
     origin: () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents.id : null),
   })

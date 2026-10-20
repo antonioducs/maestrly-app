@@ -65,23 +65,23 @@ export function registerHostsIpc(reg: IpcRegistrar): void {
   const headless = isHeadlessInstance()
   const direct = headless ? null : parseDirectHost(process.env.MAESTRLY_DEV_DIRECT_HOST, !app.isPackaged || isE2E())
   const hosts = new HostRegistry({
-    // Until hosts follow every server, the default one's environments are the remote hosts.
-    fleet: {
-      getConnection: () => fleetServers.default()?.getConnection() ?? { url: null, hostname: null },
-      getSnapshot: () =>
-        headless ? { environments: [] } : (fleetServers.default()?.getSnapshot() ?? { environments: [] }),
+    servers: {
+      list: () =>
+        headless
+          ? []
+          : fleetServers.clients().map((client) => ({
+              id: client.serverId,
+              getConnection: () => client.getConnection(),
+              getSnapshot: () => client.getSnapshot(),
+              bridgeTicket: (eid: string) => client.call('environmentBridgeTicket', { params: { eid }, body: {} }),
+              deviceName: () => client.deviceName(),
+            })),
       onChange: (listener) => fleetServers.onChange(listener),
-      bridgeTicket: async (eid) => {
-        const server = fleetServers.default()
-        if (!server) throw new Error('The server is not connected.')
-        return server.call('environmentBridgeTicket', { params: { eid }, body: {} })
-      },
     },
-    serverId: () => fleetServers.default()?.serverId ?? '',
     appVersion: app.getVersion(),
     local: { os: localOs(), homeDir: os.homedir() },
     client: () => ({
-      deviceName: (fleetServers.default()?.deviceName() ?? os.hostname()).slice(0, 128),
+      deviceName: os.hostname().slice(0, 128),
       os: localOs(),
       locale: getLocale(),
     }),

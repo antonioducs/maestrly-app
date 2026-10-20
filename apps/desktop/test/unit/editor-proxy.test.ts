@@ -19,6 +19,7 @@ import {
   resolveEditorUpstream,
 } from '../../src/main/remote-host/client/editor'
 import type { HostView } from '../../src/shared/hosts'
+import type { FleetServerId } from '../../src/shared/fleet-servers'
 
 const closers: Array<() => void | Promise<void>> = []
 afterEach(async () => {
@@ -185,6 +186,7 @@ const host = (patch: Partial<HostView>): HostView => ({
   remote: true,
   label: 'Server',
   server: 'vps',
+  serverId: 'server-1' as FleetServerId,
   tint: null,
   state: 'online',
   epoch: 1,
@@ -201,14 +203,31 @@ const host = (patch: Partial<HostView>): HostView => ({
 })
 
 describe("where a host's editor is reached", () => {
-  const fleet = (features: string[], paired = true) => ({
+  const client = (features: string[], paired = true, origin = 'https://gateway.example') => ({
     hasFeature: (feature: string) => features.includes(feature),
-    hostFilesAccess: () =>
-      paired ? { origin: 'https://gateway.example', headers: { Authorization: 'Bearer device' } } : null,
+    hostFilesAccess: () => (paired ? { origin, headers: { Authorization: 'Bearer device' } } : null),
   })
+  /** The paired servers: `server-1` alone. */
+  const fleet = (features: string[], paired = true) => {
+    const server = client(features, paired)
+    return (serverId: string) => (serverId === 'server-1' ? server : null)
+  }
   const registry = (hosts: HostView[], direct = false) => ({
     list: () => hosts,
     directHost: () => (direct ? { origin: 'http://127.0.0.1:9000', token: 'control' } : null),
+  })
+
+  it("reaches each host's editor through its own server's gateway", () => {
+    const servers = {
+      'server-1': client(['host-editor'], true, 'https://one.example'),
+      'server-2': client(['host-editor'], true, 'https://two.example'),
+    }
+    const deps = {
+      registry: registry([host({}), host({ id: 'server-2/workspaces', serverId: 'server-2' as FleetServerId })]),
+      fleet: (serverId: string) => servers[serverId as keyof typeof servers] ?? null,
+    }
+    expect(resolveEditorUpstream('server-2/workspaces', deps).origin).toBe('https://two.example')
+    expect(resolveEditorUpstream('server-1/workspaces', deps).origin).toBe('https://one.example')
   })
 
   it("goes through the paired gateway, under the environment's editor prefix", () => {
@@ -281,7 +300,7 @@ describe('the editors of remote hosts', () => {
         directHost: () => ({ origin: 'http://127.0.0.1:9', token: 'control' }),
         use,
       }),
-      fleet: { hasFeature: () => false, hostFilesAccess: () => null },
+      fleet: () => null,
       portsFile,
       origin: () => 42,
     })

@@ -3,12 +3,14 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { HostView } from '../../src/shared/hosts'
 import { hostSectionStatus } from '../../src/renderer/lib/hosts/host-status'
+import type { FleetServerId } from '../../src/shared/fleet-servers'
 
 const host = (patch: Partial<HostView>): HostView => ({
   id: 'server-1/workspaces',
   remote: true,
   label: 'vps',
   server: 'vps',
+  serverId: 'server-1' as FleetServerId,
   tint: null,
   state: 'online',
   epoch: 1,

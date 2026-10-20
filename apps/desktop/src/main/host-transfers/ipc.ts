@@ -23,14 +23,7 @@ export function registerHostTransfersIpc(reg: IpcRegistrar, deps: { getMainWindo
   if (isHeadlessInstance()) return
   const engine = new HostTransferEngine({
     endpoint: (hostId) =>
-      resolveHostFilesEndpoint(hostId, {
-        registry: hostRegistry(),
-        // Until host files follow every server, the default one's gateway serves them.
-        fleet: {
-          hostFilesAccess: () => fleetServers.default()?.hostFilesAccess() ?? null,
-          hasFeature: (feature) => fleetServers.default()?.hasFeature(feature) ?? false,
-        },
-      }),
+      resolveHostFilesEndpoint(hostId, { registry: hostRegistry(), fleet: (serverId) => fleetServers.get(serverId) }),
     downloadsDir: () => app.getPath('downloads'),
     openDir: () => path.join(app.getPath('temp'), 'maestrly-remote-files'),
     openPath: (file) => shell.openPath(file),

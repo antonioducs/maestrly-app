@@ -12,6 +12,7 @@ function localHost(): HostView {
     remote: false,
     label: '',
     server: '',
+    serverId: null,
     tint: null,
     state: 'online',
     epoch: 0,
