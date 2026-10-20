@@ -49,20 +49,26 @@ vi.mock('../../src/main/fleet/client/events', () => ({
   },
 }))
 vi.mock('../../src/main/fleet/client/provisioning/login-relay', () => ({ LoginRelay: { start: mocks.relayStart } }))
-vi.mock('../../src/main/fleet/client/service', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../src/main/fleet/client/service')>()
+vi.mock('../../src/main/fleet/client/servers', () => {
+  const client = {
+    serverId: 'aaaaaaaa-0000-4000-8000-000000000001',
+    start: vi.fn(),
+    stop: vi.fn(),
+    call: mocks.call,
+    hasFeature: (feature: string) => features.list.includes(feature),
+    getImage: vi.fn(),
+    screens: { openScreen: mocks.openScreen, send: vi.fn(), close: vi.fn() },
+    idempotencyKey: () => '550e8400-e29b-41d4-a716-446655440000',
+  }
   return {
-    ...actual,
-    fleetClientService: {
-      serverId: 'aaaaaaaa-0000-4000-8000-000000000001',
-      view: () => ({ id: 'aaaaaaaa-0000-4000-8000-000000000001', installed: false, connection: {} }),
+    fleetServers: {
       start: vi.fn(),
       stop: vi.fn(),
-      call: mocks.call,
-      hasFeature: (feature: string) => features.list.includes(feature),
-      getImage: vi.fn(),
-      screens: { openScreen: mocks.openScreen, send: vi.fn(), close: vi.fn() },
-      idempotencyKey: () => '550e8400-e29b-41d4-a716-446655440000',
+      list: () => [],
+      require: (serverId: string) => {
+        if (serverId !== client.serverId) throw new Error('FLEET_SERVER_UNKNOWN')
+        return client
+      },
     },
   }
 })
@@ -111,6 +117,8 @@ import { FleetScreenChannel, type ScreenApi } from '../../src/renderer/lib/fleet
 import type { FleetController } from '../../src/renderer/lib/fleet/use-fleet'
 import { fleetApi } from '../../src/preload/api-fleet'
 import type { FleetServerId } from '../../src/shared/fleet-servers'
+import { FleetMediaCache } from '../../src/main/fleet/client/media-cache'
+import { FleetMediaUrls } from '../../src/main/fleet/client/media-protocol'
 
 const SERVER = 'aaaaaaaa-0000-4000-8000-000000000001' as FleetServerId
 
@@ -221,6 +229,23 @@ describe('environments in the Mac snapshot', () => {
     botImageVersion: null,
     dockerVersion: null,
   }
+  /** A client of a paired server, connecting with its stored token as it does at start. */
+  function startedClient(): FleetClientService {
+    const service = new FleetClientService({
+      serverId: SERVER,
+      credentials: () => ({
+        url: 'http://127.0.0.1:7443',
+        deviceId: 'device-1',
+        deviceName: 'Mac',
+        token: 'synthetic-token',
+        persistence: 'secure',
+      }),
+      media: new FleetMediaCache({ root: () => '/nonexistent/fleet-media-cache' }),
+      mediaUrls: new FleetMediaUrls(),
+    })
+    service.start()
+    return service
+  }
   function stubGateway(meta: { features: string[] }) {
     const paths: string[] = []
     vi.stubGlobal(
@@ -254,8 +279,7 @@ describe('environments in the Mac snapshot', () => {
   it('lists environments only from gateways that advertise them and keeps an empty list for older ones', async () => {
     const meta = { features: ['provisioning'] }
     const paths = stubGateway(meta)
-    const service = new FleetClientService()
-    await service.connect({ url: 'http://127.0.0.1:7443', code: 'ABCDEFGH' })
+    const service = startedClient()
     await mocks.events[0].onConnected()
     expect(service.hasFeature('environments')).toBe(false)
     expect(service.getSnapshot().environments).toEqual([])
@@ -269,8 +293,7 @@ describe('environments in the Mac snapshot', () => {
 
   it('applies environment events and never keeps an archived or removed environment or its bots', async () => {
     stubGateway({ features: ['environments'] })
-    const service = new FleetClientService()
-    await service.connect({ url: 'http://127.0.0.1:7443', code: 'ABCDEFGH' })
+    const service = startedClient()
     await mocks.events[0].onConnected()
     const emit = mocks.events[0].onEvent
     emit({ type: 'environment.updated', at, environment: environment('home', 'Home', { botIds: ['scout'] }) })

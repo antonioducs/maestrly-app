@@ -11,11 +11,11 @@ import {
 const SERVER = 'aaaaaaaa-0000-4000-8000-000000000001'
 const OTHER_SERVER = 'bbbbbbbb-0000-4000-8000-000000000002'
 const mocks = vi.hoisted(() => ({
-  view: vi.fn((): unknown => ({
-    id: 'aaaaaaaa-0000-4000-8000-000000000001',
-    installed: false,
-    connection: { state: 'connected', url: 'https://bots.example' },
-  })),
+  list: vi.fn((): unknown[] => [
+    { id: 'aaaaaaaa-0000-4000-8000-000000000001', installed: false, connection: { state: 'connected' } },
+  ]),
+  pair: vi.fn(async (): Promise<unknown> => ({ id: 'aaaaaaaa-0000-4000-8000-000000000001' })),
+  remove: vi.fn(async () => {}),
   hasFeature: vi.fn((_feature: string) => false),
   call: vi.fn(async (): Promise<unknown> => undefined),
   getImage: vi.fn(async () => ({ mediaType: 'image/png', data: new Uint8Array([137, 80, 78, 71]) })),
@@ -35,19 +35,14 @@ vi.mock('../../src/main/dictation/settings', () => ({
   getDictationEngine: mocks.dictationEngine,
   getDictationKey: mocks.dictationKey,
 }))
-vi.mock('../../src/main/fleet/client/service', () => ({
-  fleetClientService: {
+vi.mock('../../src/main/fleet/client/service', () => ({ revealFleetDownload: mocks.revealDownload }))
+vi.mock('../../src/main/fleet/client/screen-bridge', () => ({
+  FleetScreenBridge: { forChannel: (channelId: string) => (channelId === 'channel' ? mocks.screens : null) },
+}))
+vi.mock('../../src/main/fleet/client/servers', () => {
+  const client = {
     serverId: 'aaaaaaaa-0000-4000-8000-000000000001',
-    view: mocks.view,
-    servers: () => {
-      const view = mocks.view()
-      return view ? [view] : []
-    },
-    start: vi.fn(),
-    stop: vi.fn(),
     getConnection: vi.fn(),
-    connect: vi.fn(),
-    disconnect: vi.fn(),
     getSnapshot: vi.fn(),
     refresh: vi.fn(),
     call: mocks.call,
@@ -61,8 +56,21 @@ vi.mock('../../src/main/fleet/client/service', () => ({
     prepareMedia: mocks.prepareMedia,
     screens: mocks.screens,
     idempotencyKey: () => '550e8400-e29b-41d4-a716-446655440000',
-  },
-}))
+  }
+  return {
+    fleetServers: {
+      start: vi.fn(),
+      stop: vi.fn(),
+      list: mocks.list,
+      pair: mocks.pair,
+      remove: mocks.remove,
+      require: (serverId: string) => {
+        if (serverId !== client.serverId) throw new Error('FLEET_SERVER_UNKNOWN')
+        return client
+      },
+    },
+  }
+})
 import { registerFleetClientIpc } from '../../src/main/fleet/client/ipc'
 import { FleetClientError } from '../../src/main/fleet/client/api'
 import { GATEWAY_RESTART_TO_OPEN_SCREEN, GATEWAY_SCREEN_CONTROLLED } from '../../src/main/fleet/client/targets'
@@ -158,22 +166,27 @@ describe('fleet IPC validation', () => {
     registerFleetClientIpc({ handle: register, mhandle: register, on: register, mon: register } as IpcRegistrar)
     const getBot = handlers.get('fleet:getBot')!
     expect(() => getBot({}, OTHER_SERVER, 'bot')).toThrow('FLEET_SERVER_UNKNOWN')
-    expect(() => getBot({}, 'bot')).toThrow('FLEET_SERVER_UNKNOWN')
-    mocks.view.mockReturnValueOnce(null)
-    expect(() => getBot({}, SERVER, 'bot')).toThrow('FLEET_SERVER_UNKNOWN')
+    expect(() => getBot({}, '../bot')).toThrow('FLEET_SERVER_UNKNOWN')
     expect(mocks.call).not.toHaveBeenCalled()
     await getBot({}, SERVER, 'bot')
     expect(mocks.call).toHaveBeenCalledExactlyOnceWith('botGet', { params: { id: 'bot' } })
   })
-  it('lists the paired servers', async () => {
+  it('lists the paired servers, pairs one, pairs one again, and removes one', async () => {
     const handlers = new Map<string, (...args: unknown[]) => unknown>()
     const register = (channel: string, fn: (...args: unknown[]) => unknown): void => {
       handlers.set(channel, fn)
     }
     registerFleetClientIpc({ handle: register, mhandle: register, on: register, mon: register } as IpcRegistrar)
-    expect(await handlers.get('fleet:servers')!({})).toEqual([mocks.view()])
-    mocks.view.mockReturnValueOnce(null)
-    expect(await handlers.get('fleet:servers')!({})).toEqual([])
+    expect(await handlers.get('fleet:servers')!({})).toEqual(mocks.list())
+    const input = { url: 'https://vps.example', code: 'ABCD-EFGH' }
+    await handlers.get('fleet:connect')!({}, input)
+    expect(mocks.pair).toHaveBeenLastCalledWith(input, undefined)
+    await handlers.get('fleet:connect')!({}, input, SERVER)
+    expect(mocks.pair).toHaveBeenLastCalledWith(input, SERVER)
+    expect(() => handlers.get('fleet:connect')!({}, input, 'Bad/Server')).toThrow('FLEET_SERVER_UNKNOWN')
+    expect(() => handlers.get('fleet:connect')!({}, { ...input, path: '/x' })).toThrow()
+    await handlers.get('fleet:disconnect')!({}, SERVER)
+    expect(mocks.remove).toHaveBeenCalledExactlyOnceWith(SERVER)
   })
   it('validates all login mutations before dispatch', () => {
     process.env.MAESTRLY_BOT_MODE = '1'

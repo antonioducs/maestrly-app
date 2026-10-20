@@ -243,6 +243,25 @@ describe('fleet screen bridge', () => {
     expect(sockets[3].close.mock.calls.length).toBeGreaterThan(0)
   })
 
+  it('finds a channel by its id among the bridges of every server, and forgets it once closed', async () => {
+    const api = {
+      origin: 'https://fleet.example',
+      call: vi.fn(async () => ({ ticket: 't', path: '/v1/screen?ticket=t', expiresAt: '2026-01-01T00:00:00Z' })),
+    } as unknown as FleetApiClient
+    const socket = () => new FakeSocket() as unknown as WebSocket
+    const serverA = new FleetScreenBridge(() => api, socket)
+    const serverB = new FleetScreenBridge(() => api, socket)
+    const owner = new Owner() as unknown as WebContents
+    const onA = await serverA.openScreen(owner, 'bot', 'view')
+    const onB = await serverB.openScreen(owner, 'bot', 'view')
+    expect(FleetScreenBridge.forChannel(onA.channelId)).toBe(serverA)
+    expect(FleetScreenBridge.forChannel(onB.channelId)).toBe(serverB)
+    serverA.close(owner, onA.channelId)
+    expect(FleetScreenBridge.forChannel(onA.channelId)).toBeNull()
+    serverB.closeAll()
+    expect(FleetScreenBridge.forChannel(onB.channelId)).toBeNull()
+  })
+
   it('splits sends into WebSocket messages of at most 64 KiB', async () => {
     const socket = new FakeSocket()
     const api = {

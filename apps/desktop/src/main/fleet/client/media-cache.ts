@@ -38,7 +38,8 @@ export class FleetMediaCache {
     private readonly options: {
       root: () => string
       maxBytes?: number
-      onProgress?: (progress: FleetMediaProgress) => void
+      /** `scope` is the pairing the video was fetched through: which server's bot shared it. */
+      onProgress?: (progress: FleetMediaProgress & { scope: string }) => void
       /** Last-use clock, in milliseconds; injectable so tests can order uses within one millisecond. */
       now?: () => number
     }
@@ -147,6 +148,7 @@ export class FleetMediaCache {
         if (size - reported >= ref.byteSize / 100) {
           reported = size
           this.options.onProgress?.({
+            scope: identity.scope,
             botId: identity.botId,
             fileId: identity.fileId,
             received: size,
@@ -225,6 +227,15 @@ export class FleetMediaCache {
 
   /** Forgets every video of a bot, as when it is removed. */
   async purgeBot(scope: string, botId: string): Promise<void> {
+    await this.purge((meta) => meta.scope === scope && meta.botId === botId)
+  }
+
+  /** Forgets every video fetched through one pairing, as when this computer leaves that server. */
+  async purgeScope(scope: string): Promise<void> {
+    await this.purge((meta) => meta.scope === scope)
+  }
+
+  private async purge(matches: (meta: { scope: string; botId: string }) => boolean): Promise<void> {
     const root = this.options.root()
     const names = await readdir(root).catch(() => [] as string[])
     for (const name of names) {
@@ -232,14 +243,14 @@ export class FleetMediaCache {
       if (match?.[2] !== 'json' || this.inflight.has(match[1]!)) continue
       try {
         const meta = metaSchema.parse(JSON.parse(await readFile(path.join(root, name), 'utf8')))
-        if (meta.scope === scope && meta.botId === botId) await this.remove(match[1]!)
+        if (matches(meta)) await this.remove(match[1]!)
       } catch {
         /* An unreadable sidecar is removed by the next sweep. */
       }
     }
   }
 
-  /** Forgets every video, as when this computer leaves the fleet. */
+  /** Forgets every video, as when this computer's local data is reset. */
   async clear(): Promise<void> {
     await rm(this.options.root(), { recursive: true, force: true })
   }

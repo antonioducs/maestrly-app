@@ -109,9 +109,9 @@ export class AgentRegistry extends EventEmitter {
    * Play a remote bot's alert without a status: the fleet reports bots' state itself. Bots share the event voices
    * and volumes, can be silenced on their own, and each has its own dedupe window, apart from the conversations.
    */
-  playBotAlert(botId: string, event: SoundEvent): void {
+  playBotAlert(botKey: string, event: SoundEvent): void {
     if (!this.soundSettings.bots) return
-    this.maybePlay(this.ensure('fleet-bot:' + botId), event, 'lastSoundAt')
+    this.maybePlay(this.ensure('fleet-bot:' + botKey), event, 'lastSoundAt')
   }
 
   private transition(a: AgentState, status: AgentStatus, sound = false): void {

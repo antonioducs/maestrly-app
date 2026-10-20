@@ -4,8 +4,7 @@ import { FLEET_INSTANCE_BRIDGE_PATH, FLEET_PROTOCOL_HEADER, FLEET_PROTOCOL_VERSI
 import { WebSocket as NodeWebSocket } from 'ws'
 import { type HostId, isValidHostId, parseHostKey } from '../../../shared/host-key'
 import { REMOTE_BRIDGE_LIMITS, type RemoteOriginRole, type RemoteOs } from '../../../shared/remote-bridge'
-import { fleetClientService } from '../../fleet/client/service'
-import { fleetServerId, readFleetSettings } from '../../fleet/client/settings'
+import { fleetServers } from '../../fleet/client/servers'
 import type { IpcRegistrar } from '../../ipc-registrar'
 import { getLocale } from '../../store'
 import { isE2E } from '../../test-mode'
@@ -66,17 +65,23 @@ export function registerHostsIpc(reg: IpcRegistrar): void {
   const headless = isHeadlessInstance()
   const direct = headless ? null : parseDirectHost(process.env.MAESTRLY_DEV_DIRECT_HOST, !app.isPackaged || isE2E())
   const hosts = new HostRegistry({
+    // Until hosts follow every server, the default one's environments are the remote hosts.
     fleet: {
-      getConnection: () => fleetClientService.getConnection(),
-      getSnapshot: () => (headless ? { environments: [] } : fleetClientService.getSnapshot()),
-      onChange: (listener) => fleetClientService.onChange(listener),
-      bridgeTicket: (eid) => fleetClientService.call('environmentBridgeTicket', { params: { eid }, body: {} }),
+      getConnection: () => fleetServers.default()?.getConnection() ?? { url: null, hostname: null },
+      getSnapshot: () =>
+        headless ? { environments: [] } : (fleetServers.default()?.getSnapshot() ?? { environments: [] }),
+      onChange: (listener) => fleetServers.onChange(listener),
+      bridgeTicket: async (eid) => {
+        const server = fleetServers.default()
+        if (!server) throw new Error('The server is not connected.')
+        return server.call('environmentBridgeTicket', { params: { eid }, body: {} })
+      },
     },
-    serverId: fleetServerId,
+    serverId: () => fleetServers.default()?.serverId ?? '',
     appVersion: app.getVersion(),
     local: { os: localOs(), homeDir: os.homedir() },
     client: () => ({
-      deviceName: (readFleetSettings().deviceName ?? os.hostname()).slice(0, 128),
+      deviceName: (fleetServers.default()?.deviceName() ?? os.hostname()).slice(0, 128),
       os: localOs(),
       locale: getLocale(),
     }),

@@ -32,7 +32,9 @@ import {
 } from '../../../shared/fleet-installer'
 import { compareSemver } from '../../../shared/update'
 import { broadcast } from '../../window-ipc'
-import { fleetClientService, type FleetClientService } from '../client/service'
+import type { FleetClientService } from '../client/service'
+import { fleetServers } from '../client/servers'
+import { FleetClientError } from '../client/api'
 import { DockerHost, lastLine } from './docker-host'
 import { scheduleEnvironmentUpdates } from './environment-updates'
 import { InstallerError, installerErrorOf } from './errors'
@@ -77,10 +79,11 @@ import { isHeadlessInstance } from '../../remote-host/server/config'
 /** What the installer needs from an SSH connection. */
 export type InstallerSession = Pick<SshSession, 'exec' | 'forward' | 'onClose' | 'close' | 'hostKey' | 'root'>
 export type InstallerTunnel = Pick<SshTunnel, 'start' | 'stop' | 'port' | 'state' | 'lastForwardError'>
-export type FleetInstallerFleet = Pick<
-  FleetClientService,
-  'getConnection' | 'getSnapshot' | 'connect' | 'disconnect' | 'retarget' | 'call' | 'hasFeature'
->
+export type FleetInstallerFleet = Pick<FleetClientService, 'getConnection' | 'getSnapshot' | 'call' | 'hasFeature'> & {
+  connect(input: { url: string; code: string; deviceName?: string }): Promise<unknown>
+  disconnect(): Promise<void>
+  retarget(url: string): void
+}
 export interface FleetInstallerStore {
   readRecord(): FleetInstallRecord | null
   writeRecord(record: FleetInstallRecord): void
@@ -1090,6 +1093,39 @@ function runImageBuilder(options: RunOptions, only?: 'gateway' | 'bot'): Promise
   })
 }
 
+/** Until the install record names its server, the installer acts on the default one. */
+function defaultServerFleet(): FleetInstallerFleet {
+  const unpaired = {
+    features: [],
+    state: 'unconfigured' as const,
+    deviceId: null,
+    url: null,
+    hostname: null,
+    error: null,
+    tokenPersistence: 'secure' as const,
+  }
+  return {
+    getConnection: () => fleetServers.default()?.getConnection() ?? unpaired,
+    getSnapshot: () =>
+      fleetServers.default()?.getSnapshot() ?? { host: null, bots: [], environments: [], inbox: [], peerMessages: [] },
+    hasFeature: (feature) => fleetServers.default()?.hasFeature(feature) ?? false,
+    call: ((key: Parameters<FleetClientService['call']>[0], options?: Parameters<FleetClientService['call']>[1]) => {
+      const server = fleetServers.default()
+      if (!server) throw new FleetClientError('UNAUTHORIZED', 401, 'Fleet is not connected')
+      return server.call(key, options)
+    }) as FleetClientService['call'],
+    connect: (input) => fleetServers.pair(input, fleetServers.findByUrl(input.url) ?? undefined),
+    disconnect: async () => {
+      const server = fleetServers.default()
+      if (server) await fleetServers.remove(server.serverId)
+    },
+    retarget: (url) => {
+      const server = fleetServers.default()
+      if (server) fleetServers.retarget(server.serverId, url)
+    },
+  }
+}
+
 export const fleetInstallerService = new FleetInstallerService({
   appVersion: app.getVersion(),
   isPackaged: app.isPackaged,
@@ -1101,7 +1137,7 @@ export const fleetInstallerService = new FleetInstallerService({
   timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   localRunner,
   connectSsh: (target, credentials, options) => SshSession.connect(target, credentials, options),
-  fleet: fleetClientService,
+  fleet: defaultServerFleet(),
   store: {
     readRecord: readInstallRecord,
     writeRecord: writeInstallRecord,

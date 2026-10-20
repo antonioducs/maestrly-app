@@ -1,6 +1,6 @@
 import path from 'node:path'
 import { app, type BrowserWindow, dialog, powerMonitor, shell } from 'electron'
-import { fleetClientService } from '../fleet/client/service'
+import { fleetServers } from '../fleet/client/servers'
 import type { IpcRegistrar } from '../ipc-registrar'
 import { hostRegistry, onHostsChanged } from '../remote-host/client/ipc'
 import { isHeadlessInstance } from '../remote-host/server/config'
@@ -22,7 +22,15 @@ export const hostTransferEngine = (): HostTransferEngine | null => engineInstanc
 export function registerHostTransfersIpc(reg: IpcRegistrar, deps: { getMainWindow: () => BrowserWindow | null }): void {
   if (isHeadlessInstance()) return
   const engine = new HostTransferEngine({
-    endpoint: (hostId) => resolveHostFilesEndpoint(hostId, { registry: hostRegistry(), fleet: fleetClientService }),
+    endpoint: (hostId) =>
+      resolveHostFilesEndpoint(hostId, {
+        registry: hostRegistry(),
+        // Until host files follow every server, the default one's gateway serves them.
+        fleet: {
+          hostFilesAccess: () => fleetServers.default()?.hostFilesAccess() ?? null,
+          hasFeature: (feature) => fleetServers.default()?.hasFeature(feature) ?? false,
+        },
+      }),
     downloadsDir: () => app.getPath('downloads'),
     openDir: () => path.join(app.getPath('temp'), 'maestrly-remote-files'),
     openPath: (file) => shell.openPath(file),

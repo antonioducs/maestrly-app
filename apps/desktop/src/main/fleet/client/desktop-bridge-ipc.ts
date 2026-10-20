@@ -14,7 +14,7 @@ import { FleetClientError } from './api'
 import { FleetDesktopBridge, type DesktopBridgeGateway } from './desktop-bridge'
 import type { FleetIpcRegistrar } from './scoped-ipc'
 import type { FleetClientService } from './service'
-import { readFleetSettings } from './settings'
+import type { FleetServers } from './servers'
 
 const key = z.string().min(1).max(191)
 const ids = z
@@ -44,7 +44,7 @@ export function fleetDesktopGateway(fleet: FleetClientService): DesktopBridgeGat
     error instanceof FleetClientError && (error.status === 404 || error.code === 'NOT_FOUND')
   return {
     deviceId: () => fleet.getConnection().deviceId,
-    deviceName: () => readFleetSettings().deviceName,
+    deviceName: () => fleet.deviceName(),
     availability: (botId) => {
       if (fleet.getConnection().state !== 'connected') return 'disconnected'
       if (!fleet.hasFeature(FLEET_DESKTOP_BRIDGE_FEATURE)) return 'gateway-update'
@@ -88,14 +88,29 @@ export function fleetDesktopGateway(fleet: FleetClientService): DesktopBridgeGat
  * first stream already takes desktop calls) and serves the bot settings that manage it. Only this computer's own person
  * reaches these channels; no bot tool does.
  */
-export function registerFleetDesktopBridgeIpc(scoped: FleetIpcRegistrar, fleet: FleetClientService): void {
-  const bridge = new FleetDesktopBridge(fleetDesktopGateway(fleet), botHost, (botId) =>
-    broadcast('fleet:desktop-access', { serverId: fleet.serverId, botId })
-  )
-  if (process.env.MAESTRLY_BOT_MODE !== '1') fleet.desktopBridge = bridge
+export function registerFleetDesktopBridgeIpc(
+  scoped: FleetIpcRegistrar,
+  servers: Pick<FleetServers, 'setupClients' | 'clients'>
+): void {
+  const bridges = new WeakMap<FleetClientService, FleetDesktopBridge>()
+  // One bridge per server; reconnecting to one keeps the access given through the pairings with the others.
+  const pairedDeviceIds = () => new Set(servers.clients().flatMap((client) => client.getConnection().deviceId ?? []))
+  servers.setupClients((fleet) => {
+    const bridge = new FleetDesktopBridge(
+      fleetDesktopGateway(fleet),
+      botHost,
+      (botId) => broadcast('fleet:desktop-access', { serverId: fleet.serverId, botId }),
+      undefined,
+      undefined,
+      pairedDeviceIds
+    )
+    bridges.set(fleet, bridge)
+    if (process.env.MAESTRLY_BOT_MODE !== '1') fleet.desktopBridge = bridge
+  })
   /** The bridge of the server a call names. */
   const bridgeOf = (client: FleetClientService): FleetDesktopBridge => {
-    if (client !== fleet) throw new FleetClientError('NOT_FOUND', 404, 'Unknown bot server')
+    const bridge = bridges.get(client)
+    if (!bridge) throw new FleetClientError('NOT_FOUND', 404, 'Unknown bot server')
     return bridge
   }
   scoped.handle('fleet:desktopAccess:get', (client, _event, botId: unknown) =>

@@ -55,9 +55,11 @@ import { isHeadlessInstance } from '../../remote-host/server/config'
 import { FLEET_ATTENDED_FILES_MAX } from '../../../shared/fleet-downloads'
 import { FleetClientError } from './api'
 import { setAttendedFleetFiles } from './download-notices'
-import { type FleetClientService, fleetClientService } from './service'
+import { type FleetClientService, revealFleetDownload } from './service'
+import { fleetServers } from './servers'
+import { FleetScreenBridge } from './screen-bridge'
 import { type FleetIpcRegistrar, fleetIpcRegistrar } from './scoped-ipc'
-import { FLEET_SERVER_UNKNOWN, isFleetServerId } from '../../../shared/fleet-servers'
+import { isFleetServerId, parseFleetServerId } from '../../../shared/fleet-servers'
 import { getDictationEngine, getDictationKey } from '../../dictation/settings'
 import {
   FLEET_BOT_MOVE_UNSUPPORTED,
@@ -156,12 +158,17 @@ const environmentActionRoute = {
 // `idle` waits for the environment's bots and answers at once; `now` restarts it, interrupting them.
 const updateWhen = fleetEnvironmentUpdateRequestSchema.shape.when
 
-/** The registrar of channels that name their server; until servers are listed, the one paired server answers. */
+/** The registrar of channels that name their server: the call reaches that server's client. */
 export function fleetScopedRegistrar(reg: IpcRegistrar): FleetIpcRegistrar {
-  return fleetIpcRegistrar(reg, (serverId) => {
-    if (serverId !== fleetClientService.serverId || !fleetClientService.view()) throw new Error(FLEET_SERVER_UNKNOWN)
-    return fleetClientService
-  })
+  return fleetIpcRegistrar(reg, (serverId) => fleetServers.require(serverId))
+}
+
+/** A screen channel and the bridge of the client that opened it, whichever server it reaches. */
+function screenChannel(raw: unknown): { bridge: FleetScreenBridge; channelId: string } {
+  const channelId = opaqueId.parse(raw)
+  const bridge = FleetScreenBridge.forChannel(channelId)
+  if (!bridge) throw new Error('Screen channel unavailable')
+  return { bridge, channelId }
 }
 
 export function registerFleetClientIpc(reg: IpcRegistrar): void {
@@ -169,17 +176,16 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
   registerFleetProvisioningIpc(reg, scoped)
   registerFleetEnvironmentSettingsIpc(scoped)
   if (!isHeadlessInstance()) {
-    fleetClientService.start()
-    app.once('will-quit', () => fleetClientService.stop())
+    fleetServers.start()
+    app.once('will-quit', () => fleetServers.stop())
   }
-  reg.handle('fleet:servers', () => fleetClientService.servers())
+  reg.handle('fleet:servers', () => fleetServers.list())
   scoped.handle('fleet:getConnection', (fleet) => fleet.getConnection())
   // Pairs this computer with a server; the server named, if any, is the one paired again.
-  reg.mhandle('fleet:connect', async (_event, input: unknown, _serverId: unknown = undefined) => {
-    await fleetClientService.connect(connectInput.parse(input))
-    return fleetClientService.view()
-  })
-  scoped.mhandle('fleet:disconnect', (fleet) => fleet.disconnect())
+  reg.mhandle('fleet:connect', (_event, input: unknown, serverId: unknown = undefined) =>
+    fleetServers.pair(connectInput.parse(input), serverId === undefined ? undefined : parseFleetServerId(serverId))
+  )
+  scoped.mhandle('fleet:disconnect', (fleet) => fleetServers.remove(fleet.serverId))
   // A one-use code for another device (a phone), shown as a QR code; older gateways cannot create one.
   scoped.mhandle('fleet:createPairing', async (fleet) => {
     if (!fleet.hasFeature(FLEET_PHONES_FEATURE))
@@ -566,7 +572,7 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
     fleet.getDownload(id.parse(botId), fleetFileIdSchema.parse(fileId))
   )
   reg.mhandle('fleet:revealDownload', (_event, receipt: unknown) =>
-    fleetClientService.revealDownload(z.string().uuid().parse(receipt))
+    revealFleetDownload(z.string().uuid().parse(receipt))
   )
   // Returns a capability URL for `<video>`, so only the app's trusted windows may ask for one.
   scoped.mhandle('fleet:prepareMedia', (fleet, _event, botId: unknown, fileId: unknown) =>
@@ -714,15 +720,19 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
       .instanceof(ArrayBuffer)
       .refine((value) => value.byteLength <= 1_048_576)
       .parse(data)
-    fleetClientService.screens.send(event.sender, opaqueId.parse(channelId), bytes)
+    const screen = screenChannel(channelId)
+    screen.bridge.send(event.sender, screen.channelId, bytes)
   })
-  reg.mhandle('fleet:screenClose', (event, channelId: unknown) =>
-    fleetClientService.screens.close(event.sender, opaqueId.parse(channelId))
-  )
-  reg.mhandle('fleet:screenClipboardRead', (event, channelId: unknown) =>
-    fleetClientService.screens.readClipboard(event.sender, opaqueId.parse(channelId))
-  )
-  reg.mhandle('fleet:screenClipboardWrite', (event, channelId: unknown, text: unknown) =>
-    fleetClientService.screens.writeClipboard(event.sender, opaqueId.parse(channelId), text)
-  )
+  reg.mhandle('fleet:screenClose', (event, channelId: unknown) => {
+    const screen = screenChannel(channelId)
+    screen.bridge.close(event.sender, screen.channelId)
+  })
+  reg.mhandle('fleet:screenClipboardRead', (event, channelId: unknown) => {
+    const screen = screenChannel(channelId)
+    return screen.bridge.readClipboard(event.sender, screen.channelId)
+  })
+  reg.mhandle('fleet:screenClipboardWrite', (event, channelId: unknown, text: unknown) => {
+    const screen = screenChannel(channelId)
+    return screen.bridge.writeClipboard(event.sender, screen.channelId, text)
+  })
 }
