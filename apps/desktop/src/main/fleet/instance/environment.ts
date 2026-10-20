@@ -68,6 +68,7 @@ import {
   holdsBot,
   importBotPackage,
   receiveBotPackage,
+  removeBotMoveStaging,
   removeConversationLeftovers,
   sweepBotMoveStaging,
   writeBotPackage,
@@ -414,7 +415,7 @@ export class EnvironmentRuntime {
       if (this.installed(botId)) throw new InstanceHttpError(409, 'CONFLICT', 'Freeze the bot before moving it.')
       if (!readStoredProfile(botId)) throw new InstanceHttpError(404, 'NOT_FOUND', 'Bot does not exist.')
       const staging = await botMoveStaging(this.roots)
-      const release = () => fs.rm(staging, { recursive: true, force: true })
+      const release = () => removeBotMoveStaging(staging)
       try {
         const file = path.join(staging, 'bot.tar.zst')
         const written = await writeBotPackage(botId, this.roots, file, app.getVersion())
@@ -452,7 +453,7 @@ export class EnvironmentRuntime {
         return { digest: await botMoveDigest(botId, this.roots) }
       } finally {
         body.resume()
-        await fs.rm(staging, { recursive: true, force: true })
+        await removeBotMoveStaging(staging)
       }
     })
   }
