@@ -1,7 +1,12 @@
 import { createHash } from 'node:crypto'
-import { createReadStream, type Stats } from 'node:fs'
-import { type FileHandle, link, unlink } from 'node:fs/promises'
+import type { Stats } from 'node:fs'
+import type { FileHandle } from 'node:fs/promises'
 import { extname, join } from 'node:path'
+import { realFs } from './real-fs'
+
+// The files transfers read and publish are the person's own: a file named `*.asar` is a file, never an archive.
+const { createReadStream } = realFs
+const { link, unlink } = realFs.promises
 
 /** What tells one version of a file from another: a range read from a file that changed since is refused. */
 export const fileIdentity = (info: Stats): string => `${info.size}:${Math.floor(info.mtimeMs)}:${info.ino}`

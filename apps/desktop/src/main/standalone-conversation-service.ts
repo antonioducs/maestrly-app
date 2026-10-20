@@ -7,6 +7,7 @@ import { createStandaloneConversationSchema } from '../shared/standalone-convers
 import { standaloneConversationRelPath } from './app-paths'
 import { getConversation, insertConversation } from './store'
 import { getMainLocale } from './i18n'
+import { realFs } from './real-fs'
 import { initialStandaloneChatMode } from './chat/new-chat-defaults'
 
 async function assertDirectory(directory: string): Promise<void> {
@@ -160,5 +161,6 @@ export async function removeStandaloneConversationDirectory(conversation: Standa
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
     throw error
   }
-  await fs.rm(expected, { recursive: true, force: true })
+  // A recursive `node:fs` removal in Electron fails on a real `*.asar` file, which it takes for an archive's folder.
+  await realFs.promises.rm(expected, { recursive: true, force: true })
 }
