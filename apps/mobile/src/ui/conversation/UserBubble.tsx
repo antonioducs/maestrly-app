@@ -3,6 +3,7 @@ import { Pressable, View } from 'react-native'
 import { useI18n } from '../../i18n'
 import { useTheme } from '../../theme/ThemeProvider'
 import { Icon } from '../icons'
+import { CitationChip } from '../lanes/RunMarker'
 import { AppText } from '../primitives/Text'
 import { useConversation } from './CueCard'
 import { TranscriptImage } from './TranscriptImage'
@@ -57,7 +58,8 @@ export function FileChip({
 export function UserBubble({ item, note }: { item: UserItem; note?: string | null }) {
   const { palette } = useTheme()
   const { t, plural } = useI18n()
-  const { bot, openChat, edit } = useConversation()
+  const { bot, openChat, edit, lanes } = useConversation()
+  const citation = 'citation' in item ? item.citation : undefined
   const editable = edit?.itemId === item.id ? edit : null
   const from = 'fromConversation' in item ? item.fromConversation : null
   const origin = from
@@ -107,6 +109,15 @@ export function UserBubble({ item, note }: { item: UserItem; note?: string | nul
           <AppText variant="small" tone="muted" style={{ fontWeight: '600', marginBottom: 2 }}>
             {origin}
           </AppText>
+        ) : null}
+        {citation ? (
+          <View style={{ marginTop: 2, marginBottom: 4 }}>
+            <CitationChip
+              title={citation.routineTitle || t('lanes.routine')}
+              at={citation.at}
+              onOpen={lanes?.runs ? () => lanes.openRun(citation.runId) : undefined}
+            />
+          </View>
         ) : null}
         {item.images.length ? (
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingVertical: 4 }}>

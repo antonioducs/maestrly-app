@@ -1,4 +1,11 @@
-import type { FleetGatewayEvent, FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
+import {
+  fleetPeerThreadSchema,
+  fleetRoutineRunSchema,
+  type FleetGatewayEvent,
+  type FleetPeerThread,
+  type FleetRoutineRun,
+  type FleetTranscriptItem,
+} from '@maestrly/bot-fleet-protocol'
 import { describe, expect, it } from 'vitest'
 import { botRecord, environmentRecord } from '../src/fleet/factories'
 import { fleetReducer, initialFleetState, type FleetState } from '../src/fleet/state'
@@ -170,5 +177,155 @@ describe('fleet state', () => {
       event({ type: 'environment.updated', environment: { ...studio, lifecycle: 'archived' } })
     )
     expect(archived.bots.map((bot) => bot.id)).toEqual(['juno'])
+  })
+})
+
+describe('fleet state of side conversations', () => {
+  const run = (id: string, second: number, fields: Partial<FleetRoutineRun> = {}) =>
+    fleetRoutineRunSchema.parse({
+      id,
+      routineId: 'r1',
+      botId: 'atlas',
+      trigger: 'schedule',
+      status: 'completed',
+      deliveredAt: at(second),
+      finishedAt: at(second + 1),
+      report: null,
+      finalText: null,
+      conversation: 'own',
+      ...fields,
+    })
+  const thread = (id: string, second: number, fields: Partial<FleetPeerThread> = {}) =>
+    fleetPeerThreadSchema.parse({
+      id,
+      botId: 'atlas',
+      peer: { botId: 'pixel', name: 'Pixel' },
+      title: id,
+      origin: 'primary',
+      status: 'open',
+      hops: 0,
+      hopLimit: 8,
+      messages: 1,
+      pinned: false,
+      conversation: 'own',
+      report: null,
+      reportAt: null,
+      working: false,
+      peerWorking: false,
+      createdAt: at(second),
+      lastActivityAt: at(second),
+      expiresAt: null,
+      conversationDeletedAt: null,
+      kept: null,
+      ...fields,
+    })
+  const withAtlas = fleetReducer(initialFleetState, { type: 'snapshot', bots: [atlas], environments: [], inbox: [] })
+  const laneKey = (id: string) => `atlas\u0000${id}`
+
+  it('keeps runs newest first, takes updates once loaded, and keeps older pages under a newer first page', () => {
+    // Before its first page, a run's update has no list to go to.
+    let state = fleetReducer(withAtlas, event({ type: 'routine_run.updated', botId: 'atlas', run: run('r0', 1) }))
+    expect(state.runs.atlas).toBeUndefined()
+    state = fleetReducer(state, {
+      type: 'runs-page',
+      botId: 'atlas',
+      page: { runs: [run('r3', 30), run('r2', 20)], before: 'r2' },
+      mode: 'latest',
+    })
+    state = fleetReducer(state, {
+      type: 'runs-page',
+      botId: 'atlas',
+      page: { runs: [run('r1', 10)], before: null },
+      mode: 'older',
+    })
+    expect(state.runs.atlas).toMatchObject({ loaded: true, before: null })
+    state = fleetReducer(state, event({ type: 'routine_run.updated', botId: 'atlas', run: run('r4', 40) }))
+    expect(state.runs.atlas.runs.map((item) => item.id)).toEqual(['r4', 'r3', 'r2', 'r1'])
+    // The newest page again: what it covers is replaced, the older runs loaded before stay.
+    state = fleetReducer(state, {
+      type: 'runs-page',
+      botId: 'atlas',
+      page: { runs: [run('r4', 40, { pinned: true }), run('r3', 30)], before: 'r3' },
+      mode: 'latest',
+    })
+    expect(state.runs.atlas.runs.map((item) => [item.id, item.pinned])).toEqual([
+      ['r4', true],
+      ['r3', false],
+      ['r2', false],
+      ['r1', false],
+    ])
+    expect(state.runs.atlas.before).toBeNull()
+  })
+
+  it('keeps each run’s and thread’s transcript apart, and marks it stale on a reset', () => {
+    let state = fleetReducer(withAtlas, {
+      type: 'lane-page',
+      key: laneKey('r1'),
+      page: { items: [assistant('x1', 1, 'first')], before: null },
+      mode: 'latest',
+    })
+    state = fleetReducer(
+      state,
+      event({ type: 'routine_run.transcript.upsert', botId: 'atlas', runId: 'r1', item: assistant('x2', 2, 'second') })
+    )
+    // A thread's items never reach a run's conversation, nor the bot's own.
+    state = fleetReducer(
+      state,
+      event({
+        type: 'peer_thread.transcript.upsert',
+        botId: 'atlas',
+        threadId: 't1',
+        item: assistant('y1', 3, 'elsewhere'),
+      })
+    )
+    expect(state.lanes[laneKey('r1')].items.map((item) => item.id)).toEqual(['x1', 'x2'])
+    expect(state.lanes[laneKey('t1')]).toBeUndefined()
+    expect(state.transcripts.atlas).toBeUndefined()
+    state = fleetReducer(state, event({ type: 'routine_run.transcript.reset', botId: 'atlas', runId: 'r1' }))
+    expect(state.lanes[laneKey('r1')].stale).toBe(true)
+    state = fleetReducer(state, { type: 'lane-failed', key: laneKey('r1') })
+    expect(state.lanes[laneKey('r1')]).toMatchObject({ failed: true, loading: false })
+  })
+
+  it('keeps threads by last activity and drops what a removed run, thread or bot leaves', () => {
+    let state = fleetReducer(withAtlas, {
+      type: 'threads-list',
+      botId: 'atlas',
+      threads: [thread('t1', 1), thread('t2', 2)],
+    })
+    state = fleetReducer(
+      state,
+      event({ type: 'peer_thread.updated', botId: 'atlas', thread: thread('t1', 5, { status: 'paused' }) })
+    )
+    expect(state.threads.atlas.threads.map((item) => [item.id, item.status])).toEqual([
+      ['t1', 'paused'],
+      ['t2', 'open'],
+    ])
+    state = fleetReducer(state, {
+      type: 'lane-page',
+      key: laneKey('t2'),
+      page: { items: [], before: null },
+      mode: 'latest',
+    })
+    state = fleetReducer(state, event({ type: 'peer_thread.removed', botId: 'atlas', threadId: 't2' }))
+    expect(state.threads.atlas.threads.map((item) => item.id)).toEqual(['t1'])
+    expect(state.lanes[laneKey('t2')]).toBeUndefined()
+
+    state = fleetReducer(state, {
+      type: 'runs-page',
+      botId: 'atlas',
+      page: { runs: [run('r1', 1)], before: null },
+      mode: 'latest',
+    })
+    state = fleetReducer(state, {
+      type: 'lane-page',
+      key: laneKey('r1'),
+      page: { items: [], before: null },
+      mode: 'latest',
+    })
+    const gone = fleetReducer(state, event({ type: 'bot.removed', botId: 'atlas' }))
+    expect(gone.runs.atlas).toBeUndefined()
+    expect(gone.threads.atlas).toBeUndefined()
+    expect(gone.lanes).toEqual({})
   })
 })

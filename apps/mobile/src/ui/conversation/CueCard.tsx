@@ -1,4 +1,9 @@
-import type { FleetBot, FleetInteractionResolution, FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
+import type {
+  FleetBot,
+  FleetInteractionResolution,
+  FleetRoutineRun,
+  FleetTranscriptItem,
+} from '@maestrly/bot-fleet-protocol'
 import { createContext, useContext, useState, type ReactNode } from 'react'
 import { AccessibilityInfo, View } from 'react-native'
 import { useI18n } from '../../i18n'
@@ -47,6 +52,19 @@ export type ConversationContextValue = {
   sendMessage?: (text: string) => Promise<void>
   /** The message the person may edit now, and how to start editing it; absent where it cannot be edited. */
   edit?: { itemId: string; start: (itemId: string, text: string) => void }
+  /**
+   * The bot's side conversations, in its own conversation where it keeps them apart: its routine runs and its
+   * conversations with other bots, which its notices and the messages that opened them lead to.
+   */
+  lanes?: LanesAccess
+}
+export type LanesAccess = {
+  runs: boolean
+  threads: boolean
+  openRun: (runId: string) => void
+  openThread: (threadId: string) => void
+  /** Takes a run to the bot's composer, for the next message to refer to it. */
+  cite: (run: FleetRoutineRun) => void
 }
 export const ConversationContext = createContext<ConversationContextValue | null>(null)
 export function useConversation(): ConversationContextValue {

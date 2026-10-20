@@ -144,6 +144,42 @@ describe('demo server', () => {
     })
   })
 
+  it('keeps Atlas’s routine runs and conversations with bots apart, and answers there', async () => {
+    const source = createDemoSource({ stepMs: 0, autoplay: false })
+    const events = listen(source)
+    const { bots } = await source.call('botsList')
+    expect(bots.find((bot) => bot.id === 'atlas')?.capabilities).toEqual(
+      expect.arrayContaining(['routine-conversations', 'peer-conversations'])
+    )
+    const { runs } = await source.call('botRuns', { params: { id: 'atlas' } })
+    expect(runs.map((run) => run.routineTitle)).toContain('Release readiness check')
+    expect(runs.filter((run) => run.quiet)).toHaveLength(4)
+    expect((await source.call('botRuns', { params: { id: 'ledger' } })).runs).toEqual([])
+    const page = await source.call('botRunTranscript', { params: { id: 'atlas', runId: runs[0].id } })
+    expect(page.items.length).toBeGreaterThan(0)
+    // The message that opened the thread with Pixel is in Atlas's own conversation.
+    const own = await source.call('botTranscript', { params: { id: 'atlas' }, query: { limit: 50 } })
+    expect(own.items.some((item) => item.kind === 'peer_out' && item.thread?.id === 'thread-pixel')).toBe(true)
+
+    const { threads } = await source.call('botPeerThreads', { params: { id: 'atlas' } })
+    expect(threads.find((thread) => thread.id === 'thread-pixel')).toMatchObject({ status: 'paused', hops: 8 })
+    const resumed = await source.call('botPeerThreadPatch', {
+      params: { id: 'atlas', threadId: 'thread-pixel' },
+      body: { resume: true },
+    })
+    expect(resumed).toMatchObject({ status: 'open', hops: 0, working: true })
+    await source.call('botPeerThreadMessageSend', {
+      params: { id: 'atlas', threadId: 'thread-pixel' },
+      body: { text: 'Ship Stacked.', idempotencyKey: KEY, attachments: [] },
+    })
+    await vi.runAllTimersAsync()
+    const items = events.flatMap((event) => (event.type === 'peer_thread.transcript.upsert' ? [event.item] : []))
+    expect(items.some((item) => item.kind === 'user' && item.text === 'Ship Stacked.')).toBe(true)
+    expect(items.some((item) => item.kind === 'assistant')).toBe(true)
+    const last = events.filter((event) => event.type === 'peer_thread.updated').at(-1)
+    expect(last?.type === 'peer_thread.updated' && last.thread.working).toBe(false)
+  })
+
   it('refuses what the demo does not offer', async () => {
     const source = createDemoSource({ stepMs: 0, autoplay: false })
     await expect(source.call('botSkillsList', { params: { id: 'juno' } })).rejects.toBeInstanceOf(GatewayError)

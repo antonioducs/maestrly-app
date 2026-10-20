@@ -1,7 +1,13 @@
-import type { FleetGatewayEvent } from '@maestrly/bot-fleet-protocol'
+import {
+  FLEET_PARALLEL_TURNS_FEATURE,
+  FLEET_PEER_CONVERSATIONS_FEATURE,
+  FLEET_ROUTINE_CONVERSATIONS_FEATURE,
+  fleetRoutineRunSchema,
+  type FleetGatewayEvent,
+} from '@maestrly/bot-fleet-protocol'
 import { describe, expect, it, vi } from 'vitest'
 import type { StreamState } from '../src/gateway/event-stream'
-import { BotCompactError, createFleetController } from '../src/fleet/controller'
+import { BotCompactError, createFleetController, LaneConflictError, lanesSeenKey } from '../src/fleet/controller'
 import { botRecord } from '../src/fleet/factories'
 import type { FleetSource } from '../src/fleet/source'
 import { GatewayError } from '../src/gateway/client'
@@ -234,5 +240,105 @@ describe('fleet controller', () => {
     expect(
       controller.store.getState().transcripts.juno?.items.map((entry) => entry.kind === 'assistant' && entry.text)
     ).toEqual(['the newer text'])
+  })
+})
+
+describe('fleet controller with side conversations', () => {
+  const both = ['environments', FLEET_ROUTINE_CONVERSATIONS_FEATURE, FLEET_PEER_CONVERSATIONS_FEATURE]
+  const run = (id: string, second: number) =>
+    fleetRoutineRunSchema.parse({
+      id,
+      routineId: 'r1',
+      botId: 'juno',
+      trigger: 'schedule',
+      status: 'completed',
+      deliveredAt: `2026-10-12T12:00:${String(second).padStart(2, '0')}.000Z`,
+      finishedAt: null,
+      report: null,
+      finalText: null,
+      conversation: 'own',
+    })
+
+  it('reads a bot’s runs once, counting those already there as seen, and keeps that on the phone', async () => {
+    const f = fakeSource(both)
+    f.responses.botRuns = () => ({ runs: [run('r2', 2), run('r1', 1)], before: null })
+    const { kv } = memoryStores()
+    const controller = createFleetController(f.source, kv)
+    await controller.start()
+    f.open()
+    controller.ensureRuns('juno')
+    await vi.waitFor(() => expect(controller.store.getState().runs.juno?.loaded).toBe(true))
+    expect(f.call).toHaveBeenCalledWith('botRuns', { params: { id: 'juno' }, query: { limit: 100 } })
+    expect(controller.store.getState().seen.runs.juno).toEqual(['r1', 'r2'])
+    controller.ensureRuns('juno')
+    expect(f.keys().filter((key) => key === 'botRuns')).toHaveLength(1)
+    controller.markRunSeen('juno', 'r3')
+    await vi.waitFor(async () =>
+      expect(JSON.parse((await kv.get(lanesSeenKey('s1'))) ?? '{}').runs.juno).toEqual(['r1', 'r2', 'r3'])
+    )
+
+    // Another start on the same phone remembers it.
+    const again = createFleetController(fakeSource(both).source, kv)
+    await again.start()
+    expect(again.store.getState().seen.runs.juno).toEqual(['r1', 'r2', 'r3'])
+  })
+
+  it('opens a run’s conversation, reloads it after a reset, and sends the owner’s word there', async () => {
+    const f = fakeSource(both)
+    const key = '550e8400-e29b-41d4-a716-446655440020'
+    f.responses.botRunTranscript = () => ({ items: [], before: null })
+    f.responses.botRunMessageSend = () => ({ inputId: 'in1', itemId: 'it1', queued: false })
+    const controller = createFleetController(f.source, memoryStores().kv, { uuid: () => key })
+    await controller.start()
+    f.open()
+    await controller.openLane('juno', { kind: 'run', id: 'r1' })
+    expect(f.call).toHaveBeenCalledWith('botRunTranscript', {
+      params: { id: 'juno', runId: 'r1' },
+      query: { limit: 50 },
+    })
+    expect(controller.store.getState().lanes['juno\u0000r1']).toMatchObject({ loaded: true })
+    f.call.mockClear()
+    f.emit({ type: 'routine_run.transcript.reset', at, botId: 'juno', runId: 'r1' })
+    await vi.waitFor(() => expect(f.keys()).toContain('botRunTranscript'))
+
+    await controller.sendLane('juno', { kind: 'run', id: 'r1' }, 'Add the WebKit numbers', [])
+    expect(f.call).toHaveBeenCalledWith('botRunMessageSend', {
+      params: { id: 'juno', runId: 'r1' },
+      body: { text: 'Add the WebKit numbers', idempotencyKey: key, attachments: [] },
+    })
+    // A conversation that works or is gone refuses it, and the view says why.
+    f.responses.botPeerThreadMessageSend = () => {
+      throw new GatewayError('CONFLICT', 409, 'busy')
+    }
+    await expect(controller.sendLane('juno', { kind: 'thread', id: 't1' }, 'Go on', [])).rejects.toBeInstanceOf(
+      LaneConflictError
+    )
+    // Closed, a later reset leaves it alone.
+    controller.closeLane('juno', 'r1')
+    f.call.mockClear()
+    f.emit({ type: 'routine_run.transcript.reset', at, botId: 'juno', runId: 'r1' })
+    expect(f.keys()).not.toContain('botRunTranscript')
+  })
+
+  it('sends the run a message cites with it, and stops one side conversation’s turn only', async () => {
+    const f = fakeSource([...both, FLEET_PARALLEL_TURNS_FEATURE])
+    const controller = createFleetController(f.source, memoryStores().kv, {
+      uuid: () => '550e8400-e29b-41d4-a716-446655440021',
+    })
+    await controller.start()
+    f.open()
+    await controller.send('juno', 'What did it find?', [], 'r1')
+    await vi.waitFor(() => expect(f.keys()).toContain('botMessageSend'))
+    expect(f.call).toHaveBeenCalledWith('botMessageSend', {
+      params: { id: 'juno' },
+      body: {
+        text: 'What did it find?',
+        idempotencyKey: '550e8400-e29b-41d4-a716-446655440021',
+        attachments: [],
+        citation: { runId: 'r1' },
+      },
+    })
+    await controller.cancelLane('juno', 't1')
+    expect(f.call).toHaveBeenLastCalledWith('botCancel', { params: { id: 'juno' }, query: { conversation: 't1' } })
   })
 })

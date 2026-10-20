@@ -69,4 +69,14 @@ export const ICON_PATHS = {
   branch:
     '<circle cx="7" cy="5.5" r="2"/><circle cx="7" cy="18.5" r="2"/><circle cx="17" cy="8" r="2"/><path d="M7 7.5v9M17 10c0 4-10 2.5-10 6.5"/>',
   compress: '<path d="M4 9.5h16M4 14.5h16M12 2.5v4.5M9.5 5 12 7.5 14.5 5M12 21.5V17M9.5 19l2.5-2.5 2.5 2.5"/>',
+  // A bot's side conversations: its routine runs and its conversations with other bots.
+  history: '<path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1L3.5 8.5"/><path d="M3.5 3.5v5h5"/><path d="M12 8v4l2.8 1.8"/>',
+  swap: '<path d="m16 3.5 4 4-4 4"/><path d="M20 7.5H4"/><path d="m8 20.5-4-4 4-4"/><path d="M4 16.5h16"/>',
+  repeat:
+    '<path d="m17 2.5 3.5 3.5-3.5 3.5"/><path d="M3.5 11.5v-1a4 4 0 0 1 4-4h13"/><path d="m7 21.5-3.5-3.5 3.5-3.5"/><path d="M20.5 12.5v1a4 4 0 0 1-4 4h-13"/>',
+  moon: '<path d="M19.5 14.5A8 8 0 1 1 9.5 4.5a6.5 6.5 0 0 0 10 10Z"/>',
+  pin: '<path d="M9 3.5h6M10 3.5v6l-3 4h10l-3-4v-6M12 13.5v7"/>',
+  cite: '<path d="M5 4.5v6a4 4 0 0 0 4 4h10"/><path d="m15 10.5 4 4-4 4"/>',
+  'bring-back': '<path d="M19 4.5v6a4 4 0 0 1-4 4H5"/><path d="m9 10.5-4 4 4 4"/>',
+  more: '<circle cx="5.5" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="18.5" cy="12" r="1.4" fill="currentColor" stroke="none"/>',
 } as const

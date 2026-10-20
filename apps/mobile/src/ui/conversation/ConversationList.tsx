@@ -1,7 +1,7 @@
 import type { MobileChatItem } from '@maestrly/bot-fleet-protocol'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ActivityIndicator, FlatList, Pressable, View } from 'react-native'
-import { transcriptRows, type TranscriptRow } from '../../fleet/transcript-rows'
+import { transcriptRows, withExtras, type TranscriptRow } from '../../fleet/transcript-rows'
 import { searchRows } from '../../fleet/transcript-search'
 import { useI18n } from '../../i18n'
 import { useTheme } from '../../theme/ThemeProvider'
@@ -11,7 +11,9 @@ import { useReducedMotion } from '../useReducedMotion'
 import { ArtifactCard } from './ArtifactCard'
 import { AssistantMarkdown } from './AssistantMarkdown'
 import { BotFiles } from './BotFiles'
+import { ThreadBridge } from '../lanes/ThreadBridge'
 import { ConversationSearchBar, useConversationSearch } from './ConversationSearch'
+import { useConversation } from './CueCard'
 import { DispatchCard } from './DispatchCard'
 import { HelpCard } from './HelpCard'
 import { PermissionCard } from './PermissionCard'
@@ -23,12 +25,24 @@ import { ToolGroup } from './ToolGroup'
 import { shouldOfferScrollToEnd } from './scroll-to-end'
 import { UserBubble } from './UserBubble'
 
-/** A row the conversation adds after its items: a message still on the phone, or a card such as a plan. */
-export type ExtraRow = { key: string; node: ReactNode }
+/**
+ * A row the conversation adds to its items: a message still on the phone or a card such as a plan, after them; or,
+ * with `at`, a notice shown where the conversation was then, such as a routine run that ended.
+ */
+export type ExtraRow = { key: string; node: ReactNode; at?: string }
 type Row = TranscriptRow | { kind: 'extra'; row: ExtraRow }
 
 const rowKey = (row: Row) =>
   row.kind === 'item' ? row.item.id : row.kind === 'extra' ? `extra:${row.row.key}` : `${row.kind}:${row.id}`
+
+/** A message the bot sent another bot: where the bot keeps such conversations apart, a way into that one. */
+function PeerOutRow({ item }: { item: Extract<MobileChatItem, { kind: 'peer_out' }> }) {
+  const { bot, lanes } = useConversation()
+  const threadId = item.thread?.id
+  if (bot && lanes?.threads && threadId)
+    return <ThreadBridge bot={bot} item={item} onOpen={() => lanes.openThread(threadId)} />
+  return <SystemLine item={item} />
+}
 
 function RowView({ row, found }: { row: Row; found: boolean }) {
   switch (row.kind) {
@@ -61,6 +75,8 @@ function RowView({ row, found }: { row: Row; found: boolean }) {
           return <ToolGroup steps={[{ kind: 'tool', tool: item }]} />
         case 'dispatch':
           return <DispatchCard item={item} />
+        case 'peer_out':
+          return <PeerOutRow item={item} />
         default:
           return <SystemLine item={item} />
       }
@@ -100,12 +116,8 @@ export function ConversationList({
   const list = useRef<FlatList<Row>>(null)
   const viewport = useRef(0)
   const [away, setAway] = useState(false)
-  const data = useMemo<Row[]>(() => {
-    const rows: Row[] = transcriptRows(items)
-    for (const row of extras) rows.push({ kind: 'extra', row })
-    // The list is inverted so it starts at the newest message, so it takes the rows newest first.
-    return rows.reverse()
-  }, [items, extras])
+  // The list is inverted so it starts at the newest message, so it takes the rows newest first.
+  const data = useMemo<Row[]>(() => withExtras(transcriptRows(items), extras).reverse(), [items, extras])
 
   const search = useConversationSearch()
   const [query, setQuery] = useState('')
