@@ -193,6 +193,129 @@ describe('Cursor tool bridge (Scenario D surface)', () => {
     expect(seen).toHaveLength(1)
   })
 
+  describe('snake_case argument names from Cursor models', () => {
+    const buildEdit = async (execute = vi.fn(async (_args: Record<string, unknown>) => 'edited')) => {
+      const bridge = await buildCursorToolBridge({
+        tools: {
+          edit: tool({
+            description: 'Edit a file.',
+            inputSchema: z.object({
+              path: z.string(),
+              oldString: z.string(),
+              newString: z.string(),
+              replaceAll: z.boolean().optional(),
+            }),
+            execute,
+          }),
+        },
+        signal: new AbortController().signal,
+      })
+      return { bridge, execute }
+    }
+
+    it('renames snake_case keys that the schema declares in camelCase and runs the tool', async () => {
+      const { bridge, execute } = await buildEdit()
+      const result = await bridge.customTools.edit!.execute(
+        { path: 'notes.txt', old_string: 'alpha\nbeta', new_string: 'alpha\nbeta\ngamma', replace_all: true },
+        { toolCallId: 'snake-1' }
+      )
+      expect(result).toMatchObject({ content: [{ type: 'text', text: 'edited' }] })
+      expect(result).not.toHaveProperty('isError')
+      expect(execute).toHaveBeenCalledTimes(1)
+      expect(execute.mock.calls[0]?.[0]).toEqual({
+        path: 'notes.txt',
+        oldString: 'alpha\nbeta',
+        newString: 'alpha\nbeta\ngamma',
+        replaceAll: true,
+      })
+    })
+
+    it('leaves camelCase arguments untouched', async () => {
+      const { bridge, execute } = await buildEdit()
+      await bridge.customTools.edit!.execute(
+        { path: 'notes.txt', oldString: 'a', newString: 'b' },
+        { toolCallId: 'camel-1' }
+      )
+      expect(execute.mock.calls[0]?.[0]).toEqual({ path: 'notes.txt', oldString: 'a', newString: 'b' })
+    })
+
+    it('never overwrites a camelCase argument that already arrived', async () => {
+      const { bridge, execute } = await buildEdit()
+      await bridge.customTools.edit!.execute(
+        { path: 'notes.txt', oldString: 'kept', old_string: 'ignored', new_string: 'b' },
+        { toolCallId: 'both-1' }
+      )
+      expect(execute.mock.calls[0]?.[0]).toEqual({ path: 'notes.txt', oldString: 'kept', newString: 'b' })
+    })
+
+    it('still refuses unknown keys and missing arguments', async () => {
+      const execute = vi.fn(async () => 'ok')
+      const bridge = await buildCursorToolBridge({
+        tools: {
+          strict: tool({
+            description: 'Strict tool.',
+            inputSchema: z.object({ filePath: z.string() }).strict(),
+            execute,
+          }),
+        },
+        signal: new AbortController().signal,
+      })
+
+      // `other_key` has no camelCase counterpart in the schema, so it stays and the strict schema rejects it.
+      const unknownKey = await bridge.customTools.strict!.execute(
+        { file_path: 'a.txt', other_key: 'x' },
+        { toolCallId: 'unknown-1' }
+      )
+      expect(unknownKey).toMatchObject({ isError: true })
+
+      const missing = await bridge.customTools.strict!.execute({ other_key: 'x' }, { toolCallId: 'missing-1' })
+      expect(missing).toMatchObject({ isError: true })
+      expect(execute).not.toHaveBeenCalled()
+    })
+
+    it('only renames top-level keys', async () => {
+      const execute = vi.fn(async (_args: Record<string, unknown>) => 'ok')
+      const bridge = await buildCursorToolBridge({
+        tools: {
+          nested: tool({
+            description: 'Nested tool.',
+            inputSchema: jsonSchema<Record<string, unknown>>({
+              type: 'object',
+              properties: { filePath: { type: 'string' }, options: { type: 'object', additionalProperties: true } },
+            }),
+            execute,
+          }),
+        },
+        signal: new AbortController().signal,
+      })
+      await bridge.customTools.nested!.execute(
+        { file_path: 'a.txt', options: { filePath: 'x', inner_key: 'y' } },
+        { toolCallId: 'nested-1' }
+      )
+      expect(execute.mock.calls[0]?.[0]).toEqual({ filePath: 'a.txt', options: { filePath: 'x', inner_key: 'y' } })
+    })
+  })
+
+  it('records a refused call as a canonical error so the card can close as failed', async () => {
+    const bridge = await buildCursorToolBridge({
+      tools: {
+        greet: tool({
+          description: 'greets',
+          inputSchema: z.object({ name: z.string().min(1) }),
+          execute: async ({ name }) => `hello ${name}`,
+        }),
+      },
+      signal: new AbortController().signal,
+    })
+    const invalid = await bridge.customTools.greet!.execute({ name: '' }, { toolCallId: 'refused-1' })
+    expect(invalid).toMatchObject({ isError: true })
+    expect(bridge.takeToolOutput('refused-1')).toMatchObject({
+      isError: true,
+      text: expect.stringContaining('Invalid arguments for "greet"'),
+    })
+    expect(bridge.takeToolOutput('refused-1')).toBeUndefined()
+  })
+
   it('keeps signatures stable across volatile descriptions and schemas', async () => {
     const signal = new AbortController().signal
     const build = (description: string, schema: z.ZodType) =>

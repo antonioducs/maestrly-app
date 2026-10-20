@@ -10,7 +10,7 @@ import type { SDKMessage } from '@cursor/sdk'
 import type { ChatStreamEvent, ChatUsage, ToolOutput, ToolState } from '../../../shared/chat'
 import { unwrapCursorMcpToolCall } from '../../../shared/cursor-mcp-tool'
 import { clipPersistedToolOutput } from '../message'
-import { modelOutputToChatToolOutput } from '../tool-output'
+import { modelOutputToChatToolOutput, toolOutputIsError } from '../tool-output'
 import { redactCursorCredentials } from './errors'
 
 export type CursorRunTerminalStatus = 'FINISHED' | 'ERROR' | 'CANCELLED' | 'EXPIRED'
@@ -116,6 +116,18 @@ function toolOutputText(result: unknown): string {
   } catch {
     return String(result)
   }
+}
+
+/**
+ * Error message carried by a completed tool call whose result flags a failure, or null when it does not. The SDK
+ * delivers the result of a custom tool as `{ status: 'success', value: { content, isError } }`; a plain MCP-style
+ * `{ content, isError }` is read the same way.
+ */
+function cursorResultErrorText(result: unknown): string | null {
+  if (!isRecord(result)) return null
+  const carrier = isRecord(result.value) && result.value.isError === true ? result.value : result
+  if (carrier.isError !== true) return null
+  return toolOutputText(carrier).trim() || 'Tool failed'
 }
 
 /**
@@ -329,6 +341,19 @@ export function createCursorStreamMapper(
           // Redact before clipping so a credential fragment cannot survive truncation.
           // Use the same 50k limit as the other native runtimes.
           const normalized = canonicalOutputFor?.(toolCallId) ?? modelOutputToChatToolOutput(message.result)
+          // The SDK reports every executed custom tool as completed, even when it refused the call or returned an
+          // error result, so the failure has to be read from the result itself.
+          const failure = toolOutputIsError(normalized)
+            ? toolOutputText(normalized).trim() || 'Tool failed'
+            : cursorResultErrorText(message.result)
+          if (failure !== null) {
+            closeTool(
+              toolCallId,
+              { status: 'error', error: clipPersistedToolOutput(redactCursorCredentials(failure)) },
+              events
+            )
+            return events
+          }
           const output =
             typeof normalized === 'string'
               ? clipPersistedToolOutput(redactCursorCredentials(normalized))
