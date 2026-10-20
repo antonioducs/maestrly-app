@@ -59,6 +59,7 @@ export function BotComposer({
   onCitationSent?: () => void
 }) {
   const { t } = useTranslation('fleet')
+  const serverId = fleet.serverId
   const [draftState, setDraftState] = useState(() => ({ botId: bot.id, text: readBotDraft(bot.id) }))
   const draft = draftState.botId === bot.id ? draftState.text : readBotDraft(bot.id)
   // Bound to the bot it was created for: a send that finishes after switching bots clears that bot's draft only.
@@ -101,11 +102,12 @@ export function BotComposer({
   const botSource = useMemo(
     () =>
       botChatComposerSource(
+        serverId,
         { id: bot.id, ceiling: bot.ceiling },
         () => onOpenScreenRef.current(),
         () => takeoverStateRef.current
       ),
-    [bot.id, bot.ceiling]
+    [serverId, bot.id, bot.ceiling]
   )
   // Skills, accounts and MCP servers belong to the bot's environment. Its Maestrly shows its settings on the
   // environment screen, never in the bot's browser area, and that screen needs no takeover of the bot.
@@ -121,7 +123,7 @@ export function BotComposer({
                   onOpenEnvironmentSettingsRef.current(target)
                   return
                 }
-                await window.api.fleetEnvironmentUiOpen(environmentId, target)
+                await window.api.fleetEnvironmentUiOpen(serverId, environmentId, target)
                 onOpenEnvironmentScreenRef.current?.()
               },
             },
@@ -171,7 +173,7 @@ export function BotComposer({
     if (locked) return
     let alive = true
     void window.api
-      .fleetListSelections(bot.id)
+      .fleetListSelections(serverId, bot.id)
       .then((result) => {
         if (!alive) return
         setOptions(result.options)
@@ -251,7 +253,7 @@ export function BotComposer({
     try {
       setError(null)
       await source.bot?.updateSelection(next)
-      const result = await window.api.fleetListSelections(bot.id)
+      const result = await window.api.fleetListSelections(serverId, bot.id)
       setOptions(result.options)
       setCurrent(result.current)
       await fleet.refresh()
@@ -276,7 +278,7 @@ export function BotComposer({
           data: new Uint8Array(await file.arrayBuffer()),
         }))
       )
-      await window.api.fleetSendMessage(bot.id, text.trim(), attachments, citation)
+      await window.api.fleetSendMessage(serverId, bot.id, text.trim(), attachments, citation)
       if (citation) onCitationSent?.()
       setDraft('')
       setImages((previous) => {
@@ -339,8 +341,8 @@ export function BotComposer({
           // Only this conversation's turn stops: the bot's routine runs and other conversations keep working.
           void (
             fleet.state.connection.features.includes(FLEET_PARALLEL_TURNS_FEATURE)
-              ? window.api.fleetCancelTurn(bot.id, 'primary')
-              : window.api.fleetBotAction(bot.id, 'cancel')
+              ? window.api.fleetCancelTurn(serverId, bot.id, 'primary')
+              : window.api.fleetBotAction(serverId, bot.id, 'cancel')
           ).catch((cause) => setError(fleetErrorMessage(cause)))
         }
         attachments={images.map((image) => image.attachment)}

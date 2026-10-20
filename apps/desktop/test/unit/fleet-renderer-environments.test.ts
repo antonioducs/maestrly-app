@@ -537,7 +537,7 @@ describe('environment UI wiring', () => {
     expect(environmentScreen).toContain('useFleetScreen(')
     expect(environmentScreen).toContain("t('screen.conflict')")
     // Its settings window starts hidden: opening the screen asks for it, or the tile shows black.
-    expect(environmentScreen).toContain("fleetEnvironmentUiOpen(environment.id, 'main')")
+    expect(environmentScreen).toContain("fleetEnvironmentUiOpen(serverId, environment.id, 'main')")
     // The environment screen shows Maestrly's settings: no bot is held.
     expect(environmentScreen).not.toContain('fleetTakeover')
   })
@@ -546,7 +546,7 @@ describe('environment UI wiring', () => {
     const composer = source('components/fleet/BotComposer.tsx')
     expect(composer).toContain('fleetEnvironmentUiOpen(')
     expect(composer).toContain('onOpenEnvironmentScreen')
-    expect(composer).toMatch(/\[bot\.id, bot\.ceiling\]\s*\)/)
+    expect(composer).toMatch(/\[serverId, bot\.id, bot\.ceiling\]\s*\)/)
   })
 
   it('scopes owner memory to all bots or one environment', () => {

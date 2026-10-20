@@ -38,6 +38,7 @@ export function EnvironmentCompaction({
   optionsKey: string
   onDirtyChange?: EnvironmentSettingsSectionProps['onDirtyChange']
 }) {
+  const serverId = fleet.serverId
   const { t, i18n } = useTranslation('fleet')
   // In the environment settings panel its bar saves this section with the others.
   const ownButtons = useOwnSaveButtons() || !onDirtyChange
@@ -85,7 +86,7 @@ export function EnvironmentCompaction({
   useEffect(() => {
     if (!ready) return
     let alive = true
-    window.api.fleetEnvironmentSelections(environment.id).then(
+    window.api.fleetEnvironmentSelections(serverId, environment.id).then(
       (value) => {
         if (!alive) return
         setOptions(value.options)
@@ -119,7 +120,7 @@ export function EnvironmentCompaction({
     setSaved(false)
     setError('')
     try {
-      const updated = await window.api.fleetPatchEnvironment(environment.id, {
+      const updated = await window.api.fleetPatchEnvironment(serverId, environment.id, {
         compaction: value,
         ...(fleet.state.connection.features.includes(FLEET_ENVIRONMENT_SETTINGS_FEATURE)
           ? { expected: { compaction: baseline } }

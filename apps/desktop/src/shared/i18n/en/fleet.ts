@@ -708,6 +708,7 @@ export default {
     environmentNotRunning: 'This environment is not running. Start it first.',
     botNotRunning: 'This bot is not running.',
     screenOffline: 'This screen is offline: its bot or environment is not running.',
+    serverUnknown: 'This bot server is no longer paired.',
   },
   conversation: { recalled: 'Recalled: {{titles}}' },
   transcript: {

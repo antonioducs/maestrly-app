@@ -14,6 +14,7 @@ import type { FleetController } from '@/lib/fleet/use-fleet'
 import { botEnvironments } from '@/lib/fleet/selectors'
 
 export function OwnerMemoryView({ fleet, onOpenBot }: { fleet: FleetController; onOpenBot: (id: string) => void }) {
+  const serverId = fleet.serverId
   const { t, i18n } = useTranslation('fleet')
   const [memory, setMemory] = useState<FleetOwnerMemory | null>(null)
   const [content, setContent] = useState('')
@@ -48,7 +49,7 @@ export function OwnerMemoryView({ fleet, onOpenBot }: { fleet: FleetController; 
     if (!connected) return
     let alive = true
     void window.api
-      .fleetOwnerMemoryList('all')
+      .fleetOwnerMemoryList(serverId, 'all')
       .then((value) => {
         if (alive) {
           setMemory(value)
@@ -99,7 +100,7 @@ export function OwnerMemoryView({ fleet, onOpenBot }: { fleet: FleetController; 
             onSubmit={(event) => {
               event.preventDefault()
               void mutate(async () => {
-                await window.api.fleetOwnerMemoryUpdate(entry.id, { content: editing.content.trim() })
+                await window.api.fleetOwnerMemoryUpdate(serverId, entry.id, { content: editing.content.trim() })
                 finishEditing(entry.id)
               })
             }}
@@ -163,7 +164,9 @@ export function OwnerMemoryView({ fleet, onOpenBot }: { fleet: FleetController; 
                 size="sm"
                 variant="ghost"
                 disabled={busy}
-                onClick={() => void mutate(() => window.api.fleetOwnerMemoryUpdate(entry.id, { status: 'archived' }))}
+                onClick={() =>
+                  void mutate(() => window.api.fleetOwnerMemoryUpdate(serverId, entry.id, { status: 'archived' }))
+                }
               >
                 {t('ownerMemory.archive')}
               </Button>
@@ -173,7 +176,7 @@ export function OwnerMemoryView({ fleet, onOpenBot }: { fleet: FleetController; 
                   variant="ghost"
                   disabled={busy}
                   onClick={() =>
-                    void mutate(() => window.api.fleetOwnerMemoryUpdate(entry.id, { environmentId: null }))
+                    void mutate(() => window.api.fleetOwnerMemoryUpdate(serverId, entry.id, { environmentId: null }))
                   }
                 >
                   {t('ownerMemory.makeGlobal')}
@@ -185,7 +188,9 @@ export function OwnerMemoryView({ fleet, onOpenBot }: { fleet: FleetController; 
               size="sm"
               variant="ghost"
               disabled={busy}
-              onClick={() => void mutate(() => window.api.fleetOwnerMemoryUpdate(entry.id, { status: 'active' }))}
+              onClick={() =>
+                void mutate(() => window.api.fleetOwnerMemoryUpdate(serverId, entry.id, { status: 'active' }))
+              }
             >
               {t('ownerMemory.restore')}
             </Button>
@@ -239,6 +244,7 @@ export function OwnerMemoryView({ fleet, onOpenBot }: { fleet: FleetController; 
                 event.preventDefault()
                 void mutate(async () => {
                   await window.api.fleetOwnerMemoryCreate(
+                    serverId,
                     scoped
                       ? { content: content.trim(), environmentId: scopeValue === 'global' ? null : scopeValue }
                       : { content: content.trim() }
@@ -319,7 +325,7 @@ export function OwnerMemoryView({ fleet, onOpenBot }: { fleet: FleetController; 
           onCancel={() => {
             if (!busy) setConfirm(null)
           }}
-          onConfirm={() => void mutate(() => window.api.fleetOwnerMemoryDelete(confirm.id))}
+          onConfirm={() => void mutate(() => window.api.fleetOwnerMemoryDelete(serverId, confirm.id))}
         />
       )}
     </section>

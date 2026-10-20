@@ -5,6 +5,7 @@ import type { FleetProvisioningTargetInput } from '../../../preload/api-fleet'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { useFleetServerId } from '@/lib/fleet/server-context'
 
 /**
  * Adds an API key account to an environment (shared by its bots) or, before environments, to a bot. The key goes
@@ -19,6 +20,7 @@ export function ApiKeyAccountForm({
   onAdded: () => Promise<void>
   onDirtyChange?: (dirty: boolean, save: () => Promise<boolean>, discard: () => void) => void
 }) {
+  const serverId = useFleetServerId()
   const { t } = useTranslation('fleet')
   const [accountKind, setAccountKind] = useState<FleetApiKeyProviderKind>('openai')
   const [accountName, setAccountName] = useState('')
@@ -68,7 +70,7 @@ export function ApiKeyAccountForm({
     setBusy(true)
     setError('')
     try {
-      await window.api.fleetAddApiKeyAccount(target, { kind: accountKind, name, key, baseURL: url || null })
+      await window.api.fleetAddApiKeyAccount(serverId, target, { kind: accountKind, name, key, baseURL: url || null })
       if (mounted.current) discard()
       await onAdded()
       return true

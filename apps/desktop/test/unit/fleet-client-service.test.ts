@@ -200,10 +200,8 @@ describe('fleet client service', () => {
       const request = parseFleetMediaUrl(url)!
       expect(request).toMatchObject({ botId: 'bot', fileId: 'f-clip' })
       expect(state.broadcasts.filter((item) => item.channel === 'fleet:mediaProgress').at(-1)?.payload).toEqual({
-        botId: 'bot',
-        fileId: 'f-clip',
-        received: bytes.length,
-        total: bytes.length,
+        serverId: service.serverId,
+        progress: { botId: 'bot', fileId: 'f-clip', received: bytes.length, total: bytes.length },
       })
       expect(await service.mediaEntry({ ...request, capability: '0'.repeat(32) })).toBeNull()
       expect(await service.mediaEntry({ ...request, fileId: 'f-other' })).toBeNull()
@@ -261,10 +259,8 @@ describe('fleet client service', () => {
     expect(service.getActiveDownload('bot', 'f-file')).toMatchObject({ receivedBytes: 0, totalBytes: 2048 })
     const progress = state.broadcasts.filter((event) => event.channel === 'fleet:download')
     expect(progress.at(-1)?.payload).toMatchObject({
-      type: 'progress',
-      botId: 'bot',
-      fileId: 'f-file',
-      totalBytes: 2048,
+      serverId: service.serverId,
+      event: { type: 'progress', botId: 'bot', fileId: 'f-file', totalBytes: 2048 },
     })
     finish('/downloads/big.zip')
     const receipt = await first
@@ -272,9 +268,10 @@ describe('fleet client service', () => {
     expect(service.getActiveDownload('bot', 'f-file')).toBeNull()
     expect(state.broadcasts.at(-1)).toEqual({
       channel: 'fleet:download',
-      payload: { type: 'saved', botId: 'bot', fileId: 'f-file', receipt },
+      payload: { serverId: service.serverId, event: { type: 'saved', botId: 'bot', fileId: 'f-file', receipt } },
     })
     expect(settled).toHaveBeenCalledExactlyOnceWith(
+      service.serverId,
       expect.objectContaining({ outcome: 'saved', name: 'big.zip', path: '/downloads/big.zip', receipt }),
       'Scout'
     )
@@ -296,11 +293,15 @@ describe('fleet client service', () => {
     await vi.waitFor(() => expect(state.download).toHaveBeenCalledOnce())
     service.cancelDownload('bot', 'f-file')
     await expect(saving).rejects.toThrow('FLEET_DOWNLOAD_CANCELED')
-    expect(state.broadcasts.at(-1)?.payload).toEqual({ type: 'canceled', botId: 'bot', fileId: 'f-file' })
+    expect(state.broadcasts.at(-1)?.payload).toEqual({
+      serverId: service.serverId,
+      event: { type: 'canceled', botId: 'bot', fileId: 'f-file' },
+    })
     expect(settled).not.toHaveBeenCalled()
     state.download.mockRejectedValueOnce(new FleetClientError('NOT_FOUND', 404, 'File expired'))
     await expect(service.downloadFile('bot', 'f-file')).rejects.toThrow('FLEET_FILE_NOT_FOUND')
     expect(settled).toHaveBeenCalledExactlyOnceWith(
+      service.serverId,
       expect.objectContaining({ outcome: 'failed', error: 'FLEET_FILE_NOT_FOUND' }),
       null
     )
@@ -356,7 +357,7 @@ describe('fleet client service', () => {
     state.events[0].onEvent(links)
     expect(bridge.handle).toHaveBeenLastCalledWith(links)
     expect(state.broadcasts.filter((event) => event.channel === 'fleet:event').map((event) => event.payload)).toEqual([
-      links,
+      { serverId: service.serverId, event: links },
     ])
     await service.disconnect()
     expect(bridge.unpaired).toHaveBeenCalledWith('device-1')
@@ -400,7 +401,7 @@ describe('fleet client service', () => {
       },
     })
     expect(state.broadcasts.find((event) => event.channel === 'fleet:connection')?.payload).toMatchObject({
-      deviceId: 'device-1',
+      connection: { deviceId: 'device-1' },
     })
     expect(readFleetSettings()).toMatchObject({
       url: 'http://127.0.0.1:7443',
@@ -523,6 +524,35 @@ describe('fleet client service', () => {
     expect(readFleetSettings().token).toBe('secret')
     expect(state.secure.size).toBe(0)
     service.stop()
+  })
+
+  it('names its server in every broadcast, and lists it while paired', async () => {
+    const service = new FleetClientService()
+    expect(service.servers()).toEqual([])
+    await service.connect({ url: 'http://127.0.0.1:7443', code: 'ABCDEFGH' })
+    const serverId = service.serverId
+    // The server paired keeps the id its hosts are named with.
+    expect(serverId).toBe(state.settings.get('fleet.serverId'))
+    expect(state.broadcasts).toContainEqual({
+      channel: 'fleet:connection',
+      payload: { serverId, connection: expect.objectContaining({ state: 'connecting' }) },
+    })
+    expect(state.broadcasts.filter((event) => event.channel === 'fleet:servers').at(-1)?.payload).toEqual([
+      { id: serverId, installed: false, connection: service.getConnection() },
+    ])
+    const event = { type: 'inbox.updated', at: '2026-01-01T00:00:00Z', items: [] }
+    state.events[0].onEvent(event)
+    expect(state.broadcasts.filter((item) => item.channel === 'fleet:event').at(-1)?.payload).toEqual({
+      serverId,
+      event,
+    })
+    await service.disconnect()
+    expect(state.broadcasts.filter((item) => item.channel === 'fleet:servers').at(-1)?.payload).toEqual([])
+    expect(state.broadcasts.filter((item) => item.channel === 'fleet:connection').at(-1)?.payload).toEqual({
+      serverId,
+      connection: expect.objectContaining({ state: 'unconfigured' }),
+    })
+    expect(service.servers()).toEqual([])
   })
 
   it('rejects unsafe URLs before calling the gateway', async () => {

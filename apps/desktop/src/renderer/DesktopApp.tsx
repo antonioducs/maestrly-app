@@ -33,7 +33,9 @@ import { AboutModal } from '@/components/AboutModal'
 import { useDrawerState } from '@/lib/use-drawer-state'
 import { useWorkspaces } from '@/lib/use-workspaces'
 import { useMainPanels, type FleetView } from '@/lib/use-main-panels'
-import { useFleet } from '@/lib/fleet/use-fleet'
+import { useFleets, type FleetServers } from '@/lib/fleet/use-fleet'
+import { FleetServerProvider } from '@/lib/fleet/server-context'
+import { defaultFleetServer, type FleetServerId, NO_FLEET_SERVER } from '../shared/fleet-servers'
 import { useBotUpdates } from '@/lib/fleet/use-bot-updates'
 import { PersistentBotViews } from '@/components/fleet/PersistentBotViews'
 import { EnvironmentView } from '@/components/fleet/EnvironmentView'
@@ -73,6 +75,17 @@ import { type HostId, hostKey, LOCAL_HOST_ID } from '../shared/host-key'
 import type { HostView } from '../shared/hosts'
 
 export function DesktopApp() {
+  const fleets = useFleets()
+  // The Bots tab shows one server: the default one, the installed or else the first paired.
+  const botsServer = defaultFleetServer(fleets.servers)?.id ?? NO_FLEET_SERVER
+  return (
+    <FleetServerProvider serverId={botsServer}>
+      <DesktopShell fleets={fleets} botsServer={botsServer} />
+    </FleetServerProvider>
+  )
+}
+
+function DesktopShell({ fleets, botsServer }: { fleets: FleetServers; botsServer: FleetServerId }) {
   const api = hostApi(LOCAL_HOST_ID)
   const { t } = useTranslation('ui')
   const [active, setActive] = useState<Conversation | null>(null)
@@ -305,7 +318,7 @@ export function DesktopApp() {
     refreshWorkspaces,
     refreshHostWorkspaces,
   })
-  const fleet = useFleet()
+  const fleet = fleets.controller(botsServer)
   const botUpdates = useBotUpdates(fleet)
   const [fleetTabRequest, setFleetTabRequest] = useState(0)
   const openFleetView = useCallback(

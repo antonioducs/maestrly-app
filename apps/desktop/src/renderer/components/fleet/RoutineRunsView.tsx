@@ -44,6 +44,7 @@ import type { FleetController } from '@/lib/fleet/use-fleet'
 import { cn } from '@/lib/utils'
 import { RoutineRunConversation } from './RoutineRunConversation'
 import { SettingsSwitch } from './SettingsSwitch'
+import { useFleetServerId } from '@/lib/fleet/server-context'
 
 const STATE_ICON: Record<RunState, { icon: typeof Check; className: string }> = {
   running: {
@@ -63,6 +64,7 @@ const UNDO_MS = 6_000
 
 /** A bot's settings for its runs' conversations: saved as each one changes. */
 function RunSettingsDialog({ bot, open, onClose }: { bot: FleetBot; open: boolean; onClose: () => void }) {
+  const serverId = useFleetServerId()
   const { t } = useTranslation('fleet')
   const [settings, setSettings] = useState<FleetRoutineRunSettings>(() => runSettingsOf(bot))
   const [saved, setSaved] = useState(false)
@@ -83,7 +85,7 @@ function RunSettingsDialog({ bot, open, onClose }: { bot: FleetBot; open: boolea
     setSaved(false)
     setError(null)
     try {
-      await window.api.fleetSetRunSettings(bot.id, next)
+      await window.api.fleetSetRunSettings(serverId, bot.id, next)
       setSaved(true)
     } catch (cause) {
       setSettings(previous)
@@ -414,6 +416,7 @@ export function RoutineRunsView({
   onOpenScreen: () => void
   visible: boolean
 }) {
+  const serverId = fleet.serverId
   const { t, i18n } = useTranslation('fleet')
   const runsState = fleet.state.runs[bot.id] ?? emptyRuns
   const { ensureRuns, loadRuns, dispatch } = fleet
@@ -435,7 +438,7 @@ export function RoutineRunsView({
       pending.current.delete(runId)
       setPendingIds([...pending.current.keys()])
       try {
-        const run = await window.api.fleetDeleteRunConversation(bot.id, runId)
+        const run = await window.api.fleetDeleteRunConversation(serverId, bot.id, runId)
         dispatch({ type: 'runs.upsert', botId: bot.id, run })
       } catch (cause) {
         setError(String(cause).includes('FLEET_RUN_CONFLICT') ? t('runs.delete.conflict') : fleetErrorMessage(cause))

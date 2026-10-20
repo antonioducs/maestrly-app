@@ -54,6 +54,7 @@ export function LaneTranscript({
   /** Changes when the owner sends a message: the transcript follows its end again. */
   follow?: number
 }) {
+  const serverId = fleet.serverId
   const { t } = useTranslation('fleet')
   const scrollRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
@@ -105,7 +106,7 @@ export function LaneTranscript({
   const host = useMemo<GenUiHost>(() => ({ live, send: undefined }), [live])
   const removeQueued = useCallback(
     async (inputId: string) => {
-      await window.api.fleetRemoveQueuedMessage(bot.id, inputId)
+      await window.api.fleetRemoveQueuedMessage(serverId, bot.id, inputId)
       await onLoad()
     },
     [bot.id, onLoad]
@@ -166,14 +167,14 @@ export function LaneTranscript({
                         <BotAgentActivity
                           bot={bot}
                           segment={segment}
-                          imageCache={fleetImageCache}
+                          imageCache={fleetImageCache(serverId)}
                           onShowOnComputer={onOpenScreen}
                         />
                       ) : segment.kind === 'images' ? (
                         <BotTranscriptImages
                           botId={bot.id}
                           images={segment.item.images}
-                          cache={fleetImageCache}
+                          cache={fleetImageCache(serverId)}
                           size="large"
                         />
                       ) : (
@@ -183,7 +184,7 @@ export function LaneTranscript({
                           fleet={fleet}
                           onOpenBot={onOpenBot}
                           onOpenScreen={onOpenScreen}
-                          imageCache={fleetImageCache}
+                          imageCache={fleetImageCache(serverId)}
                           latestTodoId={latestTodoId}
                           routineSchedule={null}
                           repeatedRoutine={false}

@@ -1894,7 +1894,7 @@ async function runFleetScenario(workspaceOnly: boolean) {
         data: {},
       },
     })
-    await page.evaluate(() => window.api.fleetRefresh())
+    await page.evaluate(async () => window.api.fleetRefresh((await window.api.fleetServers())[0].id))
     expect(requests.filter((item) => item.key === 'activity')).toEqual([])
     await page.getByRole('button', { name: 'Fechar ajustes', exact: true }).click()
     const setupScout = fleetBotSchema.parse({

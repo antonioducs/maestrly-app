@@ -72,6 +72,7 @@ export function BotScreen({
   streaming?: boolean
   visible?: boolean
 }) {
+  const serverId = fleet.serverId
   const { t } = useTranslation('fleet')
   const target = useRef<HTMLDivElement>(null)
   const [takeover, setTakeover] = useState<FleetTakeoverState>(bot.takeover)
@@ -157,11 +158,11 @@ export function BotScreen({
     setError('')
     setPopover(null)
     try {
-      const state = await window.api.fleetTakeover(bot.id)
+      const state = await window.api.fleetTakeover(serverId, bot.id)
       setTakeover(state)
       screen.resetRetries()
       screen.retryControl()
-      if (openAccounts) await window.api.fleetUiOpen(bot.id, { target: 'accounts' })
+      if (openAccounts) await window.api.fleetUiOpen(serverId, bot.id, { target: 'accounts' })
     } catch (cause) {
       setError(isTakeoverConflict(cause) ? t('screen.takeConflict') : fleetErrorText(cause, t))
     } finally {
@@ -173,7 +174,7 @@ export function BotScreen({
     setBusy(true)
     setError('')
     try {
-      await window.api.fleetEnvironmentUiOpen(environmentId, 'accounts')
+      await window.api.fleetEnvironmentUiOpen(serverId, environmentId, 'accounts')
       onOpenEnvironmentScreen?.()
     } catch {
       setError(t('environment.screenLoginFailed'))
@@ -185,7 +186,7 @@ export function BotScreen({
     setBusy(true)
     setError('')
     try {
-      const state = await window.api.fleetReleaseTakeover(bot.id, {
+      const state = await window.api.fleetReleaseTakeover(serverId, bot.id, {
         note: note.trim() || null,
         continue: true,
       })

@@ -186,7 +186,7 @@ describe('fleet renderer wiring', () => {
     for (const text of [
       'environmentUpdateState(',
       'updateBlockers(',
-      "fleetEnvironmentUpdate(environment.id, 'now')",
+      "fleetEnvironmentUpdate(serverId, environment.id, 'now')",
       "fleet.updateEnvironment(environment.id, 'idle')",
       'fleet.cancelEnvironmentUpdate(environment.id)',
       "t('updates.cancel')",

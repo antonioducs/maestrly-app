@@ -6,6 +6,7 @@ import { ChatVideoLightbox } from '@/components/chat/ChatVideoLightbox'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
 import { formatMediaTime } from '@/lib/media-time'
 import type { FleetFileTransfer } from './BotTranscriptFiles'
+import { useFleetServerId } from '@/lib/fleet/server-context'
 
 type Phase =
   | { kind: 'waiting' }
@@ -29,6 +30,7 @@ export function VideoPreview({
   file: FleetFileRef
   transfer: FleetFileTransfer
 }) {
+  const serverId = useFleetServerId()
   const { t } = useTranslation('fleet')
   const container = useRef<HTMLDivElement>(null)
   const opener = useRef<HTMLButtonElement>(null)
@@ -56,13 +58,14 @@ export function VideoPreview({
     let cancelled = false
     setPhase({ kind: 'loading', progress: null })
     setDuration(null)
-    const stop = window.api.onFleetMediaProgress((progress) => {
-      if (cancelled || progress.botId !== botId || progress.fileId !== file.id || !progress.total) return
+    const stop = window.api.onFleetMediaProgress((progressServerId, progress) => {
+      if (cancelled || progressServerId !== serverId) return
+      if (progress.botId !== botId || progress.fileId !== file.id || !progress.total) return
       setPhase((previous) =>
         previous.kind === 'loading' ? { kind: 'loading', progress: progress.received / progress.total } : previous
       )
     })
-    window.api.fleetPrepareMedia(botId, file.id).then(
+    window.api.fleetPrepareMedia(serverId, botId, file.id).then(
       (url) => {
         if (!cancelled) setPhase({ kind: 'ready', url })
       },
@@ -85,7 +88,7 @@ export function VideoPreview({
       cancelled = true
       stop()
     }
-  }, [visible, botId, file.id, attempt])
+  }, [visible, serverId, botId, file.id, attempt])
 
   const close = () => {
     setOpen(false)

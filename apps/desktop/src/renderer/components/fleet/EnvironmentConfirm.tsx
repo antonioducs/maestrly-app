@@ -28,6 +28,7 @@ export function EnvironmentConfirm({
   onCancel: () => void
   onDone: (kind: EnvironmentConfirmKind) => void
 }) {
+  const serverId = fleet.serverId
   const { t, i18n } = useTranslation('fleet')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -56,8 +57,8 @@ export function EnvironmentConfirm({
       // server offers. Updating now does the same through the update route, which also drops a waiting update.
       const updated =
         kind === 'updateNow'
-          ? await window.api.fleetEnvironmentUpdate(environment.id, 'now')
-          : await window.api.fleetEnvironmentAction(environment.id, kind === 'update' ? 'restart' : kind)
+          ? await window.api.fleetEnvironmentUpdate(serverId, environment.id, 'now')
+          : await window.api.fleetEnvironmentAction(serverId, environment.id, kind === 'update' ? 'restart' : kind)
       fleet.dispatch({
         type: 'event',
         value: { type: 'environment.updated', at: new Date().toISOString(), environment: updated },

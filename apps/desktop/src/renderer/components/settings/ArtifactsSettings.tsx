@@ -15,6 +15,7 @@ import { useLegacyArtifacts } from '@/components/artifacts/use-artifacts'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { choiceClass } from '@/lib/fleet/choice'
 import { cn } from '@/lib/utils'
+import { defaultFleetServer } from '../../../shared/fleet-servers'
 
 const MAX_QUOTA_GB = 100
 const MAX_ADDRESS_CHARS = 300
@@ -175,7 +176,8 @@ export function ArtifactsSettings({
     const [nextStatus, nextHost, nextConnection] = await Promise.allSettled([
       window.api.artifacts.serverStatus(),
       window.api.artifacts.serverHost(),
-      window.api.fleetGetConnection(),
+      // Artifacts go to the default server: the installed one, else the first paired.
+      window.api.fleetServers().then((servers) => defaultFleetServer(servers)?.connection ?? null),
     ])
     setStatus(nextStatus.status === 'fulfilled' ? nextStatus.value : { state: 'unreachable' })
     setHost(nextHost.status === 'fulfilled' ? nextHost.value : null)
@@ -186,10 +188,7 @@ export function ArtifactsSettings({
   useEffect(() => {
     void refresh()
     const offChanged = window.api.artifacts.onChanged(() => void refresh())
-    const offConnection = window.api.onFleetConnection((view) => {
-      setConnection(view)
-      void refresh()
-    })
+    const offConnection = window.api.onFleetConnection(() => void refresh())
     const pending = timers.current
     return () => {
       offChanged()

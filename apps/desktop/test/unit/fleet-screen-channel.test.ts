@@ -5,6 +5,9 @@ import {
   screenCloseOutcome,
   type ScreenApi,
 } from '../../src/renderer/lib/fleet/screen-channel'
+import type { FleetServerId } from '../../src/shared/fleet-servers'
+
+const SCREEN_SERVER = 'aaaaaaaa-0000-4000-8000-000000000001' as FleetServerId
 
 type State = Parameters<Parameters<ScreenApi['onFleetScreenState']>[0]>[0]
 type Data = Parameters<Parameters<ScreenApi['onFleetScreenData']>[0]>[0]
@@ -48,7 +51,7 @@ describe('fleet raw screen channel', () => {
       fake.emitData({ channelId: 'ch1', data: new Uint8Array([1, 2]).buffer })
       return { channelId: 'ch1' }
     })
-    const channel = await FleetScreenChannel.open(fake.api, 'bot', 'view')
+    const channel = await FleetScreenChannel.open(fake.api, SCREEN_SERVER, 'bot', 'view')
     expect(channel.readyState).toBe(1)
     const received: number[] = []
     channel.onmessage = (event) => received.push(...new Uint8Array(event.data))
@@ -56,7 +59,7 @@ describe('fleet raw screen channel', () => {
   })
   it('supports a later open, binary slices, receive, and close codes', async () => {
     const fake = fakeApi()
-    const channel = await FleetScreenChannel.open(fake.api, 'bot', 'control')
+    const channel = await FleetScreenChannel.open(fake.api, SCREEN_SERVER, 'bot', 'control')
     const opened = vi.fn()
     const closed = vi.fn()
     const received = vi.fn()
@@ -77,7 +80,7 @@ describe('fleet raw screen channel', () => {
   })
   it('closes through preload and handles an error', async () => {
     const fake = fakeApi()
-    const channel = await FleetScreenChannel.open(fake.api, 'bot', 'view')
+    const channel = await FleetScreenChannel.open(fake.api, SCREEN_SERVER, 'bot', 'view')
     const failed = vi.fn()
     channel.onerror = failed
     fake.emitState({ channelId: 'ch1', state: 'error' })

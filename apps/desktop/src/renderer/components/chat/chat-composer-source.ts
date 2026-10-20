@@ -2,6 +2,7 @@ import type { FleetBot, FleetSelection } from '@maestrly/bot-fleet-protocol'
 import type { HostApi } from '../../../preload'
 import type { FleetConversationOps } from '../../../preload/api-fleet'
 import type { ChatPermMode } from '../../../shared/chat'
+import type { FleetServerId } from '../../../shared/fleet-servers'
 
 type RemoteMethods = {
   [Op in keyof FleetConversationOps]: (
@@ -12,7 +13,7 @@ type RemoteMethods = {
 /** Menu data for one primary conversation. Desktop callers use the local source by default. */
 export interface ChatComposerSource extends RemoteMethods {
   bot?: {
-    listSelections: typeof window.api.fleetListSelections
+    listSelections: (botId: string) => ReturnType<typeof window.api.fleetListSelections>
     updateSelection: (selection: FleetSelection | null) => Promise<FleetBot>
     ceiling: ChatPermMode
     setCeiling: (ceiling: ChatPermMode) => Promise<FleetBot>
@@ -44,11 +45,17 @@ export function localChatComposerSource(api: HostApi, conversationId: string): C
  * the takeover state is read at call time.
  */
 export function botChatComposerSource(
+  serverId: FleetServerId,
   bot: Pick<FleetBot, 'id' | 'ceiling'>,
   onOpenScreen: () => void,
   takeoverState: () => FleetBot['takeover']['state']
 ): ChatComposerSource {
-  const call = window.api.fleetConversationCall
+  const fleetCall = window.api.fleetConversationCall
+  const call: <Op extends keyof FleetConversationOps>(
+    botId: string,
+    op: Op,
+    ...args: Parameters<FleetConversationOps[Op]>
+  ) => Promise<ReturnType<FleetConversationOps[Op]>> = (botId, op, ...args) => fleetCall(serverId, botId, op, ...args)
   const botId = bot.id
   return {
     chatConfig: () => call(botId, 'chatConfig'),
@@ -66,13 +73,13 @@ export function botChatComposerSource(
     chatCompact: () => call(botId, 'chatCompact'),
     chatBackgroundCompactionRetry: () => call(botId, 'chatBackgroundCompactionRetry'),
     bot: {
-      listSelections: window.api.fleetListSelections,
-      updateSelection: (selection) => window.api.fleetUpdateBot(botId, { selection }),
+      listSelections: (id) => window.api.fleetListSelections(serverId, id),
+      updateSelection: (selection) => window.api.fleetUpdateBot(serverId, botId, { selection }),
       ceiling: bot.ceiling,
-      setCeiling: (ceiling) => window.api.fleetUpdateBot(botId, { ceiling }),
+      setCeiling: (ceiling) => window.api.fleetUpdateBot(serverId, botId, { ceiling }),
       manage: async (target) => {
-        if (takeoverState() !== 'human') await window.api.fleetTakeover(botId)
-        await window.api.fleetUiOpen(botId, { target })
+        if (takeoverState() !== 'human') await window.api.fleetTakeover(serverId, botId)
+        await window.api.fleetUiOpen(serverId, botId, { target })
         onOpenScreen()
       },
     },

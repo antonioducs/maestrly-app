@@ -21,10 +21,17 @@ import {
 import { broadcast } from '../../window-ipc'
 import { fleetAlertFor, type FleetAlert } from './alerts'
 import { FleetApiClient, FleetClientError } from './api'
-import type { FleetConnectionView } from '../../../shared/fleet-servers'
+import {
+  type FleetConnectionView,
+  type FleetServerId,
+  type FleetServerView,
+  NO_FLEET_SERVER,
+  parseFleetServerId,
+} from '../../../shared/fleet-servers'
 import { FleetEvents } from './events'
 import {
   clearFleetCredentials,
+  fleetServerId,
   readFleetSettings,
   saveFleetCredentials,
   saveFleetUrl,
@@ -74,19 +81,43 @@ export class FleetClientService {
   private readonly mediaUrls = new FleetMediaUrls()
   readonly media = new FleetMediaCache({
     root: () => path.join(app.getPath('userData'), 'fleet-media-cache'),
-    onProgress: (progress) => broadcast('fleet:mediaProgress', progress),
+    onProgress: (progress) => broadcast('fleet:mediaProgress', { serverId: this.serverId, progress }),
   })
   private readonly transfers = new FleetActiveDownloads({
-    emit: (event) => broadcast('fleet:download', event),
+    emit: (event) => broadcast('fleet:download', { serverId: this.serverId, event }),
     settled: (download) =>
-      this.onDownloadSettled?.(download, this.snapshot.bots.find((bot) => bot.id === download.botId)?.name ?? null),
+      this.onDownloadSettled?.(
+        this.serverId,
+        download,
+        this.snapshot.bots.find((bot) => bot.id === download.botId)?.name ?? null
+      ),
   })
   /** Plays a bot's alert; set by the main process, which owns the sound settings. */
   onArtifactEvent: ((event: ArtifactHostEvent | { type: 'changed' }) => void) | null = null
   onAlert: ((botId: string, alert: FleetAlert) => void) | null = null
   /** Tells the owner a bot file finished saving or failed; set by the main process, which shows the notice. */
-  onDownloadSettled: ((download: FleetSettledDownload, botName: string | null) => void) | null = null
+  onDownloadSettled:
+    | ((serverId: FleetServerId, download: FleetSettledDownload, botName: string | null) => void)
+    | null = null
   private readonly listeners = new Set<() => void>()
+  private currentServerId: FleetServerId | null = null
+
+  /** This computer's id for the paired server; no server while unpaired. */
+  get serverId(): FleetServerId {
+    return this.currentServerId ?? NO_FLEET_SERVER
+  }
+
+  /** The paired server as the windows list it; null while unpaired. */
+  view(): FleetServerView | null {
+    return this.currentServerId && this.connection.url
+      ? { id: this.currentServerId, installed: false, connection: this.connection }
+      : null
+  }
+
+  servers(): FleetServerView[] {
+    const view = this.view()
+    return view ? [view] : []
+  }
 
   /** Calls back after the connection or what is known of the server changed; returns the function that stops it. */
   onChange(listener: () => void): () => void {
@@ -122,6 +153,7 @@ export class FleetClientService {
       if (allowed.ok) this.useCredentials(allowed.origin, settings.token, settings.tokenPersistence)
     } else if (settings.url) {
       const allowed = isAllowedFleetUrl(settings.url)
+      if (allowed.ok) this.currentServerId = parseFleetServerId(fleetServerId())
       if (allowed.ok)
         this.setConnection({
           url: allowed.origin,
@@ -148,7 +180,8 @@ export class FleetClientService {
       this.downloads = new AbortController()
     }
     this.connection = { ...this.connection, ...patch }
-    broadcast('fleet:connection', this.connection)
+    broadcast('fleet:connection', { serverId: this.serverId, connection: this.connection })
+    broadcast('fleet:servers', this.servers())
     this.changed()
     if (patch.state || patch.features) this.onArtifactEvent?.({ type: 'changed' })
   }
@@ -247,6 +280,7 @@ export class FleetClientService {
     this.stop()
     this.api = new FleetApiClient(url, token)
     this.snapshot = emptySnapshot()
+    this.currentServerId = parseFleetServerId(fleetServerId())
     this.setConnection({
       features: [],
       state: 'connecting',
@@ -330,6 +364,7 @@ export class FleetClientService {
     // A new pairing gets a new device id, so nothing cached under this one could be reached again.
     await this.media.clear().catch(() => undefined)
     this.snapshot = emptySnapshot()
+    // Broadcast under the server's id: the windows drop that server's state.
     this.setConnection({
       features: [],
       state: 'unconfigured',
@@ -339,6 +374,7 @@ export class FleetClientService {
       error: null,
       tokenPersistence: 'secure',
     })
+    this.currentServerId = null
   }
 
   async refresh(): Promise<FleetSnapshot> {
@@ -433,7 +469,7 @@ export class FleetClientService {
         break
       }
     }
-    broadcast('fleet:event', event)
+    broadcast('fleet:event', { serverId: this.serverId, event })
     this.changed()
   }
 

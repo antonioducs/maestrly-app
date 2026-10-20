@@ -1,4 +1,5 @@
 import type { FleetScreenData, FleetScreenState, FleetScreenTargetInput } from '../../../preload/api-fleet'
+import type { FleetServerId } from '../../../shared/fleet-servers'
 
 export type ScreenCloseOutcome = 'released' | 'offline' | 'conflict' | 'retry' | 'error'
 /**
@@ -83,6 +84,7 @@ export class FleetScreenChannel {
   /** Opens a bot's browser or apps area, or an environment's screen; a bare bot id is its browser area. */
   static async open(
     api: ScreenApi,
+    serverId: FleetServerId,
     target: FleetScreenTargetInput,
     mode: 'view' | 'control',
     onState?: (state: FleetScreenState) => void
@@ -103,7 +105,7 @@ export class FleetScreenChannel {
       } else earlyStates.push(state)
     })
     try {
-      const { channelId } = await api.fleetScreenOpen(target, mode)
+      const { channelId } = await api.fleetScreenOpen(serverId, target, mode)
       channel = new FleetScreenChannel(channelId, api, offData, offState)
       for (const state of earlyStates) {
         if (state.channelId === channelId) {

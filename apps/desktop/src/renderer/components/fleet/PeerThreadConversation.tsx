@@ -159,6 +159,7 @@ export function PeerThreadConversation({
   onOpenMain: () => void
   onDelete: () => void
 }) {
+  const serverId = fleet.serverId
   const { t, i18n } = useTranslation('fleet')
   const state = threadState(thread, bot)
   const own = thread.conversation === 'own'
@@ -193,7 +194,7 @@ export function PeerThreadConversation({
     setBusy(true)
     setError(null)
     try {
-      await window.api.fleetSendPeerThreadMessage(bot.id, thread.id, value)
+      await window.api.fleetSendPeerThreadMessage(serverId, bot.id, thread.id, value)
       setDraft('')
       setFollow((count) => count + 1)
       await load().catch(() => {})
@@ -206,7 +207,7 @@ export function PeerThreadConversation({
   const patch = async (change: { pinned?: boolean; resume?: true }) => {
     setError(null)
     try {
-      const updated = await window.api.fleetPatchPeerThread(bot.id, thread.id, change)
+      const updated = await window.api.fleetPatchPeerThread(serverId, bot.id, thread.id, change)
       dispatch({ type: 'threads.upsert', botId: bot.id, thread: updated })
     } catch (cause) {
       setError(describe(cause))
@@ -289,7 +290,9 @@ export function PeerThreadConversation({
               className={cn(action, 'border border-border-strong text-foreground')}
               // This bot's turn in the thread stops; its other conversations keep working.
               onClick={() =>
-                void window.api.fleetCancelTurn(bot.id, thread.id).catch((cause) => setError(fleetErrorMessage(cause)))
+                void window.api
+                  .fleetCancelTurn(serverId, bot.id, thread.id)
+                  .catch((cause) => setError(fleetErrorMessage(cause)))
               }
             >
               <Square aria-hidden="true" className="size-3" />

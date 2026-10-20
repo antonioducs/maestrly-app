@@ -7,6 +7,7 @@ import { FleetScreenChannel, ScreenRetries, screenCloseOutcome } from '@/lib/fle
 import { ScreenVideoClient } from '@/lib/fleet/screen-video-client'
 import { fleetErrorMessage, isScreenConflict, isScreenOffline } from '@/lib/fleet/errors'
 import { screenTargetOf } from '@/lib/fleet/screen-target'
+import { useFleetServerId } from '@/lib/fleet/server-context'
 
 export type ScreenPhase = 'connecting' | 'live' | 'offline' | 'error'
 
@@ -42,6 +43,7 @@ export function useFleetScreen({
   autoFocus?: boolean
   onControlLost?: () => void
 }) {
+  const serverId = useFleetServerId()
   const [phase, setPhase] = useState<ScreenPhase>('connecting')
   const [error, setError] = useState('')
   const [clipboardError, setClipboardError] = useState<ScreenClipboardError | null>(null)
@@ -80,7 +82,7 @@ export function useFleetScreen({
       // Load the keyboard before opening the channel so a failed load never leaves a channel open.
       const { default: Keyboard } = await loadScreenKeyboard()
       if (disposed) return null
-      const opened = await FleetScreenChannel.open(window.api, target, effective, (state) => {
+      const opened = await FleetScreenChannel.open(window.api, serverId, target, effective, (state) => {
         if (disposed) return
         if (state.state === 'open') setPhase('live')
         if (state.state === 'error') setPhase('error')

@@ -14,6 +14,7 @@ import { BotServerRemoteSetup } from './bot-server/BotServerRemoteSetup'
 import { BotServerManualSetup } from './bot-server/BotServerManualSetup'
 import { BotServerProgress } from './bot-server/BotServerProgress'
 import { BotServerPanel } from './bot-server/BotServerPanel'
+import { NO_FLEET_SERVER } from '../../../shared/fleet-servers'
 
 type SetupScreen = 'choice' | 'local' | 'remote' | 'manual'
 
@@ -28,6 +29,7 @@ export function FleetSettings({
   /** What a new server hosts unless the owner picks otherwise. */
   defaultHosts?: FleetInstallHosts
 }) {
+  const serverId = fleet.serverId
   const { t } = useTranslation('fleet')
   const { status, refresh } = useFleetInstaller()
   const [screen, setScreen] = useState<SetupScreen>(initialSetup ?? 'choice')
@@ -46,14 +48,10 @@ export function FleetSettings({
     const code = FLEET_INSTALLER_ERROR_CODES.find((candidate) => message.includes(candidate))
     return code ? t(`botServer.error.${code}`) : message
   }
+  // The servers and their connections arrive from main: only a server still paired is read again.
   const refreshFleet = async (disconnected = false) => {
-    fleet.dispatch({ type: 'connection', value: await window.api.fleetGetConnection() })
-    fleet.dispatch({
-      type: 'snapshot',
-      value: disconnected
-        ? { host: null, bots: [], environments: [], inbox: [], peerMessages: [] }
-        : await window.api.fleetGetSnapshot(),
-    })
+    if (disconnected || serverId === NO_FLEET_SERVER) return
+    await fleet.refresh().catch(() => undefined)
   }
   const run = async (action: () => Promise<FleetInstallerStatus>, keepRetry = true) => {
     setError(null)
@@ -74,7 +72,7 @@ export function FleetSettings({
     setError(null)
     try {
       if (status?.record) await window.api.fleetInstallerDisconnect()
-      else await window.api.fleetDisconnect()
+      else await window.api.fleetDisconnect(serverId)
       await refresh()
       await refreshFleet(true)
       setScreen('choice')

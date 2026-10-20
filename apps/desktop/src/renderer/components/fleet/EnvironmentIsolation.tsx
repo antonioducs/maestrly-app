@@ -22,6 +22,7 @@ export function EnvironmentIsolation({
   fleet: FleetController
   onConfirm: (kind: EnvironmentConfirmKind) => void
 }) {
+  const serverId = fleet.serverId
   const { t } = useTranslation('fleet')
   const [asking, setAsking] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -36,7 +37,7 @@ export function EnvironmentIsolation({
     setBusy(true)
     setError('')
     try {
-      const updated = await window.api.fleetPatchEnvironment(environment.id, { hostFolder: 'own' })
+      const updated = await window.api.fleetPatchEnvironment(serverId, environment.id, { hostFolder: 'own' })
       fleet.dispatch({
         type: 'event',
         value: { type: 'environment.updated', at: new Date().toISOString(), environment: updated },

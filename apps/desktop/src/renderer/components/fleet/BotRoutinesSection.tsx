@@ -57,6 +57,7 @@ const emptyRoutine = (): RoutineForm => ({
 
 /** A bot's routines: each change is saved at once, apart from the settings that wait for the save button. */
 export function BotRoutinesSection({ bot, fleet, id }: { bot: FleetBot; fleet: FleetController; id: string }) {
+  const serverId = fleet.serverId
   const { t, i18n } = useTranslation('fleet')
   const { status: installer } = useFleetInstaller()
   const [routines, setRoutines] = useState<FleetRoutine[]>([])
@@ -77,7 +78,7 @@ export function BotRoutinesSection({ bot, fleet, id }: { bot: FleetBot; fleet: F
   useEffect(() => {
     let alive = true
     void window.api
-      .fleetListRoutines(bot.id)
+      .fleetListRoutines(serverId, bot.id)
       .then((list) => {
         if (alive) setRoutines(list.routines)
       })
@@ -94,7 +95,7 @@ export function BotRoutinesSection({ bot, fleet, id }: { bot: FleetBot; fleet: F
     lastRoutineActivitySeq.current = latestRoutineActivity.seq
     let alive = true
     void window.api
-      .fleetListRoutines(bot.id)
+      .fleetListRoutines(serverId, bot.id)
       .then((list) => {
         if (alive) setRoutines(list.routines)
       })
@@ -124,9 +125,9 @@ export function BotRoutinesSection({ bot, fleet, id }: { bot: FleetBot; fleet: F
         schedule: routineSchedule(routine),
         enabled: routine.enabled,
       }
-      if (editingId) await window.api.fleetUpdateRoutine(bot.id, editingId, input)
-      else await window.api.fleetCreateRoutine(bot.id, input)
-      setRoutines((await window.api.fleetListRoutines(bot.id)).routines)
+      if (editingId) await window.api.fleetUpdateRoutine(serverId, bot.id, editingId, input)
+      else await window.api.fleetCreateRoutine(serverId, bot.id, input)
+      setRoutines((await window.api.fleetListRoutines(serverId, bot.id)).routines)
       setRoutine(null)
       setEditingId(null)
     } catch (cause) {
@@ -138,9 +139,10 @@ export function BotRoutinesSection({ bot, fleet, id }: { bot: FleetBot; fleet: F
   async function actionRoutine(action: 'toggle' | 'run', item: FleetRoutine) {
     setError('')
     try {
-      if (action === 'toggle') await window.api.fleetUpdateRoutine(bot.id, item.id, { enabled: !item.enabled })
-      else await window.api.fleetRunRoutine(bot.id, item.id)
-      setRoutines((await window.api.fleetListRoutines(bot.id)).routines)
+      if (action === 'toggle')
+        await window.api.fleetUpdateRoutine(serverId, bot.id, item.id, { enabled: !item.enabled })
+      else await window.api.fleetRunRoutine(serverId, bot.id, item.id)
+      setRoutines((await window.api.fleetListRoutines(serverId, bot.id)).routines)
     } catch (cause) {
       setError(fleetErrorMessage(cause))
     }
@@ -150,8 +152,8 @@ export function BotRoutinesSection({ bot, fleet, id }: { bot: FleetBot; fleet: F
     setBusy(true)
     setError('')
     try {
-      await window.api.fleetDeleteRoutine(bot.id, deleting.id)
-      setRoutines((await window.api.fleetListRoutines(bot.id)).routines)
+      await window.api.fleetDeleteRoutine(serverId, bot.id, deleting.id)
+      setRoutines((await window.api.fleetListRoutines(serverId, bot.id)).routines)
       setDeleting(null)
     } catch (cause) {
       setError(fleetErrorText(cause, t))
