@@ -1,6 +1,7 @@
 import { Download, ExternalLink, RefreshCw, RotateCw } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useUpdate } from '@/lib/use-update'
+import { releaseNotesToText } from '../../../shared/release-notes'
 import type { TFn } from './shared'
 
 /**
@@ -10,6 +11,8 @@ import type { TFn } from './shared'
 export function UpdatesSection({ t }: { t: TFn }) {
   const { state, check, download, install, openRelease } = useUpdate()
 
+  // The GitHub feed delivers the notes as HTML: show them as text, never as markup.
+  const notes = state?.releaseNotes ? releaseNotesToText(state.releaseNotes) : ''
   const checking = state?.phase === 'checking'
   const disabled = !state || checking || state.mode === 'off'
 
@@ -94,11 +97,11 @@ export function UpdatesSection({ t }: { t: TFn }) {
           </div>
         )}
 
-        {state?.releaseNotes && (
+        {notes && (
           <div className="flex flex-col gap-1">
             <div className="text-[11px] font-medium text-foreground">{t('update.settings.releaseNotes')}</div>
             <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded border border-border bg-black/30 p-2 text-[10px] leading-relaxed text-muted-foreground">
-              {state.releaseNotes}
+              {notes}
             </pre>
           </div>
         )}
