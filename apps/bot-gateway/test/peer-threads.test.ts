@@ -161,8 +161,9 @@ describe('threads between bots', () => {
       await (await h.request('PATCH', `/v1/bots/${nina}/peer-threads/${thread}`, { resume: true })).json()
     )
     expect(resumed).toMatchObject({ status: 'open', hops: 0 })
-    // The continuation goes to Atlas, whose message the pause refused.
+    // The continuation goes to Atlas, whose message the pause refused, and lets it end the exchange instead.
     expect(threadInputs().at(-1)).toMatchObject({ source: 'continuation', thread: { id: thread } })
+    expect(threadInputs().at(-1)?.text).toContain('otherwise end your turn without sending anything')
     expect(h.instance.botRequests.filter((request) => request.path === '/inputs').at(-1)?.botId).toBe(atlas)
   })
 
@@ -218,6 +219,26 @@ describe('threads between bots', () => {
     expect(h.gateway.peerThreads.get(nina, thread!)).toMatchObject({ peerWorking: true })
     // Retention never deletes a conversation that works.
     expect((await h.request('DELETE', `/v1/bots/${atlas}/peer-threads/${thread}/conversation`)).status).toBe(409)
+  })
+
+  it("tells a thread's turn that compacts, and never counts what the owner stopped as work", async () => {
+    const { h, atlas, nina, send } = await setup()
+    const { thread } = await send(atlas, nina, 'Hi')
+    const at = new Date().toISOString()
+    const status = h.lifecycle.statuses.get(atlas)!
+    status.turns = [{ state: 'running', startedAt: at, inputId: 'in-1', runId: thread!, tool: null, compacting: true }]
+    let bot = await (await h.request('GET', `/v1/bots/${atlas}`)).json()
+    expect(bot.turns).toEqual([
+      { kind: 'peer', id: thread, title: 'Hi', startedAt: at, tool: null, cancelling: false, compacting: true },
+    ])
+    expect(bot.status).toBe('working')
+    status.turns = []
+    status.queue = [{ inputId: 'in-2', source: 'peer', preview: 'Hi again', runId: thread!, stopped: true }]
+    bot = await (await h.request('GET', `/v1/bots/${atlas}`)).json()
+    expect(bot.status).toBe('idle')
+    status.queue = [{ inputId: 'in-2', source: 'peer', preview: 'Hi again', runId: thread! }]
+    bot = await (await h.request('GET', `/v1/bots/${atlas}`)).json()
+    expect(bot.status).toBe('working')
   })
 
   it('advertises conversations between bots and keeps settings within their choices', async () => {

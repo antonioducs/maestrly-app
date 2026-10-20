@@ -7,6 +7,33 @@ User-visible changes by version. Downloads are on
 
 ### Fixed
 
+- **Stop** in a bot's conversation now stops it. A turn stopped while it was
+  still preparing, for example while it compacted a long conversation, no
+  longer starts again on its own a few seconds later. The messages waiting in
+  that conversation show **Stopped**, with any that arrive meanwhile, and wait
+  until you write there: your message goes first, then theirs. Remove a stopped
+  message to discard it. Stopped messages no longer keep the bot shown as
+  working. It needs a bot server and a bot environment image on this version.
+  See [conversations at once](docs/bot-fleet.md#conversations-at-once).
+- A bot's conversation with another bot, and a routine run, say when the bot is
+  compacting their context. Before, they only showed that the bot was working,
+  with no tool running, sometimes for many minutes.
+- Two bots in a conversation no longer keep answering each other. Each
+  message from the other bot used to tell the bot to reply, so it answered
+  thanks and confirmations too. Now a bot replies only when that moves the work
+  forward (an answer, a decision or what was asked), and ends the exchange by
+  not replying once nothing is left to settle. **Let them go on** lets the bot
+  continue only if its message was held back or something is still open. It
+  needs a bot server and a bot environment image on this version. See
+  [conversations with other bots](docs/bot-fleet.md#conversations-with-other-bots).
+- Compacting a conversation between two bots keeps the questions each bot asked
+  and the answers it got, what they agreed, and what each still owes the other.
+  Before, the summary could keep only the topic, and the bot asked the other bot
+  again what it had already answered.
+- When a conversation of a bot cannot start its turn, it says why in that
+  conversation, even when another conversation of the bot failed the same way.
+  A context that cannot be compacted is reported again every 30 minutes while
+  it keeps failing, with a readable message instead of its error code.
 - The **Send to the agent**, **Check the fixes** and **Send back** buttons on
   the Code review card show their text again. It was transparent on the
   button's light background, so they looked like empty light rectangles.

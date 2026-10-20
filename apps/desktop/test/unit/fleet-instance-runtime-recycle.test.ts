@@ -59,6 +59,13 @@ describe('blocksRuntimeRecycle', () => {
     expect(
       blocksRuntimeRecycle({ ...idle(), queue: [{ inputId: 'input-1', source: 'owner', preview: 'Hi', runId: null }] })
     ).toBe(true)
+    // What the owner stopped waits for them, maybe for long.
+    expect(
+      blocksRuntimeRecycle({
+        ...idle(),
+        queue: [{ inputId: 'input-1', source: 'peer', preview: 'Hi', runId: 'thread-1', stopped: true }],
+      })
+    ).toBe(false)
     expect(blocksRuntimeRecycle({ ...idle(), pending: [{} as RecycleStatus['pending'][number]] })).toBe(true)
     expect(blocksRuntimeRecycle({ ...idle(), compaction: compaction('running') })).toBe(true)
     expect(blocksRuntimeRecycle({ ...idle(), compaction: compaction('retrying') })).toBe(true)

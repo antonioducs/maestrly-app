@@ -7,7 +7,7 @@ import { FLEET_REASONING_TEXT_MAX, FLEET_TODO_LIMITS, type FleetTranscriptItem }
 import type { ChatMessage, MessagePart } from '../../src/shared/chat'
 import { noRunConversations } from '../helpers/bot-runs'
 import { parseBotInstanceConfig } from '../../src/main/fleet/instance/config'
-import { InstanceInputQueue, promptForInput } from '../../src/main/fleet/instance/queue'
+import { InstanceInputQueue, PEER_REPLY_NOTE, promptForInput } from '../../src/main/fleet/instance/queue'
 import { InstanceHoldManager, gateInstanceAppTool, registerInstanceHoldGate } from '../../src/main/fleet/instance/gate'
 import {
   InstanceTranscriptExtras,
@@ -606,7 +606,7 @@ describe('persistent input queue', () => {
     expect(
       promptForInput({ idempotencyKey: key(), source: 'peer', text: 'hello', peer: { botId: 'p', name: 'Peer' } })
     ).toBe(
-      'Message from bot "Peer" (id p), delivered by the Maestrly gateway:\n\nhello\n\nIf a reply is useful, send it with bot_peers_send.'
+      `Message from bot "Peer" (id p), delivered by the Maestrly gateway:\n\nhello\n\n${PEER_REPLY_NOTE} Send a reply with bot_peers_send.`
     )
     const dir = await mkdtemp(path.join(os.tmpdir(), 'fleet-instance-'))
     try {

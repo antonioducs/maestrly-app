@@ -8,6 +8,7 @@ import {
   FLEET_BOT_SIDE_TURNS_MAX,
   type FleetInstanceEvent,
 } from '@maestrly/bot-fleet-protocol'
+import type { ChatStreamEvent } from '../../src/shared/chat'
 
 const h = vi.hoisted(() => ({ userData: '' }))
 vi.mock('electron', async (importOriginal) => {
@@ -35,6 +36,7 @@ const { getSubagentRouter } = await import('../../src/main/chat/subagent-route')
 const { getSubscriptionFailoverRouter, resetSubscriptionFailoverRouterForTests } = await import(
   '../../src/main/chat/subscription-failover/router'
 )
+const { CONTEXT_FAILURE_REPORT_MS } = await import('../../src/main/fleet/instance/turn-retry')
 
 let dir = ''
 beforeEach(async () => {
@@ -64,6 +66,7 @@ type Internals = {
   turns: Map<string | null, { inputId: string; key: string | null }>
   retries: Map<string | null, { at: number; failures: number }>
   quotaRetryAt: number
+  reportedStartFailures: Map<string | null, { key: string; at: number }>
 }
 const internals = (runtime: Runtime) => runtime as unknown as Internals
 
@@ -131,6 +134,7 @@ async function bot() {
     retries: new Map(),
     quotaRetryAt: 0,
     reportedStartFailure: null,
+    reportedStartFailures: new Map(),
     interrupted: new Set(),
     releaseKeys: new Map(),
     floatTimers: new Set(),
@@ -157,6 +161,13 @@ const ownerInput = (text: string) => ({
   idempotencyKey: randomUUID(),
   source: 'owner' as const,
   text,
+  attachments: [],
+})
+const peerInput = (text: string) => ({
+  idempotencyKey: randomUUID(),
+  source: 'peer' as const,
+  text,
+  peer: { botId: 'nina', name: 'Nina' },
   attachments: [],
 })
 const routineInput = (runId: string) => ({
@@ -219,6 +230,28 @@ function heldTurns(fail: (conversationId: string) => Error | null = () => null) 
   })
   return { started, attempts }
 }
+
+/**
+ * Turns that never get past their preparation, as one compacting a long context: each fails once it is stopped, with
+ * its message never saved.
+ */
+function preparingTurns() {
+  const prompts: string[] = []
+  vi.spyOn(chatService, 'acquireChatConversationSlot').mockResolvedValue({
+    release: () => {},
+    operation: {},
+  } as never)
+  vi.spyOn(chatService, 'startExecutorChatTurn').mockImplementation((input) => {
+    prompts.push(input.prompt)
+    return new Promise((_resolve, reject) =>
+      input.signal.addEventListener('abort', () => reject(new Error('context-compaction-failed')), { once: true })
+    )
+  })
+  return prompts
+}
+/** A chat event of the bot's own conversation, as the chat host relays it. */
+const chatEvent = (runtime: Runtime, event: ChatStreamEvent) =>
+  (runtime as unknown as { onChatEvent(event: ChatStreamEvent): void }).onChatEvent(event)
 
 type Tick = { tick(): Promise<void> }
 /** Runs the bot's dispatcher once: it resolves when the turns it started have ended. */
@@ -414,6 +447,130 @@ describe('turns of the bot conversations at the same time', () => {
     ).toEqual([primary.id, record.conversationId].sort())
     for (const entry of started) entry.finish()
     await both
+  })
+
+  it('holds what the owner stopped while the turn prepared, until they write there, their message first', async () => {
+    const { runtime, queue } = await bot()
+    const prompts = preparingTurns()
+    vi.spyOn(chatService, 'stopChatAndWait').mockResolvedValue(true)
+    await runtime.input(ownerInput('Plan the week'))
+    await runtime.input(peerInput('Here are the photos'))
+    const first = turn(runtime)
+    await vi.waitFor(() => expect(prompts).toHaveLength(1))
+    await runtime.stop(null)
+    await first
+    // Its message was never saved: it goes back to the queue, held with what waited behind it.
+    const held = () => queue.list().map((item) => [item.input.text, !!item.stopped])
+    expect(held()).toEqual([
+      ['Plan the week', true],
+      ['Here are the photos', true],
+    ])
+    internals(runtime).retries.clear()
+    await turn(runtime)
+    expect(prompts).toHaveLength(1)
+    const status = await runtime.status()
+    expect(status.queue.map((item) => item.stopped)).toEqual([true, true])
+    expect(status.activity).toMatchObject({ kind: 'idle' })
+    const users = (await runtime.transcript(null, 50)).items.filter((item) => item.kind === 'user')
+    expect(users).toHaveLength(2)
+    expect(users).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ text: 'Plan the week', queued: true, stopped: true }),
+        expect.objectContaining({ text: 'Here are the photos', queued: true, stopped: true }),
+      ])
+    )
+    // What reaches the stopped conversation waits with it.
+    await runtime.input(peerInput('One more thing'))
+    expect(held().at(-1)).toEqual(['One more thing', true])
+    // The owner writing there lets it go on: their message first, then what waited, in order.
+    await runtime.input(ownerInput('Use the second photo'))
+    expect(held()).toEqual([
+      ['Use the second photo', false],
+      ['Plan the week', false],
+      ['Here are the photos', false],
+      ['One more thing', false],
+    ])
+    const next = turn(runtime)
+    await vi.waitFor(() => expect(prompts).toHaveLength(2))
+    expect(prompts[1]).toBe('Use the second photo')
+    await runtime.cancel(null)
+    await next
+  })
+
+  it('keeps going after a turn that a hold or an uninstall stops, as before', async () => {
+    const { runtime, queue } = await bot()
+    const prompts = preparingTurns()
+    vi.spyOn(chatService, 'stopChatAndWait').mockResolvedValue(true)
+    await runtime.input(ownerInput('Plan the week'))
+    const first = turn(runtime)
+    await vi.waitFor(() => expect(prompts).toHaveLength(1))
+    await runtime.cancel(null)
+    await first
+    expect(queue.list().map((item) => item.stopped)).toEqual([undefined])
+    internals(runtime).retries.clear()
+    const again = turn(runtime)
+    await vi.waitFor(() => expect(prompts).toHaveLength(2))
+    await runtime.cancel(null)
+    await again
+  })
+
+  it('tells the turn whose conversation compacts, and that the bot compacts', async () => {
+    const { runtime } = await bot()
+    const { started } = heldTurns()
+    await runtime.input(ownerInput('Plan the week'))
+    const running = turn(runtime)
+    await vi.waitFor(() => expect(started).toHaveLength(1))
+    const progress = (status: 'running' | 'completed') =>
+      chatEvent(runtime, {
+        kind: 'compaction-progress',
+        messageId: 'assistant',
+        progress: { id: 'compaction', status, updatedAt: Date.now() },
+      })
+    progress('running')
+    let status = await runtime.status()
+    expect(status.turns).toEqual([expect.objectContaining({ runId: null, compacting: true })])
+    expect(status.activity).toEqual({ kind: 'compacting' })
+    progress('completed')
+    status = await runtime.status()
+    expect(status.turns[0]).not.toHaveProperty('compacting')
+    expect(status.activity).toEqual({ kind: 'thinking' })
+    started[0].finish()
+    await running
+  })
+
+  it('tells each conversation why it cannot start, and a context that cannot be compacted again later', async () => {
+    const { runtime, published, runs } = await bot()
+    let error = 'boom'
+    heldTurns(() => new Error(error))
+    const failures = (runId: string) =>
+      published.filter(
+        (event) =>
+          event.type === 'transcript.upsert' &&
+          event.runId === runId &&
+          event.item.kind === 'system' &&
+          event.item.code === 'turn_failed'
+      ).length
+    const [one, two] = [randomUUID(), randomUUID()]
+    await runtime.input(routineInput(one))
+    await runtime.input(routineInput(two))
+    await turn(runtime)
+    // The same failure in two conversations: each says why it waits.
+    expect([failures(one), failures(two)]).toEqual([1, 1])
+    const retry = async () => {
+      internals(runtime).retries.clear()
+      await turn(runtime)
+    }
+    await retry()
+    expect([failures(one), failures(two)]).toEqual([1, 1])
+    error = 'context-compaction-failed'
+    await retry()
+    await retry()
+    expect([failures(one), failures(two)]).toEqual([2, 2])
+    // A context failure that keeps holding a conversation is told again once a while has passed.
+    internals(runtime).reportedStartFailures.get(one)!.at -= CONTEXT_FAILURE_REPORT_MS
+    await retry()
+    expect([failures(one), failures(two)]).toEqual([3, 2])
+    expect(runs.list()).toHaveLength(2)
   })
 
   it('answers currentInput for each conversation', async () => {

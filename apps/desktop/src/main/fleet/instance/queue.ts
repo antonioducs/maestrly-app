@@ -59,6 +59,8 @@ export interface QueuedInput {
   started: boolean
   nativeMessageId?: string
   attachmentError?: 'invalid-attachment' | 'pdf-unreadable'
+  /** The owner stopped its conversation: no turn takes it until they write there. */
+  stopped?: boolean
 }
 const recordSchema = z.object({
   id: z.string().uuid(),
@@ -69,6 +71,7 @@ const recordSchema = z.object({
   started: z.boolean(),
   nativeMessageId: z.string().optional(),
   attachmentError: z.enum(['invalid-attachment', 'pdf-unreadable']).optional(),
+  stopped: z.boolean().optional(),
 })
 const stateSchema = z.object({ items: z.array(recordSchema) })
 
@@ -481,7 +484,21 @@ export class InstanceInputQueue {
           started: false,
         }
         if (input.source === 'continuation') items.unshift(item)
-        else items.push(item)
+        else if (input.source === 'owner') {
+          // The owner writing in a conversation they stopped lets it go on: their message first, then what waited.
+          const lane = inputRunId(item)
+          const held = items.findIndex(
+            (candidate) => candidate.stopped && !candidate.started && inputRunId(candidate) === lane
+          )
+          for (const candidate of items) if (inputRunId(candidate) === lane) delete candidate.stopped
+          if (held >= 0) items.splice(held, 0, item)
+          else items.push(item)
+        } else {
+          // What reaches a stopped conversation waits with what is there.
+          const lane = inputRunId(item)
+          if (items.some((candidate) => candidate.stopped && inputRunId(candidate) === lane)) item.stopped = true
+          items.push(item)
+        }
         return { result: { inputId: id, itemId: item.itemId, queued: true }, changed: true }
       })
       if (result.inputId !== id) await this.cleanup(id)
@@ -503,6 +520,22 @@ export class InstanceInputQueue {
       if (items[index].started) return { result: 'started' as const, changed: false }
       items.splice(index, 1)
       return { result: 'deleted' as const, changed: true }
+    })
+  }
+
+  /**
+   * The owner stopped a conversation (a run or thread id, null for the bot's own): its inputs, those waiting and the one
+   * the stopped turn took before its message was saved, wait until the owner writes there. Returns how many it holds.
+   */
+  async stop(runId: string | null): Promise<number> {
+    return this.update((items) => {
+      let count = 0
+      for (const item of items) {
+        if (inputRunId(item) !== runId || item.stopped || item.attachmentError) continue
+        item.stopped = true
+        count++
+      }
+      return { result: count, changed: count > 0 }
     })
   }
 
@@ -621,6 +654,13 @@ function citedPrompt(input: StoredInput): string {
 }
 
 /**
+ * When a bot answers another bot, and when it does not. Every message of the other bot starts a turn: told only to
+ * reply, a bot answers thanks and confirmations too, the other bot answers that, and the two never stop.
+ */
+export const PEER_REPLY_NOTE =
+  'Reply only if it moves the work forward: it answers a question, brings a decision, or delivers what was asked. Do not reply to thanks, acknowledgements or confirmations, and do not repeat what was already said. When nothing is left to settle, end your turn without sending anything: that ends the exchange. When your reply settles the subject, say so, and do not end it with a question or an offer of more help unless you need something.'
+
+/**
  * Another bot's message in a thread with it (`peer-conversations`): the conversation is the thread's own, and replies
  * stay in it. The thread's first message to the bot that opened it starts with what it had sent and why.
  */
@@ -628,7 +668,23 @@ function threadPeerPrompt(input: StoredInput): string {
   const name = input.peer?.name ?? ''
   const id = input.peer?.botId ?? ''
   const context = input.thread?.context ? input.thread.context + '\n\n' : ''
-  return `${context}Message from bot "${name}" (id ${id}) in your conversation with them about "${input.thread?.title ?? ''}", a conversation of its own, separate from your main one with your owner:\n\n${input.text}\n\nReply with bot_peers_send to ${id}: the reply stays in this conversation.`
+  return `${context}Message from bot "${name}" (id ${id}) in your conversation with them about "${input.thread?.title ?? ''}", a conversation of its own, separate from your main one with your owner:\n\n${input.text}\n\n${PEER_REPLY_NOTE} Send a reply with bot_peers_send to ${id}: it stays in this conversation.`
+}
+
+/**
+ * What compacting a thread's conversation must keep (`peer-conversations`). Its turns are the other bot's messages, and
+ * the bot's own replies only the text of its `bot_peers_send` calls: a generic summary turns what was asked and
+ * answered into a topic, and the bot then asks again what the other bot already answered.
+ */
+export function threadCompactionFocus(botName: string, thread: { peerName: string; title: string }): string {
+  return [
+    `This conversation is between the bot "${botName}" (the assistant) and another bot, "${thread.peerName}", about "${thread.title}". Its user turns are mostly the other bot's messages, sometimes the owner's; the assistant's messages to the other bot are the text of its bot_peers_send calls.`,
+    'Besides the usual, keep in the summary, quoting briefly where the wording matters:',
+    '- each question either bot asked and the answer it got, marked as answered, so that nothing answered is asked again;',
+    '- what the two bots agreed or decided, and what the owner asked in this conversation;',
+    '- what the assistant already sent, what it still owes the other bot, and what the other bot still owes it;',
+    '- the open questions and the next step.',
+  ].join('\n')
 }
 
 export function promptForInput(input: StoredInput): string {
@@ -640,7 +696,7 @@ export function promptForInput(input: StoredInput): string {
     case 'peer':
       return input.thread
         ? threadPeerPrompt(input)
-        : `Message from bot "${input.peer?.name ?? ''}" (id ${input.peer?.botId ?? ''}), delivered by the Maestrly gateway:\n\n${input.text}\n\nIf a reply is useful, send it with bot_peers_send.`
+        : `Message from bot "${input.peer?.name ?? ''}" (id ${input.peer?.botId ?? ''}), delivered by the Maestrly gateway:\n\n${input.text}\n\n${PEER_REPLY_NOTE} Send a reply with bot_peers_send.`
     case 'continuation':
       return input.text
   }

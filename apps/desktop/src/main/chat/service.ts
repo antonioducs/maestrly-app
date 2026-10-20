@@ -481,7 +481,7 @@ import {
   type PortableSummaryResult,
 } from './portable-context'
 import { chatDiag } from './diag-log'
-import { getCompactionSummarizer } from './compaction-summarizer'
+import { getCompactionFocus, getCompactionSummarizer } from './compaction-summarizer'
 import { isBotMode } from '../fleet/instance/config'
 import { isAppToolGroup, sanitizeAppToolGroupPatch } from '../../shared/app-tool-groups'
 import {
@@ -7568,10 +7568,11 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
     if (!resolution.ok) return { ok: false, error: 'executor-unavailable' }
     compactHarness = resolution.harness
   }
+  const compactFocus = opts.executionId ? null : getCompactionFocus(conversationId)
   const compactSystem =
-    conv.scope === 'standalone'
+    (conv.scope === 'standalone'
       ? `${COMPACT_SYSTEM}\nThis is a standalone general conversation. Preserve its goals and facts without assuming a project or repository.`
-      : harnessCompactionSystem(COMPACT_SYSTEM, compactHarness)
+      : harnessCompactionSystem(COMPACT_SYSTEM, compactHarness)) + (compactFocus ? `\n\n${compactFocus}` : '')
   const history = opts.historyOverride
     ? [...opts.historyOverride]
     : opts.executionId

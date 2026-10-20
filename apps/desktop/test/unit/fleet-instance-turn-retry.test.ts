@@ -7,9 +7,11 @@ vi.mock('../../src/main/chat/subscription-failover/config', () => ({
 vi.mock('../../src/main/chat/diag-log', () => ({ chatDiag: () => {} }))
 
 import {
+  CONTEXT_FAILURE_REPORT_MS,
   QUOTA_RECHECK_MS,
   START_RETRY_MAX_MS,
   START_RETRY_MIN_MS,
+  repeatsReportedFailure,
   startRetry,
 } from '../../src/main/fleet/instance/turn-retry'
 import { HALF_OPEN_RECHECK_MS, SubscriptionFailoverRouter } from '../../src/main/chat/subscription-failover/router'
@@ -67,6 +69,16 @@ describe('bot turn start retries', () => {
     })
     // Any other failure holds only the conversation whose turn could not start.
     expect(startRetry(new Error('unavailable'), 1, () => PRIMARY, NOW, router).quota).toBe(false)
+  })
+
+  it('tells a failure once in a row, and a context that cannot be compacted again after a while', () => {
+    expect(repeatsReportedFailure(undefined, 'unavailable', NOW)).toBe(false)
+    expect(repeatsReportedFailure({ key: 'unavailable', at: NOW }, 'unavailable', NOW + 86_400_000)).toBe(true)
+    expect(repeatsReportedFailure({ key: 'unavailable', at: NOW }, 'context-overflow', NOW)).toBe(false)
+    for (const key of ['context-compaction-failed', 'context-overflow']) {
+      expect(repeatsReportedFailure({ key, at: NOW }, key, NOW + CONTEXT_FAILURE_REPORT_MS - 1)).toBe(true)
+      expect(repeatsReportedFailure({ key, at: NOW }, key, NOW + CONTEXT_FAILURE_REPORT_MS)).toBe(false)
+    }
   })
 
   it('falls back to backing off when the router already admits an account again', () => {

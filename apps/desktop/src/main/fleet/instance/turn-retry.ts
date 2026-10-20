@@ -12,6 +12,32 @@ export const START_RETRY_MAX_MS = 5 * 60_000
  */
 export const QUOTA_RECHECK_MS = 10 * 60_000
 
+/**
+ * Start failures of a context that could not be made to fit. They hold their conversation for as long as they repeat,
+ * each try can run a long compaction, and the conversation shows no turn between tries: they are told again.
+ */
+const CONTEXT_FAILURE_CODES: ReadonlySet<string> = new Set(['context-compaction-failed', 'context-overflow'])
+/** How often a context failure that keeps repeating in a conversation is told again. */
+export const CONTEXT_FAILURE_REPORT_MS = 30 * 60_000
+
+/** The start failure last told in a conversation, and when. */
+export interface ReportedStartFailure {
+  key: string
+  at: number
+}
+/**
+ * Whether a conversation's start failure repeats the one last told there, and so waits quietly instead of alerting the
+ * owner's devices again. A context failure is told again once `CONTEXT_FAILURE_REPORT_MS` passed since.
+ */
+export function repeatsReportedFailure(
+  reported: ReportedStartFailure | undefined,
+  key: string,
+  now = Date.now()
+): boolean {
+  if (reported?.key !== key) return false
+  return !CONTEXT_FAILURE_CODES.has(key) || now - reported.at < CONTEXT_FAILURE_REPORT_MS
+}
+
 export interface StartRetry {
   /** When the bot tries to start the turn again. */
   at: number

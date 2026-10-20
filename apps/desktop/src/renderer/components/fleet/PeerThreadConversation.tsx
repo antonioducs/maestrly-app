@@ -17,7 +17,7 @@ import {
   Square,
   Trash2,
 } from 'lucide-react'
-import type { FleetBot, FleetPeerThread } from '@maestrly/bot-fleet-protocol'
+import { fleetLaneTurn, type FleetBot, type FleetPeerThread } from '@maestrly/bot-fleet-protocol'
 import { ChatComposer } from '@/components/chat/ChatComposer'
 import { Button } from '@/components/ui/button'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
@@ -163,6 +163,8 @@ export function PeerThreadConversation({
   const state = threadState(thread, bot)
   const own = thread.conversation === 'own'
   const working = threadWorking(thread, bot)
+  // Compacting shows no tool and can take minutes: without this line the thread would only say it works.
+  const compacting = fleetLaneTurn({ turns: bot.turns ?? null, runningRun: bot.runningRun }, thread.id)?.compacting
   const transcript = fleet.state.runTranscripts[runTranscriptKey(bot.id, thread.id)] ?? emptyTranscript
   const { ensureThreadTranscript, loadThreadTranscript, dispatch } = fleet
   useEffect(() => {
@@ -358,6 +360,12 @@ export function PeerThreadConversation({
         placeholder={own ? undefined : <DeletedThread bot={bot} thread={thread} />}
         footer={
           <>
+            {compacting && (
+              <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Loader2 aria-hidden="true" className="size-3.5 animate-spin motion-reduce:animate-none" />
+                {t('threads.detail.compacting', { name: bot.name })}
+              </p>
+            )}
             {thread.peerWorking && (
               <p className="flex items-center gap-2 text-xs text-muted-foreground">
                 <ArrowRightLeft aria-hidden="true" className="size-3.5" />

@@ -118,7 +118,11 @@ import {
 import { getConvUiPrefs, patchConvUiPrefs } from '../../src/main/store'
 import { closeDb, freshDb, restartDb } from '../helpers/db'
 import { selectContextObservation } from '../../src/renderer/components/chat/context-observation'
-import { clearCompactionSummarizer, setCompactionSummarizer } from '../../src/main/chat/compaction-summarizer'
+import {
+  clearCompactionSummarizer,
+  setCompactionFocus,
+  setCompactionSummarizer,
+} from '../../src/main/chat/compaction-summarizer'
 import { setConversationContextLimit } from '../../src/main/chat/conversation-context-limit'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
 
@@ -251,6 +255,18 @@ describe('service-owned compaction progress', () => {
     expect(listChatMessages(conversationId).at(-1)?.parts).toEqual([
       expect.objectContaining({ type: 'compaction', origin: 'manual' }),
     ])
+  })
+
+  it("tells the summarizer what a conversation's summary must keep", async () => {
+    setCompactionFocus(conversationId, 'Keep each question and the answer it got.')
+    try {
+      expect((await compact()).ok).toBe(true)
+    } finally {
+      setCompactionFocus(conversationId, null)
+    }
+    const systems = h.generateText.mock.calls.map(([options]) => (options as { system?: string }).system)
+    expect(systems.length).toBeGreaterThan(0)
+    for (const system of systems) expect(system).toContain('Keep each question and the answer it got.')
   })
 
   it('fails closed when the registered summarizer is unavailable', async () => {

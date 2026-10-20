@@ -761,6 +761,9 @@ export default {
       repeated: 'Same instructions as the last run',
     },
     queued: 'Queued',
+    stopped: 'Stopped · write here to continue',
+    stoppedHint:
+      'You stopped this conversation. It waits until you write here: your message goes first, then this one. Remove it to discard it.',
     removeQueued: 'Remove queued message',
     edit: {
       action: 'Edit and resend',
@@ -798,6 +801,12 @@ export default {
       codex: 'Every Codex account in the rotation list reached its usage limit.',
       until: 'The bot tries again at {{time}}; the message stays queued.',
       queued: 'The bot tries again later; the message stays queued.',
+    },
+    contextFailed: {
+      compaction:
+        'The context of this conversation could not be compacted. The bot tries again later; the message stays queued.',
+      overflow:
+        "This conversation no longer fits the model's context, even compacted. The bot tries again later; the message stays queued.",
     },
   },
   interaction: {
@@ -1828,6 +1837,7 @@ export default {
     summary: {
       running: 'Running · {{activity}}',
       runningStart: 'Running',
+      compacting: 'Compacting the context',
       queued: 'Waits for the turn in progress',
       deleted: 'Conversation deleted.',
       cancelled: 'You stopped this run.',
@@ -2035,6 +2045,7 @@ export default {
       hopsTitle:
         'Messages in a row between the bots without one of yours. At {{count}}, the conversation pauses and waits for you.',
       peerWorking: '{{peer}} is answering in its own conversation.',
+      compacting: '{{name}} is compacting the context of this conversation before it goes on.',
       transcriptFailed: 'Could not load this conversation.',
     },
     actions: {
