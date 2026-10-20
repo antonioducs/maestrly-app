@@ -93,7 +93,8 @@ export interface FleetInstallerServers {
   findByUrl(url: string): FleetServerId | null
   pair(input: { url: string; code: string; deviceName: string }, id?: FleetServerId): Promise<FleetServerView>
   retarget(id: FleetServerId, url: string): void
-  remove(id: FleetServerId): Promise<void>
+  /** Unpairs a server; it stays listed until `leaving` ends. */
+  remove(id: FleetServerId, leaving?: () => Promise<void>): Promise<void>
 }
 export interface FleetInstallerStore {
   readRecord(): FleetInstallRecord | null
@@ -976,7 +977,16 @@ export class FleetInstallerService {
   async disconnect(): Promise<FleetInstallerStatus> {
     this.assertIdle()
     const record = this.readRecord()
-    if (record?.serverId && this.deps.servers.get(record.serverId)) await this.deps.servers.remove(record.serverId)
+    // The server leaves the list last: until then its settings show it, and no other install starts in its place.
+    if (record?.serverId && this.deps.servers.get(record.serverId))
+      await this.deps.servers.remove(record.serverId, () => this.forgetAccess(record))
+    else await this.forgetAccess(record)
+    this.emit()
+    return this.status()
+  }
+
+  /** Revokes Maestrly's key on a VPS when it can be reached, stops the tunnels, and forgets the install. */
+  private async forgetAccess(record: FleetInstallRecord | null): Promise<void> {
     if (record?.remote) {
       const privateKey = this.deps.store.readKey()
       if (privateKey) {
@@ -1004,8 +1014,6 @@ export class FleetInstallerService {
       this.deps.store.clearKey()
       this.deps.store.clearRecord()
     }
-    this.emit()
-    return this.status()
   }
 
   /** Deletes every environment and bot, the gateway and its data, its images, and Maestrly's files and key. */

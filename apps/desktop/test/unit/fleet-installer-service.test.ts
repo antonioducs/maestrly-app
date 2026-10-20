@@ -131,6 +131,8 @@ function setup(options: SetupOptions = {}) {
     pairedAgain: [] as Array<FleetServerId | null>,
     removed: [] as FleetServerId[],
     disconnects: 0,
+    /** Called as a server leaves the list, after what its removal waited on. */
+    onLeave: null as (() => void) | null,
     retargets: [] as string[],
     calls: [] as Array<[string, unknown]>,
     /** Every gateway call a test expects, by route: a value, or a function of the call's options. Others fail. */
@@ -167,10 +169,15 @@ function setup(options: SetupOptions = {}) {
       return { id: SERVER, installed: false, connection: fleetState.connection }
     },
     retarget: (_id, url) => fleetState.retargets.push(url),
-    async remove(id) {
-      fleetState.removed.push(id)
+    async remove(id, leaving) {
       fleetState.disconnects++
       fleetState.connection = { ...fleetState.connection, url: null, deviceId: null, state: 'unconfigured' }
+      try {
+        await leaving?.()
+      } finally {
+        fleetState.removed.push(id)
+        fleetState.onLeave?.()
+      }
     },
   }
   const connections: Array<{ credentials: { kind: string }; expectedHostKey: string | null }> = []
@@ -989,8 +996,14 @@ describe('leaving and removing the server', () => {
       connection: { url: 'http://127.0.0.1:7443', deviceId: 'device-1', state: 'connected' },
     })
     await service.start()
+    // The server leaves the list last: until then its settings show it, and no new install can start under it.
+    let left: unknown = null
+    fleetState.onLeave = () => {
+      left = { revoked: keySession.commands.some((item) => item.input.includes('revoke-key')), stored: { ...stored } }
+    }
     const status = await service.disconnect()
     expect(fleetState.removed).toEqual([SERVER])
+    expect(left).toEqual({ revoked: true, stored: { record: null, key: null } })
     const revoke = keySession.commands.find((item) => item.input.startsWith('# maestrly-bot-server:revoke-key\n'))
     expect(revoke?.command).toBe("sh -s -- 'maestrly-bbbbbbbbbbbb'")
     expect(tunnels[0].stopped).toBe(true)

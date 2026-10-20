@@ -217,6 +217,24 @@ describe('fleet servers', () => {
     expect((last.payload as Array<{ id: string }>).map((item) => item.id)).toEqual([B])
   })
 
+  it('keeps a server listed, unpaired, until what its removal waits on ends', async () => {
+    h.servers.start()
+    const seen: { calls: string[]; listed: boolean }[] = []
+    await h.servers.remove(A, async () => {
+      seen.push({ calls: [...h.clients[0].calls], listed: h.servers.get(A) !== null })
+    })
+    expect(seen).toEqual([{ calls: expect.arrayContaining(['unpair']), listed: true }])
+    expect(h.servers.get(A)).toBeNull()
+    // It leaves even when what it waited on failed.
+    await expect(
+      h.servers.remove(B, async () => {
+        throw new Error('unreachable')
+      })
+    ).rejects.toThrow('unreachable')
+    expect(h.servers.get(B)).toBeNull()
+    expect(h.store.records).toEqual([])
+  })
+
   it('refuses a server it does not know', () => {
     h.servers.start()
     expect(() => h.servers.require('eeeeeeee-0000-4000-8000-000000000009' as FleetServerId)).toThrow(

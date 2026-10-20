@@ -173,13 +173,20 @@ export class FleetServers {
     this.changed()
   }
 
-  /** Disconnects one server: it forgets this device, and this computer forgets it. */
-  async remove(id: FleetServerId): Promise<void> {
+  /**
+   * Disconnects one server: it forgets this device, and this computer forgets it. `leaving` runs once it is unpaired,
+   * while it is still listed, so its windows show it until what its removal waits on ends.
+   */
+  async remove(id: FleetServerId, leaving?: () => Promise<void>): Promise<void> {
     const client = this.require(id)
     await client.unpair()
-    this.clients_.delete(id)
-    this.deps.records.delete(id)
-    this.changed()
+    try {
+      await leaving?.()
+    } finally {
+      this.clients_.delete(id)
+      this.deps.records.delete(id)
+      this.changed()
+    }
   }
 
   /** Calls back after a server was paired, removed, or anything known of one changed; returns its removal. */

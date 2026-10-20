@@ -497,8 +497,10 @@ test('a shared video plays in place with seeking, speed and keyboard controls, a
     // The preview reads the first frame from main's cache through `maestrly-media:`, past the production CSP.
     const preview = page.locator('video[aria-hidden="true"]')
     await expect.poll(() => preview.evaluate((element: HTMLVideoElement) => element.readyState)).toBeGreaterThan(0)
+    // A file is named with its server: bots of two servers may share ids.
+    const [server] = await page.evaluate(() => window.api.fleetServers())
     expect(await preview.getAttribute('src')).toMatch(
-      /^maestrly-media:\/\/fleet\/file-bot\/f-clip\/[0-9a-f]{32}#t=0\.1$/
+      new RegExp(`^maestrly-media://fleet/${server.id}/file-bot/f-clip/[0-9a-f]{32}#t=0\\.1$`)
     )
     await expect(page.getByText(/^0:0[23]$/)).toBeVisible()
     // Other files keep their usual card.
