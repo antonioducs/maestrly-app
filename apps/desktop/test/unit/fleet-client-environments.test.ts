@@ -543,16 +543,16 @@ describe('environment IPC', () => {
         : undefined
     )
     for (const target of [{ environmentId: 'work' }, { botId: 'scout' }, 'scout']) {
-      const accounts = (await ipc.read('fleet:bot:accounts', target)) as FleetBotAccounts
+      const accounts = (await ipc.read('fleet:bot:accounts', SERVER, target)) as FleetBotAccounts
       expect(accounts.apiKeys[0].baseURL).toBe('https://example.test/v1')
       expect(JSON.stringify(accounts)).not.toContain('synthetic-secret')
     }
     const work = { environmentId: 'work' }
-    await ipc.read('fleet:bot:skills', work)
-    await ipc.read('fleet:bot:mcp-servers', work)
-    await ipc.mutate('fleet:bot:skill-remove', work, 'review')
-    await ipc.mutate('fleet:bot:mcp-remove', work, 'm1')
-    await ipc.mutate('fleet:bot:subscription-remove', work, 'codex', 'default')
+    await ipc.read('fleet:bot:skills', SERVER, work)
+    await ipc.read('fleet:bot:mcp-servers', SERVER, work)
+    await ipc.mutate('fleet:bot:skill-remove', SERVER, work, 'review')
+    await ipc.mutate('fleet:bot:mcp-remove', SERVER, work, 'm1')
+    await ipc.mutate('fleet:bot:subscription-remove', SERVER, work, 'codex', 'default')
     await ipc.mutate('fleet:add-api-key-account', SERVER, work, {
       kind: 'openai',
       name: 'Synthetic',
@@ -560,7 +560,7 @@ describe('environment IPC', () => {
       baseURL: null,
     })
     await ipc.mutate('fleet:remove-account', SERVER, work, 'p1')
-    await ipc.mutate('fleet:bot:skill-remove', { botId: 'scout' }, 'review')
+    await ipc.mutate('fleet:bot:skill-remove', SERVER, { botId: 'scout' }, 'review')
     await ipc.mutate('fleet:remove-account', SERVER, 'scout', 'p1')
     expect(mocks.call.mock.calls.map(([key, options]) => [key, options?.params])).toEqual([
       ['environmentAccountsList', { eid: 'work' }],
@@ -582,13 +582,15 @@ describe('environment IPC', () => {
     const ipc = register()
     const work = { environmentId: 'work' }
     const selection = { apiKeyIds: [], copyIds: [], skillNames: ['review'], mcpServerIds: [] }
-    expect(() => ipc.mutate('fleet:bot:skill-remove', work, 'review')).toThrow(FLEET_ENVIRONMENTS_UNSUPPORTED)
-    expect(() => ipc.mutate('fleet:login:start', work, { kind: 'codex', method: 'browser' })).toThrow(
+    expect(() => ipc.mutate('fleet:bot:skill-remove', SERVER, work, 'review')).toThrow(FLEET_ENVIRONMENTS_UNSUPPORTED)
+    expect(() => ipc.mutate('fleet:login:start', SERVER, work, { kind: 'codex', method: 'browser' })).toThrow(
       FLEET_ENVIRONMENTS_UNSUPPORTED
     )
-    expect(() => ipc.mutate('fleet:provisioning:import', work, selection)).toThrow(FLEET_ENVIRONMENTS_UNSUPPORTED)
-    expect(() => ipc.read('fleet:bot:skills', work)).toThrow(FLEET_ENVIRONMENTS_UNSUPPORTED)
-    await expect(Promise.resolve().then(() => ipc.read('fleet:bot:accounts', work))).rejects.toThrow(
+    expect(() => ipc.mutate('fleet:provisioning:import', SERVER, work, selection)).toThrow(
+      FLEET_ENVIRONMENTS_UNSUPPORTED
+    )
+    expect(() => ipc.read('fleet:bot:skills', SERVER, work)).toThrow(FLEET_ENVIRONMENTS_UNSUPPORTED)
+    await expect(Promise.resolve().then(() => ipc.read('fleet:bot:accounts', SERVER, work))).rejects.toThrow(
       FLEET_ENVIRONMENTS_UNSUPPORTED
     )
     features.list = ['environments']
@@ -600,8 +602,8 @@ describe('environment IPC', () => {
       42,
       null,
     ]) {
-      expect(() => ipc.mutate('fleet:bot:skill-remove', target, 'review')).toThrow()
-      expect(() => ipc.mutate('fleet:login:cancel', target, 'l1')).toThrow()
+      expect(() => ipc.mutate('fleet:bot:skill-remove', SERVER, target, 'review')).toThrow()
+      expect(() => ipc.mutate('fleet:login:cancel', SERVER, target, 'l1')).toThrow()
       expect(() =>
         ipc.mutate('fleet:add-api-key-account', SERVER, target, { kind: 'openai', name: 'A', key: 'k', baseURL: null })
       ).toThrow()
@@ -1271,8 +1273,8 @@ describe('environment preload API', () => {
       await fleetApi.fleetEnvironmentUiOpen(SERVER, 'work', 'skills')
       await fleetApi.fleetEnvironmentSelections(SERVER, 'work')
       await fleetApi.fleetScreenOpen(SERVER, { environmentId: 'work' }, 'control')
-      await fleetApi.fleetBotSkills({ environmentId: 'work' })
-      await fleetApi.fleetLoginCancel({ environmentId: 'work' }, 'l1')
+      await fleetApi.fleetBotSkills(SERVER, { environmentId: 'work' })
+      await fleetApi.fleetLoginCancel(SERVER, { environmentId: 'work' }, 'l1')
       await fleetApi.fleetCreateBot(SERVER, {
         name: 'Scout',
         instructions: '',
@@ -1293,8 +1295,8 @@ describe('environment preload API', () => {
         ['fleet:environmentUiOpen', SERVER, 'work', 'skills'],
         ['fleet:environmentSelections', SERVER, 'work'],
         ['fleet:screenOpen', SERVER, { environmentId: 'work' }, 'control'],
-        ['fleet:bot:skills', { environmentId: 'work' }],
-        ['fleet:login:cancel', { environmentId: 'work' }, 'l1'],
+        ['fleet:bot:skills', SERVER, { environmentId: 'work' }],
+        ['fleet:login:cancel', SERVER, { environmentId: 'work' }, 'l1'],
         [
           'fleet:createBot',
           SERVER,

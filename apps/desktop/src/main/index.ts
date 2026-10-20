@@ -241,7 +241,7 @@ import { cleanupToolOutputs } from './chat/tool-output-store'
 import { clearAttachmentPreviews } from './chat/attachment-artifacts'
 import { registerRuntimeAssetIpc } from './runtime-assets/ipc'
 import { registerBotIpc } from './bot/ipc'
-import { registerFleetClientIpc } from './fleet/client/ipc'
+import { fleetScopedRegistrar, registerFleetClientIpc } from './fleet/client/ipc'
 import { registerFleetDesktopBridgeIpc } from './fleet/client/desktop-bridge-ipc'
 import { registerFleetInstallerIpc } from './fleet/installer/ipc'
 import { fleetInstallerService } from './fleet/installer/service'
@@ -971,7 +971,7 @@ function registerIpc(): void {
   fleetClientService.onDownloadSettled = noticeFleetDownload
   registerFleetInstallerIpc(reg)
   // Set before the client starts, so that its first stream already answers bots' desktop calls.
-  registerFleetDesktopBridgeIpc(reg, fleetClientService)
+  registerFleetDesktopBridgeIpc(fleetScopedRegistrar(reg), fleetClientService)
   // On a workspaces host, the owner's computers give the bots of its server access to its projects.
   registerEnvironmentBotAccessIpc(reg, hostBotAccess)
   registerFleetClientIpc(reg)

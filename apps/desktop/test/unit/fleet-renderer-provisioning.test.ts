@@ -12,6 +12,8 @@ import {
   recommendedImportChoice,
   provisioningAvailability,
 } from '../../src/renderer/lib/fleet/provisioning'
+import { bindFleetServer } from '../../src/renderer/lib/fleet/server-context'
+import type { FleetServerId } from '../../src/shared/fleet-servers'
 
 describe('fleet provisioning choices', () => {
   const inventory: MacInventory = {
@@ -240,4 +242,15 @@ it('translates local provisioning codes and keeps unknown provider errors', asyn
   )
   expect(provisioningErrorText('Provider rejected this account', translate(pt))).toBe('Provider rejected this account')
   expect(provisioningErrorText('Future error', translate(pt), 'future-code')).toBe('Future error')
+})
+
+describe('server-scoped renderer APIs', () => {
+  it('binds an API whose methods name the server first', async () => {
+    const accounts = vi.fn(async (..._args: unknown[]) => 'ok')
+    const scoped = { accounts, label: 'kept' }
+    const bound = bindFleetServer(scoped, 'aaaaaaaa-0000-4000-8000-000000000001' as FleetServerId)
+    expect(await bound.accounts('personal', { input: 1 })).toBe('ok')
+    expect(accounts).toHaveBeenCalledExactlyOnceWith('aaaaaaaa-0000-4000-8000-000000000001', 'personal', { input: 1 })
+    expect(bound.label).toBe('kept')
+  })
 })

@@ -1,71 +1,109 @@
 import { ipcRenderer } from 'electron'
 import type { FleetEnvironmentSettingsApi } from '@maestrly/bot-fleet-protocol'
+import type { FleetServerId, FleetServerScoped } from '../shared/fleet-servers'
 import type { McpOAuthConnectResult } from '../shared/chat'
 import type { InstalledPluginDto, PluginOpResult } from '../shared/plugins'
 
-export const fleetEnvironmentSettings: FleetEnvironmentSettingsApi = {
-  accounts: (environmentId, input) => ipcRenderer.invoke('fleet:settings:accounts', environmentId, input),
-  patchAccount: (environmentId, input) => ipcRenderer.invoke('fleet:settings:patchAccount', environmentId, input),
-  renameSubscription: (environmentId, input) =>
-    ipcRenderer.invoke('fleet:settings:renameSubscription', environmentId, input),
-  removeAccount: (environmentId, input) => ipcRenderer.invoke('fleet:settings:removeAccount', environmentId, input),
-  removeSubscription: (environmentId, input) =>
-    ipcRenderer.invoke('fleet:settings:removeSubscription', environmentId, input),
-  models: (environmentId, input) => ipcRenderer.invoke('fleet:settings:models', environmentId, input),
-  setModelFilter: (environmentId, input) => ipcRenderer.invoke('fleet:settings:setModelFilter', environmentId, input),
-  skills: (environmentId, input) => ipcRenderer.invoke('fleet:settings:skills', environmentId, input),
-  skill: (environmentId, input) => ipcRenderer.invoke('fleet:settings:skill', environmentId, input),
-  createSkill: (environmentId, input) => ipcRenderer.invoke('fleet:settings:createSkill', environmentId, input),
-  writeSkill: (environmentId, input) => ipcRenderer.invoke('fleet:settings:writeSkill', environmentId, input),
-  setSkillEnabled: (environmentId, input) => ipcRenderer.invoke('fleet:settings:setSkillEnabled', environmentId, input),
-  removeSkill: (environmentId, input) => ipcRenderer.invoke('fleet:settings:removeSkill', environmentId, input),
-  searchSkills: (environmentId, input) => ipcRenderer.invoke('fleet:settings:searchSkills', environmentId, input),
-  installSkill: (environmentId, input) => ipcRenderer.invoke('fleet:settings:installSkill', environmentId, input),
-  skillGroups: (environmentId, input) => ipcRenderer.invoke('fleet:settings:skillGroups', environmentId, input),
-  createSkillGroup: (environmentId, input) =>
-    ipcRenderer.invoke('fleet:settings:createSkillGroup', environmentId, input),
-  updateSkillGroup: (environmentId, input) =>
-    ipcRenderer.invoke('fleet:settings:updateSkillGroup', environmentId, input),
-  removeSkillGroup: (environmentId, input) =>
-    ipcRenderer.invoke('fleet:settings:removeSkillGroup', environmentId, input),
-  mcpServers: (environmentId, input) => ipcRenderer.invoke('fleet:settings:mcpServers', environmentId, input),
-  mcpServer: (environmentId, input) => ipcRenderer.invoke('fleet:settings:mcpServer', environmentId, input),
-  createMcpServer: (environmentId, input) => ipcRenderer.invoke('fleet:settings:createMcpServer', environmentId, input),
-  patchMcpServer: (environmentId, input) => ipcRenderer.invoke('fleet:settings:patchMcpServer', environmentId, input),
-  removeMcpServer: (environmentId, input) => ipcRenderer.invoke('fleet:settings:removeMcpServer', environmentId, input),
-  testMcpServer: (environmentId, input) => ipcRenderer.invoke('fleet:settings:testMcpServer', environmentId, input),
-  runtimes: (environmentId, input) => ipcRenderer.invoke('fleet:settings:runtimes', environmentId, input),
-  runtimeAction: (environmentId, input) => ipcRenderer.invoke('fleet:settings:runtimeAction', environmentId, input),
-  setRuntimeAutomatic: (environmentId, input) =>
-    ipcRenderer.invoke('fleet:settings:setRuntimeAutomatic', environmentId, input),
-  preferences: (environmentId, input) => ipcRenderer.invoke('fleet:settings:preferences', environmentId, input),
-  setPreferences: (environmentId, input) => ipcRenderer.invoke('fleet:settings:setPreferences', environmentId, input),
-  plugins: (environmentId, input) => ipcRenderer.invoke('fleet:settings:plugins', environmentId, input),
-  pluginCatalog: (environmentId, input) => ipcRenderer.invoke('fleet:settings:pluginCatalog', environmentId, input),
-  pluginInspect: (environmentId, input) => ipcRenderer.invoke('fleet:settings:pluginInspect', environmentId, input),
-  pluginLogo: (environmentId, input) => ipcRenderer.invoke('fleet:settings:pluginLogo', environmentId, input),
-  addPluginSource: (environmentId, input) => ipcRenderer.invoke('fleet:settings:addPluginSource', environmentId, input),
-  refreshPluginSource: (environmentId, input) =>
-    ipcRenderer.invoke('fleet:settings:refreshPluginSource', environmentId, input),
-  removePluginSource: (environmentId, input) =>
-    ipcRenderer.invoke('fleet:settings:removePluginSource', environmentId, input),
-  installPlugin: (environmentId, input) => ipcRenderer.invoke('fleet:settings:installPlugin', environmentId, input),
-  updatePlugin: (environmentId, input) => ipcRenderer.invoke('fleet:settings:updatePlugin', environmentId, input),
-  patchPlugin: (environmentId, input) => ipcRenderer.invoke('fleet:settings:patchPlugin', environmentId, input),
-  uninstallPlugin: (environmentId, input) => ipcRenderer.invoke('fleet:settings:uninstallPlugin', environmentId, input),
-  pluginSkills: (environmentId, input) => ipcRenderer.invoke('fleet:settings:pluginSkills', environmentId, input),
-  setPluginSkillEnabled: (environmentId, input) =>
-    ipcRenderer.invoke('fleet:settings:setPluginSkillEnabled', environmentId, input),
-  mcpOAuthStatuses: (environmentId, input) =>
-    ipcRenderer.invoke('fleet:settings:mcpOAuthStatuses', environmentId, input),
-  removeMcpOAuth: (environmentId, input) => ipcRenderer.invoke('fleet:settings:removeMcpOAuth', environmentId, input),
-  patchMcpOAuthAccount: (environmentId, input) =>
-    ipcRenderer.invoke('fleet:settings:patchMcpOAuthAccount', environmentId, input),
-  setMcpOAuthClient: (environmentId, input) =>
-    ipcRenderer.invoke('fleet:settings:setMcpOAuthClient', environmentId, input),
-  failover: (environmentId, input) => ipcRenderer.invoke('fleet:settings:failover', environmentId, input),
-  setFailoverRoute: (environmentId, input) =>
-    ipcRenderer.invoke('fleet:settings:setFailoverRoute', environmentId, input),
+/** An environment's settings: each call names its server, then the environment. */
+export const fleetEnvironmentSettings: FleetServerScoped<FleetEnvironmentSettingsApi> = {
+  accounts: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:accounts', fleetServerId, environmentId, input),
+  patchAccount: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:patchAccount', fleetServerId, environmentId, input),
+  renameSubscription: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:renameSubscription', fleetServerId, environmentId, input),
+  removeAccount: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:removeAccount', fleetServerId, environmentId, input),
+  removeSubscription: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:removeSubscription', fleetServerId, environmentId, input),
+  models: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:models', fleetServerId, environmentId, input),
+  setModelFilter: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:setModelFilter', fleetServerId, environmentId, input),
+  skills: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:skills', fleetServerId, environmentId, input),
+  skill: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:skill', fleetServerId, environmentId, input),
+  createSkill: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:createSkill', fleetServerId, environmentId, input),
+  writeSkill: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:writeSkill', fleetServerId, environmentId, input),
+  setSkillEnabled: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:setSkillEnabled', fleetServerId, environmentId, input),
+  removeSkill: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:removeSkill', fleetServerId, environmentId, input),
+  searchSkills: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:searchSkills', fleetServerId, environmentId, input),
+  installSkill: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:installSkill', fleetServerId, environmentId, input),
+  skillGroups: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:skillGroups', fleetServerId, environmentId, input),
+  createSkillGroup: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:createSkillGroup', fleetServerId, environmentId, input),
+  updateSkillGroup: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:updateSkillGroup', fleetServerId, environmentId, input),
+  removeSkillGroup: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:removeSkillGroup', fleetServerId, environmentId, input),
+  mcpServers: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:mcpServers', fleetServerId, environmentId, input),
+  mcpServer: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:mcpServer', fleetServerId, environmentId, input),
+  createMcpServer: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:createMcpServer', fleetServerId, environmentId, input),
+  patchMcpServer: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:patchMcpServer', fleetServerId, environmentId, input),
+  removeMcpServer: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:removeMcpServer', fleetServerId, environmentId, input),
+  testMcpServer: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:testMcpServer', fleetServerId, environmentId, input),
+  runtimes: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:runtimes', fleetServerId, environmentId, input),
+  runtimeAction: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:runtimeAction', fleetServerId, environmentId, input),
+  setRuntimeAutomatic: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:setRuntimeAutomatic', fleetServerId, environmentId, input),
+  preferences: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:preferences', fleetServerId, environmentId, input),
+  setPreferences: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:setPreferences', fleetServerId, environmentId, input),
+  plugins: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:plugins', fleetServerId, environmentId, input),
+  pluginCatalog: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:pluginCatalog', fleetServerId, environmentId, input),
+  pluginInspect: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:pluginInspect', fleetServerId, environmentId, input),
+  pluginLogo: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:pluginLogo', fleetServerId, environmentId, input),
+  addPluginSource: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:addPluginSource', fleetServerId, environmentId, input),
+  refreshPluginSource: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:refreshPluginSource', fleetServerId, environmentId, input),
+  removePluginSource: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:removePluginSource', fleetServerId, environmentId, input),
+  installPlugin: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:installPlugin', fleetServerId, environmentId, input),
+  updatePlugin: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:updatePlugin', fleetServerId, environmentId, input),
+  patchPlugin: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:patchPlugin', fleetServerId, environmentId, input),
+  uninstallPlugin: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:uninstallPlugin', fleetServerId, environmentId, input),
+  pluginSkills: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:pluginSkills', fleetServerId, environmentId, input),
+  setPluginSkillEnabled: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:setPluginSkillEnabled', fleetServerId, environmentId, input),
+  mcpOAuthStatuses: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:mcpOAuthStatuses', fleetServerId, environmentId, input),
+  removeMcpOAuth: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:removeMcpOAuth', fleetServerId, environmentId, input),
+  patchMcpOAuthAccount: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:patchMcpOAuthAccount', fleetServerId, environmentId, input),
+  setMcpOAuthClient: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:setMcpOAuthClient', fleetServerId, environmentId, input),
+  failover: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:failover', fleetServerId, environmentId, input),
+  setFailoverRoute: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:setFailoverRoute', fleetServerId, environmentId, input),
 }
 
 /**
@@ -73,13 +111,19 @@ export const fleetEnvironmentSettings: FleetEnvironmentSettingsApi = {
  * plugins (with the values entered here) and signing in to an MCP server of the environment in this computer's browser.
  */
 export const fleetEnvironmentPlugins = {
-  bring: (environmentId: string, key: string): Promise<PluginOpResult<InstalledPluginDto>> =>
-    ipcRenderer.invoke('fleet:plugins:bring', environmentId, key),
+  bring: (
+    fleetServerId: FleetServerId,
+    environmentId: string,
+    key: string
+  ): Promise<PluginOpResult<InstalledPluginDto>> =>
+    ipcRenderer.invoke('fleet:plugins:bring', fleetServerId, environmentId, key),
   mcpOAuthConnect: (
+    fleetServerId: FleetServerId,
     environmentId: string,
     serverId: string,
     options?: { accountId?: string; label?: string }
-  ): Promise<McpOAuthConnectResult> => ipcRenderer.invoke('fleet:mcp-oauth:connect', environmentId, serverId, options),
-  mcpOAuthCancel: (environmentId: string, serverId: string): Promise<void> =>
-    ipcRenderer.invoke('fleet:mcp-oauth:cancel', environmentId, serverId),
+  ): Promise<McpOAuthConnectResult> =>
+    ipcRenderer.invoke('fleet:mcp-oauth:connect', fleetServerId, environmentId, serverId, options),
+  mcpOAuthCancel: (fleetServerId: FleetServerId, environmentId: string, serverId: string): Promise<void> =>
+    ipcRenderer.invoke('fleet:mcp-oauth:cancel', fleetServerId, environmentId, serverId),
 }

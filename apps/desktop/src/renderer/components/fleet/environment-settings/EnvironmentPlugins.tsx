@@ -5,6 +5,7 @@ import { PluginsSettings } from '@/components/plugins/PluginsSettings'
 import { createEnvironmentPluginsSource } from '@/components/plugins/plugins-source'
 import { useEnvironmentSettingsSource } from '@/lib/fleet/environment-settings'
 import { SettingsPanel, type EnvironmentSettingsSectionProps } from './shared'
+import { bindFleetServer, useFleetServerId } from '@/lib/fleet/server-context'
 
 /**
  * The environment's plugins, in the same plugin center as this computer's: the environment fetches from Git, installs
@@ -12,10 +13,16 @@ import { SettingsPanel, type EnvironmentSettingsSectionProps } from './shared'
  */
 export function EnvironmentPlugins({ environment, fleet }: EnvironmentSettingsSectionProps) {
   const { t } = useTranslation('plugins')
+  const serverId = useFleetServerId()
   const settings = useEnvironmentSettingsSource(environment.id)
   const source = useMemo(
-    () => createEnvironmentPluginsSource(environment.id, settings, window.api.fleetEnvironmentPlugins),
-    [environment.id, settings]
+    () =>
+      createEnvironmentPluginsSource(
+        environment.id,
+        settings,
+        bindFleetServer(window.api.fleetEnvironmentPlugins, serverId)
+      ),
+    [serverId, environment.id, settings]
   )
   const supported =
     fleet.state.connection.features.includes(FLEET_ENVIRONMENT_PLUGINS_FEATURE) &&

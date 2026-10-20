@@ -9,10 +9,10 @@ import {
   type FleetDesktopLinksResponse,
 } from '@maestrly/bot-fleet-protocol'
 import { botHost } from '../../bot/host'
-import type { IpcRegistrar } from '../../ipc-registrar'
 import { broadcast } from '../../window-ipc'
 import { FleetClientError } from './api'
 import { FleetDesktopBridge, type DesktopBridgeGateway } from './desktop-bridge'
+import type { FleetIpcRegistrar } from './scoped-ipc'
 import type { FleetClientService } from './service'
 import { readFleetSettings } from './settings'
 
@@ -88,17 +88,26 @@ export function fleetDesktopGateway(fleet: FleetClientService): DesktopBridgeGat
  * first stream already takes desktop calls) and serves the bot settings that manage it. Only this computer's own person
  * reaches these channels; no bot tool does.
  */
-export function registerFleetDesktopBridgeIpc(reg: IpcRegistrar, fleet: FleetClientService): void {
+export function registerFleetDesktopBridgeIpc(scoped: FleetIpcRegistrar, fleet: FleetClientService): void {
   const bridge = new FleetDesktopBridge(fleetDesktopGateway(fleet), botHost, (botId) =>
-    broadcast('fleet:desktop-access', { botId })
+    broadcast('fleet:desktop-access', { serverId: fleet.serverId, botId })
   )
   if (process.env.MAESTRLY_BOT_MODE !== '1') fleet.desktopBridge = bridge
-  reg.handle('fleet:desktopAccess:get', (_event, botId: unknown) => bridge.state(fleetBotIdSchema.parse(botId)))
-  reg.mhandle('fleet:desktopAccess:save', (_event, botId: unknown, input: unknown) =>
-    bridge.save(fleetBotIdSchema.parse(botId), fleetDesktopAccessInputSchema.parse(input))
+  /** The bridge of the server a call names. */
+  const bridgeOf = (client: FleetClientService): FleetDesktopBridge => {
+    if (client !== fleet) throw new FleetClientError('NOT_FOUND', 404, 'Unknown bot server')
+    return bridge
+  }
+  scoped.handle('fleet:desktopAccess:get', (client, _event, botId: unknown) =>
+    bridgeOf(client).state(fleetBotIdSchema.parse(botId))
   )
-  reg.mhandle('fleet:desktopAccess:disable', (_event, botId: unknown) => bridge.disable(fleetBotIdSchema.parse(botId)))
-  reg.mhandle('fleet:desktopAccess:removeOther', (_event, botId: unknown, desktopId: unknown) =>
-    bridge.removeOther(fleetBotIdSchema.parse(botId), fleetDesktopIdSchema.parse(desktopId))
+  scoped.mhandle('fleet:desktopAccess:save', (client, _event, botId: unknown, input: unknown) =>
+    bridgeOf(client).save(fleetBotIdSchema.parse(botId), fleetDesktopAccessInputSchema.parse(input))
+  )
+  scoped.mhandle('fleet:desktopAccess:disable', (client, _event, botId: unknown) =>
+    bridgeOf(client).disable(fleetBotIdSchema.parse(botId))
+  )
+  scoped.mhandle('fleet:desktopAccess:removeOther', (client, _event, botId: unknown, desktopId: unknown) =>
+    bridgeOf(client).removeOther(fleetBotIdSchema.parse(botId), fleetDesktopIdSchema.parse(desktopId))
   )
 }

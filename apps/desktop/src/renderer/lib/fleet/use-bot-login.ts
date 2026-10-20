@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import type { FleetLoginAttempt, FleetLoginKind, FleetLoginStartRequest } from '@maestrly/bot-fleet-protocol'
 import type { ChatSubscriptionProviderKind } from '../../../shared/chat'
 import type { HostView } from '../../../shared/hosts'
+import type { FleetServerId } from '../../../shared/fleet-servers'
+import { parseRemoteHostId } from '../../../shared/host-key'
+import { useFleetServerId } from './server-context'
 import { closeBotLogin, createLoginOwnership } from './provisioning'
 import { fleetErrorMessage } from './errors'
 import { targetFromParts, targetParts, type ProvisioningSubject } from './environments'
@@ -23,6 +26,8 @@ export function useBotLogin({
   slot?: FleetLoginStartRequest['slot']
   active: boolean
 }) {
+  const viewServer = useFleetServerId()
+  const serverId = subject.serverId ?? viewServer
   // Primitives: a subject rebuilt on every render must not restart the sign-in.
   const { scope, id } = targetParts(subject.target)
   const target = targetFromParts(scope, id)
@@ -56,7 +61,7 @@ export function useBotLogin({
     const poll = async () => {
       if (!owned || !live()) return
       try {
-        const value = await window.api.fleetLoginStatus(target, owned.loginId)
+        const value = await window.api.fleetLoginStatus(serverId, target, owned.loginId)
         if (!live()) return
         update(value)
         if (value.state === 'pending' || value.state === 'completed') setError('')
@@ -66,9 +71,9 @@ export function useBotLogin({
       if (live() && owned?.state === 'pending') timer = setTimeout(() => void poll(), 2000)
     }
     const lease = ownership.current.acquire(
-      JSON.stringify([scope, id, kind, slot, method, revision]),
-      () => window.api.fleetLoginStart(target, { kind, slot, method }),
-      (loginId) => window.api.fleetLoginCancel(target, loginId)
+      JSON.stringify([serverId, scope, id, kind, slot, method, revision]),
+      () => window.api.fleetLoginStart(serverId, target, { kind, slot, method }),
+      (loginId) => window.api.fleetLoginCancel(serverId, target, loginId)
     )
     void lease.result
       .then((result) => {
@@ -86,7 +91,7 @@ export function useBotLogin({
       liveAttempt.current = null
       lease.release()
     }
-  }, [active, scope, id, kind, slot, method, revision])
+  }, [active, serverId, scope, id, kind, slot, method, revision])
   async function action(run: () => Promise<unknown>) {
     if (busy) return
     const current = generation.current
@@ -110,22 +115,22 @@ export function useBotLogin({
     code,
     setCode,
     togglePaste: () => setPaste((value) => !value),
-    openAuth: () => loginId && void action(() => window.api.fleetLoginOpen(target, loginId, 'auth')),
-    openManual: () => loginId && void action(() => window.api.fleetLoginOpen(target, loginId, 'manual')),
-    openDevice: () => loginId && void action(() => window.api.fleetLoginOpen(target, loginId, 'device')),
+    openAuth: () => loginId && void action(() => window.api.fleetLoginOpen(serverId, target, loginId, 'auth')),
+    openManual: () => loginId && void action(() => window.api.fleetLoginOpen(serverId, target, loginId, 'manual')),
+    openDevice: () => loginId && void action(() => window.api.fleetLoginOpen(serverId, target, loginId, 'device')),
     copyCode: () => attempt?.device && void action(() => navigator.clipboard.writeText(attempt.device!.userCode)),
     /** Codex: a device code instead of the browser relay. */
     useDeviceCode: () =>
       loginId &&
       void action(async () => {
-        await window.api.fleetLoginCancel(target, loginId)
+        await window.api.fleetLoginCancel(serverId, target, loginId)
         setMethod('device')
       }),
     submitCode: () =>
       loginId &&
       void action(async () => {
         const current = generation.current
-        const value = await window.api.fleetLoginSubmitCode(target, loginId, code.trim())
+        const value = await window.api.fleetLoginSubmitCode(serverId, target, loginId, code.trim())
         if (current === generation.current) {
           ownership.current.update(value)
           liveAttempt.current = value
@@ -175,11 +180,12 @@ const ENVIRONMENT_LOGIN_KINDS: Partial<Record<ChatSubscriptionProviderKind, Flee
  */
 export function environmentSubscriptionLogin(
   providerKind: ChatSubscriptionProviderKind,
-  host: Pick<HostView, 'remote' | 'environment'>
-): { kind: FleetLoginKind; environmentId: string } | null {
+  host: Pick<HostView, 'id' | 'remote' | 'environment'>
+): { kind: FleetLoginKind; environmentId: string; serverId: FleetServerId } | null {
   const kind = ENVIRONMENT_LOGIN_KINDS[providerKind]
   const environmentId = host.remote ? host.environment?.id : undefined
-  return kind && environmentId ? { kind, environmentId } : null
+  const serverId = parseRemoteHostId(host.id)?.serverId
+  return kind && environmentId && serverId ? { kind, environmentId, serverId } : null
 }
 
 /** The host of a sign-in page, for naming it; empty when the URL cannot be read. */

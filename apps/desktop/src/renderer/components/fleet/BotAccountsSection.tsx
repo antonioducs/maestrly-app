@@ -124,7 +124,12 @@ export function BotAccountsSection({
                     setConfirm({
                       name: item.label,
                       remove: () =>
-                        window.api.fleetRemoveBotSubscription(subject.target, item.kind, item.accountId ?? 'default'),
+                        window.api.fleetRemoveBotSubscription(
+                          serverId,
+                          subject.target,
+                          item.kind,
+                          item.accountId ?? 'default'
+                        ),
                     })
                   }
                 >

@@ -195,42 +195,55 @@ export const fleetApi = {
   fleetInstallerProvideBotEnvironment: (): Promise<FleetInstallerStatus> =>
     ipcRenderer.invoke('fleet:installer:provideBotEnvironment'),
   fleetLoginStart: (
+    serverId: FleetServerId,
     target: FleetProvisioningTargetInput,
     request: FleetLoginStartRequest
   ): Promise<{ attempt: FleetLoginAttempt; relay: 'listening' | 'unavailable' | 'none' }> =>
-    ipcRenderer.invoke('fleet:login:start', target, request),
-  fleetLoginStatus: (target: FleetProvisioningTargetInput, loginId: string): Promise<FleetLoginAttempt> =>
-    ipcRenderer.invoke('fleet:login:status', target, loginId),
+    ipcRenderer.invoke('fleet:login:start', serverId, target, request),
+  fleetLoginStatus: (
+    serverId: FleetServerId,
+    target: FleetProvisioningTargetInput,
+    loginId: string
+  ): Promise<FleetLoginAttempt> => ipcRenderer.invoke('fleet:login:status', serverId, target, loginId),
   fleetLoginSubmitCode: (
+    serverId: FleetServerId,
     target: FleetProvisioningTargetInput,
     loginId: string,
     code: string
-  ): Promise<FleetLoginAttempt> => ipcRenderer.invoke('fleet:login:code', target, loginId, code),
-  fleetLoginCancel: (target: FleetProvisioningTargetInput, loginId: string): Promise<void> =>
-    ipcRenderer.invoke('fleet:login:cancel', target, loginId),
+  ): Promise<FleetLoginAttempt> => ipcRenderer.invoke('fleet:login:code', serverId, target, loginId, code),
+  fleetLoginCancel: (serverId: FleetServerId, target: FleetProvisioningTargetInput, loginId: string): Promise<void> =>
+    ipcRenderer.invoke('fleet:login:cancel', serverId, target, loginId),
   fleetLoginOpen: (
+    serverId: FleetServerId,
     target: FleetProvisioningTargetInput,
     loginId: string,
     page: 'auth' | 'device' | 'manual'
-  ): Promise<void> => ipcRenderer.invoke('fleet:login:open', target, loginId, page),
+  ): Promise<void> => ipcRenderer.invoke('fleet:login:open', serverId, target, loginId, page),
   fleetProvisioningInventory: (): Promise<MacInventory> => ipcRenderer.invoke('fleet:provisioning:inventory'),
-  fleetImportFromMac: (target: FleetProvisioningTargetInput, selection: MacImportSelection): Promise<MacImportReport> =>
-    ipcRenderer.invoke('fleet:provisioning:import', target, selection),
-  fleetBotAccounts: (target: FleetProvisioningTargetInput): Promise<FleetBotAccounts> =>
-    ipcRenderer.invoke('fleet:bot:accounts', target),
+  fleetImportFromMac: (
+    serverId: FleetServerId,
+    target: FleetProvisioningTargetInput,
+    selection: MacImportSelection
+  ): Promise<MacImportReport> => ipcRenderer.invoke('fleet:provisioning:import', serverId, target, selection),
+  fleetBotAccounts: (serverId: FleetServerId, target: FleetProvisioningTargetInput): Promise<FleetBotAccounts> =>
+    ipcRenderer.invoke('fleet:bot:accounts', serverId, target),
   fleetRemoveBotSubscription: (
+    serverId: FleetServerId,
     target: FleetProvisioningTargetInput,
     kind: FleetSubscriptionKind,
     slot: string
-  ): Promise<void> => ipcRenderer.invoke('fleet:bot:subscription-remove', target, kind, slot),
-  fleetBotSkills: (target: FleetProvisioningTargetInput): Promise<FleetBotSkills> =>
-    ipcRenderer.invoke('fleet:bot:skills', target),
-  fleetRemoveBotSkill: (target: FleetProvisioningTargetInput, name: string): Promise<void> =>
-    ipcRenderer.invoke('fleet:bot:skill-remove', target, name),
-  fleetBotMcpServers: (target: FleetProvisioningTargetInput): Promise<FleetBotMcpServers> =>
-    ipcRenderer.invoke('fleet:bot:mcp-servers', target),
-  fleetRemoveBotMcpServer: (target: FleetProvisioningTargetInput, serverId: string): Promise<void> =>
-    ipcRenderer.invoke('fleet:bot:mcp-remove', target, serverId),
+  ): Promise<void> => ipcRenderer.invoke('fleet:bot:subscription-remove', serverId, target, kind, slot),
+  fleetBotSkills: (serverId: FleetServerId, target: FleetProvisioningTargetInput): Promise<FleetBotSkills> =>
+    ipcRenderer.invoke('fleet:bot:skills', serverId, target),
+  fleetRemoveBotSkill: (serverId: FleetServerId, target: FleetProvisioningTargetInput, name: string): Promise<void> =>
+    ipcRenderer.invoke('fleet:bot:skill-remove', serverId, target, name),
+  fleetBotMcpServers: (serverId: FleetServerId, target: FleetProvisioningTargetInput): Promise<FleetBotMcpServers> =>
+    ipcRenderer.invoke('fleet:bot:mcp-servers', serverId, target),
+  fleetRemoveBotMcpServer: (
+    fleetServerId: FleetServerId,
+    target: FleetProvisioningTargetInput,
+    serverId: string
+  ): Promise<void> => ipcRenderer.invoke('fleet:bot:mcp-remove', fleetServerId, target, serverId),
   fleetGetConnection: (serverId: FleetServerId): Promise<FleetConnectionView> =>
     ipcRenderer.invoke('fleet:getConnection', serverId),
   /** The servers this computer is paired with. */
@@ -586,19 +599,26 @@ export const fleetApi = {
   fleetScreenClipboardWrite: (channelId: string, text: string): Promise<void> =>
     ipcRenderer.invoke('fleet:screenClipboardWrite', channelId, text),
   /** What this Mac gives a bot, and every Mac linked to it. */
-  fleetDesktopAccess: (botId: string): Promise<FleetDesktopAccessView> =>
-    ipcRenderer.invoke('fleet:desktopAccess:get', botId),
+  fleetDesktopAccess: (serverId: FleetServerId, botId: string): Promise<FleetDesktopAccessView> =>
+    ipcRenderer.invoke('fleet:desktopAccess:get', serverId, botId),
   /** Gives a bot access to projects on this Mac, or changes it. */
-  fleetDesktopAccessSave: (botId: string, input: FleetDesktopAccessInput): Promise<FleetDesktopAccessView> =>
-    ipcRenderer.invoke('fleet:desktopAccess:save', botId, input),
+  fleetDesktopAccessSave: (
+    serverId: FleetServerId,
+    botId: string,
+    input: FleetDesktopAccessInput
+  ): Promise<FleetDesktopAccessView> => ipcRenderer.invoke('fleet:desktopAccess:save', serverId, botId, input),
   /** Takes this Mac's access back; the bot's conversations stay here. */
-  fleetDesktopAccessDisable: (botId: string): Promise<FleetDesktopAccessView> =>
-    ipcRenderer.invoke('fleet:desktopAccess:disable', botId),
+  fleetDesktopAccessDisable: (serverId: FleetServerId, botId: string): Promise<FleetDesktopAccessView> =>
+    ipcRenderer.invoke('fleet:desktopAccess:disable', serverId, botId),
   /** Removes another Mac's link; that Mac revokes its side when it hears of it. */
-  fleetDesktopAccessRemoveOther: (botId: string, desktopId: string): Promise<FleetDesktopAccessView> =>
-    ipcRenderer.invoke('fleet:desktopAccess:removeOther', botId, desktopId),
-  onFleetDesktopAccess: (cb: (payload: { botId: string }) => void): (() => void) =>
-    subscribe('fleet:desktop-access', cb),
+  fleetDesktopAccessRemoveOther: (
+    serverId: FleetServerId,
+    botId: string,
+    desktopId: string
+  ): Promise<FleetDesktopAccessView> =>
+    ipcRenderer.invoke('fleet:desktopAccess:removeOther', serverId, botId, desktopId),
+  onFleetDesktopAccess: (cb: (serverId: FleetServerId, botId: string) => void): (() => void) =>
+    subscribe<{ serverId: FleetServerId; botId: string }>('fleet:desktop-access', (p) => cb(p.serverId, p.botId)),
   onFleetEvent: (cb: (serverId: FleetServerId, event: FleetGatewayEvent) => void): (() => void) =>
     subscribe<{ serverId: FleetServerId; event: FleetGatewayEvent }>('fleet:event', (p) => cb(p.serverId, p.event)),
   onFleetMediaProgress: (cb: (serverId: FleetServerId, progress: FleetMediaProgress) => void): (() => void) =>

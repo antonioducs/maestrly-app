@@ -52,3 +52,8 @@ export function defaultFleetServer<T extends Pick<FleetServerView, 'id' | 'insta
 ): T | null {
   return servers.find((server) => server.installed) ?? servers[0] ?? null
 }
+
+/** An API whose every method names the server first, as the preload exposes the environment settings. */
+export type FleetServerScoped<T> = {
+  [K in keyof T]: T[K] extends (...args: infer A) => infer R ? (fleetServerId: FleetServerId, ...args: A) => R : T[K]
+}

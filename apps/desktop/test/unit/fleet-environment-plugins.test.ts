@@ -23,6 +23,10 @@ import * as engine from '../../src/main/plugins/service'
 import { listInstalled, writeInstalled } from '../../src/main/plugins/store'
 import { closeDb, freshDb } from '../helpers/db'
 import { commitFiles, type FixtureFiles, makeGitRepo } from '../helpers/plugin-fixtures'
+import { fleetIpcRegistrar } from '../../src/main/fleet/client/scoped-ipc'
+
+/** The server the test's renderer names first in every call. */
+const SERVER = 'aaaaaaaa-0000-4000-8000-000000000001'
 
 vi.mock('../../src/main/secure-store', () => {
   const values = new Map<string, string>()
@@ -333,22 +337,23 @@ describe('environment plugin IPC on this computer', () => {
     const mutations = new Set<string>()
     const reg: IpcRegistrar = {
       handle: (key, fn) => {
-        handlers.set(key, (...args) => fn({} as never, ...args))
+        handlers.set(key, (...args) => fn({} as never, SERVER, ...args))
       },
       mhandle: (key, fn) => {
         mutations.add(key)
-        handlers.set(key, (...args) => fn({} as never, ...args))
+        handlers.set(key, (...args) => fn({} as never, SERVER, ...args))
       },
       on: () => {},
       mon: () => {},
     }
     const environment = { id: 'env-1', capabilities }
     const fleet = {
+      serverId: SERVER,
       hasFeature: vi.fn((_feature: string) => true),
       getSnapshot: () => ({ environments: [environment] }),
       call: vi.fn(async (): Promise<unknown> => ({ ok: true })),
     }
-    registerFleetEnvironmentSettingsIpc(reg, fleet)
+    registerFleetEnvironmentSettingsIpc(fleetIpcRegistrar(reg, () => fleet as never))
     return { handlers, mutations, fleet }
   }
 
