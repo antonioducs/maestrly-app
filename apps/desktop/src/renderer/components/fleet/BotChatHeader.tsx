@@ -271,7 +271,7 @@ export function BotChatHeader({
             </Button>
           )
         )}
-        <ChatWindowButton target={{ kind: 'bot', id: bot.id }} />
+        <ChatWindowButton target={{ kind: 'bot', serverId: fleet.serverId, id: bot.id }} />
         <Button
           size="icon"
           variant="ghost"

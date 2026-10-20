@@ -1061,7 +1061,13 @@ function DesktopShell({
                   onOpenSettings={() => openSettings('artifacts')}
                 />
               )}
-              <PersistentBotViews view={fleetView} fleet={fleet} onView={openFleetView} onOpenBot={openFleetBot} />
+              <PersistentBotViews
+                fleets={fleets}
+                view={fleetView}
+                fleet={fleet}
+                onView={openFleetView}
+                onOpenBot={openFleetBot}
+              />
               {fleetView?.kind === 'environment' &&
                 fleet.state.snapshot.environments.some((environment) => environment.id === fleetView.environmentId) && (
                   <EnvironmentView

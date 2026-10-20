@@ -9,6 +9,7 @@ import type {
   WindowOpenHandlerResponse,
 } from 'electron'
 import { chatWindowKey, type ChatWindowRequest, type ChatWindowTarget } from '../shared/chat-window'
+import { isFleetServerId } from '../shared/fleet-servers'
 import { GENUI_WIDGET_FRAME_URL } from '../shared/genui-widget'
 
 const TOKEN_TTL = 15_000
@@ -60,6 +61,7 @@ export class ChatWindowManager {
     if (
       !request ||
       (request.kind !== 'conversation' && request.kind !== 'bot') ||
+      (request.kind === 'bot' && !isFleetServerId(request.serverId)) ||
       typeof request.id !== 'string' ||
       !request.id.trim() ||
       request.id.length > 256 ||

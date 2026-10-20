@@ -691,11 +691,10 @@ async function createWindow(): Promise<void> {
   chatWindowManager = new ChatWindowManager(wc, {
     targetExists: (target) =>
       target.kind === 'bot'
-        ? fleetServers
-            .clients()
-            .some((client) =>
-              client.getSnapshot().bots.some((bot) => bot.id === target.id && bot.lifecycle !== 'archived')
-            )
+        ? (fleetServers
+            .get(target.serverId)
+            ?.getSnapshot()
+            .bots.some((bot) => bot.id === target.id && bot.lifecycle !== 'archived') ?? false)
         : !!getConversation(target.id),
     focusSource: focusMainWindow,
     workArea: (bounds) =>

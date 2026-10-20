@@ -51,7 +51,8 @@ describe('fleet renderer wiring', () => {
     // streaming its computer.
     expect(view).toContain('<ChatWindowHost')
     expect(view).toContain('streaming={active && ')
-    expect(source('components/fleet/PersistentBotViews.tsx')).toContain('active={bot.id === activeView?.botId}')
+    // Only the bot of the server the Bots tab shows is active: a bot of the same id on another server is not.
+    expect(source('components/fleet/PersistentBotViews.tsx')).toContain('active={key === activeKey}')
     expect(source('components/fleet/BotChatHeader.tsx')).toContain('<ChatWindowButton')
     const sheet = source('components/fleet/BotSettingsSheet.tsx')
     expect(sheet).toContain('<BotSettings')
