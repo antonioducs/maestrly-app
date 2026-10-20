@@ -65,15 +65,7 @@ function computer(identity: PeerIdentity, name: string) {
 /** The hosts of this computer's windows: no server, only the computers it paired with. */
 function registryOf(store: PeerStore, name: string) {
   const registry = new HostRegistry({
-    fleet: {
-      getConnection: () => ({ url: null, hostname: null }),
-      getSnapshot: () => ({ environments: [] }),
-      onChange: () => () => undefined,
-      bridgeTicket: async () => {
-        throw new Error('No server')
-      },
-    },
-    serverId: () => 'no-server',
+    servers: { list: () => [], onChange: () => () => undefined },
     appVersion: VERSION,
     local: { os: 'mac', homeDir: `/Users/${name}` },
     client: () => ({ deviceName: name, os: 'mac', locale: 'pt-BR' }),
@@ -91,7 +83,7 @@ function registryOf(store: PeerStore, name: string) {
   return registry
 }
 
-const noFleet = { hostFilesAccess: () => null, hasFeature: () => false }
+const noFleet = () => null
 
 describe('two computers of the owner', () => {
   it('pair once, use each other, and stop when one removes the other', async () => {

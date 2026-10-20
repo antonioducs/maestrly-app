@@ -1,6 +1,6 @@
 import os from 'node:os'
 import { app } from 'electron'
-import { readFleetSettings } from '../fleet/client/settings'
+import { readFleetServerRecords } from '../fleet/client/settings'
 import type { HostFilesRoutes } from '../fleet/instance/host-files-http'
 import type { EditorRoutes } from '../fleet/instance/server'
 import { holdAwake } from '../power-manager'
@@ -34,7 +34,8 @@ export function peerHosts(): PeerHosts {
 /** This profile's identity among the owner's computers, created on first use; null without a keyring. */
 export function peerIdentity(): PeerIdentity | null {
   identity ??= loadOrCreateIdentity(appPeerStorage, {
-    defaultName: () => readFleetSettings().deviceName ?? os.hostname(),
+    // The name this computer has on the first server it paired with, as the owner chose it there.
+    defaultName: () => readFleetServerRecords()[0]?.deviceName || os.hostname(),
   })
   return identity
 }
