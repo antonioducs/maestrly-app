@@ -5,6 +5,21 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Fixed
+
+- The **Send to the agent**, **Check the fixes** and **Send back** buttons on
+  the Code review card show their text again. It was transparent on the
+  button's light background, so they looked like empty light rectangles.
+- A turn in **Plan** mode no longer ends without a plan to approve when the
+  model writes the plan as text. GitHub Copilot, Claude and ChatGPT models
+  sometimes did, and the **Plan** tab never opened. Maestrly now asks the model
+  once, in a hidden message, to submit the plan it just wrote, or to ask you
+  what is missing.
+- **Settings → Updates** shows the release notes of an available version as
+  readable text. On Windows they appeared as raw HTML tags and attributes.
+- The plan of a ChatGPT conversation no longer starts with a `<proposed_plan>`
+  line in the **Plan** tab.
+
 ## [0.23.0] - 2026-10-19
 
 ### Added
