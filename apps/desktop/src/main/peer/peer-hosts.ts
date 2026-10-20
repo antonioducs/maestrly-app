@@ -17,7 +17,7 @@ export interface PeerEndpoint {
 
 export interface PeerHostsDeps {
   store: Pick<PeerStore, 'list' | 'get' | 'tokenFor' | 'touch' | 'onChange'>
-  reach?: (candidates: string[], port: number, fingerprint: string) => Promise<string>
+  reach?: (candidates: string[], port: number, certPem: string) => Promise<string>
   openSocket?: (url: string, options: ClientOptions) => WebSocket
   now?: () => number
 }
@@ -36,7 +36,7 @@ export class PeerHosts {
   private readonly now: () => number
 
   constructor(private readonly deps: PeerHostsDeps) {
-    this.reach = deps.reach ?? ((candidates, port, fingerprint) => reachPeer(candidates, port, fingerprint))
+    this.reach = deps.reach ?? ((candidates, port, certPem) => reachPeer(candidates, port, certPem))
     this.openSocket = deps.openSocket ?? ((url, options) => new WebSocket(url, options))
     this.now = deps.now ?? Date.now
   }
@@ -65,7 +65,7 @@ export class PeerHosts {
     if (!record || !token) throw new Error('Unknown computer')
     let address: string
     try {
-      address = await this.reach(record.addresses, record.port, record.fingerprint)
+      address = await this.reach(record.addresses, record.port, record.certPem)
     } catch (error) {
       if (error instanceof PeerUnreachable) {
         if (error.identityChanged) this.setProblem(deviceId, 'identity-changed')

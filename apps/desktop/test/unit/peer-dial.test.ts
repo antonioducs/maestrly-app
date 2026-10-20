@@ -41,13 +41,11 @@ async function failure(run: Promise<unknown>): Promise<PeerUnreachable> {
 
 describe('reachPeer', () => {
   it('keeps the address that shows the pinned certificate', async () => {
-    await expect(reachPeer(['::1', '127.0.0.1'], port, identityA.fingerprint, { staggerMs: 20 })).resolves.toBe(
-      '127.0.0.1'
-    )
+    await expect(reachPeer(['::1', '127.0.0.1'], port, identityA.certPem, { staggerMs: 20 })).resolves.toBe('127.0.0.1')
   })
 
   it('says when the computer shows another certificate', async () => {
-    const error = await failure(reachPeer(['127.0.0.1'], port, identityB.fingerprint))
+    const error = await failure(reachPeer(['127.0.0.1'], port, identityB.certPem))
     expect(error.identityChanged).toBe(true)
   })
 
@@ -55,13 +53,13 @@ describe('reachPeer', () => {
     const closed = await listen()
     const closedPort = (closed.address() as AddressInfo).port
     await new Promise((resolve) => closed.close(resolve))
-    const error = await failure(reachPeer(['127.0.0.1'], closedPort, identityA.fingerprint))
+    const error = await failure(reachPeer(['127.0.0.1'], closedPort, identityA.certPem))
     expect(error.refused).toBe(true)
     expect(error.identityChanged).toBe(false)
   })
 
   it('has nowhere to go without addresses', async () => {
-    const error = await failure(reachPeer([], port, identityA.fingerprint))
+    const error = await failure(reachPeer([], port, identityA.certPem))
     expect(error).toMatchObject({ refused: false, identityChanged: false })
   })
 })

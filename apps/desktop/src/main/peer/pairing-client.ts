@@ -8,7 +8,7 @@ import {
   peerPairingPath,
 } from '../../shared/peer'
 import type { RemoteOs } from '../../shared/remote-bridge'
-import { type PeerAddress, peerRequest } from './http'
+import { isIdentityChange, type PeerAddress, peerRequest } from './http'
 import type { PeerIdentity } from './identity'
 import { b64u, fromB64u, openGrant, pairingAad, passwordScalar, sealGrant } from './pairing-crypto'
 import { PeerPairingError } from './pairing-host'
@@ -48,21 +48,6 @@ const CODES: ReadonlySet<string> = new Set<PeerPairingErrorCode>([
   'unavailable',
   'invalid',
 ])
-/** What Node says when a pinned computer shows another certificate. */
-const IDENTITY_ERRORS = new Set([
-  'DEPTH_ZERO_SELF_SIGNED_CERT',
-  'SELF_SIGNED_CERT_IN_CHAIN',
-  'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
-  'ERR_TLS_CERT_ALTNAME_INVALID',
-])
-
-function identityChanged(error: unknown): boolean {
-  const code = (error as { code?: unknown } | null)?.code
-  return (
-    (typeof code === 'string' && IDENTITY_ERRORS.has(code)) ||
-    (error instanceof Error && error.message === 'The computer identity changed.')
-  )
-}
 
 /** One request of the pairing: a refusal of the other computer becomes a PeerPairingError with its code. */
 async function call<T extends z.ZodType>(
@@ -76,7 +61,7 @@ async function call<T extends z.ZodType>(
   try {
     response = await peerRequest<unknown>(address, method, path, options)
   } catch (error) {
-    if (identityChanged(error)) throw new PeerPairingError('invalid', 'The other computer identity changed.')
+    if (isIdentityChange(error)) throw new PeerPairingError('invalid', 'The other computer identity changed.')
     throw error
   }
   if (response.status === 409) {

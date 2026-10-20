@@ -24,21 +24,39 @@ const ANSWER_MAX = 64 * 1024
 export const urlHost = (host: string): string => (host.includes(':') ? `[${host}]` : host)
 const servername = (host: string): string | undefined => (isIP(host) ? undefined : host)
 
+const IDENTITY_CHANGED = 'The computer identity changed.'
+/** What Node says when a pinned computer shows another certificate. */
+const IDENTITY_ERRORS = new Set([
+  'DEPTH_ZERO_SELF_SIGNED_CERT',
+  'SELF_SIGNED_CERT_IN_CHAIN',
+  'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+  'ERR_TLS_CERT_ALTNAME_INVALID',
+])
+
 /** Accepts only the certificate the owner's computer showed when it paired: its common name is not a host name. */
 export function pinnedTls(certPem: string): PinnedTls {
   const expected = certificateFingerprint(certPem)
   return {
     ca: certPem,
     checkServerIdentity: (_host, cert) =>
-      normalizeFingerprint(cert.fingerprint256 ?? '') === expected
-        ? undefined
-        : new Error('The computer identity changed.'),
+      normalizeFingerprint(cert.fingerprint256 ?? '') === expected ? undefined : new Error(IDENTITY_CHANGED),
   }
 }
 
+/** Whether a connection with `pinnedTls` failed because the computer showed another certificate. */
+export function isIdentityChange(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code
+  return (
+    (typeof code === 'string' && IDENTITY_ERRORS.has(code)) ||
+    (error instanceof Error && error.message === IDENTITY_CHANGED)
+  )
+}
+
 /**
- * A JSON request to another computer's peer server. Without `pin`, the first contact: the certificate is read, not
- * verified, so nothing secret may travel then. With `pin`, only that certificate is accepted.
+ * A JSON request to another computer's peer server. With `pin`, only that certificate is accepted. Without it, the
+ * first contact of a pairing, which reads a certificate nobody knows yet and so cannot verify it: only the public
+ * `hello` travels that way. Every later request pins the certificate read there, and SPAKE2 binds both computers'
+ * fingerprints into its confirmations, so a certificate swapped on the way fails the pairing.
  */
 export function peerRequest<T>(
   address: PeerAddress,

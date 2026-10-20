@@ -1,6 +1,6 @@
 import { isIP } from 'node:net'
 import tls from 'node:tls'
-import { normalizeFingerprint } from './identity'
+import { isIdentityChange, pinnedTls } from './http'
 
 /** No address of a paired computer showed its certificate. */
 export class PeerUnreachable extends Error {
@@ -16,12 +16,13 @@ export class PeerUnreachable extends Error {
 
 /**
  * Tries the addresses a paired computer was known at, starting the next one while earlier ones are pending, and
- * resolves the first that completes TLS with the pinned certificate. Nothing is sent over these connections.
+ * resolves the first that completes TLS with the certificate pinned at pairing. Nothing is sent over these
+ * connections.
  */
 export function reachPeer(
   candidates: string[],
   port: number,
-  fingerprint: string,
+  certPem: string,
   options: { staggerMs?: number; timeoutMs?: number } = {}
 ): Promise<string> {
   const hosts = [...new Set(candidates.filter(Boolean))]
@@ -53,23 +54,19 @@ export function reachPeer(
         reject(new PeerUnreachable(refused, identityChanged))
       }
     }
+    const pin = pinnedTls(certPem)
     const attempt = (host: string) => {
       if (settled) return
       const socket = tls.connect({
         host,
         port,
-        rejectUnauthorized: false,
         servername: isIP(host) ? undefined : host,
         timeout: timeoutMs,
+        ...pin,
       })
       sockets.add(socket)
+      // Only the pinned certificate completes the handshake: any other one fails it with an identity error.
       socket.once('secureConnect', () => {
-        const seen = normalizeFingerprint(socket.getPeerCertificate().fingerprint256 ?? '')
-        if (seen !== fingerprint) {
-          identityChanged = true
-          fail(socket)
-          return
-        }
         if (settled) return
         settled = true
         cleanup()
@@ -77,6 +74,7 @@ export function reachPeer(
       })
       socket.once('error', (error: NodeJS.ErrnoException) => {
         if (error.code === 'ECONNREFUSED') refused = true
+        else if (isIdentityChange(error)) identityChanged = true
         fail(socket)
       })
       socket.once('timeout', () => fail(socket))
