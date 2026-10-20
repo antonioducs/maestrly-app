@@ -164,6 +164,22 @@ function normalizeSnakeCaseArguments(
   return renamed ? normalized : args
 }
 
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError'
+}
+
+function cursorToolErrorText(error: unknown): string {
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === 'string'
+        ? error
+        : typeof (error as { message?: unknown } | null)?.message === 'string'
+          ? (error as { message: string }).message
+          : ''
+  return message.trim() || 'Tool failed'
+}
+
 function applyCursorErrorStatus(result: SDKCustomToolResult, isError: boolean): SDKCustomToolResult {
   if (!result || typeof result !== 'object' || Array.isArray(result)) {
     return isError ? { content: [{ type: 'text', text: String(result ?? '(no output)') }], isError: true } : result
@@ -214,13 +230,24 @@ export async function buildCursorToolBridge(args: BuildCursorToolBridgeArgs): Pr
           parsed = validation.value as Record<string, SDKJsonValue>
         }
         signal.throwIfAborted()
-        const result = await execute(
-          parsed as never,
-          {
-            toolCallId,
-            abortSignal: signal,
-          } as never
-        )
+        let result: unknown
+        try {
+          result = await execute(
+            parsed as never,
+            {
+              toolCallId,
+              abortSignal: signal,
+            } as never
+          )
+        } catch (error) {
+          // A cancelled run is no failure of the tool: let it propagate exactly as before.
+          if (signal.aborted || isAbortError(error)) throw error
+          // The SDK closes a throwing tool as completed and swaps the message for a generic "Tool execution error",
+          // so the mapper needs the original to close the card as failed. The error is rethrown so the model keeps
+          // receiving what it received before this record existed.
+          canonicalOutputs.set(toolCallId, { text: cursorToolErrorText(error), isError: true })
+          throw error
+        }
         const canonical = modelOutputToChatToolOutput(result)
         canonicalOutputs.set(toolCallId, canonical)
         const modelOutput = aiTool.toModelOutput

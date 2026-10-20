@@ -316,6 +316,97 @@ describe('Cursor tool bridge (Scenario D surface)', () => {
     expect(bridge.takeToolOutput('refused-1')).toBeUndefined()
   })
 
+  describe('a tool that throws while it runs', () => {
+    const original = 'oldString not found. It must match the target block uniquely; read the file again.'
+    const buildEdit = async (execute: () => Promise<unknown>, signal = new AbortController().signal) =>
+      buildCursorToolBridge({
+        tools: {
+          edit: tool({
+            description: 'Edit a file.',
+            inputSchema: z.object({ path: z.string(), oldString: z.string(), newString: z.string() }),
+            execute: execute as never,
+          }),
+        },
+        signal,
+      })
+    const args = { path: 'notes.txt', oldString: 'zzz-nao-existe', newString: 'x' }
+
+    it('records the original message as a canonical error and rethrows the error unchanged', async () => {
+      const failure = new Error(original)
+      const bridge = await buildEdit(async () => {
+        throw failure
+      })
+      await expect(bridge.customTools.edit!.execute(args, { toolCallId: 'throw-1' })).rejects.toBe(failure)
+      expect(bridge.takeToolOutput('throw-1')).toEqual({ text: original, isError: true })
+      expect(bridge.takeToolOutput('throw-1')).toBeUndefined()
+    })
+
+    it('records the failure under the call that threw only', async () => {
+      const bridge = await buildEdit(async () => {
+        throw new Error(original)
+      })
+      await expect(bridge.customTools.edit!.execute(args, { toolCallId: 'throw-2' })).rejects.toThrow(original)
+      expect(bridge.takeToolOutput('throw-3')).toBeUndefined()
+      expect(bridge.takeToolOutput('throw-2')).toMatchObject({ isError: true })
+    })
+
+    it('records a fallback message for a thrown value without one', async () => {
+      for (const thrown of [new Error('  '), '', undefined, { code: 1 }]) {
+        const bridge = await buildEdit(async () => {
+          throw thrown
+        })
+        await expect(bridge.customTools.edit!.execute(args, { toolCallId: 'throw-4' })).rejects.toBe(thrown)
+        expect(bridge.takeToolOutput('throw-4')).toEqual({ text: 'Tool failed', isError: true })
+      }
+    })
+
+    it('keeps the text of a thrown string', async () => {
+      const bridge = await buildEdit(async () => {
+        throw 'disk full'
+      })
+      await expect(bridge.customTools.edit!.execute(args, { toolCallId: 'throw-5' })).rejects.toBe('disk full')
+      expect(bridge.takeToolOutput('throw-5')).toEqual({ text: 'disk full', isError: true })
+    })
+
+    it('rethrows an abort without recording a failure', async () => {
+      const abort = Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' })
+      const bridge = await buildEdit(async () => {
+        throw abort
+      })
+      await expect(bridge.customTools.edit!.execute(args, { toolCallId: 'abort-1' })).rejects.toBe(abort)
+      expect(bridge.takeToolOutput('abort-1')).toBeUndefined()
+    })
+
+    it('rethrows without recording a failure once the run was cancelled', async () => {
+      const controller = new AbortController()
+      const failure = new Error('connection reset')
+      const bridge = await buildEdit(async () => {
+        controller.abort()
+        throw failure
+      }, controller.signal)
+      await expect(bridge.customTools.edit!.execute(args, { toolCallId: 'abort-2' })).rejects.toBe(failure)
+      expect(bridge.takeToolOutput('abort-2')).toBeUndefined()
+    })
+
+    it('records nothing for a call cancelled before it started', async () => {
+      const controller = new AbortController()
+      controller.abort()
+      const execute = vi.fn(async () => 'edited')
+      const bridge = await buildEdit(execute, controller.signal)
+      await expect(bridge.customTools.edit!.execute(args, { toolCallId: 'abort-3' })).rejects.toThrow()
+      expect(execute).not.toHaveBeenCalled()
+      expect(bridge.takeToolOutput('abort-3')).toBeUndefined()
+    })
+
+    it('keeps a successful call free of a failure record', async () => {
+      const bridge = await buildEdit(async () => 'edited')
+      const result = await bridge.customTools.edit!.execute(args, { toolCallId: 'ok-1' })
+      expect(result).toMatchObject({ content: [{ type: 'text', text: 'edited' }] })
+      expect(result).not.toHaveProperty('isError')
+      expect(bridge.takeToolOutput('ok-1')).toBe('edited')
+    })
+  })
+
   it('keeps signatures stable across volatile descriptions and schemas', async () => {
     const signal = new AbortController().signal
     const build = (description: string, schema: z.ZodType) =>

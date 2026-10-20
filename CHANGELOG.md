@@ -49,8 +49,10 @@ User-visible changes by version. Downloads are on
 - Cursor models that call a Maestrly tool with snake_case argument names, such
   as `old_string` and `new_string` for **Edit**, no longer get the call
   rejected, so the edit is applied instead of the model falling back to the
-  shell. When a Cursor tool call is still rejected or fails, its card now shows
-  an error instead of a success such as "Edited notes.txt".
+  shell. When a Cursor tool call is still rejected, or fails while it runs, for
+  example an edit whose text is not in the file, its card now shows the error
+  and its message instead of a success such as "Edited notes.txt", and the turn
+  summary counts it as failed.
 
 ## [0.23.0] - 2026-10-19
 

@@ -326,6 +326,81 @@ describe('createCursorStreamMapper', () => {
       )
       expect(events.at(-1)).toMatchObject({ kind: 'tool-state', state: { status: 'completed' } })
     })
+
+    it('keeps a successful result with no error flag completed', () => {
+      const mapper = createCursorStreamMapper('m1')
+      const events = mapper.push(completed({ status: 'success', value: { content: [{ text: 'Edited notes.txt' }] } }))
+      expect(events.at(-1)).toMatchObject({ kind: 'tool-state', state: { status: 'completed' } })
+    })
+
+    describe('custom tool that threw while it ran', () => {
+      // How @cursor/sdk 1.0.34 reports it: completed, with the generic message of the Cursor runtime.
+      const thrown = { status: 'error', error: { message: 'Tool execution error' } }
+      const original = 'oldString not found. It must match the target block uniquely; read the file again.'
+
+      it('closes as an error with the message of the result', () => {
+        const mapper = createCursorStreamMapper('m1')
+        const events = mapper.push(completed(thrown))
+        expect(events).toEqual([
+          { kind: 'tool-input-start', messageId: 'm1', toolCallId: 'c-fail', toolName: 'edit' },
+          { kind: 'tool-call', messageId: 'm1', toolCallId: 'c-fail', toolName: 'edit', input: {} },
+          {
+            kind: 'tool-state',
+            messageId: 'm1',
+            toolCallId: 'c-fail',
+            state: { status: 'error', error: 'Tool execution error' },
+          },
+        ])
+        expect(mapper.state().openToolCallIds).toEqual([])
+      })
+
+      it('prefers the original message the bridge recorded', () => {
+        const mapper = createCursorStreamMapper('m1', () => ({ text: original, isError: true }))
+        const events = mapper.push(completed(thrown))
+        expect(events.at(-1)).toMatchObject({ kind: 'tool-state', state: { status: 'error', error: original } })
+      })
+
+      it('reads an error given as a plain string', () => {
+        const mapper = createCursorStreamMapper('m1')
+        const events = mapper.push(completed({ status: 'error', error: 'disk full' }))
+        expect(events.at(-1)).toMatchObject({ kind: 'tool-state', state: { status: 'error', error: 'disk full' } })
+      })
+
+      it('uses a fallback message when the error carries none', () => {
+        for (const result of [{ status: 'error' }, { status: 'error', error: {} }, { status: 'error', error: '  ' }]) {
+          const events = createCursorStreamMapper('m1').push(completed(result))
+          expect(events.at(-1)).toMatchObject({ kind: 'tool-state', state: { status: 'error', error: 'Tool failed' } })
+        }
+      })
+
+      it('redacts credentials and clips the message', () => {
+        const mapper = createCursorStreamMapper('m1')
+        const events = mapper.push(
+          completed({
+            status: 'error',
+            error: { message: `Authorization: Bearer secret-token ${'x'.repeat(120_000)}` },
+          })
+        )
+        const state = events.at(-1)
+        expect(state).toMatchObject({ kind: 'tool-state', state: { status: 'error' } })
+        expect(JSON.stringify(state)).not.toContain('secret-token')
+        expect(JSON.stringify(state).length).toBeLessThan(50_000 + 500)
+      })
+    })
+  })
+
+  it('shows the message of a structured result on an error status', () => {
+    const mapper = createCursorStreamMapper('m1')
+    const events = mapper.push({
+      type: 'tool_call',
+      agent_id: 'a',
+      run_id: 'r',
+      call_id: 'c3',
+      name: 'edit',
+      status: 'error',
+      result: { status: 'error', error: { message: 'permission denied' } },
+    } as SDKMessage)
+    expect(events.at(-1)).toMatchObject({ kind: 'tool-state', state: { status: 'error', error: 'permission denied' } })
   })
 
   it('preserves a Cursor custom-tool image result as a multimodal tool state', () => {

@@ -118,13 +118,23 @@ function toolOutputText(result: unknown): string {
   }
 }
 
+function cursorErrorMessage(result: Record<string, unknown>): string {
+  const { error } = result
+  if (typeof error === 'string' && error.trim()) return error.trim()
+  if (isRecord(error) && typeof error.message === 'string' && error.message.trim()) return error.message.trim()
+  if (typeof result.message === 'string' && result.message.trim()) return result.message.trim()
+  return 'Tool failed'
+}
+
 /**
  * Error message carried by a completed tool call whose result flags a failure, or null when it does not. The SDK
  * delivers the result of a custom tool as `{ status: 'success', value: { content, isError } }`; a plain MCP-style
- * `{ content, isError }` is read the same way.
+ * `{ content, isError }` is read the same way. A custom tool that throws is reported as completed too, with the
+ * result `{ status: 'error', error: { message } }` and a generic message in place of the original one.
  */
 function cursorResultErrorText(result: unknown): string | null {
   if (!isRecord(result)) return null
+  if (result.status === 'error') return cursorErrorMessage(result)
   const carrier = isRecord(result.value) && result.value.isError === true ? result.value : result
   if (carrier.isError !== true) return null
   return toolOutputText(carrier).trim() || 'Tool failed'
@@ -364,7 +374,9 @@ export function createCursorStreamMapper(
           closeTool(toolCallId, { status: 'completed', output }, events)
         } else if (message.status === 'error') {
           const output = clipPersistedToolOutput(
-            redactCursorCredentials(toolOutputText(message.result) || 'Tool failed')
+            redactCursorCredentials(
+              cursorResultErrorText(message.result) ?? (toolOutputText(message.result) || 'Tool failed')
+            )
           )
           closeTool(toolCallId, { status: 'error', error: output }, events)
         }
