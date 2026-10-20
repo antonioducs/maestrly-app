@@ -55,6 +55,10 @@ mac:
   target:
     - dir
   category: public.app-category.developer-tools
+  # node-pty ships prebuilds for every platform, and packaging rebuilds it into build/Release anyway. The x64 helper
+  # is the Apple silicon app's only Intel code, and macOS warns that the app depends on Rosetta because of it.
+  files:
+    - "!node_modules/node-pty/prebuilds/!(darwin-${arch})/**"
   # Electron 44 requires macOS 13. Beta, development, and release configurations inherit this minimum.
   minimumSystemVersion: '13.0.0'
   identity: '-'

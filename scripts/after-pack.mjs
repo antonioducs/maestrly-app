@@ -3,7 +3,7 @@
  * Large provider runtimes are installed on demand and must never leak into a package.
  */
 import { createReadStream, existsSync, statSync } from 'node:fs'
-import { chmod, readFile, readdir, rename, writeFile } from 'node:fs/promises'
+import { chmod, open, readFile, readdir, rename, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
 import { listPackage } from '@electron/asar'
@@ -92,6 +92,55 @@ export async function findLeanCoreLeaks(resources, platform, arch) {
   return [...new Set(leaks)]
 }
 
+// CPU types from mach/machine.h. A Mach-O without the packaged architecture runs only under Rosetta, if at all, and
+// macOS warns that an app with such a component will stop working in a future release.
+const MACH_O_CPU_TYPES = { arm64: 0x0100000c, x64: 0x01000007 }
+const MAX_FAT_ARCHITECTURES = 20
+const MACH_O_HEADER_BYTES = 8 + MAX_FAT_ARCHITECTURES * 32
+
+/** The CPU types a Mach-O header declares, or null when the bytes are not a Mach-O header. */
+export function machOCpuTypes(header) {
+  if (header.length < 8) return null
+  const magic = header.readUInt32BE(0)
+  // Thin 32- and 64-bit Mach-O files for Intel and Apple silicon are little-endian.
+  if (magic === 0xcefaedfe || magic === 0xcffaedfe) return [header.readUInt32LE(4)]
+  if (magic !== 0xcafebabe && magic !== 0xcafebabf) return null
+  // Java class files share 0xcafebabe and keep their version where a fat header keeps its architecture count.
+  const count = header.readUInt32BE(4)
+  const entryBytes = magic === 0xcafebabf ? 32 : 20
+  if (count === 0 || count > MAX_FAT_ARCHITECTURES || header.length < 8 + count * entryBytes) return null
+  return Array.from({ length: count }, (_, index) => header.readUInt32BE(8 + index * entryBytes))
+}
+
+async function readHeader(file) {
+  const handle = await open(file, 'r')
+  try {
+    const { buffer, bytesRead } = await handle.read(Buffer.alloc(MACH_O_HEADER_BYTES), 0, MACH_O_HEADER_BYTES, 0)
+    return buffer.subarray(0, bytesRead)
+  } finally {
+    await handle.close()
+  }
+}
+
+/** Mach-O files in a macOS app bundle that carry no code for the packaged architecture. */
+export async function foreignMachOFiles(bundle, arch) {
+  const cpuType = MACH_O_CPU_TYPES[arch]
+  if (cpuType === undefined) return []
+  const foreign = []
+  const visit = async (dir) => {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name)
+      // Symlinks are neither: the framework links point back inside the bundle, whose files are checked directly.
+      if (entry.isDirectory()) await visit(full)
+      else if (entry.isFile() && machOCpuTypes(await readHeader(full))?.includes(cpuType) === false) {
+        foreign.push(path.relative(bundle, full))
+      }
+    }
+  }
+  await visit(bundle)
+  return foreign.sort()
+}
+
 export function missingLegalResources(resources) {
   return REQUIRED_LEGAL_RESOURCES.filter((relative) => {
     const candidate = path.join(resources, ...relative.split('/'))
@@ -116,10 +165,9 @@ export default async function afterPack(context) {
         ? 'win'
         : context.electronPlatformName
   const arch = builderArchNames[context.arch]
+  const bundle = path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`)
   const resources =
-    platform === 'mac'
-      ? path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`, 'Contents', 'Resources')
-      : path.join(context.appOutDir, 'resources')
+    platform === 'mac' ? path.join(bundle, 'Contents', 'Resources') : path.join(context.appOutDir, 'resources')
   const missingBuilds = missingWorkspaceBuilds(listPackage(path.join(resources, 'app.asar')))
   if (missingBuilds.length > 0) {
     throw new Error(`[after-pack] missing compiled workspace packages:\n- ${missingBuilds.join('\n- ')}`)
@@ -128,6 +176,13 @@ export default async function afterPack(context) {
   const leaks = await findLeanCoreLeaks(resources, platform, arch)
   if (leaks.length > 0) throw new Error(`[after-pack] lean-core leakage:\n- ${leaks.join('\n- ')}`)
   console.log('[after-pack] lean-core leakage gate ok')
+
+  if (platform === 'mac') {
+    const foreign = await foreignMachOFiles(bundle, arch)
+    if (foreign.length > 0)
+      throw new Error(`[after-pack] Mach-O files without ${arch} code:\n- ${foreign.join('\n- ')}`)
+    console.log(`[after-pack] Mach-O architecture gate ok (${arch})`)
+  }
 
   const missingLegal = missingLegalResources(resources)
   if (missingLegal.length > 0) {

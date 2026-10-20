@@ -305,6 +305,35 @@ test('macOS updater floor is the Darwin release of the app bundle minimum', asyn
   assert.deepEqual(floors, { linux: undefined, windows: undefined, macos: MACOS_UPDATER_MINIMUM_SYSTEM_VERSION })
 })
 
+// node-pty ships prebuilds for every platform. An x64 helper left in the Apple silicon app makes macOS warn that it
+// depends on Rosetta; scripts/after-pack.mjs rejects such a package, and this catches the configuration earlier.
+test('macOS packages keep only the node-pty prebuild of their own architecture', async () => {
+  const { getConfig } = desktopRequire('app-builder-lib/out/util/config/config')
+  const { getNodeModuleFileMatcher } = desktopRequire('app-builder-lib/out/fileMatcher')
+  const { expandMacro } = desktopRequire('app-builder-lib/out/util/macroExpander')
+  const prebuilds = 'node_modules/node-pty/prebuilds'
+  for (const file of readdirSync(desktop).filter((name) => /^electron-builder(\..+)?\.yml$/.test(name))) {
+    const config = await getConfig(desktop, path.join(desktop, file), null)
+    for (const [arch, other] of [
+      ['arm64', 'x64'],
+      ['x64', 'arm64'],
+    ]) {
+      const expand = (pattern) => expandMacro(pattern, arch, {}, { os: 'mac' })
+      const packager = { config, debugLogger: { isEnabled: false } }
+      const filter = getNodeModuleFileMatcher(desktop, desktop, expand, config.mac ?? {}, packager).createFilter()
+      // electron-builder matches each node_modules file by its path inside the app.
+      const packaged = (relative) =>
+        filter(path.join(desktop, relative), { isDirectory: () => false, moduleFullFilePath: relative })
+      const label = `${file} (${arch})`
+      assert.equal(packaged(`${prebuilds}/darwin-${other}/spawn-helper`), false, label)
+      assert.equal(packaged(`${prebuilds}/win32-${arch}/pty.node`), false, label)
+      assert.equal(packaged(`${prebuilds}/darwin-${arch}/spawn-helper`), true, label)
+      assert.equal(packaged('node_modules/node-pty/build/Release/spawn-helper'), true, label)
+      assert.equal(packaged('node_modules/node-pty/lib/index.js'), true, label)
+    }
+  }
+})
+
 test('adds the macOS 13 updater floor when latest-mac.yml has none', async (t) => {
   const { staged, manifest } = await stageMacManifest(t, macManifest())
 
