@@ -5,6 +5,8 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-10-19
+
 ### Added
 
 - Let a bot split independent work into tasks that run at the same time: up to
@@ -33,6 +35,24 @@ User-visible changes by version. Downloads are on
   GitHub Copilot and Cursor. With a Gemini API key or OpenRouter they offer
   Low, Medium and High effort only. Claude Opus 5 and Claude Fable 5.1 on
   OpenRouter now get the same instructions as on Anthropic.
+- Review a plan from the mobile app. A chat in Plan mode shows its plan as a
+  compact card with its steps, and **Read and review** opens it in a sheet:
+  comment on a part of the plan, edit its Markdown, see what changed since the
+  previous version, and decide at the bottom to approve, request changes,
+  discard, build it **With Maestro** or **In a new conversation**. What you
+  write stays on the phone while the app runs, and a review of the plan on your
+  computer holds it until you hand it off or discard it. Starting a plan review
+  is still done on the computer. A host from before this version takes only the
+  decision and one general comment; the phone writes your line comments into it
+  and hides Edit, Maestro and new conversation. See
+  [Mobile app](docs/mobile.md).
+
+### Changed
+
+- The bot gateway database moves to schema 21 to keep how each bot splits its
+  work into tasks. Older gateways cannot open it, so back up the gateway volume
+  before updating the server. See
+  [compatibility](docs/bot-fleet.md#compatibility).
 
 ### Fixed
 
@@ -63,6 +83,13 @@ User-visible changes by version. Downloads are on
   subscription conversations find `git` without restarting: refreshing `PATH`
   closes idle Codex background processes so the next turn starts with the
   updated `PATH`, while leaving any turn in progress untouched.
+- File references and mentions in the chat of a conversation on a server's
+  workspaces environment open in the drawer's **Code** tab, as on this
+  computer. Before, clicking them did nothing. Markdown links written as
+  `file:///path/to/file#L10` open too.
+- The buttons that release or pause a bot's chat, in a conversation of a bot on
+  a server's workspaces environment, now act on the right conversation. They
+  passed the window's own key for it instead of the id the host knows.
 
 ## [0.22.0] - 2026-10-19
 
