@@ -6,7 +6,26 @@ import { afterEach, describe, expect, it } from 'vitest'
 // @ts-expect-error executable ESM script
 import * as afterPack from '../../../../scripts/after-pack.mjs'
 
-const { findLeanCoreLeaks, missingLegalResources, REQUIRED_LEGAL_RESOURCES } = afterPack
+const { findLeanCoreLeaks, foreignMachOFiles, machOCpuTypes, missingLegalResources, REQUIRED_LEGAL_RESOURCES } =
+  afterPack
+
+const ARM64 = 0x0100000c
+const X64 = 0x01000007
+
+function thinMachO(cpuType: number) {
+  const header = Buffer.alloc(32)
+  header.writeUInt32LE(0xfeedfacf, 0)
+  header.writeUInt32LE(cpuType, 4)
+  return header
+}
+
+function fatMachO(cpuTypes: number[]) {
+  const header = Buffer.alloc(8 + cpuTypes.length * 20)
+  header.writeUInt32BE(0xcafebabe, 0)
+  header.writeUInt32BE(cpuTypes.length, 4)
+  cpuTypes.forEach((cpuType, index) => header.writeUInt32BE(cpuType, 8 + index * 20))
+  return header
+}
 
 const tempDirs: string[] = []
 afterEach(() => {
@@ -56,6 +75,45 @@ describe('lean core leakage gate', () => {
     const resources = await resourcesWith([])
     mkdirSync(path.join(resources, 'tunnel-client'), { recursive: true })
     expect(await findLeanCoreLeaks(resources, 'mac', 'arm64')).toContain('Resources/tunnel-client')
+  })
+})
+
+describe('macOS architecture gate', () => {
+  it('reads thin and fat Mach-O headers and ignores other files', () => {
+    expect(machOCpuTypes(thinMachO(ARM64))).toEqual([ARM64])
+    expect(machOCpuTypes(fatMachO([X64, ARM64]))).toEqual([X64, ARM64])
+    // A Java class file: 0xcafebabe, then minor version 0 and major version 55.
+    expect(machOCpuTypes(Buffer.from([0xca, 0xfe, 0xba, 0xbe, 0, 0, 0, 55]))).toBeNull()
+    expect(machOCpuTypes(Buffer.from('#!/bin/sh\n'))).toBeNull()
+    expect(machOCpuTypes(Buffer.alloc(0))).toBeNull()
+  })
+
+  it('reports every Mach-O without code for the packaged architecture', async () => {
+    const bundle = mkdtempSync(path.join(os.tmpdir(), 'maestrly-macho-'))
+    tempDirs.push(bundle)
+    const files: Record<string, Buffer> = {
+      'Contents/MacOS/Maestrly App': thinMachO(ARM64),
+      'Contents/Frameworks/universal.dylib': fatMachO([X64, ARM64]),
+      'Contents/Resources/app.asar.unpacked/node_modules/node-pty/build/Release/spawn-helper': thinMachO(ARM64),
+      'Contents/Resources/app.asar.unpacked/node_modules/node-pty/prebuilds/darwin-x64/spawn-helper': thinMachO(X64),
+      'Contents/Resources/app.asar.unpacked/node_modules/node-pty/prebuilds/win32-x64/pty.node': Buffer.from('MZ'),
+      'Contents/Info.plist': Buffer.from('<plist/>'),
+    }
+    for (const [relative, bytes] of Object.entries(files)) {
+      const file = path.join(bundle, ...relative.split('/'))
+      mkdirSync(path.dirname(file), { recursive: true })
+      writeFileSync(file, bytes)
+    }
+
+    const nodePty = path.join('Contents', 'Resources', 'app.asar.unpacked', 'node_modules', 'node-pty')
+    expect(await foreignMachOFiles(bundle, 'arm64')).toEqual([
+      path.join(nodePty, 'prebuilds', 'darwin-x64', 'spawn-helper'),
+    ])
+    expect(await foreignMachOFiles(bundle, 'x64')).toEqual([
+      path.join('Contents', 'MacOS', 'Maestrly App'),
+      path.join(nodePty, 'build', 'Release', 'spawn-helper'),
+    ])
+    expect(await foreignMachOFiles(bundle, 'universal')).toEqual([])
   })
 })
 
