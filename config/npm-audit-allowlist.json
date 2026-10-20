@@ -12,7 +12,7 @@
       "package": "node-forge",
       "path": "node_modules/node-forge",
       "advisories": ["GHSA-86w9-cpqp-85rv"],
-      "reason": "Build-time only: expo 58 -> @expo/cli (and @expo/code-signing-certificates). The CLI uses it for iOS signing identities and to sign update manifests, neither of which this repository configures; it is not shipped in the app, and the advisory concerns verifying RSA signatures from others. node-forge 1.4.0 is the latest release, so no patched version exists.",
+      "reason": "The advisory concerns verifying RSA PKCS#1 v1.5 signatures from others, which nothing here does with node-forge. The desktop app ships it only to create and sign the self-signed certificate of its peer identity (apps/desktop/src/main/peer/identity.ts); certificates are verified by Node's TLS against the certificate pinned at pairing. At build time, expo 58 -> @expo/cli (and @expo/code-signing-certificates) uses it for iOS signing identities and to sign update manifests, neither of which this repository configures. node-forge 1.4.0 is the latest release, so no patched version exists.",
       "expiresOn": "2026-11-11"
     }
   ]
