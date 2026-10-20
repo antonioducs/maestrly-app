@@ -262,7 +262,23 @@ export function TranscriptRow({
           to={bot}
           at={at}
           text={item.text}
-          meta={item.queued ? t('transcript.queued') : undefined}
+          meta={
+            item.stopped ? (
+              <span title={t('transcript.stoppedHint')} className="inline-flex items-center gap-1 text-amber-300">
+                {t('transcript.stopped')}
+                <button
+                  type="button"
+                  aria-label={t('transcript.removeQueued')}
+                  className="rounded p-0.5 text-muted-foreground hover:text-destructive"
+                  onClick={removeQueued}
+                >
+                  <X className="size-3" />
+                </button>
+              </span>
+            ) : item.queued ? (
+              t('transcript.queued')
+            ) : undefined
+          }
           footer={
             item.memories.length > 0 &&
             t('conversation.recalled', { titles: item.memories.map((memory) => memory.title).join(', ') })
@@ -284,6 +300,7 @@ export function TranscriptRow({
           repeated={repeatedRoutine}
           memories={item.memories}
           queued={item.queued}
+          stopped={item.stopped}
           onRemoveQueued={removeQueued}
           onExpand={onExpand}
           searchQuery={searchQuery}
@@ -345,7 +362,13 @@ export function TranscriptRow({
           {at}
           {item.queued && (
             <>
-              {t(item.attachmentError ? 'files.notSent' : 'transcript.queued')}
+              {item.stopped ? (
+                <span title={t('transcript.stoppedHint')} className="text-amber-300">
+                  {t('transcript.stopped')}
+                </span>
+              ) : (
+                t(item.attachmentError ? 'files.notSent' : 'transcript.queued')
+              )}
               <button
                 type="button"
                 aria-label={t('transcript.removeQueued')}
@@ -495,7 +518,11 @@ export function TranscriptRow({
             ? t('files.unreadablePdf')
             : item.text === 'invalid-attachment'
               ? t('files.invalidAttachment')
-              : (exhaustedText(item.text) ?? item.text)}
+              : item.text === 'context-compaction-failed'
+                ? t('transcript.contextFailed.compaction')
+                : item.text === 'context-overflow'
+                  ? t('transcript.contextFailed.overflow')
+                  : (exhaustedText(item.text) ?? item.text)}
         </span>
       )}
     </div>

@@ -9,7 +9,8 @@ export function blocksRuntimeRecycle(status: RecycleStatus): boolean {
   const progress = status.compaction?.progress?.status
   return (
     status.turn.state !== 'idle' ||
-    status.queue.length > 0 ||
+    // What the owner stopped waits for them, maybe for long: it does not hold the recycle.
+    status.queue.some((item) => !item.stopped) ||
     status.pending.length > 0 ||
     progress === 'running' ||
     progress === 'retrying' ||

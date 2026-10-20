@@ -13,6 +13,7 @@ export function BotRoutineMessage({
   repeated,
   memories,
   queued,
+  stopped,
   onRemoveQueued,
   onExpand,
   searchQuery,
@@ -27,6 +28,8 @@ export function BotRoutineMessage({
   repeated: boolean
   memories: Array<{ title: string }>
   queued: boolean
+  /** Queued in a conversation the owner stopped: it waits for them to write there. */
+  stopped?: boolean
   onRemoveQueued?: () => void
   /** The card grows where the owner reads: the transcript should stay there. */
   onExpand?: () => void
@@ -67,7 +70,13 @@ export function BotRoutineMessage({
               {queued && (
                 <>
                   <span aria-hidden="true">·</span>
-                  <span>{t('transcript.queued')}</span>
+                  {stopped ? (
+                    <span title={t('transcript.stoppedHint')} className="text-amber-300">
+                      {t('transcript.stopped')}
+                    </span>
+                  ) : (
+                    <span>{t('transcript.queued')}</span>
+                  )}
                 </>
               )}
               {repeated && (

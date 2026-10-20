@@ -178,8 +178,11 @@ export interface InstanceBot {
   deleteInput(id: string): Promise<void>
   /** Edits the owner's last message: the conversation is cut from it and the new text queued (`message-edit`). */
   editInput(id: string, value: FleetEditMessageRequest): Promise<FleetInputReceipt>
-  /** Stops every turn (no argument), the bot's own conversation's (null) or a side conversation's (its id). */
-  cancel(conversation?: string | null): Promise<void>
+  /**
+   * The owner stops every turn (no argument), the bot's own conversation's (null) or a side conversation's (its id);
+   * what waits in a stopped conversation waits for the owner to write there.
+   */
+  stop(conversation?: string | null): Promise<void>
   resolve(id: string, value: FleetInteractionResolution): Promise<void>
   hold(reason: 'takeover' | 'paused'): Promise<FleetInstanceHold>
   release(value: FleetInstanceReleaseRequest): Promise<FleetInstanceHold>
@@ -792,7 +795,7 @@ export function createInstanceControlServer(
     botInputSend: ({ params, input }) => bot(params).input(input as FleetInstanceInput),
     botInputDelete: ({ params }) => bot(params).deleteInput(params.inputId),
     botInputEdit: ({ params, input }) => bot(params).editInput(params.inputId, input as FleetEditMessageRequest),
-    botTurnCancel: ({ params, url }) => bot(params).cancel(cancelTarget(url.searchParams)),
+    botTurnCancel: ({ params, url }) => bot(params).stop(cancelTarget(url.searchParams)),
     botInteractionResolve: ({ params, input }) => bot(params).resolve(params.id, input as FleetInteractionResolution),
     botHold: async ({ params, input }) => {
       const hold = await bot(params).hold((input as { reason: 'takeover' | 'paused' }).reason)

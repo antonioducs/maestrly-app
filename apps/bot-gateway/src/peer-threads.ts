@@ -191,7 +191,7 @@ export class PeerThreads {
       if (this.isolates(target))
         await this.lifecycle.instanceFor(target).postInput({
           source: 'continuation',
-          text: `Your owner let this conversation with ${this.nameOf(other)} go on for ${this.hopLimit(thread.botA, thread.botB)} more messages. Continue it.`,
+          text: `Your owner let this conversation with ${this.nameOf(other)} go on for ${this.hopLimit(thread.botA, thread.botB)} more messages. If a message of yours was held back while it was paused, or something is still to settle with ${this.nameOf(other)}, continue it; otherwise end your turn without sending anything.`,
           attachments: [],
           idempotencyKey: randomUUID(),
           thread: { id: thread.id, title: thread.title },

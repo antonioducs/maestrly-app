@@ -293,7 +293,9 @@ function RunRow({
     state === 'running'
       ? activity
         ? t('runs.summary.running', { activity })
-        : t('runs.summary.runningStart')
+        : turn?.compacting
+          ? t('runs.summary.compacting')
+          : t('runs.summary.runningStart')
       : state === 'queued'
         ? t('runs.summary.queued')
         : state === 'deleted'
