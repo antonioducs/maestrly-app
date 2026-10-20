@@ -92,7 +92,7 @@ test('environment plugins: bring one from this computer, then switch it off and 
     })
     expect(installed.ok).toBe(true)
 
-    await api('fleetConnect', { url: gateway.url, code: 'ABCD-EFGH' })
+    const paired = await api('fleetConnect', { url: gateway.url, code: 'ABCD-EFGH' })
     await page.getByRole('tab', { name: /^Bots/ }).click()
     const environment = gateway.environments.find((item) => item.id === 'studio')!
     await page
@@ -168,8 +168,8 @@ test('environment plugins: bring one from this computer, then switch it off and 
         }
       })
       const signed = await page.evaluate(
-        ({ id }) => (window as any).api.fleetEnvironmentPlugins.mcpOAuthConnect('studio', id),
-        { id: created.id }
+        ({ serverId, id }) => (window as any).api.fleetEnvironmentPlugins.mcpOAuthConnect(serverId, 'studio', id),
+        { serverId: paired.id, id: created.id }
       )
       expect(signed).toEqual({ ok: true, accountId: expect.stringMatching(/^acc_/) })
       const statuses = (await (
