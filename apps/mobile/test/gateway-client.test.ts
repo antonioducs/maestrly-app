@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createGatewayClient, GatewayError, type FetchLike } from '../src/gateway/client'
+import { createGatewayClient, GatewayError, routeTimeoutMs, type FetchLike } from '../src/gateway/client'
 
 type Call = { url: string; method: string; headers: Record<string, string>; body?: string }
 
@@ -76,6 +76,12 @@ describe('gateway client', () => {
     await expect(
       createGatewayClient({ origin, token: 't', fetch: hanging }).call('host', { timeoutMs: 5 })
     ).rejects.toMatchObject({ code: 'TIMEOUT', retryable: true })
+  })
+
+  it('waits for deletions of shared files as long as the gateway does', () => {
+    expect(routeTimeoutMs('botFilesDelete')).toBe(65_000)
+    expect(routeTimeoutMs('botFilesList')).toBe(15_000)
+    expect(routeTimeoutMs('botStart')).toBe(300_000)
   })
 
   it('times out a server that answers the headers and then stalls the body', async () => {

@@ -46,6 +46,13 @@ const SLOW: Partial<Record<RouteKey, number>> = {
   botStop: 300_000,
   botRestart: 300_000,
   botMessageSend: 120_000,
+  // The gateway gives the bot 60 s to delete files it shared.
+  botFilesDelete: 65_000,
+}
+const DEFAULT_TIMEOUT_MS = 15_000
+/** How long a call may take before it fails with TIMEOUT, unless the caller says otherwise. */
+export function routeTimeoutMs(key: RouteKey): number {
+  return SLOW[key] ?? DEFAULT_TIMEOUT_MS
 }
 
 export function createGatewayClient(options: { origin: string; token: string | null; fetch: FetchLike }) {
@@ -69,7 +76,7 @@ export function createGatewayClient(options: { origin: string; token: string | n
       controller.signal.addEventListener('abort', () => reject(tooLong()))
     })
     timedOut.catch(() => {})
-    const timer = setTimeout(() => controller.abort(), o.timeoutMs ?? SLOW[key] ?? 15_000)
+    const timer = setTimeout(() => controller.abort(), o.timeoutMs ?? routeTimeoutMs(key))
     try {
       let response: Awaited<ReturnType<FetchLike>>
       try {

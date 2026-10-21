@@ -82,6 +82,8 @@ const SLOW_ROUTES: Partial<Record<RouteKey, number>> = {
   environmentLoginStart: 35_000,
   botSkillInstall: 65_000,
   environmentSkillInstall: 65_000,
+  // The gateway gives the bot 60 s to delete files it shared.
+  botFilesDelete: 65_000,
   environmentStart: LIFECYCLE_TIMEOUT_MS,
   environmentStop: LIFECYCLE_TIMEOUT_MS,
   environmentRestart: LIFECYCLE_TIMEOUT_MS,
