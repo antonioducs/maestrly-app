@@ -1,8 +1,12 @@
 import {
+  FLEET_FILE_LIMITS,
   fleetPeerThreadSchema,
   fleetRoutineRunSchema,
+  type FleetFilesList,
+  type FleetFilesUsage,
   type FleetGatewayEvent,
   type FleetPeerThread,
+  type FleetPublishedFile,
   type FleetRoutineRun,
   type FleetTranscriptItem,
 } from '@maestrly/bot-fleet-protocol'
@@ -327,5 +331,98 @@ describe('fleet state of side conversations', () => {
     expect(gone.runs.atlas).toBeUndefined()
     expect(gone.threads.atlas).toBeUndefined()
     expect(gone.lanes).toEqual({})
+  })
+})
+
+describe('fleet state of a bot’s shared files', () => {
+  const usage = (usedBytes: number, second: number): FleetFilesUsage => ({
+    usedBytes,
+    count: usedBytes ? 2 : 0,
+    quotaBytes: 1024 ** 3,
+    countMax: 200,
+    deleteWithConversations: true,
+    updatedAt: at(second),
+  })
+  const file = (id: string, byteSize: number): FleetPublishedFile => ({
+    id,
+    name: `${id}.pdf`,
+    mediaType: 'application/pdf',
+    byteSize,
+    sharedAt: at(1),
+    origin: { kind: 'primary' },
+    originGone: false,
+  })
+  const list: FleetFilesList = {
+    files: [file('f-1', 10), file('f-2', 20)],
+    removed: [{ id: 'f-0', removedAt: at(0) }],
+    usage: usage(30, 1),
+    diskFreeBytes: null,
+  }
+  const listed = () =>
+    fleetReducer(fleetReducer(initialFleetState, { type: 'files-loading', botId: 'pixel' }), {
+      type: 'files-list',
+      botId: 'pixel',
+      list,
+    })
+
+  it('loads the list and remembers the version of the space it read', () => {
+    const loading = fleetReducer(initialFleetState, { type: 'files-loading', botId: 'pixel' })
+    expect(loading.files.pixel).toMatchObject({ loading: true, loaded: false })
+    expect(listed().files.pixel).toEqual({ list, version: at(1), loaded: true, loading: false, failed: false })
+  })
+
+  it('drops deleted files, remembers them as removed and takes the space after', () => {
+    const state = fleetReducer(listed(), {
+      type: 'files-deleted',
+      botId: 'pixel',
+      result: { deleted: ['f-1'], freedBytes: 10, usage: usage(20, 5) },
+      at: at(5),
+    })
+    expect(state.files.pixel?.list?.files.map((item) => item.id)).toEqual(['f-2'])
+    expect(state.files.pixel?.list?.removed).toEqual([
+      { id: 'f-0', removedAt: at(0) },
+      { id: 'f-1', removedAt: at(5) },
+    ])
+    expect(state.files.pixel?.list?.usage).toEqual(usage(20, 5))
+    expect(state.files.pixel?.version).toBe(at(5))
+
+    // Only the latest removals are kept.
+    const many = fleetReducer(
+      fleetReducer(initialFleetState, {
+        type: 'files-list',
+        botId: 'pixel',
+        list: {
+          ...list,
+          removed: Array.from({ length: FLEET_FILE_LIMITS.removedKeptMax }, (_, index) => ({
+            id: `old-${index}`,
+            removedAt: at(0),
+          })),
+        },
+      }),
+      {
+        type: 'files-deleted',
+        botId: 'pixel',
+        result: { deleted: ['f-1'], freedBytes: 10, usage: usage(20, 5) },
+        at: at(5),
+      }
+    )
+    const removed = many.files.pixel?.list?.removed ?? []
+    expect(removed).toHaveLength(FLEET_FILE_LIMITS.removedKeptMax)
+    expect(removed[0]?.id).toBe('old-1')
+    expect(removed.at(-1)?.id).toBe('f-1')
+  })
+
+  it('takes new settings of the space', () => {
+    const state = fleetReducer(listed(), { type: 'files-usage', botId: 'pixel', usage: usage(30, 7) })
+    expect(state.files.pixel?.list?.usage).toEqual(usage(30, 7))
+    expect(state.files.pixel?.version).toBe(at(7))
+  })
+
+  it('keeps the list it had when a reload fails', () => {
+    const state = fleetReducer(fleetReducer(listed(), { type: 'files-loading', botId: 'pixel' }), {
+      type: 'files-failed',
+      botId: 'pixel',
+    })
+    expect(state.files.pixel).toMatchObject({ list, loaded: true, loading: false, failed: true })
   })
 })

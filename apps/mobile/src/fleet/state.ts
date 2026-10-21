@@ -1,7 +1,11 @@
 import {
   compareFleetTranscriptItems,
+  FLEET_FILE_LIMITS,
   type FleetBot,
   type FleetEnvironment,
+  type FleetFilesDeleted,
+  type FleetFilesList,
+  type FleetFilesUsage,
   type FleetGatewayEvent,
   type FleetInboxItem,
   type FleetPeerThread,
@@ -37,6 +41,16 @@ export type RunsState = {
 /** A bot's conversations with other bots (`peer-conversations`), the most recently active first. */
 export type ThreadsState = { threads: FleetPeerThread[]; loaded: boolean; loading: boolean; failed: boolean }
 
+/** The files a bot shared (`files-manage`), their space and the ones it deleted lately. */
+export type FilesState = {
+  list: FleetFilesList | null
+  /** `usage.updatedAt` of the list loaded: a newer one on the bot means its files changed. */
+  version: string | null
+  loaded: boolean
+  loading: boolean
+  failed: boolean
+}
+
 /**
  * What the owner has seen of each bot's side conversations, kept on the phone: the runs they opened, and each
  * thread's last activity when they last looked at it. A bot absent from it has not been read yet.
@@ -60,6 +74,7 @@ export type FleetState = {
   /** The transcripts of runs' and threads' own conversations, by `laneKey`. */
   lanes: Record<string, TranscriptState>
   seen: LanesSeen
+  files: Record<string, FilesState>
 }
 
 export type FleetAction =
@@ -83,6 +98,11 @@ export type FleetAction =
   | { type: 'lane-failed'; key: string }
   | { type: 'lane-page'; key: string; page: FleetTranscriptPage; mode: 'latest' | 'older' }
   | { type: 'seen'; seen: LanesSeen }
+  | { type: 'files-loading'; botId: string }
+  | { type: 'files-failed'; botId: string }
+  | { type: 'files-list'; botId: string; list: FleetFilesList }
+  | { type: 'files-deleted'; botId: string; result: FleetFilesDeleted; at: string }
+  | { type: 'files-usage'; botId: string; usage: FleetFilesUsage }
 
 export const initialFleetState: FleetState = {
   connection: 'connecting',
@@ -98,6 +118,7 @@ export const initialFleetState: FleetState = {
   threads: {},
   lanes: {},
   seen: { runs: {}, threads: {} },
+  files: {},
 }
 
 export const emptyTranscript: TranscriptState = {
@@ -110,6 +131,7 @@ export const emptyTranscript: TranscriptState = {
 }
 export const emptyRuns: RunsState = { runs: [], before: null, loaded: false, loading: false, failed: false }
 export const emptyThreads: ThreadsState = { threads: [], loaded: false, loading: false, failed: false }
+export const emptyFiles: FilesState = { list: null, version: null, loaded: false, loading: false, failed: false }
 
 /** Items by id, in transcript order: a newer copy of an item replaces the older one. */
 function merge(existing: FleetTranscriptItem[], incoming: FleetTranscriptItem[]): FleetTranscriptItem[] {
@@ -145,6 +167,7 @@ function withoutBots(state: FleetState, gone: (bot: Pick<FleetBot, 'id' | 'envir
     runs: without(state.runs, (botId) => ids.has(botId)),
     threads: without(state.threads, (botId) => ids.has(botId)),
     lanes: without(state.lanes, (key) => ids.has(botOfLaneKey(key))),
+    files: without(state.files, (botId) => ids.has(botId)),
   }
 }
 const withoutBot = (state: FleetState, botId: string) => withoutBots(state, (bot) => bot.id === botId)
@@ -376,5 +399,57 @@ export function fleetReducer(state: FleetState, action: FleetAction): FleetState
       }
     case 'seen':
       return { ...state, seen: action.seen }
+    case 'files-loading':
+    case 'files-failed': {
+      const previous = state.files[action.botId] ?? emptyFiles
+      const loading = action.type === 'files-loading'
+      return { ...state, files: { ...state.files, [action.botId]: { ...previous, loading, failed: !loading } } }
+    }
+    case 'files-list':
+      return {
+        ...state,
+        files: {
+          ...state.files,
+          [action.botId]: {
+            list: action.list,
+            version: action.list.usage.updatedAt,
+            loaded: true,
+            loading: false,
+            failed: false,
+          },
+        },
+      }
+    case 'files-deleted': {
+      const previous = state.files[action.botId]
+      if (!previous?.list) return state
+      const gone = new Set(action.result.deleted)
+      const list = {
+        ...previous.list,
+        files: previous.list.files.filter((file) => !gone.has(file.id)),
+        removed: [...previous.list.removed, ...action.result.deleted.map((id) => ({ id, removedAt: action.at }))].slice(
+          -FLEET_FILE_LIMITS.removedKeptMax
+        ),
+        usage: action.result.usage,
+      }
+      return {
+        ...state,
+        files: { ...state.files, [action.botId]: { ...previous, list, version: list.usage.updatedAt } },
+      }
+    }
+    case 'files-usage': {
+      const previous = state.files[action.botId]
+      if (!previous?.list) return state
+      return {
+        ...state,
+        files: {
+          ...state.files,
+          [action.botId]: {
+            ...previous,
+            list: { ...previous.list, usage: action.usage },
+            version: action.usage.updatedAt,
+          },
+        },
+      }
+    }
   }
 }
