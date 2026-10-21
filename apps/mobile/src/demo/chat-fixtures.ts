@@ -3,6 +3,7 @@ import type {
   FleetTodo,
   MobileChatItem,
   MobileChatMode,
+  MobileConversationBot,
   MobileExperience,
   MobileMaestroProfile,
   MobilePermMode,
@@ -38,6 +39,7 @@ export type DemoChat = {
   setup: DemoSetup
   usedTokens: number
   sourceConversationId?: string
+  bot?: MobileConversationBot
   items: DemoItem[]
 }
 
@@ -181,6 +183,15 @@ const user = (text: string): DemoItem => ({
   queued: false,
   memories: [],
   images: [],
+})
+const botSaid = (bot: string, text: string): DemoItem => ({
+  kind: 'user',
+  text,
+  source: 'owner',
+  queued: false,
+  memories: [],
+  images: [],
+  sentByBot: { name: bot },
 })
 const answer = (text: string): DemoItem => ({ kind: 'assistant', text, streaming: false })
 const tool = (name: string, target: string, state: 'done' | 'error', output: string | null): DemoItem => ({
@@ -337,6 +348,25 @@ export const DEMO_CHATS: DemoChat[] = [
     'How much memory should a bot environment get?',
     'Start with 4 GB for an environment with up to 3 bots that use a browser. Each extra browsing bot needs about 1 GB more. Watch the memory chart for a week before going lower.'
   ),
+  {
+    id: 'c-scout',
+    name: 'Fix the flaky login test',
+    workspaceId: 'maestrly',
+    branch: 'bot/fix-login-test',
+    minutesAgo: 40,
+    experience: 'standard',
+    setup: codexAgent,
+    usedTokens: 31_000,
+    bot: { name: 'Scout', state: 'active', shared: false },
+    items: [
+      botSaid('Scout', 'The login test times out on CI about once a day. Find the cause and fix it.'),
+      tool('bash', 'npm test -- login --repeat 30', 'error', '2 failed, 28 passed (30 runs)'),
+      tool('edit', 'apps/desktop/test/e2e/login.spec.ts', 'done', null),
+      answer(
+        'The test pressed **Sign in** before the form finished loading. It now waits for the form, and 30 of 30 runs pass.'
+      ),
+    ],
+  },
   {
     id: 'c-flaky',
     name: 'Fix flaky gateway reconnect test',

@@ -1029,7 +1029,8 @@ Conversations the bot starts there are conversations of that environment, in wor
 badge: open them from the environment's host in the sidebar to pause them, release them, or continue them. **Turn
 off** on the environment's card ends the access at once. Removing the environment's link from **Other computers and
 environments with access**, deleting the bot, or deleting the environment ends it too; a running environment revokes its side at once,
-and one that is stopped does when it next starts.
+and one that is stopped does when it next starts. The [mobile app](mobile.md) shows them too, with the same badge and
+the same pause, resume, release and block controls.
 
 ## What a bot can do
 

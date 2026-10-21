@@ -394,6 +394,18 @@ export function createChatsController(
       if (openId === conversationId) openId = null
       dispatch({ type: 'removed', conversationId })
     },
+    /** Releases a bot's chat for the person's own messages, or blocks them again; the bot keeps the chat. */
+    async setBotManualChat(conversationId: string, enabled: boolean) {
+      const conversation = await invoke('botManualChat', { conversationId, enabled })
+      dispatch({ type: 'conversation', conversation })
+      return conversation
+    },
+    /** Pauses the bot that holds a chat, which hands it to the person, or resumes it. */
+    async setBotManagement(conversationId: string, management: 'active' | 'paused') {
+      const conversation = await invoke('botManagement', { conversationId, state: management })
+      dispatch({ type: 'conversation', conversation })
+      return conversation
+    },
     /** An image a chat item shows, kept for the next time it is drawn. */
     image(conversationId: string, imageId: string) {
       const key = `${conversationId}\0${imageId}`

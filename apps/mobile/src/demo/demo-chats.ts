@@ -114,6 +114,7 @@ export function createDemoChatsSource(
         lastActivityAt: new Date(base).toISOString(),
         pinned: false,
         experience: fixture.experience,
+        ...(fixture.bot ? { bot: { ...fixture.bot } } : {}),
       },
       sourceConversationId: fixture.sourceConversationId ?? null,
       items: fixture.items.map(
@@ -480,8 +481,11 @@ export function createDemoChatsSource(
     return { items, before: items.length && stop - items.length > 0 ? items[0].id : null }
   }
 
+  const holds = (chat: Chat) => chat.conversation.bot?.state === 'active' && !chat.conversation.bot.shared
+
   function send(args: MobileArgs<'send'>): MobileResult<'send'> {
     const chat = requireChat(args.conversationId)
+    if (holds(chat)) throw new MobileBridgeError('bot-locked', 'The bot holds this chat')
     if (chat.sent.includes(args.clientId)) return { status: 'duplicate' }
     if (chat.streaming || chat.compacting) throw new MobileBridgeError('busy', 'busy')
     chat.sent.push(args.clientId)
@@ -535,6 +539,7 @@ export function createDemoChatsSource(
   /** As a host does: only the last message, while no turn runs; everything from it on is replaced. */
   function edit(args: MobileArgs<'edit'>): null {
     const chat = requireChat(args.conversationId)
+    if (holds(chat)) throw new MobileBridgeError('bot-locked', 'The bot holds this chat')
     if (chat.streaming || chat.compacting) throw new MobileBridgeError('busy', 'busy')
     const at = chat.items.findIndex((item) => item.id === args.itemId)
     let last = chat.items.length - 1
@@ -647,6 +652,27 @@ export function createDemoChatsSource(
         if (a.archived) chats.delete(String(a.conversationId))
         emit('lists', {})
         return null
+      case 'botManualChat': {
+        const current = chat()
+        const bot = current.conversation.bot
+        if (!bot) throw new MobileBridgeError('not-a-bot-chat', 'No bot started this conversation')
+        current.conversation = {
+          ...current.conversation,
+          bot: { ...bot, shared: bot.state === 'active' && a.enabled === true },
+        }
+        emit('lists', {})
+        return current.conversation
+      }
+      case 'botManagement': {
+        const current = chat()
+        const bot = current.conversation.bot
+        if (!bot || bot.state === 'revoked') throw new MobileBridgeError('bot-refused', 'This bot no longer has access')
+        const state = a.state === 'paused' ? 'paused' : 'active'
+        if (state === 'paused' && current.streaming) cancel(current)
+        current.conversation = { ...current.conversation, bot: { ...bot, state, shared: false } }
+        emit('lists', {})
+        return current.conversation
+      }
       case 'permission':
         resolvePermission(chat(), String(a.requestId), a.reply as 'once' | 'always' | 'reject')
         return null

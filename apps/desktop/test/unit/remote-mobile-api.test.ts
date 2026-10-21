@@ -1,4 +1,10 @@
-import { type MobileChatSetup, mobileChatPageSchema } from '@maestrly/bot-fleet-protocol'
+import {
+  type MobileChatItem,
+  type MobileChatSetup,
+  type MobileConversation,
+  type MobileLists,
+  mobileChatPageSchema,
+} from '@maestrly/bot-fleet-protocol'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('electron', () => ({ app: { getPath: () => '/tmp/maestrly-mobile-api-test', getVersion: () => '0.0.0' } }))
@@ -78,6 +84,8 @@ function setup() {
     review: null as Record<string, unknown> | null,
     /** More chats of the workspace, beyond the ones every test sees. */
     workspaceChats: [] as unknown[],
+    /** What `bot:management` throws, as the host does for a revoked bot. */
+    botRefusal: null as string | null,
   }
   const handle = (channel: string, fn: (...args: unknown[]) => unknown, kind: 'invoke' | 'send' = 'invoke') =>
     table.record(channel, kind, (event: { sender: typeof sender }, ...args: unknown[]) => {
@@ -85,6 +93,16 @@ function setup() {
       sender = event.sender
       return fn(...args)
     })
+  const botUpdate = (id: unknown, patch: Record<string, unknown>) => {
+    state.workspaceChats = state.workspaceChats.map((item) =>
+      (item as { id: string }).id === id ? { ...(item as object), ...patch } : item
+    )
+  }
+  handle('bot:manual-chat', (id, enabled) => botUpdate(id, { botManualChatEnabled: enabled }))
+  handle('bot:management', (id, value) => {
+    if (state.botRefusal) throw new Error(state.botRefusal)
+    botUpdate(id, { botManagementState: value })
+  })
   handle('workspace:list', () => [
     {
       id: 'w1',
@@ -103,10 +121,7 @@ function setup() {
       ],
     },
   ])
-  handle('conversation:list-standalone', () => [
-    conversation('c1', { pinnedAt: T0 }),
-    conversation('bot', { botOrigin: { botId: 'juno' } }),
-  ])
+  handle('conversation:list-standalone', () => [conversation('c1', { pinnedAt: T0 })])
   handle('conversation:create-standalone', (args) =>
     conversation('new', { name: (args as { name?: string }).name ?? 'New chat' })
   )
@@ -277,7 +292,7 @@ afterEach(() => vi.useRealTimers())
 const settle = () => vi.advanceTimersByTimeAsync(50)
 
 describe('mobile API of a workspaces host', () => {
-  it('lists active chats and workspaces, never a bot conversation', async () => {
+  it('lists active chats and workspaces', async () => {
     const h = setup()
     const lists = (await h.invoke('mobile:v1:lists')) as {
       workspaces: Array<{ conversations: Array<{ id: string }> }>
@@ -1137,6 +1152,110 @@ describe('mobile API of a workspaces host', () => {
     // A finished review no longer holds the plan.
     h.state.review = { kind: 'review', target: 'plan', status: 'completed' }
     expect(await h.invoke('mobile:v1:plan:options', { conversationId: 'c3' })).toMatchObject({ review: null })
+    h.api.dispose()
+  })
+
+  const botChat = (id: string, extra: Record<string, unknown> = {}) =>
+    conversation(id, {
+      scope: 'project',
+      workspaceId: 'w1',
+      branch: `bot/${id}`,
+      mode: 'worktree',
+      botOrigin: { kind: 'bot', connectionId: 'fleet:env1:juno:x', botName: 'Juno' },
+      botManagementState: 'active',
+      ...extra,
+    })
+
+  it('lists the conversations bots started, with their bot and how it holds them', async () => {
+    const h = setup()
+    h.state.workspaceChats = [
+      botChat('held'),
+      botChat('shared', { botManualChatEnabled: true }),
+      botChat('paused', { botManagementState: 'paused', botManualChatEnabled: true }),
+      botChat('revoked', { botManagementState: 'revoked' }),
+    ]
+    const lists = (await h.invoke('mobile:v1:lists')) as MobileLists
+    expect(Object.fromEntries(lists.workspaces[0].conversations.map((item) => [item.id, item.bot ?? null]))).toEqual({
+      c2: null,
+      held: { name: 'Juno', state: 'active', shared: false },
+      shared: { name: 'Juno', state: 'active', shared: true },
+      paused: { name: 'Juno', state: 'paused', shared: false },
+      revoked: { name: 'Juno', state: 'revoked', shared: false },
+    })
+    const opened = (await h.invoke('mobile:v1:conversation:open', { conversationId: 'held' })) as {
+      conversation: MobileConversation
+    }
+    expect(opened.conversation.bot).toEqual({ name: 'Juno', state: 'active', shared: false })
+    h.api.dispose()
+  })
+
+  it('names the bot on the messages it sent', async () => {
+    const h = setup()
+    h.state.messages = [{ ...user('m1', 'Fix the login test'), botName: 'Juno' }, answer('m2', 'Fixed.')]
+    const opened = (await h.invoke('mobile:v1:conversation:open', { conversationId: 'c1' })) as {
+      page: { items: MobileChatItem[] }
+    }
+    expect(opened.page.items.find((item) => item.kind === 'user')).toMatchObject({
+      text: 'Fix the login test',
+      sentByBot: { name: 'Juno' },
+    })
+    h.api.dispose()
+  })
+
+  it("releases, blocks, pauses and resumes a bot conversation through the host's own handlers", async () => {
+    const h = setup()
+    h.state.workspaceChats = [botChat('held')]
+    expect(await h.invoke('mobile:v1:bot:manual-chat', { conversationId: 'held', enabled: true })).toMatchObject({
+      bot: { state: 'active', shared: true },
+    })
+    expect(await h.invoke('mobile:v1:bot:manual-chat', { conversationId: 'held', enabled: false })).toMatchObject({
+      bot: { shared: false },
+    })
+    expect(await h.invoke('mobile:v1:bot:management', { conversationId: 'held', state: 'paused' })).toMatchObject({
+      bot: { state: 'paused' },
+    })
+    expect(h.called('bot:manual-chat').map(([, args]) => args)).toEqual([
+      ['held', true],
+      ['held', false],
+    ])
+    expect(h.called('bot:management').map(([, args]) => args)).toEqual([['held', 'paused']])
+    h.state.botRefusal = 'A revoked bot cannot resume control.'
+    await expect(
+      h.invoke('mobile:v1:bot:management', { conversationId: 'held', state: 'active' })
+    ).rejects.toMatchObject({ code: 'bot-refused', message: 'A revoked bot cannot resume control.' })
+    await expect(h.invoke('mobile:v1:bot:manual-chat', { conversationId: 'c2', enabled: true })).rejects.toMatchObject({
+      code: 'not-a-bot-chat',
+    })
+    await settle()
+    expect(h.events.some(([channel]) => channel === 'mobile:v1:lists-changed')).toBe(true)
+    h.api.dispose()
+  })
+
+  it('says a bot holds a chat when the host refuses what the person writes or edits there', async () => {
+    const h = setup()
+    h.state.workspaceChats = [botChat('held')]
+    h.state.send = { ok: false, error: 'Release this chat for your own messages before sending here.' }
+    await expect(
+      h.invoke('mobile:v1:conversation:send', {
+        conversationId: 'held',
+        text: 'Hi',
+        attachments: [],
+        clientId: '550e8400-e29b-41d4-a716-446655440009',
+      })
+    ).rejects.toMatchObject({ code: 'bot-locked' })
+    await expect(
+      h.invoke('mobile:v1:conversation:edit', { conversationId: 'held', itemId: 'm1:0', text: 'Again' })
+    ).rejects.toMatchObject({ code: 'bot-locked' })
+    h.api.dispose()
+  })
+
+  it("builds a bot conversation's plan only in itself", async () => {
+    const h = setup()
+    h.state.workspaceChats = [botChat('held')]
+    expect(await h.invoke('mobile:v1:plan:options', { conversationId: 'held' })).toMatchObject({
+      newConversation: false,
+      maestro: null,
+    })
     h.api.dispose()
   })
 

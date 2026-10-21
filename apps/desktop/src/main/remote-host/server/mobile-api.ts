@@ -17,6 +17,7 @@ import {
   type MobileChatPage,
   type MobileChatSetup,
   type MobileConversation,
+  type MobileConversationBot,
   type MobileDispatchItem,
   type MobileEventKey,
   type MobileEventPayload,
@@ -136,7 +137,19 @@ const STRUCTURAL = new Set<ChatStreamEvent['kind']>([
 ])
 const STATUSES = new Set<ConversationStatus>(['idle', 'working', 'ready', 'waiting', 'asking', 'error'])
 
+/** The bot that started a conversation, as a phone shows it; null for any other conversation. */
+function mobileBot(conversation: Conversation): MobileConversationBot | null {
+  if (!conversation.botOrigin) return null
+  const state = conversation.botManagementState ?? 'revoked'
+  return {
+    name: conversation.botOrigin.botName.slice(0, 400),
+    state,
+    shared: state === 'active' && !!conversation.botManualChatEnabled,
+  }
+}
+
 function mobileConversation(conversation: Conversation, workspaceName: string | null): MobileConversation {
+  const bot = mobileBot(conversation)
   return {
     id: conversation.id,
     name: conversation.name,
@@ -147,6 +160,7 @@ function mobileConversation(conversation: Conversation, workspaceName: string | 
     lastActivityAt: iso(conversation.lastActivityAt || conversation.createdAt),
     pinned: conversation.pinnedAt !== null && conversation.pinnedAt !== undefined,
     experience: conversation.scope === 'project' && conversation.experience === 'maestro' ? 'maestro' : 'standard',
+    ...(bot ? { bot } : {}),
   }
 }
 
@@ -175,8 +189,8 @@ function mobileUsageWindow(window: ChatSubscriptionUsageWindow): MobileSubscript
   }
 }
 
-/** The conversations a phone may see: active ones, never a bot's. */
-const visible = (conversation: Conversation): boolean => !conversation.archived && !conversation.botOrigin
+/** The conversations a phone may see: active ones, those bots started included. */
+const visible = (conversation: Conversation): boolean => !conversation.archived
 
 /** A plan as the broker hands it out (`plan:get`, `plan:received`). */
 type HostPlan = { plan?: string; title?: string; version?: number; previousPlan?: string | null }
@@ -295,6 +309,8 @@ export class MobileApi {
         this.listsChanged()
         return null
       },
+      botManualChat: (value) => this.botControl(value.conversationId, 'bot:manual-chat', value.enabled),
+      botManagement: (value) => this.botControl(value.conversationId, 'bot:management', value.state),
       permission: async (value) => {
         await this.call('chat:permission-respond', value.requestId, value.reply)
         return null
@@ -508,6 +524,14 @@ export class MobileApi {
     }
   }
 
+  /** Whether the bot that started a conversation holds it and the person has not released it. */
+  private heldByBot(id: string): Promise<boolean> {
+    return this.findConversation(id).then(
+      (conversation) => conversation.bot?.state === 'active' && !conversation.bot.shared,
+      () => false
+    )
+  }
+
   private async send(args: MobileArgs<'send'>): Promise<MobileResult<'send'>> {
     const open = this.open.get(args.conversationId)
     if (wasSent(args.conversationId, args.clientId)) return { status: 'duplicate' }
@@ -527,8 +551,12 @@ export class MobileApi {
     // A plugin hook refused the message: the phone learns why, under a code of its own.
     if (result?.error?.startsWith(BLOCKED_BY_HOOK))
       throw new MobileApiError('blocked-by-hook', result.error.slice(BLOCKED_BY_HOOK.length))
-    if (!result?.ok)
+    if (!result?.ok) {
+      // A chat its bot holds refuses what the person writes until they release it.
+      if (await this.heldByBot(args.conversationId))
+        throw new MobileApiError('bot-locked', result?.error ?? 'The bot holds this chat')
       throw new MobileApiError(result?.error ?? 'send-failed', result?.error ?? 'The message was not sent')
+    }
     noteSent(args.conversationId, args.clientId)
     // The message the host admitted is in the latest page; the stream carries the answer.
     if (open) this.refetch(open)
@@ -563,7 +591,11 @@ export class MobileApi {
     }
     if (result?.error?.startsWith(BLOCKED_BY_HOOK))
       throw new MobileApiError('blocked-by-hook', result.error.slice(BLOCKED_BY_HOOK.length))
-    if (!result?.ok) throw new MobileApiError(result?.error ?? 'edit-failed', result?.error ?? 'The edit failed')
+    if (!result?.ok) {
+      if (await this.heldByBot(args.conversationId))
+        throw new MobileApiError('bot-locked', result?.error ?? 'The bot holds this chat')
+      throw new MobileApiError(result?.error ?? 'edit-failed', result?.error ?? 'The edit failed')
+    }
     // The cut removed whole messages, which updates cannot describe: the phone loads the conversation again.
     const open = this.open.get(args.conversationId)
     if (open) {
@@ -598,12 +630,36 @@ export class MobileApi {
     return { ok: true, ...(conversationId ? { conversationId } : {}) }
   }
 
+  // ---- Bot conversations ----
+
+  /**
+   * Releases or blocks a bot's chat, or pauses or resumes its bot, through the host's own handlers and their checks
+   * (a revoked bot, a project it lost, a turn still stopping); answers the conversation as it is now.
+   */
+  private async botControl(
+    id: string,
+    channel: 'bot:manual-chat' | 'bot:management',
+    value: boolean | 'active' | 'paused'
+  ): Promise<MobileConversation> {
+    const conversation = await this.findConversation(id)
+    if (!conversation.bot) throw new MobileApiError('not-a-bot-chat', 'No bot started this conversation')
+    try {
+      await this.call(channel, id, value)
+    } catch (error) {
+      if (error instanceof MobileApiError) throw error
+      throw new MobileApiError('bot-refused', error instanceof Error ? error.message : String(error))
+    }
+    this.listsChanged()
+    return this.findConversation(id)
+  }
+
   private async planOptions(id: string): Promise<MobileResult<'planOptions'>> {
     const conversation = await this.findConversation(id)
-    // As on the computer: another conversation builds a plan only in a workspace, and Maestro only from a standard one.
-    const inWorkspace = conversation.workspaceId !== null
+    // As on the computer: another conversation builds a plan only in a workspace, and Maestro only from a standard
+    // one. A bot's conversation keeps its own worktree, so its plan is built only in itself.
+    const elsewhere = conversation.workspaceId !== null && !conversation.bot
     const [catalog, review] = await Promise.all([
-      inWorkspace && conversation.experience === 'standard'
+      elsewhere && conversation.experience === 'standard'
         ? (this.call('chat:maestro:strategy-profiles:list').catch(
             () => null
           ) as Promise<MaestroStrategyProfileCatalog | null>)
@@ -611,7 +667,7 @@ export class MobileApi {
       this.call('chat:review:status', id).catch(() => null) as Promise<ReviewJobInfo | null>,
     ])
     return {
-      newConversation: inWorkspace,
+      newConversation: elsewhere,
       maestro: catalog
         ? {
             profiles: catalog.items.slice(0, 200).map((item) => ({
@@ -960,8 +1016,15 @@ export class MobileApi {
           : []
       )
     )
+    // A message the bot that holds the conversation sent shows as the person's, named after the bot.
+    const botSenders = new Map(
+      messages.flatMap((message) =>
+        message.role === 'user' && message.botName ? [[message.id, message.botName] as const] : []
+      )
+    )
     const items: MobileChatItem[] = projected.map((item) => {
-      const peer = item.kind === 'user' ? peers.get(item.id.slice(0, item.id.lastIndexOf(':'))) : undefined
+      const messageId = item.kind === 'user' ? item.id.slice(0, item.id.lastIndexOf(':')) : ''
+      const peer = item.kind === 'user' ? peers.get(messageId) : undefined
       if (item.kind === 'user' && peer)
         return {
           ...item,
@@ -971,6 +1034,8 @@ export class MobileApi {
             purpose: peer.kind,
           },
         }
+      const botName = item.kind === 'user' ? botSenders.get(messageId) : undefined
+      if (item.kind === 'user' && botName) return { ...item, sentByBot: { name: botName.slice(0, 400) } }
       return this.dispatchItem(item, messages) ?? item
     })
     // How a turn ended when it did not end well: the desktop shows it under the answer, and so does the phone.

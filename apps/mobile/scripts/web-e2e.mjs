@@ -232,6 +232,28 @@ try {
     await button('Done').click()
   })
 
+  await step('release a bot’s chat, write in it, then pause and resume its bot', async () => {
+    await openMenu()
+    await page.getByRole('tab', { name: /^Workspaces/ }).click()
+    await button(/^Fix the flaky login test, Managed by Scout/).click()
+    await page.getByText('Sent by Scout').waitFor()
+    await page.getByText('Scout is running this conversation').waitFor()
+    page.once('dialog', (dialog) => dialog.accept())
+    await button('Release chat').click()
+    await page.getByText('Shared with Scout.', { exact: false }).waitFor()
+    await page.getByRole('textbox', { name: 'Message maestrly' }).fill('Also cover the sign-out test.')
+    await button('Send message').click()
+    await page.getByText('Also cover the sign-out test.').waitFor()
+    await button('Block my messages').click()
+    await page.getByText('Scout is running this conversation').waitFor()
+    await button(/^Fix the flaky login test: .*Chat setup/).click()
+    await button('Pause bot').click()
+    await button('Resume bot').waitFor()
+    await button('Resume bot').click()
+    await button('Pause bot').waitFor()
+    await button('Done').click()
+  })
+
   await step('open the settings', async () => {
     await openMenu()
     await button('Settings').click()
@@ -279,7 +301,7 @@ try {
 
   await step('show the dark theme', async () => {
     await page.emulateMedia({ colorScheme: 'dark' })
-    await page.getByText('Cleared the build cache.', { exact: false }).waitFor()
+    await page.getByText('Scout is running this conversation').waitFor()
   })
 
   await step('open a conversation from its report', async () => {

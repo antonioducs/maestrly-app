@@ -3,7 +3,14 @@ import { z } from 'zod'
 import type { OutboxAttachment } from '../fleet/attachments'
 import { MissingFileError } from '../fleet/outbox'
 
-export type ChatOutboxErrorKey = 'invalid' | 'chatGone' | 'noModel' | 'blockedByHook' | 'missingFile' | 'generic'
+export type ChatOutboxErrorKey =
+  | 'invalid'
+  | 'chatGone'
+  | 'noModel'
+  | 'blockedByHook'
+  | 'botLocked'
+  | 'missingFile'
+  | 'generic'
 
 /** A message written on the phone for a chat that the host has not admitted yet. Its id is the host's send key. */
 export type ChatOutboxEntry = {
@@ -35,7 +42,9 @@ export const chatOutboxEntriesSchema = z.array(
     ),
     createdAt: z.string(),
     state: z.enum(['waiting', 'sending', 'failed']),
-    error: z.enum(['invalid', 'chatGone', 'noModel', 'missingFile', 'generic']).nullable(),
+    error: z
+      .enum(['invalid', 'chatGone', 'noModel', 'blockedByHook', 'botLocked', 'missingFile', 'generic'])
+      .nullable(),
     attempts: z.number(),
   })
 )
@@ -85,5 +94,7 @@ export function afterChatSendFailure(entry: ChatOutboxEntry, error: unknown): Ch
   if (error.code === 'no-provider' || error.code === 'no-model') return failed(entry, 'noModel')
   // A plugin hook on the server refused the message: sending it again would be refused too.
   if (error.code === 'blocked-by-hook') return failed(entry, 'blockedByHook')
+  // The bot that started the chat holds it: the person releases it before sending again.
+  if (error.code === 'bot-locked') return failed(entry, 'botLocked')
   return failed(entry, 'generic')
 }

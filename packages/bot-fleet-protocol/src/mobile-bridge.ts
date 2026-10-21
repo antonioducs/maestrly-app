@@ -40,6 +40,16 @@ export type MobileConversationStatus = z.infer<typeof mobileConversationStatusSc
 export const mobileExperienceSchema = z.enum(['standard', 'maestro'])
 export type MobileExperience = z.infer<typeof mobileExperienceSchema>
 
+/** The bot that started a conversation (`desktop_*`), and how it holds it. */
+export const mobileConversationBotSchema = z.object({
+  name,
+  /** `active`: the bot holds the chat; `paused`: the person took it back; `revoked`: the bot lost its access. */
+  state: z.enum(['active', 'paused', 'revoked']).catch('revoked'),
+  /** The person released the chat for their own messages while the bot holds it. */
+  shared: z.boolean(),
+})
+export type MobileConversationBot = z.infer<typeof mobileConversationBotSchema>
+
 /** A chat of the host: standalone (no workspace) or in one of its workspaces, on its own branch. */
 export const mobileConversationSchema = z.object({
   id,
@@ -51,6 +61,8 @@ export const mobileConversationSchema = z.object({
   lastActivityAt: fleetTimestampSchema,
   pinned: z.boolean(),
   experience: mobileExperienceSchema,
+  /** The bot that started the conversation; absent for any other, and from hosts that list no bot conversations. */
+  bot: mobileConversationBotSchema.nullable().optional(),
 })
 export type MobileConversation = z.infer<typeof mobileConversationSchema>
 
@@ -126,9 +138,14 @@ export const mobilePeerUserItemSchema = fleetUserTranscriptItemSchema.extend({
 })
 export type MobilePeerUserItem = z.infer<typeof mobilePeerUserItemSchema>
 
-// A user item that names another conversation matches the first schema; any other, the transcript's.
+/** A message the bot that holds the conversation sent there: it shows as the person's, named after the bot. */
+export const mobileBotUserItemSchema = fleetUserTranscriptItemSchema.extend({ sentByBot: z.object({ name }) })
+export type MobileBotUserItem = z.infer<typeof mobileBotUserItemSchema>
+
+// A user item that names another conversation or a bot matches its own schema; any other, the transcript's.
 export const mobileChatItemSchema = z.union([
   mobilePeerUserItemSchema,
+  mobileBotUserItemSchema,
   fleetTranscriptItemSchema,
   mobileDispatchItemSchema,
 ])
@@ -434,6 +451,21 @@ export const MOBILE_CHANNELS = {
     channel: 'mobile:v1:conversation:archive',
     args: z.object({ conversationId: id, archived: z.boolean() }).strict(),
     result: z.null(),
+  },
+  /**
+   * Releases a bot's conversation for the person's own messages, or blocks them again; the bot keeps the chat either
+   * way. Answers the conversation as it is now. Hosts that predate it list no bot conversations.
+   */
+  botManualChat: {
+    channel: 'mobile:v1:bot:manual-chat',
+    args: z.object({ conversationId: id, enabled: z.boolean() }).strict(),
+    result: mobileConversationSchema,
+  },
+  /** Pauses the bot that holds a conversation, which hands it to the person, or resumes it. Answers the conversation. */
+  botManagement: {
+    channel: 'mobile:v1:bot:management',
+    args: z.object({ conversationId: id, state: z.enum(['active', 'paused']) }).strict(),
+    result: mobileConversationSchema,
   },
   permission: {
     channel: 'mobile:v1:permission',

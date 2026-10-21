@@ -10,8 +10,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { branchChoice, EMPTY_BRANCH_DRAFT, validBranchName } from '../src/chats/branch'
 import { openBridgeSocket } from '../src/chats/bridge-source'
 import { createChatsController } from '../src/chats/controller'
-import { afterChatSendFailure, nextChatsToSend, type ChatOutboxEntry } from '../src/chats/outbox'
 import {
+  afterChatSendFailure,
+  chatOutboxEntriesSchema,
+  nextChatsToSend,
+  type ChatOutboxEntry,
+} from '../src/chats/outbox'
+import {
+  botChatLabel,
+  botChatState,
   chatSetupSummary,
   chatStatusLine,
   dayGroup,
@@ -172,6 +179,21 @@ describe('chat lists', () => {
       'Opus 5.5 · High'
     )
   })
+
+  it('says how a bot holds the chat it started', () => {
+    const bot = (state: 'active' | 'paused' | 'revoked', shared = false) =>
+      chat('b', { bot: { name: 'Scout', state, shared } })
+    expect([bot('active'), bot('active', true), bot('paused'), bot('revoked'), chat('c')].map(botChatState)).toEqual([
+      'held',
+      'shared',
+      'paused',
+      'revoked',
+      null,
+    ])
+    expect(botChatLabel(bot('active'), text.t)).toBe('Managed by Scout')
+    expect(botChatLabel(bot('paused'), text.t)).toBe('Created by Scout · Paused')
+    expect(botChatLabel(chat('c'), text.t)).toBeNull()
+  })
 })
 
 describe('workspace chats', () => {
@@ -243,7 +265,16 @@ describe('chat outbox', () => {
       state: 'failed',
       error: 'blockedByHook',
     })
+    expect(afterChatSendFailure(waiting, new MobileBridgeError('bot-locked', 'x'))).toMatchObject({
+      state: 'failed',
+      error: 'botLocked',
+    })
     expect(afterChatSendFailure(waiting, new Error('x'))).toMatchObject({ error: 'generic' })
+  })
+
+  it('keeps every message that failed across launches, whatever the reason', () => {
+    for (const error of ['blockedByHook', 'botLocked'] as const)
+      expect(chatOutboxEntriesSchema.safeParse([entry('e1', 'a', { state: 'failed', error })]).success).toBe(true)
   })
 })
 
@@ -283,6 +314,30 @@ describe('chat state', () => {
     expect(chatsReducer({ ...state, outbox }, { type: 'hosted', hosted: false })).toEqual({
       ...initialChatsState,
       outbox,
+    })
+  })
+
+  it('follows what the lists say of an open chat, such as a bot chat released elsewhere, but not its status', () => {
+    const held = chat('c1', { bot: { name: 'Scout', state: 'active', shared: false } })
+    let state = chatsReducer(initialChatsState, { type: 'lists', lists: { chats: [held], workspaces: [] } })
+    state = chatsReducer(state, {
+      type: 'view-open',
+      conversationId: 'c1',
+      result: {
+        conversation: held,
+        sourceConversationId: null,
+        page: { items: [], before: null },
+        runtime: { streaming: false, compacting: false, plan: null, context: null },
+      },
+    })
+    // A turn started after the host read the lists it answers: their status is older than the chat's own.
+    state = chatsReducer(state, { type: 'status', conversationId: 'c1', status: 'working' })
+    const shared = chat('c1', { name: 'Login fix', bot: { name: 'Scout', state: 'active', shared: true } })
+    state = chatsReducer(state, { type: 'lists', lists: { chats: [shared], workspaces: [] } })
+    expect(state.views.c1.conversation).toMatchObject({
+      name: 'Login fix',
+      status: 'working',
+      bot: { shared: true },
     })
   })
 })
@@ -436,6 +491,28 @@ describe('chats controller', () => {
     host.emit({ key: 'reset', payload: { conversationId: 'c1' } })
     await vi.advanceTimersByTimeAsync(20)
     expect(host.keys().slice(before)).toEqual(expect.arrayContaining(['open', 'lists']))
+    controller.stop()
+  })
+
+  it('releases a bot chat and pauses its bot, and shows it at once', async () => {
+    const host = new FakeHost()
+    const held = chat('c1', { bot: { name: 'Scout', state: 'active', shared: false } })
+    host.answers.lists = () => ({ chats: [held], workspaces: [] })
+    host.answers.botManualChat = (args) => ({ ...held, bot: { name: 'Scout', state: 'active', shared: args.enabled } })
+    host.answers.botManagement = (args) => ({ ...held, bot: { name: 'Scout', state: args.state, shared: false } })
+    const controller = createChatsController(host, memoryStores().kv, { uuid: () => 'u' })
+    await controller.start()
+    controller.setHosted(true)
+    host.ready()
+    await vi.waitFor(() => expect(controller.store.getState().lists?.chats).toHaveLength(1))
+    await controller.setBotManualChat('c1', true)
+    expect(controller.store.getState().lists?.chats[0].bot?.shared).toBe(true)
+    await controller.setBotManagement('c1', 'paused')
+    expect(controller.store.getState().lists?.chats[0].bot?.state).toBe('paused')
+    expect(host.calls.filter(([key]) => key.startsWith('bot'))).toEqual([
+      ['botManualChat', { conversationId: 'c1', enabled: true }],
+      ['botManagement', { conversationId: 'c1', state: 'paused' }],
+    ])
     controller.stop()
   })
 })
@@ -736,6 +813,32 @@ describe('demo chats', () => {
       (item) => item.name === 'Gateway push sender'
     )
     expect((await connection.invoke('open', { conversationId: started!.id })).sourceConversationId).toBe('c-relay')
+    connection.close()
+  })
+
+  it("keeps a bot's chat from the person until they release it", async () => {
+    const source = createDemoChatsSource({ stepMs: 1 })
+    const connection = source.connect({ onEvent: () => {}, onState: () => {}, onReady: () => {} })
+    const message = (n: number) => ({
+      conversationId: 'c-scout',
+      text: 'Also cover the sign-out test.',
+      attachments: [],
+      clientId: `550e8400-e29b-41d4-a716-44665544010${n}`,
+    })
+    const lists = await connection.invoke('lists', {})
+    expect(lists.workspaces[0].conversations.find((item) => item.id === 'c-scout')?.bot).toEqual({
+      name: 'Scout',
+      state: 'active',
+      shared: false,
+    })
+    await expect(connection.invoke('send', message(1))).rejects.toMatchObject({ code: 'bot-locked' })
+    expect(await connection.invoke('botManualChat', { conversationId: 'c-scout', enabled: true })).toMatchObject({
+      bot: { shared: true },
+    })
+    expect(await connection.invoke('send', message(2))).toEqual({ status: 'started' })
+    expect(await connection.invoke('botManagement', { conversationId: 'c-scout', state: 'paused' })).toMatchObject({
+      bot: { state: 'paused', shared: false },
+    })
     connection.close()
   })
 })

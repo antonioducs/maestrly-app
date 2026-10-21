@@ -71,6 +71,7 @@ export function editableItemId(items: readonly MobileChatItem[], kind: 'bot' | '
     if (item.queued) return null
     last = item
   }
-  if (last?.source !== 'owner' || 'fromConversation' in last || last.attachmentError) return null
+  // Only the person's own words: not a routine's, another conversation's, nor the instructions a bot sent there.
+  if (last?.source !== 'owner' || 'fromConversation' in last || 'sentByBot' in last || last.attachmentError) return null
   return kind === 'bot' && !last.id.startsWith('input:') ? null : last.id
 }

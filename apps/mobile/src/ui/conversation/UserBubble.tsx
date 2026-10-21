@@ -64,13 +64,15 @@ export function UserBubble({ item, note }: { item: UserItem; note?: string | nul
   const from = 'fromConversation' in item ? item.fromConversation : null
   const origin = from
     ? t(`user.from.${from.purpose}`, { name: from.name })
-    : item.source === 'routine' && item.routine
-      ? t('user.routine', { title: item.routine.title })
-      : item.source === 'peer' && item.peer
-        ? t('user.peer', { name: item.peer.name })
-        : item.source === 'continuation'
-          ? t('user.continuation')
-          : null
+    : 'sentByBot' in item && item.sentByBot
+      ? t('user.bot', { name: item.sentByBot.name })
+      : item.source === 'routine' && item.routine
+        ? t('user.routine', { title: item.routine.title })
+        : item.source === 'peer' && item.peer
+          ? t('user.peer', { name: item.peer.name })
+          : item.source === 'continuation'
+            ? t('user.continuation')
+            : null
   const queued = item.queued
     ? item.stopped
       ? t('user.queuedStopped')

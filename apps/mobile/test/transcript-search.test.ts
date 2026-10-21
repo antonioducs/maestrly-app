@@ -85,6 +85,7 @@ describe('conversation search', () => {
     ).toBeNull()
     expect(editableItemId([user('input:i1', 'a')], 'bot')).toBe('input:i1')
     expect(editableItemId([user('m1:0', 'a')], 'bot')).toBeNull()
+    expect(editableItemId([user('m1:0', 'a', { sentByBot: { name: 'Scout' } } as never)], 'chat')).toBeNull()
     expect(editableItemId([said('a1', 'x')], 'chat')).toBeNull()
   })
 })

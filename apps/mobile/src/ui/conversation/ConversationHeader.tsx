@@ -2,12 +2,13 @@ import type { FleetBot, MobileConversation, MobileRuntime } from '@maestrly/bot-
 import { router } from 'expo-router'
 import type { ReactNode } from 'react'
 import { Pressable, View } from 'react-native'
-import { chatStatusLine } from '../../chats/selectors'
+import { botChatLabel, chatStatusLine } from '../../chats/selectors'
 import { botStatusLine, statusLineText, type StatusLine } from '../../fleet/selectors'
 import { useI18n } from '../../i18n'
 import { useTheme } from '../../theme/ThemeProvider'
 import { fonts } from '../../theme/tokens'
 import { BotAvatar } from '../Avatar'
+import { BotMark } from '../chat/BotMark'
 import { Icon } from '../icons'
 import { IconButton } from '../primitives/IconButton'
 import { AppText } from '../primitives/Text'
@@ -89,12 +90,14 @@ export function ChatTitle({
 }) {
   const text = useI18n()
   const line = chatStatusLine(chat, runtime, serverName, text)
+  const bot = botChatLabel(chat, text.t)
   return (
     <TitleButton
-      label={text.t('chat.details', { name: chat.name, status: line.text })}
+      label={[text.t('chat.details', { name: chat.name, status: line.text }), bot].filter(Boolean).join(', ')}
       onPress={() => router.push(`/chat-setup/${chat.id}`)}
       name={chat.name}
       line={line}
+      lead={chat.bot ? <BotMark size={22} /> : undefined}
     />
   )
 }
