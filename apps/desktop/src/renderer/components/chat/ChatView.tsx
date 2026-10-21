@@ -81,6 +81,7 @@ import {
 
 import { ChatMessageList } from './ChatMessageList'
 import {
+  adoptSavedMessageId,
   boundChatHistoryWindow,
   mergeLiveChatHistory,
   withConversationId,
@@ -782,7 +783,9 @@ export function ChatView({
                       ? t('view.errPdfUnreadable')
                       : error?.startsWith(BLOCKED_BY_HOOK)
                         ? t('view.errBlockedByHook', { reason: error.slice(BLOCKED_BY_HOOK.length) })
-                        : t('view.errSendFailed')
+                        : error === 'message-not-found'
+                          ? t('view.errMessageNotFound')
+                          : t('view.errSendFailed')
 
   const pushAssistantError = useCallback(
     (text: string) => {
@@ -809,15 +812,15 @@ export function ChatView({
   // Covers every artifact-backed attachment (images and PDFs), not only images: see hasArtifactAttachment.
   const imagesSentRef = useRef(false)
 
-  // This composer showed the user message it sent. Any other turn (a bot, another window, a queued handoff) reaches
-  // this view only as stream events, so its user message must be read back once it is saved.
-  const optimisticSentRef = useRef(false)
+  // The id under which this composer showed the user message it sent. Any other turn (a bot, another window, a queued
+  // handoff) reaches this view only as stream events, so its user message must be read back once it is saved.
+  const optimisticSentRef = useRef<string | null>(null)
 
   useEffect(() => {
     slashSentRef.current = false
     agentMentionsSentRef.current = false
     imagesSentRef.current = false
-    optimisticSentRef.current = false
+    optimisticSentRef.current = null
   }, [conversationId])
 
   const doSend = useCallback(
@@ -873,8 +876,8 @@ export function ChatView({
       for (const m of validateStructuredAgentMentions(agentMentions, mentionText, catalogNames)) {
         parts.push({ type: 'agent-mention', id: m.id, name: m.name, start: m.start, end: m.end })
       }
-      if (updateVisual) {
-        const optimisticId = crypto.randomUUID()
+      const optimisticId = updateVisual ? crypto.randomUUID() : null
+      if (optimisticId) {
         setMessages((prev) =>
           normalizeHistoryWindow(
             prev,
@@ -884,7 +887,7 @@ export function ChatView({
           )
         )
       }
-      optimisticSentRef.current = updateVisual
+      optimisticSentRef.current = optimisticId
       streamingRef.current = true
       turnRevisionRef.current++
       if (updateVisual) setStreaming(true)
@@ -911,7 +914,7 @@ export function ChatView({
         slashSentRef.current = false
         agentMentionsSentRef.current = false
         imagesSentRef.current = false
-        optimisticSentRef.current = false
+        optimisticSentRef.current = null
         streamingRef.current = false
         if (visibleRef.current) setStreaming(false)
         if (res.error !== 'empty') pushAssistantError(errorMsgFor(res.error))
@@ -1198,17 +1201,26 @@ export function ChatView({
       const localSlash = slashSentRef.current
       const localAgentMentions = agentMentionsSentRef.current
       const localImages = imagesSentRef.current
-      const optimistic = optimisticSentRef.current
+      const optimisticId = optimisticSentRef.current
       slashSentRef.current = false
       agentMentionsSentRef.current = false
       imagesSentRef.current = false
-      optimisticSentRef.current = false
-      const saved = ev as { compacted?: boolean; imagesDescribed?: number; memoryRecalled?: boolean }
+      optimisticSentRef.current = null
+      const saved = ev as {
+        messageId?: string
+        compacted?: boolean
+        imagesDescribed?: number
+        memoryRecalled?: boolean
+      }
+      // Without the saved id, editing this message later would cut nothing and save the edit beside it.
+      const savedId = saved.messageId
+      if (optimisticId && typeof savedId === 'string' && savedId)
+        setMessages((prev) => adoptSavedMessageId(prev, optimisticId, savedId))
       if (
         shouldReloadOnUserSaved({
           memoryRecalled: saved.memoryRecalled,
           // Not the streaming flag: this very event already set it, so a message sent elsewhere never loaded.
-          optimistic,
+          optimistic: optimisticId != null,
           compacted: saved.compacted,
           imagesDescribed: saved.imagesDescribed,
           localSlash,
@@ -1982,6 +1994,7 @@ export function ChatView({
       const { text, agentMentions } = payload
       setEditingId(null)
       let resendHasImage = false
+      const optimisticId = crypto.randomUUID()
       setMessages((prev) => {
         const idx = prev.findIndex((m) => m.id === id)
         const kept = idx >= 0 ? prev.slice(0, idx) : prev
@@ -1999,7 +2012,6 @@ export function ChatView({
         for (const m of validateStructuredAgentMentions(agentMentions, text, catalogNames)) {
           parts.push({ type: 'agent-mention', id: m.id, name: m.name, start: m.start, end: m.end })
         }
-        const optimisticId = crypto.randomUUID()
         return normalizeHistoryWindow(
           prev,
           [...kept, { id: optimisticId, conversationId, role: 'user', parts, createdAt: Date.now() }],
@@ -2013,14 +2025,14 @@ export function ChatView({
       agentMentionsSentRef.current = agentMentions.length > 0
 
       imagesSentRef.current = resendHasImage
-      optimisticSentRef.current = true
+      optimisticSentRef.current = optimisticId
       setStreaming(true)
       const res = await api.chatResend(conversationId, id, text, agentMentions)
       if (!res.ok) {
         slashSentRef.current = false
         agentMentionsSentRef.current = false
         imagesSentRef.current = false
-        optimisticSentRef.current = false
+        optimisticSentRef.current = null
         setStreaming(false)
         if (res.error !== 'empty') pushAssistantError(errorMsgFor(res.error))
       }

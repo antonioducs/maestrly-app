@@ -95,7 +95,14 @@ const hDiag = vi.hoisted(() => ({ chatDiag: vi.fn() }))
 vi.mock('../../src/main/chat/diag-log', () => ({ chatDiag: hDiag.chatDiag }))
 
 import type { ChatIpcDeps } from '../../src/main/chat/service'
-import { disposeChat, registerChatIpc, stopChat, stopChatAndWait } from '../../src/main/chat/service'
+import {
+  disposeChat,
+  isChatConversationRunning,
+  registerChatIpc,
+  stopChat,
+  stopChatAndWait,
+} from '../../src/main/chat/service'
+import { observeChatHost } from '../../src/main/chat/host-events'
 import { listChatMessages, upsertChatMessage } from '../../src/main/chat/chat-store'
 import { CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../src/main/chat/catalog'
 import { closeDb, freshDb } from '../helpers/db'
@@ -802,6 +809,110 @@ describe('Codex lifecycle chat IPC integration', () => {
       expect.objectContaining({ signal: expect.any(AbortSignal) })
     )
     expect(listChatMessages(conversation.id).map((message) => message.id)).toEqual(['user-1', 'assistant-1'])
+  })
+
+  it('edits a message just sent under the id user-saved reports, instead of saving the edit beside it', async () => {
+    const handlers = register()
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, {})
+    h.manager.getStatus.mockResolvedValue({
+      state: 'ready',
+      available: true,
+      connected: true,
+      authenticated: true,
+      account: { type: 'chatgpt', email: 'user@example.com', planType: 'pro' },
+      requiresOpenaiAuth: true,
+      runtime: null,
+      error: null,
+    })
+    h.manager.listModels.mockResolvedValue([
+      {
+        id: 'gpt-test',
+        model: 'gpt-test',
+        contextWindow: 256_000,
+        supportedReasoningEfforts: [],
+        serviceTiers: [],
+        legacySpeedTiers: [],
+        inputModalities: ['text'],
+      },
+    ])
+    h.manager.getClient.mockResolvedValue({})
+    patchConvUiPrefs(conversation.id, {
+      chat: { providerId: CODEX_SUBSCRIPTION_PROVIDER_ID, modelId: 'gpt-test' },
+    })
+    const sender = { isDestroyed: () => false, send: vi.fn() }
+    const userMessages = () => listChatMessages(conversation.id).filter((message) => message.role === 'user')
+    const userTexts = () =>
+      userMessages().map((message) => message.parts.map((part) => (part.type === 'text' ? part.text : '')).join(''))
+    const savedIds: string[] = []
+    const stopObserving = observeChatHost(conversation.id, ({ payload }) => {
+      const event = payload as { kind?: string; messageId?: unknown }
+      if (event.kind === 'user-saved' && typeof event.messageId === 'string') savedIds.push(event.messageId)
+    })
+
+    try {
+      await expect(
+        handlers.get('chat:send')?.({ sender }, { conversationId: conversation.id, text: 'original' })
+      ).resolves.toEqual({ ok: true })
+      await vi.waitFor(() => expect(isChatConversationRunning(conversation.id)).toBe(false))
+      expect(savedIds).toEqual([userMessages()[0]!.id])
+
+      // The id a composer shows the message under before the host saves it names nothing here.
+      const retiredBefore = h.deleteOne.mock.calls.length
+      await expect(
+        handlers.get('chat:resend')?.(
+          { sender },
+          { conversationId: conversation.id, fromMessageId: 'provisional-id', text: 'edited' }
+        )
+      ).resolves.toEqual({ ok: false, error: 'message-not-found' })
+      expect(h.deleteOne.mock.calls.length).toBe(retiredBefore)
+      expect(userTexts()).toEqual(['original'])
+
+      await expect(
+        handlers.get('chat:resend')?.(
+          { sender },
+          { conversationId: conversation.id, fromMessageId: savedIds[0], text: 'edited' }
+        )
+      ).resolves.toEqual({ ok: true })
+      await vi.waitFor(() => expect(isChatConversationRunning(conversation.id)).toBe(false))
+      expect(userTexts()).toEqual(['edited'])
+      expect(savedIds).toEqual([savedIds[0], userMessages()[0]!.id])
+    } finally {
+      stopObserving()
+    }
+  })
+
+  it('refuses to cut from a message of another conversation', async () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, {})
+    const other = makeConversation(workspace.id, {})
+    patchConvUiPrefs(conversation.id, {
+      chat: { providerId: CODEX_SUBSCRIPTION_PROVIDER_ID, modelId: 'gpt-test' },
+    })
+    for (const [conversationId, id, createdAt] of [
+      [conversation.id, 'user-1', 1],
+      [conversation.id, 'assistant-1', 2],
+      [other.id, 'foreign', 3],
+      [conversation.id, 'user-2', 4],
+    ] as const) {
+      upsertChatMessage({
+        id,
+        conversationId,
+        role: id === 'assistant-1' ? 'assistant' : 'user',
+        parts: [{ type: 'text', id: `${id}-text`, text: id }],
+        createdAt,
+      })
+    }
+
+    const result = await register().get('chat:resend')?.(
+      { sender: { isDestroyed: () => false, send: vi.fn() } },
+      { conversationId: conversation.id, fromMessageId: 'foreign', text: 'edited' }
+    )
+
+    expect(result).toEqual({ ok: false, error: 'message-not-found' })
+    expect(h.deleteOne).not.toHaveBeenCalled()
+    expect(listChatMessages(conversation.id).map((message) => message.id)).toEqual(['user-1', 'assistant-1', 'user-2'])
+    expect(listChatMessages(other.id).map((message) => message.id)).toEqual(['foreign'])
   })
 
   it('persists valid structured mention ranges on resend', async () => {

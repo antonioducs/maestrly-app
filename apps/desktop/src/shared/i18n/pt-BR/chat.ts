@@ -740,6 +740,7 @@ export default {
   view: {
     errBlockedByHook: 'Um hook de plugin bloqueou esta mensagem: {{reason}}',
     errBusy: 'Já há um turno em andamento.',
+    errMessageNotFound: 'Esta mensagem não está mais na conversa, então a edição não foi enviada.',
     errNoModel: 'Escolha um modelo no seletor abaixo.',
     errNoProvider: 'Nenhum provedor conectado. Entre ou configure um em Configurações › Maestrly Chat.',
     errAccountDeleting: 'Reative sua conta antes de iniciar um novo turno.',

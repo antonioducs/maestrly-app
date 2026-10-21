@@ -1715,7 +1715,12 @@ export class BotRuntime {
         ...listChatMessagesAfter(conversationId, native.seq).map((row) => row.message.id),
       ])
       const cut = await truncateConversationForResend(conversationId, native.message.id, slot.operation)
-      if (!cut) throw new InstanceHttpError(409, 'CONFLICT', 'The bot is busy.')
+      if (!cut.ok)
+        throw new InstanceHttpError(
+          409,
+          'CONFLICT',
+          cut.error === 'busy' ? 'The bot is busy.' : 'The message is no longer in the conversation.'
+        )
       truncated = true
       // What the cut removed leaves the transcript too, before any new turn can add to it.
       await this.extras.pruneFrom(native.message.createdAt, removed)

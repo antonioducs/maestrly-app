@@ -733,6 +733,7 @@ export default {
   view: {
     errBlockedByHook: 'A plugin hook blocked this message: {{reason}}',
     errBusy: "There's already a turn in progress.",
+    errMessageNotFound: 'This message is no longer in the conversation, so the edit was not sent.',
     errNoModel: 'Choose a model in the selector below.',
     errNoProvider: 'No connected provider. Sign in or configure one in Settings › Maestrly Chat.',
     errAccountDeleting: 'Reactivate your account before starting a new turn.',
