@@ -1,14 +1,17 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { ArrowRightLeft, History, Loader2, MessageSquare, Monitor, Pause, Play, Settings } from 'lucide-react'
+import { ArrowRightLeft, FolderOpen, History, Loader2, MessageSquare, Monitor, Pause, Play, Settings } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import type { FleetBot, FleetEnvironment } from '@maestrly/bot-fleet-protocol'
+import type { FleetBot, FleetEnvironment, FleetFilesUsage } from '@maestrly/bot-fleet-protocol'
 import { Button } from '@/components/ui/button'
 import { ChatWindowButton } from '@/components/chat/ChatWindowHost'
+import { fileSizeLabel } from '@/lib/fleet/downloads'
 import { startBot } from '@/lib/fleet/environments'
+import { filesLevel, filesMeter } from '@/lib/fleet/files'
 import { takeoverBlocksResume } from '@/lib/fleet/selectors'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import { sideTurns } from '@/lib/fleet/turns'
 import { cn } from '@/lib/utils'
+import { BOT_FILES_DRAWER_ID } from './BotFilesDrawer'
 import { BotPaneSwitch, type BotPane } from './BotPaneSwitch'
 
 /** Whether the conversation pane shows the bot's conversation, its routine runs or its conversations with other bots. */
@@ -101,6 +104,7 @@ export function BotChatHeader({
   onOpenServer,
   onOpenEnvironment,
   panes,
+  files,
 }: {
   bot: FleetBot
   fleet: FleetController
@@ -129,8 +133,13 @@ export function BotChatHeader({
     onOpenRun: (runId: string) => void
     onOpenThread: (threadId: string) => void
   }
+  files?: {
+    usage: FleetFilesUsage | null
+    open: boolean
+    onToggle: () => void
+  }
 }) {
-  const { t } = useTranslation('fleet')
+  const { t, i18n } = useTranslation('fleet')
   const host = fleet.state.snapshot.host?.hostname ?? t('view.server')
   // The side conversations working now, each in a conversation of its own, beside the bot's own conversation.
   const running = sideTurns(bot).filter((turn) => (turn.kind === 'routine' ? panes?.runs : panes?.threads))
@@ -271,6 +280,15 @@ export function BotChatHeader({
             </Button>
           )
         )}
+        {files && (
+          <BotFilesButton
+            botName={bot.name}
+            usage={files.usage}
+            open={files.open}
+            locale={i18n.language}
+            onToggle={files.onToggle}
+          />
+        )}
         <ChatWindowButton target={{ kind: 'bot', serverId: fleet.serverId, id: bot.id }} />
         <Button
           size="icon"
@@ -292,3 +310,64 @@ export function BotChatHeader({
     </header>
   )
 }
+
+function BotFilesButton({
+  botName,
+  usage,
+  open,
+  locale,
+  onToggle,
+}: {
+  botName: string
+  usage: FleetFilesUsage | null
+  open: boolean
+  locale: string
+  onToggle: () => void
+}) {
+  const { t } = useTranslation('fleet')
+  const level = filesLevel(usage)
+  const meter = usage && level !== 'ok' ? filesMeter(usage) : null
+  const label = usage
+    ? t('files.drawer.button', {
+        name: botName,
+        used: fileSizeLabel(usage.usedBytes, locale),
+        quota: fileSizeLabel(usage.quotaBytes, locale),
+        count: usage.count,
+        max: usage.countMax,
+      })
+    : t('files.drawer.title')
+  return (
+    <Button
+      size="sm"
+      variant="ghost"
+      aria-pressed={open}
+      aria-controls={BOT_FILES_DRAWER_ID}
+      title={label}
+      onClick={onToggle}
+      className={cn(
+        'h-[30px] gap-1.5 px-2.5 text-muted-foreground hover:text-foreground',
+        open && 'bg-white/[0.08] text-foreground',
+        level === 'full' && 'text-red-300 hover:text-red-200',
+        level === 'near' && 'text-amber-300 hover:text-amber-200'
+      )}
+    >
+      <FolderOpen aria-hidden="true" className="size-3.5" />
+      <span className="hidden @lg:inline">{t('files.drawer.title')}</span>
+      {meter && (
+        <span className="inline-flex items-center gap-1 tabular-nums text-[11px]">
+          <span aria-hidden="true" className="h-1 w-6 overflow-hidden rounded-full bg-white/[0.12]">
+            <i
+              className={cn(
+                'block h-full rounded-full',
+                level === 'full' ? 'bg-red-400' : 'bg-amber-400'
+              )}
+              style={{ width: `${Math.max(8, Math.round(meter.ratio * 100))}%` }}
+            />
+          </span>
+          <span>{meter.text}</span>
+        </span>
+      )}
+    </Button>
+  )
+}
+

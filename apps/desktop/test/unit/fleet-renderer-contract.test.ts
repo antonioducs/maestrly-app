@@ -332,4 +332,17 @@ describe('fleet provisioning wiring', () => {
       expect(source(`components/fleet/${name}.tsx`)).not.toMatch(/<select\b/)
     }
   })
+  it('wires the managed bot files drawer, header button, removed card state and full-space banner', () => {
+    const header = source('components/fleet/BotChatHeader.tsx')
+    expect(header).toContain("t('files.drawer.title')")
+    expect(header).toContain('aria-controls={BOT_FILES_DRAWER_ID}')
+    const view = source('components/fleet/BotView.tsx')
+    expect(view).toContain('<BotFilesDrawer')
+    expect(view).toContain('<BotFilesRemovedProvider')
+    const transcriptFiles = source('components/fleet/BotTranscriptFiles.tsx')
+    expect(transcriptFiles).toContain('data-file-id')
+    expect(transcriptFiles).toContain("t('files.removed'")
+    const conversation = source('components/fleet/BotConversation.tsx')
+    expect(conversation).toContain("t('files.full.action')")
+  })
 })

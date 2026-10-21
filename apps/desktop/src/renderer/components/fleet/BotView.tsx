@@ -33,11 +33,15 @@ import {
   writeSeenRuns,
 } from '@/lib/fleet/runs'
 import { BotConversation } from './BotConversation'
+import { BotFilesDrawer } from './BotFilesDrawer'
 import type { BotPane } from './BotPaneSwitch'
 import { BotScreen } from './BotScreen'
 import type { SettingsLeaveGuard } from './BotSettings'
 import { BotSettingsSheet } from './BotSettingsSheet'
 import { BotWorkspace } from './BotWorkspace'
+import { BotFilesRemovedProvider } from './bot-files-context'
+import type { FilesConversation, FileSort } from '@/lib/fleet/files'
+import { useBotFiles } from '@/lib/fleet/use-bot-files'
 
 type BotViewProps = {
   bot: FleetBot
@@ -220,34 +224,84 @@ function BotViewContent({ bot, view, fleet, onView, onOpenBot, onDetachedChange,
     environment && go({ kind: 'environment', environmentId: environment.id, tab: next, section })
   const onShowPane = (pane: BotPane) => (pane === 'computer' ? showComputer() : showPane('chat'))
   const activePane: BotPane = layout.showChat ? 'chat' : 'computer'
+  const botFiles = useBotFiles(fleet, bot, active)
+  const [filesOpen, setFilesOpen] = useState(false)
+  const [filesRequest, setFilesRequest] = useState<{ sort?: FileSort; nonce: number } | null>(null)
+  const [revealFile, setRevealFile] = useState<{ id: string; nonce: number } | null>(null)
+  const [revealMissed, setRevealMissed] = useState(0)
+  const [filesOverlay, setFilesOverlay] = useState(false)
+  const chatBodyRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const node = chatBodyRef.current
+    if (!node) return
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? node.clientWidth
+      setFilesOverlay(width > 0 && width < 720)
+    })
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [])
+  const currentConversation = useMemo<FilesConversation | null>(() => {
+    if (shownPane === 'conversation') return { kind: 'primary' }
+    if (shownPane === 'runs') return runId ? { kind: 'routine', runId } : null
+    return threadId ? { kind: 'thread', threadId } : null
+  }, [runId, shownPane, threadId])
+  const handleRevealed = useCallback((found: boolean) => {
+    if (!found) setRevealMissed((n) => n + 1)
+  }, [])
+  useEffect(() => {
+    if (!revealFile || shownPane === 'conversation') return
+    const card = chatBodyRef.current?.querySelector<HTMLElement>(`[data-file-id="${revealFile.id}"]`) ?? null
+    if (!card) {
+      setRevealMissed((n) => n + 1)
+      return
+    }
+    card.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    card.classList.add('bot-file-flash')
+    const timer = setTimeout(() => card.classList.remove('bot-file-flash'), 1900)
+    return () => {
+      clearTimeout(timer)
+      card.classList.remove('bot-file-flash')
+    }
+  }, [revealFile, shownPane])
   return (
-    <div data-bot-view className="flex min-h-0 min-w-0 flex-1 flex-col bg-chat-canvas">
-      {fleet.actionError &&
-        (fleet.actionError.botId === bot.id ||
-          (bot.environmentId !== null && fleet.actionError.environmentId === bot.environmentId)) && (
-          <p role="alert" className="px-5 py-2 text-xs text-destructive">
-            {fleetErrorText(fleet.actionError.message, t)}
-          </p>
-        )}
-      <BotWorkspace
-        botId={bot.id}
-        name={bot.name}
-        layout={layout}
-        conversation={
-          <>
-            <BotChatHeader
-              bot={bot}
-              fleet={fleet}
-              environment={environment}
-              narrow={layout.narrow}
-              activePane={activePane}
-              computerOpen={layout.mode !== 'chat'}
-              onShowPane={onShowPane}
-              onOpenComputer={showComputer}
-              onOpenSettings={openSettings}
-              onOpenServer={() => go({ kind: 'server' })}
-              onOpenEnvironment={environment ? () => openEnvironment('overview') : undefined}
-              panes={
+    <BotFilesRemovedProvider value={botFiles.removedAt}>
+      <div data-bot-view className="flex min-h-0 min-w-0 flex-1 flex-col bg-chat-canvas">
+        {fleet.actionError &&
+          (fleet.actionError.botId === bot.id ||
+            (bot.environmentId !== null && fleet.actionError.environmentId === bot.environmentId)) && (
+            <p role="alert" className="px-5 py-2 text-xs text-destructive">
+              {fleetErrorText(fleet.actionError.message, t)}
+            </p>
+          )}
+        <BotWorkspace
+          botId={bot.id}
+          name={bot.name}
+          layout={layout}
+          conversation={
+            <>
+              <BotChatHeader
+                bot={bot}
+                fleet={fleet}
+                environment={environment}
+                narrow={layout.narrow}
+                activePane={activePane}
+                computerOpen={layout.mode !== 'chat'}
+                onShowPane={onShowPane}
+                onOpenComputer={showComputer}
+                onOpenSettings={openSettings}
+                onOpenServer={() => go({ kind: 'server' })}
+                onOpenEnvironment={environment ? () => openEnvironment('overview') : undefined}
+                files={
+                  botFiles.supported
+                    ? {
+                        usage: botFiles.list?.usage ?? bot.sharedFiles,
+                        open: filesOpen,
+                        onToggle: () => setFilesOpen((v) => !v),
+                      }
+                    : undefined
+                }
+                panes={
                 runsSupported || threadsSupported
                   ? {
                       pane: shownPane,
@@ -271,63 +325,98 @@ function BotViewContent({ bot, view, fleet, onView, onOpenBot, onDetachedChange,
               onDetachedChange={handleDetachedChange}
               onReattach={() => go(botView('conversation'))}
             >
-              {(inWindow) =>
-                shownPane === 'threads' ? (
-                  <PeerThreadsView
-                    bot={bot}
-                    fleet={fleet}
-                    selectedThreadId={threadId}
-                    unseen={unseenThreadIds}
-                    onSelect={setThreadId}
-                    visible={inWindow || (active && layout.showChat)}
-                    onOpenBot={onOpenBot}
-                    onOpenScreen={showComputer}
-                    onOpenMain={() => setPane('conversation')}
-                  />
-                ) : shownPane === 'runs' ? (
-                  <RoutineRunsView
-                    bot={bot}
-                    fleet={fleet}
-                    selectedRunId={runId}
-                    seen={seen}
-                    onSelect={setRunId}
-                    visible={inWindow || (active && layout.showChat)}
-                    onCite={(run) => {
-                      setCitation(run)
-                      setPane('conversation')
-                    }}
-                    onOpenBot={onOpenBot}
-                    onOpenScreen={showComputer}
-                  />
-                ) : (
-                  <BotConversation
-                    bot={bot}
-                    fleet={fleet}
-                    runMarkers={markers}
-                    onOpenRun={runsSupported ? (id) => openRun(id) : undefined}
-                    onOpenThread={threadsSupported ? (id) => openThread(id) : undefined}
-                    citation={citation}
-                    onClearCitation={() => setCitation(null)}
-                    visible={inWindow || (active && layout.showChat)}
-                    onOpenBot={(id) => {
-                      onOpenBot(id)
-                      if (detached) void window.api.chatWindowShowSource(`bot:${bot.id}`)
-                    }}
-                    onOpenScreen={showComputer}
-                    onOpenSettings={openSettings}
-                    onOpenEnvironmentScreen={environment ? () => openEnvironment('screen') : undefined}
-                    onOpenEnvironmentSettings={
-                      environmentSettings
-                        ? (target) => openEnvironment('settings', target === 'mcp' ? 'tools' : 'skills')
-                        : undefined
-                    }
-                    onGiveBack={() => {
-                      if (detached) void window.api.chatWindowShowSource(`bot:${bot.id}`)
-                      setGiveBackRequest((value) => value + 1)
-                    }}
-                  />
-                )
-              }
+              {(inWindow) => (
+                <div ref={chatBodyRef} className="relative flex min-h-0 min-w-0 flex-1">
+                  {shownPane === 'threads' ? (
+                    <PeerThreadsView
+                      bot={bot}
+                      fleet={fleet}
+                      selectedThreadId={threadId}
+                      unseen={unseenThreadIds}
+                      onSelect={setThreadId}
+                      visible={inWindow || (active && layout.showChat)}
+                      onOpenBot={onOpenBot}
+                      onOpenScreen={showComputer}
+                      onOpenMain={() => setPane('conversation')}
+                    />
+                  ) : shownPane === 'runs' ? (
+                    <RoutineRunsView
+                      bot={bot}
+                      fleet={fleet}
+                      selectedRunId={runId}
+                      seen={seen}
+                      onSelect={setRunId}
+                      visible={inWindow || (active && layout.showChat)}
+                      onCite={(run) => {
+                        setCitation(run)
+                        setPane('conversation')
+                      }}
+                      onOpenBot={onOpenBot}
+                      onOpenScreen={showComputer}
+                    />
+                  ) : (
+                    <BotConversation
+                      bot={bot}
+                      fleet={fleet}
+                      runMarkers={markers}
+                      onOpenRun={runsSupported ? (id) => openRun(id) : undefined}
+                      onOpenThread={threadsSupported ? (id) => openThread(id) : undefined}
+                      citation={citation}
+                      onClearCitation={() => setCitation(null)}
+                      visible={inWindow || (active && layout.showChat)}
+                      onOpenFiles={
+                        botFiles.supported
+                          ? () => {
+                              setFilesOpen(true)
+                              setFilesRequest((prev) => ({ sort: 'size', nonce: (prev?.nonce ?? 0) + 1 }))
+                            }
+                          : undefined
+                      }
+                      revealFile={revealFile}
+                      onRevealed={handleRevealed}
+                      onOpenBot={(id) => {
+                        onOpenBot(id)
+                        if (detached) void window.api.chatWindowShowSource(`bot:${bot.id}`)
+                      }}
+                      onOpenScreen={showComputer}
+                      onOpenSettings={openSettings}
+                      onOpenEnvironmentScreen={environment ? () => openEnvironment('screen') : undefined}
+                      onOpenEnvironmentSettings={
+                        environmentSettings
+                          ? (target) => openEnvironment('settings', target === 'mcp' ? 'tools' : 'skills')
+                          : undefined
+                      }
+                      onGiveBack={() => {
+                        if (detached) void window.api.chatWindowShowSource(`bot:${bot.id}`)
+                        setGiveBackRequest((value) => value + 1)
+                      }}
+                    />
+                  )}
+                  {filesOpen && botFiles.supported && (
+                    <BotFilesDrawer
+                      bot={bot}
+                      files={botFiles}
+                      conversation={currentConversation}
+                      overlay={filesOverlay}
+                      request={filesRequest}
+                      onClose={() => setFilesOpen(false)}
+                      onReveal={(file) => {
+                        if (file.origin.kind === 'primary' && shownPane !== 'conversation') {
+                          setPane('conversation')
+                        }
+                        if (filesOverlay) setFilesOpen(false)
+                        setRevealFile((prev) => ({ id: file.id, nonce: (prev?.nonce ?? 0) + 1 }))
+                      }}
+                      onOpenLane={(origin) => {
+                        if (origin.kind === 'routine') openRun(origin.runId)
+                        else openThread(origin.threadId)
+                        if (filesOverlay) setFilesOpen(false)
+                      }}
+                      revealMissed={revealMissed}
+                    />
+                  )}
+                </div>
+              )}
             </ChatWindowHost>
           </>
         }
@@ -420,6 +509,7 @@ function BotViewContent({ bot, view, fleet, onView, onOpenBot, onDetachedChange,
           onArchived={() => onView({ kind: 'server' })}
         />
       )}
-    </div>
+      </div>
+    </BotFilesRemovedProvider>
   )
 }

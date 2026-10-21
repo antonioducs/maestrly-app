@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState, type ComponentType, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Check, Download, FileText, Film, FolderOpen, X } from 'lucide-react'
+import { Check, Download, FileText, FileX, Film, FolderOpen, X } from 'lucide-react'
 import type { FleetFileRef } from '@maestrly/bot-fleet-protocol'
 import { FLEET_DOWNLOAD_CANCELED, type FleetDownloadProgress } from '../../../shared/fleet-downloads'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
 import { attendFleetFile, downloadStatusLabel, fileSizeLabel } from '@/lib/fleet/downloads'
 import { useFleetServerId } from '@/lib/fleet/server-context'
 import { isFleetVideo } from '../../../shared/fleet-media'
+import { useRemovedFile } from './bot-files-context'
 import { VideoPreview } from './BotTranscriptVideo'
 
 export type FleetFileTransfer = {
@@ -30,7 +31,7 @@ function failureState(message: string): FleetFileTransfer['state'] {
 }
 
 /** Saving a shared file to Downloads; a video's card and its player share one, so both show the same state. */
-function useFleetFileTransfer(botId: string, fileId: string): FleetFileTransfer {
+export function useFleetFileTransfer(botId: string, fileId: string): FleetFileTransfer {
   const serverId = useFleetServerId()
   const [state, setState] = useState<FleetFileTransfer['state']>('idle')
   const [progress, setProgress] = useState<FleetDownloadProgress | null>(null)
@@ -166,6 +167,7 @@ function FileCard({
       : null
   return (
     <div
+      data-file-id={file.id}
       className={
         preview
           ? 'w-[360px] min-w-0 max-w-full overflow-hidden rounded-lg border border-border bg-surface-elevated text-sm'
@@ -264,14 +266,60 @@ function FileCard({
   )
 }
 
+function RemovedFileCard({ file, transfer }: { file: FleetFileRef; transfer: FleetFileTransfer }) {
+  const { t, i18n } = useTranslation('fleet')
+  return (
+    <div
+      data-file-id={file.id}
+      className="min-w-0 max-w-full rounded-lg border border-dashed border-border-strong px-3 py-2 text-sm"
+    >
+      <div className="flex min-w-0 items-center gap-3">
+        <FileX aria-hidden="true" className="size-5 shrink-0 text-muted-foreground" />
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-medium text-muted-foreground" title={file.name}>
+            {file.name}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {t('files.removed', { size: fileSizeLabel(file.byteSize, i18n.language) })}
+          </p>
+        </div>
+      </div>
+      {transfer.receipt && (
+        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+          <p role="status" className="text-muted-foreground">
+            {t('files.saved')}
+          </p>
+          <button
+            type="button"
+            onClick={() => void transfer.reveal()}
+            className="inline-flex items-center gap-1.5 rounded px-1 py-1 text-primary hover:underline focus-visible:outline-2 focus-visible:outline-primary"
+          >
+            <FolderOpen aria-hidden="true" className="size-3.5" />
+            {t('files.showInFolder')}
+          </button>
+        </div>
+      )}
+      {transfer.revealError && (
+        <p role="alert" className="mt-1 text-xs text-destructive">
+          {t('files.revealFailed')}
+        </p>
+      )}
+    </div>
+  )
+}
+
 function SharedFile({ botId, file }: { botId: string; file: FleetFileRef }) {
   const transfer = useFleetFileTransfer(botId, file.id)
+  const removedAt = useRemovedFile(file.id)
+  if (removedAt) return <RemovedFileCard file={file} transfer={transfer} />
   return <FileCard file={file} transfer={transfer} />
 }
 
 /** A video plays in place: a preview above the usual card, which still saves the file to Downloads. */
 function SharedVideo({ botId, file }: { botId: string; file: FleetFileRef }) {
   const transfer = useFleetFileTransfer(botId, file.id)
+  const removedAt = useRemovedFile(file.id)
+  if (removedAt) return <RemovedFileCard file={file} transfer={transfer} />
   return (
     <FileCard
       file={file}
