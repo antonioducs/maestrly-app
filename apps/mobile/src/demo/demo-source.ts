@@ -4,19 +4,27 @@ import {
   FLEET_DEVICES_FEATURE,
   FLEET_PHONES_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
+  FLEET_FILE_LIMITS,
+  FLEET_FILE_SETTINGS_DEFAULT,
   FLEET_FILES_FEATURE,
+  FLEET_FILES_MANAGE_FEATURE,
   FLEET_GATEWAY_ROUTES,
   FLEET_PEER_CONVERSATIONS_FEATURE,
   FLEET_ROUTINE_CONVERSATIONS_FEATURE,
   FLEET_TRANSCRIPT_REASONING_FEATURE,
+  fleetFileQuotaBytes,
   summarizeText,
   type FleetBot,
   type FleetCreateBotRequest,
   type FleetDevice,
+  type FleetFileSettings,
+  type FleetFilesDeleteRequest,
+  type FleetFilesUsage,
   type FleetGatewayEvent,
   type FleetInboxItem,
   type FleetInteractionResolution,
   type FleetPatchBotRequest,
+  type FleetPublishedFile,
   type FleetSendMessageRequest,
   type FleetTranscriptItem,
 } from '@maestrly/bot-fleet-protocol'
@@ -25,6 +33,7 @@ import { joinAvailability } from '../fleet/create-bot'
 import { botRecord } from '../fleet/factories'
 import type { EventHandlers, FleetSource } from '../fleet/source'
 import type { PairedServer } from '../servers/registry'
+import { DEMO_FILES_BOT, demoFilesWorld } from './demo-files'
 import { createDemoLanes, DEMO_LANES_BOT, demoLaneWorld } from './demo-lanes'
 import { DEMO_OPTIONS, DEMO_SCRIPTS, demoWorld, pixelAnswered, REPLY_SCRIPT, type AskSpec, type Step } from './fixtures'
 
@@ -36,6 +45,7 @@ export const DEMO_FEATURES = [
   FLEET_DEVICES_FEATURE,
   FLEET_ROUTINE_CONVERSATIONS_FEATURE,
   FLEET_PEER_CONVERSATIONS_FEATURE,
+  FLEET_FILES_MANAGE_FEATURE,
 ]
 
 /** The demo server as a paired server: it never leaves the phone. */
@@ -152,6 +162,35 @@ export function createDemoSource(options: { stepMs?: number; autoplay?: boolean 
     inbox = items
     emit({ type: 'inbox.updated', at: stamp(), items })
   }
+  // The files the bots shared: Pixel's fill its space, the others have none yet.
+  const fileWorld = demoFilesWorld(Date.now())
+  const files = new Map<string, FleetPublishedFile[]>([[DEMO_FILES_BOT, fileWorld.pixel]])
+  const removedFiles = new Map<string, Array<{ id: string; removedAt: string }>>()
+  const fileSettings = new Map<string, FleetFileSettings>()
+  // When each bot last shared or deleted a file or had its space changed, as a bot reports it; null before any.
+  const filesChangedAt = new Map<string, string>(
+    [...files].map(([botId, list]) => [
+      botId,
+      list
+        .map((item) => item.sharedAt)
+        .sort()
+        .at(-1) ?? stamp(),
+    ])
+  )
+  const filesUsage = (botId: string): FleetFilesUsage => {
+    const list = files.get(botId) ?? []
+    const settings = fileSettings.get(botId) ?? FLEET_FILE_SETTINGS_DEFAULT
+    return {
+      usedBytes: list.reduce((sum, item) => sum + item.byteSize, 0),
+      count: list.length,
+      quotaBytes: fleetFileQuotaBytes(settings.quotaGb),
+      countMax: FLEET_FILE_LIMITS.publishedCountMax,
+      deleteWithConversations: settings.deleteWithConversations,
+      updatedAt: filesChangedAt.get(botId) ?? null,
+    }
+  }
+  for (const bot of bots.values()) bot.sharedFiles = filesUsage(bot.id)
+
   // Atlas's routine runs and conversations with other bots, apart from its own conversation.
   const lanes = createDemoLanes(laneWorld, { emit, stamp, nextId, sleep, requireBot, updateBot })
 
@@ -633,6 +672,42 @@ export function createDemoSource(options: { stepMs?: number; autoplay?: boolean 
           throw new GatewayError('NOT_FOUND', 404, 'Device not found')
         devices = devices.filter((device) => device.id !== deviceId)
         return undefined
+      }
+      case 'botFilesList':
+        requireBot(id)
+        return {
+          files: files.get(id) ?? [],
+          removed: removedFiles.get(id) ?? [],
+          usage: filesUsage(id),
+          diskFreeBytes: 38 * 1024 ** 3,
+        }
+      case 'botFilesDelete': {
+        requireBot(id)
+        const ids = new Set((body as FleetFilesDeleteRequest).ids)
+        const list = files.get(id) ?? []
+        const gone = list.filter((item) => ids.has(item.id))
+        const removedAt = stamp()
+        files.set(
+          id,
+          list.filter((item) => !ids.has(item.id))
+        )
+        removedFiles.set(id, [...(removedFiles.get(id) ?? []), ...gone.map((item) => ({ id: item.id, removedAt }))])
+        if (gone.length) filesChangedAt.set(id, removedAt)
+        const usage = filesUsage(id)
+        updateBot(id, { sharedFiles: usage })
+        return {
+          deleted: gone.map((item) => item.id),
+          freedBytes: gone.reduce((sum, item) => sum + item.byteSize, 0),
+          usage,
+        }
+      }
+      case 'botFileSettings': {
+        requireBot(id)
+        fileSettings.set(id, body as FleetFileSettings)
+        filesChangedAt.set(id, stamp())
+        const usage = filesUsage(id)
+        updateBot(id, { sharedFiles: usage })
+        return usage
       }
       default:
         throw new GatewayError('NOT_FOUND', 404, 'The demo server does not offer this')
