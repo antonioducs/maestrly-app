@@ -36,6 +36,7 @@ import { botFileAccess } from '../conversation/bot-file-fetch'
 import { ConversationList, type ExtraRow } from '../conversation/ConversationList'
 import { ConversationContext, shownError, type ConversationContextValue } from '../conversation/CueCard'
 import { clearFileReveal, fileRevealKey, useFileReveal } from '../conversation/file-reveal'
+import { useBotFiles } from '../files/use-bot-files'
 import { Icon } from '../icons'
 import { Button } from '../primitives/Button'
 import { Cell } from '../primitives/Cell'
@@ -533,6 +534,8 @@ function LaneConversation({
   const laneId = lane.id
   const revealKey = fileRevealKey(controller.source.serverId, bot.id, laneId)
   const reveal = useFileReveal(revealKey)
+  // The bot's files, so the cards of those it deleted say so.
+  useBotFiles(bot)
   useEffect(() => {
     if (!own) return
     void controller.openLane(bot.id, { kind, id: laneId })

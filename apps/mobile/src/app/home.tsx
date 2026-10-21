@@ -27,6 +27,8 @@ import { ConversationContext, type ConversationContextValue, type LanesAccess } 
 import { ConversationSearchContext, useConversationSearch } from '../ui/conversation/ConversationSearch'
 import { fileRevealKey, useFileReveal } from '../ui/conversation/file-reveal'
 import { Transcript } from '../ui/conversation/Transcript'
+import { FilesFullBanner } from '../ui/files/FilesFullBanner'
+import { useBotFiles } from '../ui/files/use-bot-files'
 import { Drawer } from '../ui/drawer/Drawer'
 import { DrawerPanel } from '../ui/drawer/DrawerPanel'
 import { Icon } from '../ui/icons'
@@ -146,6 +148,8 @@ function BotConversation({ bot }: { bot: FleetBot }) {
   useEffect(() => {
     if (search.open) setPane('conversation')
   }, [search.open])
+  // Its files, so a full space shows above the message field and its cards know which files it deleted.
+  const files = useBotFiles(bot)
   // So does a file its Files sheet shows there.
   const reveal = useFileReveal(fileRevealKey(controller.source.serverId, bot.id))
   useEffect(() => {
@@ -203,6 +207,7 @@ function BotConversation({ bot }: { bot: FleetBot }) {
       ) : (
         <>
           <Transcript bot={bot} />
+          {files.supported ? <FilesFullBanner bot={bot} usage={files.usage} /> : null}
           {isComposerLocked(bot) ? (
             <LockedNotice bot={bot} />
           ) : (

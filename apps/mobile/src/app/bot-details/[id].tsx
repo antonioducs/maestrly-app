@@ -3,6 +3,7 @@ import { router, useLocalSearchParams } from 'expo-router'
 import { useCallback, useState } from 'react'
 import { AccessibilityInfo, ActivityIndicator, View } from 'react-native'
 import { BotCompactError, type BotAction, type BotCompactIssue } from '../../fleet/controller'
+import { filesLevel, filesShare } from '../../fleet/files'
 import { formatCost, formatTokens } from '../../fleet/format'
 import { useFleet, useFleetController } from '../../fleet/react'
 import { botStatusLine, statusLineText } from '../../fleet/selectors'
@@ -15,6 +16,8 @@ import { useTheme } from '../../theme/ThemeProvider'
 import { fonts } from '../../theme/tokens'
 import { BotAvatar } from '../../ui/Avatar'
 import { confirm } from '../../ui/confirm'
+import { FilesMeter } from '../../ui/files/FilesMeter'
+import { useBotFiles } from '../../ui/files/use-bot-files'
 import { Icon } from '../../ui/icons'
 import { Button } from '../../ui/primitives/Button'
 import { Cell } from '../../ui/primitives/Cell'
@@ -188,6 +191,7 @@ function Details({ bot }: { bot: FleetBot }) {
     )
   )
   const { option } = useBotSelections(bot)
+  const files = useBotFiles(bot)
   const [busy, setBusy] = useState<BotAction | null>(null)
   const [error, setError] = useState<string | null>(null)
   const line = botStatusLine(bot, text)
@@ -289,6 +293,24 @@ function Details({ bot }: { bot: FleetBot }) {
         <Compaction bot={bot} />
         {environment ? <Cell icon="server" label={t('details.environment')} value={environment} /> : null}
       </Group>
+      {files.supported ? (
+        <Group
+          label={t('details.filesGroup')}
+          foot={
+            filesLevel(files.usage) === 'full' ? (
+              <AppText variant="small" style={{ color: palette.brick, marginTop: 7, marginHorizontal: 6 }}>
+                {t('details.filesFull', { name: bot.name })}
+              </AppText>
+            ) : filesLevel(files.usage) === 'near' && files.usage ? (
+              <AppText variant="small" style={{ color: palette.cueInk, marginTop: 7, marginHorizontal: 6 }}>
+                {t('details.filesNear', { percent: Math.floor(filesShare(files.usage) * 100) })}
+              </AppText>
+            ) : undefined
+          }
+        >
+          <FilesMeter bot={bot} usage={files.usage} />
+        </Group>
+      ) : null}
       <RoutineList bot={bot} />
     </SheetScreen>
   )
