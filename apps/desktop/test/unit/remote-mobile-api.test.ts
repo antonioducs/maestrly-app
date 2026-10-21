@@ -1223,9 +1223,9 @@ describe('mobile API of a workspaces host', () => {
     await expect(
       h.invoke('mobile:v1:bot:management', { conversationId: 'held', state: 'active' })
     ).rejects.toMatchObject({ code: 'bot-refused', message: 'A revoked bot cannot resume control.' })
-    await expect(
-      h.invoke('mobile:v1:bot:manual-chat', { conversationId: 'c2', enabled: true })
-    ).rejects.toMatchObject({ code: 'not-a-bot-chat' })
+    await expect(h.invoke('mobile:v1:bot:manual-chat', { conversationId: 'c2', enabled: true })).rejects.toMatchObject({
+      code: 'not-a-bot-chat',
+    })
     await settle()
     expect(h.events.some(([channel]) => channel === 'mobile:v1:lists-changed')).toBe(true)
     h.api.dispose()

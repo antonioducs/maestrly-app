@@ -1509,7 +1509,8 @@ export const ptBR: Record<keyof typeof en, string> = {
   'chat.bot.group': 'Bot',
   'chat.bot.pause': 'Pausar bot',
   'chat.bot.resume': 'Retomar bot',
-  'chat.bot.pauseFoot': 'Pausar interrompe o turno de {name} e devolve o chat para você. Retome para entregar de volta.',
+  'chat.bot.pauseFoot':
+    'Pausar interrompe o turno de {name} e devolve o chat para você. Retome para entregar de volta.',
   'chat.bot.resumeFoot': '{name} retoma o chat e pode enviar a qualquer momento.',
   'chat.bot.failed': 'Não deu certo. Tente de novo.',
   'branch.label': 'Branch',

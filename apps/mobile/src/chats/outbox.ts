@@ -42,7 +42,9 @@ export const chatOutboxEntriesSchema = z.array(
     ),
     createdAt: z.string(),
     state: z.enum(['waiting', 'sending', 'failed']),
-    error: z.enum(['invalid', 'chatGone', 'noModel', 'blockedByHook', 'botLocked', 'missingFile', 'generic']).nullable(),
+    error: z
+      .enum(['invalid', 'chatGone', 'noModel', 'blockedByHook', 'botLocked', 'missingFile', 'generic'])
+      .nullable(),
     attempts: z.number(),
   })
 )

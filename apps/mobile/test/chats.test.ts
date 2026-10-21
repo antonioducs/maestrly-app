@@ -183,9 +183,13 @@ describe('chat lists', () => {
   it('says how a bot holds the chat it started', () => {
     const bot = (state: 'active' | 'paused' | 'revoked', shared = false) =>
       chat('b', { bot: { name: 'Scout', state, shared } })
-    expect(
-      [bot('active'), bot('active', true), bot('paused'), bot('revoked'), chat('c')].map(botChatState)
-    ).toEqual(['held', 'shared', 'paused', 'revoked', null])
+    expect([bot('active'), bot('active', true), bot('paused'), bot('revoked'), chat('c')].map(botChatState)).toEqual([
+      'held',
+      'shared',
+      'paused',
+      'revoked',
+      null,
+    ])
     expect(botChatLabel(bot('active'), text.t)).toBe('Managed by Scout')
     expect(botChatLabel(bot('paused'), text.t)).toBe('Created by Scout · Paused')
     expect(botChatLabel(chat('c'), text.t)).toBeNull()

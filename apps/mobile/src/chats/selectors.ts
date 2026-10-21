@@ -210,4 +210,3 @@ export function botChatLabel(chat: MobileConversation, t: Translate): string | n
     ? t('chat.bot.managedBy', { name: bot.name })
     : `${t('chat.bot.createdBy', { name: bot.name })} · ${t(`chat.bot.state.${bot.state}`)}`
 }
-
