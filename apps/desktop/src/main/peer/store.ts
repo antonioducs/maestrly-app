@@ -20,6 +20,7 @@ export function newPeerRecord(input: {
   port: number
   addresses: string[]
   issuedToken: string
+  hosting: boolean
   now: number
 }): PeerRecord {
   return {
@@ -34,6 +35,7 @@ export function newPeerRecord(input: {
     pairedAt: input.now,
     lastSeenAt: input.now,
     issuedTokenHash: tokenHash(input.issuedToken),
+    hosting: input.hosting,
   }
 }
 
@@ -97,6 +99,20 @@ export class PeerStore {
     this.write(
       records.map((item) => (item === record ? { ...item, addresses, lastSeenAt: stale ? at : item.lastSeenAt } : item))
     )
+  }
+
+  /** Notes that a paired computer shares itself: this computer reached its bridge. */
+  markHosting(deviceId: string): void {
+    const records = this.list()
+    if (!records.some((item) => item.deviceId === deviceId && item.hosting === false)) return
+    this.write(records.map((item) => (item.deviceId === deviceId ? { ...item, hosting: true } : item)))
+  }
+
+  /** Keeps the name a paired computer now gives itself. */
+  rename(deviceId: string, name: string): void {
+    const records = this.list()
+    if (!records.some((item) => item.deviceId === deviceId && item.name !== name)) return
+    this.write(records.map((item) => (item.deviceId === deviceId ? { ...item, name } : item)))
   }
 
   remove(deviceId: string): boolean {

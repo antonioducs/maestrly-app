@@ -160,6 +160,7 @@ import {
 import { registerHostEditorIpc } from './remote-host/server/host-editor-ipc'
 import { HostEditor } from './remote-host/server/host-editor'
 import { HostFiles } from './remote-host/server/host-files'
+import { registerPeerIpc } from './peer/ipc'
 import { localPeerOs, startPeerHosting } from './peer/service'
 import { requestVSCodeNavigation } from './vscode/vscode-navigation'
 import { hasVSCodeBridgeInFlight, requestVSCodeMemorySnapshot } from './vscode/vscode-memory'
@@ -1014,6 +1015,7 @@ function registerIpc(): void {
     bridgeInFlight: hasVSCodeBridgeInFlight,
   })
   registerHostsIpc(reg)
+  registerPeerIpc(reg)
   remoteEditors = new RemoteEditors({
     registry: hostRegistry,
     fleet: (serverId) => fleetServers.get(serverId),

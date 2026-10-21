@@ -22,6 +22,9 @@ const LOCAL_ONLY_PREFIXES = [
   // Signing in to an MCP server opens this computer's browser and listens on its loopback, whichever host runs it.
   'mcp-oauth:',
   'conversation-move:',
+  // Which computers use this one, its pairing codes and its peer server: a paired computer never pairs or shares on
+  // this one's behalf, nor reads the codes shown on its screen.
+  'peer:',
 ]
 const LOCAL_ONLY_CHANNELS = new Set([
   'app:info',

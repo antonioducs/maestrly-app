@@ -25,6 +25,8 @@ import type { PeerStore } from './store'
 
 export interface PeerServerDeps {
   identity: PeerIdentity
+  /** The name this computer has now, which the owner may change while the server runs; the identity's by default. */
+  name?: () => string
   appVersion: string
   os: RemoteOs
   store: Pick<PeerStore, 'authenticate' | 'touch' | 'remove'>
@@ -53,7 +55,7 @@ const protocolMatches = (request: IncomingMessage): boolean =>
 export function createPeerServer(deps: PeerServerDeps): https.Server {
   const hello = (): PeerHello => ({
     deviceId: deps.identity.deviceId,
-    name: deps.identity.name,
+    name: deps.name?.() ?? deps.identity.name,
     os: deps.os,
     appVersion: deps.appVersion,
     fingerprint: deps.identity.fingerprint,

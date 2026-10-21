@@ -14,6 +14,7 @@ function record(issuedToken: string, addresses = ['10.0.0.5']) {
     port: 7690,
     addresses,
     issuedToken,
+    hosting: true,
     now: T0,
   })
 }

@@ -61,7 +61,8 @@ import { FleetSidebarPanel } from '@/components/fleet/FleetSidebarPanel'
 import { HostSectionNotice, HostSwitcher, HostTile, hostName } from '@/components/sidebar/HostSection'
 import { hostActivity, resolveSidebarHost, type HostActivity } from '@/components/sidebar/sidebar-hosts'
 import type { RemoteHostShell } from '@/lib/hosts/remote-host-runtime'
-import { hostSectionStatus } from '@/lib/hosts/host-status'
+import { hostRetryable, hostSectionStatus } from '@/lib/hosts/host-status'
+import { PeerInUseChip } from '@/components/peer/PeerInUseChip'
 import { hostOfKey } from '@/lib/hosts/shell-keys'
 import type { MoveTarget } from '@/lib/conversation-move/flow'
 import type { HostView } from '../../shared/hosts'
@@ -89,6 +90,9 @@ export interface SidebarHostSection {
   onRetry: () => void
   onStart: () => void
   onManage: () => void
+  /** A paired computer's: pair with it again, or forget it here once it removed this computer. */
+  onPair?: () => void
+  onForget?: () => void
 }
 
 function filterWorkspaces(workspaces: WorkspaceWithConversations[], q: string): WorkspaceWithConversations[] {
@@ -193,6 +197,12 @@ interface Props {
   /** This computer's view, for its entry in the host switcher. */
   localHost?: HostView
   appVersion?: string | null
+  /** Shows a machine's lists, as when Settings opens a paired computer; `requestId` changes on each request. */
+  requestedHost?: { hostId: HostId; requestId: number } | null
+  /** Opens the dialog that pairs this computer with another of the owner's. */
+  onConnectComputer?: () => void
+  /** Opens Settings → Computers. */
+  onOpenComputers?: () => void
 }
 
 export function Sidebar({
@@ -258,6 +268,9 @@ export function Sidebar({
   hostSections = [],
   localHost,
   appVersion = null,
+  requestedHost = null,
+  onConnectComputer,
+  onOpenComputers,
 }: Props) {
   const { t } = useTranslation('ui')
   const [query, setQuery] = useState('')
@@ -289,6 +302,13 @@ export function Sidebar({
   useEffect(() => {
     if (requestedTab) selectTab(requestedTab.tab)
   }, [requestedTab?.requestId])
+
+  useEffect(() => {
+    if (!requestedHost) return
+    selectHost(requestedHost.hostId)
+    if (tab === 'bots') selectTab('workspaces')
+    if (collapsed) onCollapsedChange(false)
+  }, [requestedHost?.requestId])
 
   const [renaming, setRenaming] = useState<{ convId: string; instanceKey: string } | null>(null)
   const [renameValue, setRenameValue] = useState('')
@@ -731,10 +751,10 @@ export function Sidebar({
     if (selectedSection) {
       const status = hostSectionStatus(selectedSection.host)
       if (items.length) items.push(<DropdownMenuSeparator key="host" />)
-      if (status === 'connecting' || status === 'reconnecting' || status === 'incompatible' || status === 'offline')
+      if (hostRetryable(status))
         items.push(
           <DropdownMenuItem key="retry" onClick={selectedSection.onRetry}>
-            <RefreshCw /> {t('sidebar.hostRetry')}
+            <RefreshCw /> {t(status === 'disconnected' ? 'sidebar.peerReconnect' : 'sidebar.hostRetry')}
           </DropdownMenuItem>
         )
       if (status === 'stopped' || status === 'failed')
@@ -745,7 +765,14 @@ export function Sidebar({
         )
       items.push(
         <DropdownMenuItem key="manage" onClick={selectedSection.onManage}>
-          <SquareArrowOutUpRight /> {t('sidebar.hostManage')}
+          <SquareArrowOutUpRight />{' '}
+          {t(
+            !selectedSection.host.peer
+              ? 'sidebar.hostManage'
+              : status === 'incompatible'
+                ? 'sidebar.peerUpdates'
+                : 'sidebar.peerManage'
+          )}
         </DropdownMenuItem>
       )
     }
@@ -856,7 +883,13 @@ export function Sidebar({
             )}
             {empty && !q && (
               <p className="px-3 pb-1 text-xs text-muted-foreground">
-                {t(kind === 'chats' ? 'sidebar.noChats' : 'sidebar.hostNoWorkspaces')}
+                {t(
+                  kind === 'chats'
+                    ? 'sidebar.noChats'
+                    : host.peer
+                      ? 'sidebar.peerNoWorkspaces'
+                      : 'sidebar.hostNoWorkspaces'
+                )}
               </p>
             )}
           </div>
@@ -899,6 +932,7 @@ export function Sidebar({
               selectedId={selectedHostId}
               activity={activityByHost}
               onSelect={selectHost}
+              onConnectComputer={onConnectComputer}
               showQuickTooltip={showQuickTooltip}
               hideQuickTooltip={hideQuickTooltip}
             />
@@ -1153,6 +1187,7 @@ export function Sidebar({
           </div>
         </div>
 
+        {onOpenComputers && <PeerInUseChip onOpenSettings={onOpenComputers} />}
         <UpdateCard />
       </div>
 

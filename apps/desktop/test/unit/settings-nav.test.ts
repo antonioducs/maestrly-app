@@ -17,6 +17,7 @@ describe('settings navigation', () => {
     expect(ids).toEqual([
       'chat',
       'fleet',
+      'computers',
       'usage',
       'appearance',
       'tools',
@@ -35,6 +36,14 @@ describe('settings navigation', () => {
     expect(resources['pt-BR'].ui.settings.nav.chat).toBe('Maestrly Chat')
     expect(resources.en.ui.settings.nav.fleet).toBe('Bot server')
     expect(resources['pt-BR'].ui.settings.nav.fleet).toBe('Servidor de bots')
+    expect(resources.en.ui.settings.nav.computers).toBe('Computers')
+    expect(resources['pt-BR'].ui.settings.nav.computers).toBe('Computadores')
+  })
+
+  it('offers Computers only where Settings can leave for a paired computer', () => {
+    // A bot's own settings window, for one, has no machine switcher to show a paired computer in.
+    expect(settingsViewSource).toContain("(item) => item.id !== 'computers' || onOpenHost")
+    expect(settingsViewSource).toContain("{section === 'computers' && onOpenHost && <ComputersSection")
   })
 
   it('accepts direct navigation to the Maestrly Chat settings section', () => {

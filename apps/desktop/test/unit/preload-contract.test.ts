@@ -30,6 +30,7 @@ import { fleetEnvironmentPlugins, fleetEnvironmentSettings } from '../../src/pre
 import { FLEET_SETTINGS_OPERATIONS } from '@maestrly/bot-fleet-protocol'
 import { fleetInstallerApi } from '../../src/preload/api-fleet-installer'
 import { hostsApi } from '../../src/preload/api-hosts'
+import { peerApi } from '../../src/preload/api-peer'
 import { hostFsApi } from '../../src/preload/api-host-fs'
 import { artifactsApi } from '../../src/preload/api-artifacts'
 import { transfersApi } from '../../src/preload/api-transfers'
@@ -83,6 +84,7 @@ const apiSlices: Array<[string, Record<string, unknown>]> = [
   ['fleetEnvironmentPlugins', { fleetEnvironmentPlugins }],
   ['fleetInstallerApi', fleetInstallerApi],
   ['hostsApi', hostsApi],
+  ['peerApi', peerApi],
   ['hostFsApi', hostFsApi],
   ['artifactsApi', artifactsApi],
   ['transfersApi', transfersApi],
@@ -255,6 +257,39 @@ describe('preload API — exposure', () => {
     expect(invokeSpy).toHaveBeenCalledWith('fleet:botMove', SERVER, 'scout')
   })
 
+  it("forwards Settings → Computers and the pairing dialogs to this computer's peer channels", async () => {
+    await api.peerOverview()
+    await api.peerSetHosting(true)
+    await api.peerRename('Mac mini')
+    await api.peerRemove('device')
+    await api.peerDisconnect('device')
+    await api.peerConnectStart('mac-mini.local')
+    await api.peerConnectCode('pairing', '123456')
+    await api.peerConnectCancel('pairing')
+    await api.peerPromptCancel('pairing')
+    await api.peerPromptDismiss('pairing')
+    expect(invokeSpy.mock.calls).toEqual([
+      ['peer:overview'],
+      ['peer:set-hosting', true],
+      ['peer:rename', 'Mac mini'],
+      ['peer:remove', 'device'],
+      ['peer:disconnect', 'device'],
+      ['peer:connect-start', 'mac-mini.local'],
+      ['peer:connect-code', 'pairing', '123456'],
+      ['peer:connect-cancel', 'pairing'],
+      ['peer:prompt-cancel', 'pairing'],
+      ['peer:prompt-dismiss', 'pairing'],
+    ])
+    const callback = vi.fn()
+    const off = api.onPeerChanged(callback) as () => void
+    const listener = onSpy.mock.calls.at(-1)?.[1] as Fn
+    expect(onSpy).toHaveBeenCalledWith('peer:changed', listener)
+    listener({}, { hosting: true })
+    expect(callback).toHaveBeenCalledWith({ hosting: true })
+    off()
+    expect(removeListenerSpy).toHaveBeenCalledWith('peer:changed', listener)
+  })
+
   it("hides a bot's settings window through main instead of closing it", async () => {
     await api.fleetInstanceHideWindow()
     expect(invokeSpy).toHaveBeenCalledWith('fleet:instance:hide')
@@ -358,7 +393,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(645)
+    expect(keys).toHaveLength(656)
     expect(keys.sort()).toMatchSnapshot()
   })
 

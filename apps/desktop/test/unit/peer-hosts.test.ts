@@ -63,6 +63,7 @@ async function pairedComputers() {
       port: 7690,
       addresses: [],
       issuedToken: tokenFromA,
+      hosting: true,
       now,
     }),
     issueToken()
@@ -76,6 +77,7 @@ async function pairedComputers() {
       port,
       addresses: ['10.255.255.1', '127.0.0.1'],
       issuedToken: issueToken(),
+      hosting: true,
       now: now - 120_000,
     }),
     tokenFromA

@@ -1,11 +1,12 @@
 import { FLEET_INSTANCE_BRIDGE_PATH, FLEET_PROTOCOL_HEADER, FLEET_PROTOCOL_VERSION } from '@maestrly/bot-fleet-protocol'
 import { WebSocket, type ClientOptions } from 'ws'
-import type { PeerProblem } from '../../shared/peer'
-import { REMOTE_BRIDGE_LIMITS } from '../../shared/remote-bridge'
+import { PEER_PATHS, type PeerProblem } from '../../shared/peer'
+import { REMOTE_BRIDGE_CLOSE, REMOTE_BRIDGE_LIMITS } from '../../shared/remote-bridge'
 import type { BridgeClientSocket } from '../remote-host/client/host-connection'
 import { PeerUnreachable, reachPeer } from './dial'
-import { pinnedTls, urlHost } from './http'
-import type { PeerRecord } from './schemas'
+import { peerRequest, pinnedTls, urlHost } from './http'
+import { cleanPeerName } from './identity'
+import { peerHelloSchema, type PeerRecord } from './schemas'
 import type { PeerStore } from './store'
 
 /** Where this computer reaches a paired one for files and the editor: its origin, credentials, and certificate. */
@@ -16,11 +17,16 @@ export interface PeerEndpoint {
 }
 
 export interface PeerHostsDeps {
-  store: Pick<PeerStore, 'list' | 'get' | 'tokenFor' | 'touch' | 'onChange'>
+  store: Pick<PeerStore, 'list' | 'get' | 'tokenFor' | 'touch' | 'rename' | 'markHosting' | 'onChange'>
   reach?: (candidates: string[], port: number, certPem: string) => Promise<string>
   openSocket?: (url: string, options: ClientOptions) => WebSocket
+  /** What a paired computer says about itself now, over its pinned certificate. */
+  hello?: (host: string, port: number, certPem: string) => Promise<unknown>
   now?: () => number
 }
+
+/** Problems only the owner clears, by connecting again: the bridge is not dialed while one stands. */
+const HELD: ReadonlySet<PeerProblem> = new Set(['removed', 'disconnected'])
 
 /**
  * The owner's other computers as hosts of this one's windows: each bridge is opened at the address that shows the
@@ -33,11 +39,18 @@ export class PeerHosts {
   private readonly listeners = new Set<() => void>()
   private readonly reach: NonNullable<PeerHostsDeps['reach']>
   private readonly openSocket: NonNullable<PeerHostsDeps['openSocket']>
+  private readonly hello: NonNullable<PeerHostsDeps['hello']>
   private readonly now: () => number
 
   constructor(private readonly deps: PeerHostsDeps) {
     this.reach = deps.reach ?? ((candidates, port, certPem) => reachPeer(candidates, port, certPem))
     this.openSocket = deps.openSocket ?? ((url, options) => new WebSocket(url, options))
+    this.hello =
+      deps.hello ??
+      (async (host, port, certPem) => {
+        const response = await peerRequest({ host, port }, 'GET', PEER_PATHS.hello, { pin: certPem, timeoutMs: 5_000 })
+        return response.body
+      })
     this.now = deps.now ?? Date.now
   }
 
@@ -47,6 +60,16 @@ export class PeerHosts {
 
   problem(deviceId: string): PeerProblem {
     return this.problems.get(deviceId) ?? null
+  }
+
+  /** Whether the bridge of a paired computer waits for the owner to connect it again. */
+  held(deviceId: string): boolean {
+    return HELD.has(this.problem(deviceId))
+  }
+
+  /** The owner asks to connect again: a computer that disconnected or removed this one is dialed once more. */
+  retry(deviceId: string): void {
+    if (this.held(deviceId)) this.setProblem(deviceId, null)
   }
 
   /** Calls `listener` when the paired computers or what they said changes; returns its removal. */
@@ -75,6 +98,7 @@ export class PeerHosts {
     }
     this.reached.set(deviceId, address)
     this.deps.store.touch(deviceId, this.now(), address)
+    void this.learnName(record, address)
     const options = {
       headers: { [FLEET_PROTOCOL_HEADER]: String(FLEET_PROTOCOL_VERSION), Authorization: `Bearer ${token}` },
       maxPayload: REMOTE_BRIDGE_LIMITS.maxFrameBytes,
@@ -89,8 +113,27 @@ export class PeerHosts {
       response.resume()
       socket.terminate()
     })
-    socket.on('open', () => this.setProblem(deviceId, null))
+    socket.on('open', () => {
+      this.deps.store.markHosting(deviceId)
+      this.setProblem(deviceId, null)
+    })
+    // Registered before the connection's own listener: a held computer is not dialed again on its way out.
+    socket.on('close', (code) => {
+      if (code === REMOTE_BRIDGE_CLOSE.disconnected) this.setProblem(deviceId, 'disconnected')
+      else if (code === REMOTE_BRIDGE_CLOSE.removed) this.setProblem(deviceId, 'removed')
+    })
     return socket as unknown as BridgeClientSocket
+  }
+
+  /** Keeps the name the computer now gives itself, which its owner may have changed since the pairing. */
+  private async learnName(record: PeerRecord, address: string): Promise<void> {
+    try {
+      const hello = peerHelloSchema.safeParse(await this.hello(address, record.port, record.certPem))
+      const name = hello.success && hello.data.deviceId === record.deviceId ? cleanPeerName(hello.data.name) : ''
+      if (name) this.deps.store.rename(record.deviceId, name)
+    } catch {
+      /* The name stays the one it had: the bridge reports whether the computer is reachable. */
+    }
   }
 
   endpoint(deviceId: string): PeerEndpoint | null {

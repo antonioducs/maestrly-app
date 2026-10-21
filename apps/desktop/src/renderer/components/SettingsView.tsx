@@ -45,6 +45,7 @@ import { DefaultPermissionSection, ProjectsDirectorySection } from '@/components
 import { PrivacySection } from '@/components/settings/PrivacySection'
 import { UpdatesSection } from '@/components/settings/UpdatesSection'
 import { FleetSettings } from '@/components/settings/FleetSettings'
+import { ComputersSection } from '@/components/settings/computers/ComputersSection'
 import { ArtifactsSettings, type BotServerSetupChoice } from '@/components/settings/ArtifactsSettings'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 
@@ -60,11 +61,13 @@ interface Props {
   chat?: ChatSettingsOptions
   /** A place to show, such as Chat → Plugins on the host of the conversation that asked. */
   request?: SettingsRequest | null
+  /** Leaves Settings to show a paired computer's lists; without it, Settings → Computers is not offered. */
+  onOpenHost?: (hostId: HostId) => void
 
   onClose: () => void
 }
 
-export function SettingsView({ fleet, initialSection = 'chat', sections, chat, request, onClose }: Props) {
+export function SettingsView({ fleet, initialSection = 'chat', sections, chat, request, onOpenHost, onClose }: Props) {
   const { t } = useTranslation('ui')
   const api = useHostApi()
   // Sections about a Maestrly profile (its chat, bots, platform, usage and execution settings) show the profile of
@@ -80,7 +83,9 @@ export function SettingsView({ fleet, initialSection = 'chat', sections, chat, r
       {node}
     </HostProvider>
   )
-  const navItems = sections ? SETTINGS_NAV.filter((item) => sections.includes(item.id)) : SETTINGS_NAV
+  const navItems = (sections ? SETTINGS_NAV.filter((item) => sections.includes(item.id)) : SETTINGS_NAV).filter(
+    (item) => item.id !== 'computers' || onOpenHost
+  )
   const showNav = navItems.length > 1
   const headingRef = useRef<HTMLHeadingElement>(null)
   const [locale, setLocale] = useLocale()
@@ -420,6 +425,7 @@ export function SettingsView({ fleet, initialSection = 'chat', sections, chat, r
                 }}
               />
             )}
+            {section === 'computers' && onOpenHost && <ComputersSection request={request} onOpenHost={onOpenHost} />}
             {section === 'fleet' && fleet && (
               <FleetSettings
                 fleet={fleet}

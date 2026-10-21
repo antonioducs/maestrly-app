@@ -182,11 +182,12 @@ export function useMainPanels({
         setSettingsSection(section)
         // A plain request clears the last one, so Settings opened again later starts where it is asked to.
         setSettingsRequest(
-          options?.chatTab || options?.hostId
+          options?.chatTab || options?.hostId || options?.connectComputer
             ? {
                 section,
                 ...(options.chatTab ? { chatTab: options.chatTab } : {}),
                 ...(options.hostId ? { hostId: options.hostId } : {}),
+                ...(options.connectComputer ? { connectComputer: options.connectComputer } : {}),
                 seq: ++settingsRequestSeq.current,
               }
             : null

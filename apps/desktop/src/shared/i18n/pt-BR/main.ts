@@ -122,6 +122,12 @@ export default {
     chatgptRestoringTitle: 'Restaurando ChatGPT…',
     chatgptRestoringSub: 'Recarregando a última conversa. Login e sessão permanecem intactos.',
   },
+  peer: {
+    pairingNotice: {
+      title: '{{name}} quer usar este computador',
+      body: 'Abra o Maestrly para ver o código de pareamento.',
+    },
+  },
   chatProviderError: {
     http: '{{provider}} retornou HTTP {{status}}: {{detail}}',
     httpWithoutDetail: '{{provider}} retornou HTTP {{status}} sem mensagem de erro.',

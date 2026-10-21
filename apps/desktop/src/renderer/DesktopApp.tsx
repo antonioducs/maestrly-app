@@ -71,6 +71,8 @@ import {
   shellConversation,
 } from '@/lib/hosts/shell-keys'
 import { HostUnavailableOverlay } from '@/components/HostUnavailableOverlay'
+import { PeerPairingPrompt } from '@/components/peer/PeerPairingPrompt'
+import { hostSectionStatus } from '@/lib/hosts/host-status'
 import { type HostId, hostKey, LOCAL_HOST_ID } from '../shared/host-key'
 import type { HostView } from '../shared/hosts'
 
@@ -333,6 +335,8 @@ function DesktopShell({
   const fleet = fleets.controller(botsServer)
   const botUpdates = useBotUpdates(fleet)
   const [fleetTabRequest, setFleetTabRequest] = useState(0)
+  // A machine Settings asks the sidebar to show, such as a computer just paired.
+  const [hostRequest, setHostRequest] = useState<{ hostId: HostId; requestId: number } | null>(null)
   const openFleetView = useCallback(
     (view: FleetView) => {
       nav.openFleetView(view)
@@ -797,13 +801,22 @@ function DesktopShell({
   )
   const openServerPage = useCallback(() => openFleetView({ kind: 'server' }), [openFleetView])
   // A host's environment page has its lifecycle, settings and isolation; a host reached without a server has none.
+  // A paired computer is managed in Settings → Computers, and updated in Settings → Updates.
   const manageHost = useCallback(
     (host: HostView) => {
+      if (host.peer) return openSettings(hostSectionStatus(host) === 'incompatible' ? 'updates' : 'computers')
       if (host.serverId) onBotsServer(host.serverId)
       if (host.environment) openFleetView({ kind: 'environment', environmentId: host.environment.id, tab: 'overview' })
       else openServerPage()
     },
-    [onBotsServer, openFleetView, openServerPage]
+    [onBotsServer, openFleetView, openServerPage, openSettings]
+  )
+  const openHost = useCallback(
+    (hostId: HostId) => {
+      setSettingsOpen(false)
+      setHostRequest((current) => ({ hostId, requestId: (current?.requestId ?? 0) + 1 }))
+    },
+    [setSettingsOpen]
   )
   const hostSections: SidebarHostSection[] = remoteHosts.map((host) => ({
     host,
@@ -814,6 +827,12 @@ function DesktopShell({
     onRetry: () => retryHost(host.id),
     onStart: () => startHost(host),
     onManage: () => manageHost(host),
+    ...(host.peer
+      ? {
+          onPair: () => openSettings('computers', { connectComputer: host.peer?.deviceId ?? true }),
+          onForget: () => void window.api.peerRemove(host.peer?.deviceId ?? ''),
+        }
+      : {}),
   }))
   /** Runs an action of the sidebar on the host its conversation or workspace belongs to. */
   const onHost = (key: string, local: () => unknown, act: (actions: RemoteHostShell['actions']) => unknown): void => {
@@ -899,6 +918,9 @@ function DesktopShell({
               hostSections={hostSections}
               localHost={hosts[0]}
               appVersion={appVersion}
+              requestedHost={hostRequest}
+              onConnectComputer={() => openSettings('computers', { connectComputer: true })}
+              onOpenComputers={() => openSettings('computers')}
               onRemoveWorkspace={(id) =>
                 onHost(
                   id,
@@ -1051,6 +1073,7 @@ function DesktopShell({
                   fleet={fleet}
                   initialSection={settingsSection}
                   request={settingsRequest}
+                  onOpenHost={openHost}
                   onClose={() => setSettingsOpen(false)}
                 />
               )}
@@ -1383,6 +1406,8 @@ function DesktopShell({
             </HostProvider>
 
             <AboutModal open={aboutOpen} onClose={() => setAboutOpen(false)} />
+            {/* Another of the owner's computers asking to use this one shows its code here, whatever is open. */}
+            <PeerPairingPrompt />
 
             <MigrationRecoveryGate
               checking={migration.recoveriesChecking}

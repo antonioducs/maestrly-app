@@ -710,6 +710,65 @@ A development or test build, never a packaged one, also accepts
 `MAESTRLY_DEV_DIRECT_HOST`, which connects it straight to a host's control
 server with that host's control token.
 
+## Connected computers
+
+The owner's desktops can use each other directly, without a server: see
+[Connect your computers](connect-computers.md). Each profile has its own
+identity: a random device id, a name, and a self-signed RSA certificate valid
+for ten years, whose private key only the OS keyring holds.
+
+- **Sharing is off until the owner turns it on**, in **Settings → Computers**,
+  where the setting says what a paired computer can do. While it is on, the
+  peer server listens on every network interface on TCP port 7690, or on one
+  of the next nine when that port is taken; turning it off closes the server
+  and every session on it.
+- **A paired computer controls this one as its own window does.** Over the
+  bridge it calls this computer's IPC handlers: it reads and writes the files
+  of the home folder, runs commands in terminals, uses the profile's model
+  accounts, keys, and Git and SSH credentials, and changes its settings, as
+  with a [workspaces environment](#remote-workspaces). It never reaches the
+  channels of **Settings → Computers** (`peer:*`): it cannot turn sharing on
+  or off, rename this computer, pair or remove computers, or read a pairing
+  code. Pair only computers you control.
+- **Only a code shown on this computer pairs another one.** The asking
+  computer must reach this one and the owner must type the 6-digit code that
+  only this computer's window shows; the code is never logged and is not in
+  the system notification. Both computers run SPAKE2 (RFC 9382) with it, so
+  the code never travels and a wrong guess ends the pairing. A code is valid
+  for 2 minutes and for one exchange. One pairing runs at a time, at most 5
+  pairing requests a minute are taken, and 3 wrong codes within 10 minutes
+  pause new pairings for 10 minutes. The confirmations bind both computers'
+  certificate fingerprints, so a certificate swapped on the way fails the
+  pairing.
+- **Each computer gets its own token.** Each one issues a random token to the
+  other, sent sealed under the key SPAKE2 derived. The token a computer uses
+  stays in its keyring; the computer that issued it keeps only its SHA-256
+  hash, compared in constant time over every record.
+- **Every later connection pins the certificate.** The bridge, file
+  transfers, and the editor run over TLS that accepts only the certificate
+  read at pairing, by its SHA-256 fingerprint, and the token travels only
+  inside that connection. The certificate is marked as able to sign
+  certificates, because Electron accepts a self-signed certificate as its own
+  trust anchor only then; the fingerprint stays the pin, so a certificate
+  signed by that key for anything else is refused. A computer that answers
+  with another certificate is not used and shows **Pair again**. A copied
+  token is useless without a network path to the computer, and a stolen
+  certificate without the token cannot connect.
+- **Requests from web pages are refused.** The peer server refuses any request
+  with an `Origin` header. Its only unauthenticated routes are the public
+  `hello` (device id, name, operating system, app version, certificate
+  fingerprint, and whether it takes a pairing) and the pairing steps.
+- **Either computer ends the access at once.** **Remove** deletes the record
+  and the token: the other computer's sessions close, its token stops working,
+  and it is asked, over the pinned connection with its token, to forget this
+  computer too. **Disconnect** closes its sessions and leaves the pairing; the
+  other computer does not reconnect on its own. While a computer is connected,
+  this one does not go to sleep on its own.
+- **Limitations.** Anyone who reaches the port sees the public `hello` and can
+  make this computer show a pairing dialog, within the limits above; nothing
+  pairs unless the owner types the code. The connection does not hide which
+  computers talk to each other, or when, from the network.
+
 ## MCP, skills, and memory
 
 A stdio MCP server is an executable chosen by the user. A remote MCP server is a

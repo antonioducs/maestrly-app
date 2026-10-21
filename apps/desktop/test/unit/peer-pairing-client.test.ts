@@ -40,6 +40,7 @@ beforeEach(async () => {
           port: grant.port ?? 7690,
           addresses: [remote, ...grant.addresses],
           issuedToken: issuedByA,
+          hosting: true,
           now: Date.now(),
         }),
         grant.token

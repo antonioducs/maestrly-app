@@ -388,6 +388,25 @@ profile. Neither touches the files under the server's **Workspaces** folder.
 Both remove the environment's Docker network, which holds no data. Back up that
 folder and the environment's home volume to keep both.
 
+## Connected computers
+
+The profile's identity among the owner's [connected computers](connect-computers.md) is `peer.identity` in
+`app_settings`: its random device id, its name, and its self-signed certificate. Its private key is
+`peer.identity.key`, encrypted with the OS keyring through Electron `safeStorage`. Without secure storage, the profile
+has no identity: it cannot share itself or pair. When the keyring loses the key, the profile gets a new identity the
+next time it needs one, and every computer must pair with it again.
+
+`peer.records` lists the paired computers: device id, name, operating system, certificate and its fingerprint, the
+addresses and port it was last reached at, color, when it was paired and last seen, whether it shares itself, and the
+SHA-256 hash of the token this computer issued it. The token this computer uses to reach each one is
+`peer.token.<deviceId>`, encrypted through the keyring. `peer.hosting` records whether **Let my other computers use
+this computer** is on. **Remove** deletes a computer's record and token.
+
+While another computer uploads a file to this one, the partial file is a hidden `.maestrly-upload-<id>.part` next to
+the destination, and its record is under `host-file-uploads/` in this computer's profile; an upload untouched for 7
+days is removed with its partial file. Folders it downloads are packed under `host-file-archives/` first; an hourly
+sweep removes what an interrupted packing left there.
+
 ## Drawer browser history
 
 The drawer browser keeps one history for all conversations, like its shared

@@ -244,6 +244,7 @@ describe("a paired computer's files", () => {
         port: 7690,
         addresses: [],
         issuedToken: token,
+        hosting: true,
         now: Date.now(),
       }),
       issueToken()
