@@ -6,6 +6,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AccessibilityInfo, Pressable, type TextInputInstance, View } from 'react-native'
 import { useChats, useChatsController } from '../../chats/react'
+import { botChatState } from '../../chats/selectors'
 import { allConversations, type ChatsState } from '../../chats/state'
 import type { PlanDecisionArgs } from '../../chats/plan-review'
 import { editableItemId } from '../../fleet/transcript-search'
@@ -19,6 +20,7 @@ import { ConversationList, type ExtraRow } from '../conversation/ConversationLis
 import { ConversationContext, type ConversationContextValue } from '../conversation/CueCard'
 import { Icon } from '../icons'
 import { AppText } from '../primitives/Text'
+import { BotHeldNotice, BotSharedStrip } from './BotChatControls'
 import { ChatHostBanner } from './ChatHostBanner'
 import { ChatSetupPill } from './ChatSetupPill'
 import { PlanCard } from './PlanCard'
@@ -90,9 +92,15 @@ export function ChatConversation({ conversationId }: { conversationId: string })
   }, [chats, conversationId])
 
   const items = view?.items ?? []
-  // As on a computer: the person's last message, while no turn runs and nothing waits to be sent.
-  const editableId = !busy && outbox.length === 0 ? editableItemId(items, 'chat') : null
+  const botState = botChatState(conversation)
+  const held = botState === 'held'
+  // As on a computer: the person's last message, while no turn runs, nothing waits to be sent, and the chat is theirs.
+  const editableId = !busy && outbox.length === 0 && !held ? editableItemId(items, 'chat') : null
   const [editing, setEditing] = useState<{ itemId: string; text: string } | null>(null)
+  // A chat its bot takes back closes an edit in progress.
+  useEffect(() => {
+    if (held) setEditing(null)
+  }, [held])
   const startEdit = useCallback((itemId: string, text: string) => setEditing({ itemId, text }), [])
   const edit = useMemo(
     () => (editableId ? { itemId: editableId, start: startEdit } : undefined),
@@ -238,44 +246,53 @@ export function ChatConversation({ conversationId }: { conversationId: string })
           }
         />
       </View>
-      <ComposerShell
-        key={conversationId}
-        draftKey={`${active?.id ?? ''}:chat:${conversationId}`}
-        placeholder={
-          conversation?.workspaceName
-            ? t('composer.placeholder', { name: conversation.workspaceName })
-            : t('chat.composer.ask')
-        }
-        filesEnabled
-        setup={<ChatSetupPill conversationId={conversationId} />}
-        stopLabel={runtime?.streaming ? t('chat.composer.stop') : null}
-        onStop={() => chats.stopTurn(conversationId)}
-        onSend={async (text, files) => {
-          await chats.send(conversationId, text, files)
-          AccessibilityInfo.announceForAccessibility(online ? t('announce.sent') : t('announce.queuedOffline'))
-        }}
-        inputRef={input}
-        editing={editing}
-        onCancelEdit={() => setEditing(null)}
-        onEdit={async (text) => {
-          if (!editing) return
-          try {
-            await chats.edit(conversationId, editing.itemId, text)
-          } catch (cause) {
-            const code = cause instanceof MobileBridgeError ? cause.code : null
-            throw new Error(
-              code === 'unknown-channel'
-                ? t('edit.error.outdated')
-                : code === 'busy'
-                  ? t('edit.error.busy')
-                  : code === 'not-editable'
-                    ? t('edit.error.notLast')
-                    : t('edit.error.failed')
-            )
+      {held && conversation?.bot ? (
+        <BotHeldNotice conversationId={conversationId} bot={conversation.bot} online={online} />
+      ) : (
+        <ComposerShell
+          key={conversationId}
+          draftKey={`${active?.id ?? ''}:chat:${conversationId}`}
+          placeholder={
+            conversation?.workspaceName
+              ? t('composer.placeholder', { name: conversation.workspaceName })
+              : t('chat.composer.ask')
           }
-          setEditing(null)
-        }}
-      />
+          filesEnabled
+          setup={<ChatSetupPill conversationId={conversationId} />}
+          above={
+            botState === 'shared' && conversation?.bot ? (
+              <BotSharedStrip conversationId={conversationId} bot={conversation.bot} online={online} />
+            ) : undefined
+          }
+          stopLabel={runtime?.streaming ? t('chat.composer.stop') : null}
+          onStop={() => chats.stopTurn(conversationId)}
+          onSend={async (text, files) => {
+            await chats.send(conversationId, text, files)
+            AccessibilityInfo.announceForAccessibility(online ? t('announce.sent') : t('announce.queuedOffline'))
+          }}
+          inputRef={input}
+          editing={editing}
+          onCancelEdit={() => setEditing(null)}
+          onEdit={async (text) => {
+            if (!editing) return
+            try {
+              await chats.edit(conversationId, editing.itemId, text)
+            } catch (cause) {
+              const code = cause instanceof MobileBridgeError ? cause.code : null
+              throw new Error(
+                code === 'unknown-channel'
+                  ? t('edit.error.outdated')
+                  : code === 'busy'
+                    ? t('edit.error.busy')
+                    : code === 'not-editable'
+                      ? t('edit.error.notLast')
+                      : t('edit.error.failed')
+              )
+            }
+            setEditing(null)
+          }}
+        />
+      )}
       {plan && planOpen ? (
         <PlanSheet
           key={`plan:${plan.version}`}

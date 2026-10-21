@@ -2,7 +2,7 @@ import type { FleetBot, MobileConversation, MobileRuntime } from '@maestrly/bot-
 import { router } from 'expo-router'
 import type { ReactNode } from 'react'
 import { Pressable, View } from 'react-native'
-import { chatStatusLine } from '../../chats/selectors'
+import { botChatLabel, chatStatusLine } from '../../chats/selectors'
 import { botStatusLine, statusLineText, type StatusLine } from '../../fleet/selectors'
 import { useI18n } from '../../i18n'
 import { useTheme } from '../../theme/ThemeProvider'
@@ -87,14 +87,17 @@ export function ChatTitle({
   runtime: MobileRuntime | null
   serverName: string
 }) {
+  const { palette } = useTheme()
   const text = useI18n()
   const line = chatStatusLine(chat, runtime, serverName, text)
+  const bot = botChatLabel(chat, text.t)
   return (
     <TitleButton
-      label={text.t('chat.details', { name: chat.name, status: line.text })}
+      label={[text.t('chat.details', { name: chat.name, status: line.text }), bot].filter(Boolean).join(', ')}
       onPress={() => router.push(`/chat-setup/${chat.id}`)}
       name={chat.name}
       line={line}
+      lead={chat.bot ? <Icon name="bot" size={18} color={palette.muted} /> : undefined}
     />
   )
 }

@@ -10,7 +10,7 @@ import { router, useLocalSearchParams } from 'expo-router'
 import { useCallback, useEffect, useState } from 'react'
 import { AccessibilityInfo, ActivityIndicator, Switch, TextInput, View } from 'react-native'
 import { useChats, useChatsController } from '../../chats/react'
-import { chatEffortChoices, optionFor, parseTokenCount } from '../../chats/selectors'
+import { botChatLabel, chatEffortChoices, optionFor, parseTokenCount } from '../../chats/selectors'
 import { allConversations, type ChatsState } from '../../chats/state'
 import { effortLabel, formatTokens } from '../../fleet/format'
 import { useI18n } from '../../i18n'
@@ -93,6 +93,19 @@ function Setup({ chat, setup, initialPage }: { chat: MobileConversation; setup: 
   const maestro = setup.experience === 'maestro'
   const busy = saving !== null || !online
   const working = !!runtime?.streaming
+  const bot = chat.bot ?? null
+
+  async function setBotManagement(management: 'active' | 'paused') {
+    setSaving('bot')
+    setError(null)
+    try {
+      await chats.setBotManagement(chat.id, management)
+    } catch (cause) {
+      setError(shownError(cause, t('chat.bot.failed')))
+    } finally {
+      setSaving(null)
+    }
+  }
 
   useEffect(() => {
     void chats.loadModels().catch(() => {})
@@ -412,6 +425,30 @@ function Setup({ chat, setup, initialPage }: { chat: MobileConversation; setup: 
         {working ? t('chat.setup.noteWorking') : t('chat.setup.note')}
       </AppText>
       {errorLine}
+      {bot ? (
+        <Group
+          label={t('chat.bot.group')}
+          foot={
+            bot.state === 'active'
+              ? t('chat.bot.pauseFoot', { name: bot.name })
+              : bot.state === 'paused'
+                ? t('chat.bot.resumeFoot', { name: bot.name })
+                : undefined
+          }
+        >
+          <Cell icon="bot" label={botChatLabel(chat, t) ?? bot.name} />
+          {bot.state === 'revoked' ? null : (
+            <Cell
+              icon={bot.state === 'active' ? 'pause' : 'play'}
+              label={t(bot.state === 'active' ? 'chat.bot.pause' : 'chat.bot.resume')}
+              tone="brass"
+              disabled={busy}
+              trailing={saving === 'bot' ? <ActivityIndicator size="small" color={palette.muted} /> : null}
+              onPress={() => void setBotManagement(bot.state === 'active' ? 'paused' : 'active')}
+            />
+          )}
+        </Group>
+      ) : null}
       <Group label={t('setup.model')}>
         <Cell
           icon="sparkles"

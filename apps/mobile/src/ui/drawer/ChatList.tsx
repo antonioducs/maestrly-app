@@ -1,7 +1,7 @@
 import type { MobileConversation } from '@maestrly/bot-fleet-protocol'
 import { memo } from 'react'
 import { ActivityIndicator, Pressable, View } from 'react-native'
-import { groupByDay, isWaitingChat } from '../../chats/selectors'
+import { botChatLabel, groupByDay, isWaitingChat } from '../../chats/selectors'
 import { useI18n } from '../../i18n'
 import { useTheme } from '../../theme/ThemeProvider'
 import { Icon } from '../icons'
@@ -20,11 +20,12 @@ export const ChatRow = memo(function ChatRow({
   const { palette } = useTheme()
   const { t } = useI18n()
   const waiting = isWaitingChat(chat)
+  const bot = botChatLabel(chat, t)
   const state = chat.status === 'working' ? t('drawer.working') : waiting ? t('cue.eyebrow') : null
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={state ? `${chat.name}, ${state}` : chat.name}
+      accessibilityLabel={[chat.name, bot, state].filter(Boolean).join(', ')}
       aria-selected={current}
       onPress={onPress}
       style={({ pressed }) => ({
@@ -38,6 +39,7 @@ export const ChatRow = memo(function ChatRow({
         backgroundColor: current || pressed ? palette.surface : 'transparent',
       })}
     >
+      {chat.bot ? <Icon name="bot" size={15} color={palette.muted} /> : null}
       {chat.experience === 'maestro' ? <Icon name="sparkles" size={15} color={palette.muted} /> : null}
       <AppText numberOfLines={1} style={{ flex: 1, minWidth: 0, fontSize: 15.5 }}>
         {chat.name}
