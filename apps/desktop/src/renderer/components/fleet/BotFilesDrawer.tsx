@@ -114,21 +114,13 @@ export function BotFilesDrawer({
     })
   }, [allFiles])
 
-  const inScope = useMemo(
-    () => scopedFiles(allFiles, effectiveConversation),
-    [allFiles, effectiveConversation]
-  )
+  const inScope = useMemo(() => scopedFiles(allFiles, effectiveConversation), [allFiles, effectiveConversation])
   const others = useMemo(
     () => (conversation ? allFiles.filter((file) => !sharedIn(file, conversation)) : []),
     [allFiles, conversation]
   )
   const shown = useMemo(
-    () =>
-      visibleFiles(
-        allFiles,
-        { conversation: effectiveConversation, query, kind, sort },
-        locale
-      ),
+    () => visibleFiles(allFiles, { conversation: effectiveConversation, query, kind, sort }, locale),
     [allFiles, effectiveConversation, kind, locale, query, sort]
   )
   const visibleIdSet = useMemo(() => new Set(shown.map((f) => f.id)), [shown])
@@ -136,10 +128,7 @@ export function BotFilesDrawer({
   const pageItems = useMemo(() => pageOf(shown, currentPage), [currentPage, shown])
   const totalPages = pageCount(shown.length)
   const pageAllSelected = pageItems.length > 0 && pageItems.every((f) => selected.has(f.id))
-  const selectedFiles = useMemo(
-    () => allFiles.filter((f) => selected.has(f.id)),
-    [allFiles, selected]
-  )
+  const selectedFiles = useMemo(() => allFiles.filter((f) => selected.has(f.id)), [allFiles, selected])
   const deletingFiles = useMemo(
     () => (deletingIds ? allFiles.filter((f) => deletingIds.includes(f.id)) : []),
     [allFiles, deletingIds]
@@ -216,13 +205,7 @@ export function BotFilesDrawer({
 
   return (
     <>
-      {overlay && (
-        <div
-          aria-hidden="true"
-          onClick={onClose}
-          className="fixed inset-0 z-20 bg-black/40"
-        />
-      )}
+      {overlay && <div aria-hidden="true" onClick={onClose} className="fixed inset-0 z-20 bg-black/40" />}
       <aside
         id={BOT_FILES_DRAWER_ID}
         aria-label={t('files.drawer.title')}
@@ -353,9 +336,7 @@ export function BotFilesDrawer({
                       )}
                     >
                       <span>{t('files.drawer.scope.bot')}</span>
-                      <span className="tabular-nums text-[11px] text-muted-foreground">
-                        {allFiles.length}
-                      </span>
+                      <span className="tabular-nums text-[11px] text-muted-foreground">{allFiles.length}</span>
                     </button>
                   </div>
                 )}
@@ -536,9 +517,7 @@ export function BotFilesDrawer({
             <div className="shrink-0 border-t border-border">
               {selectedFiles.length > 0 && (
                 <div className="flex items-center gap-2 border-b border-border bg-white/[0.03] px-3.5 py-2 text-xs">
-                  <span className="font-medium">
-                    {t('files.drawer.selected', { count: selectedFiles.length })}
-                  </span>
+                  <span className="font-medium">{t('files.drawer.selected', { count: selectedFiles.length })}</span>
                   <span className="tabular-nums text-muted-foreground">
                     {fileSizeLabel(
                       selectedFiles.reduce((sum, f) => sum + f.byteSize, 0),

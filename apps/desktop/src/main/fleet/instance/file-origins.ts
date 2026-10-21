@@ -11,8 +11,8 @@ export function findFileOrigins(
   conversations: ReadonlyArray<{ conversationId: string; origin: FleetFileOrigin }>
 ): Map<string, { origin: FleetFileOrigin; sharedAt: string }> {
   const found = new Map<string, { origin: FleetFileOrigin; sharedAt: string }>()
+  // Never matches: it only visits, newest first, every message that mentions the tool.
   for (const { conversationId, origin } of conversations)
-    // Never matches: it only visits, newest first, every message that mentions the tool.
     findLatestChatMessage(
       conversationId,
       (message) => {

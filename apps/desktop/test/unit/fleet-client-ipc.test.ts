@@ -589,9 +589,7 @@ describe('fleet IPC validation', () => {
     })
 
     mocks.hasFeature.mockReturnValue(false)
-    await expect(reads.get('fleet:listBotFiles')!({}, SERVER, 'bot')).rejects.toThrow(
-      'FLEET_FILES_MANAGE_UNSUPPORTED'
-    )
+    await expect(reads.get('fleet:listBotFiles')!({}, SERVER, 'bot')).rejects.toThrow('FLEET_FILES_MANAGE_UNSUPPORTED')
     await expect(mutations.get('fleet:deleteBotFiles')!({}, SERVER, 'bot', ['f-1'])).rejects.toThrow(
       'FLEET_FILES_MANAGE_UNSUPPORTED'
     )
@@ -606,9 +604,7 @@ describe('fleet IPC validation', () => {
     mocks.call.mockImplementation(async (route?: string) =>
       route === 'botGet' ? { capabilities: ['files'] } : { ok: true }
     )
-    await expect(reads.get('fleet:listBotFiles')!({}, SERVER, 'bot')).rejects.toThrow(
-      'FLEET_FILES_MANAGE_UNSUPPORTED'
-    )
+    await expect(reads.get('fleet:listBotFiles')!({}, SERVER, 'bot')).rejects.toThrow('FLEET_FILES_MANAGE_UNSUPPORTED')
     await expect(mutations.get('fleet:deleteBotFiles')!({}, SERVER, 'bot', ['f-1'])).rejects.toThrow(
       'FLEET_FILES_MANAGE_UNSUPPORTED'
     )

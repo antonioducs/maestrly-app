@@ -357,8 +357,7 @@ export class FleetFileStore {
     const { name, origin = { kind: 'primary' } } = options
     return this.serialize(async () => {
       if (!this.loaded) throw new Error('File store has not loaded.')
-      if (this.refs.size >= FLEET_FILE_LIMITS.publishedCountMax)
-        throw new FleetFileQuotaError('count', 0, this.usage())
+      if (this.refs.size >= FLEET_FILE_LIMITS.publishedCountMax) throw new FleetFileQuotaError('count', 0, this.usage())
       const input = await openScopedFile(path.resolve(source.root), path.resolve(source.target))
       const id = `f-${randomUUID()}`
       const target = path.join(this.root, id)
@@ -366,8 +365,7 @@ export class FleetFileStore {
       try {
         const before = await input.stat()
         const usage = this.usage()
-        if (before.size > FLEET_FILE_LIMITS.downloadMaxBytes)
-          throw new FleetFileQuotaError('size', before.size, usage)
+        if (before.size > FLEET_FILE_LIMITS.downloadMaxBytes) throw new FleetFileQuotaError('size', before.size, usage)
         const free = usage.quotaBytes - usage.usedBytes
         if (before.size > free) throw new FleetFileQuotaError('space', before.size, usage)
         const limit = Math.min(FLEET_FILE_LIMITS.downloadMaxBytes, free)

@@ -45,7 +45,9 @@ export function registerBotFileTools(ctx: McpToolContext): void {
         return ok(JSON.stringify({ file: await bot.publishFile(relativePath, name, ctx.convId) }))
       } catch (error) {
         if (error instanceof FleetFileQuotaError) return err(quotaMessage(error))
-        return err('Could not share the file. Check that it is a regular file inside this conversation files directory.')
+        return err(
+          'Could not share the file. Check that it is a regular file inside this conversation files directory.'
+        )
       }
     }
   )

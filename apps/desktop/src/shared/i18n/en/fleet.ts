@@ -111,7 +111,8 @@ export default {
         title_one: 'Delete {{name}}?',
         title_other: 'Delete {{count}} files?',
         message_one: 'Frees {{size}} of {{bot}}’s space. Its card in the conversation will show that it was deleted.',
-        message_other: 'Frees {{size}} of {{bot}}’s space. Their cards in the conversations will show that they were deleted.',
+        message_other:
+          'Frees {{size}} of {{bot}}’s space. Their cards in the conversations will show that they were deleted.',
         notDownloadedThis: 'You have not downloaded this file. A deleted file cannot be recovered.',
         notDownloaded_one: '{{count}} of them you have not downloaded. Deleted files cannot be recovered.',
         notDownloaded_other: '{{count}} of them you have not downloaded. Deleted files cannot be recovered.',

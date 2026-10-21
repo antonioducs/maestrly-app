@@ -75,21 +75,14 @@ export interface FilesFilter {
   sort: FileSort
 }
 
-export function scopedFiles(
-  files: FleetPublishedFile[],
-  conversation: FilesConversation | null
-): FleetPublishedFile[] {
+export function scopedFiles(files: FleetPublishedFile[], conversation: FilesConversation | null): FleetPublishedFile[] {
   return conversation ? files.filter((file) => sharedIn(file, conversation)) : files
 }
 
 const originTitle = (file: FleetPublishedFile) =>
   file.origin.kind === 'routine' || file.origin.kind === 'thread' ? file.origin.title : ''
 
-export function visibleFiles(
-  files: FleetPublishedFile[],
-  filter: FilesFilter,
-  locale = 'en'
-): FleetPublishedFile[] {
+export function visibleFiles(files: FleetPublishedFile[], filter: FilesFilter, locale = 'en'): FleetPublishedFile[] {
   const query = filter.query.trim().toLocaleLowerCase(locale)
   const time = (file: FleetPublishedFile) => Date.parse(file.sharedAt)
   const compare: Record<FileSort, (a: FleetPublishedFile, b: FleetPublishedFile) => number> = {
@@ -140,17 +133,12 @@ export function usageSegments(
       percent: quotaBytes > 0 ? (file.byteSize / quotaBytes) * 100 : 0,
       byteSize: file.byteSize,
     }))
-    .sort(
-      (a, b) =>
-        FLEET_FILE_KINDS.indexOf(a.kind) - FLEET_FILE_KINDS.indexOf(b.kind) || b.byteSize - a.byteSize
-    )
+    .sort((a, b) => FLEET_FILE_KINDS.indexOf(a.kind) - FLEET_FILE_KINDS.indexOf(b.kind) || b.byteSize - a.byteSize)
 }
 
 export function sharedAtLabel(iso: string, now: number, locale: string, t: Translate): string {
   const at = new Date(iso)
-  const days = Math.round(
-    (new Date(now).setHours(0, 0, 0, 0) - new Date(iso).setHours(0, 0, 0, 0)) / 86_400_000
-  )
+  const days = Math.round((new Date(now).setHours(0, 0, 0, 0) - new Date(iso).setHours(0, 0, 0, 0)) / 86_400_000)
   const time = new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(at)
   if (days <= 0) return t('files.drawer.today', { time })
   if (days === 1) return t('files.drawer.yesterday', { time })

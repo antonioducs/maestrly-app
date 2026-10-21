@@ -1,5 +1,15 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { ArrowRightLeft, FolderOpen, History, Loader2, MessageSquare, Monitor, Pause, Play, Settings } from 'lucide-react'
+import {
+  ArrowRightLeft,
+  FolderOpen,
+  History,
+  Loader2,
+  MessageSquare,
+  Monitor,
+  Pause,
+  Play,
+  Settings,
+} from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { FleetBot, FleetEnvironment, FleetFilesUsage } from '@maestrly/bot-fleet-protocol'
 import { Button } from '@/components/ui/button'
@@ -357,10 +367,7 @@ function BotFilesButton({
         <span className="inline-flex items-center gap-1 tabular-nums text-[11px]">
           <span aria-hidden="true" className="h-1 w-6 overflow-hidden rounded-full bg-white/[0.12]">
             <i
-              className={cn(
-                'block h-full rounded-full',
-                level === 'full' ? 'bg-red-400' : 'bg-amber-400'
-              )}
+              className={cn('block h-full rounded-full', level === 'full' ? 'bg-red-400' : 'bg-amber-400')}
               style={{ width: `${Math.max(8, Math.round(meter.ratio * 100))}%` }}
             />
           </span>
@@ -370,4 +377,3 @@ function BotFilesButton({
     </Button>
   )
 }
-

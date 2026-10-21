@@ -15,13 +15,7 @@ import {
 } from 'lucide-react'
 import type { FleetFileOrigin, FleetPublishedFile } from '@maestrly/bot-fleet-protocol'
 import { downloadStatusLabel, fileSizeLabel } from '@/lib/fleet/downloads'
-import {
-  fleetFileKind,
-  sharedAtLabel,
-  sharedIn,
-  type FilesConversation,
-  type FleetFileKind,
-} from '@/lib/fleet/files'
+import { fleetFileKind, sharedAtLabel, sharedIn, type FilesConversation, type FleetFileKind } from '@/lib/fleet/files'
 import { cn } from '@/lib/utils'
 import { useFleetFileTransfer } from './BotTranscriptFiles'
 
@@ -84,9 +78,7 @@ export function BotFileRow({
   const inCurrentConversation = conversation ? sharedIn(file, conversation) : false
   const canRevealInCurrent = inCurrentConversation || (!conversation && file.origin.kind === 'primary')
   const canOpenSideLane =
-    !inCurrentConversation &&
-    !file.originGone &&
-    (file.origin.kind === 'routine' || file.origin.kind === 'thread')
+    !inCurrentConversation && !file.originGone && (file.origin.kind === 'routine' || file.origin.kind === 'thread')
   const canRevealPrimary = !inCurrentConversation && file.origin.kind === 'primary'
 
   const originText =
@@ -152,9 +144,7 @@ export function BotFileRow({
                 <span aria-hidden="true">·</span>
                 <span className="inline-flex min-w-0 items-center gap-1 truncate">
                   {file.origin.kind === 'routine' && <Repeat aria-hidden="true" className="size-3 shrink-0" />}
-                  {file.origin.kind === 'thread' && (
-                    <ArrowRightLeft aria-hidden="true" className="size-3 shrink-0" />
-                  )}
+                  {file.origin.kind === 'thread' && <ArrowRightLeft aria-hidden="true" className="size-3 shrink-0" />}
                   <span className="truncate">{originText}</span>
                 </span>
               </>
@@ -210,20 +200,14 @@ export function BotFileRow({
           <button
             type="button"
             onClick={() =>
-              file.origin.kind === 'routine' || file.origin.kind === 'thread'
-                ? onOpenLane(file.origin)
-                : undefined
+              file.origin.kind === 'routine' || file.origin.kind === 'thread' ? onOpenLane(file.origin) : undefined
             }
             aria-label={t(
-              file.origin.kind === 'routine'
-                ? 'files.drawer.action.openRun'
-                : 'files.drawer.action.openThread',
+              file.origin.kind === 'routine' ? 'files.drawer.action.openRun' : 'files.drawer.action.openThread',
               { name: file.name }
             )}
             title={t(
-              file.origin.kind === 'routine'
-                ? 'files.drawer.action.openRun'
-                : 'files.drawer.action.openThread',
+              file.origin.kind === 'routine' ? 'files.drawer.action.openRun' : 'files.drawer.action.openThread',
               { name: file.name }
             )}
             className="rounded-md p-1.5 text-muted-foreground hover:bg-white/[0.06] hover:text-foreground"

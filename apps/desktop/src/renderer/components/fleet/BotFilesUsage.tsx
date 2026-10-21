@@ -54,10 +54,7 @@ export function BotFilesUsageCard({
   const countLevel = filesCountLevel(usage)
   const level = filesLevel(usage)
   const segments = usageSegments(files, usage.quotaBytes)
-  const selectedBytes = files.reduce(
-    (sum, file) => (selectedIds.has(file.id) ? sum + file.byteSize : sum),
-    0
-  )
+  const selectedBytes = files.reduce((sum, file) => (selectedIds.has(file.id) ? sum + file.byteSize : sum), 0)
   const usedLabel = fileSizeLabel(usage.usedBytes, locale)
   const quotaLabel = fileSizeLabel(usage.quotaBytes, locale)
   const freeLabel = fileSizeLabel(Math.max(0, usage.quotaBytes - usage.usedBytes), locale)
@@ -153,11 +150,7 @@ export function BotFilesUsageCard({
             ) : spaceLevel === 'full' ? (
               <>
                 <span>{t('files.drawer.alert.spaceFull', { name: bot.name })} </span>
-                <button
-                  type="button"
-                  onClick={() => onApplySort('size')}
-                  className="underline hover:text-foreground"
-                >
+                <button type="button" onClick={() => onApplySort('size')} className="underline hover:text-foreground">
                   {t('files.drawer.alert.largest')}
                 </button>
               </>
@@ -184,11 +177,7 @@ export function BotFilesUsageCard({
                     percent: Math.floor((usage.usedBytes / usage.quotaBytes) * 100),
                   })}{' '}
                 </span>
-                <button
-                  type="button"
-                  onClick={() => onApplySort('size')}
-                  className="underline hover:text-foreground"
-                >
+                <button type="button" onClick={() => onApplySort('size')} className="underline hover:text-foreground">
                   {t('files.drawer.alert.largest')}
                 </button>
               </>
@@ -230,10 +219,7 @@ export function BotFilesLimitsPanel({
   }
 
   return (
-    <div
-      id={`bot-files-limits-${bot.id}`}
-      className="border-b border-border bg-white/[0.02] px-3.5 py-3 text-xs"
-    >
+    <div id={`bot-files-limits-${bot.id}`} className="border-b border-border bg-white/[0.02] px-3.5 py-3 text-xs">
       <div className="flex items-center justify-between gap-2">
         <span className="font-medium text-foreground">{t('files.drawer.limits.quota')}</span>
         <div
@@ -269,9 +255,7 @@ export function BotFilesLimitsPanel({
                 }
                 className={cn(
                   'rounded-md px-2 py-1 text-[11.5px] tabular-nums transition-colors disabled:cursor-not-allowed disabled:opacity-40',
-                  checked
-                    ? 'bg-white/[0.1] font-medium text-foreground'
-                    : 'text-muted-foreground hover:text-foreground'
+                  checked ? 'bg-white/[0.1] font-medium text-foreground' : 'text-muted-foreground hover:text-foreground'
                 )}
               >
                 {gb} GB
@@ -304,9 +288,7 @@ export function BotFilesLimitsPanel({
           }
           className={cn(
             'relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors disabled:opacity-50',
-            usage.deleteWithConversations
-              ? 'border-primary/40 bg-primary/80'
-              : 'border-border-strong bg-white/[0.08]'
+            usage.deleteWithConversations ? 'border-primary/40 bg-primary/80' : 'border-border-strong bg-white/[0.08]'
           )}
         >
           <span

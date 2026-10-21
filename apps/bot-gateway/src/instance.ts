@@ -717,15 +717,18 @@ export class InstanceClient {
   }
   /** What the bot shared, with its space (`files-manage`). */
   async filesList() {
-    if (!this.scope?.environments) throw new GatewayError('PROTOCOL_INCOMPATIBLE', 'Update this bot to manage its files')
+    if (!this.scope?.environments)
+      throw new GatewayError('PROTOCOL_INCOMPATIBLE', 'Update this bot to manage its files')
     return this.call('botFilesList', { botId: this.scope.botId })
   }
   async filesDelete(body: FleetFilesDeleteRequest) {
-    if (!this.scope?.environments) throw new GatewayError('PROTOCOL_INCOMPATIBLE', 'Update this bot to manage its files')
+    if (!this.scope?.environments)
+      throw new GatewayError('PROTOCOL_INCOMPATIBLE', 'Update this bot to manage its files')
     return this.call('botFilesDelete', { botId: this.scope.botId }, undefined, body, 60000)
   }
   async fileSettings(body: FleetFileSettings) {
-    if (!this.scope?.environments) throw new GatewayError('PROTOCOL_INCOMPATIBLE', 'Update this bot to manage its files')
+    if (!this.scope?.environments)
+      throw new GatewayError('PROTOCOL_INCOMPATIBLE', 'Update this bot to manage its files')
     return this.call('botFileSettings', { botId: this.scope.botId }, undefined, body)
   }
   async fileMeta(fileId: string, signal?: AbortSignal): Promise<FleetFileRef> {

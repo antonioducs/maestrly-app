@@ -165,4 +165,3 @@ describe('managed bot files', () => {
     })
   })
 })
-

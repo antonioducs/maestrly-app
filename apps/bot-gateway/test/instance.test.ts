@@ -223,7 +223,9 @@ describe('private file transport', () => {
     expect(await client.filesDelete({ ids: ['f-1'] })).toEqual(deleted)
     expect(JSON.parse(deleteBody)).toEqual({ ids: ['f-1'] })
     expect(await client.fileSettings({ quotaGb: 2, deleteWithConversations: true })).toEqual(usage)
-    await expect(new InstanceClient('environment', 'control', origin).forBot('bot', false).filesList()).rejects.toMatchObject({
+    await expect(
+      new InstanceClient('environment', 'control', origin).forBot('bot', false).filesList()
+    ).rejects.toMatchObject({
       code: 'PROTOCOL_INCOMPATIBLE',
     })
   })

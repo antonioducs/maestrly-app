@@ -28,7 +28,8 @@ export default {
     notSent: 'Não enviado',
     removed: 'Excluído do servidor de bots · {{size}}',
     full: {
-      space: 'O espaço de arquivos do {{name}} está cheio: sobram {{free}}, então ele não consegue te entregar nada maior que isso.',
+      space:
+        'O espaço de arquivos do {{name}} está cheio: sobram {{free}}, então ele não consegue te entregar nada maior que isso.',
       count: 'O espaço de arquivos do {{name}} está cheio: ele já guarda {{max}} arquivos.',
       action: 'Liberar espaço',
     },
@@ -112,7 +113,8 @@ export default {
         title_one: 'Excluir {{name}}?',
         title_other: 'Excluir {{count}} arquivos?',
         message_one: 'Libera {{size}} do espaço do {{bot}}. Na conversa, o card dele passa a mostrar que foi excluído.',
-        message_other: 'Libera {{size}} do espaço do {{bot}}. Nas conversas, os cards deles passam a mostrar que foram excluídos.',
+        message_other:
+          'Libera {{size}} do espaço do {{bot}}. Nas conversas, os cards deles passam a mostrar que foram excluídos.',
         notDownloadedThis: 'Você ainda não baixou este arquivo. Depois de excluir, não dá para recuperar.',
         notDownloaded_one: '{{count}} deles você ainda não baixou. Depois de excluir, não dá para recuperar.',
         notDownloaded_other: '{{count}} deles você ainda não baixou. Depois de excluir, não dá para recuperar.',
@@ -130,7 +132,8 @@ export default {
         disk: 'O servidor de bots tem {{size}} livres.',
         tooSmall: 'Menor que o espaço que os arquivos ocupam',
         tooLarge: 'Maior que o espaço livre do servidor de bots',
-        cleanup: 'Excluir os arquivos de uma execução de rotina ou de uma conversa com outro bot quando ela for apagada',
+        cleanup:
+          'Excluir os arquivos de uma execução de rotina ou de uma conversa com outro bot quando ela for apagada',
         failed: 'Não deu para salvar: {{message}}',
       },
     },

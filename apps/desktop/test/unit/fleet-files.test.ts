@@ -1,4 +1,16 @@
-import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, open, rename, realpath, utimes, lstat } from 'node:fs/promises'
+import {
+  mkdtemp,
+  mkdir,
+  writeFile,
+  readFile,
+  rm,
+  symlink,
+  open,
+  rename,
+  realpath,
+  utimes,
+  lstat,
+} from 'node:fs/promises'
 import os from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
@@ -239,10 +251,7 @@ describe('private file snapshots', () => {
       mediaType: 'text/plain',
       byteSize: 1,
     }))
-    await writeFile(
-      path.join(folder, 'published/manifest.json'),
-      JSON.stringify({ version: 1, files: fullCount })
-    )
+    await writeFile(path.join(folder, 'published/manifest.json'), JSON.stringify({ version: 1, files: fullCount }))
     await store.load()
     await expect(store.publish(await source('extra.txt', 'x'))).rejects.toMatchObject({
       reason: 'count',
@@ -261,10 +270,7 @@ describe('private file snapshots', () => {
       mediaType: 'application/octet-stream',
       byteSize: quota1Gb - almostFull.reduce((sum, f) => sum + f.byteSize, 0) - 1,
     })
-    await writeFile(
-      path.join(folder, 'published/manifest.json'),
-      JSON.stringify({ version: 1, files: almostFull })
-    )
+    await writeFile(path.join(folder, 'published/manifest.json'), JSON.stringify({ version: 1, files: almostFull }))
     await store.load()
     const twoBytes = await source('two.bin', 'ab')
     await expect(store.publish(twoBytes)).rejects.toMatchObject({
@@ -329,9 +335,7 @@ describe('private file snapshots', () => {
     await writeFile(path.join(folder, 'published/manifest.json'), JSON.stringify({ version: 1, files: [a, b] }))
     await store.load()
     expect(store.needsOrigins).toBe(true)
-    await store.assignOrigins(
-      new Map([[a.id, { origin: { kind: 'primary' }, sharedAt: '2026-10-01T00:00:00.000Z' }]])
-    )
+    await store.assignOrigins(new Map([[a.id, { origin: { kind: 'primary' }, sharedAt: '2026-10-01T00:00:00.000Z' }]]))
     expect(store.needsOrigins).toBe(false)
     expect(store.list().find((f) => f.id === a.id)).toMatchObject({
       origin: { kind: 'primary' },

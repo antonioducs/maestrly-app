@@ -302,213 +302,217 @@ function BotViewContent({ bot, view, fleet, onView, onOpenBot, onDetachedChange,
                     : undefined
                 }
                 panes={
-                runsSupported || threadsSupported
-                  ? {
-                      pane: shownPane,
-                      runs: runsSupported,
-                      threads: threadsSupported,
-                      unseenRuns: unseen,
-                      unseenThreads: unseenThreadIds.size,
-                      onPane: (next) => {
-                        setPane(next)
-                        if (next === 'conversation' && view.tab === 'runs') onView(botView('conversation'))
-                      },
-                      onOpenRun: (id) => openRun(id),
-                      onOpenThread: (id) => openThread(id),
-                    }
-                  : undefined
-              }
-            />
-            <ChatWindowHost
-              target={{ kind: 'bot', serverId: fleet.serverId, id: bot.id }}
-              title={bot.name}
-              onDetachedChange={handleDetachedChange}
-              onReattach={() => go(botView('conversation'))}
-            >
-              {(inWindow) => (
-                <div ref={chatBodyRef} className="relative flex min-h-0 min-w-0 flex-1">
-                  {shownPane === 'threads' ? (
-                    <PeerThreadsView
-                      bot={bot}
-                      fleet={fleet}
-                      selectedThreadId={threadId}
-                      unseen={unseenThreadIds}
-                      onSelect={setThreadId}
-                      visible={inWindow || (active && layout.showChat)}
-                      onOpenBot={onOpenBot}
-                      onOpenScreen={showComputer}
-                      onOpenMain={() => setPane('conversation')}
-                    />
-                  ) : shownPane === 'runs' ? (
-                    <RoutineRunsView
-                      bot={bot}
-                      fleet={fleet}
-                      selectedRunId={runId}
-                      seen={seen}
-                      onSelect={setRunId}
-                      visible={inWindow || (active && layout.showChat)}
-                      onCite={(run) => {
-                        setCitation(run)
-                        setPane('conversation')
-                      }}
-                      onOpenBot={onOpenBot}
-                      onOpenScreen={showComputer}
-                    />
-                  ) : (
-                    <BotConversation
-                      bot={bot}
-                      fleet={fleet}
-                      runMarkers={markers}
-                      onOpenRun={runsSupported ? (id) => openRun(id) : undefined}
-                      onOpenThread={threadsSupported ? (id) => openThread(id) : undefined}
-                      citation={citation}
-                      onClearCitation={() => setCitation(null)}
-                      visible={inWindow || (active && layout.showChat)}
-                      onOpenFiles={
-                        botFiles.supported
-                          ? () => {
-                              setFilesOpen(true)
-                              setFilesRequest((prev) => ({ sort: 'size', nonce: (prev?.nonce ?? 0) + 1 }))
-                            }
-                          : undefined
+                  runsSupported || threadsSupported
+                    ? {
+                        pane: shownPane,
+                        runs: runsSupported,
+                        threads: threadsSupported,
+                        unseenRuns: unseen,
+                        unseenThreads: unseenThreadIds.size,
+                        onPane: (next) => {
+                          setPane(next)
+                          if (next === 'conversation' && view.tab === 'runs') onView(botView('conversation'))
+                        },
+                        onOpenRun: (id) => openRun(id),
+                        onOpenThread: (id) => openThread(id),
                       }
-                      revealFile={revealFile}
-                      onRevealed={handleRevealed}
-                      onOpenBot={(id) => {
-                        onOpenBot(id)
-                        if (detached) void window.api.chatWindowShowSource(`bot:${bot.id}`)
-                      }}
-                      onOpenScreen={showComputer}
-                      onOpenSettings={openSettings}
-                      onOpenEnvironmentScreen={environment ? () => openEnvironment('screen') : undefined}
-                      onOpenEnvironmentSettings={
-                        environmentSettings
-                          ? (target) => openEnvironment('settings', target === 'mcp' ? 'tools' : 'skills')
-                          : undefined
-                      }
-                      onGiveBack={() => {
-                        if (detached) void window.api.chatWindowShowSource(`bot:${bot.id}`)
-                        setGiveBackRequest((value) => value + 1)
-                      }}
-                    />
-                  )}
-                  {filesOpen && botFiles.supported && (
-                    <BotFilesDrawer
-                      bot={bot}
-                      files={botFiles}
-                      conversation={currentConversation}
-                      overlay={filesOverlay}
-                      request={filesRequest}
-                      onClose={() => setFilesOpen(false)}
-                      onReveal={(file) => {
-                        if (file.origin.kind === 'primary' && shownPane !== 'conversation') {
-                          setPane('conversation')
-                        }
-                        if (filesOverlay) setFilesOpen(false)
-                        setRevealFile((prev) => ({ id: file.id, nonce: (prev?.nonce ?? 0) + 1 }))
-                      }}
-                      onOpenLane={(origin) => {
-                        if (origin.kind === 'routine') openRun(origin.runId)
-                        else openThread(origin.threadId)
-                        if (filesOverlay) setFilesOpen(false)
-                      }}
-                      revealMissed={revealMissed}
-                    />
-                  )}
-                </div>
-              )}
-            </ChatWindowHost>
-          </>
-        }
-        computer={
-          layout.computerOpened ? (
-            <BotScreen
-              bot={bot}
-              fleet={fleet}
-              mode={botComputerMode(bot, environment)}
-              layoutMode={layout.mode}
-              narrow={layout.narrow}
-              activePane={activePane}
-              giveBackRequest={giveBackRequest}
-              streaming={active && layout.mode !== 'chat'}
-              // The panel covers the computer: it keeps streaming, but takes no input meanwhile.
-              visible={active && layout.showComputer && !settingsOpen}
-              onReveal={openComputer}
-              onShowPane={onShowPane}
-              onMaximize={layout.maximize}
-              onRestore={layout.restore}
-              onClose={hideComputer}
-              onOpenSettings={openSettings}
-              onOpenEnvironment={environment ? () => openEnvironment('overview') : undefined}
-              onOpenEnvironmentScreen={environment ? () => openEnvironment('screen') : undefined}
-            />
-          ) : null
-        }
-      />
-      {active && notices.length > 0 && (
-        <div
-          aria-live="polite"
-          className="pointer-events-none fixed right-4 top-[60px] z-40 flex w-[min(360px,calc(100vw-2rem))] flex-col gap-2"
-        >
-          {notices.map((run) => {
-            const failed = run.status === 'failed'
-            const title = runTitle(run, t('transcript.routine.label'))
-            return (
-              <div
-                key={run.id}
-                role="status"
-                className="pointer-events-auto flex gap-2.5 rounded-xl border border-border-strong bg-popover p-3 text-[13px] shadow-2xl"
+                    : undefined
+                }
+              />
+              <ChatWindowHost
+                target={{ kind: 'bot', serverId: fleet.serverId, id: bot.id }}
+                title={bot.name}
+                onDetachedChange={handleDetachedChange}
+                onReattach={() => go(botView('conversation'))}
               >
-                <span
-                  aria-hidden="true"
-                  className={`flex size-[26px] shrink-0 items-center justify-center rounded-lg ${failed ? 'bg-red-400/10 text-red-300' : 'bg-sky-400/10 text-sky-300'}`}
+                {(inWindow) => (
+                  <div ref={chatBodyRef} className="relative flex min-h-0 min-w-0 flex-1">
+                    {shownPane === 'threads' ? (
+                      <PeerThreadsView
+                        bot={bot}
+                        fleet={fleet}
+                        selectedThreadId={threadId}
+                        unseen={unseenThreadIds}
+                        onSelect={setThreadId}
+                        visible={inWindow || (active && layout.showChat)}
+                        onOpenBot={onOpenBot}
+                        onOpenScreen={showComputer}
+                        onOpenMain={() => setPane('conversation')}
+                      />
+                    ) : shownPane === 'runs' ? (
+                      <RoutineRunsView
+                        bot={bot}
+                        fleet={fleet}
+                        selectedRunId={runId}
+                        seen={seen}
+                        onSelect={setRunId}
+                        visible={inWindow || (active && layout.showChat)}
+                        onCite={(run) => {
+                          setCitation(run)
+                          setPane('conversation')
+                        }}
+                        onOpenBot={onOpenBot}
+                        onOpenScreen={showComputer}
+                      />
+                    ) : (
+                      <BotConversation
+                        bot={bot}
+                        fleet={fleet}
+                        runMarkers={markers}
+                        onOpenRun={runsSupported ? (id) => openRun(id) : undefined}
+                        onOpenThread={threadsSupported ? (id) => openThread(id) : undefined}
+                        citation={citation}
+                        onClearCitation={() => setCitation(null)}
+                        visible={inWindow || (active && layout.showChat)}
+                        onOpenFiles={
+                          botFiles.supported
+                            ? () => {
+                                setFilesOpen(true)
+                                setFilesRequest((prev) => ({ sort: 'size', nonce: (prev?.nonce ?? 0) + 1 }))
+                              }
+                            : undefined
+                        }
+                        revealFile={revealFile}
+                        onRevealed={handleRevealed}
+                        onOpenBot={(id) => {
+                          onOpenBot(id)
+                          if (detached) void window.api.chatWindowShowSource(`bot:${bot.id}`)
+                        }}
+                        onOpenScreen={showComputer}
+                        onOpenSettings={openSettings}
+                        onOpenEnvironmentScreen={environment ? () => openEnvironment('screen') : undefined}
+                        onOpenEnvironmentSettings={
+                          environmentSettings
+                            ? (target) => openEnvironment('settings', target === 'mcp' ? 'tools' : 'skills')
+                            : undefined
+                        }
+                        onGiveBack={() => {
+                          if (detached) void window.api.chatWindowShowSource(`bot:${bot.id}`)
+                          setGiveBackRequest((value) => value + 1)
+                        }}
+                      />
+                    )}
+                    {filesOpen && botFiles.supported && (
+                      <BotFilesDrawer
+                        bot={bot}
+                        files={botFiles}
+                        conversation={currentConversation}
+                        overlay={filesOverlay}
+                        request={filesRequest}
+                        onClose={() => setFilesOpen(false)}
+                        onReveal={(file) => {
+                          if (file.origin.kind === 'primary' && shownPane !== 'conversation') {
+                            setPane('conversation')
+                          }
+                          if (filesOverlay) setFilesOpen(false)
+                          setRevealFile((prev) => ({ id: file.id, nonce: (prev?.nonce ?? 0) + 1 }))
+                        }}
+                        onOpenLane={(origin) => {
+                          if (origin.kind === 'routine') openRun(origin.runId)
+                          else openThread(origin.threadId)
+                          if (filesOverlay) setFilesOpen(false)
+                        }}
+                        revealMissed={revealMissed}
+                      />
+                    )}
+                  </div>
+                )}
+              </ChatWindowHost>
+            </>
+          }
+          computer={
+            layout.computerOpened ? (
+              <BotScreen
+                bot={bot}
+                fleet={fleet}
+                mode={botComputerMode(bot, environment)}
+                layoutMode={layout.mode}
+                narrow={layout.narrow}
+                activePane={activePane}
+                giveBackRequest={giveBackRequest}
+                streaming={active && layout.mode !== 'chat'}
+                // The panel covers the computer: it keeps streaming, but takes no input meanwhile.
+                visible={active && layout.showComputer && !settingsOpen}
+                onReveal={openComputer}
+                onShowPane={onShowPane}
+                onMaximize={layout.maximize}
+                onRestore={layout.restore}
+                onClose={hideComputer}
+                onOpenSettings={openSettings}
+                onOpenEnvironment={environment ? () => openEnvironment('overview') : undefined}
+                onOpenEnvironmentScreen={environment ? () => openEnvironment('screen') : undefined}
+              />
+            ) : null
+          }
+        />
+        {active && notices.length > 0 && (
+          <div
+            aria-live="polite"
+            className="pointer-events-none fixed right-4 top-[60px] z-40 flex w-[min(360px,calc(100vw-2rem))] flex-col gap-2"
+          >
+            {notices.map((run) => {
+              const failed = run.status === 'failed'
+              const title = runTitle(run, t('transcript.routine.label'))
+              return (
+                <div
+                  key={run.id}
+                  role="status"
+                  className="pointer-events-auto flex gap-2.5 rounded-xl border border-border-strong bg-popover p-3 text-[13px] shadow-2xl"
                 >
-                  {failed ? <AlertTriangle className="size-3.5" /> : <Repeat className="size-3.5" />}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="font-medium">{t(failed ? 'runs.notice.failed' : 'runs.notice.finished', { title })}</p>
-                  {(run.report?.summary || run.finalText) && (
-                    <p className="line-clamp-2 text-xs text-muted-foreground">{run.report?.summary ?? run.finalText}</p>
-                  )}
+                  <span
+                    aria-hidden="true"
+                    className={`flex size-[26px] shrink-0 items-center justify-center rounded-lg ${failed ? 'bg-red-400/10 text-red-300' : 'bg-sky-400/10 text-sky-300'}`}
+                  >
+                    {failed ? <AlertTriangle className="size-3.5" /> : <Repeat className="size-3.5" />}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium">
+                      {t(failed ? 'runs.notice.failed' : 'runs.notice.finished', { title })}
+                    </p>
+                    {(run.report?.summary || run.finalText) && (
+                      <p className="line-clamp-2 text-xs text-muted-foreground">
+                        {run.report?.summary ?? run.finalText}
+                      </p>
+                    )}
+                    <button
+                      type="button"
+                      className="mt-2 rounded-md border border-border-strong px-2.5 py-1 text-xs hover:bg-white/[0.05]"
+                      onClick={() => {
+                        setNotices((list) => list.filter((item) => item.id !== run.id))
+                        openRun(run.id)
+                        onView(botView('conversation'))
+                      }}
+                    >
+                      {t('runs.notice.open')}
+                    </button>
+                  </div>
                   <button
                     type="button"
-                    className="mt-2 rounded-md border border-border-strong px-2.5 py-1 text-xs hover:bg-white/[0.05]"
-                    onClick={() => {
-                      setNotices((list) => list.filter((item) => item.id !== run.id))
-                      openRun(run.id)
-                      onView(botView('conversation'))
-                    }}
+                    aria-label={t('runs.notice.dismiss')}
+                    className="self-start rounded-md p-1 text-muted-foreground hover:bg-white/[0.05] hover:text-foreground"
+                    onClick={() => setNotices((list) => list.filter((item) => item.id !== run.id))}
                   >
-                    {t('runs.notice.open')}
+                    <X aria-hidden="true" className="size-3.5" />
                   </button>
                 </div>
-                <button
-                  type="button"
-                  aria-label={t('runs.notice.dismiss')}
-                  className="self-start rounded-md p-1 text-muted-foreground hover:bg-white/[0.05] hover:text-foreground"
-                  onClick={() => setNotices((list) => list.filter((item) => item.id !== run.id))}
-                >
-                  <X aria-hidden="true" className="size-3.5" />
-                </button>
-              </div>
-            )
-          })}
-        </div>
-      )}
-      {settingsOpen && (
-        <BotSettingsSheet
-          bot={bot}
-          fleet={fleet}
-          leaveGuard={leaveGuard}
-          onClose={() => onView(botView('conversation'))}
-          // The destination opens the computer once the panel has been left (or its changes dealt with).
-          onOpenScreen={() => go(botView('screen'))}
-          onOpenEnvironment={
-            environment ? () => openEnvironment(environmentSettings ? 'settings' : 'overview') : undefined
-          }
-          onArchived={() => onView({ kind: 'server' })}
-        />
-      )}
+              )
+            })}
+          </div>
+        )}
+        {settingsOpen && (
+          <BotSettingsSheet
+            bot={bot}
+            fleet={fleet}
+            leaveGuard={leaveGuard}
+            onClose={() => onView(botView('conversation'))}
+            // The destination opens the computer once the panel has been left (or its changes dealt with).
+            onOpenScreen={() => go(botView('screen'))}
+            onOpenEnvironment={
+              environment ? () => openEnvironment(environmentSettings ? 'settings' : 'overview') : undefined
+            }
+            onArchived={() => onView({ kind: 'server' })}
+          />
+        )}
       </div>
     </BotFilesRemovedProvider>
   )

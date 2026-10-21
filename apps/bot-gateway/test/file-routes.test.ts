@@ -116,4 +116,3 @@ it('forwards file management to a bot that has it', async () => {
   expect(await updated.json()).toEqual(usage)
   expect(set).toHaveBeenCalledWith({ quotaGb: 2, deleteWithConversations: false })
 })
-

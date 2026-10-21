@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  fleetPublishedFileSchema,
-  type FleetFilesUsage,
-  type FleetPublishedFile,
-} from '@maestrly/bot-fleet-protocol'
+import { fleetPublishedFileSchema, type FleetFilesUsage, type FleetPublishedFile } from '@maestrly/bot-fleet-protocol'
 import { tFor } from '../../src/shared/i18n'
 import {
   clampPage,
@@ -25,10 +21,7 @@ import {
 const MIB = 1024 ** 2
 const GIB = 1024 ** 3
 
-function file(
-  id: string,
-  overrides: Partial<FleetPublishedFile> = {}
-): FleetPublishedFile {
+function file(id: string, overrides: Partial<FleetPublishedFile> = {}): FleetPublishedFile {
   return fleetPublishedFileSchema.parse({
     id,
     name: `${id}.pdf`,
