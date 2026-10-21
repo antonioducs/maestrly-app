@@ -602,9 +602,11 @@ function LaneConversation({
         onLoadOlder={() => controller.loadOlderLane(bot.id, { kind, id: laneId })}
         hasOlder={!!transcript?.before}
         reveal={reveal}
-        onRevealed={(found) => {
+        failed={!!transcript?.failed}
+        onRevealed={(result) => {
           clearFileReveal(revealKey)
-          if (!found) Alert.alert(t('files.title'), t('files.notFound'))
+          if (result !== 'found')
+            Alert.alert(t('files.title'), t(result === 'missing' ? 'files.notFound' : 'files.revealFailed'))
         }}
       />
     )

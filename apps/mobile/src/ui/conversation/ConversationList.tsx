@@ -14,6 +14,7 @@ import { BotFiles } from './BotFiles'
 import { ThreadBridge } from '../lanes/ThreadBridge'
 import { ConversationSearchBar, useConversationSearch } from './ConversationSearch'
 import { useConversation } from './CueCard'
+import { revealStep, type RevealResult } from './file-reveal'
 import { DispatchCard } from './DispatchCard'
 import { HelpCard } from './HelpCard'
 import { PermissionCard } from './PermissionCard'
@@ -100,6 +101,7 @@ export function ConversationList({
   top,
   reveal = null,
   onRevealed,
+  failed = false,
 }: {
   items: MobileChatItem[]
   extras: ExtraRow[]
@@ -113,8 +115,10 @@ export function ConversationList({
   top?: ReactNode
   /** A file to scroll to and highlight, loading older pages until it shows. */
   reveal?: string | null
-  /** The file to reveal was found, or is not in the conversation at all. */
-  onRevealed?: (found: boolean) => void
+  /** Showing the file ended: it was found, is not in the conversation, or a page before it could not be read. */
+  onRevealed?: (result: RevealResult) => void
+  /** The last page read failed. */
+  failed?: boolean
 }) {
   const { palette } = useTheme()
   const { t } = useI18n()
@@ -172,20 +176,37 @@ export function ConversationList({
     },
     []
   )
+  // Whether an older page was asked for the file being revealed, so a failed read ends it instead of asking again.
+  const askedOlder = useRef(false)
   useEffect(() => {
-    if (!reveal || !loaded) return
-    if (revealIndex >= 0) {
+    if (!reveal) {
+      askedOlder.current = false
+      return
+    }
+    const step = revealStep({
+      index: revealIndex,
+      loaded,
+      loadingOlder,
+      hasOlder,
+      asked: askedOlder.current,
+      failed,
+    })
+    if (step === 'wait') return
+    if (step === 'older') {
+      askedOlder.current = true
+      onLoadOlder()
+      return
+    }
+    askedOlder.current = false
+    if (step === 'found') {
       list.current?.scrollToIndex({ index: revealIndex, viewPosition: 0.5, animated: !reduced })
       const key = rowKey(data[revealIndex]!)
       setFlash(key)
       if (flashTimer.current) clearTimeout(flashTimer.current)
       flashTimer.current = setTimeout(() => setFlash((value) => (value === key ? null : value)), 1800)
-      onRevealed?.(true)
-    } else if (!loadingOlder) {
-      if (hasOlder) onLoadOlder()
-      else onRevealed?.(false)
     }
-  }, [reveal, revealIndex, loaded, loadingOlder, hasOlder])
+    onRevealed?.(step)
+  }, [reveal, revealIndex, loaded, loadingOlder, hasOlder, failed])
 
   const older = () => {
     if (cursor < matches.length - 1) return setCursor(cursor + 1)
