@@ -140,8 +140,18 @@ export function chatsReducer(state: ChatsState, action: ChatsAction): ChatsState
       return action.hosted ? { ...state, hosted: true } : { ...initialChatsState, outbox: state.outbox }
     case 'bridge':
       return { ...state, bridge: action.state, retryAt: action.retryAt, hostVersion: action.hostVersion }
-    case 'lists':
-      return { ...state, lists: action.lists }
+    case 'lists': {
+      // An open chat follows what the lists say of it, such as a bot chat released, blocked, paused or resumed
+      // elsewhere: otherwise it would keep the conversation it was opened with until it opened again.
+      const listed = new Map(allConversations(action.lists).map((item) => [item.id, item]))
+      const views = Object.fromEntries(
+        Object.entries(state.views).map(([id, view]) => {
+          const next = listed.get(id)
+          return [id, view.conversation && next ? { ...view, conversation: next } : view]
+        })
+      )
+      return { ...state, lists: action.lists, views }
+    }
     case 'conversation': {
       const view = state.views[action.conversation.id]
       return {

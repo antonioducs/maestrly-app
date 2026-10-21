@@ -191,3 +191,23 @@ export function chatEffortChoices(option: FleetSelectionOption | null): string[]
   const efforts = (option?.efforts ?? []).filter((effort) => effort !== 'ultra' && effort !== 'maestrly-ultra')
   return efforts.length ? ['off', ...efforts] : []
 }
+
+export type BotChatState = 'held' | 'shared' | 'paused' | 'revoked'
+
+/** How the bot that started a chat holds it: held while the person may not write, shared once they may; null otherwise. */
+export function botChatState(chat: MobileConversation | null): BotChatState | null {
+  const bot = chat?.bot
+  if (!bot) return null
+  if (bot.state === 'active') return bot.shared ? 'shared' : 'held'
+  return bot.state
+}
+
+/** Whose a bot's chat is, for its indicators: "Managed by X", or "Created by X · Paused". */
+export function botChatLabel(chat: MobileConversation, t: Translate): string | null {
+  const bot = chat.bot
+  if (!bot) return null
+  return bot.state === 'active'
+    ? t('chat.bot.managedBy', { name: bot.name })
+    : `${t('chat.bot.createdBy', { name: bot.name })} · ${t(`chat.bot.state.${bot.state}`)}`
+}
+
