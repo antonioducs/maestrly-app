@@ -12,7 +12,7 @@ export interface ChatAttentionDeps {
   questions: Emitter
   /** Follows the status of the host's conversations; returns how to stop. */
   watchStatuses(listener: (conversationId: string, status: string) => void): () => void
-  conversation(id: string): { name: string; botOrigin?: unknown } | undefined
+  conversation(id: string): { name: string } | undefined
   /** Whether the conversation's turn ended with a plan to decide. */
   hasPendingPlan(id: string): boolean
   publish(event: { conversationId: string; name: string; kind: FleetChatAttentionKind }): void
@@ -27,8 +27,8 @@ export function watchChatAttention(deps: ChatAttentionDeps): () => void {
   const statuses = new Map<string, string>()
   const publish = (conversationId: string, kind: FleetChatAttentionKind) => {
     const conversation = deps.conversation(conversationId)
-    // Bots tell the gateway themselves; a server mode host has none, but a conversation of one is never a chat.
-    if (!conversation || conversation.botOrigin) return
+    // A bot's conversation needs the owner as any chat does: its approvals and plans are theirs to decide.
+    if (!conversation) return
     deps.publish({ conversationId, name: conversation.name.slice(0, 200), kind })
   }
   const asked = ({ conversationId }: { conversationId: string }) => publish(conversationId, 'waiting')

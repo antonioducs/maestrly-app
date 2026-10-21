@@ -49,13 +49,13 @@ describe('chat attention on a workspaces host', () => {
     ])
   })
 
-  it('leaves out bot conversations and conversations that are gone, and stops when asked', () => {
+  it('tells of bot conversations too, leaves out conversations that are gone, and stops when asked', () => {
     const h = setup()
     h.permissions.emit('asked', { conversationId: 'bot' })
     h.statuses.emit('status', 'gone', 'ready')
     h.stop()
     h.permissions.emit('asked', { conversationId: 'c1' })
     h.statuses.emit('status', 'c1', 'ready')
-    expect(h.published).toEqual([])
+    expect(h.published).toEqual([{ conversationId: 'bot', name: 'Juno', kind: 'waiting' }])
   })
 })
