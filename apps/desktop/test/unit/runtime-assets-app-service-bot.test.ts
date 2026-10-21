@@ -97,6 +97,7 @@ beforeEach(async () => {
   state.bundledClaude = claude
   vi.stubEnv('AGENTS_E2E', '')
   vi.stubEnv('MAESTRLY_BOT_RUNTIME_UPDATES', '')
+  vi.stubEnv('MAESTRLY_SERVER_MODE', '')
 })
 
 afterEach(async () => {
@@ -177,6 +178,18 @@ describe('runtime asset app service in a bot', () => {
       expect(cycle).not.toHaveBeenCalled()
     }
   )
+})
+
+describe('runtime asset app service in a workspaces host', () => {
+  beforeEach(() => {
+    vi.stubEnv('MAESTRLY_BOT_MODE', '')
+    vi.stubEnv('MAESTRLY_SERVER_MODE', '1')
+  })
+
+  it('reports the Codex the image ships as the floor a managed installation must beat', async () => {
+    expect(await imageRuntimeBaseline('codex-runtime')).toEqual({ version: '0.155.1' })
+    expect(await runtimeAssetInfo('codex-runtime')).toMatchObject({ provided: { version: '0.155.1', active: true } })
+  })
 })
 
 describe('runtime asset app service on the desktop', () => {

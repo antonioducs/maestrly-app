@@ -18,6 +18,7 @@ import type {
 import { bundledClaudeCandidate } from '../chat/claude-agent-sdk/resolve-claude'
 import { resolveCodexRuntime } from '../chat/codex-subscription/runtime-resolver'
 import { isBotMode } from '../fleet/instance/config'
+import { isHeadlessInstance } from '../remote-host/server/config'
 import { getAppSetting, setAppSetting } from '../store/app-settings'
 import { isE2E } from '../test-mode'
 import { CLAUDE_CODE_COMPATIBILITY_REVISION, validateClaudeCodeRuntime } from './claude-code-compatibility'
@@ -148,11 +149,12 @@ async function readImageBaseline(id: UpdatableRuntimeAssetId): Promise<RuntimeBa
 }
 
 /**
- * The runtime a bot image ships, which a managed installation must be newer than to be used. Null outside bots and
- * when the image has none. The image never changes while this process runs, so it is read once.
+ * The runtime a bot or workspaces host image ships, which a managed installation must be newer than to be used. Null
+ * outside those instances and when the image has none. The image never changes while this process runs, so it is
+ * read once.
  */
 export function imageRuntimeBaseline(id: UpdatableRuntimeAssetId): Promise<RuntimeBaseline | null> {
-  if (!isBotMode()) return Promise.resolve(null)
+  if (!isHeadlessInstance()) return Promise.resolve(null)
   let baseline = imageBaselines.get(id)
   if (!baseline) {
     baseline = readImageBaseline(id)

@@ -45,7 +45,7 @@ import {
 import { resolveCodexRuntime, type CodexRuntimeResolution, type CodexRuntimeSource } from './runtime-resolver'
 import { codexHostMcpProcessEnv } from './host-mcp'
 import { acquireRuntimeAssetLease, readyRuntimeAsset } from '../../runtime-assets/app-service'
-import { isBotMode } from '../../fleet/instance/config'
+import { isHeadlessInstance } from '../../remote-host/server/config'
 import { isManagedCodexPath, resolveBotCodexRuntime } from './bot-runtime'
 import type { RuntimeAssetLease } from '../../../shared/runtime-assets'
 import { withSubscriptionAccount } from '../../../shared/chat'
@@ -249,13 +249,14 @@ async function defaultEnsureDirectory(directory: string): Promise<void> {
 const DEFAULT_DEPENDENCIES: CodexSubscriptionManagerDependencies = {
   accountId: null,
   resolveRuntime: async () => {
-    if (isBotMode()) return resolveBotCodexRuntime()
+    // Bots and workspaces hosts run unpackaged from an image yet install Codex updates: the newer one wins.
+    if (isHeadlessInstance()) return resolveBotCodexRuntime()
     if (!app.isPackaged) return resolveCodexRuntime()
     const asset = await readyRuntimeAsset('codex-runtime')
     return resolveCodexRuntime({ managedAssetPath: asset.path })
   },
   acquireRuntimeLease: (runtimePath) =>
-    app.isPackaged || (isBotMode() && isManagedCodexPath(runtimePath))
+    app.isPackaged || (isHeadlessInstance() && isManagedCodexPath(runtimePath))
       ? acquireRuntimeAssetLease('codex-runtime', runtimePath)
       : Promise.resolve(null),
   connectClient: (options) => CodexAppServerClient.connect(options),
