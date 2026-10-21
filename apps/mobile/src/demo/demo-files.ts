@@ -32,6 +32,7 @@ export function demoFilesWorld(now: number): { pixel: FleetPublishedFile[] } {
     file('pixel-hero-b', 'pricing-hero-b.png', 'image/png', 2 * MIB, 60 * 50),
     file('pixel-hero-c', 'pricing-hero-c.png', 'image/png', 2 * MIB, 60 * 50),
   ]
+  // Pixel keeps no routine runs in the demo, so the conversations of the runs that shared these are gone.
   for (let week = 1; week <= 8; week++)
     pixel.push(
       file(
@@ -41,7 +42,7 @@ export function demoFilesWorld(now: number): { pixel: FleetPublishedFile[] } {
         96 * MIB,
         60 * 24 * 7 * (9 - week),
         review(week),
-        week <= 6
+        true
       )
     )
   // The last review takes what is left, so the space reads exactly 7 MB free.
