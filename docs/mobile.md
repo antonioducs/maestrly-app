@@ -24,6 +24,14 @@ and workspaces on your [bot server](bot-fleet.md) from your phone.
   accounts has a switch of its own. A card shows the conversations an agent started from a chat,
   each with a way to open it, and a message, report or result another
   conversation sent names that conversation, which opens from its name.
+- **Conversations bots start:** a conversation a bot started in a workspace
+  shows with a bot icon in the menu and in its title. While the bot runs it,
+  the message field gives way to **Release chat**, which asks first; once
+  released, **Block my messages** above the field takes it back. Messages the
+  bot sent say **Sent by** and its name. The chat's setup has **Pause bot** and
+  **Resume bot**. Stopping a turn or deciding a plan in a chat you have not
+  released pauses the bot, as on a computer. These conversations notify like
+  any chat.
 - **Interactive answers:** an
   [interface](chat-context.md#interactive-answers) in a reply runs in an
   isolated web view once its block is complete, with no access to the app or

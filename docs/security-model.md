@@ -586,7 +586,9 @@ one through a **bridge**: see [remote workspaces](remote-workspaces.md).
   frame and then may call only the versioned `mobile:v1:*` channels
   (`packages/bot-fleet-protocol/src/mobile-bridge.ts`): list, create, open,
   rename and archive chats; send messages and attachments; answer permission
-  requests, questions and plans; change a chat's model, effort, Fast, mode,
+  requests, questions and plans; release a bot's conversation for its own
+  messages or block them again, and pause or resume that bot, through the same
+  host checks as a computer; change a chat's model, effort, Fast, mode,
   permission mode, MCP servers and skills; compact; read the images of what
   it was sent; and read the quota usage of the connected subscriptions, which
   names each account by its label and carries an error only as a code, never
