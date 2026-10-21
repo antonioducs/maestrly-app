@@ -8,6 +8,7 @@ import {
   encodeMobileValue,
   fleetBridgeOrigin,
   mobileChatItemSchema,
+  mobileConversationSchema,
   mobileSubscriptionUsageEntrySchema,
   type MobileBridgeSocket,
   type MobileBridgeState,
@@ -432,3 +433,50 @@ describe('mobile bridge client', () => {
     })
   })
 })
+
+describe('bot conversations', () => {
+  const conversation = {
+    id: 'c1',
+    name: 'Fix login',
+    workspaceId: 'w1',
+    workspaceName: 'maestrly',
+    branch: 'bot/fix-login',
+    status: 'idle',
+    lastActivityAt: '2026-10-20T12:00:00.000Z',
+    pinned: false,
+    experience: 'standard',
+  }
+
+  it('name the bot that holds a conversation, and read one from an older host or with an unknown state', () => {
+    const bot = { name: 'Scout', state: 'active', shared: false }
+    expect(mobileConversationSchema.parse({ ...conversation, bot })).toMatchObject({ bot })
+    expect(mobileConversationSchema.parse(conversation)).not.toHaveProperty('bot')
+    expect(mobileConversationSchema.parse({ ...conversation, bot: { ...bot, state: 'later' } }).bot?.state).toBe(
+      'revoked'
+    )
+  })
+
+  it('keep the bot that sent a message, and leave an ordinary message otherwise', () => {
+    const message = {
+      kind: 'user',
+      id: 'u',
+      at: '2026-10-20T12:00:00.000Z',
+      text: 'Run the tests.',
+      source: 'owner',
+      queued: false,
+    }
+    expect(mobileChatItemSchema.parse({ ...message, sentByBot: { name: 'Scout' } })).toMatchObject({
+      sentByBot: { name: 'Scout' },
+    })
+    expect(mobileChatItemSchema.parse(message)).not.toHaveProperty('sentByBot')
+  })
+
+  it('release, block, pause and resume a conversation by its id only', () => {
+    const { botManualChat, botManagement } = MOBILE_CHANNELS
+    expect(botManualChat.args.safeParse({ conversationId: 'c1', enabled: true }).success).toBe(true)
+    expect(botManualChat.args.safeParse({ conversationId: 'c1' }).success).toBe(false)
+    expect(botManagement.args.safeParse({ conversationId: 'c1', state: 'paused' }).success).toBe(true)
+    expect(botManagement.args.safeParse({ conversationId: 'c1', state: 'revoked' }).success).toBe(false)
+  })
+})
+
