@@ -805,4 +805,30 @@ describe('demo chats', () => {
     expect((await connection.invoke('open', { conversationId: started!.id })).sourceConversationId).toBe('c-relay')
     connection.close()
   })
+
+  it("keeps a bot's chat from the person until they release it", async () => {
+    const source = createDemoChatsSource({ stepMs: 1 })
+    const connection = source.connect({ onEvent: () => {}, onState: () => {}, onReady: () => {} })
+    const message = (n: number) => ({
+      conversationId: 'c-scout',
+      text: 'Also cover the sign-out test.',
+      attachments: [],
+      clientId: `550e8400-e29b-41d4-a716-44665544010${n}`,
+    })
+    const lists = await connection.invoke('lists', {})
+    expect(lists.workspaces[0].conversations.find((item) => item.id === 'c-scout')?.bot).toEqual({
+      name: 'Scout',
+      state: 'active',
+      shared: false,
+    })
+    await expect(connection.invoke('send', message(1))).rejects.toMatchObject({ code: 'bot-locked' })
+    expect(await connection.invoke('botManualChat', { conversationId: 'c-scout', enabled: true })).toMatchObject({
+      bot: { shared: true },
+    })
+    expect(await connection.invoke('send', message(2))).toEqual({ status: 'started' })
+    expect(await connection.invoke('botManagement', { conversationId: 'c-scout', state: 'paused' })).toMatchObject({
+      bot: { state: 'paused', shared: false },
+    })
+    connection.close()
+  })
 })
