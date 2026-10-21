@@ -1,6 +1,6 @@
 # Bot-created conversations on the phone — design
 
-Date: 2026-10-20 · Status: proposed
+Date: 2026-10-20 · Status: approved
 
 ## Goal
 
@@ -37,15 +37,16 @@ the desktop, and the same rules, which the host already enforces.
 | Bot-sent messages | A user item with `sentByBot: { name }`, a new member of `mobileChatItemSchema` (as `fromConversation` is). Older phones match the plain user item and drop the field. |
 | New channels | `mobile:v1:bot:manual-chat` `{ conversationId, enabled }` and `mobile:v1:bot:management` `{ conversationId, state: 'active' \| 'paused' }`. Both run the host's own `bot:manual-chat` and `bot:management` handlers and answer the updated `MobileConversation`. A host refusal (revoked, project no longer granted, turn still stopping) answers code `bot-refused` with the host's message. |
 | Refused sends | When `chat:send` or `chat:resend` refuses a held chat, the API answers code `bot-locked`. The phone's outbox shows "X is running this chat; release it to send". |
-| Held chat on the phone | The composer is replaced by a notice: bot icon, "X is running this conversation", "Release the chat to write in it too", and **Release** behind the desktop's confirmation text. Permission and question cards keep working, as on the desktop. |
+| Held chat on the phone | The composer is replaced by a notice: bot mark, "X is running this conversation", "Release the chat to write in it too", and **Release** behind the desktop's confirmation text. Permission and question cards keep working, as on the desktop. |
 | Released chat on the phone | The composer shows a strip above the field: "Shared with X. It is not told what you write here." with **Block**, no confirmation. |
 | Paused, revoked | Normal composer; the indicators show the state. |
 | Pause and resume | In the chat's details (tap on the title): a **Bot** group with "Managed by X" or "Created by X", the state, and **Pause bot** or **Resume bot** (none when revoked). No confirmation, as on the desktop. Stopping a turn in a held chat goes through **Pause bot**, since the notice replaces the Stop button. |
-| Drawer indicator | `ChatRow` shows a bot icon before the name, as it shows Maestro's sparkles; its accessibility label adds "Managed by X" or "Created by X · Paused/Revoked". |
-| Header indicator | `ChatTitle` leads with a bot icon. |
+| Bot mark | The bot glyph in brass on a `brassSoft` square (`BotMark`). Agent mode shows the same glyph bare in the composer's setup pill, so a bare glyph would read as the chat's mode; the desktop sets it apart the same way, in a tinted chip. Used in the drawer, the header, the held notice, the released strip, and the setup's **Bot** group. |
+| Drawer indicator | `ChatRow` shows the bot mark before the name, as it shows Maestro's sparkles; its accessibility label adds "Managed by X" or "Created by X · Paused/Revoked". |
+| Header indicator | `ChatTitle` leads with the bot mark. |
 | Editing | No edit while held. A message the bot sent is never editable on the phone, as messages from other conversations are not: it is the bot's instruction, not the person's. |
 | Plan options | A bot conversation answers `newConversation: false` and `maestro: null`. |
-| Lists refresh | The `lists` reducer refreshes the `conversation` of open views from the new lists, so a lock, release, pause or resume done elsewhere reaches the header and the composer. Today an open view keeps the conversation it was opened with until it opens again. |
+| Lists refresh | The `lists` reducer refreshes the `conversation` of open views from the new lists, so a lock, release, pause or resume done elsewhere reaches the header and the composer. Today an open view keeps the conversation it was opened with until it opens again. The view keeps its own status, which its status events set: lists the host read before the latest event would set it back. |
 
 ## Compatibility
 

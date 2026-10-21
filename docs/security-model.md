@@ -586,21 +586,21 @@ one through a **bridge**: see [remote workspaces](remote-workspaces.md).
   frame and then may call only the versioned `mobile:v1:*` channels
   (`packages/bot-fleet-protocol/src/mobile-bridge.ts`): list, create, open,
   rename and archive chats; send messages and attachments; answer permission
-  requests, questions and plans; release a bot's conversation for its own
-  messages or block them again, and pause or resume that bot, through the same
-  host checks as a computer; change a chat's model, effort, Fast, mode,
-  permission mode, MCP servers and skills; compact; read the images of what
-  it was sent; and read the quota usage of the connected subscriptions, which
-  names each account by its label and carries an error only as a code, never
-  the account's email, plan, credentials or the provider's error text. It never
-  calls the host's IPC handlers directly: the host runs
-  them on its behalf through a window of its own that the phone cannot address,
-  so a phone cannot read files, open terminals, change accounts or change
-  settings. A phone does not change the host's language. A phone's WebSocket
-  always sends an `Origin` header, which the gateway refuses elsewhere: the
-  phone names that origin when it asks for the ticket (`phones`), the
-  upgrade may carry that one origin only, and the gateway strips it before the
-  host sees the handshake.
+  requests, questions and plans; release a conversation a bot started for the
+  owner's own messages or block them again, and pause or resume that bot,
+  under the same host checks as a computer; change a chat's model, effort,
+  Fast, mode, permission mode, MCP servers and skills; compact; read the
+  images of what it was sent; and read the quota usage of the connected
+  subscriptions, which names each account by its label and carries an error
+  only as a code, never the account's email, plan, credentials or the
+  provider's error text. It never calls the host's IPC handlers directly: the
+  host runs them on its behalf through a window of its own that the phone
+  cannot address, so a phone cannot read files, open terminals, change
+  accounts or change settings. A phone does not change the host's language.
+  A phone's WebSocket always sends an `Origin` header, which the gateway
+  refuses elsewhere: the phone names that origin when it asks for the ticket
+  (`phones`), the upgrade may carry that one origin only, and the gateway
+  strips it before the host sees the handshake.
 - **The host refuses what belongs to a desktop.** For a computer's renderer it
   refuses channels that drive a window, native views, sound, updates, the bot
   fleet client and its installer, and the microphone, and channels whose

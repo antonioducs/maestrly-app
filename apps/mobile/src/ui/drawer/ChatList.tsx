@@ -4,6 +4,7 @@ import { ActivityIndicator, Pressable, View } from 'react-native'
 import { botChatLabel, groupByDay, isWaitingChat } from '../../chats/selectors'
 import { useI18n } from '../../i18n'
 import { useTheme } from '../../theme/ThemeProvider'
+import { BotMark } from '../chat/BotMark'
 import { Icon } from '../icons'
 import { AppText } from '../primitives/Text'
 
@@ -39,7 +40,7 @@ export const ChatRow = memo(function ChatRow({
         backgroundColor: current || pressed ? palette.surface : 'transparent',
       })}
     >
-      {chat.bot ? <Icon name="bot" size={15} color={palette.muted} /> : null}
+      {chat.bot ? <BotMark size={20} /> : null}
       {chat.experience === 'maestro' ? <Icon name="sparkles" size={15} color={palette.muted} /> : null}
       <AppText numberOfLines={1} style={{ flex: 1, minWidth: 0, fontSize: 15.5 }}>
         {chat.name}

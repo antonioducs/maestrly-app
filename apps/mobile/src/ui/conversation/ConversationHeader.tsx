@@ -8,6 +8,7 @@ import { useI18n } from '../../i18n'
 import { useTheme } from '../../theme/ThemeProvider'
 import { fonts } from '../../theme/tokens'
 import { BotAvatar } from '../Avatar'
+import { BotMark } from '../chat/BotMark'
 import { Icon } from '../icons'
 import { IconButton } from '../primitives/IconButton'
 import { AppText } from '../primitives/Text'
@@ -87,7 +88,6 @@ export function ChatTitle({
   runtime: MobileRuntime | null
   serverName: string
 }) {
-  const { palette } = useTheme()
   const text = useI18n()
   const line = chatStatusLine(chat, runtime, serverName, text)
   const bot = botChatLabel(chat, text.t)
@@ -97,7 +97,7 @@ export function ChatTitle({
       onPress={() => router.push(`/chat-setup/${chat.id}`)}
       name={chat.name}
       line={line}
-      lead={chat.bot ? <Icon name="bot" size={18} color={palette.muted} /> : undefined}
+      lead={chat.bot ? <BotMark size={22} /> : undefined}
     />
   )
 }

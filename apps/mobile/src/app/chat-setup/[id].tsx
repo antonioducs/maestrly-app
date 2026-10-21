@@ -17,6 +17,7 @@ import { useI18n } from '../../i18n'
 import { useServers } from '../../servers/ServersProvider'
 import { useTheme } from '../../theme/ThemeProvider'
 import { fonts } from '../../theme/tokens'
+import { BotMark } from '../../ui/chat/BotMark'
 import { MODE_ICON } from '../../ui/chat/ChatSetupPill'
 import { confirm } from '../../ui/confirm'
 import { shownError } from '../../ui/conversation/CueCard'
@@ -436,7 +437,7 @@ function Setup({ chat, setup, initialPage }: { chat: MobileConversation; setup: 
                 : undefined
           }
         >
-          <Cell icon="bot" label={botChatLabel(chat, t) ?? bot.name} />
+          <Cell leading={<BotMark size={30} />} label={botChatLabel(chat, t) ?? bot.name} />
           {bot.state === 'revoked' ? null : (
             <Cell
               icon={bot.state === 'active' ? 'pause' : 'play'}

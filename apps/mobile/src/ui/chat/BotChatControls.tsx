@@ -11,6 +11,7 @@ import { shownError } from '../conversation/CueCard'
 import { Icon } from '../icons'
 import { Button } from '../primitives/Button'
 import { AppText } from '../primitives/Text'
+import { BotMark } from './BotMark'
 
 /** Releasing asks first, as on a computer: the bot keeps the chat and is not told what the person writes. */
 function useManualChat(conversationId: string, bot: MobileConversationBot) {
@@ -81,7 +82,7 @@ export function BotHeldNotice({
           backgroundColor: palette.raised,
         }}
       >
-        <Icon name="bot" size={20} color={palette.muted} />
+        <BotMark size={28} />
         <View style={{ flex: 1 }}>
           <AppText style={{ fontSize: 15, lineHeight: 20, fontWeight: '600' }}>
             {t('chat.bot.heldTitle', { name: bot.name })}
@@ -118,7 +119,7 @@ export function BotSharedStrip({
   return (
     <View style={{ paddingHorizontal: 4 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-        <Icon name="bot" size={14} color={palette.muted} />
+        <BotMark size={18} />
         <AppText variant="small" tone="muted" style={{ flex: 1 }}>
           {t('chat.bot.shared', { name: bot.name })}
         </AppText>

@@ -317,7 +317,7 @@ describe('chat state', () => {
     })
   })
 
-  it('follows what the lists say of an open chat, such as a bot chat released elsewhere', () => {
+  it('follows what the lists say of an open chat, such as a bot chat released elsewhere, but not its status', () => {
     const held = chat('c1', { bot: { name: 'Scout', state: 'active', shared: false } })
     let state = chatsReducer(initialChatsState, { type: 'lists', lists: { chats: [held], workspaces: [] } })
     state = chatsReducer(state, {
@@ -330,9 +330,15 @@ describe('chat state', () => {
         runtime: { streaming: false, compacting: false, plan: null, context: null },
       },
     })
-    const shared = chat('c1', { bot: { name: 'Scout', state: 'active', shared: true } })
+    // A turn started after the host read the lists it answers: their status is older than the chat's own.
+    state = chatsReducer(state, { type: 'status', conversationId: 'c1', status: 'working' })
+    const shared = chat('c1', { name: 'Login fix', bot: { name: 'Scout', state: 'active', shared: true } })
     state = chatsReducer(state, { type: 'lists', lists: { chats: [shared], workspaces: [] } })
-    expect(state.views.c1.conversation?.bot?.shared).toBe(true)
+    expect(state.views.c1.conversation).toMatchObject({
+      name: 'Login fix',
+      status: 'working',
+      bot: { shared: true },
+    })
   })
 })
 
