@@ -8,11 +8,13 @@ import type { FleetServerId } from '../../../shared/fleet-servers'
 type Translate = (key: string, options?: Record<string, unknown>) => string
 
 const scale = (bytes: number) =>
-  bytes >= 1024 * 1024
-    ? ({ unit: 'megabyte', divisor: 1024 * 1024 } as const)
-    : bytes >= 1024
-      ? ({ unit: 'kilobyte', divisor: 1024 } as const)
-      : ({ unit: 'byte', divisor: 1 } as const)
+  bytes >= 1024 ** 3
+    ? ({ unit: 'gigabyte', divisor: 1024 ** 3 } as const)
+    : bytes >= 1024 * 1024
+      ? ({ unit: 'megabyte', divisor: 1024 * 1024 } as const)
+      : bytes >= 1024
+        ? ({ unit: 'kilobyte', divisor: 1024 } as const)
+        : ({ unit: 'byte', divisor: 1 } as const)
 
 /** `like` picks the unit, so a part reads in the same unit as its whole: "0 MB of 80 MB". */
 export function fileSizeLabel(bytes: number, locale: string, like = bytes): string {

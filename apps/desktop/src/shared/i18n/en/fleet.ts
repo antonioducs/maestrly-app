@@ -25,6 +25,10 @@ export default {
     invalidAttachment: 'The attachment could not be read. Remove it and send a valid file.',
     unreadablePdf: 'This PDF could not be read. It may be damaged or password-protected. Send another copy.',
     notSent: 'Not sent',
+    drawer: {
+      today: 'today, {{time}}',
+      yesterday: 'yesterday, {{time}}',
+    },
   },
   environmentSettings,
   environmentSettingsShell: {

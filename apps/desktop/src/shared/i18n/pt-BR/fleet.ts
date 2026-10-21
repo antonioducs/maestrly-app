@@ -26,6 +26,10 @@ export default {
     unreadablePdf:
       'Não foi possível ler este PDF. Ele pode estar danificado ou protegido por senha. Envie outra cópia.',
     notSent: 'Não enviado',
+    drawer: {
+      today: 'hoje, {{time}}',
+      yesterday: 'ontem, {{time}}',
+    },
   },
   environmentSettings,
   environmentSettingsShell: {

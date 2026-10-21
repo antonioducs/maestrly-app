@@ -17,7 +17,7 @@ const mocks = vi.hoisted(() => ({
   pair: vi.fn(async (): Promise<unknown> => ({ id: 'aaaaaaaa-0000-4000-8000-000000000001' })),
   remove: vi.fn(async () => {}),
   hasFeature: vi.fn((_feature: string) => false),
-  call: vi.fn(async (): Promise<unknown> => undefined),
+  call: vi.fn(async (_route?: string): Promise<unknown> => undefined),
   getImage: vi.fn(async () => ({ mediaType: 'image/png', data: new Uint8Array([137, 80, 78, 71]) })),
   downloadFile: vi.fn(async () => {}),
   cancelDownload: vi.fn(),
@@ -568,7 +568,7 @@ describe('fleet IPC validation', () => {
     mocks.call.mockClear()
     mocks.deleteFiles.mockClear()
     mocks.hasFeature.mockReturnValue(true)
-    mocks.call.mockImplementation(async (route: string) =>
+    mocks.call.mockImplementation(async (route?: string) =>
       route === 'botGet' ? { capabilities: ['files', 'files-manage'] } : { ok: true }
     )
     mocks.deleteFiles.mockResolvedValueOnce({ deleted: ['f-1'], freedBytes: 10, usage: {} })
@@ -603,7 +603,7 @@ describe('fleet IPC validation', () => {
     ).rejects.toThrow('FLEET_FILES_MANAGE_UNSUPPORTED')
 
     mocks.hasFeature.mockReturnValue(true)
-    mocks.call.mockImplementation(async (route: string) =>
+    mocks.call.mockImplementation(async (route?: string) =>
       route === 'botGet' ? { capabilities: ['files'] } : { ok: true }
     )
     await expect(reads.get('fleet:listBotFiles')!({}, SERVER, 'bot')).rejects.toThrow(
