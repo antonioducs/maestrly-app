@@ -51,6 +51,7 @@ function Root() {
             <Stack.Screen name="servers" options={sheet} />
             <Stack.Screen name="devices" options={sheet} />
             <Stack.Screen name="bot-details/[id]" options={sheet} />
+            <Stack.Screen name="bot-files/[id]" options={{ ...sheet, sheetAllowedDetents: [1] }} />
             <Stack.Screen name="bot-setup/[id]" options={{ ...sheet, sheetAllowedDetents: [1] }} />
             <Stack.Screen name="new-bot" options={{ ...sheet, sheetAllowedDetents: [1] }} />
             <Stack.Screen name="new-chat" options={sheet} />
