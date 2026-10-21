@@ -5,6 +5,20 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Added
+
+- **Files** in a bot's conversation header opens a drawer showing the files the
+  bot shared (`bot_share_file`), either in **This conversation** or across the
+  **Whole bot**, with used space, search, type filter, sorting, pagination, bulk
+  download and deletion, and **Space and cleanup** settings to set the bot's
+  file space (1, 2, 5, 10 or 20 GB; 1 GB by default) and whether deleting a
+  routine run or a conversation with another bot also deletes the files shared
+  there (on by default). Deleted files show as deleted on their conversation
+  cards while keeping any copies already downloaded on this computer, and
+  `bot_share_file` reports which limit (file size, file count, or remaining
+  space) stopped a publication. See
+  [send and download files](docs/bot-fleet.md#send-and-download-files).
+
 ### Changed
 
 - **Initialize Git in this folder**, when you open a folder that has no Git
