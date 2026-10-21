@@ -32,6 +32,7 @@ import { fonts, mix } from '../../theme/tokens'
 import { DEMO_SERVER } from '../../demo/demo-source'
 import { ComposerShell, ShownError } from '../composer/Composer'
 import { confirm } from '../confirm'
+import { botFileAccess } from '../conversation/bot-file-fetch'
 import { ConversationList, type ExtraRow } from '../conversation/ConversationList'
 import { ConversationContext, shownError, type ConversationContextValue } from '../conversation/CueCard'
 import { Icon } from '../icons'
@@ -547,13 +548,7 @@ function LaneConversation({
         inbox.find((entry) => entry.interaction.itemId === item.id)?.interaction.id ?? null,
       resolve: (interactionId, resolution) => controller.resolve(bot.id, interactionId, resolution),
       imageSource: (imageId) => controller.source.imageSource(bot.id, imageId, laneId),
-      files: {
-        serverId: controller.source.serverId,
-        botId: bot.id,
-        demo: active?.id === DEMO_SERVER.id,
-        source: (fileId) => controller.source.fileSource(bot.id, fileId),
-        check: (fileId) => controller.source.call('botFileMeta', { params: { id: bot.id, fileId } }),
-      },
+      files: botFileAccess(controller, bot.id, active?.id === DEMO_SERVER.id),
       // A run can open a thread with another bot: its card leads there too.
       lanes: {
         runs: supported.runs,

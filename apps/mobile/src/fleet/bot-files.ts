@@ -1,4 +1,5 @@
 import type { FleetFileRef } from '@maestrly/bot-fleet-protocol'
+import type { FilesState } from './state'
 
 export type BotFileKind = 'video' | 'image' | 'other'
 
@@ -39,4 +40,10 @@ const safe = (value: string) => value.replace(/[^\w.-]+/g, '_').replace(/^\.+/, 
 export function cachedFilePath(serverId: string, botId: string, fileId: string, name: string): string {
   const file = safe(name).slice(-NAME_MAX) || 'file'
   return ['bot-files', safe(serverId) || 'server', safe(botId) || 'bot', safe(fileId) || 'id', file].join('/')
+}
+
+const NONE: ReadonlySet<string> = new Set()
+/** The files a bot deleted lately, so their cards in its conversations say so. */
+export function removedFileIds(files: FilesState | undefined): ReadonlySet<string> {
+  return files?.list?.removed.length ? new Set(files.list.removed.map((entry) => entry.id)) : NONE
 }

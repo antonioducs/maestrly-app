@@ -21,6 +21,7 @@ import { NewChat } from '../ui/chat/NewChat'
 import { Composer } from '../ui/composer/Composer'
 import { LockedNotice } from '../ui/composer/LockedNotice'
 import { ConnectionBanner } from '../ui/ConnectionBanner'
+import { botFileAccess } from '../ui/conversation/bot-file-fetch'
 import { BotTitle, ChatTitle, ConversationHeader, NewChatTitle } from '../ui/conversation/ConversationHeader'
 import { ConversationContext, type ConversationContextValue, type LanesAccess } from '../ui/conversation/CueCard'
 import { ConversationSearchContext, useConversationSearch } from '../ui/conversation/ConversationSearch'
@@ -162,13 +163,7 @@ function BotConversation({ bot }: { bot: FleetBot }) {
       sendMessage: async (text: string) => {
         await controller.send(bot.id, text, [])
       },
-      files: {
-        serverId: controller.source.serverId,
-        botId: bot.id,
-        demo: active?.id === DEMO_SERVER.id,
-        source: (fileId) => controller.source.fileSource(bot.id, fileId),
-        check: (fileId) => controller.source.call('botFileMeta', { params: { id: bot.id, fileId } }),
-      },
+      files: botFileAccess(controller, bot.id, active?.id === DEMO_SERVER.id),
       ...(edit ? { edit } : {}),
       ...(lanes ? { lanes } : {}),
     }),
