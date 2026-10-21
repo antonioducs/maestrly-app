@@ -14,6 +14,7 @@ import { acceptPeerOverview, usePeerOverview } from '@/lib/peer/use-peer-overvie
 import type { SettingsRequest } from '@/lib/use-settings'
 import { cn } from '@/lib/utils'
 import { ConnectComputerDialog } from './ConnectComputerDialog'
+import { PeerPortSetting } from './PeerPortSetting'
 
 /** What each system is called, in any language. */
 const OS_LABEL = { mac: 'macOS', win: 'Windows', linux: 'Linux' } as const
@@ -185,6 +186,7 @@ export function ComputersSection({
             className="h-8 w-56 shrink-0"
           />
         </div>
+        <PeerPortSetting overview={overview} />
       </section>
 
       <section className="flex flex-col gap-3 border-t border-border pt-6">

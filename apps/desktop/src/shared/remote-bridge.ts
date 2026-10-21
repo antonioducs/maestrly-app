@@ -84,4 +84,6 @@ export const REMOTE_BRIDGE_CLOSE = {
   removed: 4010,
   /** The host's owner disconnected this computer for now; it stays paired and may connect again when asked. */
   disconnected: 4011,
+  /** The host now listens on another port, which the close reason carries: this computer reconnects there. */
+  moved: 4012,
 } as const

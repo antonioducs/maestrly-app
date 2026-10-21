@@ -400,7 +400,8 @@ next time it needs one, and every computer must pair with it again.
 addresses and port it was last reached at, color, when it was paired and last seen, whether it shares itself, and the
 SHA-256 hash of the token this computer issued it. The token this computer uses to reach each one is
 `peer.token.<deviceId>`, encrypted through the keyring. `peer.hosting` records whether **Let my other computers use
-this computer** is on. **Remove** deletes a computer's record and token.
+this computer** is on, and `peer.port` the port chosen under **Advanced**, empty for the default. **Remove** deletes a
+computer's record and token.
 
 While another computer uploads a file to this one, the partial file is a hidden `.maestrly-upload-<id>.part` next to
 the destination, and its record is under `host-file-uploads/` in this computer's profile; an upload untouched for 7

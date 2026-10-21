@@ -260,6 +260,8 @@ describe('preload API — exposure', () => {
   it("forwards Settings → Computers and the pairing dialogs to this computer's peer channels", async () => {
     await api.peerOverview()
     await api.peerSetHosting(true)
+    await api.peerSetPort(7700)
+    await api.peerSetPort(null)
     await api.peerRename('Mac mini')
     await api.peerRemove('device')
     await api.peerDisconnect('device')
@@ -271,6 +273,8 @@ describe('preload API — exposure', () => {
     expect(invokeSpy.mock.calls).toEqual([
       ['peer:overview'],
       ['peer:set-hosting', true],
+      ['peer:set-port', 7700],
+      ['peer:set-port', null],
       ['peer:rename', 'Mac mini'],
       ['peer:remove', 'device'],
       ['peer:disconnect', 'device'],
@@ -393,7 +397,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(656)
+    expect(keys).toHaveLength(657)
     expect(keys.sort()).toMatchSnapshot()
   })
 

@@ -60,7 +60,7 @@ The machine switcher shows a paired computer with a laptop icon and one of these
 | **Online**, or what its conversations are doing | Connected. | — |
 | **Connecting…** or **Reconnecting…** | The connection is being opened, or dropped and is being opened again. Work on that computer continues. | Wait, or use **Try again**. |
 | **Not connected** | The computer is asleep, off, or out of reach. | Wake it. Away from home, both computers need Tailscale. |
-| **Not shared** | The computer is reachable but does not let other computers use it now. | Turn on **Let my other computers use this computer** on it. |
+| **Not shared** | The computer is reachable but does not let other computers use it now, or listens on another port than the one this computer knows. | Turn on **Let my other computers use this computer** on it. If its port changed while this computer was off, pair again with its new address. |
 | **Disconnected** | The computer disconnected this one. They stay paired. | **Reconnect**. |
 | **Removed this computer** | The computer removed this one. | **Pair again**, or **Remove** it here. |
 | **Pair again** | The computer answered with another identity than the one paired: it was reinstalled, or something sits in between. | Pair again, with a code shown on that computer. |
@@ -72,6 +72,14 @@ The computers reach each other on TCP port `7690`. When another program holds th
 nine and shows it in **Settings → Computers**. Allow incoming connections to Maestrly in the computer's firewall when
 it asks.
 
+To use another port, open **Advanced** in **Settings → Computers**, type a port from 1024 to 65535, and choose **Use
+port**; **Use the default port** goes back. A chosen port is used exactly: when another program holds it, nothing
+changes and Settings says so. The paired computers keep the port they last knew. The ones connected when you change it
+are told the new one and reconnect there; one that was off or asleep shows **Not shared**, and pairs again with the new
+address, through **Connect a computer…**. For the same reason, a computer that had to take one of the next ports at
+startup is out of reach of the others until it gets its own port back: choose a port under **Advanced** to keep it
+fixed.
+
 Some networks keep their devices apart, such as guest, hotel, or corporate Wi-Fi. Use Tailscale there: install it on
 both computers and type the Tailscale name of the computer to use.
 
@@ -81,7 +89,6 @@ requests a minute.
 ## Not available yet
 
 - **Finding computers on the network.** Type the address the other computer shows.
-- **Choosing the port.**
 - **The Browser on a Linux computer**, and a conversation's **Computer** tab on any paired computer.
 
 ## Security

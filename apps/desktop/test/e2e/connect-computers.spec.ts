@@ -2,7 +2,7 @@ import { mkdtemp, realpath, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { _electron as electron, type ElectronApplication, expect, type Page, test } from '@playwright/test'
-import { desktop, instanceEnv } from './helpers/remote-host'
+import { desktop, freePort, instanceEnv } from './helpers/remote-host'
 
 /** A desktop of the owner in normal mode, with a profile of its own, past its first-run screen. */
 async function launch(profile: string, instance: string) {
@@ -125,8 +125,23 @@ test('connect computers: pair by code, see who uses this computer, disconnect an
     await notice.getByRole('button', { name: 'Reconnect', exact: true }).click()
     await expect(chip).toContainText('In use by Laptop')
 
-    // A removes B: B is cut off at once and offers to pair again.
+    // A moves to a port the owner chooses: B, connected, follows it there.
     await openComputers(onA.page)
+    const moved = await freePort()
+    await onA.page.getByRole('button', { name: 'Advanced', exact: true }).click()
+    await onA.page.getByLabel('Port').fill(String(moved))
+    await onA.page.getByRole('button', { name: 'Use port', exact: true }).click()
+    await expect.poll(async () => (await onA.api('peerOverview')).port).toBe(moved)
+    await expect(onA.page.locator('[data-peer-visible]')).toContainText(`:${moved}`)
+    await expect
+      .poll(async () => ((await onB.api('peerOverview')).computers as Array<{ address: string }>)[0]?.address)
+      .toBe(`127.0.0.1:${moved}`)
+    await expect
+      .poll(async () => (await onB.api('hostsList')).find((host: { id: string }) => host.id === studioHost)?.state)
+      .toBe('online')
+    await expect(onA.page.locator('[data-peer-computer]')).toContainText('Using this computer since')
+
+    // A removes B: B is cut off at once and offers to pair again.
     await expect(onA.page.locator('[data-peer-computer]')).toContainText('Laptop')
     await onA.page.getByRole('button', { name: 'Remove Laptop', exact: true }).click()
     await expect(onA.page.getByRole('dialog')).toContainText('Laptop stops using this computer at once')

@@ -108,6 +108,13 @@ export class PeerStore {
     this.write(records.map((item) => (item.deviceId === deviceId ? { ...item, hosting: true } : item)))
   }
 
+  /** Keeps the port a paired computer said it moved to. */
+  setPort(deviceId: string, port: number): void {
+    const records = this.list()
+    if (!records.some((item) => item.deviceId === deviceId && item.port !== port)) return
+    this.write(records.map((item) => (item.deviceId === deviceId ? { ...item, port } : item)))
+  }
+
   /** Keeps the name a paired computer now gives itself. */
   rename(deviceId: string, name: string): void {
     const records = this.list()

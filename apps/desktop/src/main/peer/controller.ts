@@ -8,6 +8,7 @@ import {
   type PeerConnectStart,
   type PeerOverview,
   type PeerPairingPromptView,
+  type PeerSetPortResult,
 } from '../../shared/peer'
 import type { RemoteOs } from '../../shared/remote-bridge'
 import type { PeerHosting } from './hosting'
@@ -29,7 +30,15 @@ const FORGET_TIMEOUT_MS = 5_000
 
 export type PeerHostingControls = Pick<
   PeerHosting,
-  'enabled' | 'setEnabled' | 'listeningPort' | 'error' | 'connected' | 'connectedSince' | 'disconnect'
+  | 'enabled'
+  | 'setEnabled'
+  | 'listeningPort'
+  | 'chosenPort'
+  | 'setPort'
+  | 'error'
+  | 'connected'
+  | 'connectedSince'
+  | 'disconnect'
 > & { pairings: Pick<PeerHosting['pairings'], 'pausedUntil' | 'cancel'> }
 
 export interface PeerControllerDeps {
@@ -100,6 +109,7 @@ export class PeerController {
       name: this.deps.name(),
       hosting: enabled,
       port,
+      chosenPort: hosting?.chosenPort() ?? null,
       hostingError: enabled ? (hosting?.error() ?? null) : null,
       addresses: port === null ? [] : this.deps.localAddresses(),
       pairingPausedUntil: hosting?.pairings.pausedUntil() ?? null,
@@ -119,6 +129,13 @@ export class PeerController {
   async setHosting(on: boolean): Promise<PeerOverview> {
     await this.deps.hosting()?.setEnabled(on)
     return this.overview()
+  }
+
+  /** Keeps the port the owner chose, or the default for null; the port stays as it was when it cannot be taken. */
+  async setPort(port: number | null): Promise<PeerSetPortResult> {
+    const hosting = this.deps.hosting()
+    const error = hosting ? await hosting.setPort(port) : 'failed'
+    return { overview: this.overview(), error }
   }
 
   rename(name: string): PeerOverview {

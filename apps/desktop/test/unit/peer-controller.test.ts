@@ -232,4 +232,15 @@ describe('Settings → Computers', () => {
     expect(a.onChange).not.toHaveBeenCalled()
     expect(await a.controller.setHosting(false)).toMatchObject({ hosting: false, port: null, addresses: [] })
   })
+
+  it('keeps the port the owner chose, and says why it did not', async () => {
+    const a = computer(testIdentity('A'))
+    expect(a.controller.overview().chosenPort).toBeNull()
+    await expect(a.controller.setPort(80)).resolves.toMatchObject({ error: 'invalid', overview: { chosenPort: null } })
+    await expect(a.controller.setPort(47_123)).resolves.toMatchObject({
+      error: null,
+      overview: { chosenPort: 47_123, port: null },
+    })
+    await expect(a.controller.setPort(null)).resolves.toMatchObject({ error: null, overview: { chosenPort: null } })
+  })
 })

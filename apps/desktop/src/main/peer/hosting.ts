@@ -3,14 +3,21 @@ import type { AddressInfo } from 'node:net'
 import type { HostFilesRoutes } from '../fleet/instance/host-files-http'
 import type { EditorRoutes } from '../fleet/instance/server'
 import { RemoteUiHub, type RemoteUiHubDeps } from '../remote-host/server/remote-ui-hub'
-import { PEER_DEFAULT_PORT, type PeerGrant, type PeerPairingRequest } from '../../shared/peer'
-import type { RemoteOs } from '../../shared/remote-bridge'
+import {
+  isPeerPort,
+  PEER_DEFAULT_PORT,
+  type PeerGrant,
+  type PeerPairingRequest,
+  type PeerPortError,
+} from '../../shared/peer'
+import { REMOTE_BRIDGE_CLOSE, type RemoteOs } from '../../shared/remote-bridge'
 import type { PeerIdentity, PeerStorage } from './identity'
 import { HostPairings, type PairingPrompt, PeerPairingError } from './pairing-host'
 import { createPeerServer } from './server'
 import { issueToken, newPeerRecord, type PeerStore } from './store'
 
 const HOSTING_KEY = 'peer.hosting'
+const PORT_KEY = 'peer.port'
 const AWAKE_KEY = 'peer-sessions'
 const NEXT_PORTS = 9
 const HOST_FILES_SWEEP_MS = 60 * 60 * 1_000
@@ -31,13 +38,15 @@ export interface PeerHostingDeps {
   onPrompt(prompt: PairingPrompt): void
   /** Hosting, its port, or the computers using this one changed. */
   onChange(): void
+  /** Where the peer server listens without a port the owner chose; port 0 lets the system choose. */
   bind?: { host: string; port: number }
   now?(): number
 }
 
-/** Listens on `port`, or on one of the next ports when it is taken; port 0 lets the system choose. */
-async function listenFrom(server: https.Server, host: string, first: number): Promise<number> {
-  for (let offset = 0; offset <= (first === 0 ? 0 : NEXT_PORTS); offset++) {
+/** Listens on `first`, or on one of the `next` ports after it when it is taken; port 0 lets the system choose. */
+async function listenFrom(server: https.Server, host: string, first: number, next: number): Promise<number> {
+  const last = first === 0 ? 0 : next
+  for (let offset = 0; offset <= last; offset++) {
     try {
       await new Promise<void>((resolve, reject) => {
         server.once('error', reject)
@@ -48,11 +57,16 @@ async function listenFrom(server: https.Server, host: string, first: number): Pr
       })
       return (server.address() as AddressInfo).port
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EADDRINUSE' || first === 0) throw error
+      if ((error as NodeJS.ErrnoException).code !== 'EADDRINUSE' || offset === last) throw error
     }
   }
   throw new Error('No free port for the peer server.')
 }
+
+const portError = (error: unknown): PeerPortError =>
+  (error as NodeJS.ErrnoException).code === 'EADDRINUSE' ? 'in-use' : 'failed'
+
+type Bound = { server: https.Server; port: number } | { error: unknown }
 
 /**
  * This desktop shared with the owner's other computers: while the owner keeps it on, a peer server takes pairings
@@ -96,6 +110,36 @@ export class PeerHosting {
 
   listeningPort(): number | null {
     return this.port
+  }
+
+  /** The port the owner chose; null for the default, or one of the next ports when another program holds it. */
+  chosenPort(): number | null {
+    const port = Number(this.deps.storage.get(PORT_KEY) || Number.NaN)
+    return isPeerPort(port) ? port : null
+  }
+
+  /**
+   * Keeps the port the owner chose, or the default for null. While sharing is on, the peer server takes the new port
+   * before it leaves the old one: when it cannot, nothing changes and the reason is returned. The computers using this
+   * one are told the new port as their sessions close, and reconnect there.
+   */
+  async setPort(port: number | null): Promise<PeerPortError | null> {
+    if (port !== null && !isPeerPort(port)) return 'invalid'
+    if (port === this.chosenPort()) return null
+    const identity = this.deps.identity()
+    // Already where it would go: the server stays rather than fail to take the port it holds itself.
+    const stays = this.port !== null && this.port === (port ?? (this.deps.bind ? null : PEER_DEFAULT_PORT))
+    if (this.enabled() && identity && !stays) {
+      const bound = await this.bind(identity, port)
+      if ('error' in bound) return portError(bound.error)
+      this.deps.storage.set(PORT_KEY, port === null ? '' : String(port))
+      if (this.server) await this.move(bound)
+      else this.adopt(bound)
+    } else {
+      this.deps.storage.set(PORT_KEY, port === null ? '' : String(port))
+    }
+    this.deps.onChange()
+    return null
   }
 
   /** The paired computers using this one now. */
@@ -156,6 +200,16 @@ export class PeerHosting {
     if (this.server) return
     const identity = this.deps.identity()
     if (!identity) return
+    const bound = await this.bind(identity, this.chosenPort())
+    if ('error' in bound) {
+      this.failure = bound.error instanceof Error ? bound.error.message : String(bound.error)
+      return
+    }
+    this.adopt(bound)
+  }
+
+  /** A peer server listening on the port the owner chose, exactly, or on the default or one of the next ports. */
+  private async bind(identity: PeerIdentity, chosen: number | null): Promise<Bound> {
     const server = createPeerServer({
       identity,
       name: () => this.deps.identity()?.name ?? identity.name,
@@ -170,19 +224,39 @@ export class PeerHosting {
     })
     const bind = this.deps.bind ?? { host: '0.0.0.0', port: PEER_DEFAULT_PORT }
     try {
-      this.port = await listenFrom(server, bind.host, bind.port)
+      const port =
+        chosen === null
+          ? await listenFrom(server, bind.host, bind.port, NEXT_PORTS)
+          : await listenFrom(server, bind.host, chosen, 0)
+      return { server, port }
     } catch (error) {
-      this.failure = error instanceof Error ? error.message : String(error)
-      return
+      return { error }
     }
+  }
+
+  private adopt(bound: { server: https.Server; port: number }): void {
     this.failure = null
-    this.server = server
+    this.server = bound.server
+    this.port = bound.port
     this.known = new Set(this.deps.store.list().map((record) => record.deviceId))
     this.stopStore = this.deps.store.onChange(() => this.dropRemoved())
     void this.deps.hostFiles.sweep().catch(() => undefined)
     // Folder archives are whole copies of folders: the ones nobody reads go within the day.
     this.sweepTimer = setInterval(() => void this.deps.hostFiles.sweep().catch(() => undefined), HOST_FILES_SWEEP_MS)
     this.sweepTimer.unref?.()
+  }
+
+  /** Leaves the old port for a server that already listens on the new one; the store and sweep stay as they were. */
+  private async move(bound: { server: https.Server; port: number }): Promise<void> {
+    const old = this.server
+    this.server = bound.server
+    this.port = bound.port
+    this.failure = null
+    this.hub.closeAll(REMOTE_BRIDGE_CLOSE.moved, String(bound.port))
+    this.deps.editor.closeAll()
+    if (!old) return
+    old.closeAllConnections()
+    await new Promise<void>((resolve) => old.close(() => resolve()))
   }
 
   private async close(): Promise<void> {

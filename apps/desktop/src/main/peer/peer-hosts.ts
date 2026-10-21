@@ -1,6 +1,6 @@
 import { FLEET_INSTANCE_BRIDGE_PATH, FLEET_PROTOCOL_HEADER, FLEET_PROTOCOL_VERSION } from '@maestrly/bot-fleet-protocol'
 import { WebSocket, type ClientOptions } from 'ws'
-import { PEER_PATHS, type PeerProblem } from '../../shared/peer'
+import { isPeerPort, PEER_PATHS, type PeerProblem } from '../../shared/peer'
 import { REMOTE_BRIDGE_CLOSE, REMOTE_BRIDGE_LIMITS } from '../../shared/remote-bridge'
 import type { BridgeClientSocket } from '../remote-host/client/host-connection'
 import { PeerUnreachable, reachPeer } from './dial'
@@ -17,7 +17,7 @@ export interface PeerEndpoint {
 }
 
 export interface PeerHostsDeps {
-  store: Pick<PeerStore, 'list' | 'get' | 'tokenFor' | 'touch' | 'rename' | 'markHosting' | 'onChange'>
+  store: Pick<PeerStore, 'list' | 'get' | 'tokenFor' | 'touch' | 'rename' | 'markHosting' | 'setPort' | 'onChange'>
   reach?: (candidates: string[], port: number, certPem: string) => Promise<string>
   openSocket?: (url: string, options: ClientOptions) => WebSocket
   /** What a paired computer says about itself now, over its pinned certificate. */
@@ -118,9 +118,14 @@ export class PeerHosts {
       this.setProblem(deviceId, null)
     })
     // Registered before the connection's own listener: a held computer is not dialed again on its way out.
-    socket.on('close', (code) => {
+    socket.on('close', (code, reason) => {
       if (code === REMOTE_BRIDGE_CLOSE.disconnected) this.setProblem(deviceId, 'disconnected')
       else if (code === REMOTE_BRIDGE_CLOSE.removed) this.setProblem(deviceId, 'removed')
+      else if (code === REMOTE_BRIDGE_CLOSE.moved) {
+        // Said over the pinned connection: the computer is still known by its certificate at the new port.
+        const port = Number(String(reason))
+        if (/^\d+$/.test(String(reason)) && isPeerPort(port)) this.deps.store.setPort(deviceId, port)
+      }
     })
     return socket as unknown as BridgeClientSocket
   }

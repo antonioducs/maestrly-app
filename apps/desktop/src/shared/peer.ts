@@ -3,6 +3,10 @@ import type { RemoteOs } from './remote-bridge'
 
 /** The port a computer's peer server tries first. */
 export const PEER_DEFAULT_PORT = 7690
+/** The lowest port the owner may choose: lower ones need administrator rights on macOS and Linux. */
+export const PEER_PORT_MIN = 1024
+export const isPeerPort = (port: unknown): port is number =>
+  Number.isInteger(port) && (port as number) >= PEER_PORT_MIN && (port as number) <= 65535
 /** How long a pairing code stays valid on the computer that shows it. */
 export const PEER_CODE_TTL_MS = 120_000
 const PEER_HOST_PREFIX = 'peer/'
@@ -113,6 +117,8 @@ export interface PeerOverview {
   hosting: boolean
   /** The port the peer server listens on, while it does. */
   port: number | null
+  /** The port the owner chose for it; null for the default, which moves to a next one when another program holds it. */
+  chosenPort: number | null
   /** Why sharing is on and the peer server does not listen. */
   hostingError: string | null
   /** Where the owner's other computers may reach this one. */
@@ -122,6 +128,13 @@ export interface PeerOverview {
   computers: PeerComputerView[]
   /** The pairing another computer asked for, while the owner may still see it. */
   prompt: PeerPairingPromptView | null
+}
+
+/** Why the port the owner chose was not kept: out of range, held by another program, or refused by the system. */
+export type PeerPortError = 'invalid' | 'in-use' | 'failed'
+export interface PeerSetPortResult {
+  overview: PeerOverview
+  error: PeerPortError | null
 }
 
 export type PeerConnectError = PeerPairingErrorCode | 'unreachable' | 'address'

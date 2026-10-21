@@ -1046,6 +1046,19 @@ export default {
       paused: 'Novos pareamentos estão pausados até {{time}}, depois de códigos errados demais.',
       nameTitle: 'Nome deste computador',
       nameDesc: 'É como ele aparece nos seus outros computadores.',
+      advanced: 'Avançado',
+      portTitle: 'Porta',
+      portDesc:
+        'Por onde seus outros computadores chegam a este. Vazio usa {{port}}, ou uma das portas seguintes quando outro programa a ocupa.',
+      portApply: 'Usar porta',
+      portDefault: 'Usar a porta padrão, {{port}}',
+      portHelp:
+        'Uma porta escolhida é usada exatamente. Trocá-la fecha o que seus outros computadores têm aberto aqui: os conectados agora seguem para a porta nova, e um que estiver desligado ou dormindo pareia de novo depois, pelo endereço novo.',
+      portErrors: {
+        invalid: 'Digite uma porta de {{min}} a 65535, ou deixe vazio para usar a padrão.',
+        inUse: 'Outro programa usa a porta {{port}}. Nada mudou.',
+        failed: 'Este computador não conseguiu escutar na porta {{port}}. Nada mudou.',
+      },
       pairedTitle: 'Computadores pareados',
       pairedDesc: 'Um pareamento vale para os dois sentidos: cada computador usa o outro enquanto esse outro deixa.',
       connect: 'Conectar a um computador…',

@@ -720,8 +720,11 @@ for ten years, whose private key only the OS keyring holds.
 - **Sharing is off until the owner turns it on**, in **Settings → Computers**,
   where the setting says what a paired computer can do. While it is on, the
   peer server listens on every network interface on TCP port 7690, or on one
-  of the next nine when that port is taken; turning it off closes the server
-  and every session on it.
+  of the next nine when that port is taken, or exactly on the port from 1024
+  to 65535 the owner chose; turning it off closes the server and every
+  session on it. Changing the port closes the sessions with a code that
+  carries the new port, which the paired computer accepts only over the
+  connection pinned to that computer's certificate.
 - **A paired computer controls this one as its own window does.** Over the
   bridge it calls this computer's IPC handlers: it reads and writes the files
   of the home folder, runs commands in terminals, uses the profile's model

@@ -1038,6 +1038,19 @@ export default {
       paused: 'New pairings are paused until {{time}}, after too many wrong codes.',
       nameTitle: 'This computer’s name',
       nameDesc: 'How it shows on your other computers.',
+      advanced: 'Advanced',
+      portTitle: 'Port',
+      portDesc:
+        'Where your other computers reach this one. Empty uses {{port}}, or one of the next ports when another program holds it.',
+      portApply: 'Use port',
+      portDefault: 'Use the default port, {{port}}',
+      portHelp:
+        'A chosen port is used exactly. Changing it closes what your other computers have open here: the ones connected now follow it to the new port, and one that is off or asleep pairs again later, at the new address.',
+      portErrors: {
+        invalid: 'Type a port from {{min}} to 65535, or leave it empty for the default.',
+        inUse: 'Another program uses port {{port}}. Nothing changed.',
+        failed: 'This computer could not listen on port {{port}}. Nothing changed.',
+      },
       pairedTitle: 'Paired computers',
       pairedDesc: 'One pairing works both ways: each computer uses the other while that one lets it.',
       connect: 'Connect a computer…',

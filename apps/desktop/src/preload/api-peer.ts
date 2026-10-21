@@ -1,5 +1,5 @@
 import { ipcRenderer } from 'electron'
-import type { PeerConnectFinish, PeerConnectStart, PeerOverview } from '../shared/peer'
+import type { PeerConnectFinish, PeerConnectStart, PeerOverview, PeerSetPortResult } from '../shared/peer'
 
 export type {
   PeerComputerView,
@@ -8,6 +8,8 @@ export type {
   PeerConnectStart,
   PeerOverview,
   PeerPairingPromptView,
+  PeerPortError,
+  PeerSetPortResult,
 } from '../shared/peer'
 
 /** This computer among the owner's computers: never routed to another host. */
@@ -19,6 +21,8 @@ export const peerApi = {
     return () => ipcRenderer.removeListener('peer:changed', listener)
   },
   peerSetHosting: (on: boolean): Promise<PeerOverview> => ipcRenderer.invoke('peer:set-hosting', on),
+  /** The port the other computers reach this one at; null for the default. */
+  peerSetPort: (port: number | null): Promise<PeerSetPortResult> => ipcRenderer.invoke('peer:set-port', port),
   peerRename: (name: string): Promise<PeerOverview> => ipcRenderer.invoke('peer:rename', name),
   peerRemove: (deviceId: string): Promise<PeerOverview> => ipcRenderer.invoke('peer:remove', deviceId),
   /** Ends what a paired computer has open on this one; it stays paired. */

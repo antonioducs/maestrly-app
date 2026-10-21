@@ -336,7 +336,7 @@ export class RemoteUiHub {
     }
   }
 
-  closeAll(): void {
-    for (const session of [...this.sessions]) session.close(1001, 'host-stopping')
+  closeAll(code = 1001, reason = 'host-stopping'): void {
+    for (const session of [...this.sessions]) session.close(code, reason)
   }
 }

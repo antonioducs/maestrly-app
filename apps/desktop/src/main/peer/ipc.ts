@@ -67,6 +67,11 @@ export function registerPeerIpc(reg: IpcRegistrar): void {
     if (typeof on !== 'boolean') throw new Error('Invalid argument')
     return controller.setHosting(on)
   })
+  reg.mhandle('peer:set-port', (event, port: unknown) => {
+    local(event)
+    if (port !== null && !Number.isInteger(port)) throw new Error('Invalid argument')
+    return controller.setPort(port as number | null)
+  })
   reg.mhandle('peer:rename', (event, name: unknown) => {
     local(event)
     return controller.rename(text(name))
