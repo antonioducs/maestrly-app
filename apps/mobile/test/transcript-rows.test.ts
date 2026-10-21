@@ -1,6 +1,6 @@
 import type { FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
 import { describe, expect, it } from 'vitest'
-import { toolHeadline, toolSummary, transcriptRows } from '../src/fleet/transcript-rows'
+import { rowFileIds, toolHeadline, toolSummary, transcriptRows } from '../src/fleet/transcript-rows'
 import { translator } from '../src/i18n/translate'
 
 const text = translator('en')
@@ -155,5 +155,21 @@ describe('transcript rows', () => {
     expect(rows.map(label)).toEqual(['files:t2', 'activity:t1'])
     const files = rows[0]
     expect(files.kind === 'files' && files.files.map((item) => item.name)).toEqual(['walkthrough.mp4'])
+  })
+
+  it('names the files a row shows, so a file can be found in the conversation', () => {
+    const file = (id: string) => ({ id, name: `${id}.pdf`, mediaType: 'application/pdf', byteSize: 10 })
+    const sent: FleetTranscriptItem = { ...user('u-files'), files: [file('mine')] } as FleetTranscriptItem
+    const rows = transcriptRows([
+      sent,
+      tool('share', 'share_file', { files: [file('f-1'), file('f-2')] }),
+      tool('read', 'read'),
+      said('a1'),
+    ])
+    const byLabel = Object.fromEntries(rows.map((row) => [label(row), rowFileIds(row)]))
+    expect(byLabel['u-files']).toEqual(['mine'])
+    expect(byLabel['files:share']).toEqual(['f-1', 'f-2'])
+    expect(byLabel.a1).toEqual([])
+    expect(byLabel['activity:read']).toEqual([])
   })
 })

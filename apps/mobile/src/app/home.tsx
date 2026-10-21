@@ -25,6 +25,7 @@ import { botFileAccess } from '../ui/conversation/bot-file-fetch'
 import { BotTitle, ChatTitle, ConversationHeader, NewChatTitle } from '../ui/conversation/ConversationHeader'
 import { ConversationContext, type ConversationContextValue, type LanesAccess } from '../ui/conversation/CueCard'
 import { ConversationSearchContext, useConversationSearch } from '../ui/conversation/ConversationSearch'
+import { fileRevealKey, useFileReveal } from '../ui/conversation/file-reveal'
 import { Transcript } from '../ui/conversation/Transcript'
 import { Drawer } from '../ui/drawer/Drawer'
 import { DrawerPanel } from '../ui/drawer/DrawerPanel'
@@ -145,6 +146,11 @@ function BotConversation({ bot }: { bot: FleetBot }) {
   useEffect(() => {
     if (search.open) setPane('conversation')
   }, [search.open])
+  // So does a file its Files sheet shows there.
+  const reveal = useFileReveal(fileRevealKey(controller.source.serverId, bot.id))
+  useEffect(() => {
+    if (reveal) setPane('conversation')
+  }, [reveal])
   const choosePane = (next: LanePane) => {
     if (next !== 'conversation') search.setOpen(false)
     setPane(next)

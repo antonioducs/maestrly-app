@@ -1,7 +1,7 @@
 import type { MobileChatItem } from '@maestrly/bot-fleet-protocol'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ActivityIndicator, FlatList, Pressable, View } from 'react-native'
-import { transcriptRows, withExtras, type TranscriptRow } from '../../fleet/transcript-rows'
+import { rowFileIds, transcriptRows, withExtras, type TranscriptRow } from '../../fleet/transcript-rows'
 import { searchRows } from '../../fleet/transcript-search'
 import { useI18n } from '../../i18n'
 import { useTheme } from '../../theme/ThemeProvider'
@@ -98,6 +98,8 @@ export function ConversationList({
   onLoadOlder,
   hasOlder = false,
   top,
+  reveal = null,
+  onRevealed,
 }: {
   items: MobileChatItem[]
   extras: ExtraRow[]
@@ -109,6 +111,10 @@ export function ConversationList({
   /** Older pages wait to be loaded. */
   hasOlder?: boolean
   top?: ReactNode
+  /** A file to scroll to and highlight, loading older pages until it shows. */
+  reveal?: string | null
+  /** The file to reveal was found, or is not in the conversation at all. */
+  onRevealed?: (found: boolean) => void
 }) {
   const { palette } = useTheme()
   const { t } = useI18n()
@@ -153,6 +159,34 @@ export function ConversationList({
     if (current === null) return
     list.current?.scrollToIndex({ index: current, viewPosition: 0.5, animated: !reduced })
   }, [current, reduced])
+
+  const revealIndex = useMemo(
+    () => (reveal ? data.findIndex((row) => row.kind !== 'extra' && rowFileIds(row).includes(reveal)) : -1),
+    [reveal, data]
+  )
+  const [flash, setFlash] = useState<string | null>(null)
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(
+    () => () => {
+      if (flashTimer.current) clearTimeout(flashTimer.current)
+    },
+    []
+  )
+  useEffect(() => {
+    if (!reveal || !loaded) return
+    if (revealIndex >= 0) {
+      list.current?.scrollToIndex({ index: revealIndex, viewPosition: 0.5, animated: !reduced })
+      const key = rowKey(data[revealIndex]!)
+      setFlash(key)
+      if (flashTimer.current) clearTimeout(flashTimer.current)
+      flashTimer.current = setTimeout(() => setFlash((value) => (value === key ? null : value)), 1800)
+      onRevealed?.(true)
+    } else if (!loadingOlder) {
+      if (hasOlder) onLoadOlder()
+      else onRevealed?.(false)
+    }
+  }, [reveal, revealIndex, loaded, loadingOlder, hasOlder])
+
   const older = () => {
     if (cursor < matches.length - 1) return setCursor(cursor + 1)
     if (!hasOlder) return
@@ -209,9 +243,23 @@ export function ConversationList({
         }}
         scrollEventThrottle={64}
         keyExtractor={rowKey}
-        extraData={current}
+        extraData={[current, flash]}
         renderItem={({ item, index }) =>
-          index === current ? (
+          index !== current && flash !== null && rowKey(item) === flash ? (
+            <View
+              style={{
+                marginHorizontal: -8,
+                marginVertical: -8,
+                paddingHorizontal: 6,
+                paddingVertical: 6,
+                borderRadius: 18,
+                borderWidth: 2,
+                borderColor: palette.brass,
+              }}
+            >
+              <RowView row={item} found={false} />
+            </View>
+          ) : index === current ? (
             <View
               style={{
                 marginHorizontal: -10,

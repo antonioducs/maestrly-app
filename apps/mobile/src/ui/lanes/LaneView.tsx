@@ -8,7 +8,7 @@ import {
 } from '@maestrly/bot-fleet-protocol'
 import { router } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { ActivityIndicator, KeyboardAvoidingView, Pressable, type TextInputInstance, View } from 'react-native'
+import { ActivityIndicator, Alert, KeyboardAvoidingView, Pressable, type TextInputInstance, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { LaneConflictError } from '../../fleet/controller'
 import { formatDateTime } from '../../fleet/format'
@@ -35,6 +35,7 @@ import { confirm } from '../confirm'
 import { botFileAccess } from '../conversation/bot-file-fetch'
 import { ConversationList, type ExtraRow } from '../conversation/ConversationList'
 import { ConversationContext, shownError, type ConversationContextValue } from '../conversation/CueCard'
+import { clearFileReveal, fileRevealKey, useFileReveal } from '../conversation/file-reveal'
 import { Icon } from '../icons'
 import { Button } from '../primitives/Button'
 import { Cell } from '../primitives/Cell'
@@ -530,6 +531,8 @@ function LaneConversation({
   )
   const kind = lane.kind
   const laneId = lane.id
+  const revealKey = fileRevealKey(controller.source.serverId, bot.id, laneId)
+  const reveal = useFileReveal(revealKey)
   useEffect(() => {
     if (!own) return
     void controller.openLane(bot.id, { kind, id: laneId })
@@ -595,6 +598,11 @@ function LaneConversation({
         emptyText={t('lanes.empty')}
         onLoadOlder={() => controller.loadOlderLane(bot.id, { kind, id: laneId })}
         hasOlder={!!transcript?.before}
+        reveal={reveal}
+        onRevealed={(found) => {
+          clearFileReveal(revealKey)
+          if (!found) Alert.alert(t('files.title'), t('files.notFound'))
+        }}
       />
     )
   return (
