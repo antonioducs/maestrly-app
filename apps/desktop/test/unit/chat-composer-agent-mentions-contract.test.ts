@@ -297,6 +297,23 @@ describe('structured draft and queue occurrence contract', () => {
     )
   })
 
+  it('gives the message shown at send or edit the id user-saved reports', () => {
+    const editSrc = chatViewSource.slice(
+      chatViewSource.indexOf('const submitEdit = useCallback'),
+      chatViewSource.indexOf('const contextRatio = useMemo')
+    )
+    const doSendSrc = chatViewSource.slice(
+      chatViewSource.indexOf('const doSend = useCallback'),
+      chatViewSource.indexOf('const finishTurn = useCallback')
+    )
+    // An edit names the message by id: a bubble left under its provisional id would cut nothing.
+    expect(editSrc.indexOf('optimisticSentRef.current = optimisticId')).toBeGreaterThan(-1)
+    expect(editSrc.indexOf('optimisticSentRef.current = optimisticId')).toBeLessThan(editSrc.indexOf('api.chatResend('))
+    expect(doSendSrc.indexOf('optimisticSentRef.current = optimisticId')).toBeGreaterThan(-1)
+    expect(doSendSrc.indexOf('optimisticSentRef.current = optimisticId')).toBeLessThan(doSendSrc.indexOf('.chatSend('))
+    expect(chatViewSource).toContain('setMessages((prev) => adoptSavedMessageId(prev, optimisticId, savedId))')
+  })
+
   it('clears edit flags on all failed responses', () => {
     const editStart = chatViewSource.indexOf('const submitEdit = useCallback')
     const editEnd = chatViewSource.indexOf('const contextRatio = useMemo')

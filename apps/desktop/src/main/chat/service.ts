@@ -267,8 +267,8 @@ import {
   findAttachmentPdfPart,
   findGeneratedImagePart,
   getChatMessage,
+  getChatMessagesWithSeq,
   hasChatToolImageOwner,
-  getMessageSeq,
   lastConversationContextMessage,
   listConversationContextMessages,
   listActiveConversationContextMessages,
@@ -5011,6 +5011,8 @@ async function startSend(
     }
     send(`chat:delta:${conversationId}`, {
       kind: 'user-saved',
+      // The view shows a sent message under its own id until now; an edit names the message by this one.
+      messageId: userMessageId,
       ...(turnMemory?.memoryContext ? { memoryRecalled: true } : {}),
       compacted: preflight.compacted,
       // New descriptions changed ALREADY-rendered parts (optimistic bubble/history) → UI reloads the page.
@@ -11565,7 +11567,7 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
       if (!operation) return { ok: false, error: 'busy' }
       try {
         const cut = await truncateConversationForResend(conversationId, fromMessageId, operation)
-        if (!cut) return { ok: false, error: 'busy' }
+        if (!cut.ok) return { ok: false, error: cut.error }
         // The EDITOR's `#agent` selection (occurrences with id/range) goes to startSend — SAME host-side
         // validation as chat:send (buildAgentMentionParts). Old agent-mention parts from the original
         // message are NOT automatically preserved: the user may have removed the chip in the editor.
@@ -11962,29 +11964,28 @@ export function isChatConversationRunning(conversationId: string): boolean {
  * Attachments are copied as BYTES before the cut, which deletes the old message's sidecars: reusing an `artifactId`
  * would point the new message to deleted files, so `startSend` writes new artifacts from the copies. `hidden` parts
  * (@file mention content) are left out: they come back when the text is parsed again. The caller holds the slot
- * `operation`; null when the slot was lost meanwhile, before anything was removed.
+ * `operation`. Nothing is removed when the slot was lost meanwhile (`busy`) or when the message is not in this
+ * conversation (`message-not-found`): resending past a message that was never cut would save the edit beside it.
  */
 export async function truncateConversationForResend(
   conversationId: string,
   fromMessageId: string,
   operation: PendingConversationOperation
-): Promise<{ attachments: ChatAttachmentInput[] } | null> {
-  const original = getChatMessage(conversationId, fromMessageId)
+): Promise<{ ok: true; attachments: ChatAttachmentInput[] } | { ok: false; error: 'busy' | 'message-not-found' }> {
+  const [original] = getChatMessagesWithSeq(conversationId, [fromMessageId])
+  if (!original) return { ok: false, error: 'message-not-found' }
   const attachments = await preserveResendAttachments(
     conversationId,
-    (original?.parts ?? []).filter((p): p is Extract<MessagePart, { type: 'file' }> => p.type === 'file' && !p.hidden)
+    original.message.parts.filter((p): p is Extract<MessagePart, { type: 'file' }> => p.type === 'file' && !p.hidden)
   )
   await deleteSubscriptionStateForConversation(conversationId, operation.controller.signal, {
     preserveClaude: isClaudeSubscriptionProvider(selectionFor(conversationId)?.providerId),
   })
-  if (!conversationOperationIsCurrent(conversationId, operation)) return null
-  const seq = getMessageSeq(fromMessageId)
-  if (seq != null) {
-    cancelBackgroundJob(conversationId, false)
-    deleteChatMessagesFrom(conversationId, seq)
-    publishBackgroundCompactionStatus(conversationId, backgroundCompactionStatus(conversationId))
-  }
-  return { attachments }
+  if (!conversationOperationIsCurrent(conversationId, operation)) return { ok: false, error: 'busy' }
+  cancelBackgroundJob(conversationId, false)
+  deleteChatMessagesFrom(conversationId, original.seq)
+  publishBackgroundCompactionStatus(conversationId, backgroundCompactionStatus(conversationId))
+  return { ok: true, attachments }
 }
 
 /** Host-only execution entry point: full chat engine and persistence, with an admission-safe handle. */

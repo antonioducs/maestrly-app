@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { ChatMessage, ChatStreamEvent } from '../../src/shared/chat'
 import { applyChatEvent } from '../../src/shared/chat'
 import {
+  adoptSavedMessageId,
   boundChatHistoryWindow,
   CHAT_HISTORY_MAX_BYTES,
   CHAT_HISTORY_MAX_MESSAGES,
@@ -163,6 +164,36 @@ describe('live streaming history bounds', () => {
       expect(window.length).toBeLessThanOrEqual(CHAT_HISTORY_MAX_MESSAGES)
     }
     expect(window.some((m) => m.id === 'live4')).toBe(true)
+  })
+})
+
+describe('adoptSavedMessageId', () => {
+  const assistant = (id: string): ChatMessage => ({ ...textMessage(id), role: 'assistant' })
+
+  it('gives the shown message the id it was saved under, so an edit names the saved message', () => {
+    const shown = [textMessage('u1'), assistant('a1'), textMessage('provisional', 'edited'), assistant('a2')]
+
+    const next = adoptSavedMessageId(shown, 'provisional', 'saved')
+
+    expect(next.map((message) => message.id)).toEqual(['u1', 'a1', 'saved', 'a2'])
+    expect(next[2]).toEqual({ ...shown[2], id: 'saved' })
+    expect(shown[2]?.id).toBe('provisional')
+  })
+
+  it('keeps the saved message once when a history read already brought it', () => {
+    const shown = [textMessage('provisional'), textMessage('saved')]
+
+    expect(adoptSavedMessageId(shown, 'provisional', 'saved').map((message) => message.id)).toEqual(['saved'])
+  })
+
+  it('leaves the history alone when the shown message is gone or is not a user message', () => {
+    const reloaded = [textMessage('saved'), assistant('a1')]
+    expect(adoptSavedMessageId(reloaded, 'provisional', 'saved')).toBe(reloaded)
+
+    const response = [assistant('provisional')]
+    expect(adoptSavedMessageId(response, 'provisional', 'saved')).toBe(response)
+
+    expect(adoptSavedMessageId(reloaded, 'saved', 'saved')).toBe(reloaded)
   })
 })
 

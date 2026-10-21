@@ -45,6 +45,21 @@ export function withConversationId(messages: ChatMessage[], conversationId: stri
   return messages.map(message => (message.conversationId ? message : { ...message, conversationId }))
 }
 
+/**
+ * A composer shows the message it sends under an id of its own before the host saves it under another. Edit and
+ * resend name the message by id, so the shown message takes the saved id once the host reports it.
+ */
+export function adoptSavedMessageId(
+  messages: ChatMessage[], provisionalId: string, savedId: string
+): ChatMessage[] {
+  if (provisionalId === savedId) return messages
+  const index = messages.findIndex(message => message.id === provisionalId && message.role === 'user')
+  if (index < 0) return messages
+  // A history read may already hold the saved message: keep it once.
+  if (messages.some(message => message.id === savedId)) return messages.filter((_, i) => i !== index)
+  return messages.map((message, i) => (i === index ? { ...message, id: savedId } : message))
+}
+
 /** SQLite checkpoints can lag a live stream. Overlay only the current in-memory assistant snapshot. */
 export function mergeLiveChatHistory(
   saved: readonly ChatMessage[], live: readonly ChatMessage[]
