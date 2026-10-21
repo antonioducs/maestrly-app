@@ -96,8 +96,13 @@ import {
   fleetActivitySchema,
   fleetPendingInteractionSchema,
   fleetImageMediaTypeSchema,
+  fleetFileIdSchema,
   fleetFileRefSchema,
   fleetFileNameSchema,
+  fleetFileSettingsSchema,
+  fleetFilesUsageSchema,
+  fleetPublishedFileSchema,
+  fleetRemovedFileSchema,
   fleetUsageSchema,
   fleetCompactionConfigSchema,
   fleetCompactionStateSchema,
@@ -153,6 +158,26 @@ export type FleetRoutineRunPatchRequest = z.infer<typeof fleetRoutineRunPatchReq
 /** What a bot kept of a run whose conversation it deleted. */
 export const fleetInstanceRunDeletedSchema = z.object({ kept: fleetRoutineRunKeptSchema })
 export type FleetInstanceRunDeleted = z.infer<typeof fleetInstanceRunDeletedSchema>
+/** What a bot shared, its space, and the files deleted lately (`files-manage`). */
+export const fleetFilesListSchema = z.object({
+  files: z.array(fleetPublishedFileSchema).max(FLEET_FILE_LIMITS.publishedCountMax),
+  removed: z.array(fleetRemovedFileSchema).max(FLEET_FILE_LIMITS.removedKeptMax),
+  usage: fleetFilesUsageSchema,
+  /** Free space on the disk that holds the files; null when it cannot be measured. */
+  diskFreeBytes: fleetNonNegativeIntSchema.nullable(),
+})
+export type FleetFilesList = z.infer<typeof fleetFilesListSchema>
+export const fleetFilesDeleteRequestSchema = z
+  .object({ ids: z.array(fleetFileIdSchema).min(1).max(FLEET_FILE_LIMITS.publishedCountMax) })
+  .strict()
+export type FleetFilesDeleteRequest = z.infer<typeof fleetFilesDeleteRequestSchema>
+/** The files actually deleted (unknown ids are skipped), the bytes they took, and the space after. */
+export const fleetFilesDeletedSchema = z.object({
+  deleted: z.array(fleetFileIdSchema),
+  freedBytes: fleetNonNegativeIntSchema,
+  usage: fleetFilesUsageSchema,
+})
+export type FleetFilesDeleted = z.infer<typeof fleetFilesDeletedSchema>
 export const fleetRoutineRunReportRequestSchema = fleetRoutineRunReportSchema
 export const fleetBotMemoriesResponseSchema = z.object({ memories: z.array(fleetBotMemorySchema) })
 export const fleetBotMemoryPatchRequestSchema = z
@@ -1025,6 +1050,7 @@ export const fleetInstanceStatusSchema = z.object({
   usage: fleetUsageSchema.nullable().default(null),
   /** Null from a bot that predates bot compaction: the gateway does not hold it in setup. */
   compaction: fleetCompactionStateSchema.nullable().default(null),
+  sharedFiles: fleetFilesUsageSchema.nullable().default(null),
   /** The environment's runtimes, the same in every bot's status; null from an image that predates runtime reports. */
   runtimes: fleetRuntimesSchema.nullable().default(null),
   /** Additional runtime IDs, kept separate so older readers can still parse the legacy runtimes. */
@@ -1828,6 +1854,20 @@ export const FLEET_GATEWAY_ROUTES = {
   botImage: { method: 'GET', path: '/v1/bots/:id/images/:imageId', body: null, response: null },
   botFileMeta: { method: 'GET', path: '/v1/bots/:id/files/:fileId', body: null, response: fleetFileRefSchema },
   botFile: { method: 'GET', path: '/v1/bots/:id/files/:fileId/content', body: null, response: null },
+  /** Feature `files-manage`. */
+  botFilesList: { method: 'GET', path: '/v1/bots/:id/files', body: null, response: fleetFilesListSchema },
+  botFilesDelete: {
+    method: 'POST',
+    path: '/v1/bots/:id/files/delete',
+    body: fleetFilesDeleteRequestSchema,
+    response: fleetFilesDeletedSchema,
+  },
+  botFileSettings: {
+    method: 'PUT',
+    path: '/v1/bots/:id/file-settings',
+    body: fleetFileSettingsSchema,
+    response: fleetFilesUsageSchema,
+  },
   botMessageSend: {
     method: 'POST',
     path: '/v1/bots/:id/messages',
@@ -2683,6 +2723,20 @@ export const FLEET_INSTANCE_ROUTES = {
   botImage: { method: 'GET', path: '/v1/bots/:botId/images/:imageId', body: null, response: null },
   botFileMeta: { method: 'GET', path: '/v1/bots/:botId/files/:fileId', body: null, response: fleetFileRefSchema },
   botFile: { method: 'GET', path: '/v1/bots/:botId/files/:fileId/content', body: null, response: null },
+  /** Capability `files-manage`. */
+  botFilesList: { method: 'GET', path: '/v1/bots/:botId/files', body: null, response: fleetFilesListSchema },
+  botFilesDelete: {
+    method: 'POST',
+    path: '/v1/bots/:botId/files/delete',
+    body: fleetFilesDeleteRequestSchema,
+    response: fleetFilesDeletedSchema,
+  },
+  botFileSettings: {
+    method: 'PUT',
+    path: '/v1/bots/:botId/file-settings',
+    body: fleetFileSettingsSchema,
+    response: fleetFilesUsageSchema,
+  },
   botInputSend: {
     method: 'POST',
     path: '/v1/bots/:botId/inputs',

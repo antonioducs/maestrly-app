@@ -166,6 +166,49 @@ export const fleetFileRefSchema = z.object({
   byteSize: z.number().int().nonnegative().max(FLEET_FILE_LIMITS.downloadMaxBytes),
 })
 export type FleetFileRef = z.infer<typeof fleetFileRefSchema>
+export const fleetFileQuotaBytes = (gb: number): number => gb * 1024 ** 3
+/**
+ * Where a bot shared a file: its conversation with the owner, a routine run's, a thread's with another bot, or a
+ * conversation it could not tell (shared before origins were kept, in a conversation deleted since).
+ */
+export const fleetFileOriginSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('primary') }).strict(),
+  z.object({ kind: z.literal('routine'), runId: fleetIdSchema, title: z.string().max(200) }).strict(),
+  z.object({ kind: z.literal('thread'), threadId: fleetIdSchema, title: z.string().max(200) }).strict(),
+  z.object({ kind: z.literal('unknown') }).strict(),
+])
+export type FleetFileOrigin = z.infer<typeof fleetFileOriginSchema>
+/** A file the bot shared, as its owner manages it. `originGone`: the run or thread it was shared in was deleted. */
+export const fleetPublishedFileSchema = fleetFileRefSchema.extend({
+  sharedAt: fleetTimestampSchema,
+  origin: fleetFileOriginSchema,
+  originGone: z.boolean(),
+})
+export type FleetPublishedFile = z.infer<typeof fleetPublishedFileSchema>
+export const fleetRemovedFileSchema = z.object({ id: fleetFileIdSchema, removedAt: fleetTimestampSchema })
+export type FleetRemovedFile = z.infer<typeof fleetRemovedFileSchema>
+/** How much of its space for shared files a bot uses (`files-manage`). */
+export const fleetFilesUsageSchema = z.object({
+  usedBytes: fleetNonNegativeIntSchema,
+  count: fleetNonNegativeIntSchema,
+  quotaBytes: fleetNonNegativeIntSchema,
+  countMax: fleetNonNegativeIntSchema,
+  deleteWithConversations: z.boolean(),
+  /** When a file was last shared or deleted, or the settings changed; null before any. */
+  updatedAt: fleetTimestampSchema.nullable(),
+})
+export type FleetFilesUsage = z.infer<typeof fleetFilesUsageSchema>
+export const fleetFileSettingsSchema = z
+  .object({
+    quotaGb: z.number().int().min(1).max(FLEET_FILE_LIMITS.publishedQuotaGbMax),
+    deleteWithConversations: z.boolean(),
+  })
+  .strict()
+export type FleetFileSettings = z.infer<typeof fleetFileSettingsSchema>
+export const FLEET_FILE_SETTINGS_DEFAULT: FleetFileSettings = {
+  quotaGb: FLEET_FILE_LIMITS.publishedQuotaGbDefault,
+  deleteWithConversations: true,
+}
 
 /** Context and cost of the bot's primary conversation, computed by the bot's own Maestrly like its composer does. */
 export const fleetUsageSchema = z.object({
@@ -508,6 +551,8 @@ export const fleetBotSchema = z.object({
   peerSettings: fleetPeerThreadSettingsSchema.nullable().default(null),
   /** How the bot splits its work into tasks; null from gateways without `bot-delegation` or until the owner sets it. */
   delegation: fleetBotDelegationSchema.nullable().default(null),
+  /** The space its shared files take, reported by the running bot (`files-manage`); null otherwise. */
+  sharedFiles: fleetFilesUsageSchema.nullable().default(null),
   /** The routine run its turn works on now, in the run's own conversation; null otherwise. */
   runningRun: fleetRunningRoutineRunSchema.nullable().default(null),
   /**

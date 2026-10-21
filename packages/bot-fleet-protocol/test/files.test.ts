@@ -1,9 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import {
   FLEET_FILE_LIMITS,
+  FLEET_GATEWAY_ROUTES,
+  FLEET_INSTANCE_ROUTES,
   fleetAttachmentInputSchema,
+  fleetBotSchema,
+  fleetFileOriginSchema,
+  fleetFileQuotaBytes,
   fleetFileRefSchema,
+  fleetFileSettingsSchema,
+  fleetFilesDeleteRequestSchema,
   fleetInstanceInputSchema,
+  fleetInstanceStatusSchema,
+  fleetPublishedFileSchema,
   fleetSendMessageRequestSchema,
   fleetTranscriptItemSchema,
 } from '../src/index.js'
@@ -103,3 +112,57 @@ describe('fleet file contracts', () => {
     }
   })
 })
+
+describe('managed bot files', () => {
+  const file = {
+    id: 'f-1',
+    name: 'clip.mp4',
+    mediaType: 'video/mp4',
+    byteSize: 10,
+    sharedAt: '2026-10-20T10:00:00.000Z',
+  }
+  it('accepts every origin and rejects unknown ones', () => {
+    for (const origin of [
+      { kind: 'primary' },
+      { kind: 'routine', runId: 'run-1', title: 'Daily report' },
+      { kind: 'thread', threadId: 'thread-1', title: 'Research' },
+      { kind: 'unknown' },
+    ])
+      expect(fleetPublishedFileSchema.safeParse({ ...file, origin, originGone: false }).success).toBe(true)
+    expect(fleetPublishedFileSchema.safeParse({ ...file, origin: { kind: 'disk' }, originGone: false }).success).toBe(
+      false
+    )
+    expect(fleetFileOriginSchema.safeParse({ kind: 'primary', runId: 'x' }).success).toBe(false)
+  })
+  it('bounds the space and the deletions', () => {
+    expect(fleetFileSettingsSchema.safeParse({ quotaGb: 20, deleteWithConversations: true }).success).toBe(true)
+    expect(fleetFileSettingsSchema.safeParse({ quotaGb: 0, deleteWithConversations: true }).success).toBe(false)
+    expect(fleetFileSettingsSchema.safeParse({ quotaGb: 21, deleteWithConversations: true }).success).toBe(false)
+    expect(fleetFileSettingsSchema.safeParse({ quotaGb: 1.5, deleteWithConversations: true }).success).toBe(false)
+    expect(fleetFilesDeleteRequestSchema.safeParse({ ids: [] }).success).toBe(false)
+    expect(fleetFilesDeleteRequestSchema.safeParse({ ids: ['../x'] }).success).toBe(false)
+    expect(
+      fleetFilesDeleteRequestSchema.safeParse({ ids: Array.from({ length: 201 }, (_, i) => `f-${i}`) }).success
+    ).toBe(false)
+    expect(fleetFileQuotaBytes(2)).toBe(2 * 1024 ** 3)
+  })
+  it('keeps statuses and bots from older readers valid', () => {
+    expect(fleetBotSchema.shape.sharedFiles.parse(undefined)).toBeNull()
+    expect(fleetInstanceStatusSchema.shape.sharedFiles.parse(undefined)).toBeNull()
+  })
+  it('pairs the gateway and instance routes', () => {
+    expect(FLEET_GATEWAY_ROUTES.botFilesList).toMatchObject({ method: 'GET', path: '/v1/bots/:id/files' })
+    expect(FLEET_GATEWAY_ROUTES.botFilesDelete).toMatchObject({ method: 'POST', path: '/v1/bots/:id/files/delete' })
+    expect(FLEET_GATEWAY_ROUTES.botFileSettings).toMatchObject({ method: 'PUT', path: '/v1/bots/:id/file-settings' })
+    expect(FLEET_INSTANCE_ROUTES.botFilesList).toMatchObject({ method: 'GET', path: '/v1/bots/:botId/files' })
+    expect(FLEET_INSTANCE_ROUTES.botFilesDelete).toMatchObject({
+      method: 'POST',
+      path: '/v1/bots/:botId/files/delete',
+    })
+    expect(FLEET_INSTANCE_ROUTES.botFileSettings).toMatchObject({
+      method: 'PUT',
+      path: '/v1/bots/:botId/file-settings',
+    })
+  })
+})
+

@@ -55,9 +55,19 @@ export const FLEET_FILE_LIMITS = {
   attachmentsMax: 8,
   attachmentsTotalMaxBytes: 20 * 1024 * 1024,
   downloadMaxBytes: 100 * 1024 * 1024,
-  publishedTotalMaxBytes: 1024 * 1024 * 1024,
+  /** The space a bot's shared files take by default, and the most its owner can give them, in GiB. */
+  publishedQuotaGbDefault: 1,
+  publishedQuotaGbMax: 20,
   publishedCountMax: 200,
+  /** Deleted files a bot remembers, so their cards in conversations say so. */
+  removedKeptMax: 1000,
 } as const
+/**
+ * Gateway feature (`moreFeatures` of `/v1/meta`) and instance capability: the owner lists the files a bot shared,
+ * deletes them and sets their space (`botFilesList`, `botFilesDelete`, `botFileSettings`); statuses and bots report
+ * the space used (`sharedFiles`).
+ */
+export const FLEET_FILES_MANAGE_FEATURE = 'files-manage'
 /** JSON body limit for routes that carry base64 attachments (20 MiB of images, base64-encoded, plus text). */
 export const FLEET_MESSAGE_BODY_MAX = 28 * 1024 * 1024
 
