@@ -33,6 +33,9 @@ export function SwipeToDelete({
   const x = useRef(new Animated.Value(0)).current
   const opened = useRef(open)
   opened.current = open
+  // Read when a swipe ends: a new callback on each render of the list must not rebuild the gesture under the finger.
+  const change = useRef(onOpenChange)
+  change.current = onOpenChange
   const settle = useCallback(
     (next: boolean) => {
       const toValue = next ? -ACTION_WIDTH : 0
@@ -55,12 +58,12 @@ export function SwipeToDelete({
         onPanResponderRelease: (_event, gesture) => {
           const end = (opened.current ? -ACTION_WIDTH : 0) + gesture.dx
           const next = gesture.vx < -0.4 || (gesture.vx <= 0.4 && end < -ACTION_WIDTH / 2)
-          onOpenChange(next)
+          change.current(next)
           settle(next)
         },
         onPanResponderTerminate: () => settle(opened.current),
       }),
-    [disabled, onOpenChange, settle, x]
+    [disabled, settle, x]
   )
   // Hidden at rest: an action drawn under the row would show at its edges.
   const actionOpacity = x.interpolate({ inputRange: [-ACTION_WIDTH, -1, 0], outputRange: [1, 1, 0] })
