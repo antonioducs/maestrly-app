@@ -5,6 +5,8 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-10-21
+
 ### Added
 
 - **Files** in a bot's conversation header opens a drawer showing the files the
@@ -24,6 +26,24 @@ User-visible changes by version. Downloads are on
   whether deleting a run's conversation deletes its files; deleted files are
   marked in the conversation. It needs a bot server and a bot environment image
   on this version. See [Mobile app](docs/mobile.md#what-it-does).
+- The mobile app shows a bot's routine runs and its conversations with other
+  bots apart from your conversation with it, as the desktop does: **Runs** and
+  **Bots** tabs under the bot's name count what is new or waits for you, each
+  run or conversation opens with everything it did, and you can write there,
+  let a paused conversation between bots go on, keep or delete one, and cite a
+  run in your next message. Your conversation shows where a run ended and the
+  conversations the bot opened with other bots. It needs a bot server and
+  environment image that keep them apart. See
+  [Mobile app](docs/mobile.md#what-it-does).
+- The mobile app shows the conversations a bot started in a workspace, with the
+  controls the desktop has. They carry the bot's mark in the menu and in the
+  chat title, and the messages the bot sent say so. While the bot runs a chat,
+  **Release chat** takes the message field's place and asks first; once
+  released, **Block my messages** gives the chat back to the bot. **Pause bot**
+  and **Resume bot** are in the chat's setup. These chats notify like any other.
+  Update Maestrly on the computer, or the server's workspaces environment, that
+  hosts them: an older host lists none of these conversations. See
+  [Mobile app](docs/mobile.md#what-it-does).
 
 ### Changed
 
@@ -38,6 +58,11 @@ User-visible changes by version. Downloads are on
   `id_rsa*` and `id_ed25519*`), files of 50 MB or more, files Git cannot read,
   and folders that hold a Git repository of their own. They stay in your folder,
   untouched. A new project still starts with only its `README.md`.
+- This computer keeps each paired bot server as a record of its own, ready for
+  pairing more than one. With one server nothing changes: the first start
+  converts your pairing, keeping its host ids, your sidebar selection, drafts
+  and layouts. Going back to an older version, it finds no pairing and asks you
+  to pair again.
 
 ### Fixed
 
@@ -95,6 +120,25 @@ User-visible changes by version. Downloads are on
   as text opens again. It used to show "Something went wrong" instead of the
   conversation, and the call no longer shows an empty question in a bot's
   conversation.
+- Edit a message right after sending it and the edit replaces the original.
+  Before, both messages stayed and reached the model, and both showed after the
+  next reload. An edit of a message that is no longer in the conversation is
+  refused with a message, instead of cutting the conversation at the wrong
+  place.
+- The macOS package no longer carries the two Intel files of `node-pty`, which
+  made macOS 26 warn that Maestrly App depends on Rosetta and will stop working
+  in a future macOS release. Packaging now fails if any file in the app has no
+  code for the packaged architecture.
+- A workspaces environment uses the Codex you installed when it is newer than
+  the one its image ships, and the version shown in **Settings** is the one in
+  use. Before, it ran the image's Codex, and models released for newer Codex
+  versions never showed. A Codex installed while the environment runs takes
+  effect the next time the app starts.
+- Move a bot to another environment even when its working folder holds `.asar`
+  files, such as the ones in an installed `electron` package. The move used to
+  fail at the freezing step with "Instance request failed.". Both environments
+  need a bot image on this version. See
+  [Move a bot to another environment](docs/bot-fleet.md#move-a-bot-to-another-environment).
 
 ## [0.23.0] - 2026-10-19
 
@@ -120,15 +164,6 @@ User-visible changes by version. Downloads are on
   Shift for a floating window), or with the drawer's **Open in a floating
   window** button. The shortcut can be changed in **Settings → Tools & drawer**.
   See [remote workspaces](docs/remote-workspaces.md#computer).
-- The mobile app shows a bot's routine runs and its conversations with other
-  bots apart from your conversation with it, as the desktop does: **Runs** and
-  **Bots** tabs under the bot's name count what is new or waits for you, each
-  run or conversation opens with everything it did, and you can write there,
-  let a paused conversation between bots go on, keep or delete one, and cite a
-  run in your next message. Your conversation shows where a run ended and the
-  conversations the bot opened with other bots. It needs a bot server and
-  environment image that keep them apart. See
-  [Mobile app](docs/mobile.md#what-it-does).
 - Gemini 4 Argon and Gemini 3.8 Flash follow instructions written for them,
   based on Google's prompting guidance for Gemini agents, on every provider
   that serves them: Google AI (Antigravity), a Gemini API key, OpenRouter,
