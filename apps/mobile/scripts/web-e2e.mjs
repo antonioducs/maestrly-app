@@ -9,6 +9,10 @@ import { chromium } from 'playwright-core'
 import { exportWebBuild, serveWebBuild } from './web-build.mjs'
 
 const TIMEOUT = 20_000
+// The demo dates its runs minutes before the browser's clock and the app folds them by local day, so a run that starts
+// within a couple of hours of midnight splits them and the flow stops finding what it expects. The page gets a clock
+// that starts at midday UTC and keeps running, whatever time the machine has.
+const CLOCK_START = new Date('2026-06-15T12:00:00Z')
 
 exportWebBuild()
 const server = await serveWebBuild()
@@ -48,8 +52,14 @@ const browser = await chromium.launch()
 const shots = mkdtempSync(path.join(os.tmpdir(), 'maestrly-mobile-e2e-'))
 let failed = false
 try {
-  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, locale: 'en-US' })
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    hasTouch: true,
+    locale: 'en-US',
+    timezoneId: 'UTC',
+  })
   const page = await context.newPage()
+  await page.clock.install({ time: CLOCK_START })
   page.setDefaultTimeout(TIMEOUT)
   await page.addInitScript(stubSpeech)
   page.on('pageerror', (error) => problems.push(`page error: ${error.message}`))
