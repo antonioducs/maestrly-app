@@ -218,6 +218,37 @@ try {
     await page.getByRole('alert').filter({ hasText: "The demo server doesn't host files" }).waitFor()
   })
 
+  await step('free space for a bot whose files space is full', async () => {
+    await page.getByText(/^Files space is full: 7\.0 MB left\./).waitFor()
+    await button('Free space').click()
+    await page.getByRole('heading', { name: 'Files' }).waitFor()
+    await page.getByText('0.99 GB', { exact: true }).waitFor()
+    // It opens on the conversation's files, largest first.
+    await page.getByRole('radio', { name: /^Conversation with you/, checked: true }).waitFor()
+    await button(/^pricing-walkthrough\.mp4,/).click()
+    page.once('dialog', (dialog) => dialog.accept())
+    await page.getByRole('button', { name: 'Delete', exact: true }).click()
+    await page.getByText(/^pricing-walkthrough\.mp4 deleted · 4\.0 MB freed/).waitFor()
+    await button('Done').click()
+    // The video's card stays in the conversation and says it is gone; the space is no longer full.
+    await page.getByText(/^Deleted from the bot server · 4\.0 MB/).waitFor()
+    await page.getByText(/^Files space is full/).waitFor({ state: 'detached' })
+  })
+
+  await step('open a bot’s files from its details and size its space', async () => {
+    await button(/^Pixel: .*Show details/).click()
+    await button(/^Shared files, 0\.99 GB of 1 GB · 14 of 200 files/).click()
+    await page.getByRole('heading', { name: 'Files' }).waitFor()
+    // From the details, every file of the bot shows, newest first.
+    await page.getByRole('radio', { name: /^Whole bot, 14/, checked: true }).waitFor()
+    await page.getByText(/visual-review-week-8\.mp4/).waitFor()
+    await button(/^Space for files, 1 GB/).click()
+    await page.getByRole('radio', { name: '2 GB' }).click()
+    await page.getByText('1.01 GB left', { exact: true }).waitFor()
+    await button('Done').click()
+    await button('Done').click()
+  })
+
   await step('start a chat', async () => {
     await button('New chat').click()
     await page.getByRole('textbox', { name: 'Ask anything' }).fill('Write the release notes for 0.16')
