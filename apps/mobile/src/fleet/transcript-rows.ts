@@ -96,6 +96,13 @@ function flushTurn(turn: Entry[], rows: TranscriptRow[]): void {
   rows.push({ kind: 'activity', id: turn[first].item.id, steps })
 }
 
+/** The files a row shows, so a file can be found in the conversation. */
+export function rowFileIds(row: TranscriptRow): string[] {
+  if (row.kind === 'files') return row.files.map((file) => file.id)
+  if (row.kind === 'item' && 'files' in row.item && row.item.files) return row.item.files.map((file) => file.id)
+  return []
+}
+
 /**
  * The rows with what a conversation adds to them, in conversation order: one with `at` (a notice, such as a routine
  * run that ended) goes before the first message from the owner, a routine or a bot that came after it, so it never

@@ -80,9 +80,18 @@ the bot shares them with **bot_share_file** like any other file.
 
 Published files are snapshots, so changing the source does not change an existing
 download. They survive environment restarts and updates in the bot's persistent
-data. Each bot can retain up to 200 published files and 1 GiB total; a publication
-that would exceed either limit is refused. Permanently deleting the bot or its
-environment removes these snapshots. Include the environment volume in backups.
+data. Each bot can retain up to 200 published files and 1 GiB total by default
+(configurable to 1, 2, 5, 10 or 20 GiB in **Files → Space and cleanup**); a
+publication that would exceed a limit is refused with the exact limit that
+stopped it. Open **Files** in the conversation header to browse, search, filter,
+sort, download, reveal in the conversation, or delete the files a bot shared,
+either in **This conversation** or across the **Whole bot**. Deleting a file
+frees the bot's space and marks its card in the conversation as deleted while
+keeping any copies you already downloaded on this computer. By default, deleting
+a routine run's conversation or a conversation with another bot also deletes the
+files shared there. Permanently deleting the bot or its environment removes
+these snapshots. Include the environment volume in backups. The mobile app has
+the same Files sheet; see [Mobile app](mobile.md#what-it-does).
 
 Documents and downloads require the desktop, gateway and running environment
 image to support files. If the app asks you to update, update the server and

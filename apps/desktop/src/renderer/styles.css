@@ -1004,3 +1004,24 @@ input[type='checkbox']:not(.appearance-none).accent-destructive:checked {
     animation: none;
   }
 }
+
+.bot-file-flash {
+  animation: bot-file-flash 1.8s ease-out;
+}
+@keyframes bot-file-flash {
+  0%,
+  25% {
+    box-shadow:
+      0 0 0 2px var(--primary),
+      0 0 18px rgba(237, 234, 227, 0.28);
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bot-file-flash {
+    animation: none;
+  }
+}
+

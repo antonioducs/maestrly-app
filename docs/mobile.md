@@ -39,7 +39,15 @@ and workspaces on your [bot server](bot-fleet.md) from your phone.
   asks you first. **Show code** shows its source.
 - **Files and videos from bots:** a file a bot shares shows with its name and
   size. A video downloads to the phone and plays in the conversation; any other
-  file downloads and opens the system's share sheet.
+  file downloads and opens the system's share sheet. The **Files** sheet lists
+  what a bot shared, with the space it takes. Open it from **Free space**, above
+  the message field when the bot's space is full, or from **Shared files** in
+  the bot's details. Search, filter by type and sort; tap a file to download it,
+  show it in its conversation or delete it, swipe it left to delete, or
+  **Select** several. **Space and cleanup** sets the bot's space and whether
+  deleting a run's conversation deletes its files. A deleted file's card in the
+  conversation says so. It needs a bot server and environment image that manage
+  shared files.
 - **A bot's other conversations:** a bot's routine runs and its conversations
   with other bots work apart from its conversation with you, at the same time.
   Tabs under the bot's name switch between **Conversation**, **Runs** and

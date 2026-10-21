@@ -67,3 +67,5 @@ export const FLEET_RUN_CONFLICT = 'FLEET_RUN_CONFLICT'
 export const FLEET_PEER_THREADS_UNSUPPORTED = 'FLEET_PEER_THREADS_UNSUPPORTED'
 /** Raised when a thread's conversation cannot change now: it is working, or it is gone. */
 export const FLEET_PEER_THREAD_CONFLICT = 'FLEET_PEER_THREAD_CONFLICT'
+/** Raised when the gateway or the bot cannot list, delete or size the files the bot shared yet (`files-manage`). */
+export const FLEET_FILES_MANAGE_UNSUPPORTED = 'FLEET_FILES_MANAGE_UNSUPPORTED'

@@ -196,4 +196,37 @@ describe('private file transport', () => {
     await expect(client.fileMeta('file')).rejects.toBeInstanceOf(GatewayError)
     await expect(client.file('../file')).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
   })
+  it('lists, deletes and sizes shared files for a bot in an environment', async () => {
+    const usage = {
+      usedBytes: 10,
+      count: 1,
+      quotaBytes: 1024 ** 3,
+      countMax: 200,
+      deleteWithConversations: true,
+      updatedAt: '2026-10-20T10:00:00.000Z',
+    }
+    const list = { files: [], removed: [], usage, diskFreeBytes: 5 * 1024 ** 3 }
+    const deleted = { deleted: ['f-1'], freedBytes: 10, usage: { ...usage, usedBytes: 0, count: 0 } }
+    let deleteBody = ''
+    const origin = await instance({
+      'GET /v1/bots/bot/files': json(200, list),
+      'POST /v1/bots/bot/files/delete': (res, req) => {
+        req.on('data', (chunk) => {
+          deleteBody += String(chunk)
+        })
+        req.on('end', () => json(200, deleted)(res, req))
+      },
+      'PUT /v1/bots/bot/file-settings': json(200, usage),
+    })
+    const client = new InstanceClient('environment', 'control', origin).forBot('bot', true)
+    expect(await client.filesList()).toEqual(list)
+    expect(await client.filesDelete({ ids: ['f-1'] })).toEqual(deleted)
+    expect(JSON.parse(deleteBody)).toEqual({ ids: ['f-1'] })
+    expect(await client.fileSettings({ quotaGb: 2, deleteWithConversations: true })).toEqual(usage)
+    await expect(
+      new InstanceClient('environment', 'control', origin).forBot('bot', false).filesList()
+    ).rejects.toMatchObject({
+      code: 'PROTOCOL_INCOMPATIBLE',
+    })
+  })
 })

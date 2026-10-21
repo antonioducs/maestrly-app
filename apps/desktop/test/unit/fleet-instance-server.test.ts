@@ -148,6 +148,39 @@ function fakeBot(botId: string, slot: number) {
       ref: { id: fileId, name: 'report.txt', mediaType: 'text/plain', byteSize: Buffer.byteLength(botId) },
       stream: Readable.from([Buffer.from(botId)]),
     })),
+    listFiles: vi.fn(async () => ({
+      files: [],
+      removed: [],
+      usage: {
+        usedBytes: 0,
+        count: 0,
+        quotaBytes: 1024 ** 3,
+        countMax: 200,
+        deleteWithConversations: true,
+        updatedAt: null,
+      },
+      diskFreeBytes: 10 * 1024 ** 3,
+    })),
+    deleteFiles: vi.fn(async (ids: string[]) => ({
+      deleted: ids,
+      freedBytes: 10,
+      usage: {
+        usedBytes: 0,
+        count: 0,
+        quotaBytes: 1024 ** 3,
+        countMax: 200,
+        deleteWithConversations: true,
+        updatedAt: '2026-10-20T10:00:00.000Z',
+      },
+    })),
+    setFileSettings: vi.fn(async (settings: { quotaGb: number; deleteWithConversations: boolean }) => ({
+      usedBytes: 0,
+      count: 0,
+      quotaBytes: settings.quotaGb * 1024 ** 3,
+      countMax: 200,
+      deleteWithConversations: settings.deleteWithConversations,
+      updatedAt: '2026-10-20T10:00:00.000Z',
+    })),
     input: vi.fn(async (_value: FleetInstanceInput) => ({
       inputId: `input-${botId}`,
       itemId: `input:${botId}`,
@@ -468,6 +501,7 @@ describe('instance control HTTP', () => {
       'parallel-turns',
       'peer-conversations',
       'bot-delegation',
+      'files-manage',
     ])
     const { base, environment } = await setup()
     const response = await send(base, 'GET', '/v1/environment/selections')
@@ -835,6 +869,23 @@ describe('bot routes', () => {
       args: [{ op: 'chatGetConvTools', args: [] }],
       status: 200,
     },
+    { method: 'GET', path: 'files', call: 'listFiles', args: [], status: 200 },
+    {
+      method: 'POST',
+      path: 'files/delete',
+      body: { ids: ['f-1'] },
+      call: 'deleteFiles',
+      args: [['f-1']],
+      status: 200,
+    },
+    {
+      method: 'PUT',
+      path: 'file-settings',
+      body: { quotaGb: 2, deleteWithConversations: false },
+      call: 'setFileSettings',
+      args: [{ quotaGb: 2, deleteWithConversations: false }],
+      status: 200,
+    },
   ]
   const legacy: Array<[string, string, unknown?]> = [
     ['GET', '/v1/status'],
@@ -881,6 +932,7 @@ describe('bot routes', () => {
     })
     expect((await send(base, 'GET', '/v1/bots/beta/memories?status=invalid')).status).toBe(400)
     expect((await send(base, 'PATCH', '/v1/bots/beta/memories/m1', { pinned: 'yes' })).status).toBe(400)
+    expect((await send(base, 'POST', '/v1/bots/alpha/files/delete', { ids: ['../x'] })).status).toBe(400)
   })
 
   it('answers NOT_FOUND for unknown bots, invalid bot ids and the unprefixed bot routes', async () => {

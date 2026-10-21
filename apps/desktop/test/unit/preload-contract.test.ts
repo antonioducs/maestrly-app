@@ -358,8 +358,19 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(642)
+    expect(keys).toHaveLength(645)
     expect(keys.sort()).toMatchSnapshot()
+  })
+
+  it('forwards managed bot files calls in exact argument order', async () => {
+    await api.fleetListBotFiles(SERVER, 'bot')
+    await api.fleetDeleteBotFiles(SERVER, 'bot', ['f-1'])
+    await api.fleetSetBotFileSettings(SERVER, 'bot', { quotaGb: 5, deleteWithConversations: false })
+    expect(invokeSpy.mock.calls).toEqual([
+      ['fleet:listBotFiles', SERVER, 'bot'],
+      ['fleet:deleteBotFiles', SERVER, 'bot', ['f-1']],
+      ['fleet:setBotFileSettings', SERVER, 'bot', { quotaGb: 5, deleteWithConversations: false }],
+    ])
   })
 
   it('relays the API of a remote host through this computer’s main process', async () => {

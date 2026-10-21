@@ -178,4 +178,16 @@ describe('fleet media cache', () => {
     await expect(cache.prepare('device', 'bot', 'f-clip', open, controller.signal)).rejects.toThrow()
     expect(await readdir(root)).toEqual([])
   })
+
+  it('forgets one video', async () => {
+    const cache = new FleetMediaCache({ root: () => root, now })
+    const entryA = await cache.prepare('device', 'bot', 'f-a', opener(video('f-a', 8)))
+    const entryB = await cache.prepare('device', 'bot', 'f-b', opener(video('f-b', 8)))
+    await cache.forget('device', 'bot', 'f-a')
+    const left = await readdir(root)
+    expect(left).not.toContain(path.basename(entryA.path))
+    expect(left).not.toContain(path.basename(entryA.path).replace('.media', '.json'))
+    expect(left).toContain(path.basename(entryB.path))
+    expect(left).toContain(path.basename(entryB.path).replace('.media', '.json'))
+  })
 })

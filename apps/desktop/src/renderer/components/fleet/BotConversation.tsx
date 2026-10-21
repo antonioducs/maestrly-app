@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowDown, Loader2, Pencil, Wrench, X } from 'lucide-react'
+import { ArrowDown, HardDrive, Loader2, Pencil, Wrench, X } from 'lucide-react'
 import {
   FLEET_MESSAGE_EDIT_FEATURE,
   type FleetBot,
+  type FleetFilesUsage,
   type FleetRoutine,
   type FleetRoutineRun,
   type FleetTranscriptItem,
 } from '@maestrly/bot-fleet-protocol'
 import { MarkdownViewer } from '@/components/MarkdownViewer'
 import { GenUiContext, type GenUiHost } from '@/genui/context'
+import { filesCountLevel, filesLevel, highlightFileNode, spaceLabel } from '@/lib/fleet/files'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import { ownsTakeover, takeoverBlocksResume, UNKNOWN_BOT_TINT } from '@/lib/fleet/selectors'
 import { startBot } from '@/lib/fleet/environments'
@@ -596,6 +598,10 @@ export function BotConversation({
   onOpenThread,
   citation = null,
   onClearCitation,
+  onOpenFiles,
+  filesUsage = null,
+  revealFile = null,
+  onRevealed,
 }: {
   bot: FleetBot
   fleet: FleetController
@@ -615,9 +621,14 @@ export function BotConversation({
   /** The run the owner's next message refers to, and how to drop it. */
   citation?: FleetRoutineRun | null
   onClearCitation?: () => void
+  onOpenFiles?: () => void
+  /** The space of the bot's shared files, freshest of its status and the Files drawer's list. */
+  filesUsage?: FleetFilesUsage | null
+  revealFile?: { id: string; nonce: number } | null
+  onRevealed?: (found: boolean) => void
 }) {
   const serverId = fleet.serverId
-  const { t } = useTranslation('fleet')
+  const { t, i18n } = useTranslation('fleet')
   const transcript = fleet.state.transcripts[bot.id]
   const imageCache = fleetImageCache(serverId)
   const [error, setError] = useState<string | null>(null)
@@ -859,6 +870,22 @@ export function BotConversation({
     oldHeightRef.current = scrollRef.current?.scrollHeight ?? null
     void loadTranscript(bot.id, searchBefore).catch(() => {})
   }, [bot.id, loadTranscript, searchBefore, transcriptLoading])
+  // A file the owner asked to see: older pages load until its card shows up, or the conversation has no more.
+  const transcriptBefore = transcript?.error ? null : (transcript?.before ?? null)
+  useEffect(() => {
+    if (!revealFile) return
+    const card = scrollRef.current?.querySelector<HTMLElement>(`[data-file-id="${CSS.escape(revealFile.id)}"]`)
+    if (card) {
+      atBottomRef.current = false
+      setAtBottom(false)
+      highlightFileNode(card)
+      onRevealed?.(true)
+    } else if (transcriptBefore) {
+      if (transcriptLoading) return
+      oldHeightRef.current = scrollRef.current?.scrollHeight ?? null
+      void loadTranscript(bot.id, transcriptBefore).catch(() => onRevealed?.(false))
+    } else onRevealed?.(false)
+  }, [bot.id, loadTranscript, onRevealed, revealFile, segments, transcriptBefore, transcriptLoading])
   const searchHits = useMemo(
     () => (searchOpen ? searchTranscriptSegments(segments, appliedQuery) : []),
     [appliedQuery, searchOpen, segments]
@@ -1134,6 +1161,27 @@ export function BotConversation({
                 onOpen={onOpenRun ? () => onOpenRun(citation.id) : undefined}
                 onRemove={onClearCitation}
               />
+            </div>
+          )}
+          {filesUsage && filesLevel(filesUsage) === 'full' && (
+            <div
+              role="status"
+              className="mb-2 flex flex-wrap items-center gap-2.5 rounded-[10px] border border-destructive/30 bg-destructive/[0.07] py-2 pl-3 pr-2.5 text-[12.5px] text-foreground/75"
+            >
+              <HardDrive aria-hidden="true" className="size-4 shrink-0 text-destructive" />
+              <span className="min-w-48 flex-1">
+                {filesCountLevel(filesUsage) === 'full'
+                  ? t('files.full.count', { name: bot.name, max: filesUsage.countMax })
+                  : t('files.full.space', {
+                      name: bot.name,
+                      free: spaceLabel(Math.max(0, filesUsage.quotaBytes - filesUsage.usedBytes), i18n.language),
+                    })}
+              </span>
+              {onOpenFiles && (
+                <Button size="sm" variant="outline" className="h-7" onClick={onOpenFiles}>
+                  {t('files.full.action')}
+                </Button>
+              )}
             </div>
           )}
           <BotComposer

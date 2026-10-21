@@ -1,7 +1,8 @@
 import type { FleetFileRef } from '@maestrly/bot-fleet-protocol'
 import { describe, expect, it } from 'vitest'
-import { cachedFilePath, fileKind } from '../src/fleet/bot-files'
+import { cachedFilePath, fileKind, removedFileIds } from '../src/fleet/bot-files'
 import { formatBytes } from '../src/fleet/format'
+import { emptyFiles } from '../src/fleet/state'
 
 const file = (name: string, mediaType: string): FleetFileRef => ({ id: 'f1', name, mediaType, byteSize: 1024 })
 
@@ -39,5 +40,32 @@ describe('files a bot shares', () => {
     expect(formatBytes(1536)).toBe('1.5 KB')
     expect(formatBytes(4 * 1024 * 1024)).toBe('4.0 MB')
     expect(formatBytes(3.2 * 1024 * 1024 * 1024)).toBe('3.2 GB')
+  })
+
+  it('knows which files the bot deleted lately, so their cards say so', () => {
+    expect(removedFileIds(undefined).size).toBe(0)
+    expect(removedFileIds(emptyFiles).size).toBe(0)
+    const usage = {
+      usedBytes: 0,
+      count: 0,
+      quotaBytes: 1024 ** 3,
+      countMax: 200,
+      deleteWithConversations: true,
+      updatedAt: null,
+    }
+    const removed = removedFileIds({
+      ...emptyFiles,
+      loaded: true,
+      list: {
+        files: [],
+        removed: [
+          { id: 'f-1', removedAt: '2026-10-12T12:00:00.000Z' },
+          { id: 'f-2', removedAt: '2026-10-12T12:00:01.000Z' },
+        ],
+        usage,
+        diskFreeBytes: null,
+      },
+    })
+    expect([...removed].sort()).toEqual(['f-1', 'f-2'])
   })
 })

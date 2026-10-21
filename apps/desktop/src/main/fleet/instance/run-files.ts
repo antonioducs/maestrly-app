@@ -113,6 +113,8 @@ export async function keepRunFiles(options: {
   /** The bot's conversation folder, or null when it is gone: nothing is copied then. */
   folder: string | null
   images: FleetImageStore
+  /** Files the run shared that are deleted with it: they are not listed as kept. */
+  dropped?: ReadonlySet<string>
 }): Promise<FleetRoutineRunKept> {
   const { record, images } = options
   const conversationId = record.conversationId
@@ -176,11 +178,12 @@ export async function keepRunFiles(options: {
           read: async () => (await images.read(image.id, conversationId, []))?.bytes ?? null,
         })
     for (const file of item.files ?? [])
-      shared.push({
-        name: file.name,
-        kind: file.mediaType.startsWith('video/') ? 'video' : 'file',
-        byteSize: file.byteSize,
-      })
+      if (!options.dropped?.has(file.id))
+        shared.push({
+          name: file.name,
+          kind: file.mediaType.startsWith('video/') ? 'video' : 'file',
+          byteSize: file.byteSize,
+        })
   }
   const relative = laneKeptFolder(record)
   const kept: Kept[] = []

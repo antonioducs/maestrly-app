@@ -3,6 +3,8 @@ import {
   FLEET_PEER_CONVERSATIONS_FEATURE,
   FLEET_ROUTINE_CONVERSATIONS_FEATURE,
   fleetRoutineRunSchema,
+  type FleetFilesList,
+  type FleetFilesUsage,
   type FleetGatewayEvent,
 } from '@maestrly/bot-fleet-protocol'
 import { describe, expect, it, vi } from 'vitest'
@@ -340,5 +342,98 @@ describe('fleet controller with side conversations', () => {
     })
     await controller.cancelLane('juno', 't1')
     expect(f.call).toHaveBeenLastCalledWith('botCancel', { params: { id: 'juno' }, query: { conversation: 't1' } })
+  })
+})
+
+describe('fleet controller with shared files', () => {
+  const usage = (usedBytes: number, second: number): FleetFilesUsage => ({
+    usedBytes,
+    count: usedBytes ? 1 : 0,
+    quotaBytes: 1024 ** 3,
+    countMax: 200,
+    deleteWithConversations: true,
+    updatedAt: `2026-10-12T12:00:${String(second).padStart(2, '0')}.000Z`,
+  })
+  const pixel = botRecord({ id: 'pixel', name: 'Pixel', capabilities: ['files-manage'], sharedFiles: usage(10, 1) })
+  const list = (): FleetFilesList => ({
+    files: [
+      {
+        id: 'f-1',
+        name: 'clip.mp4',
+        mediaType: 'video/mp4',
+        byteSize: 10,
+        sharedAt: at,
+        origin: { kind: 'primary' },
+        originGone: false,
+      },
+    ],
+    removed: [],
+    usage: usage(10, 1),
+    diskFreeBytes: null,
+  })
+  async function started() {
+    const f = fakeSource(['environments', 'files-manage'])
+    f.responses.botsList = () => ({ bots: [pixel] })
+    f.responses.botFilesList = () => list()
+    const controller = createFleetController(f.source, memoryStores().kv)
+    await controller.start()
+    f.open()
+    await vi.waitFor(() => expect(controller.store.getState().bots).toEqual([pixel]))
+    const listCalls = () => f.keys().filter((key) => key === 'botFilesList').length
+    return { f, controller, listCalls }
+  }
+
+  it('reads a bot’s files once, and again when the bot says they changed or the stream says hello', async () => {
+    const { f, controller, listCalls } = await started()
+    controller.ensureFiles('pixel')
+    controller.ensureFiles('pixel')
+    await vi.waitFor(() => expect(controller.store.getState().files.pixel?.loaded).toBe(true))
+    expect(f.call).toHaveBeenCalledWith('botFilesList', { params: { id: 'pixel' } })
+    controller.ensureFiles('pixel')
+    expect(listCalls()).toBe(1)
+
+    f.emit({ type: 'bot.updated', at, bot: { ...pixel, sharedFiles: usage(20, 9) } })
+    controller.ensureFiles('pixel')
+    expect(listCalls()).toBe(2)
+    await vi.waitFor(() => expect(controller.store.getState().files.pixel?.loading).toBe(false))
+
+    f.open()
+    controller.ensureFiles('pixel')
+    expect(listCalls()).toBe(3)
+  })
+
+  it('deletes files and sizes the space, updating the list and the bot', async () => {
+    const { f, controller, listCalls } = await started()
+    controller.ensureFiles('pixel')
+    await vi.waitFor(() => expect(controller.store.getState().files.pixel?.loaded).toBe(true))
+
+    const after = usage(0, 30)
+    f.responses.botFilesDelete = () => ({ deleted: ['f-1'], freedBytes: 10, usage: after })
+    const result = await controller.deleteFiles('pixel', ['f-1'])
+    expect(result.deleted).toEqual(['f-1'])
+    expect(f.call).toHaveBeenCalledWith('botFilesDelete', { params: { id: 'pixel' }, body: { ids: ['f-1'] } })
+    expect(controller.store.getState().files.pixel?.list?.files).toEqual([])
+    expect(controller.store.getState().bots[0]?.sharedFiles).toEqual(after)
+    controller.ensureFiles('pixel')
+    expect(listCalls()).toBe(1)
+
+    const sized = { ...usage(0, 40), quotaBytes: 2 * 1024 ** 3, deleteWithConversations: false }
+    f.responses.botFileSettings = () => sized
+    await controller.saveFileSettings('pixel', { quotaGb: 2, deleteWithConversations: false })
+    expect(f.call).toHaveBeenCalledWith('botFileSettings', {
+      params: { id: 'pixel' },
+      body: { quotaGb: 2, deleteWithConversations: false },
+    })
+    expect(controller.store.getState().files.pixel?.list?.usage).toEqual(sized)
+    expect(controller.store.getState().bots[0]?.sharedFiles).toEqual(sized)
+  })
+
+  it('says the files could not be read when the bot server is too old', async () => {
+    const { f, controller } = await started()
+    f.responses.botFilesList = () => {
+      throw new GatewayError('PROTOCOL_INCOMPATIBLE', 426, 'Update the bot server')
+    }
+    controller.ensureFiles('pixel')
+    await vi.waitFor(() => expect(controller.store.getState().files.pixel?.failed).toBe(true))
   })
 })

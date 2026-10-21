@@ -1,4 +1,4 @@
-import type { FleetGatewayEvent } from '@maestrly/bot-fleet-protocol'
+import { FLEET_FILE_LIMITS, type FleetGatewayEvent } from '@maestrly/bot-fleet-protocol'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createDemoSource, DEMO_SERVER } from '../src/demo/demo-source'
 import { GatewayError } from '../src/gateway/client'
@@ -199,5 +199,51 @@ describe('demo server', () => {
     await expect(source.call('deviceRevoke', { params: { deviceId: devices[1].id } })).rejects.toMatchObject({
       code: 'INVALID_REQUEST',
     })
+  })
+
+  it('fills Pixel’s files space, and lists, deletes and sizes its files', async () => {
+    const MiB = 1024 ** 2
+    const GiB = 1024 * MiB
+    const source = createDemoSource({ stepMs: 0, autoplay: false })
+    const events = listen(source)
+    await vi.runAllTimersAsync()
+    const meta = await source.call('meta')
+    expect(meta.features).toContain('files-manage')
+    const pixel = (await source.call('botsList')).bots.find((bot) => bot.id === 'pixel')
+    expect(pixel?.capabilities).toEqual(expect.arrayContaining(['files', 'files-manage']))
+    expect(pixel?.sharedFiles).toMatchObject({ quotaBytes: GiB, usedBytes: GiB - 7 * MiB, count: 15 })
+
+    const listed = await source.call('botFilesList', { params: { id: 'pixel' } })
+    expect(listed.files).toHaveLength(15)
+    // The walkthrough is the video Pixel's conversation shows.
+    const transcript = await source.call('botTranscript', { params: { id: 'pixel' }, query: { limit: 200 } })
+    const shown = transcript.items.flatMap((item) => ('files' in item && item.files ? item.files : []))
+    expect(shown).toContainEqual(expect.objectContaining({ id: 'pixel-2c-file', name: 'pricing-walkthrough.mp4' }))
+    expect(listed.files.find((file) => file.id === 'pixel-2c-file')?.name).toBe('pricing-walkthrough.mp4')
+    expect(listed.files.every((file) => file.byteSize <= FLEET_FILE_LIMITS.downloadMaxBytes)).toBe(true)
+    expect(listed.diskFreeBytes).toBe(38 * GiB)
+
+    events.length = 0
+    const deleted = await source.call('botFilesDelete', { params: { id: 'pixel' }, body: { ids: ['pixel-2c-file'] } })
+    expect(deleted).toMatchObject({ deleted: ['pixel-2c-file'], freedBytes: 4 * MiB })
+    const updated = events.find((event) => event.type === 'bot.updated')
+    expect(updated?.type === 'bot.updated' && updated.bot.sharedFiles?.usedBytes).toBe(GiB - 11 * MiB)
+    const after = await source.call('botFilesList', { params: { id: 'pixel' } })
+    expect(after.removed.map((entry) => entry.id)).toContain('pixel-2c-file')
+    expect(after.files).toHaveLength(14)
+
+    events.length = 0
+    const sized = await source.call('botFileSettings', {
+      params: { id: 'pixel' },
+      body: { quotaGb: 2, deleteWithConversations: false },
+    })
+    expect(sized).toMatchObject({ quotaBytes: 2 * GiB, deleteWithConversations: false })
+    expect(events.some((event) => event.type === 'bot.updated' && event.bot.sharedFiles?.quotaBytes === 2 * GiB)).toBe(
+      true
+    )
+
+    const juno = await source.call('botFilesList', { params: { id: 'juno' } })
+    expect(juno.files).toEqual([])
+    expect(juno.usage).toMatchObject({ usedBytes: 0, count: 0 })
   })
 })

@@ -43,6 +43,10 @@ import type {
   FleetBotMove,
   FleetCreateBotRequest,
   FleetEnvironment,
+  FleetFileSettings,
+  FleetFilesDeleted,
+  FleetFilesList,
+  FleetFilesUsage,
   FleetPatchEnvironmentRequest,
   FleetCreateRoutineRequest,
   FleetGatewayEvent,
@@ -483,6 +487,15 @@ export const fleetApi = {
   /** Resolves with a receipt; joins the transfer already running for the file instead of starting another. */
   fleetDownloadFile: (serverId: FleetServerId, botId: string, fileId: string): Promise<string> =>
     ipcRenderer.invoke('fleet:downloadFile', serverId, botId, fileId),
+  fleetListBotFiles: (serverId: FleetServerId, botId: string): Promise<FleetFilesList> =>
+    ipcRenderer.invoke('fleet:listBotFiles', serverId, botId),
+  fleetDeleteBotFiles: (serverId: FleetServerId, botId: string, ids: string[]): Promise<FleetFilesDeleted> =>
+    ipcRenderer.invoke('fleet:deleteBotFiles', serverId, botId, ids),
+  fleetSetBotFileSettings: (
+    serverId: FleetServerId,
+    botId: string,
+    settings: FleetFileSettings
+  ): Promise<FleetFilesUsage> => ipcRenderer.invoke('fleet:setBotFileSettings', serverId, botId, settings),
   fleetCancelDownload: (serverId: FleetServerId, botId: string, fileId: string): Promise<void> =>
     ipcRenderer.invoke('fleet:cancelDownload', serverId, botId, fileId),
   fleetGetActiveDownload: (

@@ -36,6 +36,7 @@ describe('bot file download progress in the renderer', () => {
       '1 MB of 1 MB · 1 MB/s'
     )
     expect(fileSizeLabel(1536, 'en')).toBe('1.5 kB')
+    expect(fileSizeLabel(3 * 1024 ** 3, 'en')).toBe('3 GB')
   })
 
   it('reports the files a window shows once per batch, until every view of them is gone', async () => {

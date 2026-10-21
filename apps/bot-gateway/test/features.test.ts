@@ -382,6 +382,16 @@ describe('instance link and takeover', () => {
     }
     fake.setState({ ...fake.state, usage })
     await until(() => f.lifecycle.get(bot.id)?.usage?.contextUsedTokens === 100)
+    const sharedFiles = {
+      usedBytes: 512,
+      count: 3,
+      quotaBytes: 1024 ** 3,
+      countMax: 200,
+      deleteWithConversations: true,
+      updatedAt: new Date().toISOString(),
+    }
+    fake.setState({ ...fake.state, sharedFiles })
+    await until(() => f.lifecycle.get(bot.id)?.sharedFiles?.count === sharedFiles.count)
     expect(f.events.some((event: any) => event.type === 'bot.updated' && event.bot.usage?.costUsd === 0.01)).toBe(true)
     const pending = {
       kind: 'permission' as const,

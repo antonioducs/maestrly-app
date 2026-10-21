@@ -24,6 +24,7 @@ import {
   FLEET_CONTEXT_LIMIT_FEATURE,
   FLEET_DESKTOP_BRIDGE_FEATURE,
   FLEET_FILES_FEATURE,
+  FLEET_FILES_MANAGE_FEATURE,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_INSTANCE_BRIDGE_PATH,
@@ -67,6 +68,11 @@ import {
   type FleetConversationCallRequest,
   type FleetEditMessageRequest,
   type FleetFileRef,
+  type FleetFileSettings,
+  type FleetFilesDeleteRequest,
+  type FleetFilesDeleted,
+  type FleetFilesList,
+  type FleetFilesUsage,
   type FleetImportResults,
   type FleetInputReceipt,
   type FleetInstanceBotFreeze,
@@ -120,8 +126,9 @@ export type { HostFilesRoutes } from './host-files-http'
  * in transcripts to readers that ask for it, reports the versions of its Claude Code and Codex with checks for
  * newer ones, gives its bots the desktop_* tools that reach the Macs that linked them, lets the owner edit their
  * last message, streams its screens as video, moves its bots to other environments with everything that is theirs,
- * says why an MCP connection test failed, runs routines in conversations of their own when the gateway asks, and
- * routes the tasks of a bot that delegates to the models its owner allows. Its health and every status advertise them.
+ * says why an MCP connection test failed, runs routines in conversations of their own when the gateway asks,
+ * routes the tasks of a bot that delegates to the models its owner allows, and lets the owner list, delete and size
+ * the files its bots shared. Its health and every status advertise them.
  */
 export const INSTANCE_CAPABILITIES: readonly string[] = [
   FLEET_FILES_FEATURE,
@@ -143,6 +150,7 @@ export const INSTANCE_CAPABILITIES: readonly string[] = [
   FLEET_PARALLEL_TURNS_FEATURE,
   FLEET_PEER_CONVERSATIONS_FEATURE,
   FLEET_BOT_DELEGATION_FEATURE,
+  FLEET_FILES_MANAGE_FEATURE,
 ]
 
 type MemoryStatus = 'active' | 'archived' | 'superseded' | 'all'
@@ -172,6 +180,9 @@ export interface InstanceBot {
   image(imageId: string, runId?: string | null): Promise<{ mediaType: string; bytes: Uint8Array }>
   fileMeta(fileId: string): Promise<FleetFileRef>
   file(fileId: string): Promise<InstanceFile>
+  listFiles(): Promise<FleetFilesList>
+  deleteFiles(ids: string[]): Promise<FleetFilesDeleted>
+  setFileSettings(settings: FleetFileSettings): Promise<FleetFilesUsage>
   input(value: FleetInstanceInput): Promise<FleetInputReceipt>
   deleteInput(id: string): Promise<void>
   /** Edits the owner's last message: the conversation is cut from it and the new text queued (`message-edit`). */
@@ -718,6 +729,9 @@ export function createInstanceControlServer(
     },
     botFileMeta: ({ params }) => bot(params).fileMeta(fileIdOf(params.fileId)),
     botFile: ({ params }) => bot(params).file(fileIdOf(params.fileId)),
+    botFilesList: ({ params }) => bot(params).listFiles(),
+    botFilesDelete: ({ params, input }) => bot(params).deleteFiles((input as FleetFilesDeleteRequest).ids),
+    botFileSettings: ({ params, input }) => bot(params).setFileSettings(input as FleetFileSettings),
     botInputSend: ({ params, input }) => bot(params).input(input as FleetInstanceInput),
     botInputDelete: ({ params }) => bot(params).deleteInput(params.inputId),
     botInputEdit: ({ params, input }) => bot(params).editInput(params.inputId, input as FleetEditMessageRequest),

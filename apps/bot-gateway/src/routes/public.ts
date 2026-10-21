@@ -42,10 +42,13 @@ import {
   FLEET_RUNTIME_UPDATES_FEATURE,
   FLEET_IMAGE_LIMITS,
   FLEET_FILES_FEATURE,
+  FLEET_FILES_MANAGE_FEATURE,
   FLEET_FILE_LIMITS,
   FLEET_MESSAGE_EDIT_FEATURE,
   FLEET_VIDEO_SCREENS_FEATURE,
   fleetFileIdSchema,
+  type FleetFileSettings,
+  type FleetFilesDeleteRequest,
   fleetHostConversationIdSchema,
   FLEET_TRANSCRIPT_REASONING_FEATURE,
   fleetReaderWantsReasoning,
@@ -489,6 +492,7 @@ export async function publicRoute(
             FLEET_PEER_CONVERSATIONS_FEATURE,
             FLEET_DICTATION_FEATURE,
             FLEET_BOT_DELEGATION_FEATURE,
+            FLEET_FILES_MANAGE_FEATURE,
           ],
           botImage: ctx.config.botImage,
           botImageVersion: await ctx.host.botImageVersion(),
@@ -789,6 +793,22 @@ export async function publicRoute(
             fleetReaderWantsReasoning(url.searchParams)
           ),
       }
+    case 'botFilesList':
+    case 'botFilesDelete':
+    case 'botFileSettings': {
+      requireBot(ctx, id)
+      // A bot that is not running has no status: its instance says so below.
+      const status = ctx.lifecycle.statuses.get(id)
+      if (status && !status.capabilities.includes(FLEET_FILES_MANAGE_FEATURE))
+        throw new GatewayError('PROTOCOL_INCOMPATIBLE', 'Update this bot to manage its files')
+      const client = ctx.lifecycle.instanceFor(id)
+      if (key === 'botFilesList') {
+        res.setHeader('Cache-Control', 'private, no-store')
+        return { body: await client.filesList() }
+      }
+      if (key === 'botFilesDelete') return { body: await client.filesDelete(body as FleetFilesDeleteRequest) }
+      return { body: await client.fileSettings(body as FleetFileSettings) }
+    }
     case 'botFileMeta':
     case 'botFile': {
       if (!fleetFileIdSchema.safeParse(params.fileId).success)

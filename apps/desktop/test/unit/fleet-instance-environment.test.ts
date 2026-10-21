@@ -180,6 +180,8 @@ describe('bot environment registry', () => {
     const original = Buffer.from([80, 75, 3, 4, 0, 255])
     await writeFile(path.join(cwd, 'report.zip'), original)
     const ref = await a.publishFile('report.zip')
+    expect((await a.listFiles()).files[0]?.origin.kind).toBe('primary')
+    expect((await a.status()).sharedFiles).toMatchObject({ count: 1, usedBytes: original.length })
     await writeFile(path.join(cwd, 'report.zip'), 'changed source')
     await expect(b.fileMeta(ref.id)).rejects.toMatchObject({ code: 'NOT_FOUND' })
     await expect(a.publishFile('../outside')).rejects.toThrow()
@@ -504,6 +506,7 @@ describe('bot environment registry', () => {
       'parallel-turns',
       'peer-conversations',
       'bot-delegation',
+      'files-manage',
     ])
     expect(runtime.health()).toMatchObject({
       ok: true,
@@ -528,6 +531,7 @@ describe('bot environment registry', () => {
         'parallel-turns',
         'peer-conversations',
         'bot-delegation',
+        'files-manage',
       ],
     })
   })
@@ -1298,6 +1302,7 @@ describe('bot environment registry', () => {
           'parallel-turns',
           'peer-conversations',
           'bot-delegation',
+          'files-manage',
         ],
       })
       expect(await (await request('GET', '/v1/environment/status')).json()).toMatchObject({
@@ -1322,6 +1327,7 @@ describe('bot environment registry', () => {
           'parallel-turns',
           'peer-conversations',
           'bot-delegation',
+          'files-manage',
         ],
         bots: [
           { botId: 'alpha', slot: 1 },
@@ -1350,6 +1356,7 @@ describe('bot environment registry', () => {
           'parallel-turns',
           'peer-conversations',
           'bot-delegation',
+          'files-manage',
         ],
       })
       const selections = await request('GET', '/v1/environment/selections')

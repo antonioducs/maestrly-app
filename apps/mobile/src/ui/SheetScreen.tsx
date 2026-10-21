@@ -10,17 +10,22 @@ import { AppText } from './primitives/Text'
  * A screen shown as a sheet: a title, a Done button (or Back inside the sheet), and scrolling groups.
  *
  * The scroll view is the screen's only root, with the header as its first, sticky child. iOS form sheets resize a
- * scroll view that has a sibling and, on the new architecture, then place it at the top, over that sibling.
+ * scroll view that has a sibling and, on the new architecture, then place it at the top, over that sibling. So what
+ * must stay in view while the groups scroll, such as the actions on a selection, goes in `accessory`, which sits in
+ * the sticky header under the Done row.
  */
 export function SheetScreen({
   title,
   onDone,
   back,
+  accessory,
   children,
 }: {
   title: string
   onDone: () => void
   back?: { label: string; onPress: () => void }
+  /** Stays at the top, under the Done row, while the rest scrolls. */
+  accessory?: ReactNode
   children: ReactNode
 }) {
   const { palette } = useTheme()
@@ -71,6 +76,7 @@ export function SheetScreen({
             <AppText style={{ color: palette.brass, fontWeight: '600' }}>{t('common.done')}</AppText>
           </Pressable>
         </View>
+        {accessory ? <View style={{ paddingHorizontal: 16, paddingBottom: 8 }}>{accessory}</View> : null}
       </View>
       <View style={{ paddingHorizontal: 16 }}>
         <AppText variant="title" accessibilityRole="header" style={{ marginHorizontal: 4, marginBottom: 2 }}>

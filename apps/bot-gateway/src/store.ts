@@ -1725,6 +1725,7 @@ export class Store {
       delegation: row.delegation_json
         ? (fleetBotDelegationSchema.safeParse(JSON.parse(String(row.delegation_json))).data ?? null)
         : null,
+      sharedFiles: null,
       runningRun: null,
       turns: null,
     }

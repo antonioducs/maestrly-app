@@ -1,12 +1,13 @@
 import { useChatDocument, useChatOwnerWindow } from '@/lib/chat-window-context'
 import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Loader2 } from 'lucide-react'
+import { AlertTriangle, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 export function ConfirmDialog({
   title,
   message,
+  warning,
   confirmLabel,
   busy,
   destructive,
@@ -16,6 +17,8 @@ export function ConfirmDialog({
 }: {
   title: string
   message: string
+  /** A consequence to weigh before confirming, shown apart from the message. */
+  warning?: string | null
   confirmLabel: string
   busy?: boolean
   destructive?: boolean
@@ -54,6 +57,12 @@ export function ConfirmDialog({
       >
         <h2 className="text-sm font-semibold text-foreground">{title}</h2>
         <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">{message}</p>
+        {warning && (
+          <p className="mt-2.5 flex items-start gap-2 rounded-md bg-artifact-warn/[0.08] px-2.5 py-2 text-xs leading-relaxed text-foreground">
+            <AlertTriangle aria-hidden="true" className="mt-px size-3.5 shrink-0 text-artifact-warn" />
+            <span>{warning}</span>
+          </p>
+        )}
         {error && (
           <p role="alert" className="mt-2 text-xs leading-relaxed text-destructive">
             {error}

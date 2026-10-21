@@ -39,7 +39,10 @@ import {
   fleetSendMessageRequestSchema,
   fleetEditMessageRequestSchema,
   FLEET_FILES_FEATURE,
+  FLEET_FILES_MANAGE_FEATURE,
   FLEET_FILE_LIMITS,
+  fleetFileSettingsSchema,
+  fleetFilesDeleteRequestSchema,
   FLEET_MESSAGE_EDIT_FEATURE,
   FLEET_REASONING_QUERY,
   FLEET_ROUTINE_CONVERSATIONS_FEATURE,
@@ -66,6 +69,7 @@ import {
   FLEET_DEVICES_UNSUPPORTED,
   FLEET_EDIT_CONFLICT,
   FLEET_EDIT_UNSUPPORTED,
+  FLEET_FILES_MANAGE_UNSUPPORTED,
   FLEET_RUN_CONFLICT,
   FLEET_RUNS_UNSUPPORTED,
   FLEET_PEER_THREAD_CONFLICT,
@@ -414,6 +418,12 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
       if (!bot.capabilities.includes(FLEET_FILES_FEATURE)) throw new Error('FLEET_FILES_UNSUPPORTED')
     })
   }
+  /** Checks the gateway and the bot manage the files it shared (`files-manage`). */
+  const requireFilesManage = async (fleet: FleetClientService, botId: string): Promise<void> => {
+    if (!fleet.hasFeature(FLEET_FILES_MANAGE_FEATURE)) throw new Error(FLEET_FILES_MANAGE_UNSUPPORTED)
+    const bot = await fleet.call('botGet', { params: { id: botId } })
+    if (!bot.capabilities.includes(FLEET_FILES_MANAGE_FEATURE)) throw new Error(FLEET_FILES_MANAGE_UNSUPPORTED)
+  }
   /** The bot after checking it and its gateway keep routine runs in conversations of their own. */
   const requireRuns = async (fleet: FleetClientService, botId: string) => {
     if (!fleet.hasFeature(FLEET_ROUTINE_CONVERSATIONS_FEATURE)) throw new Error(FLEET_RUNS_UNSUPPORTED)
@@ -582,6 +592,20 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
       throw error
     })
   )
+  scoped.handle('fleet:listBotFiles', (fleet, _event, botId: unknown) => {
+    const bot = id.parse(botId)
+    return requireFilesManage(fleet, bot).then(() => fleet.call('botFilesList', { params: { id: bot } }))
+  })
+  scoped.mhandle('fleet:deleteBotFiles', (fleet, _event, botId: unknown, ids: unknown) => {
+    const bot = id.parse(botId)
+    const body = fleetFilesDeleteRequestSchema.parse({ ids })
+    return requireFilesManage(fleet, bot).then(() => fleet.deleteFiles(bot, body.ids))
+  })
+  scoped.mhandle('fleet:setBotFileSettings', (fleet, _event, botId: unknown, settings: unknown) => {
+    const bot = id.parse(botId)
+    const body = fleetFileSettingsSchema.parse(settings)
+    return requireFilesManage(fleet, bot).then(() => fleet.call('botFileSettings', { params: { id: bot }, body }))
+  })
   scoped.handle('fleet:getImage', (fleet, _event, botId: unknown, rawImageId: unknown, runId: unknown = null) =>
     fleet
       .getImage(id.parse(botId), imageId.parse(rawImageId), opaqueId.nullable().parse(runId))

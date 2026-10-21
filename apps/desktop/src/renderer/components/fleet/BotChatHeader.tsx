@@ -1,14 +1,16 @@
-import { useEffect, useState, type ReactNode } from 'react'
-import { ArrowRightLeft, History, Loader2, MessageSquare, Monitor, Pause, Play, Settings } from 'lucide-react'
+import { useEffect, useState, type ReactNode, type Ref } from 'react'
+import { ArrowRightLeft, Files, History, Loader2, MessageSquare, Monitor, Pause, Play, Settings } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import type { FleetBot, FleetEnvironment } from '@maestrly/bot-fleet-protocol'
+import type { FleetBot, FleetEnvironment, FleetFilesUsage } from '@maestrly/bot-fleet-protocol'
 import { Button } from '@/components/ui/button'
 import { ChatWindowButton } from '@/components/chat/ChatWindowHost'
 import { startBot } from '@/lib/fleet/environments'
+import { filesLevel, filesMeter, spaceLabel } from '@/lib/fleet/files'
 import { takeoverBlocksResume } from '@/lib/fleet/selectors'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import { sideTurns } from '@/lib/fleet/turns'
 import { cn } from '@/lib/utils'
+import { botFilesDrawerId } from './BotFilesDrawer'
 import { BotPaneSwitch, type BotPane } from './BotPaneSwitch'
 
 /** Whether the conversation pane shows the bot's conversation, its routine runs or its conversations with other bots. */
@@ -101,6 +103,7 @@ export function BotChatHeader({
   onOpenServer,
   onOpenEnvironment,
   panes,
+  files,
 }: {
   bot: FleetBot
   fleet: FleetController
@@ -129,8 +132,15 @@ export function BotChatHeader({
     onOpenRun: (runId: string) => void
     onOpenThread: (threadId: string) => void
   }
+  /** The bot's shared files (`files-manage`): their space, and the drawer that lists them. */
+  files?: {
+    usage: FleetFilesUsage | null
+    open: boolean
+    buttonRef?: Ref<HTMLButtonElement>
+    onToggle: () => void
+  }
 }) {
-  const { t } = useTranslation('fleet')
+  const { t, i18n } = useTranslation('fleet')
   const host = fleet.state.snapshot.host?.hostname ?? t('view.server')
   // The side conversations working now, each in a conversation of its own, beside the bot's own conversation.
   const running = sideTurns(bot).filter((turn) => (turn.kind === 'routine' ? panes?.runs : panes?.threads))
@@ -145,6 +155,8 @@ export function BotChatHeader({
       ] as BotConversationPane[])
     : []
   const tabIcon = { conversation: MessageSquare, runs: History, threads: ArrowRightLeft }
+  // The Files button takes room the header does not have in a narrow conversation: Pause and Resume give theirs up.
+  const pauseLabel = files ? 'hidden @3xl:inline' : undefined
   const tabLabel = (pane: BotConversationPane) =>
     t(pane === 'conversation' ? 'runs.tabConversation' : pane === 'runs' ? 'runs.tab' : 'threads.tab')
   const tabCount = (pane: BotConversationPane) =>
@@ -252,11 +264,12 @@ export function BotChatHeader({
             variant="ghost"
             className="h-[30px] text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
             disabled={takeoverBlocksResume(bot.takeover)}
-            title={takeoverBlocksResume(bot.takeover) ? t('action.resumeBlocked') : undefined}
+            aria-label={t('action.resume')}
+            title={takeoverBlocksResume(bot.takeover) ? t('action.resumeBlocked') : t('action.resume')}
             onClick={() => void fleet.botAction(bot.id, 'resume')}
           >
             <Play className="size-3.5" />
-            {t('action.resume')}
+            <span className={pauseLabel}>{t('action.resume')}</span>
           </Button>
         ) : (
           !['starting', 'human'].includes(bot.status) && (
@@ -264,12 +277,25 @@ export function BotChatHeader({
               size="sm"
               variant="ghost"
               className="h-[30px] text-muted-foreground hover:text-foreground"
+              aria-label={t('action.pause')}
+              title={t('action.pause')}
               onClick={() => void fleet.botAction(bot.id, 'pause')}
             >
               <Pause className="size-3.5" />
-              {t('action.pause')}
+              <span className={pauseLabel}>{t('action.pause')}</span>
             </Button>
           )
+        )}
+        {files && (
+          <BotFilesButton
+            botId={bot.id}
+            botName={bot.name}
+            usage={files.usage}
+            open={files.open}
+            locale={i18n.language}
+            buttonRef={files.buttonRef}
+            onToggle={files.onToggle}
+          />
         )}
         <ChatWindowButton target={{ kind: 'bot', serverId: fleet.serverId, id: bot.id }} />
         <Button
@@ -290,5 +316,81 @@ export function BotChatHeader({
         )}
       </div>
     </header>
+  )
+}
+
+/**
+ * Opens the bot's files. Near or at a limit it shows how close, as a meter where the header has room and as a dot
+ * where it has not, so the header's other buttons stay in reach.
+ */
+function BotFilesButton({
+  botId,
+  botName,
+  usage,
+  open,
+  locale,
+  buttonRef,
+  onToggle,
+}: {
+  botId: string
+  botName: string
+  usage: FleetFilesUsage | null
+  open: boolean
+  locale: string
+  buttonRef?: Ref<HTMLButtonElement>
+  onToggle: () => void
+}) {
+  const { t } = useTranslation('fleet')
+  const level = filesLevel(usage)
+  const meter = usage && level !== 'ok' ? filesMeter(usage) : null
+  const label = usage
+    ? t('files.drawer.button', {
+        name: botName,
+        used: spaceLabel(usage.usedBytes, locale),
+        quota: spaceLabel(usage.quotaBytes, locale),
+        count: usage.count,
+        max: usage.countMax,
+      })
+    : t('files.drawer.title')
+  const tone =
+    level === 'full'
+      ? { bg: 'bg-destructive', text: 'text-destructive' }
+      : { bg: 'bg-artifact-warn', text: 'text-artifact-warn' }
+  return (
+    <Button
+      ref={buttonRef}
+      size="sm"
+      variant="ghost"
+      aria-pressed={open}
+      aria-controls={botFilesDrawerId(botId)}
+      aria-label={label}
+      title={label}
+      onClick={onToggle}
+      className={cn(
+        'relative h-[30px] gap-1.5 border border-transparent px-2 text-muted-foreground hover:text-foreground',
+        open && 'border-border-strong bg-white/[0.08] text-foreground',
+        level === 'full' && !open && 'border-destructive/40'
+      )}
+    >
+      <Files aria-hidden="true" className="size-3.5" />
+      <span className="hidden @4xl:inline">{t('files.drawer.title')}</span>
+      {meter && (
+        <>
+          <span aria-hidden="true" className="hidden items-center gap-1.5 @2xl:inline-flex">
+            <span className="h-1 w-[26px] overflow-hidden rounded-sm bg-white/10">
+              <i
+                className={cn('block h-full', tone.bg)}
+                style={{ width: `${Math.max(8, Math.round(meter.ratio * 100))}%` }}
+              />
+            </span>
+            <span className={cn('font-mono text-[11px]', tone.text)}>{meter.text}</span>
+          </span>
+          <span
+            aria-hidden="true"
+            className={cn('absolute right-1 top-1 size-1.5 rounded-full @2xl:hidden', tone.bg)}
+          />
+        </>
+      )}
+    </Button>
   )
 }

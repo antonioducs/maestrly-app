@@ -5,6 +5,9 @@ import {
   FLEET_TRANSCRIPT_REASONING_FEATURE,
   fleetMetaFeatures,
   type FleetBot,
+  type FleetFileSettings,
+  type FleetFilesDeleted,
+  type FleetFilesUsage,
   type FleetGatewayEvent,
   type FleetInteractionResolution,
   type FleetPatchBotRequest,
@@ -100,7 +103,8 @@ export function createFleetController(
   let saving: Promise<void> = Promise.resolve()
   let savingSeen: Promise<void> = Promise.resolve()
   // Each hello may follow missed events: a transcript or a list loaded before the latest hello is reloaded when it is
-  // shown again, a newer one is not. Keys are a bot's id for its transcript, `runs:`/`threads:` and a lane's key.
+  // shown again, a newer one is not. Keys are a bot's id for its transcript, `runs:`/`threads:`/`files:` and a lane's
+  // key.
   let hellos = 0
   const loadedAtHello = new Map<string, number>()
   const fresh = (key: string) => (loadedAtHello.get(key) ?? -1) >= hellos
@@ -268,6 +272,18 @@ export function createFleetController(
         )
     } catch {
       dispatch({ type: 'threads-failed', botId })
+    }
+  }
+
+  /** The files a bot shared, their space and the ones deleted lately (`files-manage`). */
+  async function loadFiles(botId: string) {
+    loadedAtHello.set(`files:${botId}`, hellos)
+    dispatch({ type: 'files-loading', botId })
+    try {
+      const list = await source.call('botFilesList', { params: { id: botId } })
+      dispatch({ type: 'files-list', botId, list })
+    } catch {
+      dispatch({ type: 'files-failed', botId })
     }
   }
 
@@ -503,6 +519,30 @@ export function createFleetController(
       void loadThreads(botId)
     },
     reloadThreads: (botId: string) => loadThreads(botId),
+    // --- Files the bot shared (`files-manage`). ---
+    /** Reads a bot's files unless they are loaded, current, and as new as the bot says its files are. */
+    ensureFiles(botId: string) {
+      const current = state.files[botId]
+      if (current?.loading) return
+      const version = state.bots.find((bot) => bot.id === botId)?.sharedFiles?.updatedAt ?? null
+      if (current?.loaded && fresh(`files:${botId}`) && (version === null || current.version === version)) return
+      void loadFiles(botId)
+    },
+    reloadFiles: (botId: string) => loadFiles(botId),
+    async deleteFiles(botId: string, ids: string[]): Promise<FleetFilesDeleted> {
+      const result = await source.call('botFilesDelete', { params: { id: botId }, body: { ids } })
+      dispatch({ type: 'files-deleted', botId, result, at: new Date(now()).toISOString() })
+      const bot = state.bots.find((item) => item.id === botId)
+      if (bot) applyBot({ ...bot, sharedFiles: result.usage })
+      return result
+    },
+    async saveFileSettings(botId: string, settings: FleetFileSettings): Promise<FleetFilesUsage> {
+      const usage = await source.call('botFileSettings', { params: { id: botId }, body: settings })
+      dispatch({ type: 'files-usage', botId, usage })
+      const bot = state.bots.find((item) => item.id === botId)
+      if (bot) applyBot({ ...bot, sharedFiles: usage })
+      return usage
+    },
     /** Shows a run's or a thread's own conversation, read again unless it is loaded and current. */
     async openLane(botId: string, lane: LaneRef) {
       openLane = { botId, lane }

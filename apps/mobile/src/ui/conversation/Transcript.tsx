@@ -1,5 +1,6 @@
 import type { FleetBot } from '@maestrly/bot-fleet-protocol'
 import { useCallback, useMemo } from 'react'
+import { Alert } from 'react-native'
 import { runMarkers, runSettingsOf } from '../../fleet/lanes'
 import { useFleet, useFleetController } from '../../fleet/react'
 import { botWorksHere } from '../../fleet/selectors'
@@ -9,6 +10,7 @@ import { OutboxRow } from '../composer/OutboxRow'
 import { RunMarker } from '../lanes/RunMarker'
 import { ConversationList, type ExtraRow } from './ConversationList'
 import { useConversation } from './CueCard'
+import { clearFileReveal, fileRevealKey, useFileReveal } from './file-reveal'
 
 /**
  * The conversation with a bot, newest at the bottom; scrolling up loads older pages. Where the bot keeps its routine
@@ -19,6 +21,8 @@ export function Transcript({ bot }: { bot: FleetBot }) {
   const controller = useFleetController()
   const { lanes } = useConversation()
   const transcript = useFleet(useCallback((state: FleetState) => state.transcripts[bot.id], [bot.id]))
+  const revealKey = fileRevealKey(controller.source.serverId, bot.id)
+  const reveal = useFileReveal(revealKey)
   const outbox = useFleet(
     useCallback((state: FleetState) => state.outbox.filter((entry) => entry.botId === bot.id), [bot.id])
   )
@@ -70,6 +74,13 @@ export function Transcript({ bot }: { bot: FleetBot }) {
       emptyText={t('conv.empty', { name: bot.name })}
       onLoadOlder={() => void controller.loadOlder(bot.id)}
       hasOlder={!!transcript?.before}
+      reveal={reveal}
+      failed={!!transcript?.failed}
+      onRevealed={(result) => {
+        clearFileReveal(revealKey)
+        if (result !== 'found')
+          Alert.alert(t('files.title'), t(result === 'missing' ? 'files.notFound' : 'files.revealFailed'))
+      }}
     />
   )
 }

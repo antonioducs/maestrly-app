@@ -1,7 +1,7 @@
 import type { MobileChatItem } from '@maestrly/bot-fleet-protocol'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ActivityIndicator, FlatList, Pressable, View } from 'react-native'
-import { transcriptRows, withExtras, type TranscriptRow } from '../../fleet/transcript-rows'
+import { rowFileIds, transcriptRows, withExtras, type TranscriptRow } from '../../fleet/transcript-rows'
 import { searchRows } from '../../fleet/transcript-search'
 import { useI18n } from '../../i18n'
 import { useTheme } from '../../theme/ThemeProvider'
@@ -14,6 +14,7 @@ import { BotFiles } from './BotFiles'
 import { ThreadBridge } from '../lanes/ThreadBridge'
 import { ConversationSearchBar, useConversationSearch } from './ConversationSearch'
 import { useConversation } from './CueCard'
+import { revealStep, type RevealResult } from './file-reveal'
 import { DispatchCard } from './DispatchCard'
 import { HelpCard } from './HelpCard'
 import { PermissionCard } from './PermissionCard'
@@ -98,6 +99,9 @@ export function ConversationList({
   onLoadOlder,
   hasOlder = false,
   top,
+  reveal = null,
+  onRevealed,
+  failed = false,
 }: {
   items: MobileChatItem[]
   extras: ExtraRow[]
@@ -109,6 +113,12 @@ export function ConversationList({
   /** Older pages wait to be loaded. */
   hasOlder?: boolean
   top?: ReactNode
+  /** A file to scroll to and highlight, loading older pages until it shows. */
+  reveal?: string | null
+  /** Showing the file ended: it was found, is not in the conversation, or a page before it could not be read. */
+  onRevealed?: (result: RevealResult) => void
+  /** The last page read failed. */
+  failed?: boolean
 }) {
   const { palette } = useTheme()
   const { t } = useI18n()
@@ -153,6 +163,51 @@ export function ConversationList({
     if (current === null) return
     list.current?.scrollToIndex({ index: current, viewPosition: 0.5, animated: !reduced })
   }, [current, reduced])
+
+  const revealIndex = useMemo(
+    () => (reveal ? data.findIndex((row) => row.kind !== 'extra' && rowFileIds(row).includes(reveal)) : -1),
+    [reveal, data]
+  )
+  const [flash, setFlash] = useState<string | null>(null)
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(
+    () => () => {
+      if (flashTimer.current) clearTimeout(flashTimer.current)
+    },
+    []
+  )
+  // Whether an older page was asked for the file being revealed, so a failed read ends it instead of asking again.
+  const askedOlder = useRef(false)
+  useEffect(() => {
+    if (!reveal) {
+      askedOlder.current = false
+      return
+    }
+    const step = revealStep({
+      index: revealIndex,
+      loaded,
+      loadingOlder,
+      hasOlder,
+      asked: askedOlder.current,
+      failed,
+    })
+    if (step === 'wait') return
+    if (step === 'older') {
+      askedOlder.current = true
+      onLoadOlder()
+      return
+    }
+    askedOlder.current = false
+    if (step === 'found') {
+      list.current?.scrollToIndex({ index: revealIndex, viewPosition: 0.5, animated: !reduced })
+      const key = rowKey(data[revealIndex]!)
+      setFlash(key)
+      if (flashTimer.current) clearTimeout(flashTimer.current)
+      flashTimer.current = setTimeout(() => setFlash((value) => (value === key ? null : value)), 1800)
+    }
+    onRevealed?.(step)
+  }, [reveal, revealIndex, loaded, loadingOlder, hasOlder, failed])
+
   const older = () => {
     if (cursor < matches.length - 1) return setCursor(cursor + 1)
     if (!hasOlder) return
@@ -209,9 +264,23 @@ export function ConversationList({
         }}
         scrollEventThrottle={64}
         keyExtractor={rowKey}
-        extraData={current}
+        extraData={[current, flash]}
         renderItem={({ item, index }) =>
-          index === current ? (
+          index !== current && flash !== null && rowKey(item) === flash ? (
+            <View
+              style={{
+                marginHorizontal: -8,
+                marginVertical: -8,
+                paddingHorizontal: 6,
+                paddingVertical: 6,
+                borderRadius: 18,
+                borderWidth: 2,
+                borderColor: palette.brass,
+              }}
+            >
+              <RowView row={item} found={false} />
+            </View>
+          ) : index === current ? (
             <View
               style={{
                 marginHorizontal: -10,

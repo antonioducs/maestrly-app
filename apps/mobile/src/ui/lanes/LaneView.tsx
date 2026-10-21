@@ -8,7 +8,7 @@ import {
 } from '@maestrly/bot-fleet-protocol'
 import { router } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { ActivityIndicator, KeyboardAvoidingView, Pressable, type TextInputInstance, View } from 'react-native'
+import { ActivityIndicator, Alert, KeyboardAvoidingView, Pressable, type TextInputInstance, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { LaneConflictError } from '../../fleet/controller'
 import { formatDateTime } from '../../fleet/format'
@@ -32,8 +32,11 @@ import { fonts, mix } from '../../theme/tokens'
 import { DEMO_SERVER } from '../../demo/demo-source'
 import { ComposerShell, ShownError } from '../composer/Composer'
 import { confirm } from '../confirm'
+import { botFileAccess } from '../conversation/bot-file-fetch'
 import { ConversationList, type ExtraRow } from '../conversation/ConversationList'
 import { ConversationContext, shownError, type ConversationContextValue } from '../conversation/CueCard'
+import { clearFileReveal, fileRevealKey, useFileReveal } from '../conversation/file-reveal'
+import { useBotFiles } from '../files/use-bot-files'
 import { Icon } from '../icons'
 import { Button } from '../primitives/Button'
 import { Cell } from '../primitives/Cell'
@@ -529,6 +532,10 @@ function LaneConversation({
   )
   const kind = lane.kind
   const laneId = lane.id
+  const revealKey = fileRevealKey(controller.source.serverId, bot.id, laneId)
+  const reveal = useFileReveal(revealKey)
+  // The bot's files, so the cards of those it deleted say so.
+  useBotFiles(bot)
   useEffect(() => {
     if (!own) return
     void controller.openLane(bot.id, { kind, id: laneId })
@@ -547,13 +554,7 @@ function LaneConversation({
         inbox.find((entry) => entry.interaction.itemId === item.id)?.interaction.id ?? null,
       resolve: (interactionId, resolution) => controller.resolve(bot.id, interactionId, resolution),
       imageSource: (imageId) => controller.source.imageSource(bot.id, imageId, laneId),
-      files: {
-        serverId: controller.source.serverId,
-        botId: bot.id,
-        demo: active?.id === DEMO_SERVER.id,
-        source: (fileId) => controller.source.fileSource(bot.id, fileId),
-        check: (fileId) => controller.source.call('botFileMeta', { params: { id: bot.id, fileId } }),
-      },
+      files: botFileAccess(controller, bot.id, active?.id === DEMO_SERVER.id),
       // A run can open a thread with another bot: its card leads there too.
       lanes: {
         runs: supported.runs,
@@ -600,6 +601,13 @@ function LaneConversation({
         emptyText={t('lanes.empty')}
         onLoadOlder={() => controller.loadOlderLane(bot.id, { kind, id: laneId })}
         hasOlder={!!transcript?.before}
+        reveal={reveal}
+        failed={!!transcript?.failed}
+        onRevealed={(result) => {
+          clearFileReveal(revealKey)
+          if (result !== 'found')
+            Alert.alert(t('files.title'), t(result === 'missing' ? 'files.notFound' : 'files.revealFailed'))
+        }}
       />
     )
   return (

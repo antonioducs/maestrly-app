@@ -11,6 +11,8 @@ import {
   fleetEditMessageRequestSchema,
   fleetSendMessageRequestSchema,
   type FleetEditMessageRequest,
+  type FleetFileSettings,
+  type FleetPublishedFile,
   type FleetSendMessageRequest,
   type FleetTranscriptItem,
 } from '@maestrly/bot-fleet-protocol'
@@ -27,7 +29,15 @@ const code = Buffer.from('export const greeting = "Olá, bot"\n', 'utf8')
  * server and the bot can edit it when `edit` is true: an edit cuts the transcript there and queues the new text.
  */
 async function withBot(
-  options: { files?: boolean; permission?: boolean; video?: boolean; edit?: boolean; slow?: boolean },
+  options: {
+    files?: boolean
+    permission?: boolean
+    video?: boolean
+    edit?: boolean
+    slow?: boolean
+    /** The server and the bot manage shared files (`files-manage`), and the bot's space for them is full. */
+    manage?: boolean
+  },
   run: (fixture: {
     page: Page
     downloads: string
@@ -40,6 +50,8 @@ async function withBot(
     /** With `slow`, file bodies stop halfway until this runs; later bodies flow at once. */
     releaseFile: () => void
     notices: () => Promise<{ title: string; body: string }[]>
+    /** With `manage`, what the owner deleted and the space settings they saved. */
+    manage: { deletes: string[][]; settings: FleetFileSettings[] }
   }) => Promise<void>
 ) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'maestrly-bot-files-'))
@@ -47,6 +59,52 @@ async function withBot(
   await mkdir(downloads)
   const at = new Date().toISOString()
   const features = [...(options.files === false ? [] : ['files']), ...(options.edit ? ['message-edit'] : [])]
+  const ref = { id: 'f-report', name: 'Relatório.pdf', mediaType: 'application/pdf', byteSize: pdf.length }
+  // The bot's shared files as the owner manages them: the report and a video of its conversation, and a video of a
+  // routine run deleted since. Its space is full: 6 MiB of 1 GiB left.
+  let quotaBytes = 1024 ** 3
+  const managed: FleetPublishedFile[] = [
+    { ...ref, sharedAt: at, origin: { kind: 'primary' }, originGone: false },
+    {
+      id: 'f-episode',
+      name: 'episodio_12_1080p.mp4',
+      mediaType: 'video/mp4',
+      byteSize: 98 * 1024 ** 2,
+      sharedAt: new Date(Date.parse(at) - 86_400_000).toISOString(),
+      origin: { kind: 'primary' },
+      originGone: false,
+    },
+    {
+      id: 'f-short',
+      name: 'short_a.mp4',
+      mediaType: 'video/mp4',
+      byteSize: 15 * 1024 ** 2,
+      sharedAt: new Date(Date.parse(at) - 7 * 86_400_000).toISOString(),
+      origin: { kind: 'routine', runId: 'run-1', title: 'Shorts' },
+      originGone: true,
+    },
+  ]
+  const removed: Array<{ id: string; removedAt: string }> = []
+  const manage = { deletes: [] as string[][], settings: [] as FleetFileSettings[] }
+  const sharedUsage = () => ({
+    usedBytes: quotaBytes - 6 * 1024 ** 2,
+    count: managed.length,
+    quotaBytes,
+    countMax: 200,
+    deleteWithConversations: manage.settings.at(-1)?.deleteWithConversations ?? true,
+    updatedAt: at,
+  })
+  const shareReport: FleetTranscriptItem = {
+    kind: 'tool',
+    id: 'tool-share',
+    at,
+    name: 'bot_share_file',
+    state: 'done',
+    target: ref.name,
+    output: null,
+    images: [],
+    files: [ref],
+  }
   const bot = fleetBotSchema.parse({
     id: 'file-bot',
     name: 'File Bot',
@@ -67,11 +125,11 @@ async function withBot(
     resources: { memoryBytes: null, memoryLimitBytes: null, cpuPercent: null, startedAt: at },
     screen: { width: 1280, height: 800, display: ':1' },
     appVersion: '0.12.0',
-    capabilities: features,
+    capabilities: [...features, ...(options.manage ? ['files-manage'] : [])],
+    ...(options.manage ? { sharedFiles: sharedUsage() } : {}),
     createdAt: at,
     updatedAt: at,
   })
-  const ref = { id: 'f-report', name: 'Relatório.pdf', mediaType: 'application/pdf', byteSize: pdf.length }
   // Recorded once the app is up, before the bot's transcript is read.
   let video: Buffer = Buffer.alloc(0)
   const clip = () => ({ id: 'f-clip', name: 'clip.webm', mediaType: 'video/webm', byteSize: video.length })
@@ -138,7 +196,14 @@ async function withBot(
       let value: unknown
       switch (key) {
         case 'meta':
-          value = { protocol: 1, gatewayVersion: '0.12.0', botImage: 'fixture', botImageVersion: null, features }
+          value = {
+            protocol: 1,
+            gatewayVersion: '0.12.0',
+            botImage: 'fixture',
+            botImageVersion: null,
+            features,
+            moreFeatures: options.manage ? ['files-manage'] : [],
+          }
           break
         case 'pair':
           value = { deviceId: 'fixture-device', token: 'fixture-files-token' }
@@ -192,21 +257,22 @@ async function withBot(
             value = { items: [edited], before: null }
             break
           }
+          if (options.manage) {
+            // The report's card is on an older page, which only "Load older" or a search for it would bring.
+            value =
+              url.searchParams.get('before') === 'older'
+                ? { items: [shareReport], before: null }
+                : {
+                    items: [{ kind: 'assistant', id: 'answer', at, text: 'Your report is ready.', streaming: false }],
+                    before: 'older',
+                  }
+            break
+          }
           value = {
             items: [
               ...(options.edit !== undefined ? [owner('owner-1', 'Summarize the report', false)] : []),
               ...(options.permission ? [permission] : []),
-              {
-                kind: 'tool',
-                id: 'tool-share',
-                at,
-                name: 'bot_share_file',
-                state: 'done',
-                target: ref.name,
-                output: null,
-                images: [],
-                files: [ref],
-              },
+              shareReport,
               ...(options.video
                 ? [
                     {
@@ -266,6 +332,28 @@ async function withBot(
           value = { result: results[body.op] ?? { ok: true } }
           break
         }
+        case 'botFilesList':
+          value = { files: managed, removed, usage: sharedUsage(), diskFreeBytes: 38 * 1024 ** 3 }
+          break
+        case 'botFilesDelete': {
+          manage.deletes.push(body.ids)
+          const deleted = managed.filter((file) => body.ids.includes(file.id))
+          for (const file of deleted) {
+            managed.splice(managed.indexOf(file), 1)
+            removed.push({ id: file.id, removedAt: new Date().toISOString() })
+          }
+          value = {
+            deleted: deleted.map((file) => file.id),
+            freedBytes: deleted.reduce((sum, file) => sum + file.byteSize, 0),
+            usage: sharedUsage(),
+          }
+          break
+        }
+        case 'botFileSettings':
+          manage.settings.push(body)
+          quotaBytes = body.quotaGb * 1024 ** 3
+          value = sharedUsage()
+          break
         case 'botFileMeta':
         case 'botFile': {
           fileRequests.push(url.pathname)
@@ -356,6 +444,7 @@ async function withBot(
       received,
       edits,
       fileRequests,
+      manage,
       revealedPaths: () =>
         app!.evaluate(() => (globalThis as typeof globalThis & { fleetRevealedPaths: string[] }).fleetRevealedPaths),
       expireFile: () => {
@@ -718,5 +807,77 @@ test('a gateway without files support rejects PDF attachments with an update hin
     ).toBeVisible()
     await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeDisabled()
     expect(received).toEqual([])
+  })
+})
+
+test('the Files drawer shows the space, deletes what the owner picks and marks its cards', async () => {
+  await withBot({ manage: true }, async ({ page, manage }) => {
+    const banner = page.getByRole('status').filter({ hasText: 'space for files is full' })
+    await expect(banner).toBeVisible()
+    await banner.getByRole('button', { name: 'Free space', exact: true }).click()
+    const drawer = page.getByRole('complementary', { name: 'Files', exact: true })
+    const search = drawer.getByRole('searchbox', { name: 'Search files' })
+    await expect(search).toBeFocused()
+    // "Free space" lists this conversation's files, largest first.
+    await expect(drawer.getByRole('button', { name: /^This conversation/ })).toHaveAttribute('aria-pressed', 'true')
+    await expect(drawer.getByRole('listitem')).toHaveCount(2)
+    await expect(drawer.getByRole('listitem').first()).toContainText('episodio_12_1080p.mp4')
+    // Each file takes its share of the bar, however small.
+    const bar = await drawer
+      .getByRole('img', { name: /used of/ })
+      .evaluate((node) =>
+        [...node.children].reduce((sum, child) => sum + parseFloat((child as HTMLElement).style.width), 0)
+      )
+    expect(bar).toBeCloseTo(((113 * 1024 ** 2 + pdf.length) / 1024 ** 3) * 100, 2)
+
+    await drawer.getByRole('button', { name: /^Whole bot/ }).click()
+    await expect(drawer.getByRole('listitem')).toHaveCount(3)
+    await expect(drawer.getByRole('listitem').filter({ hasText: 'short_a.mp4' })).toContainText('Routine Shorts')
+    await expect(drawer.getByRole('listitem').filter({ hasText: 'short_a.mp4' })).toContainText('deleted')
+
+    await search.fill('Relat')
+    await expect(drawer.getByRole('listitem')).toHaveCount(1)
+    // Its message is on an older page: showing it loads that page and highlights its card.
+    await drawer.getByRole('button', { name: 'Show Relatório.pdf in the conversation' }).click()
+    await expect(page.locator('[data-file-id="f-report"].bot-file-flash')).toBeVisible()
+    await expect(drawer.getByText('no longer in the conversation', { exact: false })).toHaveCount(0)
+    await drawer.getByRole('checkbox', { name: 'Select Relatório.pdf' }).check()
+    await drawer.getByRole('button', { name: 'Delete', exact: true }).click()
+    const dialog = page.getByRole('dialog', { name: 'Delete Relatório.pdf?' })
+    await expect(dialog).toContainText('You have not downloaded this file.')
+    await expect(dialog.getByRole('button', { name: 'Delete file' })).toBeFocused()
+    await page.keyboard.press('Escape')
+    await expect(dialog).toHaveCount(0)
+    await expect(drawer).toBeVisible()
+    await drawer.getByRole('button', { name: 'Delete', exact: true }).click()
+    await dialog.getByRole('button', { name: 'Delete file' }).click()
+    await expect.poll(() => manage.deletes).toEqual([['f-report']])
+    // Its row is gone with the dialog: the focus stays in the drawer.
+    await expect(search).toBeFocused()
+    await expect(drawer.getByText('Relatório.pdf deleted', { exact: false })).toBeVisible()
+    // Its card in the conversation says so, without a download that would fail.
+    const card = page.locator('[data-file-id="f-report"]').filter({ hasText: 'Deleted from the bot server' })
+    await expect(card).toBeVisible()
+    await expect(card.getByRole('button', { name: /^Download/ })).toHaveCount(0)
+
+    await drawer.getByRole('button', { name: 'Space and cleanup' }).click()
+    await drawer.getByRole('radio', { name: '5 GB' }).click()
+    await expect.poll(() => manage.settings).toEqual([{ quotaGb: 5, deleteWithConversations: true }])
+    await expect(drawer.getByRole('radio', { name: '5 GB' })).toHaveAttribute('aria-checked', 'true')
+
+    // Escape clears the search first, then closes the drawer and gives the focus back to its button.
+    await search.focus()
+    await page.keyboard.press('Escape')
+    await expect(search).toHaveValue('')
+    await page.keyboard.press('Escape')
+    await expect(drawer).toHaveCount(0)
+    await expect(page.locator('[aria-controls="bot-files-drawer-file-bot"]')).toBeFocused()
+  })
+})
+
+test('a server or bot that cannot manage shared files shows no Files button', async () => {
+  await withBot({}, async ({ page }) => {
+    await expect(page.getByRole('button', { name: 'Download Relatório.pdf' }).first()).toBeVisible()
+    await expect(page.locator('[aria-controls^="bot-files-drawer"]')).toHaveCount(0)
   })
 })

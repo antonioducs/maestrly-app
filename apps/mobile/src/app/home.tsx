@@ -21,10 +21,14 @@ import { NewChat } from '../ui/chat/NewChat'
 import { Composer } from '../ui/composer/Composer'
 import { LockedNotice } from '../ui/composer/LockedNotice'
 import { ConnectionBanner } from '../ui/ConnectionBanner'
+import { botFileAccess } from '../ui/conversation/bot-file-fetch'
 import { BotTitle, ChatTitle, ConversationHeader, NewChatTitle } from '../ui/conversation/ConversationHeader'
 import { ConversationContext, type ConversationContextValue, type LanesAccess } from '../ui/conversation/CueCard'
 import { ConversationSearchContext, useConversationSearch } from '../ui/conversation/ConversationSearch'
+import { fileRevealKey, useFileReveal } from '../ui/conversation/file-reveal'
 import { Transcript } from '../ui/conversation/Transcript'
+import { FilesFullBanner } from '../ui/files/FilesFullBanner'
+import { useBotFiles } from '../ui/files/use-bot-files'
 import { Drawer } from '../ui/drawer/Drawer'
 import { DrawerPanel } from '../ui/drawer/DrawerPanel'
 import { Icon } from '../ui/icons'
@@ -144,6 +148,13 @@ function BotConversation({ bot }: { bot: FleetBot }) {
   useEffect(() => {
     if (search.open) setPane('conversation')
   }, [search.open])
+  // Its files, so a full space shows above the message field and its cards know which files it deleted.
+  const files = useBotFiles(bot)
+  // So does a file its Files sheet shows there.
+  const reveal = useFileReveal(fileRevealKey(controller.source.serverId, bot.id))
+  useEffect(() => {
+    if (reveal) setPane('conversation')
+  }, [reveal])
   const choosePane = (next: LanePane) => {
     if (next !== 'conversation') search.setOpen(false)
     setPane(next)
@@ -162,13 +173,7 @@ function BotConversation({ bot }: { bot: FleetBot }) {
       sendMessage: async (text: string) => {
         await controller.send(bot.id, text, [])
       },
-      files: {
-        serverId: controller.source.serverId,
-        botId: bot.id,
-        demo: active?.id === DEMO_SERVER.id,
-        source: (fileId) => controller.source.fileSource(bot.id, fileId),
-        check: (fileId) => controller.source.call('botFileMeta', { params: { id: bot.id, fileId } }),
-      },
+      files: botFileAccess(controller, bot.id, active?.id === DEMO_SERVER.id),
       ...(edit ? { edit } : {}),
       ...(lanes ? { lanes } : {}),
     }),
@@ -202,6 +207,7 @@ function BotConversation({ bot }: { bot: FleetBot }) {
       ) : (
         <>
           <Transcript bot={bot} />
+          {files.supported ? <FilesFullBanner bot={bot} usage={files.usage} /> : null}
           {isComposerLocked(bot) ? (
             <LockedNotice bot={bot} />
           ) : (
