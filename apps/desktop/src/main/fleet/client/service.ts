@@ -9,6 +9,7 @@ import {
   isAllowedFleetUrl,
   type FleetBot,
   type FleetEnvironment,
+  type FleetFilesDeleted,
   type FleetGatewayEvent,
   type FleetHostInfo,
   type FleetInboxItem,
@@ -221,6 +222,14 @@ export class FleetClientService {
       const destination = await saveFleetFile(api, botId, fileId, { signal, onProgress })
       return { path: destination, receipt: rememberFleetDownload(deviceId, botId, fileId, destination) }
     })
+  }
+
+  /** Deletes files the bot shared (`files-manage`), and the cached copies of those that were videos. */
+  async deleteFiles(botId: string, ids: string[]): Promise<FleetFilesDeleted> {
+    const result = await this.requireApi().call('botFilesDelete', { params: { id: botId }, body: { ids } })
+    const deviceId = this.connection.deviceId
+    if (deviceId) await Promise.all(result.deleted.map((fileId) => this.media.forget(deviceId, botId, fileId)))
+    return result
   }
 
   getActiveDownload(botId: string, fileId: string): FleetDownloadProgress | null {

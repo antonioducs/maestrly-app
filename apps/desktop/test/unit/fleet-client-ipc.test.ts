@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   revealDownload: vi.fn(),
   getDownload: vi.fn(async () => null),
   prepareMedia: vi.fn(async () => 'maestrly-media://fleet/bot/f-file/' + '0'.repeat(32)),
+  deleteFiles: vi.fn(),
   screens: { openScreen: vi.fn(), send: vi.fn(), close: vi.fn(), writeClipboard: vi.fn(), readClipboard: vi.fn() },
   dictationEngine: vi.fn((): string => 'local'),
   dictationKey: vi.fn((_provider: string): string | null => null),
@@ -54,6 +55,7 @@ vi.mock('../../src/main/fleet/client/servers', () => {
     revealDownload: mocks.revealDownload,
     getDownload: mocks.getDownload,
     prepareMedia: mocks.prepareMedia,
+    deleteFiles: mocks.deleteFiles,
     screens: mocks.screens,
     idempotencyKey: () => '550e8400-e29b-41d4-a716-446655440000',
   }
@@ -544,6 +546,90 @@ describe('fleet IPC validation', () => {
     expect(gateway).toContain(`export const RESTART_TO_OPEN_SCREEN = '${GATEWAY_RESTART_TO_OPEN_SCREEN}'`)
     expect(gateway).toContain("throw new GatewayError('BOT_NOT_RUNNING', 'Bot not running')")
     expect(gateway).toContain("throw new GatewayError('BOT_NOT_RUNNING', 'Environment not running')")
+  })
+
+  it('lists, deletes and sizes bot files only where both ends manage them', async () => {
+    const reads = new Map<string, (...args: unknown[]) => unknown>()
+    const mutations = new Map<string, (...args: unknown[]) => unknown>()
+    registerFleetClientIpc({
+      handle: (channel: string, fn: (...args: unknown[]) => unknown) => reads.set(channel, fn),
+      mhandle: (channel: string, fn: (...args: unknown[]) => unknown) => mutations.set(channel, fn),
+      on: () => {},
+      mon: () => {},
+    } as unknown as IpcRegistrar)
+
+    expect(reads.has('fleet:listBotFiles')).toBe(true)
+    expect(mutations.has('fleet:listBotFiles')).toBe(false)
+    expect(mutations.has('fleet:deleteBotFiles')).toBe(true)
+    expect(reads.has('fleet:deleteBotFiles')).toBe(false)
+    expect(mutations.has('fleet:setBotFileSettings')).toBe(true)
+    expect(reads.has('fleet:setBotFileSettings')).toBe(false)
+
+    mocks.call.mockClear()
+    mocks.deleteFiles.mockClear()
+    mocks.hasFeature.mockReturnValue(true)
+    mocks.call.mockImplementation(async (route: string) =>
+      route === 'botGet' ? { capabilities: ['files', 'files-manage'] } : { ok: true }
+    )
+    mocks.deleteFiles.mockResolvedValueOnce({ deleted: ['f-1'], freedBytes: 10, usage: {} })
+
+    await reads.get('fleet:listBotFiles')!({}, SERVER, 'bot')
+    expect(mocks.call).toHaveBeenCalledWith('botFilesList', { params: { id: 'bot' } })
+
+    await mutations.get('fleet:deleteBotFiles')!({}, SERVER, 'bot', ['f-1'])
+    expect(mocks.deleteFiles).toHaveBeenCalledWith('bot', ['f-1'])
+
+    await mutations.get('fleet:setBotFileSettings')!({}, SERVER, 'bot', {
+      quotaGb: 5,
+      deleteWithConversations: false,
+    })
+    expect(mocks.call).toHaveBeenCalledWith('botFileSettings', {
+      params: { id: 'bot' },
+      body: { quotaGb: 5, deleteWithConversations: false },
+    })
+
+    mocks.hasFeature.mockReturnValue(false)
+    await expect(reads.get('fleet:listBotFiles')!({}, SERVER, 'bot')).rejects.toThrow(
+      'FLEET_FILES_MANAGE_UNSUPPORTED'
+    )
+    await expect(mutations.get('fleet:deleteBotFiles')!({}, SERVER, 'bot', ['f-1'])).rejects.toThrow(
+      'FLEET_FILES_MANAGE_UNSUPPORTED'
+    )
+    await expect(
+      mutations.get('fleet:setBotFileSettings')!({}, SERVER, 'bot', {
+        quotaGb: 5,
+        deleteWithConversations: false,
+      })
+    ).rejects.toThrow('FLEET_FILES_MANAGE_UNSUPPORTED')
+
+    mocks.hasFeature.mockReturnValue(true)
+    mocks.call.mockImplementation(async (route: string) =>
+      route === 'botGet' ? { capabilities: ['files'] } : { ok: true }
+    )
+    await expect(reads.get('fleet:listBotFiles')!({}, SERVER, 'bot')).rejects.toThrow(
+      'FLEET_FILES_MANAGE_UNSUPPORTED'
+    )
+    await expect(mutations.get('fleet:deleteBotFiles')!({}, SERVER, 'bot', ['f-1'])).rejects.toThrow(
+      'FLEET_FILES_MANAGE_UNSUPPORTED'
+    )
+    await expect(
+      mutations.get('fleet:setBotFileSettings')!({}, SERVER, 'bot', {
+        quotaGb: 5,
+        deleteWithConversations: false,
+      })
+    ).rejects.toThrow('FLEET_FILES_MANAGE_UNSUPPORTED')
+
+    expect(() => reads.get('fleet:listBotFiles')!({}, SERVER, '../bot')).toThrow()
+    expect(() => mutations.get('fleet:deleteBotFiles')!({}, SERVER, 'bot', ['../x'])).toThrow()
+    expect(() => mutations.get('fleet:deleteBotFiles')!({}, SERVER, 'bot', [])).toThrow()
+    expect(() =>
+      mutations.get('fleet:setBotFileSettings')!({}, SERVER, 'bot', {
+        quotaGb: 50,
+        deleteWithConversations: true,
+      })
+    ).toThrow()
+    mocks.hasFeature.mockReturnValue(false)
+    mocks.call.mockReset()
   })
 })
 

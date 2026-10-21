@@ -225,6 +225,13 @@ export class FleetMediaCache {
     await rm(files.media, { force: true }).catch(() => undefined)
   }
 
+  /** Forgets one video, as when its bot deleted it; a download of it running now finishes first. */
+  async forget(scope: string, botId: string, fileId: string): Promise<void> {
+    const key = this.key(scope, botId, fileId)
+    await this.inflight.get(key)?.catch(() => undefined)
+    await this.remove(key)
+  }
+
   /** Forgets every video of a bot, as when it is removed. */
   async purgeBot(scope: string, botId: string): Promise<void> {
     await this.purge((meta) => meta.scope === scope && meta.botId === botId)
