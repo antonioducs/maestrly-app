@@ -172,7 +172,8 @@ try {
     await page.getByRole('link', { name: /^Release readiness check · / }).waitFor()
     await page.getByRole('tab', { name: /^Conversations with other bots/ }).click()
     await button(/^Pricing hero for rc\.2/).click()
-    await page.getByText('Paused after 8 messages without you').waitFor()
+    // The thread's row in the list repeats this text while the conversation opens: wait for the alert, not the text.
+    await page.getByRole('alert').getByText('Paused after 8 messages without you').waitFor()
     await button('Let them go on for 8 more').click()
     await page.getByText(/let’s get Stacked ready/).waitFor()
     await button('Back').click()
