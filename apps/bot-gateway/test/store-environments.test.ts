@@ -105,6 +105,7 @@ function botRecord(id: string, overrides: Partial<FleetBot> = {}): FleetBot {
     turns: null,
     peerSettings: FLEET_PEER_THREAD_SETTINGS_DEFAULT,
     delegation: null,
+    sharedFiles: null,
     createdAt: at(20),
     updatedAt: at(20),
     ...overrides,

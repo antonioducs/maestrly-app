@@ -30,7 +30,9 @@ it('replays image receipts created before attachment kinds were introduced', asy
 })
 it('advertises files and proxies private bytes, including empty files', async () => {
   const h = await harness()
-  expect((await (await h.request('GET', '/v1/meta')).json()).features).toContain('files')
+  const meta = await (await h.request('GET', '/v1/meta')).json()
+  expect(meta.features).toContain('files')
+  expect(meta.moreFeatures).toContain('files-manage')
   for (const bytes of [new Uint8Array([0, 255, 1]), new Uint8Array()]) {
     const ref = { id: 'file', name: 'report.pdf', mediaType: 'application/pdf', byteSize: bytes.length }
     vi.spyOn(InstanceClient.prototype, 'fileMeta').mockResolvedValue(ref)
@@ -72,3 +74,46 @@ it('rejects documents before forwarding to an older instance but accepts legacy 
   expect(legacy.status).toBe(201)
   expect(post).toHaveBeenCalledOnce()
 })
+it('refuses file management on a bot that predates it', async () => {
+  const h = await harness()
+  const response = await h.request('GET', `/v1/bots/${h.bot.id}/files`)
+  expect(response.status).toBe(426)
+  expect((await response.json()).code).toBe('PROTOCOL_INCOMPATIBLE')
+})
+it('forwards file management to a bot that has it', async () => {
+  const h = await harness()
+  h.lifecycle.statuses.set(h.bot.id, {
+    ...h.lifecycle.statuses.get(h.bot.id)!,
+    capabilities: ['files', 'files-manage'],
+  })
+  const usage = {
+    usedBytes: 10,
+    count: 1,
+    quotaBytes: 1024 ** 3,
+    countMax: 200,
+    deleteWithConversations: true,
+    updatedAt: null,
+  }
+  const list = { files: [], removed: [], usage, diskFreeBytes: 1024 ** 3 }
+  const deleted = { deleted: ['f-1'], freedBytes: 10, usage }
+  vi.spyOn(InstanceClient.prototype, 'filesList').mockResolvedValue(list)
+  const del = vi.spyOn(InstanceClient.prototype, 'filesDelete').mockResolvedValue(deleted)
+  const set = vi.spyOn(InstanceClient.prototype, 'fileSettings').mockResolvedValue(usage)
+  const listed = await h.request('GET', `/v1/bots/${h.bot.id}/files`)
+  expect(listed.status).toBe(200)
+  expect(listed.headers.get('cache-control')).toBe('private, no-store')
+  expect(await listed.json()).toEqual(list)
+  const removed = await h.request('POST', `/v1/bots/${h.bot.id}/files/delete`, { ids: ['f-1'] })
+  expect(removed.status).toBe(200)
+  expect(await removed.json()).toEqual(deleted)
+  expect(del).toHaveBeenCalledWith({ ids: ['f-1'] })
+  expect((await h.request('POST', `/v1/bots/${h.bot.id}/files/delete`, { ids: [] })).status).toBe(400)
+  const updated = await h.request('PUT', `/v1/bots/${h.bot.id}/file-settings`, {
+    quotaGb: 2,
+    deleteWithConversations: false,
+  })
+  expect(updated.status).toBe(200)
+  expect(await updated.json()).toEqual(usage)
+  expect(set).toHaveBeenCalledWith({ quotaGb: 2, deleteWithConversations: false })
+})
+

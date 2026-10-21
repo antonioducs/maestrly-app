@@ -565,6 +565,7 @@ export class Lifecycle {
     bot.accounts = status?.accounts ?? { connected: false, providers: [] }
     bot.usage = status?.usage ?? null
     bot.compactionState = status?.compaction ?? null
+    bot.sharedFiles = status?.sharedFiles ?? null
     bot.takeover = this.takeovers.get(bot.id) ?? bot.takeover
     bot.activity = status?.activity ?? null
     bot.pendingCount = status?.pending.length ?? 0
@@ -956,6 +957,7 @@ export class Lifecycle {
       turns: null,
       peerSettings: FLEET_PEER_THREAD_SETTINGS_DEFAULT,
       delegation: null,
+      sharedFiles: null,
       createdAt: at,
       updatedAt: at,
     }

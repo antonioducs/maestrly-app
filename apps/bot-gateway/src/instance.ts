@@ -15,6 +15,8 @@ import {
   type FleetInstanceBotImport,
   fleetFileIdSchema,
   type FleetFileRef,
+  type FleetFileSettings,
+  type FleetFilesDeleteRequest,
   FLEET_PROTOCOL_HEADER,
   FLEET_CANCEL_CONVERSATION_QUERY,
   FLEET_PROTOCOL_VERSION,
@@ -712,6 +714,19 @@ export class InstanceClient {
   deleteRun(runId: string) {
     if (!this.scope?.environments) throw new GatewayError('PROTOCOL_INCOMPATIBLE', 'Update this bot to delete runs')
     return this.call('botRunDelete', { botId: this.scope.botId, runId }, undefined, undefined, 60000)
+  }
+  /** What the bot shared, with its space (`files-manage`). */
+  async filesList() {
+    if (!this.scope?.environments) throw new GatewayError('PROTOCOL_INCOMPATIBLE', 'Update this bot to manage its files')
+    return this.call('botFilesList', { botId: this.scope.botId })
+  }
+  async filesDelete(body: FleetFilesDeleteRequest) {
+    if (!this.scope?.environments) throw new GatewayError('PROTOCOL_INCOMPATIBLE', 'Update this bot to manage its files')
+    return this.call('botFilesDelete', { botId: this.scope.botId }, undefined, body, 60000)
+  }
+  async fileSettings(body: FleetFileSettings) {
+    if (!this.scope?.environments) throw new GatewayError('PROTOCOL_INCOMPATIBLE', 'Update this bot to manage its files')
+    return this.call('botFileSettings', { botId: this.scope.botId }, undefined, body)
   }
   async fileMeta(fileId: string, signal?: AbortSignal): Promise<FleetFileRef> {
     if (!fleetFileIdSchema.safeParse(fileId).success || !this.scope)
