@@ -90,7 +90,8 @@ frees the bot's space and marks its card in the conversation as deleted while
 keeping any copies you already downloaded on this computer. By default, deleting
 a routine run's conversation or a conversation with another bot also deletes the
 files shared there. Permanently deleting the bot or its environment removes
-these snapshots. Include the environment volume in backups.
+these snapshots. Include the environment volume in backups. The mobile app has
+the same Files sheet; see [Mobile app](mobile.md#what-it-does).
 
 Documents and downloads require the desktop, gateway and running environment
 image to support files. If the app asks you to update, update the server and

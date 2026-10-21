@@ -18,6 +18,12 @@ User-visible changes by version. Downloads are on
   `bot_share_file` reports which limit (file size, file count, or remaining
   space) stopped a publication. See
   [send and download files](docs/bot-fleet.md#send-and-download-files).
+- The mobile app shows a bot's **Files**: the space they take, with search,
+  types and sort, from a **Free space** notice when the space is full or from
+  the bot's details. Delete one file or several, raise the space and choose
+  whether deleting a run's conversation deletes its files; deleted files are
+  marked in the conversation. It needs a bot server and a bot environment image
+  on this version. See [Mobile app](docs/mobile.md#what-it-does).
 
 ### Changed
 
