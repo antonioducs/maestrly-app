@@ -22,6 +22,7 @@ const { InstanceInputQueue, conversationQueue, inputRunId, promptForInput, PEER_
   await import('../../src/main/fleet/instance/queue')
 const { InstanceTranscriptExtras } = await import('../../src/main/fleet/instance/transcript')
 const { FleetImageStore } = await import('../../src/main/fleet/instance/images')
+const { FleetFileStore } = await import('../../src/main/fleet/instance/files')
 const { LiveTranscript } = await import('../../src/main/fleet/instance/live-transcript')
 const { InstanceEvents, InstanceHttpError } = await import('../../src/main/fleet/instance/server')
 const { InstanceHelpStore } = await import('../../src/main/fleet/instance/help')
@@ -75,6 +76,7 @@ async function bot() {
   events.subscribe((event) => published.push(event))
   const queue = new InstanceInputQueue(path.join(dir, 'inputs.json'), path.join(dir, 'attachments'))
   const images = new FleetImageStore(path.join(dir, 'images'))
+  const files = new FleetFileStore(path.join(dir, 'files'))
   const runtime = Object.create(BotRuntime.prototype) as InstanceType<typeof BotRuntime>
   const publish = (event: Parameters<InstanceType<typeof InstanceEvents>['publish']>[0]) =>
     events.publish({ ...event, botId: 'alpha' })
@@ -108,6 +110,7 @@ async function bot() {
     events,
     queue,
     images,
+    files,
     extras,
     runs,
     threadReports: new ThreadReports(path.join(dir, 'thread-reports.json')),
@@ -151,7 +154,8 @@ async function bot() {
     (runtime as unknown as { turns: Map<string | null, { inputId: string }> }).turns.get(runId)?.inputId ?? null
   await queue.load()
   await runs.load()
-  return { runtime, primary, published, runs, queue, host }
+  await files.load()
+  return { runtime, primary, published, runs, queue, files, host }
 }
 
 const routineInput = (runId: string) => ({
@@ -425,6 +429,62 @@ describe('routine runs in conversations of their own', () => {
       getDb().prepare('UPDATE conversations SET folder_owner_id = ? WHERE id = ?').run(null, record.conversationId)
     ).toThrow(/immutable/)
   })
+
+  it('deletes the files a run shared with its conversation, and lists them as kept no more', async () => {
+    const { runtime, primary, runs, files } = await bot()
+    const runId = randomUUID()
+    await runtime.input(routineInput(runId))
+    answer('Done.')
+    vi.spyOn(chatService, 'acquireChatConversationSlot').mockResolvedValue({
+      release: () => {},
+      operation: {},
+    } as never)
+    await turn(runtime)
+    const record = runs.routine(runId)!
+    await writeFile(path.join(primary.cwd, 'report.pdf'), '%PDF-1.7')
+    await writeFile(path.join(primary.cwd, 'primary.pdf'), '%PDF-1.7')
+    const runFile = await runtime.publishFile('report.pdf', undefined, record.conversationId)
+    const primaryFile = await runtime.publishFile('primary.pdf')
+    upsertChatMessage({
+      id: randomUUID(),
+      conversationId: record.conversationId,
+      role: 'assistant',
+      createdAt: Date.now() + 2,
+      parts: [
+        {
+          type: 'tool',
+          id: randomUUID(),
+          toolCallId: randomUUID(),
+          toolName: 'bot_share_file',
+          input: {},
+          state: { status: 'completed', output: { text: JSON.stringify({ file: runFile }) } },
+        },
+      ],
+      finishReason: 'stop',
+    })
+    const deleted = await runtime.deleteRun(runId)
+    expect(files.list().map((f) => f.id)).toEqual([primaryFile.id])
+    expect(deleted.kept.files.map((f) => f.name)).not.toContain('report.pdf')
+  })
+
+  it('keeps them when the owner turned that off', async () => {
+    const { runtime, primary, runs, files } = await bot()
+    await files.setSettings({ quotaGb: 1, deleteWithConversations: false })
+    const runId = randomUUID()
+    await runtime.input(routineInput(runId))
+    answer('Done.')
+    vi.spyOn(chatService, 'acquireChatConversationSlot').mockResolvedValue({
+      release: () => {},
+      operation: {},
+    } as never)
+    await turn(runtime)
+    const record = runs.routine(runId)!
+    await writeFile(path.join(primary.cwd, 'report.pdf'), '%PDF-1.7')
+    const runFile = await runtime.publishFile('report.pdf', undefined, record.conversationId)
+    await runtime.deleteRun(runId)
+    expect(files.list().map((f) => f.id)).toEqual([runFile.id])
+    expect((await runtime.listFiles()).files[0]).toMatchObject({ id: runFile.id, originGone: true })
+  })
 })
 
 const peerInput = (threadId: string, text = 'Release 4.2 passed: 412 of 415 tests.') => ({
@@ -689,5 +749,17 @@ describe('threads with other bots in conversations of their own', () => {
       expect.objectContaining({ threadId, peerName: 'Nina', title: 'Release 4.2', text: 'Nina says it passed.' }),
     ])
     await expect(runtime.reportThread(randomUUID(), 'No')).rejects.toThrow('not here')
+  })
+
+  it("deletes the files a peer thread shared when the thread's conversation is deleted", async () => {
+    const { runtime, primary, runs, files } = await bot()
+    const threadId = randomUUID()
+    await runtime.input(peerInput(threadId))
+    const record = runs.get(threadId)!
+    await writeFile(path.join(primary.cwd, 'thread.pdf'), '%PDF-1.7')
+    await runtime.publishFile('thread.pdf', undefined, record.conversationId)
+    expect(files.list()).toHaveLength(1)
+    await runtime.deleteRun(threadId)
+    expect(files.list()).toEqual([])
   })
 })

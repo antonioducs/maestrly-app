@@ -42,7 +42,7 @@ const at = (time: number): string => new Date(time).toISOString()
 const textOf = (value: unknown): string => (typeof value === 'string' ? value : (JSON.stringify(value) ?? ''))
 const TOOL_OUTPUT_KEYS = new Set(['text', 'images', 'structuredContent', 'isError'])
 /** A chat tool output envelope sends its text only: its images travel as refs, and their ids are internal. */
-const toolOutputTextOf = (value: unknown): string =>
+export const toolOutputTextOf = (value: unknown): string =>
   value !== null &&
   typeof value === 'object' &&
   typeof (value as { text?: unknown }).text === 'string' &&

@@ -31,7 +31,12 @@ import {
   type FleetUsage,
   type FleetConversationCallRequest,
   type FleetCompactionState,
+  type FleetFileOrigin,
   type FleetFileRef,
+  type FleetFileSettings,
+  type FleetFilesDeleted,
+  type FleetFilesList,
+  type FleetFilesUsage,
   type FleetEditMessageRequest,
   type FleetAttachmentInput,
   type FleetInstanceRunDeleted,
@@ -139,7 +144,8 @@ import { keepRunFiles, runMedia } from './run-files'
 import { clearBotIdentity, setBotIdentity, type BotIdentityPeer } from './identity'
 import type { GatewayConfig } from './gateway-client'
 import { FleetImageStore } from './images'
-import { FleetFileStore } from './files'
+import { FleetFileSettingsError, FleetFileStore } from './files'
+import { findFileOrigins } from './file-origins'
 import { readConversationFile } from './attachment-files'
 import { validateAttachmentBytes } from './incoming-attachments'
 import { botToolsPatchRefusal, validateFleetConversationArgs, projectFleetChatConfig } from './conversation'
@@ -653,6 +659,19 @@ export class BotRuntime {
     await this.runs.load()
     await this.images.load()
     await this.files.load()
+    if (this.files.needsOrigins) {
+      const conversations = [
+        ...(this.primaryConversationId
+          ? [{ conversationId: this.primaryConversationId, origin: { kind: 'primary' } as const }]
+          : []),
+        ...this.runs
+          .list()
+          .map((lane) => ({ conversationId: lane.conversationId, origin: this.fileOrigin(lane.conversationId) })),
+      ]
+      await this.files
+        .assignOrigins(findFileOrigins(conversations))
+        .catch((error) => console.warn('[fleet] could not find where shared files came from', error))
+    }
     await this.extras.load()
     for (const item of this.extras.list()) {
       if (item.kind === 'permission' && item.state === 'pending')
@@ -1038,11 +1057,13 @@ export class BotRuntime {
           : 'The routine run is working; stop it first.'
       )
     const primary = this.primaryConversationId ? getConversation(this.primaryConversationId) : undefined
+    const dropped = this.files?.settings().deleteWithConversations ? this.files.idsFrom(runId) : []
     const kept = getConversation(record.conversationId)
       ? await keepRunFiles({
           record,
           folder: primary?.cwd ?? null,
           images: this.images,
+          dropped: new Set(dropped),
         })
       : { folder: '', files: [] }
     await this.queue.forgetRun(runId)
@@ -1051,6 +1072,12 @@ export class BotRuntime {
     await cancelMemoryExtraction(record.conversationId)
     if (getConversation(record.conversationId)) await this.host.purgeConversation?.(record.conversationId)
     await this.runs.remove(runId)
+    if (dropped.length)
+      await this.files.remove(dropped).then(
+        () => this.changed(),
+        // The run is gone either way: its files stay, marked as from a deleted conversation, for the owner to delete.
+        (error) => console.warn('[fleet] could not delete a run’s shared files', error)
+      )
     this.publish({ type: 'reset', runId })
     this.changed()
     return { kept }
@@ -1471,6 +1498,7 @@ export class BotRuntime {
       pending,
       usage: this.usage,
       compaction,
+      sharedFiles: this.files?.isLoaded ? this.files.usage() : null,
       lastEventSeq: this.events.lastSeq,
     }
   }
@@ -1785,13 +1813,63 @@ export class BotRuntime {
     return result
   }
 
-  async publishFile(relativePath: string, name?: string): Promise<FleetFileRef> {
+  /** Where a conversation of this bot shares from: its own, a run's, a thread's, or one it no longer knows. */
+  private fileOrigin(conversationId: string | undefined): FleetFileOrigin {
+    if (!conversationId || conversationId === this.primaryConversationId) return { kind: 'primary' }
+    const lane = this.runs.byConversation(conversationId)
+    if (!lane) return { kind: 'unknown' }
+    return lane.kind === 'routine'
+      ? { kind: 'routine', runId: lane.runId, title: lane.routineTitle.slice(0, 200) }
+      : { kind: 'thread', threadId: lane.threadId, title: lane.peerName.slice(0, 200) }
+  }
+
+  async publishFile(relativePath: string, name?: string, conversationId?: string): Promise<FleetFileRef> {
     const id = this.primaryConversationId
     const conversation = id ? getConversation(id) : null
     if (!conversation) throw new InstanceHttpError(404, 'NOT_FOUND', 'Bot conversation not found.')
     const scope = await createConversationFileScope(conversation)
     const source = await scope.resolveBridgePath(relativePath)
-    return this.files.publish({ root: source.root, target: path.resolve(source.root, relativePath) }, name)
+    const ref = await this.files.publish(
+      { root: source.root, target: path.resolve(source.root, relativePath) },
+      { name, origin: this.fileOrigin(conversationId) }
+    )
+    this.changed()
+    return ref
+  }
+
+  async listFiles(): Promise<FleetFilesList> {
+    const gone = (laneId: string) => !this.runs.get(laneId)
+    return {
+      files: this.files.list().map((file) => ({
+        ...file,
+        originGone:
+          file.origin.kind === 'routine'
+            ? gone(file.origin.runId)
+            : file.origin.kind === 'thread'
+              ? gone(file.origin.threadId)
+              : false,
+      })),
+      removed: this.files.removedFiles(),
+      usage: this.files.usage(),
+      diskFreeBytes: await this.files.diskFreeBytes(),
+    }
+  }
+
+  async deleteFiles(ids: string[]): Promise<FleetFilesDeleted> {
+    const result = await this.files.remove(ids)
+    if (result.deleted.length) this.changed()
+    return { ...result, usage: this.files.usage() }
+  }
+
+  async setFileSettings(settings: FleetFileSettings): Promise<FleetFilesUsage> {
+    try {
+      const usage = await this.files.setSettings(settings)
+      this.changed()
+      return usage
+    } catch (error) {
+      if (error instanceof FleetFileSettingsError) throw new InstanceHttpError(409, 'CONFLICT', error.message)
+      throw error
+    }
   }
 
   private async attachmentFile(fileId: string) {
