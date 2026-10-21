@@ -335,7 +335,8 @@ describe('fleet provisioning wiring', () => {
   it('wires the managed bot files drawer, header button, removed card state and full-space banner', () => {
     const header = source('components/fleet/BotChatHeader.tsx')
     expect(header).toContain("t('files.drawer.title')")
-    expect(header).toContain('aria-controls={BOT_FILES_DRAWER_ID}')
+    expect(header).toContain('aria-controls={botFilesDrawerId(botId)}')
+    expect(header).toContain('aria-label={label}')
     const view = source('components/fleet/BotView.tsx')
     expect(view).toContain('<BotFilesDrawer')
     expect(view).toContain('<BotFilesRemovedProvider')
@@ -344,5 +345,11 @@ describe('fleet provisioning wiring', () => {
     expect(transcriptFiles).toContain("t('files.removed'")
     const conversation = source('components/fleet/BotConversation.tsx')
     expect(conversation).toContain("t('files.full.action')")
+    // The drawer follows the app's dialogs and selects, which handle Escape, focus and detached windows.
+    const drawer = source('components/fleet/BotFilesDrawer.tsx')
+    expect(drawer).toContain('<ConfirmDialog')
+    expect(drawer).not.toMatch(/<select\b/)
+    expect(drawer).toContain("event.key === 'Escape'")
+    expect(source('components/fleet/BotFilesUsage.tsx')).toContain('<SettingsSwitch')
   })
 })

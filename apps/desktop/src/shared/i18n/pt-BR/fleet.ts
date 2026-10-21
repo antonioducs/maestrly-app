@@ -38,7 +38,7 @@ export default {
       button: 'Arquivos do {{name}}: {{used}} de {{quota}}, {{count}} de {{max}} arquivos',
       close: 'Fechar arquivos',
       settings: 'Espaço e limpeza',
-      used: '{{used}} de {{quota}}',
+      of: 'de {{quota}}',
       free: 'Sobram {{size}}',
       freed: 'Excluir libera {{size}}',
       count: '{{count}} de {{max}} arquivos',
@@ -68,9 +68,6 @@ export default {
       sort: { label: 'Ordenar', recent: 'Mais recentes', size: 'Maiores', oldest: 'Mais antigos', name: 'Nome' },
       selectPage: 'Selecionar os arquivos desta página',
       select: 'Selecionar {{name}}',
-      total_one: '{{count}} arquivo',
-      total_other: '{{count}} arquivos',
-      shownOf: '{{shown}} de {{total}}',
       today: 'hoje, {{time}}',
       yesterday: 'ontem, {{time}}',
       origin: {
@@ -116,6 +113,7 @@ export default {
         message_other:
           'Libera {{size}} do espaço do {{bot}}. Nas conversas, os cards deles passam a mostrar que foram excluídos.',
         notDownloadedThis: 'Você ainda não baixou este arquivo. Depois de excluir, não dá para recuperar.',
+        notDownloadedAny: 'Você ainda não baixou nenhum deles. Depois de excluir, não dá para recuperar.',
         notDownloaded_one: '{{count}} deles você ainda não baixou. Depois de excluir, não dá para recuperar.',
         notDownloaded_other: '{{count}} deles você ainda não baixou. Depois de excluir, não dá para recuperar.',
         downloaded: 'As cópias que você baixou continuam neste computador.',

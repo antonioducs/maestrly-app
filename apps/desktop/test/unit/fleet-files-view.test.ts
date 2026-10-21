@@ -8,12 +8,14 @@ import {
   filesMeter,
   filesSpaceLevel,
   fleetFileKind,
+  freshestUsage,
   pageCount,
   pageNumbers,
   pageOf,
   scopedFiles,
   sharedAtLabel,
   sharedIn,
+  spaceLabel,
   usageSegments,
   visibleFiles,
 } from '../../src/renderer/lib/fleet/files'
@@ -165,5 +167,24 @@ describe('bot shared files view logic', () => {
     expect(sharedAtLabel(older.toISOString(), now, 'pt-BR', t)).toBe(
       new Intl.DateTimeFormat('pt-BR', { day: 'numeric', month: 'short' }).format(older)
     )
+  })
+  it('reads a nearly full gigabyte in gigabytes, with two decimals', () => {
+    const MB = 1024 ** 2
+    expect(spaceLabel(6 * MB, 'en')).toBe('6 MB')
+    expect(spaceLabel(819 * MB, 'en')).toBe('819 MB')
+    expect(spaceLabel(1018 * MB, 'en')).toBe('0.99 GB')
+    expect(spaceLabel(1018 * MB, 'pt-BR')).toBe('0,99 GB')
+    expect(spaceLabel(1024 * MB, 'en')).toBe('1 GB')
+    expect(spaceLabel(20 * 1024 * MB, 'pt-BR')).toBe('20 GB')
+  })
+  it('reads the newer of the drawer list and the bot status', () => {
+    const listed = usage({ usedBytes: 10, updatedAt: '2026-10-20T10:00:05.000Z' })
+    const reported = usage({ usedBytes: 20, updatedAt: '2026-10-20T10:00:01.000Z' })
+    expect(freshestUsage(listed, reported)).toBe(listed)
+    expect(freshestUsage(reported, listed)).toBe(listed)
+    expect(freshestUsage(null, reported)).toBe(reported)
+    expect(freshestUsage(listed, undefined)).toBe(listed)
+    expect(freshestUsage(null, null)).toBeNull()
+    expect(freshestUsage(usage({ updatedAt: null }), reported)).toBe(reported)
   })
 })

@@ -4,14 +4,14 @@ import { ArrowDown, HardDrive, Loader2, Pencil, Wrench, X } from 'lucide-react'
 import {
   FLEET_MESSAGE_EDIT_FEATURE,
   type FleetBot,
+  type FleetFilesUsage,
   type FleetRoutine,
   type FleetRoutineRun,
   type FleetTranscriptItem,
 } from '@maestrly/bot-fleet-protocol'
 import { MarkdownViewer } from '@/components/MarkdownViewer'
 import { GenUiContext, type GenUiHost } from '@/genui/context'
-import { fileSizeLabel } from '@/lib/fleet/downloads'
-import { filesCountLevel, filesLevel } from '@/lib/fleet/files'
+import { filesCountLevel, filesLevel, highlightFileNode, spaceLabel } from '@/lib/fleet/files'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import { ownsTakeover, takeoverBlocksResume, UNKNOWN_BOT_TINT } from '@/lib/fleet/selectors'
 import { startBot } from '@/lib/fleet/environments'
@@ -599,6 +599,7 @@ export function BotConversation({
   citation = null,
   onClearCitation,
   onOpenFiles,
+  filesUsage = null,
   revealFile = null,
   onRevealed,
 }: {
@@ -621,6 +622,8 @@ export function BotConversation({
   citation?: FleetRoutineRun | null
   onClearCitation?: () => void
   onOpenFiles?: () => void
+  /** The space of the bot's shared files, freshest of its status and the Files drawer's list. */
+  filesUsage?: FleetFilesUsage | null
   revealFile?: { id: string; nonce: number } | null
   onRevealed?: (found: boolean) => void
 }) {
@@ -665,25 +668,6 @@ export function BotConversation({
     observer.observe(content)
     return () => observer.disconnect()
   }, [])
-  useEffect(() => {
-    if (!revealFile) return
-    const node = scrollRef.current
-    const card = node?.querySelector<HTMLElement>(`[data-file-id="${revealFile.id}"]`) ?? null
-    if (!card) {
-      onRevealed?.(false)
-      return
-    }
-    atBottomRef.current = false
-    setAtBottom(false)
-    card.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    card.classList.add('bot-file-flash')
-    onRevealed?.(true)
-    const timer = setTimeout(() => card.classList.remove('bot-file-flash'), 1900)
-    return () => {
-      clearTimeout(timer)
-      card.classList.remove('bot-file-flash')
-    }
-  }, [revealFile, onRevealed])
   const scrollToBottom = () => {
     const node = scrollRef.current
     if (!node) return
@@ -886,6 +870,22 @@ export function BotConversation({
     oldHeightRef.current = scrollRef.current?.scrollHeight ?? null
     void loadTranscript(bot.id, searchBefore).catch(() => {})
   }, [bot.id, loadTranscript, searchBefore, transcriptLoading])
+  // A file the owner asked to see: older pages load until its card shows up, or the conversation has no more.
+  const transcriptBefore = transcript?.error ? null : (transcript?.before ?? null)
+  useEffect(() => {
+    if (!revealFile) return
+    const card = scrollRef.current?.querySelector<HTMLElement>(`[data-file-id="${CSS.escape(revealFile.id)}"]`)
+    if (card) {
+      atBottomRef.current = false
+      setAtBottom(false)
+      highlightFileNode(card)
+      onRevealed?.(true)
+    } else if (transcriptBefore) {
+      if (transcriptLoading) return
+      oldHeightRef.current = scrollRef.current?.scrollHeight ?? null
+      void loadTranscript(bot.id, transcriptBefore).catch(() => onRevealed?.(false))
+    } else onRevealed?.(false)
+  }, [bot.id, loadTranscript, onRevealed, revealFile, segments, transcriptBefore, transcriptLoading])
   const searchHits = useMemo(
     () => (searchOpen ? searchTranscriptSegments(segments, appliedQuery) : []),
     [appliedQuery, searchOpen, segments]
@@ -1163,31 +1163,24 @@ export function BotConversation({
               />
             </div>
           )}
-          {bot.sharedFiles && filesLevel(bot.sharedFiles) === 'full' && (
+          {filesUsage && filesLevel(filesUsage) === 'full' && (
             <div
               role="status"
-              className="mb-2 flex items-center gap-2.5 rounded-lg border border-red-400/35 bg-red-400/[0.06] px-3 py-2 text-xs text-red-200"
+              className="mb-2 flex flex-wrap items-center gap-2.5 rounded-[10px] border border-destructive/30 bg-destructive/[0.07] py-2 pl-3 pr-2.5 text-[12.5px] text-foreground/75"
             >
-              <HardDrive aria-hidden="true" className="size-3.5 shrink-0 text-red-300" />
-              <span className="min-w-0 flex-1">
-                {filesCountLevel(bot.sharedFiles) === 'full'
-                  ? t('files.full.count', { name: bot.name, max: bot.sharedFiles.countMax })
+              <HardDrive aria-hidden="true" className="size-4 shrink-0 text-destructive" />
+              <span className="min-w-48 flex-1">
+                {filesCountLevel(filesUsage) === 'full'
+                  ? t('files.full.count', { name: bot.name, max: filesUsage.countMax })
                   : t('files.full.space', {
                       name: bot.name,
-                      free: fileSizeLabel(
-                        Math.max(0, bot.sharedFiles.quotaBytes - bot.sharedFiles.usedBytes),
-                        i18n.language
-                      ),
+                      free: spaceLabel(Math.max(0, filesUsage.quotaBytes - filesUsage.usedBytes), i18n.language),
                     })}
               </span>
               {onOpenFiles && (
-                <button
-                  type="button"
-                  onClick={onOpenFiles}
-                  className="shrink-0 rounded-md border border-red-400/40 px-2.5 py-1 text-xs font-medium text-red-100 hover:bg-red-400/15"
-                >
+                <Button size="sm" variant="outline" className="h-7" onClick={onOpenFiles}>
                   {t('files.full.action')}
-                </button>
+                </Button>
               )}
             </div>
           )}

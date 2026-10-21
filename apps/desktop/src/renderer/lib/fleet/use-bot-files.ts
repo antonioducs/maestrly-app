@@ -47,6 +47,7 @@ export function useBotFiles(fleet: FleetController, bot: FleetBot, active: boole
       .finally(() => alive && setLoading(false))
     return () => {
       alive = false
+      setLoading(false)
     }
   }, [supported, active, fleet.serverId, bot.id, version, nonce])
   const removed = useMemo(() => new Map(list?.removed.map((entry) => [entry.id, entry.removedAt])), [list])

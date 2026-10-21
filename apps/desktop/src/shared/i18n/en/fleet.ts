@@ -36,7 +36,7 @@ export default {
       button: 'Files of {{name}}: {{used}} of {{quota}}, {{count}} of {{max}} files',
       close: 'Close files',
       settings: 'Space and cleanup',
-      used: '{{used}} of {{quota}}',
+      of: 'of {{quota}}',
       free: '{{size}} free',
       freed: 'Deleting frees {{size}}',
       count: '{{count}} of {{max}} files',
@@ -66,9 +66,6 @@ export default {
       sort: { label: 'Sort', recent: 'Newest', size: 'Largest', oldest: 'Oldest', name: 'Name' },
       selectPage: 'Select the files on this page',
       select: 'Select {{name}}',
-      total_one: '{{count}} file',
-      total_other: '{{count}} files',
-      shownOf: '{{shown}} of {{total}}',
       today: 'today, {{time}}',
       yesterday: 'yesterday, {{time}}',
       origin: {
@@ -114,6 +111,7 @@ export default {
         message_other:
           'Frees {{size}} of {{bot}}’s space. Their cards in the conversations will show that they were deleted.',
         notDownloadedThis: 'You have not downloaded this file. A deleted file cannot be recovered.',
+        notDownloadedAny: 'You have not downloaded any of them. Deleted files cannot be recovered.',
         notDownloaded_one: '{{count}} of them you have not downloaded. Deleted files cannot be recovered.',
         notDownloaded_other: '{{count}} of them you have not downloaded. Deleted files cannot be recovered.',
         downloaded: 'The copies you downloaded stay on this computer.',

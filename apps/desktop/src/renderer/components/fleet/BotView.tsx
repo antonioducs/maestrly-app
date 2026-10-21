@@ -40,7 +40,7 @@ import type { SettingsLeaveGuard } from './BotSettings'
 import { BotSettingsSheet } from './BotSettingsSheet'
 import { BotWorkspace } from './BotWorkspace'
 import { BotFilesRemovedProvider } from './bot-files-context'
-import type { FilesConversation, FileSort } from '@/lib/fleet/files'
+import { freshestUsage, highlightFileNode, type FilesConversation, type FileSort } from '@/lib/fleet/files'
 import { useBotFiles } from '@/lib/fleet/use-bot-files'
 
 type BotViewProps = {
@@ -229,41 +229,31 @@ function BotViewContent({ bot, view, fleet, onView, onOpenBot, onDetachedChange,
   const [filesRequest, setFilesRequest] = useState<{ sort?: FileSort; nonce: number } | null>(null)
   const [revealFile, setRevealFile] = useState<{ id: string; nonce: number } | null>(null)
   const [revealMissed, setRevealMissed] = useState(0)
-  const [filesOverlay, setFilesOverlay] = useState(false)
+  const filesUsage = freshestUsage(botFiles.list?.usage, bot.sharedFiles)
   const chatBodyRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const node = chatBodyRef.current
-    if (!node) return
-    const observer = new ResizeObserver((entries) => {
-      const width = entries[0]?.contentRect.width ?? node.clientWidth
-      setFilesOverlay(width > 0 && width < 720)
-    })
-    observer.observe(node)
-    return () => observer.disconnect()
+  const filesButtonRef = useRef<HTMLButtonElement>(null)
+  /** Closing forgets what the drawer was opened for; a dismissal gives the focus back to the Files button. */
+  const closeFiles = useCallback((restoreFocus: boolean) => {
+    setFilesOpen(false)
+    setFilesRequest(null)
+    if (restoreFocus) requestAnimationFrame(() => filesButtonRef.current?.focus())
   }, [])
   const currentConversation = useMemo<FilesConversation | null>(() => {
     if (shownPane === 'conversation') return { kind: 'primary' }
     if (shownPane === 'runs') return runId ? { kind: 'routine', runId } : null
     return threadId ? { kind: 'thread', threadId } : null
   }, [runId, shownPane, threadId])
+  // A file to show is shown once: the conversation that finds it, or says it cannot, clears it.
   const handleRevealed = useCallback((found: boolean) => {
+    setRevealFile(null)
     if (!found) setRevealMissed((n) => n + 1)
   }, [])
   useEffect(() => {
     if (!revealFile || shownPane === 'conversation') return
-    const card = chatBodyRef.current?.querySelector<HTMLElement>(`[data-file-id="${revealFile.id}"]`) ?? null
-    if (!card) {
-      setRevealMissed((n) => n + 1)
-      return
-    }
-    card.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    card.classList.add('bot-file-flash')
-    const timer = setTimeout(() => card.classList.remove('bot-file-flash'), 1900)
-    return () => {
-      clearTimeout(timer)
-      card.classList.remove('bot-file-flash')
-    }
-  }, [revealFile, shownPane])
+    const card = chatBodyRef.current?.querySelector<HTMLElement>(`[data-file-id="${CSS.escape(revealFile.id)}"]`)
+    if (card) highlightFileNode(card)
+    handleRevealed(!!card)
+  }, [handleRevealed, revealFile, shownPane])
   return (
     <BotFilesRemovedProvider value={botFiles.removedAt}>
       <div data-bot-view className="flex min-h-0 min-w-0 flex-1 flex-col bg-chat-canvas">
@@ -295,9 +285,10 @@ function BotViewContent({ bot, view, fleet, onView, onOpenBot, onDetachedChange,
                 files={
                   botFiles.supported
                     ? {
-                        usage: botFiles.list?.usage ?? bot.sharedFiles,
+                        usage: filesUsage,
                         open: filesOpen,
-                        onToggle: () => setFilesOpen((v) => !v),
+                        buttonRef: filesButtonRef,
+                        onToggle: () => (filesOpen ? closeFiles(false) : setFilesOpen(true)),
                       }
                     : undefined
                 }
@@ -372,6 +363,7 @@ function BotViewContent({ bot, view, fleet, onView, onOpenBot, onDetachedChange,
                               }
                             : undefined
                         }
+                        filesUsage={filesUsage}
                         revealFile={revealFile}
                         onRevealed={handleRevealed}
                         onOpenBot={(id) => {
@@ -397,20 +389,18 @@ function BotViewContent({ bot, view, fleet, onView, onOpenBot, onDetachedChange,
                         bot={bot}
                         files={botFiles}
                         conversation={currentConversation}
-                        overlay={filesOverlay}
                         request={filesRequest}
-                        onClose={() => setFilesOpen(false)}
+                        onClose={closeFiles}
                         onReveal={(file) => {
                           if (file.origin.kind === 'primary' && shownPane !== 'conversation') {
                             setPane('conversation')
+                            if (view.tab === 'runs') onView(botView('conversation'))
                           }
-                          if (filesOverlay) setFilesOpen(false)
                           setRevealFile((prev) => ({ id: file.id, nonce: (prev?.nonce ?? 0) + 1 }))
                         }}
                         onOpenLane={(origin) => {
                           if (origin.kind === 'routine') openRun(origin.runId)
                           else openThread(origin.threadId)
-                          if (filesOverlay) setFilesOpen(false)
                         }}
                         revealMissed={revealMissed}
                       />

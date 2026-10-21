@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type CSSProperties } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AlertTriangle } from 'lucide-react'
 import {
@@ -8,26 +8,43 @@ import {
   type FleetFilesUsage,
   type FleetPublishedFile,
 } from '@maestrly/bot-fleet-protocol'
-import { fileSizeLabel } from '@/lib/fleet/downloads'
 import { fleetErrorText } from '@/lib/fleet/errors'
 import {
   filesCountLevel,
   filesLevel,
   filesSpaceLevel,
+  spaceLabel,
   usageSegments,
   type FileSort,
+  type FilesLevel,
   type FleetFileKind,
 } from '@/lib/fleet/files'
 import { cn } from '@/lib/utils'
+import { SettingsSwitch } from './SettingsSwitch'
 
 const QUOTA_OPTIONS_GB = [1, 2, 5, 10, 20] as const
 
+/** Quiet tones of the app's palette: the bar reads as one space, split by kind, not as a chart. */
 const KIND_COLOR: Record<FleetFileKind, string> = {
-  video: 'bg-sky-400/80',
-  image: 'bg-emerald-400/80',
-  document: 'bg-amber-300/80',
-  archive: 'bg-violet-400/80',
+  video: 'bg-[#e3dccd]',
+  image: 'bg-[#7d9fae]',
+  document: 'bg-[#8a857c]',
+  archive: 'bg-[#b39a72]',
 }
+
+/** The track, with a tick every tenth of the space. */
+const TRACK: CSSProperties = {
+  background:
+    'repeating-linear-gradient(90deg, transparent 0 calc(10% - 1px), rgba(255, 255, 255, 0.07) calc(10% - 1px) 10%), rgba(255, 255, 255, 0.035)',
+  boxShadow: 'inset 0 0 0 1px var(--border)',
+}
+/** A file selected for deletion: what deleting it frees. */
+const SELECTED: CSSProperties = {
+  background: 'repeating-linear-gradient(135deg, var(--destructive) 0 3px, rgba(255, 122, 133, 0.38) 3px 6px)',
+}
+
+const levelText = (level: FilesLevel) =>
+  level === 'full' ? 'text-destructive' : level === 'near' ? 'text-artifact-warn' : 'text-muted-foreground'
 
 export function BotFilesUsageCard({
   bot,
@@ -55,134 +72,97 @@ export function BotFilesUsageCard({
   const level = filesLevel(usage)
   const segments = usageSegments(files, usage.quotaBytes)
   const selectedBytes = files.reduce((sum, file) => (selectedIds.has(file.id) ? sum + file.byteSize : sum), 0)
-  const usedLabel = fileSizeLabel(usage.usedBytes, locale)
-  const quotaLabel = fileSizeLabel(usage.quotaBytes, locale)
-  const freeLabel = fileSizeLabel(Math.max(0, usage.quotaBytes - usage.usedBytes), locale)
+  const usedLabel = spaceLabel(usage.usedBytes, locale)
+  const quotaLabel = spaceLabel(usage.quotaBytes, locale)
+  const alert =
+    countLevel === 'full'
+      ? { text: t('files.drawer.alert.countFull', { max: usage.countMax }), sort: 'oldest' as const }
+      : spaceLevel === 'full'
+        ? { text: t('files.drawer.alert.spaceFull', { name: bot.name }), sort: 'size' as const }
+        : countLevel === 'near'
+          ? {
+              text: t('files.drawer.alert.countNear', { count: usage.countMax - usage.count, max: usage.countMax }),
+              sort: 'oldest' as const,
+            }
+          : spaceLevel === 'near'
+            ? {
+                text: t('files.drawer.alert.spaceNear', {
+                  percent: Math.floor((usage.usedBytes / usage.quotaBytes) * 100),
+                }),
+                sort: 'size' as const,
+              }
+            : null
 
   return (
     <div
       className={cn(
-        'rounded-lg border p-2.5 text-xs',
-        level === 'full'
-          ? 'border-red-400/35 bg-red-400/[0.06]'
-          : level === 'near'
-            ? 'border-amber-400/35 bg-amber-400/[0.05]'
-            : 'border-border bg-white/[0.025]'
+        'rounded-[10px] border bg-white/[0.03] px-3 py-2.5 text-xs',
+        level === 'full' ? 'border-destructive/35' : level === 'near' ? 'border-artifact-warn/30' : 'border-border'
       )}
     >
-      <div className="flex items-center justify-between gap-2">
-        <span className="font-medium text-foreground">
-          {t('files.drawer.used', { used: usedLabel, quota: quotaLabel })}
+      <div className="mb-[7px] flex items-baseline justify-between gap-2 text-muted-foreground">
+        <span className="min-w-0 truncate">
+          <b className="text-[17px] font-semibold tracking-tight text-foreground tabular-nums">{usedLabel}</b>{' '}
+          {t('files.drawer.of', { quota: quotaLabel })}
         </span>
         {selectedBytes > 0 ? (
-          <span className="text-sky-300">
-            {t('files.drawer.freed', { size: fileSizeLabel(selectedBytes, locale) })}
+          <span className="shrink-0">
+            <b className="font-semibold text-destructive">
+              {t('files.drawer.freed', { size: spaceLabel(selectedBytes, locale) })}
+            </b>
           </span>
         ) : (
-          <span
-            className={cn(
-              spaceLevel === 'full'
-                ? 'text-red-300'
-                : spaceLevel === 'near'
-                  ? 'text-amber-300'
-                  : 'text-muted-foreground'
-            )}
-          >
-            {t('files.drawer.free', { size: freeLabel })}
+          <span className={cn('shrink-0 font-medium', levelText(spaceLevel))}>
+            {t('files.drawer.free', { size: spaceLabel(Math.max(0, usage.quotaBytes - usage.usedBytes), locale) })}
           </span>
         )}
       </div>
       <div
         role="img"
         aria-label={t('files.drawer.bar', { used: usedLabel, quota: quotaLabel })}
-        className="mt-2 flex h-2 overflow-hidden rounded-full bg-white/[0.07]"
+        className="flex h-3.5 overflow-hidden rounded"
+        style={TRACK}
       >
-        {segments.map((seg) => (
+        {segments.map((segment) => (
           <button
-            key={seg.id}
+            key={segment.id}
             type="button"
-            onClick={() => onSelectSegment(seg.id)}
-            title={`${seg.name} · ${fileSizeLabel(seg.byteSize, locale)}`}
-            style={{ width: `${Math.max(0.4, seg.percent)}%` }}
+            tabIndex={-1}
+            data-file-segment={segment.id}
+            onClick={() => onSelectSegment(segment.id)}
+            title={`${segment.name} · ${spaceLabel(segment.byteSize, locale)}`}
+            style={{
+              width: `${segment.percent}%`,
+              ...(selectedIds.has(segment.id) ? SELECTED : {}),
+              ...(segment.percent > 0.6 ? { boxShadow: 'inset -1px 0 0 rgba(13, 13, 16, 0.6)' } : {}),
+            }}
             className={cn(
-              'h-full shrink-0 transition-opacity focus-visible:outline-none',
-              KIND_COLOR[seg.kind],
-              selectedIds.has(seg.id) && 'ring-1 ring-white',
-              filtering && !visibleIds.has(seg.id) && 'opacity-30',
-              seg.percent > 0.6 && 'border-r border-black/40'
+              'h-full shrink-0 cursor-pointer transition-[opacity,filter] hover:brightness-110 motion-reduce:transition-none',
+              !selectedIds.has(segment.id) && KIND_COLOR[segment.kind],
+              filtering && !visibleIds.has(segment.id) && !selectedIds.has(segment.id) && 'opacity-20'
             )}
           />
         ))}
       </div>
       <div className="mt-1.5 flex items-center justify-between gap-2 text-[11.5px] text-muted-foreground">
         <span className="truncate">{t('files.drawer.spaceOf', { name: bot.name })}</span>
-        <span
-          className={cn(
-            'shrink-0 tabular-nums',
-            countLevel === 'full' && 'text-red-300',
-            countLevel === 'near' && 'text-amber-300'
-          )}
-        >
+        <span className={cn('shrink-0 tabular-nums', countLevel !== 'ok' && levelText(countLevel))}>
           {t('files.drawer.count', { count: usage.count, max: usage.countMax })}
         </span>
       </div>
-      {level !== 'ok' && (
-        <div
-          role="status"
-          className={cn(
-            'mt-2 flex items-start gap-1.5 border-t border-white/[0.07] pt-2 text-[11.5px]',
-            level === 'full' ? 'text-red-200' : 'text-amber-200'
-          )}
-        >
-          <AlertTriangle aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
-          <div className="min-w-0 flex-1">
-            {countLevel === 'full' ? (
-              <>
-                <span>{t('files.drawer.alert.countFull', { max: usage.countMax })} </span>
-                <button
-                  type="button"
-                  onClick={() => onApplySort('oldest', true)}
-                  className="underline hover:text-foreground"
-                >
-                  {t('files.drawer.alert.oldest')}
-                </button>
-              </>
-            ) : spaceLevel === 'full' ? (
-              <>
-                <span>{t('files.drawer.alert.spaceFull', { name: bot.name })} </span>
-                <button type="button" onClick={() => onApplySort('size')} className="underline hover:text-foreground">
-                  {t('files.drawer.alert.largest')}
-                </button>
-              </>
-            ) : countLevel === 'near' ? (
-              <>
-                <span>
-                  {t('files.drawer.alert.countNear', {
-                    count: usage.countMax - usage.count,
-                    max: usage.countMax,
-                  })}{' '}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => onApplySort('oldest', true)}
-                  className="underline hover:text-foreground"
-                >
-                  {t('files.drawer.alert.oldest')}
-                </button>
-              </>
-            ) : (
-              <>
-                <span>
-                  {t('files.drawer.alert.spaceNear', {
-                    percent: Math.floor((usage.usedBytes / usage.quotaBytes) * 100),
-                  })}{' '}
-                </span>
-                <button type="button" onClick={() => onApplySort('size')} className="underline hover:text-foreground">
-                  {t('files.drawer.alert.largest')}
-                </button>
-              </>
-            )}
-          </div>
+      {alert && (
+        <div role="status" className="mt-2 flex items-start gap-1.5 border-t border-border pt-2 text-foreground">
+          <AlertTriangle aria-hidden="true" className={cn('mt-px size-3.5 shrink-0', levelText(level))} />
+          <p className="min-w-0 flex-1">
+            {alert.text}{' '}
+            <button
+              type="button"
+              onClick={() => onApplySort(alert.sort, alert.sort === 'oldest')}
+              className="whitespace-nowrap rounded-sm text-primary underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {t(alert.sort === 'oldest' ? 'files.drawer.alert.oldest' : 'files.drawer.alert.largest')}
+            </button>
+          </p>
         </div>
       )}
     </div>
@@ -190,11 +170,13 @@ export function BotFilesUsageCard({
 }
 
 export function BotFilesLimitsPanel({
+  id,
   bot,
   usage,
   diskFreeBytes,
   onSave,
 }: {
+  id: string
   bot: FleetBot
   usage: FleetFilesUsage
   diskFreeBytes: number | null
@@ -219,27 +201,26 @@ export function BotFilesLimitsPanel({
   }
 
   return (
-    <div id={`bot-files-limits-${bot.id}`} className="border-b border-border bg-white/[0.02] px-3.5 py-3 text-xs">
-      <div className="flex items-center justify-between gap-2">
+    <div id={id} className="flex shrink-0 flex-col gap-2 border-b border-border bg-white/[0.03] px-4 py-3 text-xs">
+      <div className="flex items-center justify-between gap-2.5">
         <span className="font-medium text-foreground">{t('files.drawer.limits.quota')}</span>
         <div
           role="radiogroup"
           aria-label={t('files.drawer.spaceOf', { name: bot.name })}
-          className="inline-flex rounded-lg border border-border bg-white/[0.03] p-0.5"
+          className="inline-flex gap-0.5 rounded-lg border border-border-strong bg-black/20 p-0.5"
         >
           {QUOTA_OPTIONS_GB.map((gb) => {
             const bytes = fleetFileQuotaBytes(gb)
-            const tooSmall = bytes < usage.usedBytes
-            const tooLarge = diskFreeBytes !== null && bytes - usage.usedBytes > diskFreeBytes
-            const disabled = busy || tooSmall || tooLarge
             const checked = currentQuotaGb === gb
+            const tooSmall = !checked && bytes < usage.usedBytes
+            const tooLarge = !checked && diskFreeBytes !== null && bytes - usage.usedBytes > diskFreeBytes
             return (
               <button
                 key={gb}
                 type="button"
                 role="radio"
                 aria-checked={checked}
-                disabled={disabled}
+                disabled={busy || tooSmall || tooLarge}
                 title={
                   tooSmall
                     ? t('files.drawer.limits.tooSmall')
@@ -248,14 +229,13 @@ export function BotFilesLimitsPanel({
                       : undefined
                 }
                 onClick={() =>
-                  void update({
-                    quotaGb: gb,
-                    deleteWithConversations: usage.deleteWithConversations,
-                  })
+                  !checked && void update({ quotaGb: gb, deleteWithConversations: usage.deleteWithConversations })
                 }
                 className={cn(
-                  'rounded-md px-2 py-1 text-[11.5px] tabular-nums transition-colors disabled:cursor-not-allowed disabled:opacity-40',
-                  checked ? 'bg-white/[0.1] font-medium text-foreground' : 'text-muted-foreground hover:text-foreground'
+                  'whitespace-nowrap rounded-md px-[7px] py-0.5 text-[11.5px] tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40',
+                  checked
+                    ? 'bg-surface-elevated text-foreground shadow-[0_0_0_1px_var(--border-strong)]'
+                    : 'text-muted-foreground hover:text-foreground'
                 )}
               >
                 {gb} GB
@@ -264,44 +244,23 @@ export function BotFilesLimitsPanel({
           })}
         </div>
       </div>
-      <p className="mt-1.5 text-[11.5px] text-muted-foreground">
-        {diskFreeBytes !== null && (
-          <>{t('files.drawer.limits.disk', { size: fileSizeLabel(diskFreeBytes, locale) })} </>
-        )}
+      <p className="-mt-0.5 text-[11.5px] text-muted-foreground">
+        {diskFreeBytes !== null && <>{t('files.drawer.limits.disk', { size: spaceLabel(diskFreeBytes, locale) })} </>}
         {t('files.drawer.limits.quotaHint', { max: usage.countMax })}
       </p>
-      <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border pt-2.5">
-        <span id={`bot-files-cleanup-${bot.id}`} className="text-[11.5px] text-foreground/90">
-          {t('files.drawer.limits.cleanup')}
-        </span>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={usage.deleteWithConversations}
-          aria-labelledby={`bot-files-cleanup-${bot.id}`}
+      <div className="flex items-center justify-between gap-2.5">
+        <span className="text-[12.5px] text-foreground/75">{t('files.drawer.limits.cleanup')}</span>
+        <SettingsSwitch
+          checked={usage.deleteWithConversations}
+          label={t('files.drawer.limits.cleanup')}
           disabled={busy}
-          onClick={() =>
-            void update({
-              quotaGb: currentQuotaGb,
-              deleteWithConversations: !usage.deleteWithConversations,
-            })
+          onChange={() =>
+            void update({ quotaGb: currentQuotaGb, deleteWithConversations: !usage.deleteWithConversations })
           }
-          className={cn(
-            'relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors disabled:opacity-50',
-            usage.deleteWithConversations ? 'border-primary/40 bg-primary/80' : 'border-border-strong bg-white/[0.08]'
-          )}
-        >
-          <span
-            aria-hidden="true"
-            className={cn(
-              'inline-block size-3.5 rounded-full bg-background transition-transform',
-              usage.deleteWithConversations ? 'translate-x-4' : 'translate-x-0.5'
-            )}
-          />
-        </button>
+        />
       </div>
       {error && (
-        <p role="alert" className="mt-2 text-[11.5px] text-destructive">
+        <p role="alert" className="text-[11.5px] text-destructive">
           {t('files.drawer.limits.failed', { message: error })}
         </p>
       )}

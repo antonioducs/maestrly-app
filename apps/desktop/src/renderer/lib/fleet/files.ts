@@ -1,5 +1,6 @@
 import type { FleetFilesUsage, FleetPublishedFile } from '@maestrly/bot-fleet-protocol'
 import { isFleetVideo } from '../../../shared/fleet-media'
+import { fileSizeLabel } from './downloads'
 
 type Translate = (key: string, options?: Record<string, unknown>) => string
 
@@ -7,6 +8,31 @@ const MIB = 1024 ** 2
 export const FILES_FULL_FREE_BYTES = 10 * MIB
 export const FILES_NEAR_RATIO = 0.85
 export const FILES_NEAR_LEFT = 20
+
+/**
+ * A size within a bot's space for files: megabytes below 1000 MB, then gigabytes with two decimals, so a nearly full
+ * gigabyte reads "0.99 GB" beside its "1 GB" rather than "1,018 MB".
+ */
+export function spaceLabel(bytes: number, locale: string): string {
+  if (bytes < 1000 * MIB) return fileSizeLabel(bytes, locale)
+  return new Intl.NumberFormat(locale, { style: 'unit', unit: 'gigabyte', maximumFractionDigits: 2 }).format(
+    bytes / 1024 ** 3
+  )
+}
+
+/** Scrolls a file's card or row into view and highlights it for a moment; motion follows the system setting. */
+export function highlightFileNode(node: HTMLElement, block: ScrollLogicalPosition = 'center'): void {
+  const view = node.ownerDocument.defaultView ?? window
+  node.scrollIntoView({
+    block,
+    behavior: view.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+  })
+  node.classList.remove('bot-file-flash')
+  // Reading the layout restarts the animation when the same node is highlighted again.
+  void node.offsetWidth
+  node.classList.add('bot-file-flash')
+  view.setTimeout(() => node.classList.remove('bot-file-flash'), 1900)
+}
 
 export const FLEET_FILE_KINDS = ['video', 'image', 'document', 'archive'] as const
 export type FleetFileKind = (typeof FLEET_FILE_KINDS)[number]
@@ -36,6 +62,19 @@ export function filesSpaceLevel(usage: FleetFilesUsage): FilesLevel {
 export function filesCountLevel(usage: FleetFilesUsage): FilesLevel {
   const left = usage.countMax - usage.count
   return left <= 0 ? 'full' : left <= FILES_NEAR_LEFT ? 'near' : 'ok'
+}
+
+/**
+ * The newer of two readings of a bot's space: the list the drawer loaded (fresh right after a deletion) and the bot's
+ * status (fresh right after the bot shares a file).
+ */
+export function freshestUsage(
+  a: FleetFilesUsage | null | undefined,
+  b: FleetFilesUsage | null | undefined
+): FleetFilesUsage | null {
+  if (!a || !b) return a ?? b ?? null
+  const time = (usage: FleetFilesUsage) => (usage.updatedAt ? Date.parse(usage.updatedAt) : Number.NEGATIVE_INFINITY)
+  return time(b) > time(a) ? b : a
 }
 
 export function filesLevel(usage: FleetFilesUsage | null): FilesLevel {

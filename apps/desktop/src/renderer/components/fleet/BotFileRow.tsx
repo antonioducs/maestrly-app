@@ -1,4 +1,3 @@
-import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   ArrowRightLeft,
@@ -14,8 +13,15 @@ import {
   X,
 } from 'lucide-react'
 import type { FleetFileOrigin, FleetPublishedFile } from '@maestrly/bot-fleet-protocol'
-import { downloadStatusLabel, fileSizeLabel } from '@/lib/fleet/downloads'
-import { fleetFileKind, sharedAtLabel, sharedIn, type FilesConversation, type FleetFileKind } from '@/lib/fleet/files'
+import { downloadStatusLabel } from '@/lib/fleet/downloads'
+import {
+  fleetFileKind,
+  sharedAtLabel,
+  sharedIn,
+  spaceLabel,
+  type FilesConversation,
+  type FleetFileKind,
+} from '@/lib/fleet/files'
 import { cn } from '@/lib/utils'
 import { useFleetFileTransfer } from './BotTranscriptFiles'
 
@@ -26,77 +32,73 @@ const KIND_ICON: Record<FleetFileKind, typeof FileText> = {
   archive: FileArchive,
 }
 
+const action =
+  'grid size-7 place-items-center rounded-[7px] text-muted-foreground hover:bg-white/[0.07] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
+
+/** One file the bot shared: what it is, its size and when, and what the owner can do with it. */
 export function BotFileRow({
   botId,
   file,
   conversation,
   showOrigin,
   selected,
-  flashing,
   now,
   onToggleSelect,
   onReveal,
   onOpenLane,
   onDelete,
-  onDownloadedChange,
 }: {
   botId: string
   file: FleetPublishedFile
   conversation: FilesConversation | null
   showOrigin: boolean
   selected: boolean
-  flashing: boolean
   now: number
   onToggleSelect: () => void
   onReveal: (file: FleetPublishedFile) => void
   onOpenLane: (origin: Extract<FleetFileOrigin, { kind: 'routine' | 'thread' }>) => void
   onDelete: () => void
-  onDownloadedChange?: (fileId: string, downloaded: boolean) => void
 }) {
   const { t, i18n } = useTranslation('fleet')
   const locale = i18n.language
   const transfer = useFleetFileTransfer(botId, file.id)
-  const downloaded = Boolean(transfer.receipt)
-  useEffect(() => {
-    onDownloadedChange?.(file.id, downloaded)
-  }, [downloaded, file.id, onDownloadedChange])
-
-  const kind = fleetFileKind(file)
-  const Icon = KIND_ICON[kind]
+  const downloading = transfer.state === 'downloading'
+  const Icon = KIND_ICON[fleetFileKind(file)]
   const totalBytes = transfer.progress?.totalBytes || file.byteSize
   const receivedBytes = Math.min(transfer.progress?.receivedBytes ?? 0, totalBytes)
   const percent = totalBytes > 0 ? Math.round((receivedBytes / totalBytes) * 100) : 0
-  const status =
-    transfer.state === 'downloading'
-      ? downloadStatusLabel(
-          { receivedBytes, totalBytes, bytesPerSecond: transfer.progress?.bytesPerSecond ?? null },
-          locale,
-          t
-        )
-      : null
+  const status = downloading
+    ? downloadStatusLabel(
+        { receivedBytes, totalBytes, bytesPerSecond: transfer.progress?.bytesPerSecond ?? null },
+        locale,
+        t
+      )
+    : null
 
-  const inCurrentConversation = conversation ? sharedIn(file, conversation) : false
-  const canRevealInCurrent = inCurrentConversation || (!conversation && file.origin.kind === 'primary')
-  const canOpenSideLane =
-    !inCurrentConversation && !file.originGone && (file.origin.kind === 'routine' || file.origin.kind === 'thread')
-  const canRevealPrimary = !inCurrentConversation && file.origin.kind === 'primary'
-
+  const origin = file.origin
+  const inShownConversation = conversation ? sharedIn(file, conversation) : false
+  // A file of the shown conversation, or of the bot's own one, is shown where it was shared; one of another run or
+  // thread opens that conversation, while it still exists.
+  const canReveal = inShownConversation || origin.kind === 'primary'
+  const lane = (origin.kind === 'routine' || origin.kind === 'thread') && !file.originGone ? origin : null
   const originText =
-    file.origin.kind === 'primary'
-      ? t('files.drawer.origin.primary')
-      : file.origin.kind === 'routine'
-        ? t('files.drawer.origin.routine', { title: file.origin.title })
-        : file.origin.kind === 'thread'
-          ? t('files.drawer.origin.thread', { title: file.origin.title })
-          : t('files.drawer.origin.unknown')
+    origin.kind === 'routine'
+      ? t('files.drawer.origin.routine', { title: origin.title })
+      : origin.kind === 'thread'
+        ? t('files.drawer.origin.thread', { title: origin.title })
+        : origin.kind === 'unknown'
+          ? t('files.drawer.origin.unknown')
+          : null
 
   return (
     <div
+      role="listitem"
       data-file-row={file.id}
       className={cn(
-        'group flex items-center gap-2.5 border-b border-border/60 px-3.5 py-2 text-xs transition-colors',
-        selected ? 'bg-white/[0.06]' : 'hover:bg-white/[0.03]',
-        flashing && 'bot-file-flash'
+        'group relative grid grid-cols-[16px_34px_minmax(0,1fr)] items-center gap-2.5 rounded-lg py-[7px] pl-2.5 pr-2.5 text-xs',
+        '[--row-bg:#161618] hover:[--row-bg:#202023] focus-within:[--row-bg:#202023]',
+        selected && '[--row-bg:#2a1e22] hover:[--row-bg:#31232a] focus-within:[--row-bg:#31232a]',
+        'bg-[var(--row-bg)]'
       )}
     >
       <input
@@ -104,20 +106,19 @@ export function BotFileRow({
         checked={selected}
         onChange={onToggleSelect}
         aria-label={t('files.drawer.select', { name: file.name })}
-        className="size-3.5 shrink-0 accent-primary"
       />
       <span
         aria-hidden="true"
-        className="flex size-7 shrink-0 items-center justify-center rounded-md border border-border bg-white/[0.04] text-muted-foreground"
+        className="grid h-[26px] w-[34px] place-items-center rounded-[5px] bg-white/[0.05] text-muted-foreground shadow-[inset_0_0_0_1px_var(--border)]"
       >
-        <Icon className="size-3.5" />
+        <Icon className="size-[13px]" />
       </span>
-      <div className="min-w-0 flex-1">
-        <p className="truncate font-medium text-foreground" title={file.name}>
+      <div className="min-w-0">
+        <p className="truncate font-medium text-[13px] text-foreground" title={file.name}>
           {file.name}
         </p>
         {status !== null ? (
-          <div className="mt-1 flex items-center gap-2">
+          <div className="mt-1 flex items-center gap-1.5 pr-[70px]">
             <div
               className="h-1 flex-1 overflow-hidden rounded-full bg-white/[0.08]"
               role="progressbar"
@@ -132,45 +133,54 @@ export function BotFileRow({
                 style={{ width: `${Math.max(2, percent)}%` }}
               />
             </div>
-            <span className="shrink-0 tabular-nums text-[11px] text-muted-foreground">{percent}%</span>
+            <span className="min-w-[30px] text-right font-mono text-[11px] text-muted-foreground">{percent}%</span>
           </div>
         ) : (
-          <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-muted-foreground">
-            <span className="tabular-nums">{fileSizeLabel(file.byteSize, locale)}</span>
-            <span aria-hidden="true">·</span>
+          <div className="mt-px flex min-w-0 items-center gap-[5px] overflow-hidden whitespace-nowrap text-[11.5px] text-muted-foreground">
+            <span className="font-mono text-[11px] text-foreground/75">{spaceLabel(file.byteSize, locale)}</span>
+            <span aria-hidden="true" className="text-muted-foreground/50">
+              ·
+            </span>
             <span>{sharedAtLabel(file.sharedAt, now, locale, t)}</span>
-            {(showOrigin || file.originGone) && (
+            {originText && (showOrigin || file.originGone) && (
               <>
-                <span aria-hidden="true">·</span>
-                <span className="inline-flex min-w-0 items-center gap-1 truncate">
-                  {file.origin.kind === 'routine' && <Repeat aria-hidden="true" className="size-3 shrink-0" />}
-                  {file.origin.kind === 'thread' && <ArrowRightLeft aria-hidden="true" className="size-3 shrink-0" />}
-                  <span className="truncate">{originText}</span>
+                <span aria-hidden="true" className="text-muted-foreground/50">
+                  ·
                 </span>
+                {origin.kind === 'routine' && <Repeat aria-hidden="true" className="size-[11px] shrink-0" />}
+                {origin.kind === 'thread' && <ArrowRightLeft aria-hidden="true" className="size-[11px] shrink-0" />}
+                <span className="min-w-0 truncate">{originText}</span>
               </>
             )}
             {file.originGone && (
-              <span className="rounded bg-white/[0.07] px-1.5 py-px text-[10px] text-muted-foreground">
+              <span className="shrink-0 rounded bg-white/[0.07] px-[5px] text-[10.5px] text-foreground/75">
                 {t('files.drawer.origin.gone')}
               </span>
             )}
-            {downloaded && (
-              <span className="inline-flex items-center gap-0.5 text-emerald-300">
-                <Check aria-hidden="true" className="size-3" />
+            {transfer.receipt && (
+              <span className="ml-0.5 inline-flex shrink-0 items-center gap-[3px] text-status-ready">
+                <Check aria-hidden="true" className="size-[11px]" />
                 {t('files.drawer.downloaded')}
               </span>
             )}
           </div>
         )}
       </div>
-      <div className="flex shrink-0 items-center gap-0.5">
-        {transfer.state === 'downloading' ? (
+      <div
+        className={cn(
+          'absolute right-1 top-1/2 flex -translate-y-1/2 gap-px bg-[linear-gradient(90deg,transparent,var(--row-bg)_24px)] pl-7 transition-opacity motion-reduce:transition-none',
+          downloading
+            ? 'opacity-100'
+            : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100'
+        )}
+      >
+        {downloading ? (
           <button
             type="button"
             onClick={transfer.cancel}
             aria-label={t('files.cancelName', { name: file.name })}
             title={t('files.cancel')}
-            className="rounded-md p-1.5 text-muted-foreground hover:bg-white/[0.06] hover:text-foreground"
+            className={action}
           >
             <X aria-hidden="true" className="size-3.5" />
           </button>
@@ -180,51 +190,51 @@ export function BotFileRow({
             onClick={() => void transfer.download()}
             aria-label={t('files.drawer.action.download', { name: file.name })}
             title={t('files.drawer.action.download', { name: file.name })}
-            className="rounded-md p-1.5 text-muted-foreground hover:bg-white/[0.06] hover:text-foreground"
+            className={action}
           >
             <Download aria-hidden="true" className="size-3.5" />
           </button>
         )}
-        {(canRevealInCurrent || canRevealPrimary) && (
+        {canReveal ? (
           <button
             type="button"
             onClick={() => onReveal(file)}
             aria-label={t('files.drawer.action.reveal', { name: file.name })}
             title={t('files.drawer.action.reveal', { name: file.name })}
-            className="rounded-md p-1.5 text-muted-foreground hover:bg-white/[0.06] hover:text-foreground"
+            className={action}
           >
             <MessageSquare aria-hidden="true" className="size-3.5" />
           </button>
-        )}
-        {canOpenSideLane && (file.origin.kind === 'routine' || file.origin.kind === 'thread') && (
-          <button
-            type="button"
-            onClick={() =>
-              file.origin.kind === 'routine' || file.origin.kind === 'thread' ? onOpenLane(file.origin) : undefined
-            }
-            aria-label={t(
-              file.origin.kind === 'routine' ? 'files.drawer.action.openRun' : 'files.drawer.action.openThread',
-              { name: file.name }
-            )}
-            title={t(
-              file.origin.kind === 'routine' ? 'files.drawer.action.openRun' : 'files.drawer.action.openThread',
-              { name: file.name }
-            )}
-            className="rounded-md p-1.5 text-muted-foreground hover:bg-white/[0.06] hover:text-foreground"
-          >
-            {file.origin.kind === 'routine' ? (
-              <Repeat aria-hidden="true" className="size-3.5" />
-            ) : (
-              <ArrowRightLeft aria-hidden="true" className="size-3.5" />
-            )}
-          </button>
+        ) : (
+          lane && (
+            <button
+              type="button"
+              onClick={() => onOpenLane(lane)}
+              aria-label={t(
+                lane.kind === 'routine' ? 'files.drawer.action.openRun' : 'files.drawer.action.openThread',
+                {
+                  name: file.name,
+                }
+              )}
+              title={t(lane.kind === 'routine' ? 'files.drawer.action.openRun' : 'files.drawer.action.openThread', {
+                name: file.name,
+              })}
+              className={action}
+            >
+              {lane.kind === 'routine' ? (
+                <Repeat aria-hidden="true" className="size-3.5" />
+              ) : (
+                <ArrowRightLeft aria-hidden="true" className="size-3.5" />
+              )}
+            </button>
+          )
         )}
         <button
           type="button"
           onClick={onDelete}
           aria-label={t('files.drawer.action.delete', { name: file.name })}
           title={t('files.drawer.action.delete', { name: file.name })}
-          className="rounded-md p-1.5 text-muted-foreground hover:bg-red-400/10 hover:text-red-300"
+          className={cn(action, 'hover:bg-destructive/10 hover:text-destructive')}
         >
           <Trash2 aria-hidden="true" className="size-3.5" />
         </button>
