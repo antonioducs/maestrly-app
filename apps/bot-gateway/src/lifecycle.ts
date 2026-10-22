@@ -1533,6 +1533,10 @@ export class Lifecycle {
     for (const bot of this.store.botsOfEnvironment(environmentId)) this.activity(bot.id, 'bot_failed')
     this.logger.warn('Environment startup failed', { environmentId, failure: code })
   }
+  /**
+   * Starts a stopped or failed environment. A running one installs again those of its bots that are not running (their
+   * installation failed), as their own start does: devices start a bot that shares its environment through it.
+   */
   async startEnvironment(id: string, via: Via = null): Promise<FleetEnvironment> {
     this.requireEnvironment(id)
     return this.exclusive(id, async () => {
@@ -1548,6 +1552,12 @@ export class Lifecycle {
         } catch (error) {
           this.failEnvironment(id, error)
         }
+      } else {
+        const waiting = this.store
+          .botsOfEnvironment(id)
+          .filter((bot) => bot.lifecycle !== 'running')
+          .map((bot) => bot.id)
+        if (waiting.length) await this.installInRunning(id, waiting)
       }
       return this.environmentView(this.store.getEnvironment(id)!)
     })

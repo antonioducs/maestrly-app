@@ -1337,6 +1337,42 @@ describe('installation failures', () => {
       message: 'This bot shares its environment. Restart the environment instead.',
     })
   })
+
+  it('installs the failed bots of a running environment again when it is started, and nothing else', async () => {
+    const f = fixture()
+    const work = await f.instance('work')
+    const {
+      ids: [alpha, beta],
+    } = await environment(f, 'Work', ['Alpha', 'Beta'])
+    work.failures.push({ method: 'PUT', path: '/v1/bots/' + beta, status: 409, code: 'CONFLICT' })
+    await f.lifecycle.restartEnvironment('work')
+    expect(f.lifecycle.get(beta)?.lifecycle).toBe('failed')
+    work.failures.length = 0
+    const docker: string[] = []
+    for (const method of ['start', 'stop', 'restart'] as const) {
+      const original = f.docker[method].bind(f.docker)
+      f.docker[method] = async (id: string) => {
+        docker.push(method + ' ' + id)
+        return original(id)
+      }
+    }
+    const changes = (before: number) =>
+      work.requests
+        .slice(before)
+        .filter((item) => item.method !== 'GET')
+        .map((item) => item.method + ' ' + item.path)
+    // Devices start a bot that shares its environment through the environment, which already runs.
+    let before = work.requests.length
+    expect((await f.lifecycle.startEnvironment('work')).lifecycle).toBe('running')
+    expect(changes(before)).toEqual(['PUT /v1/bots/' + beta])
+    expect(f.lifecycle.get(beta)?.lifecycle).toBe('running')
+    expect(f.lifecycle.get(alpha)?.lifecycle).toBe('running')
+    // With every bot running, starting it again changes nothing.
+    before = work.requests.length
+    expect((await f.lifecycle.startEnvironment('work')).lifecycle).toBe('running')
+    expect(changes(before)).toEqual([])
+    expect(docker).toEqual([])
+  })
 })
 
 describe('older images', () => {
