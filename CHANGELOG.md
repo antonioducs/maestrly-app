@@ -5,6 +5,71 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-10-22
+
+### Added
+
+- Use your other computers from this one, and this one from them, with no server
+  in between. On the computer to use, open **Settings → Computers** and turn on
+  **Let my other computers use this computer**; on the other one, choose
+  **Connect a computer…** and type the 6-digit code the first shows. A paired
+  computer appears in the machine switcher, and its chats and workspaces run
+  there, with its folders, terminals, accounts and keys. The connection goes
+  over your local network or Tailscale, encrypted and pinned to each computer's
+  certificate. Both computers need this version. A paired computer can do
+  everything you can do on the one it connects to, so pair only your own, type
+  only a code you asked for, and remove one you lose. **Advanced → Port**
+  chooses the port other computers reach this one at. The Browser on a Linux
+  computer and the Computer tab are not available on a paired computer yet. See
+  [Connect your computers](docs/connect-computers.md).
+- Pair this computer with more than one bot server. **Settings → Bot servers**
+  shows one server at a time, chosen at the top, with **Add server**, and
+  disconnecting one keeps the others. The Bots tab gets a server switcher when
+  two or more are paired, with each server's connection and pending inbox
+  items, and the machine switcher lists each server's workspaces environments
+  under its name. Each server hosts its own artifacts: the center lists them
+  all with their server, and **Settings → Artifacts → Publish to** picks where
+  this computer's conversations publish. Maestrly refuses to pair the same
+  installation twice under two addresses, before the pairing code is spent, and
+  a bot's access to this computer's projects stays with the server it was given
+  on. This app still installs one server. See
+  [several servers](docs/bot-fleet.md#several-servers) and
+  [artifacts](docs/artifacts.md#several-servers).
+- Draw the images of `generate_image` with a Google AI subscription, with
+  Google's Gemini image model, in conversations on any model. **Settings ›
+  Maestrly Chat › Tools › Generator** chooses **Automatic**, **ChatGPT** or
+  **Google AI**. Automatic uses ChatGPT first, then Google AI; conversations on
+  Google AI now draw with their own account first, where they always used
+  ChatGPT before. An explicit choice never falls back to the other
+  subscription, and neither does Automatic when Google's image quota runs out.
+  Bots always use Automatic. It needs Google AI's runtime 1.4.0, and these images
+  report no token usage. See
+  [image generation](docs/antigravity.md#image-generation).
+
+### Changed
+
+- The settings section **Bot server** is now **Bot servers**.
+
+### Fixed
+
+- A conversation between two bots no longer stays shown as working, with
+  "… is answering", for hours after its turn ended and its answer reached your
+  conversation. The bot server now sends the conversation again when a turn
+  starts or ends. It needs a bot server on this version.
+- Moving a very large bot no longer fails in ways that left it unable to start.
+  The server waits for the environment to freeze the bot as long as the move
+  allows; it used to give up after 5 of its 10 minutes. A bot over the 32 GB
+  package limit is refused before it is frozen, so it keeps running, and the
+  message names the limit and what to do. When the environment does not answer
+  the rollback, the bot waits as starting and is installed once the environment
+  answers, instead of being marked failed. It needs a bot server and bot
+  environment image on this version. See
+  [Move a bot to another environment](docs/bot-fleet.md#move-a-bot-to-another-environment).
+- **Start** on an environment that already runs now starts its bots that are not
+  running, so a failed bot can be started again, from older apps and the mobile
+  app too. Before, it did nothing, with no error. It needs a bot server on this
+  version.
+
 ## [0.24.0] - 2026-10-21
 
 ### Added
