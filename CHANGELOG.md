@@ -5,6 +5,8 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-10-22
+
 ### Changed
 
 - Each bot now drives a real Chromium of its own on its desktop, with its own
@@ -30,6 +32,8 @@ User-visible changes by version. Downloads are on
   script that never returns.
 - Sign-in pages and bot checks that refused the built-in browser as an embedded
   one now see an ordinary Chromium.
+- After a conversation's context is compacted, the agent keeps working from the
+  to-do list it had open instead of leaving the last card frozen in the chat.
 
 ## [0.25.0] - 2026-10-22
 
