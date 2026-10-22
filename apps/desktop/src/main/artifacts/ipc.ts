@@ -7,6 +7,7 @@ import {
   MAX_ARTIFACT_NAME_CHARS,
   MIN_ACCESS_CODE_CHARS,
 } from '../../shared/artifacts'
+import { type FleetServerId, parseFleetServerId } from '../../shared/fleet-servers'
 import type { IpcRegistrar } from '../ipc-registrar'
 import type { ArtifactsService } from './service'
 
@@ -33,6 +34,9 @@ const requestDecision = z.object({ approve: z.boolean(), name: personName.option
 const commentBody = z.string().trim().min(1).max(MAX_ARTIFACT_COMMENT_CHARS)
 /** Some artifacts, or all of them when absent. */
 const idList = z.array(artifactId).min(1).max(1000).optional()
+/** A paired server, or the one conversations of this computer publish to when absent. */
+const optionalServer = (value: unknown): FleetServerId | undefined =>
+  value === undefined || value === null ? undefined : parseFleetServerId(value)
 
 /** Owner actions from the renderer. Every channel is guarded and validates its input before the service sees it. */
 export function registerArtifactsIpc(reg: IpcRegistrar, deps: { service: () => ArtifactsService }): void {
@@ -53,10 +57,18 @@ export function registerArtifactsIpc(reg: IpcRegistrar, deps: { service: () => A
       activate: true,
     })
   })
-  reg.mhandle('artifacts:server-status', async () => service().serverStatus())
-  reg.mhandle('artifacts:server-host-get', async () => service().serverHost())
-  reg.mhandle('artifacts:server-host-set', async (_e, patch: unknown) =>
-    service().setServerHost(fleetArtifactSettingsPatchSchema.parse(patch))
+  reg.mhandle('artifacts:server-status', async (_e, serverId: unknown) =>
+    service().serverStatus(optionalServer(serverId))
+  )
+  reg.mhandle('artifacts:server-host-get', async (_e, serverId: unknown) =>
+    service().serverHost(optionalServer(serverId))
+  )
+  reg.mhandle('artifacts:server-host-set', async (_e, patch: unknown, serverId: unknown) =>
+    service().setServerHost(fleetArtifactSettingsPatchSchema.parse(patch), optionalServer(serverId))
+  )
+  reg.mhandle('artifacts:servers', async () => service().servers())
+  reg.mhandle('artifacts:publish-server-set', async (_e, serverId: unknown) =>
+    service().setPublishing(parseFleetServerId(serverId))
   )
 
   // Artifacts an earlier version left on this computer: they move to the bot server or are deleted.

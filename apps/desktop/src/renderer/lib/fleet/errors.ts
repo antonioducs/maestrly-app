@@ -13,7 +13,7 @@ import {
   FLEET_BOT_MOVE_UNSUPPORTED,
   FLEET_FILES_MANAGE_UNSUPPORTED,
 } from '../../../shared/fleet-targets'
-import { FLEET_SERVER_UNKNOWN } from '../../../shared/fleet-servers'
+import { FLEET_SERVER_ALREADY_PAIRED, FLEET_SERVER_UNKNOWN } from '../../../shared/fleet-servers'
 
 /** Error text for the Bots UI: IPC failures arrive wrapped by Electron, so drop that transport prefix. */
 // Main-process errors arrive as "<Class>: message"; gateway failures are FleetClientError instances.
@@ -91,6 +91,7 @@ const marked = (marker: string) => (message: string) => message.includes(marker)
  */
 const KNOWN_REFUSALS: KnownRefusal[] = [
   { matches: marked(FLEET_SERVER_UNKNOWN), key: 'errors.serverUnknown' },
+  { matches: marked(FLEET_SERVER_ALREADY_PAIRED), key: 'errors.serverAlreadyPaired' },
   { matches: marked(FLEET_ENVIRONMENTS_UNSUPPORTED), key: 'provisioning.updateServer' },
   { matches: marked(FLEET_UPDATES_UNSUPPORTED), key: 'updates.unsupported' },
   { matches: marked(FLEET_SCOPES_UNSUPPORTED), key: 'workspaces.scopesUnsupported' },

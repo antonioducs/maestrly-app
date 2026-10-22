@@ -145,7 +145,7 @@ workspaces, chats and messages waiting to be sent.
 
 ## Pair
 
-1. On a computer already paired with the server, open **Settings → Bot server**
+1. On a computer already paired with the server, open **Settings → Bot servers**
    and choose **Pair a phone**.
 2. Check the **Address your phone uses** field: it must be the server's
    `https://` address.
@@ -218,7 +218,7 @@ keeps listing the phone until you remove it from another device or with
 **Settings → Paired devices** lists the phones and computers paired with the
 server, with when each paired and was last active, and removes one you no longer
 use or have lost; it can no longer reach the server. On a computer, the same list
-is in **Settings → Bot server**. It needs a bot server that offers it. A revoked phone shows
+is in **Settings → Bot servers**. It needs a bot server that offers it. A revoked phone shows
 **This phone was removed** and offers to pair again. Unpairing or revoking a
 phone also removes its push registration from the server.
 
@@ -438,7 +438,7 @@ For App Review and the stores:
 
 Before a release, on a real phone with a `preview` build:
 
-1. On the computer, choose **Settings → Bot server → Pair a phone** and scan the
+1. On the computer, choose **Settings → Bot servers → Pair a phone** and scan the
    code with the app. Expect the confirmation with the server's address, then
    the bots, and the offer to turn notifications on.
 2. Send a message to a bot and watch the reply arrive as it streams.

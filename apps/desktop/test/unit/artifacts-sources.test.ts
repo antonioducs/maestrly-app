@@ -7,6 +7,8 @@ import { ArtifactsService } from '../../src/main/artifacts/service'
 import { InviteVault } from '../../src/main/artifacts/invite-vault'
 import { LegacyArtifacts } from '../../src/main/artifacts/legacy'
 import type { ServerArtifacts } from '../../src/main/artifacts/server-artifacts'
+import type { ArtifactServerSet } from '../../src/main/artifacts/servers'
+import type { FleetServerId } from '../../src/shared/fleet-servers'
 import { createDesktopSources, serverUnavailable, type ArtifactSource } from '../../src/main/artifacts/sources'
 import type { ArtifactServerStatus } from '../../src/shared/artifacts'
 import { getConversation } from '../../src/main/store'
@@ -67,9 +69,21 @@ function harness() {
   })
   const vault = new InviteVault({ get: () => null, set: () => true, remove: () => {} })
   const openExternal = vi.fn(async () => {})
+  // One paired server, or none while it is absent.
+  const SERVER = 'aaaaaaaa-0000-4000-8000-000000000001' as FleetServerId
+  const paired = () => state !== 'absent'
+  const servers = {
+    publishing: () => (paired() ? server : null),
+    publishingId: () => (paired() ? SERVER : null),
+    get: (id: FleetServerId) => (paired() && id === SERVER ? server : null),
+    entries: () => (paired() ? [{ serverId: SERVER, source: server.source(), unavailable: reason }] : []),
+    views: () => [],
+    name: () => 'server',
+    refresh: async () => {},
+  } satisfies ArtifactServerSet
   const service = new ArtifactsService({
-    sources: createDesktopSources({ server: () => server.source(), unavailable: reason }),
-    server,
+    sources: createDesktopSources({ servers: () => servers.entries(), publishing: () => servers.publishingId() }),
+    servers,
     legacy,
     vault,
     getConversation,

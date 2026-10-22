@@ -1020,7 +1020,7 @@ export default {
     },
     // Menu lateral (#556): agrupa as configs por tema p/ a janela deixar de ser uma lista gigante.
     nav: {
-      fleet: 'Servidor de bots',
+      fleet: 'Servidores de bots',
       computers: 'Computadores',
       chat: 'Maestrly Chat',
       usage: 'Uso e custos',
@@ -1120,6 +1120,9 @@ export default {
       saving: 'Salvando…',
       saved: 'Salvo',
       saveFailed: 'Não foi possível salvar: {{message}}',
+      publishTo: 'Publicar em',
+      publishToHint:
+        'O servidor de bots em que as conversas deste computador publicam. O que já foi publicado fica no seu servidor. As configurações abaixo são do servidor escolhido aqui.',
       setup: {
         title: 'Conecte um servidor de bots para publicar artefatos',
         text: 'Seus agentes publicam as páginas no servidor de bots. Se ainda não quer bots, a instalação traz só o necessário para artefatos; o ambiente dos bots é baixado quando você criar o primeiro.',
@@ -1489,6 +1492,7 @@ export default {
     peerConnectAnother: 'Conectar outro computador…',
     // Host switcher: the sidebar lists one machine's chats and workspaces at a time.
     hostMachines: 'Máquinas',
+    hostServerUnnamed: 'Servidor de bots',
     hostSwitch: 'Máquina: {{host}}. Trocar de máquina',
     hostOthers: 'Outras máquinas',
     hostSwitchTo: 'Ir para {{host}}: {{status}}',

@@ -929,6 +929,16 @@ describe('bot provisioning contracts', () => {
     expect(provisioning.fleetMetaFeatures(parsed)).toEqual([...features, 'phones'])
     expect(provisioning.fleetMetaResponseSchema.parse(meta).moreFeatures).toEqual([])
   })
+  it('names the installation in an id older peers drop and newer ones check', () => {
+    const meta = { protocol: 1, gatewayVersion: '1', botImage: 'i', botImageVersion: null }
+    const serverId = '11111111-2222-4333-8444-555555555555'
+    expect(provisioning.fleetMetaResponseSchema.parse({ ...meta, serverId }).serverId).toBe(serverId)
+    expect(provisioning.fleetMetaResponseSchema.parse(meta).serverId).toBeUndefined()
+    expect(() => provisioning.fleetMetaResponseSchema.parse({ ...meta, serverId: 'not-an-id' })).toThrow()
+    // What a desktop before it parses: the answer, without the field.
+    const legacy = provisioning.fleetMetaResponseSchema.omit({ serverId: true })
+    expect(legacy.parse({ ...meta, serverId })).not.toHaveProperty('serverId')
+  })
   it('allows only provider sign-in URLs and extracts loopback redirects', () => {
     for (const [kind, url] of [
       ['codex', 'https://auth.openai.com/oauth/authorize?x=1'],

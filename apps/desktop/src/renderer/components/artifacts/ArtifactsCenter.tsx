@@ -197,6 +197,12 @@ export function ArtifactsCenter({
   )
   const itemProject = (item: ArtifactListItem) =>
     item.project ? (item.project.name ?? t('artifacts.filter.removedProject')) : t('artifacts.card.standalone')
+  // With artifacts on more than one bot server, each card says which one it is on.
+  const severalServers = new Set(items.flatMap((item) => (item.server ? [item.server.id] : []))).size > 1
+  const cardLabel = (item: ArtifactListItem) =>
+    [severalServers ? item.server?.name : null, project === ALL_PROJECTS ? itemProject(item) : null]
+      .filter(Boolean)
+      .join(' · ') || null
 
   const isOpening = (id: string, version?: number) => opening.has(`${id}:${version ?? 'current'}`)
   const open = async (item: ArtifactListItem, version?: number) => {
@@ -474,7 +480,7 @@ export function ArtifactsCenter({
                 <ArtifactGridCard
                   key={item.id}
                   item={item}
-                  projectLabel={project === ALL_PROJECTS ? itemProject(item) : null}
+                  projectLabel={cardLabel(item)}
                   showSize={sort === 'size'}
                   arrival={arrived.get(item.id)}
                   entering={entering.has(item.id)}

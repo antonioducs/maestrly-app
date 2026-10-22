@@ -1,12 +1,15 @@
 import { ArtifactHostError, createRemoteAdmin, UPLOAD_METHODS, type ArtifactAdmin } from '@maestrly/artifact-host'
 import { fleetArtifactResultSchema } from '@maestrly/bot-fleet-protocol'
 import type { Conversation } from '../../shared/conversation'
+import type { FleetServerId } from '../../shared/fleet-servers'
 import type { FleetClientService } from '../fleet/client/service'
 
-/** Artifacts are hosted only on the bot server. */
+/** Artifacts are hosted only on a bot server. */
 export type ArtifactHostKey = 'server'
 export interface ArtifactSource {
   readonly key: ArtifactHostKey
+  /** This computer's id for the paired server it is; absent where there is one host only (a bot, a workspaces host). */
+  readonly server?: FleetServerId
   readonly owner: { kind: 'device' | 'bot'; id: string }
   admin(): Promise<ArtifactAdmin>
   ready(): boolean
@@ -26,35 +29,50 @@ export type ServerUnavailableReason =
   | 'server_off'
   | 'server_unreachable'
   | 'no_viewer'
-export function serverUnavailable(reason: ServerUnavailableReason = 'server_unreachable'): ArtifactHostError {
-  return new ArtifactHostError('host_unavailable', 'The bot server artifact host is unavailable', { reason })
+/** With `server`, the name of the server it is about, when the owner has several. */
+export function serverUnavailable(
+  reason: ServerUnavailableReason = 'server_unreachable',
+  server?: string
+): ArtifactHostError {
+  return new ArtifactHostError('host_unavailable', 'The bot server artifact host is unavailable', {
+    reason,
+    ...(server ? { server } : {}),
+  })
 }
 /**
- * The desktop's sources: the paired bot server alone. Without a ready server there is nowhere to publish or look, and
- * the reason is reported instead; nothing is ever published on this computer.
+ * The desktop's sources: the paired bot servers, each a source of its own. Conversations publish on the one chosen;
+ * lookups search every one, so an artifact is found on whichever server holds it. A server that is not ready stands
+ * as a placeholder that says why, which also keeps lookups from reporting its artifacts as missing meanwhile. Nothing
+ * is ever published on this computer.
  */
 export function createDesktopSources(deps: {
-  server: () => ArtifactSource | null
-  /** Why the server is not ready; it also keeps lookups from reporting an artifact as missing meanwhile. */
-  unavailable: () => ArtifactHostError
+  servers: () => Array<{ serverId: FleetServerId; source: ArtifactSource | null; unavailable(): ArtifactHostError }>
+  publishing: () => FleetServerId | null
 }): ArtifactSources {
-  const placeholder: ArtifactSource = {
+  const placeholder = (server: FleetServerId | undefined, unavailable: () => ArtifactHostError): ArtifactSource => ({
     key: 'server',
+    ...(server ? { server } : {}),
     owner: { kind: 'device', id: '' },
     ready: () => false,
     admin: async () => {
-      throw deps.unavailable()
+      throw unavailable()
     },
     viewerBase: () => null,
     publicBase: () => null,
     linkExpiryDays: () => null,
+  })
+  const all = () => {
+    const servers = deps.servers()
+    if (servers.length === 0) return [placeholder(undefined, () => serverUnavailable('server_absent'))]
+    return servers.map((entry) => entry.source ?? placeholder(entry.serverId, entry.unavailable))
   }
-  const all = () => [deps.server() ?? placeholder]
   return {
     publishTarget: () => {
-      const server = deps.server()
-      if (!server) throw deps.unavailable()
-      return server
+      const id = deps.publishing()
+      const entry = deps.servers().find((server) => server.serverId === id)
+      if (!entry) throw serverUnavailable('server_absent')
+      if (!entry.source) throw entry.unavailable()
+      return entry.source
     },
     forConversation: all,
     managed: all,

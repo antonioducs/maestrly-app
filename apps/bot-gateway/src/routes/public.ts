@@ -454,6 +454,7 @@ export async function publicRoute(
         body: {
           protocol: FLEET_PROTOCOL_VERSION,
           gatewayVersion: ctx.host.gatewayVersion,
+          serverId: ctx.store.serverId(),
           features: [
             FLEET_FILES_FEATURE,
             FLEET_ENVIRONMENT_SETTINGS_FEATURE,

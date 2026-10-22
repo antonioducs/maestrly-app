@@ -179,6 +179,8 @@ import {
   setLocaleSetting,
   initLocaleOnFirstRun,
   initOnboardingFlag,
+  getAppSetting,
+  setAppSetting,
   type ConversationStatus,
   type FloatTab,
 } from './store'
@@ -250,12 +252,12 @@ import { fleetScopedRegistrar, registerFleetClientIpc } from './fleet/client/ipc
 import { registerFleetDesktopBridgeIpc } from './fleet/client/desktop-bridge-ipc'
 import { registerFleetInstallerIpc } from './fleet/installer/ipc'
 import { fleetInstallerService } from './fleet/installer/service'
-import { ServerArtifacts } from './artifacts/server-artifacts'
-import { createDesktopSources, serverUnavailable } from './artifacts/sources'
+import { ArtifactServers } from './artifacts/servers'
+import { createDesktopSources } from './artifacts/sources'
 import { botArtifactSource, createBotSources } from './fleet/instance/artifacts'
 import { botRuntimeForConversation } from './fleet/instance'
 import { fleetServers } from './fleet/client/servers'
-import { fleetKey } from '../shared/fleet-servers'
+import { fleetKey, isFleetServerId } from '../shared/fleet-servers'
 import { handleFleetMediaProtocol } from './fleet/client/media-scheme'
 import { appPolicyHeaders } from './content-security-policy'
 import { isGenUiWidgetUrl } from '../shared/genui-widget'
@@ -344,6 +346,9 @@ function hostBotAccess(): HostBotAccess | null {
   return hostBots
 }
 
+/** The server conversations of this computer publish artifacts to, as chosen in Settings → Artifacts. */
+const ARTIFACTS_PUBLISH_SERVER_KEY = 'artifacts.publishServer'
+
 // The artifact host on this computer, opened only for what earlier versions published here; created with the store.
 let artifactHost: ArtifactHostProcess | null = null
 let legacyArtifacts: LegacyArtifacts | null = null
@@ -351,10 +356,26 @@ let legacyArtifacts: LegacyArtifacts | null = null
 function initArtifacts(): void {
   let thumbnails: ThumbnailQueue | null = null
   const vault = new InviteVault()
-  // Artifacts go to the default server: the installed one, else the first paired.
-  const server = new ServerArtifacts({
-    fleet: () => fleetServers.default(),
+  // Each paired server hosts its own artifacts. Conversations of this computer publish to the one chosen in Settings →
+  // Artifacts, by default the installed one, else the first paired.
+  const servers = new ArtifactServers({
+    servers: () => fleetServers.list().map(({ id, installed }) => ({ id, installed })),
+    client: (id) => fleetServers.get(id),
     viewerPort: () => fleetInstallerService.artifactsViewerPort(),
+    chosen: () => {
+      const chosen = getAppSetting(ARTIFACTS_PUBLISH_SERVER_KEY)
+      return isFleetServerId(chosen) ? chosen : null
+    },
+    name: (id) => {
+      const connection = fleetServers.get(id)?.getConnection()
+      if (!connection) return ''
+      if (connection.hostname) return connection.hostname
+      try {
+        return connection.url ? new URL(connection.url).host : ''
+      } catch {
+        return connection.url ?? ''
+      }
+    },
   })
   if (!isBotMode()) {
     artifactHost = new ArtifactHostProcess({ fork: forkArtifactHostWorker, dataDir: artifactsDataDir })
@@ -377,15 +398,12 @@ function initArtifacts(): void {
       })
     : isServerMode()
       ? createHostSources(hostAccess)
-      : createDesktopSources({
-          server: () => server.source(),
-          unavailable: () => server.unavailable() ?? serverUnavailable(),
-        })
+      : createDesktopSources({ servers: () => servers.entries(), publishing: () => servers.publishingId() })
   const onArtifactEvent = createArtifactEventHandler({ broadcast, soundSettings: getSoundSettings, playSound })
   if (!isBotMode())
     fleetServers.setupClients((client) => {
       client.onArtifactEvent = (event) => {
-        void server.refresh().then(() => broadcast('artifacts:changed'))
+        void (servers.get(client.serverId)?.refresh() ?? Promise.resolve()).then(() => broadcast('artifacts:changed'))
         if ('artifactId' in event) onArtifactEvent(event)
         else broadcast('artifacts:changed')
       }
@@ -393,13 +411,13 @@ function initArtifacts(): void {
   const service = new ArtifactsService({
     sources,
     emitChanged: () => broadcast('artifacts:changed'),
-    server: isHeadlessInstance() ? undefined : server,
+    servers: isHeadlessInstance() ? undefined : servers,
+    choosePublishing: (id) => setAppSetting(ARTIFACTS_PUBLISH_SERVER_KEY, id),
     legacy: legacyArtifacts ?? undefined,
-    botName: (id) =>
-      fleetServers
-        .default()
-        ?.getSnapshot()
-        .bots.find((bot) => bot.id === id)?.name,
+    botName: (id, serverId) => {
+      const client = serverId ? fleetServers.get(serverId) : fleetServers.default()
+      return client?.getSnapshot().bots.find((bot) => bot.id === id)?.name
+    },
     vault,
     getConversation,
     workspaceName: (id) => getWorkspace(id)?.name,

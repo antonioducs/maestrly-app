@@ -28,6 +28,7 @@ function item(id: string, overrides: Partial<ArtifactListItem> = {}): ArtifactLi
     updatedAt: 1,
     bot: null,
     elsewhere: false,
+    server: null,
     conversation: null,
     project: { id: 'p1', name: 'Zeta' },
     storageBytes: 10,

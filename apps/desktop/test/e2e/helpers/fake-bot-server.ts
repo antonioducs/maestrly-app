@@ -1,4 +1,4 @@
-import { randomBytes, randomInt } from 'node:crypto'
+import { randomBytes, randomInt, randomUUID } from 'node:crypto'
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { createServer, request as httpRequest, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -61,6 +61,8 @@ export class FakeGateway {
   private devices = 0
   /** The version of the gateway image running, which `compose up` sets from the `.env`, as the real one reports. */
   version = '0.9.3'
+  /** The installation's id, which `/v1/meta` announces whatever address it is reached at. */
+  readonly serverId = randomUUID()
   private environments: FleetEnvironment[] = []
   private bots: FleetBot[] = []
   private archived: FleetArchivedEnvironment[] = []
@@ -82,7 +84,12 @@ export class FakeGateway {
      * With `gatewayViewer`, the API port also serves the artifact viewer, as a current gateway does. With `transfer`, a
      * device can move artifacts in (`exportArtifact`, `putBlobs`, `importArtifact`).
      */
-    private readonly options: { artifacts?: boolean; gatewayViewer?: boolean; transfer?: boolean } = {}
+    private readonly options: {
+      artifacts?: boolean
+      gatewayViewer?: boolean
+      transfer?: boolean
+      botName?: string
+    } = {}
   ) {
     this.reset()
   }
@@ -210,7 +217,7 @@ export class FakeGateway {
     this.bots = [
       fleetBotSchema.parse({
         id: 'scout',
-        name: 'Scout',
+        name: this.options.botName ?? 'Scout',
         environmentId: 'acme',
         capabilities,
         role: 'Finds orders',
@@ -314,6 +321,7 @@ export class FakeGateway {
         return send(200, {
           protocol: 1,
           gatewayVersion: this.version,
+          serverId: this.serverId,
           botImage: 'e2e',
           botImageVersion: null,
           features: [

@@ -43,9 +43,10 @@ Once an environment runs, the **Chats** and **Workspaces** tabs get a machine sw
 machine whose chats and workspaces are listed, **This computer** or the environment's name in its color, with what is
 going on there: how many conversations need you and how many are running. Beside it, shortcuts to the other machines
 carry a red dot when a conversation there finished and needs you. Click a shortcut, or open the switcher and choose a
-machine; hovering an environment there shows the server it runs on. The choice applies to both tabs and is remembered;
-opening a conversation switches to the machine it runs on. While you filter, a link under the list says how many
-results another machine has. With no server that hosts workspaces, the sidebar has no switcher.
+machine; hovering an environment there shows the server it runs on. With environments of [several
+servers](bot-fleet.md#several-servers), the switcher lists them under each server's name. The choice applies to both
+tabs and is remembered; opening a conversation switches to the machine it runs on. While you filter, a link under the
+list says how many results another machine has. With no server that hosts workspaces, the sidebar has no switcher.
 
 If **Workspaces** says **Update the server to run workspaces on it**, the server runs a version from before this
 feature: use **Update bots** first. If it says **Update the server to run more than one workspaces environment on it**,
@@ -308,7 +309,7 @@ while connecting, gray when not reached, red on a failure) and, under the server
 | **Connecting…** or **Reconnecting…** | The connection is being opened, or dropped and is being opened again. Work on the server continues. | Wait, or use **Try again**. The server's list keeps its last state, dimmed, and an open conversation says it is reconnecting. |
 | **Update required** | The host and this app run different versions. They must run the same version, because this window calls the host's own functions. | Update the older of the two: **Update bots** for the server, or the app's own update for this computer. |
 | **Stopped**, **Starting…**, or **Failed to start** | The state of the workspaces environment on the server. | **Start** it, or open its page for details. |
-| **Not connected** | This computer does not reach the bot server. | Check the server and its connection in **Settings → Bot server**. |
+| **Not connected** | This computer does not reach the bot server. | Check the server and its connection in **Settings → Bot servers**. |
 
 After a reconnection, the server's list and any open conversation of the host are loaded again. Messages queued behind a
 running turn are kept by this window only, and are lost if the connection drops or the window closes before they are
@@ -336,8 +337,6 @@ kept by the server: opening the conversation on one computer clears it on the ot
   folders, and workspace groups are for conversations of this computer.
 - **Moving plain chats and multi-repository conversations** between this computer and the server: only conversations
   of a workspace with one repository move (see [Move a conversation](#move-a-conversation)).
-- **Several servers.** This computer pairs with one bot server, so it shows the chats and workspaces of that server's
-  environments only.
 - **Isolation between workspaces of one environment.** They share one container, one user, and one set of accounts:
   use another environment for work that must stay apart.
 
@@ -364,7 +363,7 @@ boundaries, and revoke a lost computer as described in [Security and data](bot-f
 ## Troubleshooting
 
 - **The switcher stays on Connecting… or Reconnecting… for an environment.** Open its page: it must be **Running**. For
-  a VPS, check that the SSH tunnel is connected in **Settings → Bot server**.
+  a VPS, check that the SSH tunnel is connected in **Settings → Bot servers**.
 - **An environment fails with "The gateway could not join the network of this environment."** The gateway runs outside
   a container on the fleet network, or cannot find its own container there. Run the gateway with the Compose file, or
   set `MAESTRLY_GATEWAY_CONTAINER` to its container's name; `maestrly-bot-gateway doctor` checks it.

@@ -31,6 +31,8 @@ export interface ArtifactListItem {
   pendingRequests: number
   /** Comment threads that are neither resolved nor deleted. */
   openComments: number
+  /** The paired server it lives on, by this computer's id for it; null where artifacts have one host only. */
+  server: { id: string; name: string } | null
 }
 
 export const MAX_ARTIFACT_COMMENT_CHARS = 4000
@@ -211,6 +213,15 @@ export type ArtifactServerStatus =
       quotaBytes: number
       problem: string | null
     }
+
+/** A paired bot server as artifacts see it: whether conversations of this computer publish there, and its host. */
+export interface ArtifactServerView {
+  serverId: string
+  name: string
+  installed: boolean
+  publishing: boolean
+  status: ArtifactServerStatus
+}
 
 /** An artifact an earlier version published on this computer; it no longer opens until it moves to the server. */
 export interface LegacyArtifactView {

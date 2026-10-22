@@ -20,6 +20,16 @@ deleting the chat removes it. Back up the complete profile before reset.
 Keep exports and project backups independently. Never test a migration or
 recovery against the only copy of real data.
 
+## Paired bot servers
+
+`fleet.servers` in `app_settings` lists the bot servers this computer is paired with, in pairing order: this
+computer's id for each, its address, this computer's device id and name there, and when it was paired.
+`fleet.gatewayIds` keeps the installation id each server announced, by which this computer refuses pairing one server
+twice. Each server's device token is `fleet.deviceToken.<id>`, encrypted through the keyring, or kept in memory for the
+session without one. `artifacts.publishServer` records the server chosen in **Settings → Artifacts → Publish to**, and
+the window keeps the server the **Bots** tab shows in its local storage. **Disconnect** removes a server's record, its
+installation id, and its token.
+
 ## Bot server installation
 
 When the desktop app installs a bot server, `fleet.installer` in
@@ -366,8 +376,8 @@ profile of its own on the server, not on this computer:
 | The environment's record, kind, limits, idle stop, color, and folder mode | The gateway's database (`environments`, schemas 11 and 13) |
 | Uploads in progress | A hidden `.maestrly-upload-<id>.part` file next to the destination, and its record under `host-file-uploads/` in the profile. An upload untouched for 7 days is removed with its partial file. |
 
-This computer keeps only what it needs to show the host: its own id for the
-paired server (`fleet.serverId`, removed when you disconnect the server) and,
+This computer keeps only what it needs to show the host: its own id for each
+paired server (in `fleet.servers`, removed when you disconnect that server) and,
 for each conversation of the host you opened, the drawer's width and open
 state for as long as the window runs. Conversations and messages of the host
 are never stored here. The drawer tabs a conversation has open are kept by the

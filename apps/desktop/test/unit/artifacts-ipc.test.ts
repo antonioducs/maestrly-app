@@ -18,6 +18,7 @@ function setup() {
     serverStatus: vi.fn(async () => ({ state: 'absent' })),
     serverHost: vi.fn(async () => null),
     setServerHost: vi.fn(async (input: unknown) => input),
+    setPublishing: vi.fn(async () => []),
     listAll: vi.fn(async () => []),
     detail: vi.fn(async () => null),
     remove: vi.fn(async () => ({ removed: true, freedBytes: 0 })),
@@ -79,10 +80,12 @@ describe('artifacts IPC', () => {
       'artifacts:open-external',
       'artifacts:open-in-conversation',
       'artifacts:person-revoke',
+      'artifacts:publish-server-set',
       'artifacts:request-decide',
       'artifacts:server-host-get',
       'artifacts:server-host-set',
       'artifacts:server-status',
+      'artifacts:servers',
       'artifacts:sessions-revoke',
       'artifacts:sharing-get',
       'artifacts:sharing-set',
@@ -233,5 +236,14 @@ it('validates server settings before calling the owner service', async () => {
   await expect(call('artifacts:server-host-set', { publicAddress: 'https://server.example/private' })).rejects.toThrow()
   expect(service.setServerHost).not.toHaveBeenCalled()
   await call('artifacts:server-host-set', { enabled: true, quotaGb: 2 })
-  expect(service.setServerHost).toHaveBeenCalledWith({ enabled: true, quotaGb: 2 })
+  expect(service.setServerHost).toHaveBeenCalledWith({ enabled: true, quotaGb: 2 }, undefined)
+  // A server is named by this computer's id for it; anything else is refused before the service.
+  const server = 'aaaaaaaa-0000-4000-8000-000000000001'
+  await call('artifacts:server-host-set', { enabled: false }, server)
+  expect(service.setServerHost).toHaveBeenLastCalledWith({ enabled: false }, server)
+  await expect(call('artifacts:server-host-set', { enabled: false }, 'A/B')).rejects.toThrow()
+  await expect(call('artifacts:publish-server-set', '../x')).rejects.toThrow()
+  expect(service.setPublishing).not.toHaveBeenCalled()
+  await call('artifacts:publish-server-set', server)
+  expect(service.setPublishing).toHaveBeenCalledWith(server)
 })

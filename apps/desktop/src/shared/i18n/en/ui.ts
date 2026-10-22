@@ -1012,7 +1012,7 @@ export default {
     },
     // Side menu (#556): groups the settings by theme so the window stops being one giant list.
     nav: {
-      fleet: 'Bot server',
+      fleet: 'Bot servers',
       computers: 'Computers',
       chat: 'Maestrly Chat',
       usage: 'Usage & cost',
@@ -1110,6 +1110,9 @@ export default {
       saving: 'Saving…',
       saved: 'Saved',
       saveFailed: 'Could not save: {{message}}',
+      publishTo: 'Publish to',
+      publishToHint:
+        'The bot server your conversations on this computer publish to. What is already published stays on its server. The settings below are for the server chosen here.',
       setup: {
         title: 'Connect a bot server to publish artifacts',
         text: 'Your agents publish pages on the bot server. If you do not want bots yet, the setup brings only what artifacts need; the bot environment downloads when you create your first bot.',
@@ -1477,6 +1480,7 @@ export default {
     peerConnectAnother: 'Connect another computer…',
     // Host switcher: the sidebar lists one machine's chats and workspaces at a time.
     hostMachines: 'Machines',
+    hostServerUnnamed: 'Bot server',
     hostSwitch: 'Machine: {{host}}. Switch machine',
     hostOthers: 'Other machines',
     hostSwitchTo: 'Switch to {{host}}: {{status}}',

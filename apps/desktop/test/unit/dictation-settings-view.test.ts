@@ -3,7 +3,7 @@ import {
   DICTATION_NOTICE_KEYS,
   createDictationSettingsActions,
   dictationSettingsModel,
-  loadDictationServer,
+  loadDictationServers,
   type DictationSettingsApi,
 } from '../../src/renderer/components/chat/dictation-settings-model'
 import enChat from '../../src/shared/i18n/en/chat'
@@ -11,8 +11,11 @@ import type { FleetServerId } from '../../src/shared/fleet-servers'
 import ptBrChat from '../../src/shared/i18n/pt-BR/chat'
 
 const SERVER = 'aaaaaaaa-0000-4000-8000-000000000001' as FleetServerId
+const OTHER = 'bbbbbbbb-0000-4000-8000-000000000002' as FleetServerId
 const servers = (state: string, features: string[]) =>
-  vi.fn(async () => [{ id: SERVER, installed: false, connection: { state, features } }])
+  vi.fn(async () => [
+    { id: SERVER, installed: false, connection: { state, features, hostname: 'vps', url: 'https://vps.example' } },
+  ])
 
 function fakeApi(overrides: Partial<DictationSettingsApi> = {}): DictationSettingsApi {
   return {
@@ -58,11 +61,11 @@ describe('dictation settings', () => {
   })
 
   it('hides the phone section without a connected server that supports dictation', async () => {
-    expect(await loadDictationServer(fakeApi({ fleetServers: servers('unconfigured', []) }))).toEqual({
-      kind: 'none',
-    })
+    expect(await loadDictationServers(fakeApi({ fleetServers: servers('unconfigured', []) }))).toEqual([
+      { id: SERVER, name: 'vps', view: { kind: 'none' } },
+    ])
     const old = fakeApi({ fleetServers: servers('connected', ['phones']) })
-    expect(await loadDictationServer(old)).toEqual({ kind: 'old' })
+    expect(await loadDictationServers(old)).toEqual([{ id: SERVER, name: 'vps', view: { kind: 'old' } }])
     expect(old.fleetDictation).not.toHaveBeenCalled()
     expect(dictationSettingsModel(openaiKey, { kind: 'none' }).phone).toBe('none')
     expect(dictationSettingsModel(openaiKey, { kind: 'old' })).toMatchObject({ phone: 'old', useOnPhone: false })
@@ -71,7 +74,7 @@ describe('dictation settings', () => {
   it("shows the server's key hint and removes it", async () => {
     const status = { configured: true, provider: 'openai' as const, keyHint: '1234' }
     const api = fakeApi({ fleetDictation: vi.fn(async () => status) })
-    const server = await loadDictationServer(api)
+    const [{ view: server }] = await loadDictationServers(api)
     expect(server).toEqual({ kind: 'ready', status })
     expect(api.fleetDictation).toHaveBeenCalledExactlyOnceWith(SERVER)
     expect(dictationSettingsModel(openaiKey, server)).toEqual({
@@ -80,8 +83,42 @@ describe('dictation settings', () => {
       removeFromServer: true,
       state: { key: 'settings.dictationServerState', provider: 'openai', hint: '1234' },
     })
-    await createDictationSettingsActions(api).removeFromServer()
+    await createDictationSettingsActions(api).removeFromServer(SERVER)
     expect(api.fleetDictationRemove).toHaveBeenCalledExactlyOnceWith(SERVER)
+  })
+
+  it('reads the key of every paired server, each with its name, and acts on the one asked', async () => {
+    const api = fakeApi({
+      fleetServers: vi.fn(async () => [
+        { id: SERVER, installed: true, connection: { state: 'connected', features: ['dictation'], hostname: 'mac' } },
+        {
+          id: OTHER,
+          installed: false,
+          connection: { state: 'connected', features: ['dictation'], hostname: null, url: 'https://vps.example:7443' },
+        },
+      ]),
+      fleetDictation: vi.fn(async (id: FleetServerId) =>
+        id === OTHER
+          ? { configured: true, provider: 'groq' as const, keyHint: '9876' }
+          : { configured: false, provider: null, keyHint: null }
+      ),
+    })
+    expect(await loadDictationServers(api)).toEqual([
+      {
+        id: SERVER,
+        name: 'mac',
+        view: { kind: 'ready', status: { configured: false, provider: null, keyHint: null } },
+      },
+      {
+        id: OTHER,
+        name: 'vps.example:7443',
+        view: { kind: 'ready', status: { configured: true, provider: 'groq', keyHint: '9876' } },
+      },
+    ])
+    await createDictationSettingsActions(api).useOnPhone(OTHER)
+    expect(api.fleetDictationUseLocal).toHaveBeenCalledExactlyOnceWith(OTHER)
+    expect(enChat.settings.dictationServerStateNamed).toContain('{{server}}')
+    expect(ptBrChat.settings.dictationServerStateNamed).toContain('{{server}}')
   })
 
   it('offers to use the key on the phone only with an API engine and its key', () => {
@@ -99,6 +136,9 @@ describe('dictation settings', () => {
 
   it("reports a key the server's check refused", async () => {
     const api = fakeApi({ fleetDictationUseLocal: vi.fn(async () => ({ error: 'unchecked' as const })) })
-    expect(await createDictationSettingsActions(api).useOnPhone()).toEqual({ scope: 'server', kind: 'unchecked' })
+    expect(await createDictationSettingsActions(api).useOnPhone(SERVER)).toEqual({
+      scope: `server:${SERVER}`,
+      kind: 'unchecked',
+    })
   })
 })

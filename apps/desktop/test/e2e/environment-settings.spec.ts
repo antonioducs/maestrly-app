@@ -89,7 +89,7 @@ async function launch(pair = true) {
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1000, 800))
   if (pair) {
     await page.getByRole('button', { name: 'Configurações', exact: true }).click()
-    await page.getByRole('button', { name: 'Servidor de bots' }).first().click()
+    await page.getByRole('button', { name: 'Servidores de bots' }).first().click()
     await page.getByRole('button', { name: 'Já tenho um servidor configurado', exact: true }).click()
     await page.getByLabel('Endereço do servidor').fill(gateway.url)
     await page.getByLabel('Código de pareamento').fill('ABCD-EFGH')

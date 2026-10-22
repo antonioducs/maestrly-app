@@ -1735,6 +1735,9 @@ export default {
     dictationUseOnPhone: 'Usar no celular também',
     dictationRemoveFromServer: 'Remover do servidor',
     dictationServerOld: 'Atualize o servidor de bots para ditar pelo celular através dele.',
+    dictationServerStateNamed: '{{server}}: {{provider}}, chave …{{hint}}',
+    dictationServerNoneNamed: '{{server}} não tem chave de ditado.',
+    dictationServerOldNamed: 'Atualize {{server}} para ditar pelo celular através dele.',
     bashFiltersHeading: 'Saída compacta de comandos',
     bashFiltersDescription:
       'Filtra a saída verbosa de comandos bash suportados antes de enviá-la ao modelo, reduzindo o uso de tokens. Os pedidos de permissão continuam mostrando o comando original.',

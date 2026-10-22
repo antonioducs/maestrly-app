@@ -232,6 +232,17 @@ reg.handle('fleet:getBot', (fleet, _event, botId: unknown) => fleet.call('botGet
 - E2E: pair two fake gateways, see the hosts of both grouped in the machine switcher, switch the Bots tab between
   them, open a bot of each in its own window, disconnect one and keep the other.
 
+## Status
+
+Plan 1 shipped in PR #278. Plans 2 and 3 are on `feat/connect-computers-ui`, with these choices made while building them:
+
+- The installation id each server announced is kept in `fleet.gatewayIds`, apart from `fleet.servers`, which 0.24
+  reads with a strict schema: an unknown field there would drop the record after a downgrade.
+- Pairing a server again at another address keeps its id when it announces the same installation id.
+- Artifact lookups by id search every server, as artifact ids are unique; IPC carries a server only for a server's
+  settings and status. `artifacts.publishServer` keeps the server chosen in **Publish to**.
+- The machine switcher names each server above its hosts once hosts come from two or more servers.
+
 ## Plans
 
 1. **Server registry and server-scoped fleet API**: identifiers, IPC with a server, records and migration, one client

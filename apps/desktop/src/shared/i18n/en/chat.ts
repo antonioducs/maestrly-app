@@ -1718,6 +1718,9 @@ export default {
     dictationUseOnPhone: 'Use on my phone too',
     dictationRemoveFromServer: 'Remove from server',
     dictationServerOld: 'Update the bot server to dictate from the phone through it.',
+    dictationServerStateNamed: '{{server}}: {{provider}}, key …{{hint}}',
+    dictationServerNoneNamed: '{{server}} has no dictation key.',
+    dictationServerOldNamed: 'Update {{server}} to dictate from the phone through it.',
     bashFiltersHeading: 'Compact command output',
     bashFiltersDescription:
       'Filters verbose output from supported bash commands before sending it to the model, reducing token usage. Permission prompts still show the original command.',

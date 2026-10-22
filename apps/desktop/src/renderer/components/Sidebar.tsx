@@ -58,6 +58,7 @@ import { SidebarPanelHeader, type SidebarCreateAction } from '@/components/sideb
 import { SidebarRail } from '@/components/sidebar/SidebarRail'
 import { UpdateCard } from '@/components/sidebar/UpdateCard'
 import { FleetSidebarPanel } from '@/components/fleet/FleetSidebarPanel'
+import { FleetServerSwitcher } from '@/components/fleet/FleetServerSwitcher'
 import { HostSectionNotice, HostSwitcher, HostTile, hostName } from '@/components/sidebar/HostSection'
 import { hostActivity, resolveSidebarHost, type HostActivity } from '@/components/sidebar/sidebar-hosts'
 import type { RemoteHostShell } from '@/lib/hosts/remote-host-runtime'
@@ -66,6 +67,7 @@ import { PeerInUseChip } from '@/components/peer/PeerInUseChip'
 import { hostOfKey } from '@/lib/hosts/shell-keys'
 import type { MoveTarget } from '@/lib/conversation-move/flow'
 import type { HostView } from '../../shared/hosts'
+import type { FleetServerId, FleetServerView } from '../../shared/fleet-servers'
 import { type HostId, LOCAL_HOST_ID } from '../../shared/host-key'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import { fleetSearchCount } from '@/lib/fleet/environments'
@@ -129,6 +131,14 @@ interface Props {
   onOpenFleetOwnerMemory: () => void
   botServerConnected?: boolean
   botPendingCount?: number
+  /** With more than one paired server, which one the Bots tab shows, chosen at its top. */
+  fleetServers?: {
+    servers: FleetServerView[]
+    selectedId: FleetServerId
+    pending: Record<string, number>
+    onSelect: (id: FleetServerId) => void
+    onAdd: () => void
+  }
   /** Bots can be updated, or an update of theirs runs or waits. */
   botUpdate?: 'available' | 'pending' | null
   onCreateBot?: () => void
@@ -226,6 +236,7 @@ export function Sidebar({
   onOpenFleetOwnerMemory,
   botServerConnected = false,
   botPendingCount = 0,
+  fleetServers,
   botUpdate = null,
   onCreateBot,
   onOpenBotSettings,
@@ -936,6 +947,9 @@ export function Sidebar({
               showQuickTooltip={showQuickTooltip}
               hideQuickTooltip={hideQuickTooltip}
             />
+          )}
+          {tab === 'bots' && fleetServers && fleetServers.servers.length > 1 && (
+            <FleetServerSwitcher {...fleetServers} />
           )}
         </SidebarPanelHeader>
 

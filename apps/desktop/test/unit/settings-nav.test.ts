@@ -34,8 +34,8 @@ describe('settings navigation', () => {
   it('translates the new item into English and pt-BR', () => {
     expect(resources.en.ui.settings.nav.chat).toBe('Maestrly Chat')
     expect(resources['pt-BR'].ui.settings.nav.chat).toBe('Maestrly Chat')
-    expect(resources.en.ui.settings.nav.fleet).toBe('Bot server')
-    expect(resources['pt-BR'].ui.settings.nav.fleet).toBe('Servidor de bots')
+    expect(resources.en.ui.settings.nav.fleet).toBe('Bot servers')
+    expect(resources['pt-BR'].ui.settings.nav.fleet).toBe('Servidores de bots')
     expect(resources.en.ui.settings.nav.computers).toBe('Computers')
     expect(resources['pt-BR'].ui.settings.nav.computers).toBe('Computadores')
   })

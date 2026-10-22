@@ -452,6 +452,15 @@ cannot remove itself this way; it unpairs with `DELETE /v1/devices/self`.
 Removing a device revokes its token, deletes its push registration, and closes
 its event streams, bridges and screens.
 
+A computer paired with several gateways holds one device token for each and
+keeps their authority apart: a bot's access to this computer's projects is
+granted per pairing, so a grant to a bot of one server never reaches the bots of
+another, and disconnecting one server ends only the access granted through it.
+`GET /v1/meta` announces an installation id (`serverId`), created once with the
+gateway's data and readable without a token like the rest of that answer. It
+identifies the installation, not a device, and grants nothing: the desktop app
+uses it only to refuse pairing one gateway twice under two addresses.
+
 A phone is a paired device with the same authority. It registers for
 notifications with its own device token (`/v1/devices/self/push`): the gateway
 keeps its Expo push token, language and preferences, deletes them when the
@@ -482,7 +491,7 @@ set. The rules reject the Docker host, private, link-local, CGNAT,
 remote loopback, multicast and reserved destinations while retaining access to
 the fleet Docker network and public internet. IPv6 is guarded when present. If the guard cannot
 install its rules, the environment refuses to start. The host firewall is not
-changed. The switch in **Settings → Bot server** selects `open` to allow private
+changed. The switch in **Settings → Bot servers** selects `open` to allow private
 network access; each environment follows the new setting on its next start or
 restart. Manual Compose setups default to `open`. This is an outbound network
 control, not isolation between bots or environments on the shared fleet network.

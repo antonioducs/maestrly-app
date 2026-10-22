@@ -3,35 +3,45 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { formatPairingCode } from '@/lib/fleet/format'
-import { fleetErrorMessage } from '@/lib/fleet/errors'
-import type { FleetController } from '@/lib/fleet/use-fleet'
+import { fleetErrorText } from '@/lib/fleet/errors'
+import type { FleetServerId, FleetServerView } from '../../../../shared/fleet-servers'
 
-export function BotServerManualSetup({ fleet, onBack }: { fleet: FleetController; onBack: () => void }) {
+/**
+ * Pairs this computer with a running server by its address and a code. With `again`, a server that refused this
+ * computer is paired again under its own id; otherwise a server is added.
+ */
+export function BotServerManualSetup({
+  again,
+  onBack,
+  onPaired,
+}: {
+  again: { serverId: FleetServerId; url: string | null } | null
+  onBack: () => void
+  onPaired?: (server: FleetServerView) => void
+}) {
   const { t } = useTranslation('fleet')
-  const [url, setUrl] = useState(fleet.state.connection.url ?? '')
+  const [url, setUrl] = useState(again?.url ?? '')
   const [code, setCode] = useState('')
   const defaultDeviceName = t(`settings.deviceNameDefault.${window.api.platformInfo.os}`)
   const [deviceName, setDeviceName] = useState(defaultDeviceName)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   useEffect(() => {
-    if (fleet.state.connection.url) setUrl(fleet.state.connection.url)
-  }, [fleet.state.connection.url])
+    if (again?.url) setUrl(again.url)
+  }, [again?.url])
   async function connect() {
     setBusy(true)
     setError(null)
     try {
-      // A server that refused this computer is paired again under its own id; otherwise a server is added. The
-      // window follows the server list that main broadcasts.
-      const state = fleet.state.connection.state
-      const again = state === 'unauthorized' || state === 'incompatible' ? fleet.serverId : undefined
-      await window.api.fleetConnect(
+      // The window follows the server list that main broadcasts.
+      const server = await window.api.fleetConnect(
         { url: url.trim(), code, deviceName: deviceName.trim() || defaultDeviceName },
-        again
+        again?.serverId
       )
       setCode('')
+      onPaired?.(server)
     } catch (cause) {
-      setError(fleetErrorMessage(cause))
+      setError(fleetErrorText(cause, t))
     } finally {
       setBusy(false)
     }

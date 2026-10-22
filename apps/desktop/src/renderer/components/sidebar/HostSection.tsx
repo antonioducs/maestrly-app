@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from 'react'
+import { Fragment, type CSSProperties, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Check, ChevronsUpDown, Laptop, Monitor, Plus, Server } from 'lucide-react'
 import type { TFunction } from 'i18next'
@@ -15,7 +15,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import type { HostActivity } from './sidebar-hosts'
+import { hostGroups, type HostActivity } from './sidebar-hosts'
 
 const STATUS_LABEL = {
   connecting: 'sidebar.hostConnecting',
@@ -190,6 +190,9 @@ export function HostSwitcher({
   const shortcuts = others.slice(0, MAX_SHORTCUTS)
   const hiddenAttention = others.slice(MAX_SHORTCUTS).some((host) => (activity[host.id] ?? none).attention > 0)
   const stacked = shortcuts.length > 1
+  const groups = hostGroups(hosts)
+  // With hosts of several servers, the chosen one says which server it runs on.
+  const selectedServer = groups.length > 1 && selected.serverId ? selected.server : ''
   return (
     <div className="flex shrink-0 items-stretch gap-1 px-2 pb-2">
       <DropdownMenu>
@@ -202,8 +205,13 @@ export function HostSwitcher({
           >
             <HostTile host={selected} />
             <span className="flex min-w-0 flex-1 flex-col gap-px">
-              <span className="truncate text-[12.5px] font-semibold leading-tight text-foreground">
-                {hostName(selected, t)}
+              <span className="flex min-w-0 items-baseline gap-1 leading-tight">
+                <span className="truncate text-[12.5px] font-semibold text-foreground">{hostName(selected, t)}</span>
+                {selectedServer && (
+                  <span data-host-server className="min-w-0 shrink truncate text-[10.5px] text-muted-foreground">
+                    · {selectedServer}
+                  </span>
+                )}
               </span>
               <HostSummary
                 host={selected}
@@ -223,26 +231,38 @@ export function HostSwitcher({
           <div className="px-2 pb-1 pt-1.5 text-[11px] font-medium text-muted-foreground">
             {t('sidebar.hostMachines')}
           </div>
-          {hosts.map((host) => (
-            <DropdownMenuItem
-              key={host.id}
-              data-host-option={host.id}
-              onSelect={() => onSelect(host.id)}
-              // Environments of one server are told apart by name; the server they run on is a hover away.
-              title={host.server ? `${hostName(host, t)} · ${host.server}` : undefined}
-              className="gap-2.5 py-1.5"
-            >
-              <HostTile host={host} />
-              <span className="flex min-w-0 flex-1 flex-col">
-                <span className="truncate text-[13px]">{hostName(host, t)}</span>
-                <HostSummary
-                  host={host}
-                  activity={activity[host.id] ?? none}
-                  className="truncate text-[11px] text-muted-foreground"
-                />
-              </span>
-              {host.id === selected.id && <Check className="size-3.5 text-foreground" />}
-            </DropdownMenuItem>
+          {groups.map((group) => (
+            <Fragment key={group.serverId ?? 'computers'}>
+              {group.serverId && (
+                <div
+                  data-host-group={group.serverId}
+                  className="truncate px-2 pb-0.5 pt-2 text-[10.5px] font-medium uppercase tracking-wide text-muted-foreground"
+                >
+                  {group.server || t('sidebar.hostServerUnnamed')}
+                </div>
+              )}
+              {group.hosts.map((host) => (
+                <DropdownMenuItem
+                  key={host.id}
+                  data-host-option={host.id}
+                  onSelect={() => onSelect(host.id)}
+                  // Environments of one server are told apart by name; the server they run on is a hover away.
+                  title={host.server ? `${hostName(host, t)} · ${host.server}` : undefined}
+                  className="gap-2.5 py-1.5"
+                >
+                  <HostTile host={host} />
+                  <span className="flex min-w-0 flex-1 flex-col">
+                    <span className="truncate text-[13px]">{hostName(host, t)}</span>
+                    <HostSummary
+                      host={host}
+                      activity={activity[host.id] ?? none}
+                      className="truncate text-[11px] text-muted-foreground"
+                    />
+                  </span>
+                  {host.id === selected.id && <Check className="size-3.5 text-foreground" />}
+                </DropdownMenuItem>
+              ))}
+            </Fragment>
           ))}
           {onConnectComputer && (
             <>
