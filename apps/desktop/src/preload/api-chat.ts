@@ -1,6 +1,7 @@
 import type { MemorySettings } from '../shared/memory'
 import type { AppToolGroup } from '../shared/app-tool-groups'
 import type { WebSearchKeyProvider, WebSearchProvider } from '../shared/web-search'
+import type { ImageGenProvider } from '../shared/image-generation'
 import { ipcRenderer } from 'electron'
 import type { AsrLanguage, AsrSupport, TranscribeError } from '../shared/asr'
 import type { DictationApiProvider, DictationConfig, DictationEngine } from '../shared/dictation'
@@ -541,6 +542,8 @@ export function makeChatApi(ipcRenderer: IpcTransport) {
       ipcRenderer.invoke('chat:set-app-tool-group', group, enabled),
 
     chatSetImageGen: (enabled: boolean): Promise<{ ok: boolean }> => ipcRenderer.invoke('chat:set-image-gen', enabled),
+    chatSetImageGenProvider: (provider: ImageGenProvider): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('chat:set-image-gen-provider', provider),
     chatSetGeneratedInterfaces: (enabled: boolean): Promise<{ ok: boolean }> =>
       ipcRenderer.invoke('chat:set-generated-interfaces', enabled),
 

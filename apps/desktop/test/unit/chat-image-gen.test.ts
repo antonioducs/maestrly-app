@@ -9,6 +9,22 @@ const h = vi.hoisted(() => ({
   authenticated: true,
   generateImageForConversation: vi.fn(),
   anyCodexFailoverAccountConnected: vi.fn(() => h.authenticated),
+  /** Google AI accounts with a stored sign-in (null = default account). */
+  googleAccounts: [] as Array<string | null>,
+  generateImageWithAntigravityRuntime: vi.fn(),
+}))
+vi.mock('../../src/main/chat/antigravity-subscription/manager', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../src/main/chat/antigravity-subscription/manager')>()
+  return {
+    ...original,
+    getAntigravitySubscriptionManager: (accountId: string | null = null) => ({
+      accountId,
+      getAccountIdentity: () => ({ fingerprint: h.googleAccounts.includes(accountId) ? 'project:g' : null, epoch: 0 }),
+    }),
+  }
+})
+vi.mock('../../src/main/chat/antigravity-subscription/image-generation', () => ({
+  generateImageWithAntigravityRuntime: h.generateImageWithAntigravityRuntime,
 }))
 vi.mock('../../src/main/runtime-assets/app-service', () => ({
   readyRuntimeAsset: h.readyRuntimeAsset,
@@ -42,15 +58,20 @@ import {
 import { summarizeWithCodexRuntime } from '../../src/main/chat/portable-summarizer'
 import {
   emitGeneratedImagePart,
+  generateConversationImage,
   generateImageToolEnabled,
+  getImageGenProvider,
   imageGenEnabledFor,
+  IMAGE_GEN_PROVIDER_KEY,
   mergeGeneratedImageUsage,
+  resolveImageGenRoute,
+  setImageGenProvider,
 } from '../../src/main/chat/image-gen'
 import type { ChatStreamEvent } from '../../src/shared/chat'
 import { generateImageTool } from '../../src/main/chat/tools/generate-image'
 import type { GeneratedImageUsage, ToolContext } from '../../src/main/chat/tools/util'
 import { readGeneratedImage, saveGeneratedImage } from '../../src/main/chat/generated-images'
-import { patchConvUiPrefs, setAppFlag } from '../../src/main/store'
+import { patchConvUiPrefs, setAppFlag, setAppSetting } from '../../src/main/store'
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
 
@@ -142,6 +163,7 @@ beforeEach(() => {
   h.readyRuntimeAsset.mockReset()
   setAppPackaged(false)
   h.authenticated = true
+  h.googleAccounts = []
   freshDb()
 })
 afterEach(() => {
@@ -883,5 +905,83 @@ describe('global and conversation image-generation toggles', () => {
     // Without connected ChatGPT credentials the model never sees the tool.
     h.authenticated = false
     await expect(generateImageToolEnabled(conversation.id, 'agent')).resolves.toBe(false)
+  })
+
+  it('offers the tool with only a Google AI account connected', async () => {
+    const conversation = makeConversation(makeWorkspace().id, {})
+    h.authenticated = false
+    h.googleAccounts = [null]
+    await expect(generateImageToolEnabled(conversation.id, 'agent')).resolves.toBe(true)
+  })
+})
+
+describe('image generator choice', () => {
+  const generated = { artifactId: 'g'.repeat(32), name: 'robot.png', mediaType: 'image/png', byteSize: 70 }
+  const draw = (options: { antigravityAccountId?: string | null } = {}) =>
+    generateConversationImage({
+      conversationId: 'conv_route',
+      cwd: os.tmpdir(),
+      prompt: 'a teal robot',
+      signal: new AbortController().signal,
+      ...options,
+    })
+
+  it('defaults to Automatic and ignores an unknown stored value', () => {
+    expect(getImageGenProvider()).toBe('auto')
+    setAppSetting(IMAGE_GEN_PROVIDER_KEY, 'midjourney')
+    expect(getImageGenProvider()).toBe('auto')
+    setImageGenProvider('google')
+    expect(getImageGenProvider()).toBe('google')
+  })
+
+  it('Automatic keeps ChatGPT first and falls back to Google AI', async () => {
+    h.googleAccounts = [null]
+    await expect(resolveImageGenRoute('conv_route')).resolves.toEqual({ provider: 'chatgpt' })
+    h.generateImageForConversation.mockResolvedValueOnce(generated)
+    await expect(draw()).resolves.toEqual(generated)
+    expect(h.generateImageWithAntigravityRuntime).not.toHaveBeenCalled()
+
+    h.authenticated = false
+    await expect(resolveImageGenRoute('conv_route')).resolves.toEqual({ provider: 'google', accountId: null })
+    h.generateImageWithAntigravityRuntime.mockResolvedValueOnce(generated)
+    await expect(draw()).resolves.toEqual(generated)
+    expect(h.generateImageWithAntigravityRuntime).toHaveBeenCalledWith(
+      expect.objectContaining({ conversationId: 'conv_route', prompt: 'a teal robot', manager: expect.anything() })
+    )
+  })
+
+  it('Automatic draws with the account of a conversation on Google AI', async () => {
+    h.googleAccounts = [null, 'acc_g']
+    await expect(resolveImageGenRoute('conv_route', { antigravityAccountId: 'acc_g' })).resolves.toEqual({
+      provider: 'google',
+      accountId: 'acc_g',
+    })
+    h.generateImageWithAntigravityRuntime.mockResolvedValueOnce(generated)
+    await draw({ antigravityAccountId: 'acc_g' })
+    const call = h.generateImageWithAntigravityRuntime.mock.calls[0]?.[0] as { manager: { accountId: unknown } }
+    expect(call.manager.accountId).toBe('acc_g')
+    expect(h.generateImageForConversation).not.toHaveBeenCalled()
+  })
+
+  it('an explicit choice never falls back to the other subscription', async () => {
+    setImageGenProvider('chatgpt')
+    h.authenticated = false
+    h.googleAccounts = [null]
+    await expect(resolveImageGenRoute('conv_route', { antigravityAccountId: null })).resolves.toBeNull()
+
+    setImageGenProvider('google')
+    h.authenticated = true
+    h.googleAccounts = []
+    await expect(resolveImageGenRoute('conv_route')).resolves.toBeNull()
+    await expect(draw()).rejects.toThrow('Connect a Google AI account')
+    expect(h.generateImageForConversation).not.toHaveBeenCalled()
+  })
+
+  it('names both subscriptions when Automatic finds none connected', async () => {
+    h.authenticated = false
+    h.generateImageForConversation.mockRejectedValueOnce(
+      new Error('Connect your ChatGPT (Codex) account in Maestrly settings to generate images.')
+    )
+    await expect(draw()).rejects.toThrow('Connect a ChatGPT or Google AI account in Maestrly settings')
   })
 })

@@ -245,6 +245,18 @@ describe('OpenAI harness kill switch', () => {
     ).toBe(false)
   })
 
+  it('reports and persists who draws images', async () => {
+    const handlers = register()
+    const provider = async () =>
+      ((await handlers.get('chat:config')!(undefined as never)) as { imageGenProvider: unknown }).imageGenProvider
+
+    expect(await provider()).toBe('auto')
+    expect(handlers.get('chat:set-image-gen-provider')?.(undefined as never, 'dall-e')).toEqual({ ok: false })
+    expect(handlers.get('chat:set-image-gen-provider')?.(undefined as never, 'google')).toEqual({ ok: true })
+    expect(h.setAppSetting).toHaveBeenCalledWith('chat.imageGenProvider', 'google')
+    expect(await provider()).toBe('google')
+  })
+
   it('defaults generated interfaces on and persists their switch', async () => {
     const handlers = register()
     const enabled = async () =>

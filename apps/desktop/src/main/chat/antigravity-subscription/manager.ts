@@ -21,6 +21,7 @@ import type {
 import { AcpClient, AcpRpcError } from '../acp/client'
 import {
   ACP_AUTH_REQUIRED_CODE,
+  type AcpPermissionOutcome,
   type AcpSessionNotification,
   type AcpSessionSetupResult,
   type AcpSessionUpdate,
@@ -172,6 +173,7 @@ export class AntigravitySubscriptionManager {
   private readonly now: () => number
   private readonly authListeners = new Set<() => void>()
   private readonly liveSessions = new Map<string, AntigravityLiveSession>()
+  private readonly permissionPolicies = new Map<string, (request: unknown) => AcpPermissionOutcome>()
   private projectId: string | null | undefined
   /** Undefined until read from the account home. */
   private tier: AntigravityTier | null | undefined
@@ -543,6 +545,23 @@ export class AntigravitySubscriptionManager {
   }
 
   /**
+   * Lets one session answer its own permission requests, such as the image session's single built-in call. Every
+   * other session keeps {@link decideAntigravityPermission}. Returns the function that removes the policy.
+   */
+  setSessionPermissionPolicy(sessionId: string, policy: (request: unknown) => AcpPermissionOutcome): () => void {
+    this.permissionPolicies.set(sessionId, policy)
+    return () => {
+      if (this.permissionPolicies.get(sessionId) === policy) this.permissionPolicies.delete(sessionId)
+    }
+  }
+
+  private decidePermission(request: unknown): AcpPermissionOutcome {
+    const sessionId = (request as { sessionId?: unknown } | null)?.sessionId
+    const policy = typeof sessionId === 'string' ? this.permissionPolicies.get(sessionId) : undefined
+    return policy ? policy(request) : decideAntigravityPermission(request)
+  }
+
+  /**
    * Deletes one ACP session: through the running server when possible, then its files in this account's
    * GEMINI_HOME (the server keeps them even for sessions it no longer has in memory).
    */
@@ -645,7 +664,7 @@ export class AntigravitySubscriptionManager {
       }
       for (const listener of subscribers.get(notification.sessionId) ?? []) listener(notification.update)
     })
-    client.setRequestHandler('session/request_permission', async (params) => decideAntigravityPermission(params))
+    client.setRequestHandler('session/request_permission', async (params) => this.decidePermission(params))
     const generation = ++this.generation
     const handle: AntigravityConnection = {
       client,

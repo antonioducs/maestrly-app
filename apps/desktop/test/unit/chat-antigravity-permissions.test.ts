@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import type { AcpPermissionOption, AcpPermissionRequest } from '../../src/main/chat/acp/protocol'
-import { decideAntigravityPermission } from '../../src/main/chat/antigravity-subscription/permissions'
+import {
+  createAntigravityImagePermissionPolicy,
+  decideAntigravityPermission,
+} from '../../src/main/chat/antigravity-subscription/permissions'
 
 const ALL_OPTIONS: AcpPermissionOption[] = [
   { optionId: 'allow_always', name: 'Allow Always', kind: 'allow_always' },
@@ -48,5 +51,29 @@ describe('Antigravity permission policy', () => {
 
   it('treats malformed requests as rejected', () => {
     expect(decideAntigravityPermission(null)).toEqual({ outcome: { outcome: 'cancelled' } })
+  })
+})
+
+describe('Antigravity image session permission policy', () => {
+  const imageCall = (title = 'Run generate_image?', meta?: AcpPermissionRequest['toolCall']['_meta']) => ({
+    sessionId: 's',
+    toolCall: { toolCallId: 't', title, kind: 'other', _meta: meta },
+    options: ALL_OPTIONS,
+  })
+
+  it('allows the first generate_image call once, never always', () => {
+    const decide = createAntigravityImagePermissionPolicy()
+    expect(decide(imageCall())).toEqual({ outcome: { outcome: 'selected', optionId: 'allow' } })
+    expect(decide(imageCall())).toEqual({ outcome: { outcome: 'selected', optionId: 'deny' } })
+  })
+
+  it('keeps rejecting other built-in tools', () => {
+    const decide = createAntigravityImagePermissionPolicy()
+    expect(decide(imageCall('Run run_command?'))).toEqual({ outcome: { outcome: 'selected', optionId: 'deny' } })
+    // An MCP call named like the tool is not the built-in.
+    expect(decide(imageCall('maestrly_generate_image', { mcp: { server: 'other', tool: 'generate_image' } }))).toEqual({
+      outcome: { outcome: 'selected', optionId: 'deny' },
+    })
+    expect(decide(imageCall())).toEqual({ outcome: { outcome: 'selected', optionId: 'allow' } })
   })
 })

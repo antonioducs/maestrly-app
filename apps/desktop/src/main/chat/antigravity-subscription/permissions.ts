@@ -25,3 +25,26 @@ export function decideAntigravityPermission(request: unknown): AcpPermissionOutc
   if (value.toolCall._meta?.mcp?.server === ANTIGRAVITY_HOST_MCP_SERVER_NAME) return select(options, ['allow_once'])
   return select(options, ['reject_once', 'reject_always'])
 }
+
+/** The only built-in tool an image session enables; the server titles its approval "Run generate_image?". */
+export const ANTIGRAVITY_IMAGE_TOOL = 'generate_image'
+const IMAGE_TOOL_TITLE = /\bgenerate[_ ]image\b/i
+
+/**
+ * Permission policy of one image session: its first built-in `generate_image` call runs once. Everything else,
+ * including a second image, falls back to {@link decideAntigravityPermission}, which rejects built-in tools.
+ */
+export function createAntigravityImagePermissionPolicy(): (request: unknown) => AcpPermissionOutcome {
+  let granted = false
+  return (request) => {
+    const value = request as Partial<AcpPermissionRequest> | null | undefined
+    const toolCall = value?.toolCall
+    const options = Array.isArray(value?.options) ? value.options : []
+    if (granted || !toolCall || toolCall._meta?.mcp || !IMAGE_TOOL_TITLE.test(toolCall.title ?? '')) {
+      return decideAntigravityPermission(request)
+    }
+    const outcome = select(options, ['allow_once'])
+    if (outcome.outcome.outcome === 'selected') granted = true
+    return outcome
+  }
+}
