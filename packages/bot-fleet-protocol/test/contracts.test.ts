@@ -9,6 +9,7 @@ import {
   fleetActivityKindSchema,
 } from '../src/index.js'
 import {
+  FLEET_BOT_BROWSERS,
   FLEET_BOT_ENV,
   FLEET_BOT_EGRESS_MODES,
   FLEET_BOT_RUNTIME_UPDATE_MODES,
@@ -228,6 +229,9 @@ describe('domain contracts', () => {
     expect(FLEET_BOT_RUNTIME_UPDATE_MODES).toEqual(['auto', 'off'])
     expect(FLEET_GATEWAY_ENV.botRuntimeUpdates).toBe('MAESTRLY_GATEWAY_BOT_RUNTIME_UPDATES')
     expect(FLEET_BOT_ENV.runtimeUpdates).toBe('MAESTRLY_BOT_RUNTIME_UPDATES')
+    expect(FLEET_GATEWAY_ENV.botBrowser).toBe('MAESTRLY_GATEWAY_BOT_BROWSER')
+    expect(FLEET_BOT_ENV.browser).toBe('MAESTRLY_BOT_BROWSER')
+    expect(FLEET_BOT_BROWSERS).toEqual(['chromium', 'electron'])
   })
   it('preserves structured permission tools in transcript, pending inbox, and events', () => {
     const tool = { name: 'computer_click', target: '(10, 20)' }

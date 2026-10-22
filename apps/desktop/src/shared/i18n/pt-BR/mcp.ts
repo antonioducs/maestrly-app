@@ -8,6 +8,8 @@ export default {
       ' Opera terminais persistentes no ambiente do bot. Leia a saída com terminal_read ou terminal_snapshot e relate os resultados na conversa; o dono não tem uma gaveta de terminal. Para comandos pontuais, prefira a ferramenta de shell.',
     drawer:
       ' [Navegador EMBUTIDO na gaveta direita deste app — NÃO o Chrome do sistema. Use estas ferramentas para ver/controlar o navegador desta janela.]',
+    botChromium:
+      ' [Chromium do desktop do bot: uma janela real do Chromium na sua tela de apps, com o perfil e os logins de sites do próprio bot. Estas ferramentas o controlam; o dono o vê no seu desktop. Só as abas desta conversa aparecem.]',
     term: ' Opera nos terminais da gaveta DESTA conversa. Use estes p/ processos PERSISTENTES ou interativos que o usuário acompanha ao vivo: dev servers, docker compose up, watch modes, TUIs. P/ comandos ONE-SHOT (git, testes, installs, builds, scripts que terminam sozinhos) prefira seu próprio shell/tool bash — saída mais limpa e menos tokens que o stream do PTY do terminal.',
     notes:
       ' (caderno "Notas" desta conversa, visível/editável na gaveta). PREFIRA-o aos seus próprios arquivos de rascunho para notas que o usuário deva poder ver/editar.',

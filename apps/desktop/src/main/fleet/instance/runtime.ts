@@ -361,6 +361,10 @@ export interface BotRuntimeHost {
   floatBrowser(conversationId: string): void
   /** Brings the app a tool of the bot uses forward on its desktop, when the environment gives bots one. */
   present?(conversationId: string, request: PresentationRequest): void
+  /** Closes the bot's own Chromium, where it has one, keeping its tabs to reopen. */
+  stopBrowser?(botId: string): void
+  /** Whether the bot drives a Chromium of its own, with its own site logins, rather than the environment's browser. */
+  hasOwnBrowser?(botId: string): boolean
   /** Stops a conversation's turn and closes its windows, terminals and browser views: a routine run's, once it ends. */
   closeConversation?(conversationId: string): Promise<void>
   /** Deletes a conversation with its messages and files: a routine run's, when the owner or retention deletes it. */
@@ -940,6 +944,7 @@ export class BotRuntime {
       if (this.registeredConversation?.id === id) this.registeredConversation.cwd = conversation.cwd
       setBotIdentity(conversation.cwd, this.stored.profile, () => this.host.peers(this.botId), {
         unifiedDesktop: () => this.host.capabilities?.().includes(FLEET_UNIFIED_DESKTOP_FEATURE) ?? false,
+        ownBrowser: () => this.host.hasOwnBrowser?.(this.botId) ?? false,
       })
     }
     const selection = this.currentSelection()
@@ -2265,6 +2270,8 @@ export class BotRuntime {
       this.interrupted = interrupted
       await this.system(reason === 'takeover' ? 'takeover' : 'paused', null, null)
     }
+    // A paused bot frees its browser's memory; a takeover keeps it open for the person who took the screen.
+    if (reason === 'paused') this.host.stopBrowser?.(this.botId)
     return state
   }
   async release(value: FleetInstanceReleaseRequest): Promise<FleetInstanceHold> {

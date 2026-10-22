@@ -94,10 +94,19 @@ export async function startBotDesktop(
     presenter.refreshTitle()
     surfaces.applyFocusEmulation()
   })
-  /** Shows the bot's Maestrly browser on its desktop, opening its window first when it has none. */
+  /**
+   * Shows the bot's browser on its desktop: its own Chromium, which the dock's launcher (`activate`) starts and a tool
+   * only brings forward, or the Maestrly browser window, opened first when it has none.
+   */
   const showBrowser = async (activate: boolean): Promise<void> => {
     const conversationId = target.conversationId()
     if (!conversationId) throw new Error(t('botDesktop.noConversation'))
+    const chromium = target.browser?.()
+    if (chromium) {
+      if (activate) await chromium.show(conversationId)
+      else chromium.present(conversationId)
+      return
+    }
     hooks.floatBrowser?.(conversationId)
     presenter.refreshSize()
     if (!(await presenter.whenConnected(PRESENTER_WAIT_MS))) throw new Error(t('botDesktop.presenterUnavailable'))
@@ -134,6 +143,11 @@ export async function startBotDesktop(
     },
     // The link opener is also the $BROWSER of the bot's own programs: the window comes forward without the keyboard.
     openUrl: async (conversationId, url) => {
+      const chromium = target.browser?.()
+      if (chromium) {
+        await chromium.openUrl(conversationId, url)
+        return
+      }
       createBrowserTab(conversationId, url)
       // The link is open either way; without a presenter it shows in the bot's browser area.
       await showBrowser(false).catch((error: unknown) =>

@@ -250,6 +250,9 @@ async function main() {
       'seccomp=' + path.join(root, 'deploy/bot-fleet/seccomp-bot.json'),
       '-e',
       'MAESTRLY_BOT_MODE=1',
+      // The focus between screens of the environment display is the built-in browser's: its bots drive it here.
+      '-e',
+      'MAESTRLY_BOT_BROWSER=electron',
       '-e',
       'MAESTRLY_ENVIRONMENT_ID=focus-test',
       ...Object.keys(credentials).flatMap((variable) => ['-e', variable]),

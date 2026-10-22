@@ -1,4 +1,9 @@
-import { FLEET_BOT_ENV, FLEET_PORTS, fleetEnvironmentIdSchema } from '@maestrly/bot-fleet-protocol'
+import {
+  FLEET_BOT_ENV,
+  FLEET_PORTS,
+  fleetEnvironmentIdSchema,
+  type FleetBotBrowser,
+} from '@maestrly/bot-fleet-protocol'
 import { z } from 'zod'
 
 export const tokenSchema = z
@@ -26,6 +31,12 @@ export type EnvironmentInstanceConfig = z.infer<typeof schema>
 /** The control server only needs the control token; kept under its former name for the instance server. */
 export type BotInstanceConfig = EnvironmentInstanceConfig
 export const isBotMode = (env: NodeJS.ProcessEnv = process.env): boolean => env[FLEET_BOT_ENV.mode] === '1'
+/**
+ * The browser the bots of this environment drive: each its own Chromium (the default), or `electron`, the environment's
+ * built-in browser, whose site logins its bots share. The gateway sets it from `MAESTRLY_GATEWAY_BOT_BROWSER`.
+ */
+export const botBrowserKind = (env: NodeJS.ProcessEnv = process.env): FleetBotBrowser =>
+  env[FLEET_BOT_ENV.browser]?.trim() === 'electron' ? 'electron' : 'chromium'
 
 /**
  * The control server and gateway of an environment's container. Bot environments and workspaces hosts read the same

@@ -5,6 +5,7 @@ import type { FleetBot, FleetEnvironment, FleetSettingsOutput } from '@maestrly/
 import { compactionSourceOf } from '@/lib/fleet/compaction'
 import { formatNames } from '@/lib/fleet/environments'
 import { useEnvironmentSettingsResource } from '@/lib/fleet/environment-settings'
+import { environmentSiteLogins } from '@/lib/fleet/provisioning'
 import { isWorkspacesEnvironment } from '@/lib/fleet/selectors'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import type { EnvironmentSettingsSection } from './environment-settings/sections'
@@ -144,6 +145,7 @@ function Tiles({
   const users = bots.filter((bot) => compactionSourceOf(bot) === 'environment').map((bot) => bot.name)
   // A workspaces environment has no bots to compact for and no screen to log in to sites on.
   const botTiles = !isWorkspacesEnvironment(environment)
+  const ownBrowsers = environmentSiteLogins(environment) === 'per-bot'
   return (
     <div className="grid grid-cols-1 gap-2 @sm:grid-cols-2 @2xl:grid-cols-3">
       <Tile
@@ -219,8 +221,8 @@ function Tiles({
         <Tile
           icon={Globe}
           label={t('environment.tiles.siteLogins')}
-          value={t('environment.tiles.siteLoginsValue')}
-          sub={t('environment.tiles.siteLoginsNote')}
+          value={t(ownBrowsers ? 'environment.tiles.siteLoginsOwnValue' : 'environment.tiles.siteLoginsValue')}
+          sub={t(ownBrowsers ? 'environment.tiles.siteLoginsOwnNote' : 'environment.tiles.siteLoginsNote')}
           onClick={onOpenScreen}
         />
       )}

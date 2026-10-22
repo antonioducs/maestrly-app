@@ -82,6 +82,7 @@ const SHOWN_FAILURES = new Set([WORKSPACES_UNSUPPORTED, HOST_FOLDER_FAILED, NETW
 export const WORKSPACES_LIMIT = 'This server already hosts as many workspaces environments as it can.'
 export const WORKSPACES_ONLY = 'Only a workspaces environment has this setting.'
 const runtimeUpdatesLabel = 'org.maestrly.fleet.runtime-updates'
+const botBrowserLabel = 'org.maestrly.fleet.bot-browser'
 /** The label of containers created before environments: their bot's id, which their environment took over. */
 const legacyBotLabel = 'org.maestrly.fleet.bot-id'
 const now = () => new Date().toISOString()
@@ -1169,6 +1170,7 @@ export class Lifecycle {
       [FLEET_BOT_ENV.gatewayUrl]: this.config.internalUrl,
       ...(guarded ? { [FLEET_BOT_ENV.egress]: 'public' } : {}),
       ...(this.config.botRuntimeUpdates === 'off' ? { [FLEET_BOT_ENV.runtimeUpdates]: 'off' } : {}),
+      ...(this.config.botBrowser === 'electron' ? { [FLEET_BOT_ENV.browser]: 'electron' } : {}),
       ...(sole && soleToken
         ? { [FLEET_BOT_ENV.id]: sole.id, [FLEET_BOT_ENV.name]: sole.name, [FLEET_BOT_ENV.gatewayToken]: soleToken }
         : {}),
@@ -1184,6 +1186,7 @@ export class Lifecycle {
         [environmentLabel]: environmentId,
         [egressLabel]: this.config.botEgress,
         [runtimeUpdatesLabel]: this.config.botRuntimeUpdates,
+        [botBrowserLabel]: this.config.botBrowser,
         ...(workspaces ? { [workspacesRootLabel]: root ?? '', [hostTokenLabel]: '1', [networkLabel]: network } : {}),
       },
       env: Object.entries(env).map(([key, value]) => key + '=' + value),
@@ -1225,6 +1228,8 @@ export class Lifecycle {
     const egressChanged = (container.labels[egressLabel] ?? 'open') !== this.config.botEgress
     // Containers from before this setting update on their own, as `auto` does.
     const runtimeUpdatesChanged = (container.labels[runtimeUpdatesLabel] ?? 'auto') !== this.config.botRuntimeUpdates
+    // Containers from before this setting run the image's default, each bot's own Chromium.
+    const botBrowserChanged = (container.labels[botBrowserLabel] ?? 'chromium') !== this.config.botBrowser
     // A workspaces environment is created with its server folder and network: a server that gained or moved its
     // workspaces folder, an environment that moved to a folder of its own, or a container from before networks of
     // their own replaces it.
@@ -1240,7 +1245,13 @@ export class Lifecycle {
     await this.prepareWorkspaces(environment)
     if (
       imageId &&
-      (imageChanged || egressChanged || runtimeUpdatesChanged || rootChanged || networkChanged || hostTokenMissing)
+      (imageChanged ||
+        egressChanged ||
+        runtimeUpdatesChanged ||
+        botBrowserChanged ||
+        rootChanged ||
+        networkChanged ||
+        hostTokenMissing)
     ) {
       await this.docker.stop(container.id)
       await this.docker.remove(container.id)
@@ -1256,6 +1267,7 @@ export class Lifecycle {
         ...(imageChanged ? { fromImage, toImage } : {}),
         ...(egressChanged ? { egress: this.config.botEgress } : {}),
         ...(runtimeUpdatesChanged ? { runtimeUpdates: this.config.botRuntimeUpdates } : {}),
+        ...(botBrowserChanged ? { botBrowser: this.config.botBrowser } : {}),
       })
       this.lifecycleActivity(environmentId, via, 'restarted', {
         updated: true,

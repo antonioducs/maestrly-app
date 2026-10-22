@@ -28,9 +28,11 @@ import * as chatService from '../../src/main/chat/service'
 import {
   EnvironmentRuntime,
   productionDisplayDeps,
+  type BotBrowserTarget,
   type BotDesktopTarget,
   type EnvironmentRuntimeDeps,
 } from '../../src/main/fleet/instance/environment'
+import type { BotChromium } from '../../src/main/fleet/instance/bot-browser/bot-chromium'
 import { botRuntimeForConversation, getEnvironmentRuntime } from '../../src/main/fleet/instance'
 import { parseBotInstanceConfig } from '../../src/main/fleet/instance/config'
 import { emitChatHost } from '../../src/main/chat/host-events'
@@ -1046,6 +1048,95 @@ describe('bot environment registry', () => {
     // The services stop before the displays they run on.
     expect(order.at(-1)).toBe('displays')
     expect(order.indexOf('desktop alpha')).toBeLessThan(order.indexOf('displays'))
+  })
+
+  it("gives each bot its own Chromium with its display, routes its conversations' browser there and stops it with its screens", async () => {
+    const order: string[] = []
+    const browsers = new Map<
+      string,
+      {
+        target: BotBrowserTarget
+        present: ReturnType<typeof vi.fn>
+        stop: ReturnType<typeof vi.fn>
+        dispose: ReturnType<typeof vi.fn>
+        closeConversation: ReturnType<typeof vi.fn>
+      }
+    >()
+    const botBrowser = vi.fn((target: BotBrowserTarget) => {
+      const fake = {
+        target,
+        present: vi.fn(),
+        stop: vi.fn(async () => {}),
+        dispose: vi.fn(async () => {
+          order.push(`browser ${target.botId}`)
+        }),
+        closeConversation: vi.fn(async () => {}),
+      }
+      browsers.set(target.botId, fake)
+      return fake as unknown as BotChromium
+    })
+    const desktop = vi.fn(async (target: BotDesktopTarget) => ({
+      present: vi.fn(),
+      ownProcessIds: () => [],
+      dispose: vi.fn(async () => {
+        order.push(`desktop ${target.botId}`)
+      }),
+    }))
+    const displays = { ...fakeDisplays(home), watched: vi.fn((_botId: string) => false) }
+    displays.stopBot.mockImplementation(async (botId: string) => {
+      order.push(`display ${botId}`)
+    })
+    const setup = environment(displays)
+    const runtime = new EnvironmentRuntime({ ...setup.deps, desktop, botBrowser })
+    environments.push(runtime)
+    await runtime.start()
+    await runtime.installBot({ profile: profile('alpha', 'Alpha'), slot: 1, gatewayToken: tokenA })
+    await runtime.installBot({ profile: profile('beta', 'Beta'), slot: 2, gatewayToken: tokenB })
+    const alpha = browsers.get('alpha')!
+    const alphaConversation = runtime.bot('alpha').primaryConversationId!
+    // Clients learn that site logins are each bot's own.
+    expect(runtime.health().capabilities).toContain('bot-own-browser')
+    expect(new EnvironmentRuntime({ ...setup.deps }).health().capabilities).not.toContain('bot-own-browser')
+    vi.stubEnv('MAESTRLY_BOT_MODE', '1')
+    expect(botIdentityPrompt(getConversation(alphaConversation)!.cwd)).toContain('your own Chromium is a window there')
+    expect(alpha.target.display.env.MAESTRLY_BOT_BROWSER_PROFILE).toBe(`${home}/.config/maestrly-bots/alpha/chromium`)
+    expect(alpha.target.foregroundConversationId()).toBe(alphaConversation)
+    expect(alpha.target.ownsConversation(alphaConversation)).toBe(true)
+    expect(alpha.target.ownsConversation(runtime.bot('beta').primaryConversationId!)).toBe(false)
+    displays.watched.mockReturnValueOnce(true)
+    expect(alpha.target.watched()).toBe(true)
+    expect(displays.watched).toHaveBeenCalledWith('alpha')
+    // Its desktop opens links and the dock's browser in it.
+    expect(desktop.mock.calls[0][0].browser?.()).toBe(alpha)
+    expect(runtime.browserForConversation(alphaConversation)).toBe(alpha)
+    expect(runtime.browserForConversation('somebody-else')).toBeNull()
+
+    // A browser tool brings the bot's tab forward there instead of floating the built-in browser.
+    emitChatHost(alphaConversation, `chat:delta:${alphaConversation}`, {
+      messageId: 'm',
+      kind: 'tool-call',
+      toolCallId: 'a1',
+      toolName: 'browser_navigate',
+      input: { url: 'https://example.test' },
+    })
+    await new Promise((resolve) => setTimeout(resolve, 1_100))
+    expect(alpha.present).toHaveBeenCalledWith(alphaConversation)
+    expect(setup.deps.floatBrowser).not.toHaveBeenCalledWith(alphaConversation)
+
+    // Pausing frees its memory; a pause while someone watches leaves it to its idle time.
+    await runtime.bot('alpha').hold('paused')
+    expect(alpha.stop).toHaveBeenCalledTimes(1)
+    const beta = browsers.get('beta')!
+    displays.watched.mockReturnValue(true)
+    await runtime.bot('beta').hold('paused')
+    expect(beta.stop).not.toHaveBeenCalled()
+    displays.watched.mockReturnValue(false)
+
+    await runtime.uninstallBot('beta', { purge: false })
+    // The browser stops before the desktop and the display it runs on.
+    expect(order.slice(0, 3)).toEqual(['browser beta', 'desktop beta', 'display beta'])
+    await runtime.dispose()
+    expect(alpha.dispose).toHaveBeenCalledTimes(1)
   })
 
   it('installs a bot whose desktop services fail to start, and starts none without a display', async () => {

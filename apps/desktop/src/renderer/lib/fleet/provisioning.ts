@@ -8,6 +8,7 @@ import { useCallback, useEffect, useState } from 'react'
 import {
   FLEET_CONTEXT_LIMIT_FEATURE,
   FLEET_BOT_DELEGATION_FEATURE,
+  FLEET_BOT_OWN_BROWSER_FEATURE,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
   FLEET_ENVIRONMENT_LIMITS,
   FLEET_ENVIRONMENTS_FEATURE,
@@ -141,6 +142,13 @@ export function botComputerMode(
   if (!environment || bot.environmentId === null) return 'browser-only'
   if (environmentScreenAvailability(environment) === 'restart-environment') return 'browser-only'
   return environment.capabilities.includes(FLEET_UNIFIED_DESKTOP_FEATURE) ? 'unified' : 'legacy'
+}
+/**
+ * Whose site logins the bots of an environment use: each bot's own, where each drives a Chromium of its own, or the
+ * environment's, shared by its bots in its built-in browser.
+ */
+export function environmentSiteLogins(environment: Pick<FleetEnvironment, 'capabilities'>): 'per-bot' | 'shared' {
+  return environment.capabilities.includes(FLEET_BOT_OWN_BROWSER_FEATURE) ? 'per-bot' : 'shared'
 }
 export type EnvironmentCompactionAvailability =
   | 'unsupported'

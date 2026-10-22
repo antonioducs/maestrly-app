@@ -1,6 +1,6 @@
 # Remote bots (bot fleet)
 
-A bot is a Maestrly agent that runs in Docker on this computer or on a Linux server. Bots on a server keep working when your computer is off; bots on this computer stop when it sleeps or shuts down. Bots run in **environments**: an environment is one container with one Maestrly desktop, one home folder, and one set of model accounts, skills, MCP servers, and site logins. Up to eight bots can share an environment; each keeps its own conversation, models, memory, routines, and screens. You install and update one desktop app to control them all. A bot can also [work in the projects of your computers](#work-in-the-projects-of-your-computers) that give it access, without any of them being reachable from outside.
+A bot is a Maestrly agent that runs in Docker on this computer or on a Linux server. Bots on a server keep working when your computer is off; bots on this computer stop when it sleeps or shuts down. Bots run in **environments**: an environment is one container with one Maestrly desktop, one home folder, and one set of model accounts, skills, and MCP servers. Up to eight bots can share an environment; each keeps its own conversation, models, memory, routines, screens, and browser with its site logins. You install and update one desktop app to control them all. A bot can also [work in the projects of your computers](#work-in-the-projects-of-your-computers) that give it access, without any of them being reachable from outside.
 
 **Experimental:** The **Bots** tab shows a flask icon titled **Experimental**. Back up your bot data before changing or removing a server.
 
@@ -100,7 +100,7 @@ exchanging images and text messages.
 
 ## Set up the bot server
 
-Open **Settings → Bot servers** and choose where bots will run. The desktop app sets up the gateway, connects this computer, and keeps the server on the app's version. Each environment has a **4 GiB memory limit by default** and 1 GiB of shared memory; budget more for open browsers and other programs. The included desktop uses CPU rendering; no GPU is required. Downloading the bot runtime requires substantial disk space, and each environment needs its own persistent home volume. An artifact-only setup downloads just the gateway image.
+Open **Settings → Bot servers** and choose where bots will run. The desktop app sets up the gateway, connects this computer, and keeps the server on the app's version. Each environment has a **4 GiB memory limit by default** and 1 GiB of shared memory; budget more for open browsers and other programs. Each bot's Chromium takes roughly 300 to 500 MiB while it is open, and closes after 15 minutes without use. The included desktop uses CPU rendering; no GPU is required. Downloading the bot runtime requires substantial disk space, and each environment needs its own persistent home volume. An artifact-only setup downloads just the gateway image.
 
 ### On this computer
 
@@ -305,7 +305,7 @@ After an environment restarts, its bots wait for the gateway to confirm membersh
 **Bot server → Archived bots** lists bots archived on their own from an active environment:
 
 - **Restore** puts the bot back in its environment, in its previous slot when free, otherwise in the lowest free slot. Its environment must not be archived (restore the environment first) and must have a free slot. The bot is installed at once when the environment runs; in a stopped environment it is installed when the environment starts, and a bot that is the only one in its stopped environment starts that environment. It reconnects to peers that are still active.
-- **Delete forever** asks you to type the bot's name and needs its environment running. The environment's Maestrly deletes the bot's conversation, memory, own folders, **Apps** browser profile, and settings; the gateway then deletes its routines, routine runs, peer messages, activity, and gateway token. Files the bot left in the shared home folder, the environment's accounts, skills, and MCP servers, and owner memory stay. A new bot with the same name can reuse its id. When the environment still runs an image from before environments and holds no other bot, deletion removes the whole environment and its home volume, as it did for single-bot containers.
+- **Delete forever** asks you to type the bot's name and needs its environment running. The environment's Maestrly deletes the bot's conversation, memory, own folders, Chromium profile with its site logins, and settings; the gateway then deletes its routines, routine runs, peer messages, activity, and gateway token. Files the bot left in the shared home folder, the environment's accounts, skills, and MCP servers, and owner memory stay. A new bot with the same name can reuse its id. When the environment still runs an image from before environments and holds no other bot, deletion removes the whole environment and its home volume, as it did for single-bot containers.
 
 If a home volume was removed outside Maestrly, the lists say so, and a restored environment or bot starts without those files.
 
@@ -382,7 +382,7 @@ A server can also run your own chats and workspaces, in **workspaces environment
 of your work: see [Remote workspaces and chats](remote-workspaces.md). They appear under **Workspaces** on the server
 page and never in bot lists; the rest of this section is about the environments bots run in.
 
-An environment is the unit of sharing, isolation, and resources. When you create a bot, choose **New environment** to give it its own container, accounts, files, and site logins, or **Existing environment** to add it to one that is already set up and signed in. A bot joining an existing environment needs no new container and no new sign-ins.
+An environment is the unit of sharing, isolation, and resources. When you create a bot, choose **New environment** to give it its own container, accounts, and files, or **Existing environment** to add it to one that is already set up and signed in. A bot joining an existing environment needs no new container and no new model sign-ins; it signs in to websites in its own browser.
 
 | Shared by the bots of an environment | Each bot's own |
 | --- | --- |
@@ -390,7 +390,7 @@ An environment is the unit of sharing, isolation, and resources. When you create
 | The home folder (`/home/bot`), its files, and the tools installed there | Conversation, queue, pause, and screen takeover |
 | Model accounts: API keys and subscription sign-ins | Model selection and compaction model |
 | Skills and MCP servers | Bot memory, routines, and requests in **Awaiting you** |
-| Site logins: the cookies of the browser the bots drive with `browser_*` | A desktop with its browser as a window (a **Browser** area and an **Apps** screen on older images) |
+| The built-in browser and its site logins, only on a server that keeps bots on it (`MAESTRLY_GATEWAY_BOT_BROWSER=electron`) | A desktop with its own Chromium as a window, with its profile, tabs, and site logins (a **Browser** area and an **Apps** screen on older images) |
 | The environment screen (Maestrly's settings) | Its gateway token and peer message budget |
 | Start, stop, restart, update, archive, and delete forever | Archive, restore, and delete forever of the bot alone |
 
@@ -398,7 +398,7 @@ An environment holds at most **8 active bots**, one in each display slot from 1 
 
 **Bots in one environment trust each other.** They run as the same Linux user in the same container, so a bot that can run commands can read the other bots' files and conversations, operate their screens, and act as them toward the gateway. Use separate environments for work that must stay apart, for example one per company or client. See [Security and data](#security-and-data).
 
-Each bot is told which other bots share its environment and that its home folder, files, accounts, skills, MCP servers, and site logins are shared with them, while its conversation, memory, and screens stay its own.
+Each bot is told which other bots share its environment and that its home folder, files, accounts, skills, and MCP servers are shared with them, while its conversation, memory, screens, and site logins stay its own (with the built-in browser, site logins are shared too).
 
 ### Screens of a bot
 
@@ -439,20 +439,38 @@ current image, and says so; a bot server from before video screens asks you to u
 A bot's desktop is its own 1280×800 Linux desktop, with a wallpaper in the bot's tint, a dock with **Browser**,
 **Terminal**, and **Files**, and the windows of its programs:
 
-- **Browser** shows the bot's Maestrly browser, the one it drives with `browser_*`, as a window of the desktop. The
-  browser itself runs in the environment's one Maestrly process and shares its cookies with the other bots; the window
-  shows it live, and your clicks, typing, and scrolling reach only that bot's tabs, address bar, page, and sign-in
-  popups, which open inside the window. Move and resize the window freely, from 480×320 up to 1280×800; it opens where
-  you left it. Closing it hides it, and the dock's **Browser** shows it again. Copy and paste work between the browser
-  and the other programs of the desktop.
+- **Browser** shows the bot's own Chromium, the one it drives with `browser_*`, as a window of the desktop; see
+  [A bot's browser](#a-bots-browser). Use it as any browser: its tabs, address bar, pages, and sign-in popups are the
+  bot's. Copy and paste work between the browser and the other programs of the desktop.
 - **Terminal** opens a window on the bot's terminal, the one its terminal tools use: one window per terminal, up to
   eight. Closing a window keeps its shell running, and the dock opens the same shell again.
 - **Files** opens the bot's home folder; text files open in a text editor. Links opened by programs on the desktop,
-  and the bot's `BROWSER`, open in its Maestrly browser.
+  and the bot's `BROWSER`, open in a new tab of its browser.
 
-When the bot's tools act on its browser or a terminal, that window comes to the front without taking the keyboard from
-the window you are typing in; a terminal it creates opens the same way. Nothing comes forward while you control the
-computer.
+When the bot's tools act on its browser or a terminal, that window comes to the front; a terminal it creates opens
+without taking the keyboard from the window you are typing in. Nothing comes forward while you control the computer.
+
+#### A bot's browser
+
+Each bot drives a Chromium of its own on its desktop, with its own profile in
+`~/.config/maestrly-bots/<bot-id>/chromium`: its cookies, site logins, and history are that bot's only. Maestrly drives
+it through a DevTools pipe, never a network port, so no other program of the environment can control it.
+
+- Each of the bot's conversations sees and drives only its own tabs: `browser_tabs` in a routine run or a conversation
+  with another bot never lists the main conversation's tabs. A tab a page opens belongs to the conversation of that
+  page; a tab you open by hand belongs to the conversation the desktop shows.
+- The browser starts when a tool, a link, or the dock needs it, and closes after 15 minutes without use while nobody
+  watches or controls the bot's screen, or when you pause the bot. Its tabs reopen the next time it starts. If it
+  crashes, it starts again with them, at most five times a minute; if you close its window, it stays closed until it is
+  needed.
+- Downloads go to the environment's `~/Downloads` folder without a dialog.
+- The first time a bot's browser starts, it copies the site logins of the environment's built-in browser, which bots
+  shared before this browser existed. Later sign-ins stay with that bot: sign in once in each bot that needs a site.
+
+A server can keep its bots on the built-in browser instead: set `MAESTRLY_GATEWAY_BOT_BROWSER=electron` (see
+[the deploy README](../deploy/bot-fleet/README.md)). That browser runs in the environment's one Maestrly process and
+shares its cookies with all of its bots; its window on each desktop shows the bot's tabs, opens popups inside it, and
+can be moved and resized from 480×320 up to 1280×800. The change applies when each environment restarts.
 
 An environment on an older image has two screen areas instead, shown in the app with a **Browser** | **Apps** switch:
 
@@ -485,8 +503,8 @@ until you choose **Move**.
 | Its conversation and history, with its whole working folder (Git repositories and installed packages included), attachments, and generated images | Model accounts: API keys and subscription sign-ins |
 | Its queue, transcript extras, published files, and images | Skills and MCP servers |
 | Its bot memory | The home folder and the files the bots there share |
-| Its settings, pause, routines, peers, links to computers and workspaces environments, and activity, which keep its id | The site logins of the browser the bots drive with `browser_*` |
-| The browser profile of its **Apps** desktop, with the site sign-ins made there; caches are left behind | |
+| Its settings, pause, routines, peers, links to computers and workspaces environments, and activity, which keep its id | The site logins of the built-in browser, on a server that keeps bots on it |
+| Its Chromium profile, with its site logins and the tabs it reopens; caches are left behind | |
 
 The bot keeps its id, so everything that names it (routines, peers, desktop links, activity) follows without change.
 Symbolic links in its working folder move when they lead inside that folder; one that leads elsewhere (another
@@ -553,7 +571,7 @@ The sidebar's icon rail has **Chats**, **Workspaces**, and **Bots** tabs. **Bots
 Create a bot with **+**. Give it a **Name** and **What it does**, then choose **Where it runs**:
 
 - **New environment** creates a container for this bot. The environment's name follows the bot's name until you edit it. Progress shows **Creating container**, **Starting desktop**, **Setting up profile**, and **Ready**. Only a new environment offers **Accounts, skills, and MCP** from your computer (see [Bring from your computer](#bring-from-your-computer)).
-- **Existing environment** adds the bot to an environment you pick from a searchable list. The bot uses that environment's accounts, skills, MCP servers, and site logins, and the dialog shows how many of each it already has. Full, stopped, and older-image environments cannot be picked; the list says why.
+- **Existing environment** adds the bot to an environment you pick from a searchable list. The bot uses that environment's accounts, skills, and MCP servers, and the dialog shows how many of each it already has. Full, stopped, and older-image environments cannot be picked; the list says why.
 
 Then choose how far it goes without asking, which lists what the bot does on its own and what it asks you about, and the bots it can talk to: search by bot or environment name, check the ones to allow, and remove any from the chips under the field. The footer sums up what will be created.
 
@@ -561,7 +579,7 @@ Then choose how far it goes without asking, which lists what the bot does on its
 
 The environment view is laid out like a bot's: its overview and, beside it, its screen, with its settings in a panel over both. Its header shows the environment's state and server, **Restart** and **Stop** (or **Start environment** when it is stopped), **Environment settings** (the gear), and **Screen** while the screen is closed. In a window narrower than about 840 pixels, an **Overview | Screen** switch shows one at a time. **Restart**, **Stop**, and archiving each ask for confirmation and name every bot they affect.
 
-- The overview shows an update the server offers at the top, then its bots as up to eight bays, each lit in the bot's color with its status and what it is doing; select a bay to open the bot. The next bay is **New bot in this environment**, or says why no bot can join yet. **Shared by its bots** sums up the environment's accounts, models, skills, MCP servers, default compaction model, and site logins; each opens its tab of the settings, and site logins open the screen. **Resources** shows the memory in use against the environment's limit, CPU, uptime, and version, with **Memory limit**. Environments on an older image or server keep their existing account, skill, MCP, compaction, and runtime controls under **Shared by its bots**.
+- The overview shows an update the server offers at the top, then its bots as up to eight bays, each lit in the bot's color with its status and what it is doing; select a bay to open the bot. The next bay is **New bot in this environment**, or says why no bot can join yet. **Shared by its bots** sums up the environment's accounts, models, skills, MCP servers, default compaction model, and where site logins live (each bot's own browser, or the built-in browser all its bots share); each opens its tab of the settings, and site logins open the screen. **Resources** shows the memory in use against the environment's limit, CPU, uptime, and version, with **Memory limit**. Environments on an older image or server keep their existing account, skill, MCP, compaction, and runtime controls under **Shared by its bots**.
 - The screen shows the environment screen, with **Maximize screen** and **Close screen**. **Take control** operates it without holding or pausing any bot; **Stop controlling**, or closing the screen, returns to watching.
 - **Environment settings** opens on **Accounts** and has one tab per section: **Accounts**, **Models**, **Skills**, **Tools**, **Plugins**, **Components**, **Preferences**, and **Archive**, with the same controls as desktop settings. Its heading names the bots sharing these settings. Changes to models, skills, tools, and preferences wait, across tabs, in one bar until you **Save changes** (⌘S, or Ctrl+S on Windows and Linux) or **Discard** them; a dot marks each tab with unsaved changes. Editors that open in a dialog of their own, such as an account or an MCP server, save from that dialog. Closing the panel, an editor, or the view with unsaved changes asks first.
 
@@ -1085,7 +1103,7 @@ owner help for logins instead.
 | Tool | Scope |
 | --- | --- |
 | `computer_screenshot`, `computer_click`, `computer_move`, `computer_drag`, `computer_scroll`, `computer_type`, `computer_key` | See and operate its own **Apps** screen. A routine run or a conversation with another bot uses a desktop of its own; see [Conversations at once](#conversations-at-once). |
-| `browser_*` | Use its own browser window in its **Browser** area. Cookies and site logins are shared with the other bots of its environment. |
+| `browser_*` | Use its own Chromium on its desktop, with its own profile and site logins; each conversation sees only its own tabs. With the built-in browser (`MAESTRLY_GATEWAY_BOT_BROWSER=electron`), its browser window in its **Browser** area, whose cookies and site logins are shared with the other bots of its environment. |
 | Terminal, files, and Maestrly chat tools | Work in its environment's container and shared home, with its **Apps** screen as the display, subject to permissions and the selected model's capabilities. |
 | `memory_search`, `memory_list`, `memory_read`, `history_search`, `history_read` | Read its memory and its own conversation history without approval prompts. |
 | `memory_upsert`, `memory_archive`, `memory_restore` | Save, archive and restore its own memory without approval prompts. |
@@ -1188,7 +1206,7 @@ it can refer to the earlier report. Archive the sample owner entry afterward.
 - `npm run test --workspace @maestrly/bot-gateway` checks gateway behavior.
 - `npm run test:unit --workspace @maestrly/desktop` checks desktop units.
 - `npm run test:e2e --workspace @maestrly/desktop` runs the Electron E2E suite, including `apps/desktop/test/e2e/bot-fleet.spec.ts`, with its usual build and display prerequisites.
-- `npm run test:e2e:bot-fleet` is an opt-in Docker end-to-end test. Build both local images first with `node scripts/bot-fleet-images.mjs`. The test creates an isolated gateway, two real environments, and a deterministic local model. It checks pairing, protocol guards, SSE, accounts, model tool calls on the apps screen, approvals, peer delivery, video screen view and control (key frames, pointer injection, Caps Lock typing on an apps screen, and UTF-8 clipboard both ways with PRIMARY never sent), takeover, pause, scheduled and bot-created routines (each run in a conversation of its own, its report kept when that conversation is deleted), owner and bot memory, and compaction, including a bot's model becoming its environment's default. It then adds a second bot to one environment and checks that no container is created and that the bot inherits the environment's default compaction model, and that changing the default reaches only the bots that inherit it; that both bots run turns at the same time with their own models, type on their own apps screens at the same time, and share site cookies; the placement of the environment screen; that a second control session on the shared display is refused; archiving and restoring one bot; an environment restart; the separation of the two environments; archiving and permanently deleting bots and environments; and an environment update that waits while a bot works, then recreates the container on a newer image with the conversations kept. That last check briefly points the configured bot image's tag at a derived image and tags it back before it passes, or on exit. It saves screen captures under `.bot-fleet-local/screens/` and removes its Docker resources on exit. Pass `-- --keep` to retain them for debugging. A workspaces step, also runnable alone with `npm run test:e2e:bot-fleet:workspaces`, uses a Compose project and containers of its own: it creates a workspaces environment with a folder of its own under a folder of the Docker host mounted and a network of its own, creates a second one with a CPU limit and checks that the first cannot reach it and that deleting it removes its network, checks that a bot in a workspaces environment is refused, adds an account through the gateway, opens the bridge with a ticket, creates a project under the mounted folder, runs a chat turn whose model navigates, reads, and takes a picture with the host's browser, writes a file from a host terminal, and checks that revoking the device closes the bridge. A final focus test uses a separate container and real keyboard input over the screen stream to check popups, native JavaScript dialogs, screen changes and focus restoration. Its report is saved under `.bot-fleet-local/focus/`, and its container and volume are always removed, including with `--keep`.
+- `npm run test:e2e:bot-fleet` is an opt-in Docker end-to-end test. Build both local images first with `node scripts/bot-fleet-images.mjs`. The test creates an isolated gateway, two real environments, and a deterministic local model. It checks pairing, protocol guards, SSE, accounts, model tool calls on the apps screen, approvals, peer delivery, video screen view and control (key frames, pointer injection, Caps Lock typing on an apps screen, and UTF-8 clipboard both ways with PRIMARY never sent), takeover, pause, scheduled and bot-created routines (each run in a conversation of its own, its report kept when that conversation is deleted), owner and bot memory, and compaction, including a bot's model becoming its environment's default. It then adds a second bot to one environment and checks that no container is created and that the bot inherits the environment's default compaction model, and that changing the default reaches only the bots that inherit it; that both bots run turns at the same time with their own models, type on their own apps screens at the same time, and each drive a Chromium of their own on their own display through a DevTools pipe, without sharing site cookies; the placement of the environment screen; that a second control session on the shared display is refused; archiving and restoring one bot; an environment restart; the separation of the two environments; archiving and permanently deleting bots and environments; and an environment update that waits while a bot works, then recreates the container on a newer image with the conversations kept. That last check briefly points the configured bot image's tag at a derived image and tags it back before it passes, or on exit. It saves screen captures under `.bot-fleet-local/screens/` and removes its Docker resources on exit. Pass `-- --keep` to retain them for debugging. A workspaces step, also runnable alone with `npm run test:e2e:bot-fleet:workspaces`, uses a Compose project and containers of its own: it creates a workspaces environment with a folder of its own under a folder of the Docker host mounted and a network of its own, creates a second one with a CPU limit and checks that the first cannot reach it and that deleting it removes its network, checks that a bot in a workspaces environment is refused, adds an account through the gateway, opens the bridge with a ticket, creates a project under the mounted folder, runs a chat turn whose model navigates, reads, and takes a picture with the host's browser, writes a file from a host terminal, and checks that revoking the device closes the bridge. A final focus test uses a separate container, with its bots on the built-in browser (`MAESTRLY_BOT_BROWSER=electron`), and real keyboard input over the screen stream to check popups, native JavaScript dialogs, screen changes and focus restoration. Its report is saved under `.bot-fleet-local/focus/`, and its container and volume are always removed, including with `--keep`.
 - `deploy/bot-fleet/test/screen-encoder-smoke.mjs` checks the screen encoder alone, inside a throwaway container of the bot image: its stream, key frame and pointer sprite, pointer input held to its region, the UTF-8 clipboard, CLIPBOARD-only reporting, and its exit when its input closes. Its header shows how to run it.
 
 In a run of that end-to-end test on a local Linux/arm64 Docker host, with bot images built from this source, synthetic data, the deterministic local model, the default 4 GiB limit, and no screen open, the test measured after memory stopped changing:

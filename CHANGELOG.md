@@ -5,6 +5,32 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Changed
+
+- Each bot now drives a real Chromium of its own on its desktop, with its own
+  profile, instead of the environment's built-in browser. Sites see an ordinary
+  Chromium, its cookies and site logins belong to that bot only, and you can use
+  it directly from the bot's screen. Each of a bot's conversations sees only its
+  own tabs. The browser starts when needed, closes after 15 idle minutes or when
+  the bot is paused, and reopens its tabs on the next start. On its first start
+  it copies the site logins the bots of its environment shared until then;
+  later sign-ins stay with the bot that made them. A server can keep the previous
+  behavior with `MAESTRLY_GATEWAY_BOT_BROWSER=electron`. See
+  [A bot's browser](docs/bot-fleet.md#a-bots-browser).
+- Browser tools find an element of `browser_snapshot` again when they act on it,
+  scrolling it into view when it moved off screen, and say when it is gone
+  instead of clicking where it used to be. Snapshots now include elements inside
+  open shadow roots and same-origin frames, and pages cannot alter what they read.
+
+### Fixed
+
+- Browser tools no longer wait forever on a page that stops responding: each
+  call ends with an error after its deadline or when the turn is stopped, and the
+  next navigation or reload restarts the stuck page. `browser_evaluate` stops a
+  script that never returns.
+- Sign-in pages and bot checks that refused the built-in browser as an embedded
+  one now see an ordinary Chromium.
+
 ## [0.25.0] - 2026-10-22
 
 ### Added

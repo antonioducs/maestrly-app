@@ -231,7 +231,8 @@ data under its bot id:
 | Queue and transcript extras | `fleet-instance/bots/<botId>/inputs.json` and `transcript.json` in the profile |
 | Queued attachments and tool images | `fleet-inputs/<botId>/` and `fleet-images/<botId>/` in the profile |
 | Durable memory | The `bot-self:<botId>` memory space in `local_memories` |
-| Chromium profile of its apps screen | `~/.config/maestrly-bots/<botId>/chromium` |
+| Chromium profile of its browser, with its cookies and site logins | `~/.config/maestrly-bots/<botId>/chromium`, with `.maestrly-shared-cookies-imported` once the environment's shared logins were copied into it |
+| Tabs its browser reopens, with the conversation each belongs to | `~/.config/maestrly-bots/<botId>/chromium-tabs.json` |
 | Session bus, desktop socket, wallpaper, and the size and place of its browser window | `~/.cache/maestrly-bots/<botId>/` (`bus`, `desktop.sock`, `wallpaper.*`, `presenter.json`) |
 
 Claude Code, Codex and Google Antigravity ACP releases a bot downloads live in the
@@ -244,13 +245,14 @@ turn still uses, and removes the rest. Google AI credentials and ACP conversatio
 files live separately under `antigravity/accounts/` in the profile. Runtime
 updates preserve those account homes; signing out removes the selected home.
 
-Two browsers keep separate data. The browser that a bot drives with `browser_*`
-runs in the environment's Maestrly process, so all bots of the environment share
-its cookies and site logins. Programs on a bot's apps screen open Chromium
-through the `BROWSER` wrapper with that bot's own profile, which shares nothing
-with the `browser_*` browser or other bots' profiles. That profile uses
-Chromium's basic password store rather than the environment's keyring, so treat
-passwords and cookies saved there as unencrypted. Bots of the same environment
+A bot drives its own Chromium with `browser_*`, with that bot's own profile,
+which shares nothing with other bots' profiles; the links its programs open go
+to the same browser. That profile uses Chromium's basic password store rather
+than the environment's keyring, so treat passwords and cookies saved there as
+unencrypted. The environment's built-in browser, which bots drove before and
+still drive on a server set to `MAESTRLY_GATEWAY_BOT_BROWSER=electron`, runs in
+the environment's Maestrly process and keeps one set of cookies for all its
+bots; each bot's Chromium copies them once, on its first start. Bots of the same environment
 can read all of these files; see the
 [fleet security boundary](bot-fleet.md#security-and-data).
 

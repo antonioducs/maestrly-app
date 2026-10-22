@@ -1,7 +1,11 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { FLEET_ENVIRONMENTS_FEATURE, FLEET_UNIFIED_DESKTOP_FEATURE } from '@maestrly/bot-fleet-protocol'
-import { botComputerMode } from '../../src/renderer/lib/fleet/provisioning'
+import {
+  FLEET_BOT_OWN_BROWSER_FEATURE,
+  FLEET_ENVIRONMENTS_FEATURE,
+  FLEET_UNIFIED_DESKTOP_FEATURE,
+} from '@maestrly/bot-fleet-protocol'
+import { botComputerMode, environmentSiteLogins } from '../../src/renderer/lib/fleet/provisioning'
 import { environmentSubscriptionLogin } from '../../src/renderer/lib/fleet/use-bot-login'
 import { resources } from '../../src/shared/i18n/resources'
 
@@ -103,6 +107,17 @@ describe('fleet renderer wiring', () => {
     expect(botComputerMode(bot, running('provisioning'))).toBe('browser-only')
     expect(botComputerMode({ environmentId: null }, undefined)).toBe('browser-only')
     expect(botComputerMode(bot, undefined)).toBe('browser-only')
+  })
+  it('tells whose site logins an environment’s bots use from what it advertises', () => {
+    expect(
+      environmentSiteLogins({ capabilities: [FLEET_UNIFIED_DESKTOP_FEATURE, FLEET_BOT_OWN_BROWSER_FEATURE] })
+    ).toBe('per-bot')
+    expect(environmentSiteLogins({ capabilities: [FLEET_UNIFIED_DESKTOP_FEATURE] })).toBe('shared')
+    expect(source('components/fleet/EnvironmentSharedSummary.tsx')).toContain(
+      "ownBrowsers ? 'environment.tiles.siteLoginsOwnValue'"
+    )
+    expect(resources.en.fleet.environment.tiles.siteLoginsOwnNote).toBe('Each bot keeps its own')
+    expect(resources['pt-BR'].fleet.environment.tiles.siteLoginsOwnNote).toBe('Cada bot tem os seus')
   })
   it('chooses the screen a computer opens from the capability of its environment', () => {
     const screen = source('components/fleet/BotScreen.tsx')

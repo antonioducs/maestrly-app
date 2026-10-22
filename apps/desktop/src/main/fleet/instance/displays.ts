@@ -393,6 +393,13 @@ export class DisplayManager {
     }
   }
 
+  /** Whether someone watches or controls one of the bot's screens: its apps display or its browser area. */
+  watched(botId: string): boolean {
+    const slot = this.stacks.get(botId)?.display.slot
+    if (slot === null || slot === undefined) return false
+    return [`apps:${slot}`, `browser:${slot}`].some((key) => (this.servers.get(key)?.refs ?? 0) > 0)
+  }
+
   /** The ids of the owner's display programs that are running: the windows they open are its desktop's own. */
   ownProcessIds(key: string): number[] {
     const stack = this.stacks.get(key)
