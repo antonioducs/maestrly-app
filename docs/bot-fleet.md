@@ -324,7 +324,7 @@ The fleet protocol stays at version 1; environments add fields and routes with d
 
 Desktop apps from before environments can list, restore and delete an archived environment containing exactly one bot through their archived-bot controls. This includes bots archived before the gateway upgrade. An archived environment containing several bots requires an environment-aware desktop app, so a bot shortcut cannot restore or delete its neighbours. Current desktop apps request `separateEnvironments=1` on the archived-bot collection and show archived environments separately.
 
-**Start** can also retry a failed bot in an already running shared environment without restarting its neighbours. Other start, stop and restart aliases retain the restrictions above. A stopped or failed environment must be started before the app offers it for a new bot to join.
+**Start** can also retry a failed bot in an already running shared environment without restarting its neighbours. Starting an environment that already runs does the same for each of its bots that is not running, which is how the current app's **Start** on such a bot reaches it; its container and running bots are left alone. Other start, stop and restart aliases retain the restrictions above. A stopped or failed environment must be started before the app offers it for a new bot to join.
 
 The gateway migrates schemas 5 to 20 to schema 21 in place and refuses databases with a newer schema. Schema 8 records when an environment update was scheduled; schema 9 whether a bot may publish artifacts; schema 10 which computers linked which bot for the desktop bridge; schema 11 whether an environment runs bots or hosts workspaces; schema 12 the token a workspaces environment publishes artifacts with; schema 13 each environment's CPU limit, idle stop, color, and (for workspaces) which server folder it mounts, keeping the whole folder for workspaces environments created before; schema 14 the push token and notification choices of each phone; schema 15 whether each device is a phone or a computer, and its platform, as it says when it pairs (unknown for devices paired before); schema 16 which workspaces environments linked which bot for the desktop bridge; schema 17 the moves of bots between environments; schema 18 the conversation of each routine run and each bot's run settings; schema 19 the conversations between bots, the conversation each message between bots belongs to (none for messages from before), and each bot's settings for them; schema 20 the server's dictation key; and schema 21 how each bot splits its work into tasks. Older gateways cannot open a newer schema; back up the gateway volume before upgrading and restore a matching backup to downgrade.
 
@@ -500,7 +500,9 @@ The move runs on the server and continues if you close the dialog or this comput
 close, it is uninstalled from its environment), streams a package of its data from one environment to the other,
 checking its size and SHA-256 on the way, and installs it in the new environment once that environment holds the same
 conversation, memories, and files. Until then any failure puts everything back: the new environment deletes what it
-received, a new environment created for the move is removed, and the bot is installed again where it was. The dialog
+received, a new environment created for the move is removed, and the bot is installed again where it was. Pausing a
+bot reads all its files, and the gateway waits up to 10 minutes for it; if its former environment is still busy and
+does not answer the install, the bot shows as starting and is installed again once that environment answers. The dialog
 then says why it failed, and **Try again** starts over. If the gateway restarts during a move, a move that had not
 reached its new environment fails the same way when the gateway starts again; one that had is completed.
 
@@ -508,7 +510,9 @@ Once the bot runs in its new environment, its former environment deletes its cop
 does not answer, the copy waits and is deleted when the environment next starts; the bot is not held back meanwhile.
 
 Both environments must be running, run the same version of the bot image with move support, and the new one must have
-a free slot. A bot cannot move while you control its screen. The gateway API is `POST /v1/bots/:id/move` with
+a free slot. A bot cannot move while you control its screen, nor when its files, its working folder included, take more
+than 32 GB: that move is refused before the bot is paused. Delete what it no longer needs, such as installed packages it
+can install again, and try again. The gateway API is `POST /v1/bots/:id/move` with
 `environmentId` or `newEnvironment` (feature `bot-move`), and `GET /v1/bots/:id/move` reads the bot's last move; see
 [bot environment data](local-data.md#bot-environment-data) for what an environment keeps of each bot.
 

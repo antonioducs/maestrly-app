@@ -63,6 +63,7 @@ import { deleteLocalMemorySpace, getAppSetting, getLocale, setAppSetting, transa
 import { adoptLegacyBot } from './adoption'
 import {
   BOT_FOLDERS,
+  assertBotFitsMove,
   botMoveDigest,
   botMoveStaging,
   holdsBot,
@@ -396,10 +397,12 @@ export class EnvironmentRuntime {
    * Freezes a bot for its move to another environment (`bot-move`): it is uninstalled, as for archiving, so its turn
    * stops, its windows close, its background work ends and it does not come back when the environment restarts; its
    * data stays as it is, which the digest describes. An install brings it back. A frozen bot freezes again unchanged.
+   * A bot too large to move is refused first, and keeps running.
    */
   async freezeBot(botId: string): Promise<FleetInstanceBotFreeze> {
     if (!isBotId(botId)) throw new InstanceHttpError(404, 'NOT_FOUND', 'Bot does not exist.')
     return this.serialize(async () => {
+      await assertBotFitsMove(botId, this.roots)
       if (this.installed(botId)) await this.remove(botId, false)
       if (!readStoredProfile(botId)) throw new InstanceHttpError(404, 'NOT_FOUND', 'Bot does not exist.')
       return { digest: await botMoveDigest(botId, this.roots) }

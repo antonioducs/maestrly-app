@@ -57,6 +57,47 @@ import { GatewayError } from './errors.js'
 type Routes = typeof FLEET_INSTANCE_ROUTES
 /** How long freezing a bot, or packing it before its first byte streams, may take. */
 const BOT_MOVE_STEP_MS = 10 * 60_000
+/**
+ * Node's `fetch` gives up on an answer whose headers take longer than this, whatever its signal allows: a call that may
+ * wait longer (freezing a bot hashes all its files) goes through `node:http`, which waits as long as the signal does.
+ */
+const FETCH_HEADERS_TIMEOUT_MS = 300_000
+interface TextRequest {
+  url: string
+  method: string
+  headers: Record<string, string>
+  body: string | undefined
+  signal: AbortSignal
+}
+async function fetchText(request: TextRequest): Promise<{ status: number; text: string }> {
+  const response = await fetch(request.url, { ...request, redirect: 'error' })
+  return { status: response.status, text: await response.text() }
+}
+function httpText(request: TextRequest): Promise<{ status: number; text: string }> {
+  return new Promise((resolve, reject) => {
+    const outgoing = http.request(
+      request.url,
+      {
+        method: request.method,
+        signal: request.signal,
+        headers:
+          request.body === undefined
+            ? request.headers
+            : { ...request.headers, 'Content-Length': String(Buffer.byteLength(request.body)) },
+      },
+      (response) => {
+        const chunks: Buffer[] = []
+        response.on('data', (chunk: Buffer) => chunks.push(chunk))
+        response.on('end', () =>
+          resolve({ status: response.statusCode ?? 500, text: Buffer.concat(chunks).toString('utf8') })
+        )
+        response.on('error', reject)
+      }
+    )
+    outgoing.on('error', reject)
+    outgoing.end(request.body)
+  })
+}
 
 /**
  * Streams a frozen bot's package from the environment it leaves to the one it joins, through the gateway and never
@@ -187,28 +228,28 @@ export class InstanceClient {
     const route = FLEET_INSTANCE_ROUTES[key]
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
-    let response: Response, text: string
+    const request = {
+      url: this.origin + buildPath(route.path, params, query),
+      method: route.method,
+      headers: {
+        [FLEET_PROTOCOL_HEADER]: String(FLEET_PROTOCOL_VERSION),
+        Authorization: 'Bearer ' + this.controlToken,
+        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal,
+    }
+    let status: number, text: string
     try {
-      response = await fetch(this.origin + buildPath(route.path, params, query), {
-        method: route.method,
-        redirect: 'error',
-        headers: {
-          [FLEET_PROTOCOL_HEADER]: String(FLEET_PROTOCOL_VERSION),
-          Authorization: 'Bearer ' + this.controlToken,
-          ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-        },
-        body: body === undefined ? undefined : JSON.stringify(body),
-        signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal,
-      })
-      text = await response.text()
+      ;({ status, text } = await (timeoutMs > FETCH_HEADERS_TIMEOUT_MS ? httpText(request) : fetchText(request)))
     } catch {
       throw new InstanceUnreachableError()
     } finally {
       clearTimeout(timer)
     }
-    if (!response.ok) throw instanceError(text)
+    if (status < 200 || status > 299) throw instanceError(text)
     // A route that answers with a body is never taken to have succeeded without one.
-    if (response.status === 204) {
+    if (status === 204) {
       if (route.response) throw invalidResponse()
       return undefined
     }

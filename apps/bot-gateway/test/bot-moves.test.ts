@@ -58,6 +58,8 @@ async function environmentInstance(environmentId: string, options: { capabilitie
   /** What the environment holds of each bot, installed or not. */
   const data = new Map<string, Buffer>()
   const failures: Array<{ method: string; path: string; status: number; code: string }> = []
+  /** Requests it carries out without answering, once each: the gateway stopped waiting for them. */
+  const drops: Array<{ method: string; path: string }> = []
   const capabilities = options.capabilities ?? ['provisioning', 'environments', FLEET_BOT_MOVE_FEATURE]
   const deferred = new Map<string, Promise<void>>()
   /** How it misbehaves on purpose: an export whose bytes differ from its digest, an import that reports another. */
@@ -98,6 +100,11 @@ async function environmentInstance(environmentId: string, options: { capabilitie
     const route = url.pathname + url.search
     const send = (code: number, value?: unknown) => {
       if (res.headersSent) return
+      const drop = drops.findIndex((item) => item.method === req.method && item.path === route)
+      if (drop >= 0) {
+        drops.splice(drop, 1)
+        return req.socket.destroy()
+      }
       if (value === undefined) {
         res.writeHead(code)
         return res.end()
@@ -226,6 +233,7 @@ async function environmentInstance(environmentId: string, options: { capabilitie
     installed,
     data,
     failures,
+    drops,
     quirks,
     capabilities,
     /** Holds back the next answer to a request until `resume` is called. */
@@ -582,6 +590,27 @@ describe('a move that fails', () => {
     expect(f.events.some((event) => event.type === 'environment.removed' && event.environmentId === 'lab')).toBe(true)
     expect(work.requests.some((item) => item.path.endsWith('/freeze'))).toBe(false)
     expect(f.lifecycle.get(ads)).toMatchObject({ environmentId: 'work', lifecycle: 'running', move: null })
+  })
+
+  it('installs the bot back once its environment answers again, without failing it meanwhile', async () => {
+    const f = fixture()
+    const { work, ads, scout } = await twoEnvironments(f)
+    // The environment froze the bot and installed it back, but answered neither in time: it was busy hashing.
+    work.drops.push({ method: 'POST', path: `/v1/bots/${ads}/freeze` }, { method: 'PUT', path: `/v1/bots/${ads}` })
+    f.events.length = 0
+    move(f, ads, { environmentId: 'home' })
+    expect(await settled(f, ads)).toMatchObject({
+      state: 'failed',
+      phase: 'freezing',
+      error: { code: 'INSTANCE_UNAVAILABLE' },
+    })
+    expect(f.lifecycle.get(ads)).toMatchObject({ environmentId: 'work', lifecycle: 'starting', move: null })
+    await running(f, ads)
+    expect(work.installed.get(ads)?.slot).toBe(1)
+    expect(work.installed.has(scout)).toBe(true)
+    expect(
+      f.events.some((event) => event.type === 'bot.updated' && event.bot.id === ads && event.bot.lifecycle === 'failed')
+    ).toBe(false)
   })
 })
 

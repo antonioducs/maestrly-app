@@ -53,6 +53,13 @@ vi.mock('../../src/main/real-fs', async () => {
   const fs = await vi.importActual<typeof import('node:fs')>('node:fs')
   return { realFs: fs, realFileSystem: () => fs }
 })
+// The real limits, which a test lowers to stand for a bot of tens of gigabytes.
+const limits = vi.hoisted(() => ({ packageMaxBytes: 32 * 1024 ** 3, transferTimeoutMs: 2 * 60 * 60_000 }))
+const PACKAGE_MAX_BYTES = limits.packageMaxBytes
+vi.mock('@maestrly/bot-fleet-protocol', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@maestrly/bot-fleet-protocol')>()),
+  FLEET_BOT_MOVE_LIMITS: limits,
+}))
 
 const model = {
   providerId: 'synthetic',
@@ -366,6 +373,35 @@ describe('moving a bot between environments', () => {
       item.kind === 'user' || item.kind === 'assistant' ? [item.text] : []
     )
     expect(texts).toEqual(expect.arrayContaining(['Find the invoice', 'Found it in the portal']))
+  })
+
+  it('refuses to freeze a bot too large to move, which keeps running, and to pack one that grew too large', async () => {
+    const work = await environment('work')
+    const { cwd } = await seededBot(work)
+    const tooLarge = { code: 'CONFLICT', message: 'This bot has too many files to move.' }
+    try {
+      limits.packageMaxBytes = 16
+      const refused = await work.request('POST', '/v1/bots/alpha/freeze')
+      expect(refused.status).toBe(409)
+      expect(await refused.json()).toMatchObject(tooLarge)
+      // Refused before it was frozen: it still runs where it was.
+      expect(work.runtime.bots().map((bot) => bot.botId)).toEqual(['alpha', 'beta'])
+      expect(JSON.parse(getAppSetting('fleet.instance.bots') ?? '[]')).toHaveLength(2)
+      expect(work.deps.closeConversation).not.toHaveBeenCalled()
+
+      limits.packageMaxBytes = PACKAGE_MAX_BYTES
+      expect((await work.request('POST', '/v1/bots/alpha/freeze')).status).toBe(200)
+      // Frozen, its files take more than a package carries: the export refuses it and keeps nothing.
+      await writeFile(path.join(cwd, 'render.bin'), randomBytes(64 * 1024))
+      limits.packageMaxBytes = 32 * 1024
+      const unpacked = await work.request('GET', '/v1/bots/alpha/export')
+      expect(unpacked.status).toBe(409)
+      expect(await unpacked.json()).toMatchObject(tooLarge)
+      expect(await readdir(path.join(work.userData, 'bot-moves'))).toEqual([])
+    } finally {
+      limits.packageMaxBytes = PACKAGE_MAX_BYTES
+    }
+    expect((await work.request('GET', '/v1/bots/alpha/export')).status).toBe(200)
   })
 
   it('refuses an export of an installed bot, and imports over a bot installed or held without replace', async () => {

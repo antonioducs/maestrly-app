@@ -1533,6 +1533,10 @@ export class Lifecycle {
     for (const bot of this.store.botsOfEnvironment(environmentId)) this.activity(bot.id, 'bot_failed')
     this.logger.warn('Environment startup failed', { environmentId, failure: code })
   }
+  /**
+   * Starts a stopped or failed environment. A running one installs again those of its bots that are not running (their
+   * installation failed), as their own start does: devices start a bot that shares its environment through it.
+   */
   async startEnvironment(id: string, via: Via = null): Promise<FleetEnvironment> {
     this.requireEnvironment(id)
     return this.exclusive(id, async () => {
@@ -1548,6 +1552,12 @@ export class Lifecycle {
         } catch (error) {
           this.failEnvironment(id, error)
         }
+      } else {
+        const waiting = this.store
+          .botsOfEnvironment(id)
+          .filter((bot) => bot.lifecycle !== 'running')
+          .map((bot) => bot.id)
+        if (waiting.length) await this.installInRunning(id, waiting)
       }
       return this.environmentView(this.store.getEnvironment(id)!)
     })
@@ -2476,7 +2486,15 @@ export class Lifecycle {
     // A bot that was frozen is installed again where it was, as an archived bot comes back, before the move counts as
     // failed; one whose environment no longer runs comes back when it starts.
     const back = reached.freeze && this.store.getEnvironment(move.fromEnvironmentId)?.lifecycle === 'running'
-    if (back) await this.installOne(this.client(move.fromEnvironmentId), id, move.fromSlot, false)
+    if (back)
+      try {
+        await this.installOne(this.client(move.fromEnvironmentId), id, move.fromSlot, true)
+      } catch {
+        // An environment that did not answer may still be busy with the freeze the move gave up on, which its bot
+        // waits behind: the bot is starting, and the environment's reconcile installs it once it answers.
+        this.updateActive(id, { lifecycle: 'starting', setup: botSetup('profile') })
+        this.scheduleReconcile(move.fromEnvironmentId, 1000)
+      }
     this.store.updateBotMove(moveId, {
       state: 'failed',
       error: {
