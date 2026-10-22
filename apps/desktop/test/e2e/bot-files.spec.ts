@@ -812,6 +812,12 @@ test('a gateway without files support rejects PDF attachments with an update hin
 
 test('the Files drawer shows the space, deletes what the owner picks and marks its cards', async () => {
   await withBot({ manage: true }, async ({ page, manage }) => {
+    // The drawer sits beside the conversation only when that is 720 px wide; on a small display (a Windows runner's)
+    // it is an overlay that closes as soon as it shows a file. Without the sidebar the window's minimum is enough.
+    const sidebar = page.getByTestId('sidebar-toggle')
+    await expect(sidebar).toHaveAttribute('aria-expanded', 'true')
+    await sidebar.click()
+    await expect(sidebar).toHaveAttribute('aria-expanded', 'false')
     const banner = page.getByRole('status').filter({ hasText: 'space for files is full' })
     await expect(banner).toBeVisible()
     await banner.getByRole('button', { name: 'Free space', exact: true }).click()
