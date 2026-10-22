@@ -106,7 +106,8 @@ const page = (body: string) => {
 
 describe.skipIf(!existsSync('/usr/bin/chromium'))('bot chromium smoke', () => {
   it('drives tabs, refs, history, popups, cookies, crash and restore', { timeout: 240_000 }, async () => {
-    onTestFailed(() => console.error(`The bot Chromium's log:\n${logs.join('\n')}`))
+    const trace: string[] = []
+    onTestFailed(() => console.error(`The bot Chromium's log:\n${logs.join('\n')}\nTrace:\n${trace.join('\n')}`))
     const first = await chromium.state('conv-a')
     expect(first.tabs.length).toBe(1)
 
@@ -143,7 +144,22 @@ describe.skipIf(!existsSync('/usr/bin/chromium'))('bot chromium smoke', () => {
     await bc.navigate(tab, page('<p>next</p>'))
     await expect(bc.clickRef(tab, snap2.elements[0].ref)).rejects.toThrow(/before the page changed/)
 
-    // A frozen page is restarted by the next navigation.
+    // A frozen page is restarted by the next navigation. The trace below is printed when this fails.
+    const startedAt = Date.now()
+    const mark = (text: string) => trace.push(`${Date.now() - startedAt} ms ${text}`)
+    tab.debugger.on('message', (_event: unknown, method: string) => {
+      if (/^(Inspector|Target|Page\.(frameNavigated|frameStoppedLoading|loadEventFired))/.test(method))
+        mark(`event ${method}`)
+    })
+    const send = tab.send.bind(tab)
+    tab.send = (method, params, timeoutMs) =>
+      send(method, params, timeoutMs).then(
+        (result) => (mark(`${method} answered`), result),
+        (error: Error) => {
+          mark(`${method} failed: ${error.message}`)
+          throw error
+        }
+      )
     await bc.navigate(tab, page('<script>setTimeout(()=>{while(true){}},300)</script><p>stuck</p>'))
     await new Promise((r) => setTimeout(r, 700))
     await expect(bc.snapshot(tab, { timeoutMs: 1000 })).rejects.toThrow(/frozen/)
