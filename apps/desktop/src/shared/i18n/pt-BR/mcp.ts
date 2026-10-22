@@ -673,10 +673,16 @@ export default {
       serverAbsent:
         'Nenhum servidor de bots está conectado, e os artefatos só são publicados num servidor de bots. Diga ao usuário para conectar um em Configurações → Artefatos; não publique a página de outro jeito a menos que ele peça.',
       serverUnsupported:
-        'O servidor de bots é antigo demais para hospedar artefatos. Diga ao usuário para atualizá-lo em Configurações → Servidor de bots.',
+        'O servidor de bots é antigo demais para hospedar artefatos. Diga ao usuário para atualizá-lo em Configurações → Servidores de bots.',
       serverUnavailable:
-        'O servidor de bots está inacessível. Verifique a conexão em Configurações → Servidor de bots.',
+        'O servidor de bots está inacessível. Verifique a conexão em Configurações → Servidores de bots.',
       serverOff: 'A hospedagem de artefatos está desligada no servidor de bots. Ative em Configurações → Artefatos.',
+      serverUnsupportedNamed:
+        'O servidor de bots {{server}} é antigo demais para hospedar artefatos. Diga ao usuário para atualizá-lo em Configurações → Servidores de bots, ou para publicar em outro servidor em Configurações → Artefatos.',
+      serverUnavailableNamed:
+        'O servidor de bots {{server}} está inacessível. Verifique a conexão em Configurações → Servidores de bots, ou publique em outro servidor em Configurações → Artefatos.',
+      serverOffNamed:
+        'A hospedagem de artefatos está desligada no servidor de bots {{server}}. Ative em Configurações → Artefatos, ou publique em outro servidor por lá.',
       botOff: 'A publicação de artefatos está desligada para este bot. Peça ao dono para ativá-la.',
       noViewer:
         'Não há endereço para abrir o visualizador. Verifique o túnel ou configure o endereço público do servidor em Configurações → Artefatos.',

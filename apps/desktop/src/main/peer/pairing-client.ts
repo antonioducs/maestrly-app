@@ -84,8 +84,9 @@ export async function beginPairing(deps: ClientPairingDeps, address: PeerAddress
   const met = await call(address, 'GET', PEER_PATHS.hello, peerHelloSchema, {})
   const hello = met.value
   if (hello.fingerprint !== met.fingerprint) throw new PeerPairingError('invalid')
+  if (hello.deviceId === deps.identity.deviceId) throw new PeerPairingError('self')
   if (hello.appVersion !== deps.appVersion) throw new PeerPairingError('version')
-  if (!hello.pairing) throw new PeerPairingError('busy')
+  // Asked even when `hello` says it takes no pairing now: its refusal says why (busy, paused, asked too often).
   const started = await call(address, 'POST', PEER_PATHS.pairings, peerPairingStartedSchema, {
     pin: met.certificate,
     body: {
@@ -137,10 +138,7 @@ export async function completePairing(
   }
   const presented = fromB64u(exchanged.value.confirm)
   if (presented.length !== keys.confirmB.length || !timingSafeEqual(presented, keys.confirmB)) {
-    await call(started.address, 'POST', peerPairingPath(started.pairingId, 'abort'), null, {
-      pin,
-      body: { reason: 'mismatch' },
-    }).catch(() => undefined)
+    await abortPairing(started, 'mismatch')
     throw new PeerPairingError('mismatch')
   }
   const confirmed = await call(
@@ -155,6 +153,14 @@ export async function completePairing(
   } catch {
     throw new PeerPairingError('invalid')
   }
+}
+
+/** Tells the other computer this one gave up on a pairing it started (best effort): its dialog closes. */
+export async function abortPairing(started: StartedClientPairing, reason: 'mismatch' | 'cancelled'): Promise<void> {
+  await call(started.address, 'POST', peerPairingPath(started.pairingId, 'abort'), null, {
+    pin: started.hostCertificate,
+    body: { reason },
+  }).catch(() => undefined)
 }
 
 /** Keeps the computer this one just paired with; false when the keyring cannot keep its token. */
@@ -174,6 +180,7 @@ export function savePairedHost(
       port: hostGrant.port ?? started.address.port,
       addresses: [started.address.host, ...hostGrant.addresses],
       issuedToken,
+      hosting: true,
       now,
     }),
     hostGrant.token

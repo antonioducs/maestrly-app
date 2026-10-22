@@ -3,7 +3,7 @@ import type { FleetConnectionView } from '../../../preload/api-fleet'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AlertTriangle, Check, Link, Lock, RotateCw, Server } from 'lucide-react'
-import { type ArtifactServerStatus, MAX_ARTIFACT_NAME_CHARS } from '../../../shared/artifacts'
+import { type ArtifactServerStatus, type ArtifactServerView, MAX_ARTIFACT_NAME_CHARS } from '../../../shared/artifacts'
 import { Button } from '@/components/ui/button'
 import { EXPIRY_CHOICES } from '@/components/artifacts/sharing-view'
 import { formatBytes } from '@/components/chat/runtime-asset-presentation'
@@ -15,7 +15,7 @@ import { useLegacyArtifacts } from '@/components/artifacts/use-artifacts'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { choiceClass } from '@/lib/fleet/choice'
 import { cn } from '@/lib/utils'
-import { defaultFleetServer } from '../../../shared/fleet-servers'
+import { defaultFleetServer, type FleetServerId } from '../../../shared/fleet-servers'
 
 const MAX_QUOTA_GB = 100
 const MAX_ADDRESS_CHARS = 300
@@ -156,7 +156,7 @@ export function ArtifactsSettings({
   onOpenFleet,
   onSetupServer,
 }: {
-  /** Opens Settings → Bot server, to manage or update the server. */
+  /** Opens Settings → Bot servers, to manage or update the server. */
   onOpenFleet: () => void
   /** Opens the bot server setup on the chosen screen, with "Artifacts only" preselected. */
   onSetupServer: (choice: BotServerSetupChoice) => void
@@ -165,6 +165,8 @@ export function ArtifactsSettings({
   const [status, setStatus] = useState<ArtifactServerStatus | null>(null)
   const [host, setHost] = useState<FleetArtifactHost | null>(null)
   const [connection, setConnection] = useState<FleetConnectionView | null>(null)
+  // Every paired server, and the one conversations of this computer publish to: the server these settings are about.
+  const [servers, setServers] = useState<ArtifactServerView[]>([])
   const [loaded, setLoaded] = useState(false)
   const [busy, setBusy] = useState(false)
   const [retrying, setRetrying] = useState(false)
@@ -173,15 +175,22 @@ export function ArtifactsSettings({
   const timers = useRef(new Map<FieldKey, ReturnType<typeof setTimeout>>())
 
   const refresh = useCallback(async () => {
-    const [nextStatus, nextHost, nextConnection] = await Promise.allSettled([
+    const [nextStatus, nextHost, nextServers, nextFleet] = await Promise.allSettled([
       window.api.artifacts.serverStatus(),
       window.api.artifacts.serverHost(),
-      // Artifacts go to the default server: the installed one, else the first paired.
-      window.api.fleetServers().then((servers) => defaultFleetServer(servers)?.connection ?? null),
+      window.api.artifacts.servers(),
+      window.api.fleetServers(),
     ])
     setStatus(nextStatus.status === 'fulfilled' ? nextStatus.value : { state: 'unreachable' })
     setHost(nextHost.status === 'fulfilled' ? nextHost.value : null)
-    if (nextConnection.status === 'fulfilled') setConnection(nextConnection.value)
+    const views = nextServers.status === 'fulfilled' ? nextServers.value : []
+    setServers(views)
+    if (nextFleet.status === 'fulfilled') {
+      // These settings are the publishing server's: the one chosen, else the installed one, else the first paired.
+      const publishing = views.find((view) => view.publishing)?.serverId
+      const server = nextFleet.value.find((item) => item.id === publishing) ?? defaultFleetServer(nextFleet.value)
+      setConnection(server?.connection ?? null)
+    }
     setLoaded(true)
   }, [])
 
@@ -223,6 +232,16 @@ export function ArtifactsSettings({
         message: reason instanceof Error ? reason.message : String(reason),
       })
       if (key) setField(key, { kind: 'error', text })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const choosePublishing = async (serverId: FleetServerId) => {
+    setBusy(true)
+    try {
+      setServers(await window.api.artifacts.setPublishServer(serverId))
+      await refresh()
     } finally {
       setBusy(false)
     }
@@ -285,6 +304,35 @@ export function ArtifactsSettings({
       </div>
 
       <LegacyArtifactsNotice items={legacy.items} server={status} move={legacy.move} onRaiseLimit={raiseLimit} />
+
+      {servers.length > 1 && (
+        <div className="flex items-center justify-between gap-4 max-sm:flex-col max-sm:items-stretch">
+          <div className="flex min-w-0 flex-col gap-0.5">
+            <span className="text-sm font-medium text-foreground">{t('settings.artifacts.publishTo')}</span>
+            <p className="text-[11px] leading-snug text-muted-foreground">{t('settings.artifacts.publishToHint')}</p>
+          </div>
+          <Select
+            value={servers.find((server) => server.publishing)?.serverId ?? ''}
+            disabled={busy}
+            onValueChange={(value) => void choosePublishing(value as FleetServerId)}
+          >
+            <SelectTrigger
+              className="h-8 w-56 shrink-0 text-sm max-sm:w-full"
+              aria-label={t('settings.artifacts.publishTo')}
+              data-testid="artifacts-publish-server"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent align="end">
+              {servers.map((server) => (
+                <SelectItem key={server.serverId} value={server.serverId}>
+                  {server.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
 
       {reason === 'absent' ? (
         <ServerSetup onSetup={onSetupServer} />

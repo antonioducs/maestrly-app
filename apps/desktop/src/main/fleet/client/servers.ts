@@ -38,7 +38,12 @@ export interface FleetServersDeps {
     saveToken(id: FleetServerId, token: string): TokenPersistence
     newId(): FleetServerId
   }
-  pair(input: { url: string; code: string; deviceName: string }): Promise<PairedGateway>
+  pair(input: {
+    url: string
+    code: string
+    deviceName: string
+    accept(gatewayId: string | null): void
+  }): Promise<PairedGateway>
   createClient(deps: FleetClientDeps): FleetClientService
   /** The server this app installed, which artifacts and the Bots tab start on. */
   installedServerId(): FleetServerId | null
@@ -114,22 +119,30 @@ export class FleetServers {
   }
 
   /**
-   * Pairs a server. With `id`, pairs that server again (its token was revoked or lost): it keeps its id when the
-   * address is the same, and an address of another server replaces it, so a host id never names two servers.
+   * Pairs a server. With `id`, pairs that server again (its token was revoked or lost): it keeps its id when it is the
+   * same server, at the same address or announcing the same installation, and another server replaces it, so a host
+   * id never names two servers. A server already paired, by its address or by its installation, is refused; by its
+   * installation, before the code is spent.
    */
   async pair(input: { url: string; code: string; deviceName?: string }, id?: FleetServerId): Promise<FleetServerView> {
     const allowed = isAllowedFleetUrl(input.url)
     if (!allowed.ok) throw new FleetClientError('INVALID_REQUEST', 400, allowed.reason)
     if (id) this.require(id)
     const previous = id ? this.record(id) : null
-    const same = previous?.url === allowed.origin
     const holder = this.findByUrl(allowed.origin)
-    if (holder && !(same && holder === id)) throw new Error(FLEET_SERVER_ALREADY_PAIRED)
+    if (holder && holder !== id) throw new Error(FLEET_SERVER_ALREADY_PAIRED)
     const paired = await this.deps.pair({
       url: allowed.origin,
       code: input.code,
       deviceName: input.deviceName?.trim() || this.deps.hostname(),
+      accept: (gatewayId) => {
+        if (!gatewayId) return
+        const other = this.deps.records.read().find((record) => record.gatewayId === gatewayId && record.id !== id)
+        if (other) throw new Error(FLEET_SERVER_ALREADY_PAIRED)
+      },
     })
+    const same =
+      !!previous && (previous.url === allowed.origin || (!!paired.gatewayId && previous.gatewayId === paired.gatewayId))
     if (id && previous && same) {
       const client = this.require(id)
       client.stop()
@@ -140,6 +153,7 @@ export class FleetServers {
         url: paired.origin,
         deviceId: paired.deviceId,
         deviceName: paired.deviceName,
+        ...(paired.gatewayId ? { gatewayId: paired.gatewayId } : {}),
       })
       client.restart(paired.features)
       this.changed()
@@ -153,6 +167,7 @@ export class FleetServers {
       deviceId: paired.deviceId,
       deviceName: paired.deviceName,
       pairedAt: this.deps.now(),
+      ...(paired.gatewayId ? { gatewayId: paired.gatewayId } : {}),
     })
     const client = this.add(serverId)
     client.restart(paired.features)
@@ -223,6 +238,10 @@ export class FleetServers {
       },
       media: this.deps.media,
       mediaUrls: this.mediaUrls,
+      onGatewayId: (gatewayId) => {
+        const record = this.record(id)
+        if (record && record.gatewayId !== gatewayId) this.deps.records.write({ ...record, gatewayId })
+      },
     })
     for (const setup of this.setups) setup(client)
     client.onChange(() => this.changed())

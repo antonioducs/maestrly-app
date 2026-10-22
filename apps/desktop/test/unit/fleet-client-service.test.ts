@@ -8,6 +8,7 @@ const state = vi.hoisted(() => ({
   secure: new Map<string, string>(),
   secureAvailable: true,
   features: undefined as string[] | undefined,
+  gatewayId: undefined as string | undefined,
   events: [] as {
     onConnected: () => Promise<void>
     onEvent: (event: unknown) => void
@@ -91,6 +92,7 @@ function makeClient(
     credentials?: Partial<Credentials>
     media?: FleetMediaCache
     mediaUrls?: FleetMediaUrls
+    onGatewayId?: (gatewayId: string) => void
   } = {}
 ) {
   const credentials: Credentials = {
@@ -111,6 +113,7 @@ function makeClient(
         onProgress: (progress) => state.progress.push(progress),
       }),
     mediaUrls: options.mediaUrls ?? new FleetMediaUrls(),
+    onGatewayId: options.onGatewayId,
   })
   return Object.assign(service, { credentials })
 }
@@ -142,6 +145,7 @@ beforeEach(() => {
   state.settings.clear()
   state.secure.clear()
   state.features = undefined
+  state.gatewayId = undefined
   state.secureAvailable = true
   state.events.length = 0
   state.broadcasts.length = 0
@@ -157,6 +161,7 @@ beforeEach(() => {
         return response({
           protocol: 1,
           features: state.features,
+          serverId: state.gatewayId,
           gatewayVersion: '1',
           botImage: 'bot',
           botImageVersion: null,
@@ -435,6 +440,16 @@ describe('fleet client service', () => {
     await service.unpair()
     expect(service.getConnection().features).toEqual([])
   })
+  it('passes on the installation id the gateway announces when it connects', async () => {
+    const announced: string[] = []
+    const service = makeClient({ onGatewayId: (gatewayId) => announced.push(gatewayId) })
+    service.start()
+    await state.events.at(-1)!.onConnected()
+    expect(announced).toEqual([])
+    state.gatewayId = '11111111-2222-4333-8444-555555555555'
+    await state.events.at(-1)!.onConnected()
+    expect(announced).toEqual(['11111111-2222-4333-8444-555555555555'])
+  })
   it('pairs as a computer, and refuses unsafe addresses before calling the gateway', async () => {
     await expect(
       pairWithGateway({ url: 'http://example.com', code: 'ABCDEFGH', deviceName: 'Mac' })
@@ -448,6 +463,7 @@ describe('fleet client service', () => {
       deviceName: 'Mac',
       token: 'secret',
       features: ['phones'],
+      gatewayId: null,
     })
     // The computer says what it is, so the server's list of devices can tell it from a phone.
     const pairing = vi.mocked(fetch).mock.calls.find(([url]) => new URL(String(url)).pathname === '/v1/pair')
@@ -459,6 +475,18 @@ describe('fleet client service', () => {
         platform: process.platform === 'darwin' ? 'macos' : process.platform === 'win32' ? 'windows' : 'linux',
       },
     })
+    // An installation it refuses is refused before its code is spent.
+    state.gatewayId = '11111111-2222-4333-8444-555555555555'
+    vi.mocked(fetch).mockClear()
+    const accept = vi.fn(() => {
+      throw new Error('FLEET_SERVER_ALREADY_PAIRED')
+    })
+    await expect(
+      pairWithGateway({ url: 'http://127.0.0.1:7443/', code: 'abcd-efgh', deviceName: 'Mac', accept })
+    ).rejects.toThrow('FLEET_SERVER_ALREADY_PAIRED')
+    expect(accept).toHaveBeenCalledWith('11111111-2222-4333-8444-555555555555')
+    const paths = vi.mocked(fetch).mock.calls.map(([url]) => new URL(String(url)).pathname)
+    expect(paths).toEqual(['/v1/meta'])
   })
   it('connects with its stored credentials, refreshes without fetching past activity, and leaves the server', async () => {
     const service = makeClient()

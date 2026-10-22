@@ -1251,7 +1251,7 @@ async function runFleetScenario(workspaceOnly: boolean) {
     }, inventory)
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 900))
     await page.getByRole('button', { name: 'Configurações', exact: true }).click()
-    await page.getByRole('button', { name: 'Servidor de bots' }).first().click()
+    await page.getByRole('button', { name: 'Servidores de bots' }).first().click()
     // A server this computer did not install is paired through the manual form.
     await page.getByRole('button', { name: 'Já tenho um servidor configurado', exact: true }).click()
     await page.getByLabel('Endereço do servidor').fill(url)
@@ -2986,7 +2986,7 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
     await page.waitForFunction(() => Boolean((window as any).api))
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 900))
     await page.getByRole('button', { name: 'Configurações', exact: true }).click()
-    await page.getByRole('button', { name: 'Servidor de bots' }).first().click()
+    await page.getByRole('button', { name: 'Servidores de bots' }).first().click()
     // A server this computer did not install is paired through the manual form.
     await page.getByRole('button', { name: 'Já tenho um servidor configurado', exact: true }).click()
     await page.getByLabel('Endereço do servidor').fill(url)
@@ -3770,7 +3770,7 @@ test('fleet UI keeps older environment images, stopped environments and refused 
     await page.waitForFunction(() => Boolean((window as any).api))
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 900))
     await page.getByRole('button', { name: 'Configurações', exact: true }).click()
-    await page.getByRole('button', { name: 'Servidor de bots' }).first().click()
+    await page.getByRole('button', { name: 'Servidores de bots' }).first().click()
     // A server this computer did not install is paired through the manual form.
     await page.getByRole('button', { name: 'Já tenho um servidor configurado', exact: true }).click()
     await page.getByLabel('Endereço do servidor').fill(`http://127.0.0.1:${address.port}`)
@@ -4271,7 +4271,7 @@ test('fleet UI gives environments a default compaction model that their bots inh
     await page.waitForFunction(() => Boolean((window as any).api))
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 900))
     await page.getByRole('button', { name: 'Configurações', exact: true }).click()
-    await page.getByRole('button', { name: 'Servidor de bots' }).first().click()
+    await page.getByRole('button', { name: 'Servidores de bots' }).first().click()
     // A server this computer did not install is paired through the manual form.
     await page.getByRole('button', { name: 'Já tenho um servidor configurado', exact: true }).click()
     await page.getByLabel('Endereço do servidor').fill(url)

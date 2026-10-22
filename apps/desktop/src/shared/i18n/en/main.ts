@@ -110,7 +110,7 @@ export default {
     remoteOfflineTitle: 'The server is not connected',
     remoteOfflineSub: 'Open the Code tab again once the server is back.',
     remoteUnauthorizedTitle: 'This computer is not paired with the server',
-    remoteUnauthorizedSub: 'Pair it again in Settings → Bot server, then open the Code tab again.',
+    remoteUnauthorizedSub: 'Pair it again in Settings → Bot servers, then open the Code tab again.',
     remoteGatewayUpdateTitle: 'Update the bot server to open its editor',
     remoteGatewayUpdateSub:
       'The bot server runs a version from before the remote editor. Update it, then open the Code tab again.',
@@ -121,6 +121,12 @@ export default {
       'The server could not download or start the editor. Check its internet connection and open the Code tab again to retry.',
     chatgptRestoringTitle: 'Restoring ChatGPT…',
     chatgptRestoringSub: 'Reloading the last conversation. Your login and session stay intact.',
+  },
+  peer: {
+    pairingNotice: {
+      title: '{{name}} wants to use this computer',
+      body: 'Open Maestrly to see the pairing code.',
+    },
   },
   chatProviderError: {
     http: '{{provider}} returned HTTP {{status}}: {{detail}}',

@@ -147,6 +147,21 @@ describe('fleet server records', () => {
     expect(readFleetServerToken(S).token).toBeNull()
   })
 
+  it('keeps the installation id apart from the records an earlier version reads strictly', () => {
+    const GATEWAY = '11111111-2222-4333-8444-555555555555'
+    writeFleetServerRecord({ ...record(S), gatewayId: GATEWAY })
+    expect(readFleetServerRecords()).toEqual([{ ...record(S), gatewayId: GATEWAY }])
+    // What 0.24 reads: the record as it knew it, without a field its strict schema would refuse.
+    expect(JSON.parse(state.settings.get('fleet.servers') ?? '')).toEqual([record(S)])
+    writeFleetServerRecord(record(S, 'http://127.0.0.1:7471'))
+    expect(readFleetServerRecords()[0].gatewayId).toBeUndefined()
+    writeFleetServerRecord({ ...record(S), gatewayId: GATEWAY })
+    state.settings.set('fleet.gatewayIds', JSON.stringify({ [S]: GATEWAY, 'A/B': GATEWAY, other: 'not-a-uuid' }))
+    expect(readFleetServerRecords()[0].gatewayId).toBe(GATEWAY)
+    deleteFleetServerRecord(S)
+    expect(JSON.parse(state.settings.get('fleet.gatewayIds') ?? '')).toEqual({})
+  })
+
   it('keeps a token in memory without a keyring', () => {
     state.secureAvailable = false
     expect(saveFleetServerToken(S, 'secret')).toBe('memory')

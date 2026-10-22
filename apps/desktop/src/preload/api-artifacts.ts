@@ -1,5 +1,6 @@
 import type { FleetArtifactHost, FleetArtifactSettingsPatch } from '@maestrly/bot-fleet-protocol'
-import type { ArtifactServerStatus } from '../shared/artifacts'
+import type { ArtifactServerStatus, ArtifactServerView } from '../shared/artifacts'
+import type { FleetServerId } from '../shared/fleet-servers'
 import { ipcRenderer } from 'electron'
 import type {
   ArtifactActivity,
@@ -17,10 +18,17 @@ import type {
 
 export const artifactsApi = {
   artifacts: {
-    serverStatus: (): Promise<ArtifactServerStatus> => ipcRenderer.invoke('artifacts:server-status'),
-    serverHost: (): Promise<FleetArtifactHost | null> => ipcRenderer.invoke('artifacts:server-host-get'),
-    setServerHost: (patch: FleetArtifactSettingsPatch): Promise<FleetArtifactHost> =>
-      ipcRenderer.invoke('artifacts:server-host-set', patch),
+    /** A paired server's artifact host; without one, the server conversations of this computer publish to. */
+    serverStatus: (serverId?: FleetServerId): Promise<ArtifactServerStatus> =>
+      ipcRenderer.invoke('artifacts:server-status', serverId),
+    serverHost: (serverId?: FleetServerId): Promise<FleetArtifactHost | null> =>
+      ipcRenderer.invoke('artifacts:server-host-get', serverId),
+    setServerHost: (patch: FleetArtifactSettingsPatch, serverId?: FleetServerId): Promise<FleetArtifactHost> =>
+      ipcRenderer.invoke('artifacts:server-host-set', patch, serverId),
+    /** Every paired server's artifact host, and the one conversations of this computer publish to. */
+    servers: (): Promise<ArtifactServerView[]> => ipcRenderer.invoke('artifacts:servers'),
+    setPublishServer: (serverId: FleetServerId): Promise<ArtifactServerView[]> =>
+      ipcRenderer.invoke('artifacts:publish-server-set', serverId),
     list: (): Promise<ArtifactListItem[]> => ipcRenderer.invoke('artifacts:list'),
     detail: (id: string): Promise<ArtifactDetailView | null> => ipcRenderer.invoke('artifacts:detail', id),
     remove: (id: string): Promise<ArtifactRemoveResult> => ipcRenderer.invoke('artifacts:delete', id),

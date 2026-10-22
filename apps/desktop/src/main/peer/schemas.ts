@@ -50,5 +50,7 @@ export const peerRecordSchema = z.object({
   pairedAt: z.number(),
   lastSeenAt: z.number().nullable(),
   issuedTokenHash: fingerprint,
+  /** Whether it shares itself with this computer: known at pairing, and once this computer reached it. */
+  hosting: z.boolean().optional(),
 })
 export type PeerRecord = z.infer<typeof peerRecordSchema>

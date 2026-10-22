@@ -16,10 +16,19 @@ export function artifactToolFailure(t: McpToolContext['t']) {
     }
     if (error.code === 'host_unavailable') {
       const reason = error.details?.reason
+      // With several servers, the error names the one it is about.
+      const server = typeof error.details?.server === 'string' ? error.details.server : ''
       if (reason === 'server_absent') return err(t('errors.artifacts.serverAbsent'))
-      if (reason === 'server_unsupported') return err(t('errors.artifacts.serverUnsupported'))
-      if (reason === 'server_unreachable') return err(t('errors.artifacts.serverUnavailable'))
-      if (reason === 'server_off') return err(t('errors.artifacts.serverOff'))
+      if (reason === 'server_unsupported')
+        return err(
+          server ? t('errors.artifacts.serverUnsupportedNamed', { server }) : t('errors.artifacts.serverUnsupported')
+        )
+      if (reason === 'server_unreachable')
+        return err(
+          server ? t('errors.artifacts.serverUnavailableNamed', { server }) : t('errors.artifacts.serverUnavailable')
+        )
+      if (reason === 'server_off')
+        return err(server ? t('errors.artifacts.serverOffNamed', { server }) : t('errors.artifacts.serverOff'))
       if (reason === 'bot_off') return err(t('errors.artifacts.botOff'))
       if (reason === 'no_viewer') return err(t('errors.artifacts.noViewer'))
       if (reason === 'on_this_computer') return err(t('errors.artifacts.onThisComputer'))

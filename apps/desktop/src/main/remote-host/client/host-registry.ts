@@ -54,7 +54,7 @@ export interface HostRegistryDeps {
   openSocket: (url: string) => BridgeClientSocket
   direct?: { host: DirectHost; openSocket: (host: DirectHost) => BridgeClientSocket } | null
   /** The owner's other computers this one paired with, reached straight over the network. */
-  peers?: Pick<PeerHosts, 'list' | 'problem' | 'onChange' | 'connect' | 'endpoint'> | null
+  peers?: Pick<PeerHosts, 'list' | 'problem' | 'held' | 'retry' | 'onChange' | 'connect' | 'endpoint'> | null
   onChanged: (hosts: HostView[]) => void
   onEvent: (hostId: HostId, origin: number, channel: string, args: unknown[]) => void
   timings?: Partial<HostConnectionTimings>
@@ -73,6 +73,8 @@ type Remote = {
   /** The device id of a paired computer; null for a server's hosts and the development host. */
   peer: string | null
   tint: string | null
+  /** A paired computer not known to share itself: still dialed, and listed once it answers. */
+  unshared: boolean
 }
 
 /**
@@ -80,7 +82,7 @@ type Remote = {
  * workspaces environments of every paired server, one per scope of the owner's work, each named after its environment.
  * A remote host has a connection while its environment runs; stopped, starting or failed, it stays listed as offline
  * with its environment's state, so the window can offer to start it. A paired computer is dialed until it says it
- * removed this one.
+ * removed or disconnected this one.
  */
 export class HostRegistry {
   private readonly remotes = new Map<HostId, Remote>()
@@ -102,6 +104,7 @@ export class HostRegistry {
         environment: null,
         peer: null,
         tint: null,
+        unshared: false,
       })
       connection.start()
     }
@@ -141,8 +144,11 @@ export class HostRegistry {
       peer: null,
       hostVersion: null,
     }
-    // The owner's own computers come first; the rest keep the order they were added in.
-    const remotes = [...this.remotes].sort(([, a], [, b]) => (a.peer ? 0 : 1) - (b.peer ? 0 : 1))
+    // The owner's own computers come first; the rest keep the order they were added in. A computer that only uses
+    // this one is not a place to go to until it shares itself.
+    const remotes = [...this.remotes]
+      .filter(([, remote]) => !remote.unshared || remote.connection.snapshot().state === 'online')
+      .sort(([, a], [, b]) => (a.peer ? 0 : 1) - (b.peer ? 0 : 1))
     return [local, ...remotes.map(([id, remote]) => this.view(id, remote))]
   }
 
@@ -191,8 +197,12 @@ export class HostRegistry {
     return this.remotes.get(hostId)?.connection ?? null
   }
 
+  /** Dials a host again now; a paired computer that disconnected or removed this one is dialed once more. */
   retry(hostId: HostId): void {
-    this.get(hostId)?.retry()
+    const remote = this.remotes.get(hostId)
+    const peers = this.deps.peers
+    if (remote?.peer && peers?.held(remote.peer)) return peers.retry(remote.peer)
+    remote?.connection.retry()
   }
 
   /** Makes a renderer an origin of a host on its first call, and returns the host's connection. */
@@ -273,6 +283,7 @@ export class HostRegistry {
           environment,
           peer: null,
           tint: null,
+          unshared: false,
         }
         this.remotes.set(id, remote)
       }
@@ -287,7 +298,7 @@ export class HostRegistry {
     this.changed()
   }
 
-  /** Follows the paired computers: each is a host, dialed until it says it removed this one. */
+  /** Follows the paired computers: each is a host, dialed until it says it removed or disconnected this one. */
   private syncPeers(): void {
     const peers = this.deps.peers
     if (!peers) return
@@ -313,12 +324,15 @@ export class HostRegistry {
           environment: null,
           peer: deviceId,
           tint: record.tint,
+          unshared: record.hosting === false,
         }
         this.remotes.set(id, remote)
       }
       remote.label = record.name
       remote.tint = record.tint
-      if (peers.problem(record.deviceId) === 'removed') remote.connection.stop()
+      remote.unshared = record.hosting === false
+      // A computer that removed or disconnected this one waits for the owner to connect it again.
+      if (peers.held(record.deviceId)) remote.connection.stop()
       else remote.connection.start()
     }
     this.changed()

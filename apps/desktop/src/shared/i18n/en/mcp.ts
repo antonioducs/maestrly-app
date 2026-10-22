@@ -672,9 +672,15 @@ export default {
       serverAbsent:
         'No bot server is connected, and artifacts are published only on a bot server. Tell the user to connect one in Settings → Artifacts; do not publish the page some other way unless they ask.',
       serverUnsupported:
-        'The bot server is too old to host artifacts. Tell the user to update it in Settings → Bot server.',
-      serverUnavailable: 'The bot server is unreachable. Check its connection in Settings → Bot server.',
+        'The bot server is too old to host artifacts. Tell the user to update it in Settings → Bot servers.',
+      serverUnavailable: 'The bot server is unreachable. Check its connection in Settings → Bot servers.',
       serverOff: 'Artifact hosting is turned off on the bot server. Enable it in Settings → Artifacts.',
+      serverUnsupportedNamed:
+        'The bot server {{server}} is too old to host artifacts. Tell the user to update it in Settings → Bot servers, or to publish to another server in Settings → Artifacts.',
+      serverUnavailableNamed:
+        'The bot server {{server}} is unreachable. Check its connection in Settings → Bot servers, or publish to another server in Settings → Artifacts.',
+      serverOffNamed:
+        'Artifact hosting is turned off on the bot server {{server}}. Enable it in Settings → Artifacts, or publish to another server there.',
       botOff: 'Publishing artifacts is turned off for this bot. Ask the owner to enable it.',
       noViewer:
         'No viewer address is available. Check the server tunnel or set its public address in Settings → Artifacts.',

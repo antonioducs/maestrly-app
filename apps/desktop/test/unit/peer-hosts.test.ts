@@ -1,3 +1,4 @@
+import { createServer } from 'node:net'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { HostFilesRoutes } from '../../src/main/fleet/instance/host-files-http'
 import type { EditorRoutes } from '../../src/main/fleet/instance/server'
@@ -63,6 +64,7 @@ async function pairedComputers() {
       port: 7690,
       addresses: [],
       issuedToken: tokenFromA,
+      hosting: true,
       now,
     }),
     issueToken()
@@ -76,11 +78,21 @@ async function pairedComputers() {
       port,
       addresses: ['10.255.255.1', '127.0.0.1'],
       issuedToken: issueToken(),
+      hosting: true,
       now: now - 120_000,
     }),
     tokenFromA
   )
-  return { storeA, storeB, port, tokenFromA }
+  return { storeA, storeB, port, tokenFromA, hosting }
+}
+
+/** A port nobody listens on now. */
+async function freePort(): Promise<number> {
+  const server = createServer()
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const { port } = server.address() as { port: number }
+  await new Promise<void>((resolve) => server.close(() => resolve()))
+  return port
 }
 
 function opened(socket: unknown): Promise<'open' | 'closed'> {
@@ -116,6 +128,22 @@ describe('PeerHosts', () => {
     await expect(opened(socket)).resolves.toBe('closed')
     await vi.waitFor(() => expect(peers.problem(A.deviceId)).toBe('removed'))
     expect(changed).toHaveBeenCalled()
+  })
+
+  it('follows a computer to the port it moved to', async () => {
+    const c = await pairedComputers()
+    const peers = new PeerHosts({ store: c.storeB, reach: async () => '127.0.0.1' })
+    const socket = await peers.connect(A.deviceId)
+    closers.push(() => socket.close())
+    await expect(opened(socket)).resolves.toBe('open')
+    const chosen = await freePort()
+    await expect(c.hosting.setPort(chosen)).resolves.toBeNull()
+    await vi.waitFor(() => expect(c.storeB.get(A.deviceId)?.port).toBe(chosen))
+    expect(peers.problem(A.deviceId)).toBeNull()
+    expect(peers.endpoint(A.deviceId)?.origin).toBe(`https://127.0.0.1:${chosen}`)
+    const again = await peers.connect(A.deviceId)
+    closers.push(() => again.close())
+    await expect(opened(again)).resolves.toBe('open')
   })
 
   it('says why a computer is out of reach, and forgets it once it answers', async () => {

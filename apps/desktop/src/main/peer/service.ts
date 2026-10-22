@@ -5,9 +5,11 @@ import type { HostFilesRoutes } from '../fleet/instance/host-files-http'
 import type { EditorRoutes } from '../fleet/instance/server'
 import { holdAwake } from '../power-manager'
 import type { IpcHandlerTable } from '../remote-host/ipc-handler-table'
+import type { PeerPairingPromptView } from '../../shared/peer'
 import type { RemoteHostInfo, RemoteOs } from '../../shared/remote-bridge'
+import { PeerController } from './controller'
 import { PeerHosting } from './hosting'
-import { loadOrCreateIdentity, type PeerIdentity } from './identity'
+import { loadOrCreateIdentity, type PeerIdentity, renameIdentity, storedPeerName } from './identity'
 import { PeerHosts } from './peer-hosts'
 import { appPeerStorage } from './storage'
 import { PeerStore } from './store'
@@ -18,6 +20,12 @@ let store: PeerStore | null = null
 let identity: PeerIdentity | null = null
 let hosting: PeerHosting | null = null
 let hosts: PeerHosts | null = null
+let controller: PeerController | null = null
+const overviewListeners = new Set<() => void>()
+const promptListeners = new Set<(prompt: PeerPairingPromptView) => void>()
+const overviewChanged = (): void => {
+  for (const listener of [...overviewListeners]) listener()
+}
 
 /** The owner's other computers this profile paired with. */
 export function peerStore(): PeerStore {
@@ -31,13 +39,50 @@ export function peerHosts(): PeerHosts {
   return hosts
 }
 
+/** The name this computer has on the first server it paired with, as the owner chose it there, else its host name. */
+const defaultPeerName = (): string => readFleetServerRecords()[0]?.deviceName || os.hostname()
+
 /** This profile's identity among the owner's computers, created on first use; null without a keyring. */
 export function peerIdentity(): PeerIdentity | null {
-  identity ??= loadOrCreateIdentity(appPeerStorage, {
-    // The name this computer has on the first server it paired with, as the owner chose it there.
-    defaultName: () => readFleetServerRecords()[0]?.deviceName || os.hostname(),
-  })
+  identity ??= loadOrCreateIdentity(appPeerStorage, { defaultName: defaultPeerName })
   return identity
+}
+
+/** Settings → Computers and the pairing dialogs of this computer. */
+export function peerController(): PeerController {
+  controller ??= new PeerController({
+    available: () => appPeerStorage.secretsAvailable(),
+    name: () => storedPeerName(appPeerStorage) ?? defaultPeerName(),
+    identity: peerIdentity,
+    rename: (name) => {
+      if (!peerIdentity() || !renameIdentity(appPeerStorage, name)) return false
+      // Loaded again with the new name, which the peer server answers from then on.
+      identity = null
+      return true
+    },
+    store: peerStore(),
+    hosting: () => hosting,
+    appVersion: app.getVersion(),
+    os: localPeerOs(),
+    localAddresses: localPeerAddresses,
+    onChange: overviewChanged,
+    onPrompt: (prompt) => {
+      for (const listener of [...promptListeners]) listener(prompt)
+    },
+  })
+  return controller
+}
+
+/** Calls `listener` whenever what Settings → Computers shows changes; returns its removal. */
+export function onPeerOverviewChanged(listener: () => void): () => void {
+  overviewListeners.add(listener)
+  return () => overviewListeners.delete(listener)
+}
+
+/** Calls `listener` when another computer asks to pair with this one; returns its removal. */
+export function onPeerPairingRequested(listener: (prompt: PeerPairingPromptView) => void): () => void {
+  promptListeners.add(listener)
+  return () => promptListeners.delete(listener)
 }
 
 export const localPeerOs = (): RemoteOs =>
@@ -76,12 +121,20 @@ export function startPeerHosting(deps: {
     editor: deps.editor,
     holdAwake,
     localAddresses: localPeerAddresses,
-    // Until Settings shows them, pairings and connections are only logged; the code itself never is.
-    onPrompt: (prompt) => log('info', `Pairing with ${prompt.name}: ${prompt.outcome}`),
-    onChange: () =>
-      log('info', `Hosting ${started.enabled() ? 'on' : 'off'}, ${started.connected().length} computer(s) connected`),
+    // The code shows in this computer's window only: it is never logged.
+    onPrompt: (prompt) => {
+      log('info', `Pairing with ${prompt.name}: ${prompt.outcome}`)
+      peerController().receivePrompt(prompt)
+    },
+    onChange: () => {
+      log('info', `Hosting ${started.enabled() ? 'on' : 'off'}, ${started.connected().length} computer(s) connected`)
+      overviewChanged()
+    },
+    // An end-to-end test's instances reach each other on loopback only, never on the machine's network.
+    ...(process.env.AGENTS_E2E === '1' ? { bind: { host: '127.0.0.1', port: 0 } } : {}),
   })
   hosting = started
+  overviewChanged()
   return started
 }
 

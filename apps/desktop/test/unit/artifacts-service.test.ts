@@ -8,6 +8,7 @@ import { ArtifactsService } from '../../src/main/artifacts/service'
 import { type ArtifactSource, createDesktopSources, serverUnavailable } from '../../src/main/artifacts/sources'
 import { deleteConversation, getConversation, insertConversation } from '../../src/main/store'
 import type { Conversation, StandaloneConversation } from '../../src/shared/conversation'
+import type { FleetServerId } from '../../src/shared/fleet-servers'
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
 
@@ -106,8 +107,14 @@ beforeEach(async () => {
   })
   service = new ArtifactsService({
     sources: createDesktopSources({
-      server: () => (serverReady ? server : null),
-      unavailable: () => serverUnavailable('server_unreachable'),
+      servers: () => [
+        {
+          serverId: SERVER_ID,
+          source: serverReady ? server : null,
+          unavailable: () => serverUnavailable('server_unreachable'),
+        },
+      ],
+      publishing: () => SERVER_ID,
     }),
     vault,
     getConversation,
@@ -118,6 +125,8 @@ beforeEach(async () => {
     openInDrawer: deps.openInDrawer,
   })
 })
+
+const SERVER_ID = 'aaaaaaaa-0000-4000-8000-000000000001' as FleetServerId
 
 afterEach(async () => {
   await host.close()

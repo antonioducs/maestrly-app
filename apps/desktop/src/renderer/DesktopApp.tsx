@@ -35,7 +35,7 @@ import { useWorkspaces } from '@/lib/use-workspaces'
 import { useMainPanels, type FleetView } from '@/lib/use-main-panels'
 import { useFleets, type FleetServers } from '@/lib/fleet/use-fleet'
 import { FleetServerProvider } from '@/lib/fleet/server-context'
-import { defaultFleetServer, type FleetServerId, NO_FLEET_SERVER } from '../shared/fleet-servers'
+import { defaultFleetServer, type FleetServerId, isFleetServerId, NO_FLEET_SERVER } from '../shared/fleet-servers'
 import { useBotUpdates } from '@/lib/fleet/use-bot-updates'
 import { PersistentBotViews } from '@/components/fleet/PersistentBotViews'
 import { EnvironmentView } from '@/components/fleet/EnvironmentView'
@@ -71,20 +71,33 @@ import {
   shellConversation,
 } from '@/lib/hosts/shell-keys'
 import { HostUnavailableOverlay } from '@/components/HostUnavailableOverlay'
+import { PeerPairingPrompt } from '@/components/peer/PeerPairingPrompt'
+import { hostSectionStatus } from '@/lib/hosts/host-status'
 import { type HostId, hostKey, LOCAL_HOST_ID } from '../shared/host-key'
 import type { HostView } from '../shared/hosts'
 
+/** The server the Bots tab shows, as this computer last chose it. */
+const BOTS_SERVER_KEY = 'fleet.server'
+
 export function DesktopApp() {
   const fleets = useFleets()
-  // The Bots tab shows one server: the one chosen while it is paired, else the default one.
-  const [chosenServer, setChosenServer] = useState<FleetServerId | null>(null)
+  // The Bots tab shows one server: the one chosen while it is paired, else the default one. The choice outlives the
+  // window, as this computer's own setting.
+  const [chosenServer, setChosenServer] = useState<FleetServerId | null>(() => {
+    const stored = localStorage.getItem(BOTS_SERVER_KEY)
+    return isFleetServerId(stored) ? stored : null
+  })
+  const chooseServer = useCallback((serverId: FleetServerId) => {
+    localStorage.setItem(BOTS_SERVER_KEY, serverId)
+    setChosenServer(serverId)
+  }, [])
   const botsServer =
     chosenServer && fleets.servers.some((server) => server.id === chosenServer)
       ? chosenServer
       : (defaultFleetServer(fleets.servers)?.id ?? NO_FLEET_SERVER)
   return (
     <FleetServerProvider serverId={botsServer}>
-      <DesktopShell fleets={fleets} botsServer={botsServer} onBotsServer={setChosenServer} />
+      <DesktopShell fleets={fleets} botsServer={botsServer} onBotsServer={chooseServer} />
     </FleetServerProvider>
   )
 }
@@ -332,7 +345,13 @@ function DesktopShell({
   })
   const fleet = fleets.controller(botsServer)
   const botUpdates = useBotUpdates(fleet)
+  // The Bots tab's badge counts what waits for the owner on every server; the switcher, on each.
+  const pendingByServer = Object.fromEntries(
+    fleets.servers.map((server) => [server.id, fleets.controller(server.id).state.snapshot.inbox.length])
+  )
   const [fleetTabRequest, setFleetTabRequest] = useState(0)
+  // A machine Settings asks the sidebar to show, such as a computer just paired.
+  const [hostRequest, setHostRequest] = useState<{ hostId: HostId; requestId: number } | null>(null)
   const openFleetView = useCallback(
     (view: FleetView) => {
       nav.openFleetView(view)
@@ -796,14 +815,33 @@ function DesktopShell({
     [fleets]
   )
   const openServerPage = useCallback(() => openFleetView({ kind: 'server' }), [openFleetView])
+  // Another server's bots and environments have their own ids: a bot or environment open from the last one closes, and
+  // the new server's page shows instead.
+  const selectBotsServer = useCallback(
+    (serverId: FleetServerId) => {
+      if (serverId === botsServer) return
+      onBotsServer(serverId)
+      if (fleetView?.kind === 'bot' || fleetView?.kind === 'environment') openFleetView({ kind: 'server' })
+    },
+    [botsServer, fleetView?.kind, onBotsServer, openFleetView]
+  )
   // A host's environment page has its lifecycle, settings and isolation; a host reached without a server has none.
+  // A paired computer is managed in Settings → Computers, and updated in Settings → Updates.
   const manageHost = useCallback(
     (host: HostView) => {
+      if (host.peer) return openSettings(hostSectionStatus(host) === 'incompatible' ? 'updates' : 'computers')
       if (host.serverId) onBotsServer(host.serverId)
       if (host.environment) openFleetView({ kind: 'environment', environmentId: host.environment.id, tab: 'overview' })
       else openServerPage()
     },
-    [onBotsServer, openFleetView, openServerPage]
+    [onBotsServer, openFleetView, openServerPage, openSettings]
+  )
+  const openHost = useCallback(
+    (hostId: HostId) => {
+      setSettingsOpen(false)
+      setHostRequest((current) => ({ hostId, requestId: (current?.requestId ?? 0) + 1 }))
+    },
+    [setSettingsOpen]
   )
   const hostSections: SidebarHostSection[] = remoteHosts.map((host) => ({
     host,
@@ -814,6 +852,12 @@ function DesktopShell({
     onRetry: () => retryHost(host.id),
     onStart: () => startHost(host),
     onManage: () => manageHost(host),
+    ...(host.peer
+      ? {
+          onPair: () => openSettings('computers', { connectComputer: host.peer?.deviceId ?? true }),
+          onForget: () => void window.api.peerRemove(host.peer?.deviceId ?? ''),
+        }
+      : {}),
   }))
   /** Runs an action of the sidebar on the host its conversation or workspace belongs to. */
   const onHost = (key: string, local: () => unknown, act: (actions: RemoteHostShell['actions']) => unknown): void => {
@@ -883,7 +927,14 @@ function DesktopShell({
               onOpenFleetInbox={() => openFleetView({ kind: 'inbox' })}
               onOpenFleetOwnerMemory={() => openFleetView({ kind: 'memory' })}
               botServerConnected={fleet.state.connection.state === 'connected'}
-              botPendingCount={fleet.state.snapshot.inbox.length}
+              botPendingCount={Object.values(pendingByServer).reduce((sum, count) => sum + count, 0)}
+              fleetServers={{
+                servers: fleets.servers,
+                selectedId: botsServer,
+                pending: pendingByServer,
+                onSelect: selectBotsServer,
+                onAdd: () => openSettings('fleet', { fleetServer: 'add' }),
+              }}
               botUpdate={botUpdates.summary.pending ? 'pending' : botUpdates.summary.available ? 'available' : null}
               onCreateBot={() => {
                 openCreateBot(null)
@@ -899,6 +950,9 @@ function DesktopShell({
               hostSections={hostSections}
               localHost={hosts[0]}
               appVersion={appVersion}
+              requestedHost={hostRequest}
+              onConnectComputer={() => openSettings('computers', { connectComputer: true })}
+              onOpenComputers={() => openSettings('computers')}
               onRemoveWorkspace={(id) =>
                 onHost(
                   id,
@@ -1048,9 +1102,11 @@ function DesktopShell({
               )}
               {settingsOpen && (
                 <SettingsView
-                  fleet={fleet}
+                  fleets={fleets}
+                  botsServer={botsServer}
                   initialSection={settingsSection}
                   request={settingsRequest}
+                  onOpenHost={openHost}
                   onClose={() => setSettingsOpen(false)}
                 />
               )}
@@ -1383,6 +1439,8 @@ function DesktopShell({
             </HostProvider>
 
             <AboutModal open={aboutOpen} onClose={() => setAboutOpen(false)} />
+            {/* Another of the owner's computers asking to use this one shows its code here, whatever is open. */}
+            <PeerPairingPrompt />
 
             <MigrationRecoveryGate
               checking={migration.recoveriesChecking}

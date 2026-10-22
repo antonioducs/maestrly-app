@@ -7,6 +7,7 @@ import {
   type FleetArtifactSettingsPatch,
 } from '@maestrly/bot-fleet-protocol'
 import type { ArtifactServerStatus } from '../../shared/artifacts'
+import type { FleetServerId } from '../../shared/fleet-servers'
 import type { FleetClientService } from '../fleet/client/service'
 import { createFleetAdmin, serverUnavailable, type ArtifactSource } from './sources'
 
@@ -32,6 +33,8 @@ export class ServerArtifacts {
   private revision = 0
   constructor(
     private readonly deps: {
+      /** This computer's id for the server, which names its sources. */
+      serverId?: FleetServerId
       /** The server artifacts go to now; null while none is paired. */
       fleet: () => Pick<FleetClientService, 'call' | 'hasFeature' | 'getConnection'> | null
       viewerPort: () => number | null
@@ -148,6 +151,7 @@ export class ServerArtifacts {
     }
     return {
       key: 'server',
+      ...(this.deps.serverId ? { server: this.deps.serverId } : {}),
       owner,
       admin: async () => {
         validate()

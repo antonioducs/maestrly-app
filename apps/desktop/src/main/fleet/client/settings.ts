@@ -11,6 +11,12 @@ const TOKEN_KEY = 'fleet.deviceToken'
 export type TokenPersistence = 'secure' | 'memory'
 
 const SERVERS_KEY = 'fleet.servers'
+/**
+ * Each server's installation id (`/v1/meta`'s `serverId`), by this computer's id for it. Kept apart from the records,
+ * which earlier versions read strictly: an unknown field there would drop the record on a downgrade.
+ */
+const GATEWAY_IDS_KEY = 'fleet.gatewayIds'
+const gatewayIdSchema = z.string().uuid()
 const LEGACY_KEYS = [
   'fleet.url',
   'fleet.deviceId',
@@ -38,6 +44,30 @@ export type FleetServerRecord = {
   deviceId: string
   deviceName: string
   pairedAt: string
+  /** The installation id the server announced, by which this computer refuses pairing it twice; absent from older. */
+  gatewayId?: string
+}
+
+function readGatewayIds(): Record<string, string> {
+  try {
+    const raw: unknown = JSON.parse(getAppSetting(GATEWAY_IDS_KEY) || '{}')
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+    return Object.fromEntries(
+      Object.entries(raw).filter(
+        (entry): entry is [string, string] => isFleetServerId(entry[0]) && gatewayIdSchema.safeParse(entry[1]).success
+      )
+    )
+  } catch {
+    return {}
+  }
+}
+
+function writeGatewayId(id: FleetServerId, gatewayId: string | undefined): void {
+  const ids = readGatewayIds()
+  if (ids[id] === gatewayId) return
+  if (gatewayId) ids[id] = gatewayId
+  else delete ids[id]
+  setAppSetting(GATEWAY_IDS_KEY, JSON.stringify(ids))
 }
 
 export const newFleetServerId = (): FleetServerId => randomUUID() as FleetServerId
@@ -70,29 +100,42 @@ export function readFleetServerRecords(): FleetServerRecord[] {
     return []
   }
   if (!Array.isArray(raw)) return []
+  const gatewayIds = readGatewayIds()
   const records: FleetServerRecord[] = []
   for (const entry of raw) {
     const parsed = recordSchema.safeParse(entry)
-    if (parsed.success && !records.some((record) => record.id === parsed.data.id))
-      records.push(parsed.data as FleetServerRecord)
+    if (!parsed.success || records.some((record) => record.id === parsed.data.id)) continue
+    const record = parsed.data as FleetServerRecord
+    const gatewayId = gatewayIds[record.id]
+    records.push(gatewayId ? { ...record, gatewayId } : record)
   }
   return records
 }
 
 /** Replaces the record of the same server in place, or adds it last. */
 export function writeFleetServerRecord(record: FleetServerRecord): void {
-  const records = readFleetServerRecords()
+  const { gatewayId, ...stored } = record
+  const records = readFleetServerRecords().map(({ gatewayId: _, ...item }) => item)
   const at = records.findIndex((item) => item.id === record.id)
-  if (at < 0) records.push(record)
-  else records[at] = record
+  if (at < 0) records.push(stored)
+  else records[at] = stored
   setAppSetting(SERVERS_KEY, JSON.stringify(records))
+  writeGatewayId(record.id, gatewayId)
 }
 
 /** Forgets a server: its record and its token. */
 export function deleteFleetServerRecord(id: FleetServerId): void {
   if (!secureRemove(tokenKey(id))) throw new Error('Failed to clear fleet token')
   memoryTokens.delete(id)
-  setAppSetting(SERVERS_KEY, JSON.stringify(readFleetServerRecords().filter((record) => record.id !== id)))
+  setAppSetting(
+    SERVERS_KEY,
+    JSON.stringify(
+      readFleetServerRecords()
+        .filter((record) => record.id !== id)
+        .map(({ gatewayId: _, ...record }) => record)
+    )
+  )
+  writeGatewayId(id, undefined)
 }
 
 export function readFleetServerToken(id: FleetServerId): { token: string | null; persistence: TokenPersistence } {

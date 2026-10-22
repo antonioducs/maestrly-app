@@ -2,7 +2,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { HostView } from '../../src/shared/hosts'
-import { hostSectionStatus } from '../../src/renderer/lib/hosts/host-status'
+import { hostRetryable, hostSectionStatus } from '../../src/renderer/lib/hosts/host-status'
 import type { FleetServerId } from '../../src/shared/fleet-servers'
 
 const host = (patch: Partial<HostView>): HostView => ({
@@ -46,6 +46,29 @@ describe('host section status', () => {
     expect(offline('failed')).toBe('failed')
     expect(offline('running')).toBe('offline')
     expect(offline(null)).toBe('offline')
+  })
+
+  it('says what a paired computer answered until it answers again, over how it is reached', () => {
+    const peer = (state: HostView['state'], problem: NonNullable<HostView['peer']>['problem']) =>
+      hostSectionStatus(host({ state, environment: null, peer: { deviceId: 'd', problem } }))
+    for (const problem of ['not-hosting', 'removed', 'disconnected', 'identity-changed'] as const) {
+      expect(peer('offline', problem)).toBe(problem)
+      expect(peer('reconnecting', problem)).toBe(problem)
+    }
+    expect(peer('online', 'removed')).toBe('online')
+    expect(peer('incompatible', null)).toBe('incompatible')
+    expect(peer('offline', null)).toBe('offline')
+    expect(peer('connecting', null)).toBe('connecting')
+  })
+
+  it('offers to dial again only where it may help', () => {
+    expect(hostRetryable('offline')).toBe(true)
+    expect(hostRetryable('not-hosting')).toBe(true)
+    expect(hostRetryable('disconnected')).toBe(true)
+    // A computer that removed this one, or answers with another identity, needs a new pairing.
+    expect(hostRetryable('removed')).toBe(false)
+    expect(hostRetryable('identity-changed')).toBe(false)
+    expect(hostRetryable('stopped')).toBe(false)
   })
 })
 

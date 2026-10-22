@@ -100,7 +100,7 @@ exchanging images and text messages.
 
 ## Set up the bot server
 
-Open **Settings → Bot server** and choose where bots will run. The desktop app sets up the gateway, connects this computer, and keeps the server on the app's version. Each environment has a **4 GiB memory limit by default** and 1 GiB of shared memory; budget more for open browsers and other programs. The included desktop uses CPU rendering; no GPU is required. Downloading the bot runtime requires substantial disk space, and each environment needs its own persistent home volume. An artifact-only setup downloads just the gateway image.
+Open **Settings → Bot servers** and choose where bots will run. The desktop app sets up the gateway, connects this computer, and keeps the server on the app's version. Each environment has a **4 GiB memory limit by default** and 1 GiB of shared memory; budget more for open browsers and other programs. The included desktop uses CPU rendering; no GPU is required. Downloading the bot runtime requires substantial disk space, and each environment needs its own persistent home volume. An artifact-only setup downloads just the gateway image.
 
 ### On this computer
 
@@ -123,6 +123,33 @@ Choose **A server (VPS)**. Get a Linux VPS from a provider that gives you SSH ac
 Choose **Install on the server**. Maestrly checks the server, installs Docker Engine and Compose from Docker's installer when needed, writes Compose files under `/opt/maestrly-bots/`, pulls the required images of the app's version from GHCR, starts the gateway, and pairs this computer. It generates a separate ed25519 administrator key, authorizes it on the server, and stores the private key with the OS keyring when available. The app pins the server's SSH host key fingerprint on first use. If secure storage is unavailable, the key lasts only until the app closes; after restarting, the panel asks you to sign in again: use **Set up again** with the server's password or key. The setup progress shows the host key fingerprint and can be cancelled or retried like an install on this computer.
 
 The gateway stays on the server's loopback port `7443`. The desktop app reaches it through an SSH tunnel from `127.0.0.1` on this computer and shows **Reconnecting to the server…** when SSH drops. Installer setups need no Tailscale or HTTPS certificate. On a second computer, installing against an existing `/opt/maestrly-bots/` starts the gateway if needed and only pairs that computer; it does not replace the server's images or network setting.
+
+### Several servers
+
+This computer can be paired with several bot servers at once: the one Maestrly installed, on this computer or on a
+VPS, and any number of servers that already run elsewhere, such as another computer or another VPS. Maestrly installs
+one server; the others are paired with their address and a pairing code. All of them stay connected at the same time.
+
+- **Add a server** in **Settings → Bot servers → Add server**. While Maestrly has installed no server, it offers the
+  same choice as the first setup; otherwise it pairs a running server. **Settings → Bot servers** shows one server at a
+  time, chosen at its top, with its devices, **Pair a phone**, and **Disconnect**. The installer's controls (update,
+  network access, **Set up again**, and **Remove bot server**) show on the installed server only. Disconnecting one
+  server leaves the others connected.
+- **One server is paired once.** A current gateway announces an installation id that stays the same whatever address
+  reaches it, so pairing a server already paired at another address, such as its Tailscale name and its IP address, is
+  refused before its pairing code is used. Pairing a server again at a new address after it refused this computer keeps
+  it as the same server. A gateway from before this id cannot be told apart this way.
+- **The Bots tab shows one server at a time**, chosen in the switcher at its top, which appears with two or more
+  servers. Each server shows its address, its connection, and how many inbox items wait for you there; the tab's badge
+  counts them on every server. This computer remembers the choice. Switching closes a bot or environment open from the
+  previous server; a bot open in its own window stays open.
+- **The machine switcher** of the **Chats** and **Workspaces** tabs lists the workspaces environments of every server,
+  each under its server's name, and shows the chosen environment's server beside its name.
+- **Phone dictation**: the dictation settings show the key each server keeps for its phones, one row per server.
+- **Artifacts**: each server hosts its own. See [Several servers](artifacts.md#several-servers).
+
+Bots, environments, owner memory, and devices belong to their server; they do not move between servers. The mobile app
+pairs with each server itself.
 
 ### Artifact hosting
 
@@ -175,7 +202,7 @@ removes the artifacts; desktop export and reset do not back up or erase them.
 
 ### Update, disconnect, and remove
 
-When bots can be updated, the **Bots** tab shows an arrow icon, and the bots sidebar and the **Server** page show **Update available** with an **Update bots** button (**Settings → Bot server** offers the same button). One click does everything:
+When bots can be updated, the **Bots** tab shows an arrow icon, and the bots sidebar and the **Server** page show **Update available** with an **Update bots** button (**Settings → Bot servers** offers the same button). One click does everything:
 
 1. When Maestrly installed the server and it is older than the desktop app, it updates the server. A packaged app pulls the required images of its version from GHCR and recreates the gateway; an unpackaged app uses local images.
 2. It then schedules every running environment whose container runs an older image than the server offers. Each environment restarts on the new image as soon as none of its bots is working, waiting for your answer, or under your control. Its home volume keeps accounts, site logins, files, and every bot's conversation.
@@ -250,7 +277,7 @@ Installer setups start with the private-network switch off: **Let bots reach thi
    docker compose --env-file deploy/bot-fleet/.env -f deploy/bot-fleet/compose.yml exec maestrly-bot-gateway maestrly-bot-gateway pair
    ```
 
-5. In the desktop app, open **Settings → Bot server** and choose **I already have a server**. Enter the tailnet HTTPS **Server address**, **Pairing code**, and a **Device name**, then **Connect**. Once paired, a computer can also create codes for other devices: **Settings → Bot server → Pair a phone** shows one as a QR code for the mobile app. A paired device can control every environment and bot on this gateway. **Settings → Bot server → Paired devices** lists every phone and computer paired with the server, and removes one you lost. Use `devices list` and `devices revoke <id>` with the same `docker compose ... exec maestrly-bot-gateway maestrly-bot-gateway` prefix to do the same on the server.
+5. In the desktop app, open **Settings → Bot servers** and choose **I already have a server**. Enter the tailnet HTTPS **Server address**, **Pairing code**, and a **Device name**, then **Connect**. Once paired, a computer can also create codes for other devices: **Settings → Bot servers → Pair a phone** shows one as a QR code for the mobile app. A paired device can control every environment and bot on this gateway. **Settings → Bot servers → Paired devices** lists every phone and computer paired with the server, and removes one you lost. Use `devices list` and `devices revoke <id>` with the same `docker compose ... exec maestrly-bot-gateway maestrly-bot-gateway` prefix to do the same on the server.
 
 ### Updates, backups, and removal
 
@@ -511,7 +538,7 @@ npm run bot-fleet:dev -- pair
 npm run bot-fleet:dev -- seed
 ```
 
-`up` prints the local URL. Enter that URL and the fresh one-use code from `pair` in **Settings → Bot server**. `seed` creates Dev, Scout, and Ads, each in a new environment named after it, starts a fake model sidecar, and gives Scout a sample tool transcript and pending help request. It uses only synthetic credentials and data. The helper keeps its private connection state in the Git-ignored `.bot-fleet-local/dev-fleet.json` file.
+`up` prints the local URL. Enter that URL and the fresh one-use code from `pair` in **Settings → Bot servers**. `seed` creates Dev, Scout, and Ads, each in a new environment named after it, starts a fake model sidecar, and gives Scout a sample tool transcript and pending help request. It uses only synthetic credentials and data. The helper keeps its private connection state in the Git-ignored `.bot-fleet-local/dev-fleet.json` file.
 
 When finished, run `npm run bot-fleet:dev -- down`. It stops the dev gateway, reads a copy of its database, and removes this fleet's environment containers and home volumes, including archived environments and the legacy `maestrly-bot-<id>` names. It removes the fake model, gateway data, network and helper state last. Resources whose ownership is ambiguous stay in place. If records cannot be read or resources remain, it reports them and exits with an error, keeping the gateway data and helper state for another attempt; the gateway stays stopped.
 
@@ -1083,7 +1110,7 @@ approved, denied, or expired.
 
 ## Security and data
 
-Pairing codes are one-use and expire after ten minutes. Any paired device can create pairing codes for other devices (at most five unused at once); a new device gets the same authority as every other paired device. The gateway stores **hashes** of paired-device tokens and pairing codes, while the desktop app stores its device token in secure storage when available (otherwise only until the app closes). A paired device has authority over **all** environments and bots, including their screens, settings, and messages. Remove a lost device in **Settings → Bot server → Paired devices**, from the mobile app's **Paired devices**, or with `devices revoke`; it can no longer reach the gateway. A gateway from before the `devices` feature lists and revokes devices only with the command. For a manually managed server, tailnet-only HTTPS limits who can reach the public listener; it does not narrow a paired device's authority.
+Pairing codes are one-use and expire after ten minutes. Any paired device can create pairing codes for other devices (at most five unused at once); a new device gets the same authority as every other paired device. The gateway stores **hashes** of paired-device tokens and pairing codes, while the desktop app stores its device token in secure storage when available (otherwise only until the app closes). A paired device has authority over **all** environments and bots, including their screens, settings, and messages. Remove a lost device in **Settings → Bot servers → Paired devices**, from the mobile app's **Paired devices**, or with `devices revoke`; it can no longer reach the gateway. A gateway from before the `devices` feature lists and revokes devices only with the command. For a manually managed server, tailnet-only HTTPS limits who can reach the public listener; it does not narrow a paired device's authority.
 
 The gateway's private `/data/gateway.sqlite` database (Compose `gateway-data`) has mode 0600 in a 0700 directory. It stores environment and bot profiles, routines and prompts, routine runs, owner memory, activity, peer messages, device token hashes, and **plaintext** secrets needed to restart containers: a control token and keyring password per environment and a gateway token per bot. Host root can read them. API keys pass through the gateway when added but are **not stored** there; the environment stores them in its own encrypted credential store inside its home volume. The one exception is the server's **dictation key** (OpenAI or Groq), which phones dictate through: the gateway keeps it in plaintext in this database and calls the provider with it; no route returns it, only its last four characters. Each environment's keyring password is also present in Docker container metadata, so host root can decrypt those credentials. Secrets flow only from your computer through the gateway to the environment and are never returned. Logs redact fields named for tokens, keys, passwords, prompts, messages, and similar secrets; protect log access and avoid putting secrets in bot or environment names or error text.
 
@@ -1112,7 +1139,7 @@ compatible. See [memory storage](local-data.md#memory-storage),
 
 | Symptom | Check |
 | --- | --- |
-| Docker is not running | Start Docker and wait until it is ready, then use **Check again** in **Settings → Bot server**. |
+| Docker is not running | Start Docker and wait until it is ready, then use **Check again** in **Settings → Bot servers**. |
 | Docker permission denied (Linux) | Add your user to the `docker` group, sign in again, then use **Check again**. |
 | Compose plugin missing | Install the Docker Compose plugin, then use **Check again**. |
 | Bot server images unavailable or download failed | Check the internet connection and free disk space. For a packaged app, check that both GHCR images for the app's version are public; for an unpackaged app on this computer, build them with `node scripts/bot-fleet-images.mjs`. Then **Try again**. |

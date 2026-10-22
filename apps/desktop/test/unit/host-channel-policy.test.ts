@@ -13,6 +13,7 @@ import { fleetApi } from '../../src/preload/api-fleet'
 import { fleetEnvironmentSettings } from '../../src/preload/api-fleet-environment-settings'
 import { fleetInstallerApi } from '../../src/preload/api-fleet-installer'
 import { hostsApi } from '../../src/preload/api-hosts'
+import { peerApi } from '../../src/preload/api-peer'
 import { performanceApi } from '../../src/preload/api-performance'
 import { transfersApi } from '../../src/preload/api-transfers'
 import { conversationMoveApi } from '../../src/preload/api-conversation-move'
@@ -94,6 +95,7 @@ describe('host channel policy', () => {
       ...fleetEnvironmentSettings,
       ...fleetInstallerApi,
       ...hostsApi,
+      ...peerApi,
       ...artifactsApi,
       ...transfersApi,
       ...conversationMoveApi,

@@ -1,8 +1,10 @@
+import { generateKeyPairSync, X509Certificate } from 'node:crypto'
 import { once } from 'node:events'
 import https from 'node:https'
 import type { AddressInfo } from 'node:net'
+import forge from 'node-forge'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { pinnedFetch, peerRequest, urlHost } from '../../src/main/peer/http'
+import { isIdentityChange, pinnedFetch, peerRequest, urlHost } from '../../src/main/peer/http'
 import { certificateFingerprint } from '../../src/main/peer/identity'
 import { testIdentity } from './peer-helpers'
 
@@ -52,6 +54,37 @@ describe('peerRequest', () => {
     expect(response.body).toEqual({ ok: true })
     expect(response.fingerprint).toBe(identityA.fingerprint)
     expect(certificateFingerprint(response.certificate)).toBe(identityA.fingerprint)
+  })
+
+  it('refuses another certificate that the pinned one signed: the fingerprint is the pin', async () => {
+    // A certificate that anchors itself may sign others; one signed by A's key for another key is not A.
+    const { publicKey, privateKey } = generateKeyPairSync('rsa', {
+      modulusLength: 2048,
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+      privateKeyEncoding: { type: 'pkcs1', format: 'pem' },
+    })
+    const issued = forge.pki.createCertificate()
+    issued.publicKey = forge.pki.publicKeyFromPem(publicKey)
+    issued.serialNumber = '02'
+    issued.validity.notBefore = new Date(Date.now() - 86_400_000)
+    issued.validity.notAfter = new Date(Date.now() + 86_400_000)
+    issued.setSubject([{ name: 'commonName', value: 'impostor' }])
+    issued.setIssuer(forge.pki.certificateFromPem(identityA.certPem).subject.attributes)
+    issued.setExtensions([{ name: 'extKeyUsage', serverAuth: true }])
+    issued.sign(forge.pki.privateKeyFromPem(identityA.keyPem), forge.md.sha256.create())
+    const certPem = forge.pki.certificateToPem(issued)
+    expect(new X509Certificate(certPem).checkIssued(new X509Certificate(identityA.certPem))).toBe(true)
+    const impostor = https.createServer({ key: privateKey, cert: certPem }, (_request, response) => response.end('{}'))
+    impostor.listen(0, '127.0.0.1')
+    await once(impostor, 'listening')
+    try {
+      const at = { host: '127.0.0.1', port: (impostor.address() as AddressInfo).port }
+      const refused = await peerRequest(at, 'GET', '/json', { pin: identityA.certPem }).catch((error) => error)
+      expect(isIdentityChange(refused)).toBe(true)
+    } finally {
+      impostor.closeAllConnections()
+      await new Promise((resolve) => impostor.close(resolve))
+    }
   })
 
   it('reaches a paired computer only with the certificate it pinned', async () => {

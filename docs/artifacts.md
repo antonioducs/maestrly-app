@@ -106,6 +106,20 @@ chosen, so it downloads only the gateway image; the bot runtime downloads when
 you create your first bot. **I already have a server configured** pairs this
 computer with an existing server instead.
 
+### Several servers
+
+Each paired bot server hosts its own artifacts. The **Artifacts** center lists the artifacts of every server, and each
+card names its server while they come from more than one. Opening, sharing, comments, and deleting go to the server
+that holds the artifact.
+
+With two or more servers, **Settings → Artifacts → Publish to** chooses the server where conversations of this computer
+publish. By default, it is the server Maestrly installed, or else the first one paired. What was already published
+stays on its server, and agents still reach it there. The settings below **Publish to** are for the chosen server.
+Conversations on a server's workspaces environment publish on that server. When a server cannot take a page, the agent
+is told which server it is.
+
+### Server settings
+
 With a server, the page shows its state and how many artifacts it holds, and
 **Host artifacts on the bot server** turns hosting on or off. A fresh installer
 setup turns it on; existing servers start with hosting off after an upgrade.

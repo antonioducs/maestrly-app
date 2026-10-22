@@ -81,6 +81,11 @@ function fakePeers(records: PeerRecord[]) {
     sockets,
     list: () => records,
     problem: (deviceId: string) => problems.get(deviceId) ?? null,
+    held: (deviceId: string) => ['removed', 'disconnected'].includes(problems.get(deviceId) ?? ''),
+    retry(deviceId: string) {
+      problems.delete(deviceId)
+      this.change()
+    },
     onChange: (listener: () => void) => {
       listeners.add(listener)
       return () => void listeners.delete(listener)
@@ -500,6 +505,7 @@ describe('host registry with paired computers', () => {
       port: 7690,
       addresses: ['10.0.0.5'],
       issuedToken: issueToken(),
+      hosting: true,
       now: 1,
     })
 
@@ -547,6 +553,31 @@ describe('host registry with paired computers', () => {
     peers.change()
     expect(h.registry.list()[1]).toMatchObject({ state: 'offline', peer: { problem: 'removed' } })
     expect(peers.sockets[0].closed).toBe(true)
+  })
+
+  it('dials a computer that disconnected this one again once the owner asks', async () => {
+    const peers = fakePeers([record()])
+    const h = setup({ peers })
+    await vi.waitFor(() => expect(peers.sockets).toHaveLength(1))
+    peers.problems.set(B.deviceId, 'disconnected')
+    peers.change()
+    expect(peers.sockets[0].closed).toBe(true)
+    expect(h.registry.list()[1]).toMatchObject({ state: 'offline', peer: { problem: 'disconnected' } })
+    h.registry.retry(PEER)
+    expect(peers.problems.has(B.deviceId)).toBe(false)
+    await vi.waitFor(() => expect(peers.sockets).toHaveLength(2))
+    peers.sockets[1].welcome()
+    expect(h.registry.list()[1]).toMatchObject({ state: 'online', peer: { problem: null } })
+  })
+
+  it('lists a computer that only uses this one once it shares itself', async () => {
+    const peers = fakePeers([{ ...record(), hosting: false }])
+    const h = setup({ peers })
+    expect(h.registry.list().map((host) => host.id)).toEqual(['local'])
+    // Still dialed: the computer may have started sharing itself since the pairing.
+    await vi.waitFor(() => expect(peers.sockets).toHaveLength(1))
+    peers.sockets[0].welcome()
+    expect(h.registry.list().map((host) => host.id)).toEqual(['local', PEER])
   })
 
   it('keeps paired computers when the server changes', async () => {

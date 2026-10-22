@@ -123,6 +123,7 @@ To contribute, read [CONTRIBUTING.md](CONTRIBUTING.md) and the
 - [Remote bots on your own server](docs/bot-fleet.md)
 - [Mobile app](docs/mobile.md)
 - [Remote workspaces and chats on your own server](docs/remote-workspaces.md)
+- [Connect your computers](docs/connect-computers.md)
 - [Changelog](CHANGELOG.md)
 
 ## License

@@ -822,6 +822,7 @@ export default {
     botNotRunning: 'Este bot não está rodando.',
     screenOffline: 'Esta tela está offline: o bot ou o ambiente dela não está rodando.',
     serverUnknown: 'Este servidor de bots não está mais pareado.',
+    serverAlreadyPaired: 'Este computador já está pareado com este servidor de bots, talvez por outro endereço.',
   },
   conversation: { recalled: 'Lembrou: {{titles}}' },
   transcript: {
@@ -1651,9 +1652,28 @@ export default {
     },
     artifactsTunnelFailed:
       'A conexão com o visualizador de artefatos está indisponível. A conexão com o servidor de bots é independente.',
-    description: 'Escolha onde os bots vão rodar e gerencie o servidor.',
+    description: 'Escolha onde os bots rodam e gerencie os servidores pareados com este computador.',
     loading: 'Carregando servidor de bots…',
     back: 'Voltar',
+    servers: {
+      choose: 'Servidor de bots',
+      option: '{{name}} · {{address}} · {{status}}',
+      add: 'Adicionar servidor',
+      addTitle: 'Adicionar um servidor de bots',
+      switcher: 'Servidor de bots: {{name}}. Trocar de servidor',
+      heading: 'Servidores de bots',
+      addMenu: 'Adicionar servidor…',
+      pending_one: '{{count}} esperando por você',
+      pending_other: '{{count}} esperando por você',
+      status: {
+        connected: 'Online',
+        connecting: 'Conectando…',
+        reconnecting: 'Reconectando…',
+        unauthorized: 'Parear de novo',
+        incompatible: 'Precisa atualizar',
+        unconfigured: 'Não pareado',
+      },
+    },
     choice: {
       heading: 'Onde os bots vão rodar?',
       localTitle: 'Neste computador',
@@ -1833,7 +1853,7 @@ export default {
     },
   },
   settings: {
-    title: 'Servidor de bots',
+    title: 'Servidores de bots',
     description: 'Pareie este computador com o gateway no seu servidor.',
     address: 'Endereço do servidor',
     addressExample: 'https://servidor.exemplo',

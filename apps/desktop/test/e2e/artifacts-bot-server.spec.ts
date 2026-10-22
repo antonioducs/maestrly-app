@@ -138,7 +138,7 @@ test('publishes to the paired bot server, opens its viewer through the gateway p
 
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 900))
     await page.getByRole('button', { name: 'Settings', exact: true }).click()
-    await page.getByRole('button', { name: 'Bot server', exact: true }).first().click()
+    await page.getByRole('button', { name: 'Bot servers', exact: true }).first().click()
     await page.getByRole('button', { name: 'I already have a server', exact: true }).click()
     await page.getByLabel('Server address', { exact: true }).fill(`http://127.0.0.1:${gateway.port}`)
     await page.getByLabel('Pairing code').fill(gateway.issueCode())

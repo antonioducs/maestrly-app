@@ -306,6 +306,11 @@ export const fleetMetaResponseSchema = z.object({
   features: fleetFeaturesSchema,
   /** The features past those: desktops up to 0.18 drop this field. Read both lists with `fleetMetaFeatures`. */
   moreFeatures: fleetFeaturesSchema,
+  /**
+   * This installation's stable id, whatever address it is reached at, so a computer does not pair one server twice.
+   * Gateways before it omit it; desktops before it drop it.
+   */
+  serverId: z.string().uuid().optional(),
 })
 export type FleetMetaResponse = z.infer<typeof fleetMetaResponseSchema>
 /** Every feature a gateway announces, from both lists of `/v1/meta`. */

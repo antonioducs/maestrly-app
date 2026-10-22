@@ -151,9 +151,9 @@ describe('artifact tools', () => {
     expect(conflict.isError).toBe(true)
     expect(conflict.text).toContain('Version 3')
 
-    const explained = async (reason: string) => {
+    const explained = async (reason: string, server?: string) => {
       service.create.mockRejectedValueOnce(
-        new ArtifactHostError('host_unavailable', 'unavailable', { reason }) as never
+        new ArtifactHostError('host_unavailable', 'unavailable', { reason, ...(server ? { server } : {}) }) as never
       )
       const result = await call('artifact_create', { title: 'X', directory: 'dist' })
       expect(result.isError).toBe(true)
@@ -165,6 +165,10 @@ describe('artifact tools', () => {
     expect(await explained('server_unsupported')).toContain('too old')
     expect(await explained('server_unreachable')).toContain('unreachable')
     expect(await explained('server_off')).toContain('turned off on the bot server')
+    // With several servers, the agent hears which one, and that another can take the page.
+    expect(await explained('server_unreachable', 'vps')).toContain('The bot server vps is unreachable')
+    expect(await explained('server_off', 'vps')).toContain('on the bot server vps')
+    expect(await explained('server_unsupported', 'vps')).toContain('publish to another server')
     expect(await explained('on_this_computer')).toContain('move')
     expect(await explained('something_else')).toContain('unavailable')
 

@@ -38,6 +38,7 @@ beforeEach(async () => {
       port: 7690,
       addresses: [],
       issuedToken: tokenB,
+      hosting: true,
       now: Date.now(),
     }),
     'token-a-uses-to-reach-b-0123456789abcdef'

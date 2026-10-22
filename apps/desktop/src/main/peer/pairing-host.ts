@@ -1,21 +1,22 @@
 import { randomInt, randomUUID, timingSafeEqual } from 'node:crypto'
-import type {
-  PeerAbortRequest,
-  PeerConfirmRequest,
-  PeerConfirmResponse,
-  PeerExchangeRequest,
-  PeerExchangeResponse,
-  PeerGrant,
-  PeerPairingErrorCode,
-  PeerPairingRequest,
-  PeerPairingStarted,
+import {
+  PEER_CODE_TTL_MS,
+  type PeerAbortRequest,
+  type PeerConfirmRequest,
+  type PeerConfirmResponse,
+  type PeerExchangeRequest,
+  type PeerExchangeResponse,
+  type PeerGrant,
+  type PeerPairingErrorCode,
+  type PeerPairingRequest,
+  type PeerPairingStarted,
 } from '../../shared/peer'
 import type { RemoteOs } from '../../shared/remote-bridge'
 import { certificateFingerprint, type PeerIdentity } from './identity'
 import { b64u, fromB64u, openGrant, pairingAad, passwordScalar, sealGrant } from './pairing-crypto'
 import { type Spake2Keys, spake2Finish, spake2Start } from './spake2'
 
-const CODE_TTL_MS = 120_000
+const CODE_TTL_MS = PEER_CODE_TTL_MS
 const FAILURE_WINDOW_MS = 600_000
 const FAILURE_LIMIT = 3
 const COOLDOWN_MS = 600_000
@@ -32,6 +33,7 @@ const MESSAGES: Record<PeerPairingErrorCode, string> = {
   used: 'This pairing code was already used.',
   unavailable: 'This computer cannot keep the pairing: its keyring is unavailable.',
   invalid: 'Invalid pairing request.',
+  self: 'That address is this computer.',
 }
 
 /** Why a pairing step was refused; `code` travels to the other computer. */
@@ -91,6 +93,11 @@ export class HostPairings {
   accepting(): boolean {
     const now = this.deps.now()
     return now >= this.cooldownUntil && (this.current === null || this.current.expiresAt <= now)
+  }
+
+  /** Until when new pairings are refused after too many wrong codes; null when they are not. */
+  pausedUntil(): number | null {
+    return this.cooldownUntil > this.deps.now() ? this.cooldownUntil : null
   }
 
   request(input: PeerPairingRequest, remote: string): PeerPairingStarted {

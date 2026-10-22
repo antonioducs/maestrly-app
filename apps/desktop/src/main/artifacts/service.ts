@@ -31,9 +31,10 @@ import type {
   LegacyMoveState,
 } from '../../shared/artifacts'
 import type { FleetArtifactHost, FleetArtifactSettingsPatch } from '@maestrly/bot-fleet-protocol'
-import type { ArtifactOpenRequest, ArtifactServerStatus } from '../../shared/artifacts'
+import type { ArtifactOpenRequest, ArtifactServerStatus, ArtifactServerView } from '../../shared/artifacts'
+import type { FleetServerId } from '../../shared/fleet-servers'
 import { serverUnavailable, type ArtifactSource, type ArtifactSources } from './sources'
-import type { ServerArtifacts } from './server-artifacts'
+import type { ArtifactServerSet } from './servers'
 import type { Conversation } from '../../shared/conversation'
 import type { InviteVault } from './invite-vault'
 import type { LegacyArtifacts } from './legacy'
@@ -47,11 +48,15 @@ export type ArtifactChange =
 
 export interface ArtifactsServiceDeps {
   sources: ArtifactSources
-  server?: ServerArtifacts
+  /** The paired servers' artifact hosts, and the one conversations of this computer publish to. */
+  servers?: ArtifactServerSet
+  /** Keeps the server conversations of this computer publish to. */
+  choosePublishing?: (serverId: FleetServerId) => void
   /** What earlier versions published on this computer; absent in a bot's own Maestrly. */
   legacy?: LegacyArtifacts
   emitChanged?: () => void
-  botName?: (id: string) => string | undefined
+  /** A bot's name, by the server it runs on when there are several. */
+  botName?: (id: string, serverId?: FleetServerId) => string | undefined
   /** The tokens of personal links, kept so the owner can copy a link again. */
   vault: InviteVault
   getConversation: (id: string) => Conversation | undefined
@@ -100,7 +105,7 @@ export class ArtifactsService {
   }
 
   private async refreshSources(): Promise<void> {
-    await this.deps.server?.refresh()
+    await this.deps.servers?.refresh()
   }
 
   /** Not on the server: when it is among the artifacts on this computer, says so instead of "not found". */
@@ -152,7 +157,9 @@ export class ArtifactsService {
     const sources = this.sources.managed()
     const cached = this.locations.get(id)
     // Resolve against today's sources: pairing another server invalidates cached credentials.
-    const preferred = cached && sources.find((s) => s.key === cached.key && s.owner.id === cached.owner.id)
+    const preferred =
+      cached &&
+      sources.find((s) => s.key === cached.key && s.server === cached.server && s.owner.id === cached.owner.id)
     return this.find(id, preferred ? [preferred, ...sources.filter((s) => s !== preferred)] : sources)
   }
 
@@ -310,8 +317,10 @@ export class ArtifactsService {
       updatedAt: artifact.updatedAt,
       bot:
         artifact.ownerKind === 'bot'
-          ? { id: artifact.ownerId, name: this.deps.botName?.(artifact.ownerId) ?? null }
+          ? { id: artifact.ownerId, name: this.deps.botName?.(artifact.ownerId, source.server) ?? null }
           : null,
+      server:
+        source.server && this.deps.servers ? { id: source.server, name: this.deps.servers.name(source.server) } : null,
       elsewhere: artifact.ownerKind === 'device' && !own,
       project:
         localConversation && artifact.workspaceId
@@ -609,18 +618,36 @@ export class ArtifactsService {
     return !!this.deps.openOnViewer
   }
 
-  async serverStatus(): Promise<ArtifactServerStatus> {
-    return (await this.deps.server?.refresh()) ?? { state: 'absent' }
+  /** A server's artifact host, the one conversations of this computer publish to by default. */
+  private server(serverId?: FleetServerId) {
+    const servers = this.deps.servers
+    return (serverId ? servers?.get(serverId) : servers?.publishing()) ?? null
   }
-  async serverHost(): Promise<FleetArtifactHost | null> {
-    await this.refreshSources()
-    return this.deps.server?.host() ?? null
+  async serverStatus(serverId?: FleetServerId): Promise<ArtifactServerStatus> {
+    return (await this.server(serverId)?.refresh()) ?? { state: 'absent' }
   }
-  async setServerHost(patch: FleetArtifactSettingsPatch): Promise<FleetArtifactHost> {
-    if (!this.deps.server) throw serverUnavailable()
-    const host = await this.deps.server.update(patch)
+  async serverHost(serverId?: FleetServerId): Promise<FleetArtifactHost | null> {
+    const server = this.server(serverId)
+    await server?.refresh()
+    return server?.host() ?? null
+  }
+  async setServerHost(patch: FleetArtifactSettingsPatch, serverId?: FleetServerId): Promise<FleetArtifactHost> {
+    const server = this.server(serverId)
+    if (!server) throw serverUnavailable()
+    const host = await server.update(patch)
     this.deps.emitChanged?.()
     return host
+  }
+  /** Every paired server's artifact host, and which one conversations of this computer publish to. */
+  async servers(): Promise<ArtifactServerView[]> {
+    await this.refreshSources()
+    return this.deps.servers?.views() ?? []
+  }
+  async setPublishing(serverId: FleetServerId): Promise<ArtifactServerView[]> {
+    if (!this.deps.servers?.get(serverId)) throw serverUnavailable('server_absent')
+    this.deps.choosePublishing?.(serverId)
+    this.deps.emitChanged?.()
+    return this.servers()
   }
 
   /** What earlier versions left on this computer, waiting to be moved or deleted. */
@@ -644,7 +671,7 @@ export class ArtifactsService {
     const state = this.legacyState()
     if (state.phase === 'running') return state
     await this.refreshSources()
-    const server = this.deps.server
+    const server = this.server()
     const source = server?.source()
     if (!server || !source) throw server?.unavailable() ?? serverUnavailable('server_absent')
     const status = server.status()

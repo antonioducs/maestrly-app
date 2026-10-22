@@ -326,14 +326,17 @@ export class RemoteUiHub {
     return [...new Set([...this.sessions].flatMap((session) => (session.tag ? [session.tag] : [])))]
   }
 
-  /** Closes every session of one paired computer, which this host no longer lets use it. */
-  closeTagged(tag: string): void {
+  /**
+   * Closes every session of one paired computer: one this host no longer lets use it (`removed`), or one its owner
+   * disconnected for now (`disconnected`), which stays paired.
+   */
+  closeTagged(tag: string, why: 'removed' | 'disconnected' = 'removed'): void {
     for (const session of [...this.sessions]) {
-      if (session.tag === tag) session.close(REMOTE_BRIDGE_CLOSE.removed, 'removed')
+      if (session.tag === tag) session.close(REMOTE_BRIDGE_CLOSE[why], why)
     }
   }
 
-  closeAll(): void {
-    for (const session of [...this.sessions]) session.close(1001, 'host-stopping')
+  closeAll(code = 1001, reason = 'host-stopping'): void {
+    for (const session of [...this.sessions]) session.close(code, reason)
   }
 }

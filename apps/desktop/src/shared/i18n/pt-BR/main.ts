@@ -110,7 +110,7 @@ export default {
     remoteOfflineTitle: 'O servidor não está conectado',
     remoteOfflineSub: 'Abra a aba Código novamente quando o servidor voltar.',
     remoteUnauthorizedTitle: 'Este computador não está pareado com o servidor',
-    remoteUnauthorizedSub: 'Pareie de novo em Configurações → Servidor de bots e abra a aba Código novamente.',
+    remoteUnauthorizedSub: 'Pareie de novo em Configurações → Servidores de bots e abra a aba Código novamente.',
     remoteGatewayUpdateTitle: 'Atualize o servidor de bots para abrir o editor',
     remoteGatewayUpdateSub:
       'O servidor de bots roda uma versão anterior ao editor remoto. Atualize-o e abra a aba Código novamente.',
@@ -121,6 +121,12 @@ export default {
       'O servidor não conseguiu baixar ou iniciar o editor. Verifique a conexão dele com a internet e abra a aba Código novamente para tentar de novo.',
     chatgptRestoringTitle: 'Restaurando ChatGPT…',
     chatgptRestoringSub: 'Recarregando a última conversa. Login e sessão permanecem intactos.',
+  },
+  peer: {
+    pairingNotice: {
+      title: '{{name}} quer usar este computador',
+      body: 'Abra o Maestrly para ver o código de pareamento.',
+    },
   },
   chatProviderError: {
     http: '{{provider}} retornou HTTP {{status}}: {{detail}}',

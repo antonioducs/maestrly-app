@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { hostActivity, resolveSidebarHost } from '../../src/renderer/components/sidebar/sidebar-hosts'
+import { hostActivity, hostGroups, resolveSidebarHost } from '../../src/renderer/components/sidebar/sidebar-hosts'
+import type { HostView } from '../../src/shared/hosts'
 import { compactAge } from '../../src/renderer/components/sidebar/relative-time'
 import en from '../../src/shared/i18n/en/ui'
 import ptBR from '../../src/shared/i18n/pt-BR/ui'
@@ -16,6 +17,27 @@ describe('sidebar hosts', () => {
     // `a` runs by its stored status, `b` by its live one; archived `d` and `e` count for nothing.
     expect(activity).toEqual({ attention: 1, working: 2 })
     expect(hostActivity([], {}, new Set())).toEqual({ attention: 0, working: 0 })
+  })
+
+  it('lists the machines of each bot server under its name once there are several servers', () => {
+    const host = (id: string, serverId: string | null, server = '') => ({ id, serverId, server }) as unknown as HostView
+    const local = host('local', null)
+    const laptop = host('peer:laptop', null)
+    const one = [local, host('s1/personal', 's1', 'mac-mini'), host('s1/work', 's1', 'mac-mini'), laptop]
+    expect(hostGroups(one)).toEqual([{ serverId: null, server: '', hosts: one }])
+    const two = [
+      local,
+      host('s1/personal', 's1', 'mac-mini'),
+      host('s2/work', 's2', ''),
+      laptop,
+      host('s2/ads', 's2', 'vps'),
+    ]
+    expect(hostGroups(two).map((group) => [group.serverId, group.server, group.hosts.map((item) => item.id)])).toEqual([
+      [null, '', ['local', 'peer:laptop']],
+      ['s1', 'mac-mini', ['s1/personal']],
+      // A server is named by the first of its hosts that knows its name.
+      ['s2', 'vps', ['s2/work', 's2/ads']],
+    ])
   })
 
   it('keeps the chosen machine while it is listed and falls back to this computer otherwise', () => {

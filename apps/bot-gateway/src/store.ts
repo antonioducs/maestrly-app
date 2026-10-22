@@ -1,4 +1,4 @@
-import { randomBytes, timingSafeEqual } from 'node:crypto'
+import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import { chmodSync, existsSync } from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -270,6 +270,16 @@ export class Store {
   getMetaJson(key: string): unknown {
     const row = this.db.prepare('SELECT value FROM meta WHERE key=?').get(key) as Row | undefined
     return row ? JSON.parse(String(row.value)) : null
+  }
+  /**
+   * This installation's id, created once and kept with its data: computers tell one server from another by it,
+   * whichever address they reach it at.
+   */
+  serverId(): string {
+    this.db
+      .prepare("INSERT INTO meta(key,value) VALUES('server_id',?) ON CONFLICT(key) DO NOTHING")
+      .run(JSON.stringify(randomUUID()))
+    return String(this.getMetaJson('server_id'))
   }
   setMetaJson(key: string, value: unknown) {
     this.db

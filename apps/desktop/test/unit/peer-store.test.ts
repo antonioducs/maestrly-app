@@ -14,6 +14,7 @@ function record(issuedToken: string, addresses = ['10.0.0.5']) {
     port: 7690,
     addresses,
     issuedToken,
+    hosting: true,
     now: T0,
   })
 }
@@ -58,6 +59,20 @@ describe('PeerStore', () => {
     expect(store.tokenFor(saved.deviceId)).toBeNull()
     expect(listener).toHaveBeenCalledTimes(1)
     expect(store.remove(saved.deviceId)).toBe(false)
+  })
+
+  it('keeps the port a computer moved to, telling listeners only when it changes', () => {
+    const store = new PeerStore(memoryPeerStorage())
+    const saved = record(issueToken())
+    store.save(saved, 'token')
+    const listener = vi.fn()
+    store.onChange(listener)
+    store.setPort(saved.deviceId, 7700)
+    expect(store.get(saved.deviceId)?.port).toBe(7700)
+    store.setPort(saved.deviceId, 7700)
+    store.setPort('unknown', 7701)
+    expect(listener).toHaveBeenCalledTimes(1)
+    expect(store.tokenFor(saved.deviceId)).toBe('token')
   })
 
   it('keeps the newest addresses first, and records when it saw a computer at most each minute', () => {

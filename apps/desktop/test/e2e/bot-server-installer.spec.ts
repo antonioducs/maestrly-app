@@ -39,7 +39,7 @@ async function launch(root: string, instance: string, env: Record<string, string
 
 async function openBotServer(page: Page) {
   await page.getByRole('button', { name: 'Configurações', exact: true }).click()
-  await page.getByRole('button', { name: 'Servidor de bots' }).first().click()
+  await page.getByRole('button', { name: 'Servidores de bots' }).first().click()
 }
 
 const installerStatus = (page: Page) => page.evaluate(() => window.api.fleetInstallerStatus())

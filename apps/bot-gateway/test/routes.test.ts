@@ -413,6 +413,21 @@ it('advertises video screens within the twenty features a Mac reads', async () =
   expect(fleetFeaturesSchema.safeParse(features).success).toBe(true)
 })
 
+it('names its installation with one id that outlives a restart', async () => {
+  const h = await harness()
+  const first = (await (await h.request('GET', '/v1/meta')).json()).serverId as string
+  expect(first).toMatch(/^[0-9a-f-]{36}$/)
+  expect((await (await h.request('GET', '/v1/meta')).json()).serverId).toBe(first)
+  const reopened = new Store(h.dir)
+  try {
+    expect(reopened.serverId()).toBe(first)
+  } finally {
+    reopened.close()
+  }
+  const other = await harness()
+  expect((await (await other.request('GET', '/v1/meta')).json()).serverId).not.toBe(first)
+})
+
 it('refuses to edit a message on a bot that cannot, before reaching it', async () => {
   const h = await harness(Date.now, { environments: true })
   const response = await h.request('POST', `/v1/bots/${h.bot.id}/messages/in-1/edit`, {

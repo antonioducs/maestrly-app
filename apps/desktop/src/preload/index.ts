@@ -13,6 +13,7 @@ import { updateApi } from './api-update'
 import { fleetApi } from './api-fleet'
 import { fleetInstallerApi } from './api-fleet-installer'
 import { hostsApi } from './api-hosts'
+import { peerApi } from './api-peer'
 import { localHostApi } from './host-api'
 import { artifactsApi } from './api-artifacts'
 import { transfersApi } from './api-transfers'
@@ -126,6 +127,7 @@ export type * from './api-workspace'
 export type * from './api-fleet'
 export type * from './api-fleet-installer'
 export type * from './api-hosts'
+export type * from './api-peer'
 export type * from './api-host-fs'
 export type * from './api-artifacts'
 export type * from './api-transfers'
@@ -146,6 +148,7 @@ const localApi = {
   fleetEnvironmentPlugins,
   ...fleetInstallerApi,
   ...hostsApi,
+  ...peerApi,
   ...artifactsApi,
   ...transfersApi,
   ...conversationMoveApi,

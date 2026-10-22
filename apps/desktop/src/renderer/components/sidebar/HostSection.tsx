@@ -1,6 +1,6 @@
-import type { CSSProperties, ReactNode } from 'react'
+import { Fragment, type CSSProperties, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Check, ChevronsUpDown, Monitor, Server } from 'lucide-react'
+import { Check, ChevronsUpDown, Laptop, Monitor, Plus, Server } from 'lucide-react'
 import type { TFunction } from 'i18next'
 import type { HostView } from '../../../shared/hosts'
 import type { HostId } from '../../../shared/host-key'
@@ -8,8 +8,14 @@ import { hostTint } from '@/lib/hosts/host-tint'
 import { cn } from '@/lib/utils'
 import { hostSectionStatus, type HostSectionStatus } from '@/lib/hosts/host-status'
 import { Button } from '@/components/ui/button'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
-import type { HostActivity } from './sidebar-hosts'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { hostGroups, type HostActivity } from './sidebar-hosts'
 
 const STATUS_LABEL = {
   connecting: 'sidebar.hostConnecting',
@@ -19,6 +25,25 @@ const STATUS_LABEL = {
   starting: 'sidebar.hostStarting',
   failed: 'sidebar.hostFailed',
   offline: 'sidebar.hostOffline',
+  'not-hosting': 'sidebar.peerNotHosting',
+  removed: 'sidebar.peerRemoved',
+  disconnected: 'sidebar.peerDisconnected',
+  'identity-changed': 'sidebar.peerIdentityChanged',
+} as const
+
+/** The few words that say how a machine is reached, as its entry in the machine switcher says them. */
+export const hostStatusLabelKey = (status: HostSectionStatus): string =>
+  status === 'online' ? 'sidebar.hostOnline' : STATUS_LABEL[status]
+
+/** What a paired computer's section says while it lists nothing live; `{{host}}` is its name. */
+const PEER_DETAIL = {
+  connecting: 'sidebar.peerConnectingDetail',
+  reconnecting: 'sidebar.peerReconnectingDetail',
+  offline: 'sidebar.peerOfflineDetail',
+  'not-hosting': 'sidebar.peerNotHostingDetail',
+  removed: 'sidebar.peerRemovedDetail',
+  disconnected: 'sidebar.peerDisconnectedDetail',
+  'identity-changed': 'sidebar.peerIdentityChangedDetail',
 } as const
 
 const STATUS_DETAIL = {
@@ -39,6 +64,10 @@ const STATUS_DOT: Record<HostSectionStatus, string> = {
   offline: 'bg-muted-foreground',
   incompatible: 'bg-destructive',
   failed: 'bg-destructive',
+  'not-hosting': 'bg-muted-foreground',
+  removed: 'bg-destructive',
+  disconnected: 'bg-muted-foreground',
+  'identity-changed': 'bg-destructive',
 }
 
 const TILE_SIZE = {
@@ -48,14 +77,28 @@ const TILE_SIZE = {
 } as const
 
 export function hostName(host: HostView, t: TFunction<'ui'>): string {
-  return host.remote ? host.label || t('sidebar.hostUnnamed') : t('sidebar.hostThisComputer')
+  return host.remote
+    ? host.label || t(host.peer ? 'sidebar.peerUnnamed' : 'sidebar.hostUnnamed')
+    : t('sidebar.hostThisComputer')
 }
 
-/** One look for a machine wherever the sidebar shows it: its kind, its tint, and a dot for how it is reached. */
-export function HostTile({ host, size = 'lg' }: { host: HostView; size?: keyof typeof TILE_SIZE }) {
-  const status = hostSectionStatus(host)
+/**
+ * One look for a machine wherever the sidebar shows it: its kind (this computer, another of the owner's computers, or
+ * a server), its tint, and a dot for how it is reached.
+ */
+export function HostTile({
+  host,
+  size = 'lg',
+  status: shown,
+}: {
+  host: Pick<HostView, 'id' | 'remote' | 'tint' | 'state' | 'environment' | 'peer'>
+  size?: keyof typeof TILE_SIZE
+  /** What the dot says instead of how this computer reaches the machine; null for no dot. */
+  status?: HostSectionStatus | null
+}) {
+  const status = shown === undefined ? hostSectionStatus(host) : shown
   const [r, g, b] = hostTint(host)
-  const Icon = host.remote ? Server : Monitor
+  const Icon = host.peer ? Laptop : host.remote ? Server : Monitor
   const dims = TILE_SIZE[size]
   const style: CSSProperties = {
     backgroundColor: `rgba(${r}, ${g}, ${b}, 0.15)`,
@@ -67,15 +110,17 @@ export function HostTile({ host, size = 'lg' }: { host: HostView; size?: keyof t
       {/* Inline size: menu items size every svg inside them. */}
       <Icon
         style={{ width: dims.icon, height: dims.icon }}
-        className={cn(status !== 'online' && status !== 'connecting' && 'opacity-45')}
+        className={cn(status && status !== 'online' && status !== 'connecting' && 'opacity-45')}
       />
-      <span
-        className={cn(
-          'absolute -bottom-0.5 -right-0.5 rounded-full ring-2 ring-[#19191c]',
-          dims.dot,
-          STATUS_DOT[status]
-        )}
-      />
+      {status && (
+        <span
+          className={cn(
+            'absolute -bottom-0.5 -right-0.5 rounded-full ring-2 ring-[#19191c]',
+            dims.dot,
+            STATUS_DOT[status]
+          )}
+        />
+      )}
     </span>
   )
 }
@@ -124,6 +169,7 @@ export function HostSwitcher({
   selectedId,
   activity,
   onSelect,
+  onConnectComputer,
   showQuickTooltip,
   hideQuickTooltip,
 }: {
@@ -131,6 +177,8 @@ export function HostSwitcher({
   selectedId: HostId
   activity: Record<HostId, HostActivity>
   onSelect: (id: HostId) => void
+  /** Opens the dialog that pairs this computer with another one of the owner's. */
+  onConnectComputer?: () => void
   showQuickTooltip: (e: { currentTarget: HTMLElement }, text: string, side?: 'below' | 'right') => void
   hideQuickTooltip: () => void
 }) {
@@ -142,6 +190,9 @@ export function HostSwitcher({
   const shortcuts = others.slice(0, MAX_SHORTCUTS)
   const hiddenAttention = others.slice(MAX_SHORTCUTS).some((host) => (activity[host.id] ?? none).attention > 0)
   const stacked = shortcuts.length > 1
+  const groups = hostGroups(hosts)
+  // With hosts of several servers, the chosen one says which server it runs on.
+  const selectedServer = groups.length > 1 && selected.serverId ? selected.server : ''
   return (
     <div className="flex shrink-0 items-stretch gap-1 px-2 pb-2">
       <DropdownMenu>
@@ -154,8 +205,13 @@ export function HostSwitcher({
           >
             <HostTile host={selected} />
             <span className="flex min-w-0 flex-1 flex-col gap-px">
-              <span className="truncate text-[12.5px] font-semibold leading-tight text-foreground">
-                {hostName(selected, t)}
+              <span className="flex min-w-0 items-baseline gap-1 leading-tight">
+                <span className="truncate text-[12.5px] font-semibold text-foreground">{hostName(selected, t)}</span>
+                {selectedServer && (
+                  <span data-host-server className="min-w-0 shrink truncate text-[10.5px] text-muted-foreground">
+                    · {selectedServer}
+                  </span>
+                )}
               </span>
               <HostSummary
                 host={selected}
@@ -175,27 +231,52 @@ export function HostSwitcher({
           <div className="px-2 pb-1 pt-1.5 text-[11px] font-medium text-muted-foreground">
             {t('sidebar.hostMachines')}
           </div>
-          {hosts.map((host) => (
-            <DropdownMenuItem
-              key={host.id}
-              data-host-option={host.id}
-              onSelect={() => onSelect(host.id)}
-              // Environments of one server are told apart by name; the server they run on is a hover away.
-              title={host.server ? `${hostName(host, t)} · ${host.server}` : undefined}
-              className="gap-2.5 py-1.5"
-            >
-              <HostTile host={host} />
-              <span className="flex min-w-0 flex-1 flex-col">
-                <span className="truncate text-[13px]">{hostName(host, t)}</span>
-                <HostSummary
-                  host={host}
-                  activity={activity[host.id] ?? none}
-                  className="truncate text-[11px] text-muted-foreground"
-                />
-              </span>
-              {host.id === selected.id && <Check className="size-3.5 text-foreground" />}
-            </DropdownMenuItem>
+          {groups.map((group) => (
+            <Fragment key={group.serverId ?? 'computers'}>
+              {group.serverId && (
+                <div
+                  data-host-group={group.serverId}
+                  className="truncate px-2 pb-0.5 pt-2 text-[10.5px] font-medium uppercase tracking-wide text-muted-foreground"
+                >
+                  {group.server || t('sidebar.hostServerUnnamed')}
+                </div>
+              )}
+              {group.hosts.map((host) => (
+                <DropdownMenuItem
+                  key={host.id}
+                  data-host-option={host.id}
+                  onSelect={() => onSelect(host.id)}
+                  // Environments of one server are told apart by name; the server they run on is a hover away.
+                  title={host.server ? `${hostName(host, t)} · ${host.server}` : undefined}
+                  className="gap-2.5 py-1.5"
+                >
+                  <HostTile host={host} />
+                  <span className="flex min-w-0 flex-1 flex-col">
+                    <span className="truncate text-[13px]">{hostName(host, t)}</span>
+                    <HostSummary
+                      host={host}
+                      activity={activity[host.id] ?? none}
+                      className="truncate text-[11px] text-muted-foreground"
+                    />
+                  </span>
+                  {host.id === selected.id && <Check className="size-3.5 text-foreground" />}
+                </DropdownMenuItem>
+              ))}
+            </Fragment>
           ))}
+          {onConnectComputer && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                data-host-connect
+                onSelect={onConnectComputer}
+                className="gap-2.5 py-1.5 text-muted-foreground"
+              >
+                <Plus className="size-3.5" />
+                <span className="text-[13px]">{t('sidebar.peerConnectAnother')}</span>
+              </DropdownMenuItem>
+            </>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
       {shortcuts.length > 0 && (
@@ -240,6 +321,9 @@ export interface HostNoticeActions {
   onRetry: () => void
   onStart: () => void
   onManage: () => void
+  /** A paired computer's: pair with it again, or forget it here once it removed this computer. */
+  onPair?: () => void
+  onForget?: () => void
 }
 
 /** What a remote host's section says in place of its lists while it cannot list them. */
@@ -255,38 +339,43 @@ export function HostSectionNotice({
   const { t } = useTranslation('ui')
   const status = hostSectionStatus(host)
   if (status === 'online') return <p className="px-3 py-1 text-xs text-muted-foreground">{t('sidebar.hostLoading')}</p>
+  const name = hostName(host, t)
   const detail =
     status === 'incompatible'
       ? host.hostVersion && appVersion
-        ? t('sidebar.hostIncompatibleDetail', { hostVersion: host.hostVersion, appVersion })
-        : t('sidebar.hostIncompatibleDetailUnknown')
-      : t(STATUS_DETAIL[status])
-  let action: ReactNode = null
-  if (status === 'stopped' || status === 'failed')
-    action = (
-      <Button variant="secondary" size="sm" className="h-6 px-2 text-[11px]" onClick={actions.onStart}>
-        {t('sidebar.hostStart')}
-      </Button>
-    )
+        ? t(host.peer ? 'sidebar.peerIncompatibleDetail' : 'sidebar.hostIncompatibleDetail', {
+            host: name,
+            hostVersion: host.hostVersion,
+            appVersion,
+          })
+        : t(host.peer ? 'sidebar.peerIncompatibleDetailUnknown' : 'sidebar.hostIncompatibleDetailUnknown', {
+            host: name,
+          })
+      : host.peer && status in PEER_DETAIL
+        ? t(PEER_DETAIL[status as keyof typeof PEER_DETAIL], { host: name })
+        : t(STATUS_DETAIL[status as keyof typeof STATUS_DETAIL])
+  const button = (label: string, onClick: () => void) => (
+    <Button key={label} variant="secondary" size="sm" className="h-6 px-2 text-[11px]" onClick={onClick}>
+      {label}
+    </Button>
+  )
+  const buttons: ReactNode[] = []
+  if (status === 'stopped' || status === 'failed') buttons.push(button(t('sidebar.hostStart'), actions.onStart))
   else if (status === 'incompatible')
-    action = (
-      <Button variant="secondary" size="sm" className="h-6 px-2 text-[11px]" onClick={actions.onManage}>
-        {t('sidebar.hostManage')}
-      </Button>
-    )
-  else if (status === 'reconnecting' || status === 'offline')
-    action = (
-      <Button variant="secondary" size="sm" className="h-6 px-2 text-[11px]" onClick={actions.onRetry}>
-        {t('sidebar.hostRetry')}
-      </Button>
-    )
+    buttons.push(button(t(host.peer ? 'sidebar.peerUpdates' : 'sidebar.hostManage'), actions.onManage))
+  else if (status === 'reconnecting' || status === 'offline' || status === 'not-hosting')
+    buttons.push(button(t('sidebar.hostRetry'), actions.onRetry))
+  else if (status === 'disconnected') buttons.push(button(t('sidebar.peerReconnect'), actions.onRetry))
+  if ((status === 'removed' || status === 'identity-changed') && actions.onPair)
+    buttons.push(button(t('sidebar.peerPairAgain'), actions.onPair))
+  if (status === 'removed' && actions.onForget) buttons.push(button(t('sidebar.peerForget'), actions.onForget))
   return (
     <div
       data-host-notice={status}
       className="mx-2 my-1.5 flex flex-col items-start gap-1.5 rounded-lg border border-border bg-white/[0.03] px-2.5 py-2"
     >
       <p className="text-xs leading-snug text-muted-foreground">{detail}</p>
-      {action}
+      {buttons.length > 0 && <div className="flex flex-wrap gap-1.5">{buttons}</div>}
     </div>
   )
 }

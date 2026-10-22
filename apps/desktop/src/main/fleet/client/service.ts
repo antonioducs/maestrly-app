@@ -59,6 +59,8 @@ export interface FleetClientDeps {
   } | null
   media: FleetMediaCache
   mediaUrls: FleetMediaUrls
+  /** The installation id the server announces each time this computer connects; gateways before it announce none. */
+  onGatewayId?(gatewayId: string): void
 }
 
 /** This computer's connection to one paired bot server. */
@@ -308,6 +310,7 @@ export class FleetClientService {
         if (generation !== this.generation) return
         const meta = await this.requireApi().call('meta')
         if (generation !== this.generation) return
+        if (meta.serverId) this.deps.onGatewayId?.(meta.serverId)
         this.setConnection({ features: fleetMetaFeatures(meta) })
         await this.refresh()
         // Links may have changed while this computer was away; checking them needs the stream open, not this answer.

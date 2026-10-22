@@ -1,3 +1,4 @@
+import { createServer, type Server } from 'node:net'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { FLEET_PROTOCOL_HEADER, FLEET_PROTOCOL_VERSION } from '@maestrly/bot-fleet-protocol'
 import { WebSocket } from 'ws'
@@ -10,7 +11,7 @@ import { issueToken, newPeerRecord, PeerStore } from '../../src/main/peer/store'
 import type { BridgeClientSocket } from '../../src/main/remote-host/client/host-connection'
 import { HostConnection } from '../../src/main/remote-host/client/host-connection'
 import { IpcHandlerTable } from '../../src/main/remote-host/ipc-handler-table'
-import type { RemoteHostInfo } from '../../src/shared/remote-bridge'
+import { REMOTE_BRIDGE_CLOSE, type RemoteHostInfo } from '../../src/shared/remote-bridge'
 import { memoryPeerStorage, testIdentity } from './peer-helpers'
 
 const A = testIdentity('A')
@@ -75,6 +76,7 @@ function pairB(store: PeerStore): string {
       port: 7690,
       addresses: [],
       issuedToken: token,
+      hosting: true,
       now: Date.now(),
     }),
     'token-a-uses-to-reach-b-0123456789abcdef'
@@ -82,13 +84,28 @@ function pairB(store: PeerStore): string {
   return token
 }
 
-function connect(port: number, token: string) {
+/** A port another program holds while the test runs; `free` releases it at once, for a port nobody holds. */
+async function heldPort(free = false): Promise<number> {
+  const server: Server = createServer()
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const port = (server.address() as { port: number }).port
+  const release = () => new Promise<void>((resolve) => server.close(() => resolve()))
+  if (free) await release()
+  else closers.push(release)
+  return port
+}
+
+function connect(port: number | (() => number), token: string, closes: Array<[number, string]> = []) {
   const connection = new HostConnection({
-    connect: async () =>
-      new WebSocket(`wss://127.0.0.1:${port}/v1/bridge`, {
+    connect: async () => {
+      const at = typeof port === 'number' ? port : port()
+      const socket = new WebSocket(`wss://127.0.0.1:${at}/v1/bridge`, {
         headers: { [FLEET_PROTOCOL_HEADER]: String(FLEET_PROTOCOL_VERSION), Authorization: `Bearer ${token}` },
         ...pinnedTls(A.certPem),
-      }) as unknown as BridgeClientSocket,
+      })
+      socket.on('close', (code, reason) => closes.push([code, String(reason)]))
+      return socket as unknown as BridgeClientSocket
+    },
     appVersion: '1.2.3',
     client: () => ({ deviceName: 'B', os: 'mac', locale: 'en' }),
     onChange: () => undefined,
@@ -140,6 +157,85 @@ describe('PeerHosting', () => {
     await vi.waitFor(() => expect(h.hosting.connected()).toEqual([]))
     expect(h.release).toHaveBeenCalled()
     expect(h.editor.closeAll).toHaveBeenCalled()
+  })
+
+  it('moves to a chosen port, used exactly, and tells the computers using it where it went', async () => {
+    const h = setup()
+    const token = pairB(h.store)
+    await h.hosting.setEnabled(true)
+    const before = h.hosting.listeningPort() ?? 0
+    const closes: Array<[number, string]> = []
+    let dialed = before
+    const connection = connect(() => dialed, token, closes)
+    connection.start()
+    await vi.waitFor(() => expect(connection.snapshot().state).toBe('online'))
+
+    const chosen = await heldPort(true)
+    await expect(h.hosting.setPort(chosen)).resolves.toBeNull()
+    expect(h.hosting.chosenPort()).toBe(chosen)
+    expect(h.hosting.listeningPort()).toBe(chosen)
+    expect(h.storage.get('peer.port')).toBe(String(chosen))
+    // B's session closes with the new port, which B dials next.
+    await vi.waitFor(() => expect(closes).toContainEqual([REMOTE_BRIDGE_CLOSE.moved, String(chosen)]))
+    dialed = chosen
+    await vi.waitFor(() => expect(connection.snapshot().state).toBe('online'))
+    expect(h.hosting.connected()).toEqual([B.deviceId])
+    await expect(
+      peerRequest({ host: '127.0.0.1', port: before }, 'GET', '/v1/peer/hello', { pin: A.certPem })
+    ).rejects.toThrow()
+    const hello = await peerRequest({ host: '127.0.0.1', port: chosen }, 'GET', '/v1/peer/hello', { pin: A.certPem })
+    expect(hello.status).toBe(200)
+
+    // Back to the default: here, a port the system chooses.
+    await expect(h.hosting.setPort(null)).resolves.toBeNull()
+    expect(h.hosting.chosenPort()).toBeNull()
+    expect(h.storage.get('peer.port')).toBe('')
+    expect(h.hosting.listeningPort()).not.toBe(chosen)
+  })
+
+  it('stays where it is when the chosen port is taken or out of range', async () => {
+    const h = setup()
+    const token = pairB(h.store)
+    await h.hosting.setEnabled(true)
+    const before = h.hosting.listeningPort()
+    const closes: Array<[number, string]> = []
+    const connection = connect(before ?? 0, token, closes)
+    connection.start()
+    await vi.waitFor(() => expect(connection.snapshot().state).toBe('online'))
+    h.storage.values.delete('peer.port')
+
+    await expect(h.hosting.setPort(await heldPort())).resolves.toBe('in-use')
+    await expect(h.hosting.setPort(80)).resolves.toBe('invalid')
+    await expect(h.hosting.setPort(70_000)).resolves.toBe('invalid')
+    await expect(h.hosting.setPort(7690.5)).resolves.toBe('invalid')
+    expect(h.hosting.listeningPort()).toBe(before)
+    expect(h.hosting.chosenPort()).toBeNull()
+    expect(h.storage.values.has('peer.port')).toBe(false)
+    expect(closes).toEqual([])
+    expect(connection.snapshot().state).toBe('online')
+  })
+
+  it('keeps a port chosen while off, and listens there once turned on', async () => {
+    const h = setup()
+    const chosen = await heldPort(true)
+    await expect(h.hosting.setPort(chosen)).resolves.toBeNull()
+    expect(h.hosting.listeningPort()).toBeNull()
+    await h.hosting.setEnabled(true)
+    expect(h.hosting.listeningPort()).toBe(chosen)
+  })
+
+  it('starts sharing again on a free port after the chosen one was taken at startup', async () => {
+    const h = setup()
+    h.storage.set('peer.port', String(await heldPort()))
+    h.storage.set('peer.hosting', '1')
+    await h.hosting.start()
+    expect(h.hosting.listeningPort()).toBeNull()
+    expect(h.hosting.error()).toMatch(/EADDRINUSE/)
+    const free = await heldPort(true)
+    await expect(h.hosting.setPort(free)).resolves.toBeNull()
+    expect(h.hosting.listeningPort()).toBe(free)
+    expect(h.hosting.error()).toBeNull()
+    expect(h.hostFiles.sweep).toHaveBeenCalled()
   })
 
   it('closes the peer server when turned off', async () => {

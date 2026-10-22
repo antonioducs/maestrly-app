@@ -614,6 +614,45 @@ export default {
     starting: 'Workspaces on {{host}} are starting…',
     failed: 'Workspaces on {{host}} failed to start',
     offline: '{{host}} is not reachable',
+    notHosting: '{{host}} does not let other computers use it now',
+    removed: '{{host}} removed this computer',
+    disconnected: '{{host}} disconnected this computer',
+    identityChanged: '{{host}} must be paired again',
+    peerReconnectingDetail:
+      'What runs on {{host}} keeps running. This conversation comes back when the connection does.',
+  },
+  // Another of the owner's computers asks to use this one: the code shows here and is typed there.
+  peerPrompt: {
+    waitingTitle: '{{name}} wants to use this computer',
+    waitingDescription: 'Type this code on {{name}}. It is valid for 2 minutes and for one try.',
+    codeLabel: 'Pairing code',
+    codeAria: 'Pairing code: {{code}}',
+    expiresIn: 'Expires in {{time}}',
+    warning:
+      'Only type it if you asked for it. Once paired, {{name}} can use everything on this computer: files, terminals, accounts, and keys.',
+    pairedTitle: '{{name}} paired',
+    pairedDescription:
+      'It can use this computer now. While it does, “In use by {{name}}” shows at the bottom of the sidebar, with Disconnect.',
+    mismatchTitle: 'The code did not match',
+    mismatchDescription: 'Nothing was paired. If you asked, ask for a new code on {{name}}.',
+    mismatchPausedDescription:
+      'Nothing was paired. After too many wrong codes, new pairings are paused until {{time}}.',
+    expiredTitle: 'The code expired',
+    expiredDescription: 'Nothing was paired. Ask for a new code on {{name}}.',
+    cancelledTitle: '{{name}} cancelled the pairing',
+    cancelledDescription: 'Nothing was paired.',
+    done: 'Done',
+  },
+  // At the bottom of the sidebar while the owner's other computers use this one.
+  peerChip: {
+    oneLabel: 'In use by {{name}}',
+    manyLabel_one: 'In use by {{name}} and {{count}} more',
+    manyLabel_other: 'In use by {{name}} and {{count}} more',
+    heading: 'Using this computer now',
+    since: 'Connected since {{time}}',
+    disconnect: 'Disconnect {{name}}',
+    access: 'A connected computer has full access to this computer.',
+    settings: 'Computer settings',
   },
   projectSetup: {
     title: 'Add project',
@@ -973,7 +1012,8 @@ export default {
     },
     // Side menu (#556): groups the settings by theme so the window stops being one giant list.
     nav: {
-      fleet: 'Bot server',
+      fleet: 'Bot servers',
+      computers: 'Computers',
       chat: 'Maestrly Chat',
       usage: 'Usage & cost',
       appearance: 'Appearance & sound',
@@ -983,12 +1023,96 @@ export default {
       privacy: 'Privacy',
       updates: 'Updates',
     },
+    computers: {
+      loading: 'Loading…',
+      title: 'Computers',
+      desc: 'Use your other computers from this one, and this one from them, straight over your local network or Tailscale.',
+      keyringUnavailable:
+        'The system keyring is unavailable, so this computer has nowhere to keep its key. Sharing and pairing come back once it is available.',
+      hostingTitle: 'Let my other computers use this computer',
+      hostingDesc:
+        'A paired computer can do everything you can do here: read and change the files of your home folder, run commands, and use your accounts, keys, and Git and SSH credentials.',
+      visibleAs: 'Visible as {{name}} at',
+      visibleHint: 'Only computers you pair by typing a code shown here can connect.',
+      hostingFailed: 'This computer could not start sharing itself: {{error}}',
+      paused: 'New pairings are paused until {{time}}, after too many wrong codes.',
+      nameTitle: 'This computer’s name',
+      nameDesc: 'How it shows on your other computers.',
+      advanced: 'Advanced',
+      portTitle: 'Port',
+      portDesc:
+        'Where your other computers reach this one. Empty uses {{port}}, or one of the next ports when another program holds it.',
+      portApply: 'Use port',
+      portDefault: 'Use the default port, {{port}}',
+      portHelp:
+        'A chosen port is used exactly. Changing it closes what your other computers have open here: the ones connected now follow it to the new port, and one that is off or asleep pairs again later, at the new address.',
+      portErrors: {
+        invalid: 'Type a port from {{min}} to 65535, or leave it empty for the default.',
+        inUse: 'Another program uses port {{port}}. Nothing changed.',
+        failed: 'This computer could not listen on port {{port}}. Nothing changed.',
+      },
+      pairedTitle: 'Paired computers',
+      pairedDesc: 'One pairing works both ways: each computer uses the other while that one lets it.',
+      connect: 'Connect a computer…',
+      empty:
+        'No paired computers. To use another computer from this one, turn on “Let my other computers use this computer” on it, then choose Connect a computer here.',
+      usingSince: 'Using this computer since {{time}}',
+      lastSeen: 'Last seen {{date}}',
+      pairedAt: 'Paired {{date}}',
+      open: 'Open',
+      disconnect: 'Disconnect',
+      remove: 'Remove',
+      removeNamed: 'Remove {{name}}',
+      removeTitle: 'Remove {{name}}?',
+      removeConfirm:
+        '{{name}} stops using this computer at once, and this computer stops showing {{name}}. To use each other again, pair them again with a code.',
+      connectDialog: {
+        title: 'Connect a computer',
+        description:
+          'On the other computer, turn on “Let my other computers use this computer” in Settings → Computers. Then type its address here.',
+        addressLabel: 'Address of the other computer',
+        addressPlaceholder: '192.168.1.20, studio.local or studio.tail1234.ts.net',
+        addressHelp:
+          'Settings → Computers on that computer shows its addresses. Away from home, use its Tailscale name.',
+        connect: 'Connect',
+        codeTitle: 'Type the code shown on {{name}}',
+        codeDescription: '{{name}} shows a 6-digit code. It is valid for 2 minutes and for one try.',
+        codeLabel: 'Pairing code',
+        back: 'Back',
+        pair: 'Pair',
+        pairing: 'Pairing…',
+        newCode: 'Ask for a new code',
+        pairedTitle: 'Paired with {{name}}',
+        pairedDescription:
+          '{{name}} now shows in the machine switcher at the top of the sidebar. The connection goes straight from one computer to the other, encrypted.',
+        open: 'Open {{name}}',
+        thatComputer: 'That computer',
+        errors: {
+          address: 'Type an address such as 192.168.1.20, studio.local or studio.tail1234.ts.net.',
+          unreachable:
+            'Nothing answered at {{address}}. Check that the other computer is on, lets other computers use it, and is on this network or on your Tailscale.',
+          busy: '{{name}} is pairing with another computer. Try again in a moment.',
+          cooldown: '{{name}} paused new pairings after too many wrong codes. Try again in 10 minutes.',
+          version: 'Both computers must run the same version of Maestrly. Update the older one, then try again.',
+          rateLimited: 'Too many pairing requests. Wait a minute, then try again.',
+          expired: 'The code expired. Ask for a new one.',
+          mismatch: 'The code did not match, and nothing was paired. Ask for a new code.',
+          used: 'This code was already used. Ask for a new one.',
+          unavailable: 'One of the computers cannot keep the pairing: its system keyring is unavailable.',
+          invalid: 'The other computer refused the pairing. Make sure it runs Maestrly, then try again.',
+          self: 'That address is this computer. Type the address of the other one.',
+        },
+      },
+    },
     artifacts: {
       title: 'Artifacts',
       desc: 'Pages your agents and bots publish on the bot server. They stay private until you share them.',
       saving: 'Saving…',
       saved: 'Saved',
       saveFailed: 'Could not save: {{message}}',
+      publishTo: 'Publish to',
+      publishToHint:
+        'The bot server your conversations on this computer publish to. What is already published stays on its server. The settings below are for the server chosen here.',
       setup: {
         title: 'Connect a bot server to publish artifacts',
         text: 'Your agents publish pages on the bot server. If you do not want bots yet, the setup brings only what artifacts need; the bot environment downloads when you create your first bot.',
@@ -1329,8 +1453,34 @@ export default {
     hostNewChat: 'New chat on {{host}}',
     hostAddWorkspace: 'Add workspace on {{host}}',
     hostNoWorkspaces: 'No workspaces in this environment.',
+    peerUnnamed: 'Computer',
+    peerNoWorkspaces: 'No workspaces on this computer.',
+    peerNotHosting: 'Not shared',
+    peerRemoved: 'Removed this computer',
+    peerDisconnected: 'Disconnected',
+    peerIdentityChanged: 'Pair again',
+    peerConnectingDetail: 'Connecting to {{host}}…',
+    peerReconnectingDetail: 'The connection dropped. What runs on {{host}} keeps running.',
+    peerOfflineDetail: '{{host}} is asleep, off, or out of reach. Away from home, both computers need Tailscale.',
+    peerNotHostingDetail:
+      '{{host}} does not let other computers use it now. Turn it on in Settings → Computers, on {{host}}.',
+    peerRemovedDetail: '{{host}} removed this computer. Pair again to use it, or remove it here.',
+    peerDisconnectedDetail: '{{host}} disconnected this computer. They stay paired.',
+    peerIdentityChangedDetail:
+      '{{host}} answered with another identity than the one paired: it was reinstalled, or something sits in between. Pair again to trust it.',
+    peerIncompatibleDetail:
+      '{{host}} runs Maestrly {{hostVersion}} and this computer runs {{appVersion}}. Update the older one so both run the same version.',
+    peerIncompatibleDetailUnknown:
+      '{{host}} runs another version of Maestrly. Update the older one so both run the same version.',
+    peerUpdates: 'Check for updates',
+    peerReconnect: 'Reconnect',
+    peerPairAgain: 'Pair again',
+    peerForget: 'Remove',
+    peerManage: 'Computer settings',
+    peerConnectAnother: 'Connect another computer…',
     // Host switcher: the sidebar lists one machine's chats and workspaces at a time.
     hostMachines: 'Machines',
+    hostServerUnnamed: 'Bot server',
     hostSwitch: 'Machine: {{host}}. Switch machine',
     hostOthers: 'Other machines',
     hostSwitchTo: 'Switch to {{host}}: {{status}}',

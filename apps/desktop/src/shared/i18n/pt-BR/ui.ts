@@ -622,6 +622,44 @@ export default {
     starting: 'Os workspaces de {{host}} estão iniciando…',
     failed: 'Os workspaces de {{host}} falharam ao iniciar',
     offline: 'Não foi possível falar com {{host}}',
+    notHosting: '{{host}} não deixa outros computadores usá-lo agora',
+    removed: '{{host}} removeu este computador',
+    disconnected: '{{host}} desconectou este computador',
+    identityChanged: 'É preciso parear com {{host}} de novo',
+    peerReconnectingDetail: 'O que roda em {{host}} continua rodando. Esta conversa volta quando a conexão voltar.',
+  },
+  // Outro computador do dono pede para usar este: o código aparece aqui e é digitado lá.
+  peerPrompt: {
+    waitingTitle: '{{name}} quer usar este computador',
+    waitingDescription: 'Digite este código em {{name}}. Ele vale por 2 minutos e para uma tentativa.',
+    codeLabel: 'Código de pareamento',
+    codeAria: 'Código de pareamento: {{code}}',
+    expiresIn: 'Expira em {{time}}',
+    warning:
+      'Só digite se foi você quem pediu. Depois de pareado, {{name}} pode usar tudo neste computador: arquivos, terminais, contas e chaves.',
+    pairedTitle: '{{name}} pareado',
+    pairedDescription:
+      'Ele já pode usar este computador. Enquanto usar, “Em uso por {{name}}” aparece no pé da barra lateral, com Desconectar.',
+    mismatchTitle: 'O código não conferiu',
+    mismatchDescription: 'Nada foi pareado. Se foi você quem pediu, peça um novo código em {{name}}.',
+    mismatchPausedDescription:
+      'Nada foi pareado. Depois de códigos errados demais, novos pareamentos ficam pausados até {{time}}.',
+    expiredTitle: 'O código expirou',
+    expiredDescription: 'Nada foi pareado. Peça um novo código em {{name}}.',
+    cancelledTitle: '{{name}} cancelou o pareamento',
+    cancelledDescription: 'Nada foi pareado.',
+    done: 'Concluir',
+  },
+  // No pé da barra lateral enquanto outros computadores do dono usam este.
+  peerChip: {
+    oneLabel: 'Em uso por {{name}}',
+    manyLabel_one: 'Em uso por {{name}} e mais {{count}}',
+    manyLabel_other: 'Em uso por {{name}} e mais {{count}}',
+    heading: 'Usando este computador agora',
+    since: 'Conectado desde {{time}}',
+    disconnect: 'Desconectar {{name}}',
+    access: 'Um computador conectado tem acesso total a este.',
+    settings: 'Configurações de computadores',
   },
   projectSetup: {
     title: 'Adicionar projeto',
@@ -982,7 +1020,8 @@ export default {
     },
     // Menu lateral (#556): agrupa as configs por tema p/ a janela deixar de ser uma lista gigante.
     nav: {
-      fleet: 'Servidor de bots',
+      fleet: 'Servidores de bots',
+      computers: 'Computadores',
       chat: 'Maestrly Chat',
       usage: 'Uso e custos',
       appearance: 'Aparência e sons',
@@ -992,12 +1031,98 @@ export default {
       privacy: 'Privacidade',
       updates: 'Atualizações',
     },
+    computers: {
+      loading: 'Carregando…',
+      title: 'Computadores',
+      desc: 'Use seus outros computadores a partir deste, e este a partir deles, direto pela rede local ou pelo Tailscale.',
+      keyringUnavailable:
+        'O chaveiro do sistema não está disponível, então este computador não tem onde guardar a própria chave. Compartilhar e parear voltam quando ele estiver disponível.',
+      hostingTitle: 'Deixar meus outros computadores usarem este',
+      hostingDesc:
+        'Um computador pareado pode fazer tudo o que você faz aqui: ler e alterar arquivos da sua pasta pessoal, rodar comandos e usar suas contas, chaves e credenciais de Git e SSH.',
+      visibleAs: 'Visível como {{name}} em',
+      visibleHint: 'Só entra quem você parear digitando um código mostrado aqui.',
+      hostingFailed: 'Este computador não conseguiu começar a se compartilhar: {{error}}',
+      paused: 'Novos pareamentos estão pausados até {{time}}, depois de códigos errados demais.',
+      nameTitle: 'Nome deste computador',
+      nameDesc: 'É como ele aparece nos seus outros computadores.',
+      advanced: 'Avançado',
+      portTitle: 'Porta',
+      portDesc:
+        'Por onde seus outros computadores chegam a este. Vazio usa {{port}}, ou uma das portas seguintes quando outro programa a ocupa.',
+      portApply: 'Usar porta',
+      portDefault: 'Usar a porta padrão, {{port}}',
+      portHelp:
+        'Uma porta escolhida é usada exatamente. Trocá-la fecha o que seus outros computadores têm aberto aqui: os conectados agora seguem para a porta nova, e um que estiver desligado ou dormindo pareia de novo depois, pelo endereço novo.',
+      portErrors: {
+        invalid: 'Digite uma porta de {{min}} a 65535, ou deixe vazio para usar a padrão.',
+        inUse: 'Outro programa usa a porta {{port}}. Nada mudou.',
+        failed: 'Este computador não conseguiu escutar na porta {{port}}. Nada mudou.',
+      },
+      pairedTitle: 'Computadores pareados',
+      pairedDesc: 'Um pareamento vale para os dois sentidos: cada computador usa o outro enquanto esse outro deixa.',
+      connect: 'Conectar a um computador…',
+      empty:
+        'Nenhum computador pareado. Para usar outro computador a partir deste, ligue nele “Deixar meus outros computadores usarem este” e escolha aqui Conectar a um computador.',
+      usingSince: 'Usando este computador desde {{time}}',
+      lastSeen: 'Visto pela última vez em {{date}}',
+      pairedAt: 'Pareado em {{date}}',
+      open: 'Abrir',
+      disconnect: 'Desconectar',
+      remove: 'Remover',
+      removeNamed: 'Remover {{name}}',
+      removeTitle: 'Remover {{name}}?',
+      removeConfirm:
+        '{{name}} deixa de usar este computador na hora, e este deixa de mostrar {{name}}. Para voltarem a se usar, os dois precisam parear de novo com um código.',
+      connectDialog: {
+        title: 'Conectar a um computador',
+        description:
+          'No outro computador, ligue “Deixar meus outros computadores usarem este” em Configurações → Computadores. Depois digite o endereço dele aqui.',
+        addressLabel: 'Endereço do outro computador',
+        addressPlaceholder: '192.168.1.20, studio.local ou studio.tail1234.ts.net',
+        addressHelp:
+          'Configurações → Computadores, naquele computador, mostra os endereços dele. Fora de casa, use o nome dele no Tailscale.',
+        connect: 'Conectar',
+        codeTitle: 'Digite o código mostrado em {{name}}',
+        codeDescription: '{{name}} mostra um código de 6 dígitos. Ele vale por 2 minutos e para uma tentativa.',
+        codeLabel: 'Código de pareamento',
+        back: 'Voltar',
+        pair: 'Parear',
+        pairing: 'Pareando…',
+        newCode: 'Pedir um novo código',
+        pairedTitle: 'Pareado com {{name}}',
+        pairedDescription:
+          '{{name}} agora aparece no seletor de máquinas, no topo da barra lateral. A conexão vai direto de um computador ao outro, criptografada.',
+        open: 'Abrir {{name}}',
+        thatComputer: 'Aquele computador',
+        errors: {
+          address: 'Digite um endereço como 192.168.1.20, studio.local ou studio.tail1234.ts.net.',
+          unreachable:
+            'Nada respondeu em {{address}}. Confira se o outro computador está ligado, deixa outros computadores usá-lo e está nesta rede ou no seu Tailscale.',
+          busy: '{{name}} está pareando com outro computador. Tente de novo daqui a pouco.',
+          cooldown: '{{name}} pausou novos pareamentos depois de códigos errados demais. Tente de novo em 10 minutos.',
+          version:
+            'Os dois computadores precisam rodar a mesma versão do Maestrly. Atualize o mais antigo e tente de novo.',
+          rateLimited: 'Pedidos de pareamento demais. Espere um minuto e tente de novo.',
+          expired: 'O código expirou. Peça um novo.',
+          mismatch: 'O código não confere, e nada foi pareado. Peça um novo código.',
+          used: 'Este código já foi usado. Peça um novo.',
+          unavailable:
+            'Um dos computadores não consegue guardar o pareamento: o chaveiro do sistema dele não está disponível.',
+          invalid: 'O outro computador recusou o pareamento. Confira se ele roda o Maestrly e tente de novo.',
+          self: 'Esse endereço é deste computador. Digite o endereço do outro.',
+        },
+      },
+    },
     artifacts: {
       title: 'Artefatos',
       desc: 'Páginas que seus agentes e bots publicam no servidor de bots. Ficam privadas até você compartilhar.',
       saving: 'Salvando…',
       saved: 'Salvo',
       saveFailed: 'Não foi possível salvar: {{message}}',
+      publishTo: 'Publicar em',
+      publishToHint:
+        'O servidor de bots em que as conversas deste computador publicam. O que já foi publicado fica no seu servidor. As configurações abaixo são do servidor escolhido aqui.',
       setup: {
         title: 'Conecte um servidor de bots para publicar artefatos',
         text: 'Seus agentes publicam as páginas no servidor de bots. Se ainda não quer bots, a instalação traz só o necessário para artefatos; o ambiente dos bots é baixado quando você criar o primeiro.',
@@ -1339,8 +1464,35 @@ export default {
     hostNewChat: 'Novo chat em {{host}}',
     hostAddWorkspace: 'Adicionar workspace em {{host}}',
     hostNoWorkspaces: 'Nenhum workspace neste ambiente.',
+    peerUnnamed: 'Computador',
+    peerNoWorkspaces: 'Nenhum workspace neste computador.',
+    peerNotHosting: 'Não compartilhado',
+    peerRemoved: 'Removeu este computador',
+    peerDisconnected: 'Desconectado',
+    peerIdentityChanged: 'Parear de novo',
+    peerConnectingDetail: 'Conectando a {{host}}…',
+    peerReconnectingDetail: 'A conexão caiu. O que roda em {{host}} continua rodando.',
+    peerOfflineDetail:
+      '{{host}} está dormindo, desligado ou fora de alcance. Fora de casa, os dois computadores precisam do Tailscale.',
+    peerNotHostingDetail:
+      '{{host}} não deixa outros computadores usá-lo agora. Ligue em Configurações → Computadores, em {{host}}.',
+    peerRemovedDetail: '{{host}} removeu este computador. Pareie de novo para usá-lo, ou remova-o daqui.',
+    peerDisconnectedDetail: '{{host}} desconectou este computador. Os dois continuam pareados.',
+    peerIdentityChangedDetail:
+      '{{host}} respondeu com outra identidade que não a pareada: foi reinstalado, ou há algo no meio do caminho. Pareie de novo para confiar nele.',
+    peerIncompatibleDetail:
+      '{{host}} roda o Maestrly {{hostVersion}} e este computador roda o {{appVersion}}. Atualize o mais antigo para os dois rodarem a mesma versão.',
+    peerIncompatibleDetailUnknown:
+      '{{host}} roda outra versão do Maestrly. Atualize o mais antigo para os dois rodarem a mesma versão.',
+    peerUpdates: 'Ver atualizações',
+    peerReconnect: 'Reconectar',
+    peerPairAgain: 'Parear de novo',
+    peerForget: 'Remover',
+    peerManage: 'Configurações de computadores',
+    peerConnectAnother: 'Conectar outro computador…',
     // Host switcher: the sidebar lists one machine's chats and workspaces at a time.
     hostMachines: 'Máquinas',
+    hostServerUnnamed: 'Servidor de bots',
     hostSwitch: 'Máquina: {{host}}. Trocar de máquina',
     hostOthers: 'Outras máquinas',
     hostSwitchTo: 'Ir para {{host}}: {{status}}',

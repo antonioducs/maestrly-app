@@ -69,13 +69,21 @@ function setup(records: FleetServerRecord[] = []) {
   const clients: FakeClient[] = []
   const emitted: Array<{ channel: string; payload: unknown }> = []
   const migrate = vi.fn()
-  const pair = vi.fn(async (input: { url: string; code: string; deviceName: string }) => ({
-    origin: input.url,
-    deviceId: 'device-new',
-    deviceName: input.deviceName,
-    token: 'token-new',
-    features: ['phones'],
-  }))
+  // The installation id the gateway being paired announces; null for a gateway before it.
+  let announced: string | null = null
+  const pair = vi.fn(
+    async (input: { url: string; code: string; deviceName: string; accept(gatewayId: string | null): void }) => {
+      input.accept(announced)
+      return {
+        origin: input.url,
+        deviceId: 'device-new',
+        deviceName: input.deviceName,
+        token: 'token-new',
+        features: ['phones'],
+        gatewayId: announced,
+      }
+    }
+  )
   const purgeScope = vi.fn(async () => {})
   let installed: FleetServerId | null = null
   const servers = new FleetServers({
@@ -121,6 +129,9 @@ function setup(records: FleetServerRecord[] = []) {
     install: (id: FleetServerId | null) => {
       installed = id
     },
+    announce: (gatewayId: string | null) => {
+      announced = gatewayId
+    },
   }
 }
 const record = (id: FleetServerId, url: string, deviceId = `device-${id.slice(0, 1)}`): FleetServerRecord => ({
@@ -161,7 +172,9 @@ describe('fleet servers', () => {
     )
     expect(h.pair).not.toHaveBeenCalled()
     const view = await h.servers.pair({ url: 'https://other.example', code: 'ABCD-EFGH' })
-    expect(h.pair).toHaveBeenCalledWith({ url: 'https://other.example', code: 'ABCD-EFGH', deviceName: 'Laptop' })
+    expect(h.pair).toHaveBeenCalledWith(
+      expect.objectContaining({ url: 'https://other.example', code: 'ABCD-EFGH', deviceName: 'Laptop' })
+    )
     expect(view.id).toBe(NEW)
     expect(h.store.tokens.get(NEW)).toBe('token-new')
     expect(h.store.records.at(-1)).toEqual({
@@ -196,6 +209,44 @@ describe('fleet servers', () => {
     expect(h.clients[1].calls).toContain('unpair')
     expect(h.servers.clients().map((client) => client.serverId)).toEqual([A, NEW])
     expect(h.store.records.map((item) => item.id)).toEqual([A, NEW])
+  })
+
+  it('refuses a server already paired at another address, before its code is spent', async () => {
+    const GATEWAY = '11111111-2222-4333-8444-555555555555'
+    h.store.records[1] = { ...h.store.records[1], gatewayId: GATEWAY }
+    h.servers.start()
+    h.announce(GATEWAY)
+    await expect(h.servers.pair({ url: 'https://vps-alias.example', code: 'ABCD-EFGH' })).rejects.toThrow(
+      FLEET_SERVER_ALREADY_PAIRED
+    )
+    expect(h.store.records.map((item) => item.id)).toEqual([A, B])
+    expect(h.store.tokens.has(NEW)).toBe(false)
+    // Another installation at another address is a new server, and its id is kept.
+    h.announce('99999999-2222-4333-8444-555555555555')
+    await expect(h.servers.pair({ url: 'https://other.example', code: 'ABCD-EFGH' })).resolves.toMatchObject({
+      id: NEW,
+    })
+    expect(h.store.records.at(-1)?.gatewayId).toBe('99999999-2222-4333-8444-555555555555')
+  })
+
+  it('pairs a server again under its id at a new address when it announces the same installation', async () => {
+    const GATEWAY = '11111111-2222-4333-8444-555555555555'
+    h.store.records[1] = { ...h.store.records[1], gatewayId: GATEWAY }
+    h.servers.start()
+    h.announce(GATEWAY)
+    const view = await h.servers.pair({ url: 'https://vps-new-name.example', code: 'ABCD-EFGH' }, B)
+    expect(view.id).toBe(B)
+    expect(h.servers.clients().map((client) => client.serverId)).toEqual([A, B])
+    expect(h.store.records[1]).toMatchObject({ id: B, url: 'https://vps-new-name.example', gatewayId: GATEWAY })
+    expect(h.clients[1].calls).not.toContain('unpair')
+  })
+
+  it('keeps the installation id a server announces when this computer connects', () => {
+    h.servers.start()
+    const GATEWAY = '11111111-2222-4333-8444-555555555555'
+    h.clients[0].deps.onGatewayId?.(GATEWAY)
+    expect(h.store.records[0].gatewayId).toBe(GATEWAY)
+    expect(h.store.records[1].gatewayId).toBeUndefined()
   })
 
   it('moves a server to another address and restarts only its client', () => {

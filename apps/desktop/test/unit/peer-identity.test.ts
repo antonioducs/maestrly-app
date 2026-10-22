@@ -1,4 +1,5 @@
 import { createPrivateKey, X509Certificate } from 'node:crypto'
+import forge from 'node-forge'
 import { describe, expect, it } from 'vitest'
 import { certificateFingerprint, loadOrCreateIdentity, normalizeFingerprint } from '../../src/main/peer/identity'
 import { memoryPeerStorage } from './peer-helpers'
@@ -20,6 +21,46 @@ describe('peer identity', () => {
     expect(loadOrCreateIdentity(storage, { defaultName: () => 'other' })).toEqual(first)
     const plain = [...storage.values].filter(([key]) => !key.startsWith('secret:')).map(([, value]) => value)
     expect(plain.join()).not.toContain('PRIVATE KEY')
+  })
+
+  it('has a certificate that anchors itself, as Electron requires of a pinned one', () => {
+    const identity = loadOrCreateIdentity(memoryPeerStorage(), { defaultName: () => 'A' })
+    if (!identity) throw new Error('No identity')
+    const cert = new X509Certificate(identity.certPem)
+    expect(cert.ca).toBe(true)
+    expect(cert.checkIssued(cert)).toBe(true)
+    expect(cert.verify(cert.publicKey)).toBe(true)
+  })
+
+  it('gets a new certificate for the same key and device when its own cannot anchor itself', () => {
+    const storage = memoryPeerStorage()
+    const first = loadOrCreateIdentity(storage, { defaultName: () => 'A' })
+    if (!first) throw new Error('No identity')
+    // A certificate as the first release issued it: not allowed to sign certificates.
+    const old = forge.pki.createCertificate()
+    old.publicKey = forge.pki.publicKeyFromPem(
+      new X509Certificate(first.certPem).publicKey.export({ type: 'spki', format: 'pem' }).toString()
+    )
+    old.serialNumber = '01'
+    old.validity.notBefore = new Date(Date.now() - 86_400_000)
+    old.validity.notAfter = new Date(Date.now() + 86_400_000)
+    old.setSubject([{ name: 'commonName', value: first.deviceId }])
+    old.setIssuer([{ name: 'commonName', value: first.deviceId }])
+    old.setExtensions([{ name: 'basicConstraints', cA: false, critical: true }])
+    old.sign(forge.pki.privateKeyFromPem(first.keyPem), forge.md.sha256.create())
+    storage.set(
+      'peer.identity',
+      JSON.stringify({ deviceId: first.deviceId, name: 'A', certPem: forge.pki.certificateToPem(old) })
+    )
+
+    const again = loadOrCreateIdentity(storage, { defaultName: () => 'other' })
+    if (!again) throw new Error('No identity')
+    expect(again.deviceId).toBe(first.deviceId)
+    expect(again.keyPem).toBe(first.keyPem)
+    expect(new X509Certificate(again.certPem).ca).toBe(true)
+    expect(new X509Certificate(again.certPem).checkPrivateKey(createPrivateKey(first.keyPem))).toBe(true)
+    // Kept: the next start loads the same certificate.
+    expect(loadOrCreateIdentity(storage, { defaultName: () => 'other' })).toEqual(again)
   })
 
   it('is unavailable without a keyring and stores nothing', () => {
