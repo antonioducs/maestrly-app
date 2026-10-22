@@ -18,9 +18,14 @@ const logs: string[] = []
 let lastPid: number | undefined
 
 // Headless and unsandboxed: a CI runner may forbid the user namespaces of Chromium's sandbox, which the bot image allows.
-// The profile flags are `maestrly-bot-browser`'s; without a session bus, as in the image, Chromium does not wait on one.
+// The profile flags are `maestrly-bot-browser`'s. The buses point at nothing, so Chromium fails to connect at once: a
+// runner's own bus can leave it waiting, and with none set libdbus launches one that may take as long.
 function spawnHeadless(args: string[]): ChromiumProcess {
-  const { DBUS_SESSION_BUS_ADDRESS: _bus, ...env } = process.env
+  const env = {
+    ...process.env,
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/nonexistent/maestrly-test-bus',
+    DBUS_SYSTEM_BUS_ADDRESS: 'unix:path=/nonexistent/maestrly-test-bus',
+  }
   const child = spawn(
     'chromium',
     [
@@ -154,7 +159,10 @@ describe.skipIf(!existsSync('/usr/bin/chromium'))('bot chromium smoke', () => {
     const send = tab.send.bind(tab)
     tab.send = (method, params, timeoutMs) =>
       send(method, params, timeoutMs).then(
-        (result) => (mark(`${method} answered`), result),
+        (result) => {
+          mark(`${method} answered`)
+          return result
+        },
         (error: Error) => {
           mark(`${method} failed: ${error.message}`)
           throw error
