@@ -78,6 +78,16 @@ export function registerBrowserTools(ctx: McpToolContext): void {
     })
   }
 
+  /**
+   * The tool call's cancellation, joined with the delegated worker's. Operations also end at their own deadline, so a
+   * page that stops answering cannot hold the call, or the tab lock the next calls wait for.
+   */
+  const controlFor = (extra?: { signal?: AbortSignal }): bc.BrowserControlOperationOptions => {
+    const signals = [extra?.signal, workerScope?.signal].filter((signal): signal is AbortSignal => !!signal)
+    if (signals.length === 0) return {}
+    return { signal: signals.length === 1 ? signals[0] : AbortSignal.any(signals) }
+  }
+
   const withBrowserLease = async <T>(operation: (lease: BrowserLease) => Promise<T>): Promise<T> => {
     if (!workerScope) {
       const lease = acquireBrowserForControl(convId)
@@ -104,8 +114,13 @@ export function registerBrowserTools(ctx: McpToolContext): void {
       }
     })
   }
-  const withBrowserActivity = <T>(operation: (browser: BrowserWebContents) => Promise<T>): Promise<T> =>
-    withBrowserLease((lease) => operation(lease.webContents))
+  const withBrowserActivity = <T>(
+    extra: { signal?: AbortSignal } | undefined,
+    operation: (browser: BrowserWebContents, control: bc.BrowserControlOperationOptions) => Promise<T>
+  ): Promise<T> => {
+    const control = controlFor(extra)
+    return withBrowserLease((lease) => operation(lease.webContents, control))
+  }
 
   server.registerTool(
     'browser_navigate',
@@ -114,9 +129,9 @@ export function registerBrowserTools(ctx: McpToolContext): void {
       description: t('tools.browser_navigate.description') + DRAWER_NOTE,
       inputSchema: { url: z.string().describe(t('tools.browser_navigate.params.url')) },
     },
-    async ({ url }) => {
-      return withBrowserActivity(async (browser) => {
-        const r = await bc.navigate(browser, url)
+    async ({ url }, extra) => {
+      return withBrowserActivity(extra, async (browser, control) => {
+        const r = await bc.navigate(browser, url, control)
         return { content: [{ type: 'text', text: t('returns.browser.navigated', { url: r.url }) }] }
       })
     }
@@ -138,9 +153,9 @@ export function registerBrowserTools(ctx: McpToolContext): void {
           DRAWER_NOTE,
         inputSchema: {},
       },
-      async () => {
-        return withBrowserActivity(async (browser) => {
-          const r = await bc.navHistory(browser, dir)
+      async (_args, extra) => {
+        return withBrowserActivity(extra, async (browser, control) => {
+          const r = await bc.navHistory(browser, dir, control)
           if (!r.moved && dir !== 'reload')
             return { content: [{ type: 'text', text: t('returns.browser.noHistory', { label: label.toLowerCase() }) }] }
           return {
@@ -171,14 +186,14 @@ export function registerBrowserTools(ctx: McpToolContext): void {
         timeout_ms: z.number().int().positive().optional().describe(t('tools.browser_wait_for.params.timeoutMs')),
       },
     },
-    async ({ selector, text, network_idle, timeout_ms }) => {
-      return withBrowserActivity(async (browser) => {
+    async ({ selector, text, network_idle, timeout_ms }, extra) => {
+      return withBrowserActivity(extra, async (browser, control) => {
         const r = await bc.waitFor(browser, {
           selector,
           text,
           networkIdle: network_idle,
           timeoutMs: timeout_ms,
-          ...(workerScope?.signal ? { signal: workerScope.signal } : {}),
+          ...control,
         })
         const what = selector
           ? t('returns.browser.waitWhatSelector', { selector })
@@ -208,9 +223,9 @@ export function registerBrowserTools(ctx: McpToolContext): void {
       description: t('tools.browser_snapshot.description') + DRAWER_NOTE,
       inputSchema: {},
     },
-    async () => {
-      return withBrowserActivity(async (browser) => {
-        const r = await bc.snapshot(browser)
+    async (_args, extra) => {
+      return withBrowserActivity(extra, async (browser, control) => {
+        const r = await bc.snapshot(browser, control)
         const pct = r.scroll.maxY > 0 ? Math.round((r.scroll.y / r.scroll.maxY) * 100) : 0
         const head = t('returns.browser.snapshotHead', {
           url: r.url,
@@ -236,9 +251,9 @@ export function registerBrowserTools(ctx: McpToolContext): void {
       description: t('tools.browser_click.description'),
       inputSchema: { ref: z.number().int().describe(t('tools.browser_click.params.ref')) },
     },
-    async ({ ref }) => {
-      return withBrowserActivity(async (browser) => {
-        await bc.clickRef(browser, ref)
+    async ({ ref }, extra) => {
+      return withBrowserActivity(extra, async (browser, control) => {
+        await bc.clickRef(browser, ref, control)
         return { content: [{ type: 'text', text: t('returns.browser.clicked', { ref }) }] }
       })
     }
@@ -251,9 +266,9 @@ export function registerBrowserTools(ctx: McpToolContext): void {
       description: t('tools.browser_double_click.description'),
       inputSchema: { ref: z.number().int().describe(t('tools.browser_double_click.params.ref')) },
     },
-    async ({ ref }) => {
-      return withBrowserActivity(async (browser) => {
-        await bc.doubleClickRef(browser, ref)
+    async ({ ref }, extra) => {
+      return withBrowserActivity(extra, async (browser, control) => {
+        await bc.doubleClickRef(browser, ref, control)
         return { content: [{ type: 'text', text: t('returns.browser.doubleClicked', { ref }) }] }
       })
     }
@@ -266,9 +281,9 @@ export function registerBrowserTools(ctx: McpToolContext): void {
       description: t('tools.browser_right_click.description'),
       inputSchema: { ref: z.number().int().describe(t('tools.browser_right_click.params.ref')) },
     },
-    async ({ ref }) => {
-      return withBrowserActivity(async (browser) => {
-        await bc.rightClickRef(browser, ref)
+    async ({ ref }, extra) => {
+      return withBrowserActivity(extra, async (browser, control) => {
+        await bc.rightClickRef(browser, ref, control)
         return { content: [{ type: 'text', text: t('returns.browser.rightClicked', { ref }) }] }
       })
     }
@@ -284,9 +299,9 @@ export function registerBrowserTools(ctx: McpToolContext): void {
         to_ref: z.number().int().describe(t('tools.browser_drag.params.toRef')),
       },
     },
-    async ({ from_ref, to_ref }) => {
-      return withBrowserActivity(async (browser) => {
-        await bc.dragRef(browser, from_ref, to_ref)
+    async ({ from_ref, to_ref }, extra) => {
+      return withBrowserActivity(extra, async (browser, control) => {
+        await bc.dragRef(browser, from_ref, to_ref, control)
         return { content: [{ type: 'text', text: t('returns.browser.dragged', { from: from_ref, to: to_ref }) }] }
       })
     }
@@ -303,9 +318,9 @@ export function registerBrowserTools(ctx: McpToolContext): void {
         clear: z.boolean().optional().describe(t('tools.browser_type.params.clear')),
       },
     },
-    async ({ ref, text, clear }) => {
-      return withBrowserActivity(async (browser) => {
-        await bc.typeRef(browser, ref, text, clear)
+    async ({ ref, text, clear }, extra) => {
+      return withBrowserActivity(extra, async (browser, control) => {
+        await bc.typeRef(browser, ref, text, clear, control)
         return {
           content: [
             {
@@ -331,9 +346,9 @@ export function registerBrowserTools(ctx: McpToolContext): void {
           .describe(t('tools.browser_press_key.params.modifiers')),
       },
     },
-    async ({ key, modifiers }) => {
-      return withBrowserActivity(async (browser) => {
-        await bc.pressKey(browser, key, modifiers)
+    async ({ key, modifiers }, extra) => {
+      return withBrowserActivity(extra, async (browser, control) => {
+        await bc.pressKey(browser, key, modifiers, control)
         const combo = modifiers?.length ? `${modifiers.join('+')}+${key}` : key
         return { content: [{ type: 'text', text: t('returns.browser.key', { combo }) }] }
       })
@@ -347,9 +362,9 @@ export function registerBrowserTools(ctx: McpToolContext): void {
       description: t('tools.browser_read_text.description') + DRAWER_NOTE,
       inputSchema: {},
     },
-    async () => {
-      return withBrowserActivity(async (browser) => {
-        const text = await bc.readText(browser)
+    async (_args, extra) => {
+      return withBrowserActivity(extra, async (browser, control) => {
+        const text = await bc.readText(browser, control)
         return { content: [{ type: 'text', text }] }
       })
     }
@@ -366,10 +381,11 @@ export function registerBrowserTools(ctx: McpToolContext): void {
       },
     },
     async (_args, extra) => {
+      const { signal = extra.signal } = controlFor(extra)
       return withBrowserLease(async (acquired) => {
         const browser = acquired.webContents
         const data = await bc.screenshot(browser, {
-          signal: extra.signal,
+          signal,
           captureFrame: acquired.captureFrame,
         })
         const m = bc.mousePosition(browser)
@@ -377,11 +393,11 @@ export function registerBrowserTools(ctx: McpToolContext): void {
         let scrollError: unknown
         try {
           s = await bc.scrollPosition(browser, {
-            signal: extra.signal,
+            signal,
             timeoutMs: SCREENSHOT_METADATA_TIMEOUT_MS,
           })
         } catch (error) {
-          if (extra.signal.aborted) throw error
+          if (signal.aborted) throw error
           scrollError = error
         }
         const pct = s && s.maxY > 0 ? Math.round((s.y / s.maxY) * 100) : 0
@@ -413,9 +429,9 @@ export function registerBrowserTools(ctx: McpToolContext): void {
         expression: z.string().describe(t('tools.browser_evaluate.params.expression')),
       },
     },
-    async ({ expression }) => {
-      return withBrowserActivity(async (browser) => {
-        const r = await bc.evaluate(browser, expression)
+    async ({ expression }, extra) => {
+      return withBrowserActivity(extra, async (browser, control) => {
+        const r = await bc.evaluate(browser, expression, control)
         return { content: [{ type: 'text', text: r.value }] }
       })
     }
@@ -431,9 +447,9 @@ export function registerBrowserTools(ctx: McpToolContext): void {
         y: z.number().finite().describe(t('tools.browser_mouse_move.params.y')),
       },
     },
-    async ({ x, y }) => {
-      return withBrowserActivity(async (browser) => {
-        const p = await bc.moveMouse(browser, x, y)
+    async ({ x, y }, extra) => {
+      return withBrowserActivity(extra, async (browser, control) => {
+        const p = await bc.moveMouse(browser, x, y, control)
         return { content: [{ type: 'text', text: t('returns.browser.mouseMoved', { x: p.x, y: p.y }) }] }
       })
     }
@@ -454,9 +470,9 @@ export function registerBrowserTools(ctx: McpToolContext): void {
         container: z.string().optional().describe(t('tools.browser_scroll.params.container')),
       },
     },
-    async ({ dx, dy, x, y, to, selector, container }) => {
-      return withBrowserActivity(async (browser) => {
-        const p = await bc.scroll(browser, { dx, dy, x, y, to, selector, container })
+    async ({ dx, dy, x, y, to, selector, container }, extra) => {
+      return withBrowserActivity(extra, async (browser, control) => {
+        const p = await bc.scroll(browser, { dx, dy, x, y, to, selector, container }, control)
         const pct = p.maxY > 0 ? Math.round((p.y / p.maxY) * 100) : 0
         const onde = container ? t('returns.browser.scrollContainer', { container }) : ''
         return {
@@ -484,9 +500,9 @@ export function registerBrowserTools(ctx: McpToolContext): void {
         limit: z.number().int().optional().describe(t('tools.browser_console_logs.params.limit')),
       },
     },
-    async ({ level, limit }) => {
-      return withBrowserActivity(async (browser) => {
-        const logs = await bc.getConsoleLogs(browser, { level, limit })
+    async ({ level, limit }, extra) => {
+      return withBrowserActivity(extra, async (browser, control) => {
+        const logs = await bc.getConsoleLogs(browser, { level, limit }, control)
         const text = logs.length
           ? logs.map((l) => `[${l.level}] ${l.text}`).join('\n')
           : t('returns.browser.noConsoleLogs')
@@ -505,9 +521,9 @@ export function registerBrowserTools(ctx: McpToolContext): void {
         limit: z.number().int().optional().describe(t('tools.browser_network_logs.params.limit')),
       },
     },
-    async ({ onlyErrors, limit }) => {
-      return withBrowserActivity(async (browser) => {
-        const net = await bc.getNetworkLogs(browser, { onlyErrors, limit })
+    async ({ onlyErrors, limit }, extra) => {
+      return withBrowserActivity(extra, async (browser, control) => {
+        const net = await bc.getNetworkLogs(browser, { onlyErrors, limit }, control)
         const text = net.length
           ? net
               .map(
@@ -530,8 +546,8 @@ export function registerBrowserTools(ctx: McpToolContext): void {
       description: t('tools.browser_clear_logs.description') + DRAWER_NOTE,
       inputSchema: {},
     },
-    async () => {
-      return withBrowserActivity(async (browser) => {
+    async (_args, extra) => {
+      return withBrowserActivity(extra, async (browser) => {
         await bc.clearLogs(browser)
         return { content: [{ type: 'text', text: t('returns.browser.logsCleared') }] }
       })
@@ -548,9 +564,9 @@ export function registerBrowserTools(ctx: McpToolContext): void {
         prompt_text: z.string().optional().describe(t('tools.browser_set_dialog_behavior.params.promptText')),
       },
     },
-    async ({ accept, prompt_text }) => {
-      return withBrowserActivity(async (browser) => {
-        await bc.setDialogBehavior(browser, accept, prompt_text)
+    async ({ accept, prompt_text }, extra) => {
+      return withBrowserActivity(extra, async (browser, control) => {
+        await bc.setDialogBehavior(browser, accept, prompt_text, control)
         return {
           content: [
             {

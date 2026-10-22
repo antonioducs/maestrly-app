@@ -131,6 +131,8 @@ export const safeStorage = {
 const fakeSession = {
   webRequest: { onHeadersReceived: (): void => {} },
   setPermissionRequestHandler: (_fn: unknown): void => {},
+  getUserAgent: (): string => 'Mozilla/5.0 Chrome/144.0.0.0 Safari/537.36',
+  setUserAgent: (_userAgent: string): void => {},
   clearCache: (): Promise<void> => Promise.resolve(),
   clearStorageData: (): Promise<void> => Promise.resolve(),
 }

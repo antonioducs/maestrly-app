@@ -1,6 +1,6 @@
 import { BrowserWindow, WebContentsView, session, type NativeImage, type Rectangle, type WebContents } from 'electron'
 import * as windowIpc from '../window-ipc'
-import { attachToView, setBrowserCdpActivity } from '../browser-control'
+import { attachToView, notePageResponsiveness, setBrowserCdpActivity } from '../browser-control'
 import {
   acquireAgentActivity,
   registerThrottleTarget,
@@ -15,6 +15,7 @@ import { getConvUiPrefs, patchConvUiPrefs } from '../store'
 import { attachHotkeyCapture } from '../hotkeys'
 import { attachBrowserHotkeyCapture } from '../browser-hotkeys'
 import { isPopupDisposition, oauthChildWindowOptions } from '../oauth-popup'
+import { websiteUserAgent } from './browser-user-agent'
 import { attachMacMouseNavigation } from '../mouse-navigation'
 import { conversationBrowserArea, presentedBrowserSize } from '../conversation-screen'
 import { isHeadlessInstance, isServerMode } from '../remote-host/server/config'
@@ -71,6 +72,7 @@ let popupBrowserRelayout: ((convId: string) => void) | null = null
 const oauthOwnerScopeByWindow = new Map<BrowserWindow, string>()
 const browserCaptureTails = new WeakMap<WebContents, Promise<void>>()
 const browserDialogReady = new WeakMap<WebContents, Promise<void>>()
+const BROWSER_CONTROL_READY_TIMEOUT_MS = 15_000
 
 /** Bot pages load only once their nonblocking dialog policy is installed. Native dialogs are disabled from creation. */
 function loadBrowserUrl(wc: WebContents, url: string): void {
@@ -87,7 +89,17 @@ function loadBrowserUrl(wc: WebContents, url: string): void {
  * install its dialog policy; a navigation sent before that page is in place would be replaced by it.
  */
 export function browserControlReady(wc: WebContents): Promise<void> {
-  return browserDialogReady.get(wc) ?? Promise.resolve()
+  const ready = browserDialogReady.get(wc)
+  if (!ready) return Promise.resolve()
+  // A view whose empty page never finishes is driven anyway: the operation's own deadline then reports it.
+  return new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, BROWSER_CONTROL_READY_TIMEOUT_MS)
+    timer.unref?.()
+    void ready.finally(() => {
+      clearTimeout(timer)
+      resolve()
+    })
+  })
 }
 
 function enqueueBrowserCapture<T>(wc: WebContents, operation: () => Promise<T>): Promise<T> {
@@ -506,7 +518,10 @@ export function disposeBrowserTabEviction(): void {
  * when explicitly supported.
  */
 export function hardenBrowserSession(): void {
-  session.fromPartition(BROWSER_PARTITION).setPermissionRequestHandler((_wc, _permission, cb) => cb(false))
+  const browserSession = session.fromPartition(BROWSER_PARTITION)
+  browserSession.setPermissionRequestHandler((_wc, _permission, cb) => cb(false))
+  // Set before any page exists: a session's user agent applies to the pages created after it.
+  browserSession.setUserAgent(websiteUserAgent(browserSession.getUserAgent()))
 }
 
 /** Where a conversation's popups stay: inside its presented browser, or its whole screen area; none without one. */
@@ -543,6 +558,9 @@ function createBrowserView(d: ConvDrawer, convId: string, tab: BrowserTab): WebC
     if (tab.view === v) tab.view = null
     unregisterPerformanceWebContents(wc)
   })
+  // A page the hang monitor reports gets its renderer restarted by the next navigation or reload.
+  wc.on('unresponsive', () => notePageResponsiveness(wc, false))
+  wc.on('responsive', () => notePageResponsiveness(wc, true))
   // Attach CDP early; Page/DevTools coexist while Runtime/Log/Network capture follows activity leases and
   // tool demand.
   // In a bot or on a workspaces host nobody can answer a native dialog: the page's dialog policy answers instead.

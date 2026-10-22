@@ -36,6 +36,11 @@ const nativeDialogsDisabled = new WeakSet<WebContents>()
 // Per-tab prompt override script ID, removed before reinstalling because Electron does not support native
 // prompt().
 const promptScriptId = new WeakMap<WebContents, string>()
+// The protocol listeners outlive a detached session: the next attach reuses them instead of doubling every event.
+const listenersInstalled = new WeakSet<WebContents>()
+// Pages whose renderer stopped answering: an operation ran out of time or Electron's hang monitor reported it. The
+// next navigation probes them and restarts the renderer when it is still stuck.
+const frozenPages = new WeakSet<WebContents>()
 
 // Bounded console/network ring buffers collect while the tab is active or within governor grace; existing
 // history remains available to tools.
@@ -231,8 +236,21 @@ function isCaptureDomainMethod(method: string): boolean {
   return method.startsWith('Runtime.') || method.startsWith('Log.') || method.startsWith('Network.')
 }
 
+/**
+ * A session ends without the tab closing (the renderer process is replaced or another client takes over): forget it,
+ * so the next operation attaches again instead of sending commands to a session that is gone.
+ */
+function forgetAttachment(wc: WebContents): void {
+  attached.delete(wc)
+  cdpDomains.delete(wc)
+  cdpCaptureActive.set(wc, false)
+  promptScriptId.delete(wc)
+  clearPending(getBuffers(wc))
+}
+
 function attachCdpListeners(wc: WebContents): void {
   const b = getBuffers(wc)
+  wc.debugger.on('detach', () => forgetAttachment(wc))
   wc.debugger.on('message', (_e, method, params: Record<string, unknown>) => {
     // Keep Page enabled for navigation, screenshots, and dialogs. Ignore and disable Runtime/Log/Network
     // domains when policy marks the tab idle.
@@ -354,24 +372,30 @@ async function ensureAttached(wc: WebContents): Promise<void> {
       // A racing attach by us is harmless; propagate conflicts with another debugger client.
       if (!String((e as Error).message).includes('already attached')) throw e
     }
-    attachCdpListeners(wc)
+    const reattaching = listenersInstalled.has(wc)
+    if (!reattaching) {
+      listenersInstalled.add(wc)
+      attachCdpListeners(wc)
+      wc.once('destroyed', () => {
+        attached.delete(wc)
+        cdpCaptureActive.delete(wc)
+        cdpCaptureGeneration.delete(wc)
+        cdpGovernorActive.delete(wc)
+        cdpExplicitCaptureLeases.delete(wc)
+        cdpDomains.delete(wc)
+      })
+    }
     await wc.debugger.sendCommand('Page.enable')
     cdpDomains.set(wc, { runtime: false, log: false, network: false })
     cdpCaptureActive.set(wc, false)
     attached.add(wc)
-    wc.once('destroyed', () => {
-      attached.delete(wc)
-      cdpCaptureActive.delete(wc)
-      cdpCaptureGeneration.delete(wc)
-      cdpGovernorActive.delete(wc)
-      cdpExplicitCaptureLeases.delete(wc)
-      cdpDomains.delete(wc)
-    })
     // Install prompt override on attach with default accept so unsupported native prompt() cannot break
     // pages before explicit configuration.
     await installPromptOverride(wc).catch(() => {
       /* best-effort: setDialogBehavior reinstala sob demanda */
     })
+    // A session attached again after a detach resumes the capture the governor or a reader still wants.
+    if (reattaching && wantsCdpCapture(wc)) void reconcileCdpCapture(wc).catch(() => {})
   })()
   attachInFlight.set(wc, current)
   try {
@@ -480,25 +504,31 @@ export function attachToView(wc: WebContents, options: { nativeDialogsDisabled?:
 /** Collected console/exception logs, oldest first. */
 export async function getConsoleLogs(
   wc: WebContents,
-  opts?: { level?: string; limit?: number }
+  opts?: { level?: string; limit?: number },
+  control: BrowserControlOperationOptions = {}
 ): Promise<ConsoleEntry[]> {
-  return withExplicitCdpCapture(wc, async () => {
-    let logs = getBuffers(wc).console
-    if (opts?.level) logs = logs.filter((l) => l.level === opts.level)
-    return logs.slice(-(opts?.limit ?? 100))
-  })
+  return pageOperation(wc, control, 'reading the console logs', BROWSER_COMMAND_TIMEOUT_MS, () =>
+    withExplicitCdpCapture(wc, async () => {
+      let logs = getBuffers(wc).console
+      if (opts?.level) logs = logs.filter((l) => l.level === opts.level)
+      return logs.slice(-(opts?.limit ?? 100))
+    })
+  )
 }
 
 /** Collected network requests, oldest first. */
 export async function getNetworkLogs(
   wc: WebContents,
-  opts?: { onlyErrors?: boolean; limit?: number }
+  opts?: { onlyErrors?: boolean; limit?: number },
+  control: BrowserControlOperationOptions = {}
 ): Promise<NetworkEntry[]> {
-  return withExplicitCdpCapture(wc, async () => {
-    let net = getBuffers(wc).network
-    if (opts?.onlyErrors) net = net.filter((n) => n.failed || (n.status ?? 0) >= 400)
-    return net.slice(-(opts?.limit ?? 100))
-  })
+  return pageOperation(wc, control, 'reading the network logs', BROWSER_COMMAND_TIMEOUT_MS, () =>
+    withExplicitCdpCapture(wc, async () => {
+      let net = getBuffers(wc).network
+      if (opts?.onlyErrors) net = net.filter((n) => n.failed || (n.status ?? 0) >= 400)
+      return net.slice(-(opts?.limit ?? 100))
+    })
+  )
 }
 
 /** Clear buffers before reproducing an issue. */
@@ -548,10 +578,17 @@ async function installPromptOverride(wc: WebContents): Promise<void> {
  * Set automatic dialog responses. CDP handles alert/confirm; reinstall the JS prompt override so
  * accept/promptText changes apply immediately.
  */
-export async function setDialogBehavior(wc: WebContents, accept: boolean, promptText?: string): Promise<void> {
+export async function setDialogBehavior(
+  wc: WebContents,
+  accept: boolean,
+  promptText?: string,
+  opts: BrowserControlOperationOptions = {}
+): Promise<void> {
   dialogBehavior.set(wc, { accept, promptText })
-  await ensureCdpDomain(wc, 'runtime')
-  await installPromptOverride(wc)
+  await pageOperation(wc, opts, 'setting the dialog behavior', BROWSER_COMMAND_TIMEOUT_MS, async () => {
+    await ensureCdpDomain(wc, 'runtime')
+    await installPromptOverride(wc)
+  })
 }
 
 async function evalJs<T = unknown>(wc: WebContents, expression: string): Promise<T> {
@@ -582,8 +619,34 @@ interface EvalResponse {
  * awaiting Promises. Return serializable values, explicit undefined, or runtime descriptions for
  * functions, DOM nodes, and other nonserializable results.
  */
-export async function evaluate(wc: WebContents, expression: string): Promise<{ type: string; value: string }> {
-  await ensureCdpDomain(wc, 'runtime')
+export async function evaluate(
+  wc: WebContents,
+  expression: string,
+  opts: BrowserControlOperationOptions = {}
+): Promise<{ type: string; value: string }> {
+  const timeoutMs = validTimeout(opts.timeoutMs, BROWSER_EVALUATE_TIMEOUT_MS)
+  return pageOperation(wc, opts, 'evaluating JavaScript', BROWSER_EVALUATE_TIMEOUT_MS, async () => {
+    await ensureCdpDomain(wc, 'runtime')
+    return evaluateInPage(wc, expression, timeoutMs)
+  })
+}
+
+/** Leaves the deadline a moment to report a script the page stopped itself, rather than a silent browser. */
+const SCRIPT_TERMINATION_MARGIN_MS = 1_000
+
+function scriptTerminatedError(timeoutMs: number): Error {
+  return new Error(
+    `the script ran for more than ${timeoutMs} ms and was stopped. ` +
+      'Return sooner, or await a promise instead of blocking the page.'
+  )
+}
+
+async function evaluateInPage(
+  wc: WebContents,
+  expression: string,
+  timeoutMs: number
+): Promise<{ type: string; value: string }> {
+  const scriptTimeoutMs = Math.max(1, timeoutMs - SCRIPT_TERMINATION_MARGIN_MS)
   let r: EvalResponse
   try {
     r = (await wc.debugger.sendCommand('Runtime.evaluate', {
@@ -594,16 +657,22 @@ export async function evaluate(wc: WebContents, expression: string): Promise<{ t
       // retaining last-expression semantics. Otherwise repeated declarations in the shared page context
       // would fail.
       replMode: true,
+      // Stops a synchronous script that never returns (a loop), which would otherwise freeze the page for good. An
+      // awaited promise is not affected: the deadline around this call covers it.
+      timeout: scriptTimeoutMs,
     })) as EvalResponse
   } catch (e) {
+    const message = (e as Error).message
+    if (/terminated/i.test(message)) throw scriptTerminatedError(scriptTimeoutMs)
     // CDP cannot serialize some results by value, including circular references and window.
     throw new Error(
-      `could not serialize the return value (${(e as Error).message}). ` +
+      `could not serialize the return value (${message}). ` +
         'Return a JSON-serializable value, e.g.: JSON.stringify(x), x.length, x.outerHTML.'
     )
   }
   if (r.exceptionDetails) {
     const msg = r.exceptionDetails.exception?.description || r.exceptionDetails.text || 'JavaScript evaluation failed'
+    if (/Execution was terminated/i.test(msg)) throw scriptTerminatedError(scriptTimeoutMs)
     // If a declaration conflict remains despite replMode, explain persistent scope rather than only echoing
     // the error.
     if (/already been declared/i.test(msg)) {
@@ -649,12 +718,23 @@ function waitForLoad(wc: WebContents, ms = 15000, methods = ['Page.loadEventFire
   })
 }
 
-export async function navigate(wc: WebContents, url: string): Promise<{ url: string }> {
-  await ensureAttached(wc)
-  const loaded = waitForLoad(wc)
-  await wc.debugger.sendCommand('Page.navigate', { url: normalizeUrl(url) })
-  await loaded
-  return { url: await currentUrl(wc) }
+export async function navigate(
+  wc: WebContents,
+  url: string,
+  opts: BrowserControlOperationOptions = {}
+): Promise<{ url: string }> {
+  const target = normalizeUrl(url)
+  return pageOperation(wc, opts, `navigating to ${target.slice(0, 200)}`, BROWSER_NAVIGATION_TIMEOUT_MS, async () => {
+    if (await restartFrozenRenderer(wc)) {
+      await loadInNewRenderer(wc, target)
+      return { url: wc.getURL() }
+    }
+    await ensureAttached(wc)
+    const loaded = waitForLoad(wc)
+    await wc.debugger.sendCommand('Page.navigate', { url: target })
+    await loaded
+    return { url: await currentUrl(wc) }
+  })
 }
 
 /**
@@ -663,19 +743,31 @@ export async function navigate(wc: WebContents, url: string): Promise<{ url: str
  */
 export async function navHistory(
   wc: WebContents,
-  dir: 'back' | 'forward' | 'reload'
+  dir: 'back' | 'forward' | 'reload',
+  opts: BrowserControlOperationOptions = {}
 ): Promise<{ url: string; moved: boolean }> {
-  await ensureAttached(wc)
-  if (dir === 'back' && !wc.canGoBack()) return { url: await currentUrl(wc), moved: false }
-  if (dir === 'forward' && !wc.canGoForward()) return { url: await currentUrl(wc), moved: false }
-  // Reload waits for load up to 15 seconds; back/forward also accepts bfcache frameNavigated within 8 seconds.
-  const loaded =
-    dir === 'reload' ? waitForLoad(wc) : waitForLoad(wc, 8000, ['Page.loadEventFired', 'Page.frameNavigated'])
-  if (dir === 'back') wc.goBack()
-  else if (dir === 'forward') wc.goForward()
-  else wc.reload()
-  await loaded
-  return { url: await currentUrl(wc), moved: true }
+  const operation = dir === 'reload' ? 'reloading the page' : `going ${dir}`
+  return pageOperation(wc, opts, operation, BROWSER_NAVIGATION_TIMEOUT_MS, async () => {
+    // Reloading a stuck page loads it in a new renderer. Going back or forward from one starts a new renderer too,
+    // once the old one is ended; its address comes from the browser, since the page cannot answer.
+    const restarted = await restartFrozenRenderer(wc)
+    if (restarted && dir === 'reload') {
+      await loadInNewRenderer(wc, wc.getURL())
+      return { url: wc.getURL(), moved: true }
+    }
+    const pageUrl = (): Promise<string> => (restarted ? Promise.resolve(wc.getURL()) : currentUrl(wc))
+    await ensureAttached(wc)
+    if (dir === 'back' && !wc.canGoBack()) return { url: await pageUrl(), moved: false }
+    if (dir === 'forward' && !wc.canGoForward()) return { url: await pageUrl(), moved: false }
+    // Reload waits for load up to 15 seconds; back/forward also accepts bfcache frameNavigated within 8 seconds.
+    const loaded =
+      dir === 'reload' ? waitForLoad(wc) : waitForLoad(wc, 8000, ['Page.loadEventFired', 'Page.frameNavigated'])
+    if (dir === 'back') wc.goBack()
+    else if (dir === 'forward') wc.goForward()
+    else wc.reload()
+    await loaded
+    return { url: await currentUrl(wc), moved: true }
+  })
 }
 
 /** CDP can reject one Runtime.evaluate while a same-tab navigation replaces its document. */
@@ -695,14 +787,27 @@ export async function waitFor(
   opts: { selector?: string; text?: string; networkIdle?: boolean; timeoutMs?: number; signal?: AbortSignal }
 ): Promise<{ matched: boolean; waitedMs: number }> {
   opts.signal?.throwIfAborted()
+  const timeout = Number.isFinite(opts.timeoutMs) ? (opts.timeoutMs as number) : 10000
+  // The wait's own timeout ends a page that answers. A page that stops answering mid-poll ends at the deadline.
+  const deadline = { timeoutMs: timeout + BROWSER_COMMAND_TIMEOUT_MS, ...(opts.signal ? { signal: opts.signal } : {}) }
+  return pageOperation(wc, deadline, 'waiting on the page', BROWSER_COMMAND_TIMEOUT_MS, (signal) =>
+    waitForInPage(wc, opts, timeout, signal)
+  )
+}
+
+async function waitForInPage(
+  wc: WebContents,
+  opts: { selector?: string; text?: string; networkIdle?: boolean },
+  timeout: number,
+  signal: AbortSignal
+): Promise<{ matched: boolean; waitedMs: number }> {
   await ensureAttached(wc)
-  opts.signal?.throwIfAborted()
+  signal.throwIfAborted()
   const poll = async (): Promise<{ matched: boolean; waitedMs: number }> => {
-    const timeout = Number.isFinite(opts.timeoutMs) ? (opts.timeoutMs as number) : 10000
     const start = Date.now()
     let idleStreak = 0
     for (;;) {
-      opts.signal?.throwIfAborted()
+      signal.throwIfAborted()
       if (opts.selector) {
         try {
           if (await evalJs<boolean>(wc, `!!document.querySelector(${JSON.stringify(opts.selector)})`))
@@ -745,17 +850,23 @@ export interface SnapshotElement {
   name: string
 }
 
-/**
- * List visible interactive elements with stable refs and store click centers. Include viewport bounds
- * and current mouse position.
- */
-export async function snapshot(wc: WebContents): Promise<{
+export interface PageSnapshot {
   url: string
   elements: SnapshotElement[]
   viewport: { width: number; height: number }
   scroll: ScrollPosition
   mouse: { x: number; y: number }
-}> {
+}
+
+/**
+ * List visible interactive elements with stable refs and store click centers. Include viewport bounds
+ * and current mouse position.
+ */
+export function snapshot(wc: WebContents, opts: BrowserControlOperationOptions = {}): Promise<PageSnapshot> {
+  return pageOperation(wc, opts, 'reading the page elements', BROWSER_COMMAND_TIMEOUT_MS, () => snapshotPage(wc))
+}
+
+async function snapshotPage(wc: WebContents): Promise<PageSnapshot> {
   await ensureAttached(wc)
   const raw = await evalJs<{
     viewport: { width: number; height: number }
@@ -808,13 +919,20 @@ async function clickXY(wc: WebContents, x: number, y: number): Promise<void> {
  * Move the synthetic cursor in CSS pixels from the top-left origin and record it. Dispatch real
  * mouseMoved so hover/mouseenter runs; snapshot/screenshot reports the position.
  */
-export async function moveMouse(wc: WebContents, x: number, y: number): Promise<{ x: number; y: number }> {
+export async function moveMouse(
+  wc: WebContents,
+  x: number,
+  y: number,
+  opts: BrowserControlOperationOptions = {}
+): Promise<{ x: number; y: number }> {
   if (!Number.isFinite(x) || !Number.isFinite(y)) {
     throw new Error('mouse coordinates must be finite numbers')
   }
-  await ensureAttached(wc)
-  await wc.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, buttons: 0 })
-  return setMousePosition(wc, x, y)
+  return pageOperation(wc, opts, 'moving the mouse', BROWSER_COMMAND_TIMEOUT_MS, async () => {
+    await ensureAttached(wc)
+    await wc.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, buttons: 0 })
+    return setMousePosition(wc, x, y)
+  })
 }
 
 /**
@@ -919,18 +1037,25 @@ export async function scrollPosition(
  * Scroll the document deterministically using scrollBy/scrollTo. Priority: top/bottom target, absolute
  * coordinates, then deltas. Reread maxima afterward to reflect lazy/infinite loading.
  */
-export async function scroll(
+export interface ScrollRequest {
+  dx?: number
+  dy?: number
+  x?: number
+  y?: number
+  to?: 'top' | 'bottom'
+  selector?: string
+  container?: string
+}
+
+export function scroll(
   wc: WebContents,
-  opts: {
-    dx?: number
-    dy?: number
-    x?: number
-    y?: number
-    to?: 'top' | 'bottom'
-    selector?: string
-    container?: string
-  }
+  opts: ScrollRequest,
+  control: BrowserControlOperationOptions = {}
 ): Promise<ScrollPosition> {
+  return pageOperation(wc, control, 'scrolling the page', BROWSER_COMMAND_TIMEOUT_MS, () => scrollPage(wc, opts))
+}
+
+async function scrollPage(wc: WebContents, opts: ScrollRequest): Promise<ScrollPosition> {
   await ensureAttached(wc)
   const n = (v: number | undefined): number => (Number.isFinite(v) ? (v as number) : 0)
   // JavaScript expression returning a scrollable element's x, y, maxX, and maxY.
@@ -994,26 +1119,36 @@ async function selectAllInFocused(wc: WebContents): Promise<void> {
   )
 }
 
-export async function clickRef(wc: WebContents, ref: number): Promise<void> {
-  await ensureAttached(wc)
-  const p = requireRef(wc, ref)
-  await clickXY(wc, p.x, p.y)
+export function clickRef(wc: WebContents, ref: number, opts: BrowserControlOperationOptions = {}): Promise<void> {
+  return pageOperation(wc, opts, `clicking ref ${ref}`, BROWSER_COMMAND_TIMEOUT_MS, async () => {
+    await ensureAttached(wc)
+    const p = requireRef(wc, ref)
+    await clickXY(wc, p.x, p.y)
+  })
 }
 
-export async function typeRef(wc: WebContents, ref: number, text: string, clear = false): Promise<void> {
-  await ensureAttached(wc)
-  const p = requireRef(wc, ref)
-  await clickXY(wc, p.x, p.y) // foca o campo
-  if (clear) {
-    // After clicking, reselect all content through JavaScript and delete with Backspace, which generates
-    // actual beforeinput/input events for controlled inputs. This also supports empty replacement text;
-    // insertText adds the new value afterward.
-    await selectAllInFocused(wc)
-    const bs = { windowsVirtualKeyCode: 8, key: 'Backspace', code: 'Backspace' }
-    await wc.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...bs })
-    await wc.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', ...bs })
-  }
-  await wc.debugger.sendCommand('Input.insertText', { text })
+export function typeRef(
+  wc: WebContents,
+  ref: number,
+  text: string,
+  clear = false,
+  opts: BrowserControlOperationOptions = {}
+): Promise<void> {
+  return pageOperation(wc, opts, `typing into ref ${ref}`, BROWSER_COMMAND_TIMEOUT_MS, async () => {
+    await ensureAttached(wc)
+    const p = requireRef(wc, ref)
+    await clickXY(wc, p.x, p.y) // foca o campo
+    if (clear) {
+      // After clicking, reselect all content through JavaScript and delete with Backspace, which generates
+      // actual beforeinput/input events for controlled inputs. This also supports empty replacement text;
+      // insertText adds the new value afterward.
+      await selectAllInFocused(wc)
+      const bs = { windowsVirtualKeyCode: 8, key: 'Backspace', code: 'Backspace' }
+      await wc.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...bs })
+      await wc.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', ...bs })
+    }
+    await wc.debugger.sendCommand('Input.insertText', { text })
+  })
 }
 
 const MODIFIER_BITS: Record<string, number> = { Alt: 1, Control: 2, Meta: 4, Shift: 8 }
@@ -1056,7 +1191,18 @@ function resolveKey(key: string): { keyCode: number; key: string; code: string }
 }
 
 /** Press a named or single-character key with optional modifiers. */
-export async function pressKey(wc: WebContents, key: string, modifiers?: string[]): Promise<void> {
+export function pressKey(
+  wc: WebContents,
+  key: string,
+  modifiers?: string[],
+  opts: BrowserControlOperationOptions = {}
+): Promise<void> {
+  return pageOperation(wc, opts, `pressing ${key}`, BROWSER_COMMAND_TIMEOUT_MS, () =>
+    pressKeyInPage(wc, key, modifiers)
+  )
+}
+
+async function pressKeyInPage(wc: WebContents, key: string, modifiers?: string[]): Promise<void> {
   await ensureAttached(wc)
   const k = resolveKey(key)
   const modList = modifiers ?? []
@@ -1080,31 +1226,46 @@ export async function pressKey(wc: WebContents, key: string, modifiers?: string[
   await wc.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', ...base })
 }
 
-export async function doubleClickRef(wc: WebContents, ref: number): Promise<void> {
-  await ensureAttached(wc)
-  const p = requireRef(wc, ref)
-  for (const clickCount of [1, 2]) {
-    const base = { x: p.x, y: p.y, button: 'left', clickCount }
-    await wc.debugger.sendCommand('Input.dispatchMouseEvent', { ...base, type: 'mousePressed', buttons: 1 })
-    await wc.debugger.sendCommand('Input.dispatchMouseEvent', { ...base, type: 'mouseReleased', buttons: 0 })
-  }
-  setMousePosition(wc, p.x, p.y)
+export function doubleClickRef(wc: WebContents, ref: number, opts: BrowserControlOperationOptions = {}): Promise<void> {
+  return pageOperation(wc, opts, `double-clicking ref ${ref}`, BROWSER_COMMAND_TIMEOUT_MS, async () => {
+    await ensureAttached(wc)
+    const p = requireRef(wc, ref)
+    for (const clickCount of [1, 2]) {
+      const base = { x: p.x, y: p.y, button: 'left', clickCount }
+      await wc.debugger.sendCommand('Input.dispatchMouseEvent', { ...base, type: 'mousePressed', buttons: 1 })
+      await wc.debugger.sendCommand('Input.dispatchMouseEvent', { ...base, type: 'mouseReleased', buttons: 0 })
+    }
+    setMousePosition(wc, p.x, p.y)
+  })
 }
 
-export async function rightClickRef(wc: WebContents, ref: number): Promise<void> {
-  await ensureAttached(wc)
-  const p = requireRef(wc, ref)
-  const base = { x: p.x, y: p.y, button: 'right', clickCount: 1 }
-  await wc.debugger.sendCommand('Input.dispatchMouseEvent', { ...base, type: 'mousePressed', buttons: 2 })
-  await wc.debugger.sendCommand('Input.dispatchMouseEvent', { ...base, type: 'mouseReleased', buttons: 0 })
-  setMousePosition(wc, p.x, p.y)
+export function rightClickRef(wc: WebContents, ref: number, opts: BrowserControlOperationOptions = {}): Promise<void> {
+  return pageOperation(wc, opts, `right-clicking ref ${ref}`, BROWSER_COMMAND_TIMEOUT_MS, async () => {
+    await ensureAttached(wc)
+    const p = requireRef(wc, ref)
+    const base = { x: p.x, y: p.y, button: 'right', clickCount: 1 }
+    await wc.debugger.sendCommand('Input.dispatchMouseEvent', { ...base, type: 'mousePressed', buttons: 2 })
+    await wc.debugger.sendCommand('Input.dispatchMouseEvent', { ...base, type: 'mouseReleased', buttons: 0 })
+    setMousePosition(wc, p.x, p.y)
+  })
 }
 
 /**
  * Drag between snapshot refs with mouse press, interpolated movement for drag-and-drop detection, then
  * release at the target.
  */
-export async function dragRef(wc: WebContents, fromRef: number, toRef: number): Promise<void> {
+export function dragRef(
+  wc: WebContents,
+  fromRef: number,
+  toRef: number,
+  opts: BrowserControlOperationOptions = {}
+): Promise<void> {
+  return pageOperation(wc, opts, `dragging ref ${fromRef} to ref ${toRef}`, BROWSER_COMMAND_TIMEOUT_MS, () =>
+    dragRefInPage(wc, fromRef, toRef)
+  )
+}
+
+async function dragRefInPage(wc: WebContents, fromRef: number, toRef: number): Promise<void> {
   await ensureAttached(wc)
   const a = requireRef(wc, fromRef)
   const b = requireRef(wc, toRef)
@@ -1134,9 +1295,11 @@ export async function dragRef(wc: WebContents, fromRef: number, toRef: number): 
   setMousePosition(wc, b.x, b.y)
 }
 
-export async function readText(wc: WebContents): Promise<string> {
-  await ensureAttached(wc)
-  return evalJs<string>(wc, 'document.body ? document.body.innerText.slice(0, 8000) : ""')
+export function readText(wc: WebContents, opts: BrowserControlOperationOptions = {}): Promise<string> {
+  return pageOperation(wc, opts, 'reading the page text', BROWSER_COMMAND_TIMEOUT_MS, async () => {
+    await ensureAttached(wc)
+    return evalJs<string>(wc, 'document.body ? document.body.innerText.slice(0, 8000) : ""')
+  })
 }
 
 // Capture screenshots within the host byte limit. Large/ultrawide native PNGs may exceed
@@ -1175,15 +1338,91 @@ class BrowserControlInterruptedError extends Error {
   constructor(
     readonly reason: 'timeout' | 'aborted',
     operation: string,
-    timeoutMs: number
+    timeoutMs: number,
+    advice = 'try again.'
   ) {
     super(
       reason === 'aborted'
         ? `${operation} cancelled.`
-        : `${operation} exceeded ${timeoutMs} ms without a browser response; try again.`
+        : `${operation} exceeded ${timeoutMs} ms without a browser response; ${advice}`
     )
     this.name = 'BrowserControlInterruptedError'
   }
+}
+
+/**
+ * Default deadlines of page operations. A page whose renderer is stuck (a script in a loop, an overloaded tab) answers
+ * none of its protocol commands: without a deadline the tool call, and the tab lock other calls wait for, never end.
+ */
+export const BROWSER_COMMAND_TIMEOUT_MS = 15_000
+export const BROWSER_EVALUATE_TIMEOUT_MS = 30_000
+export const BROWSER_NAVIGATION_TIMEOUT_MS = 30_000
+/** How long a page suspected frozen gets to answer before its renderer is restarted. */
+export const BROWSER_FROZEN_PROBE_TIMEOUT_MS = 2_000
+const FROZEN_PAGE_ADVICE = 'the page may be frozen. browser_reload or browser_navigate restarts it.'
+
+/**
+ * Runs one page operation within its deadline. A deadline that runs out marks the page suspected frozen; any
+ * operation that completes shows the renderer answers again.
+ */
+function pageOperation<T>(
+  wc: WebContents,
+  opts: BrowserControlOperationOptions,
+  operation: string,
+  fallbackTimeoutMs: number,
+  run: (signal: AbortSignal) => Promise<T>
+): Promise<T> {
+  return settleBrowserOperation(run, opts, operation, fallbackTimeoutMs).then(
+    (value) => {
+      frozenPages.delete(wc)
+      return value
+    },
+    (error: unknown) => {
+      if (error instanceof BrowserControlInterruptedError && error.reason === 'timeout') {
+        frozenPages.add(wc)
+        throw new BrowserControlInterruptedError(
+          'timeout',
+          operation,
+          validTimeout(opts.timeoutMs, fallbackTimeoutMs),
+          FROZEN_PAGE_ADVICE
+        )
+      }
+      throw error
+    }
+  )
+}
+
+/** Electron's hang monitor reports a page that stopped (or resumed) answering input. */
+export function notePageResponsiveness(wc: WebContents, responsive: boolean): void {
+  if (responsive) frozenPages.delete(wc)
+  else frozenPages.add(wc)
+}
+
+/**
+ * A renderer that stopped answering cannot load the next document either: a same-site page would reuse its process.
+ * A crashed page, or one suspected frozen that still fails a short probe, gets its renderer restarted by loading
+ * through Electron instead of the protocol. Returns whether the caller must load that way.
+ */
+async function restartFrozenRenderer(wc: WebContents): Promise<boolean> {
+  if (wc.isCrashed()) return true
+  if (!frozenPages.has(wc)) return false
+  const answers = await settleBrowserOperation(
+    () => wc.debugger.sendCommand('Runtime.evaluate', { expression: '1', returnByValue: true }).then(() => true),
+    { timeoutMs: BROWSER_FROZEN_PROBE_TIMEOUT_MS },
+    'probing the page',
+    BROWSER_FROZEN_PROBE_TIMEOUT_MS
+  ).catch(() => false)
+  frozenPages.delete(wc)
+  if (answers) return false
+  wc.forcefullyCrashRenderer()
+  return true
+}
+
+/** Loads through Electron, which starts a new renderer for a crashed one. Its load failures are the page's own. */
+async function loadInNewRenderer(wc: WebContents, url: string): Promise<void> {
+  await wc.loadURL(url).catch(() => {
+    /* An aborted or failed load still leaves the tab on a live renderer, showing the error page. */
+  })
 }
 
 function validTimeout(value: number | undefined, fallback = SCREENSHOT_TIMEOUT_MS): number {
