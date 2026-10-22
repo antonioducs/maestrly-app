@@ -220,6 +220,11 @@ export class Lifecycle {
     }
   ) => FleetActivityEntry['data'] | void
   onEvent: (event: FleetGatewayEvent) => void = () => {}
+  /**
+   * A turn started or ended in some of the bot's side conversations, as its status says. An instance tells a turn
+   * finished before its status drops it, so what is told of those conversations then must be told again now.
+   */
+  onTurnRunsChanged: (botId: string, runIds: string[]) => void = () => {}
   /** A chat of the workspaces host needs the owner (`chat.attention`). */
   onChatAttention?: (environmentId: string, conversationId: string, name: string, kind: FleetChatAttentionKind) => void
   constructor(
@@ -302,6 +307,7 @@ export class Lifecycle {
   }
   private updateStatus(id: string, status: FleetInstanceStatus) {
     const before = JSON.stringify(this.inbox())
+    const formerRuns = this.turnRuns(this.statuses.get(id))
     const seen = this.pendingSeen.get(id) ?? new Set<string>()
     const next = new Set(status.pending.map((item) => item.kind + ':' + item.id))
     for (const item of status.pending) {
@@ -316,6 +322,7 @@ export class Lifecycle {
     this.pendingSeen.set(id, next)
     this.statuses.set(id, status)
     this.emitBot(id)
+    this.turnRunsChanged(id, formerRuns, this.turnRuns(status))
     this.updateRuntimes(id, status)
     if (JSON.stringify(this.inbox()) !== before) this.onEvent({ type: 'inbox.updated', at: now(), items: this.inbox() })
     if (status.ready && this.get(id)?.lifecycle === 'running') this.onReady(id)
@@ -346,8 +353,19 @@ export class Lifecycle {
   }
   private removeStatus(id: string) {
     const before = JSON.stringify(this.inbox())
+    const formerRuns = this.turnRuns(this.statuses.get(id))
     this.statuses.delete(id)
     if (JSON.stringify(this.inbox()) !== before) this.onEvent({ type: 'inbox.updated', at: now(), items: this.inbox() })
+    this.turnRunsChanged(id, formerRuns, new Set())
+  }
+  /** The side conversations (runs and threads) the bot has a turn in. */
+  private turnRuns(status: FleetInstanceStatus | undefined): Set<string> {
+    if (!status) return new Set()
+    return new Set(fleetInstanceTurns(status).flatMap((turn) => (turn.runId ? [turn.runId] : [])))
+  }
+  private turnRunsChanged(id: string, before: ReadonlySet<string>, after: ReadonlySet<string>) {
+    const changed = [...before, ...after].filter((runId) => before.has(runId) !== after.has(runId))
+    if (changed.length) this.onTurnRunsChanged(id, changed)
   }
   /** Follows an environment's one event stream and hands each event to the bot it names. */
   private startLink(environmentId: string) {

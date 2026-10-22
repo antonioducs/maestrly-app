@@ -258,6 +258,14 @@ export class PeerThreads {
     this.emit(next)
   }
 
+  /** A turn of the bot started or ended in these runs: the threads among them work, or not, for both their bots. */
+  turnsChanged(botId: string, runIds: readonly string[]) {
+    for (const threadId of runIds) {
+      const thread = this.store.peerThread(threadId)
+      if (thread && this.store.peerThreadSide(threadId, botId)) this.emit(thread)
+    }
+  }
+
   /**
    * Deletes the bot's conversation of a thread; what it kept of it (its images and attachments, in a folder of the
    * bot's conversation) stays with its side. Once neither bot has its conversation, the thread goes.
