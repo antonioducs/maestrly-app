@@ -4,7 +4,9 @@ import {
   FLEET_PEER_CONVERSATIONS_FEATURE,
   fleetPeerThreadListSchema,
   fleetPeerThreadSchema,
+  type FleetGatewayEvent,
   type FleetInstanceInput,
+  type FleetInstanceStatus,
 } from '@maestrly/bot-fleet-protocol'
 import { harness } from './harness.js'
 
@@ -219,6 +221,34 @@ describe('threads between bots', () => {
     expect(h.gateway.peerThreads.get(nina, thread!)).toMatchObject({ peerWorking: true })
     // Retention never deletes a conversation that works.
     expect((await h.request('DELETE', `/v1/bots/${atlas}/peer-threads/${thread}/conversation`)).status).toBe(409)
+  })
+
+  it("tells both bots a thread's turn ended once the status drops it, after the turn said it finished", async () => {
+    const { h, atlas, nina, send } = await setup()
+    const { thread } = await send(atlas, nina, 'Hi')
+    const updateStatus = (status: FleetInstanceStatus) =>
+      (h.lifecycle as unknown as { updateStatus(id: string, status: FleetInstanceStatus): void }).updateStatus(
+        atlas,
+        status
+      )
+    const status = h.lifecycle.statuses.get(atlas)!
+    const turn = { state: 'running' as const, startedAt: new Date().toISOString(), inputId: 'in-1', runId: thread! }
+    updateStatus({ ...status, turns: [{ ...turn, tool: null }] })
+    // An instance says the turn finished while its status still has it: the thread is told it works.
+    h.lifecycle.onTurnFinished!(atlas, { outcome: 'completed', inputId: 'in-1', text: 'Done', runId: thread })
+    const told = (botId: string) =>
+      h.events.filter(
+        (event): event is Extract<FleetGatewayEvent, { type: 'peer_thread.updated' }> =>
+          event.type === 'peer_thread.updated' && event.botId === botId && event.thread.id === thread
+      )
+    expect(told(atlas).at(-1)?.thread).toMatchObject({ working: true })
+    updateStatus({ ...h.lifecycle.statuses.get(atlas)!, turns: [] })
+    expect(told(atlas).at(-1)?.thread).toMatchObject({ working: false })
+    expect(told(nina).at(-1)?.thread).toMatchObject({ peerWorking: false })
+    // A status that changes nothing of the thread's turns tells it nothing.
+    const count = told(atlas).length
+    updateStatus({ ...h.lifecycle.statuses.get(atlas)!, turns: [] })
+    expect(told(atlas)).toHaveLength(count)
   })
 
   it("tells a thread's turn that compacts, and never counts what the owner stopped as work", async () => {

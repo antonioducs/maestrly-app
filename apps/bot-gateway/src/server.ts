@@ -195,6 +195,7 @@ export function createGatewayServers(ctx: GatewayContext) {
         })
       : undefined
   }
+  ctx.lifecycle.onTurnRunsChanged = (id, runIds) => peerThreads.turnsChanged(id, runIds)
   ctx.lifecycle.onReady = (id) => {
     void peers.retry(id)
   }
