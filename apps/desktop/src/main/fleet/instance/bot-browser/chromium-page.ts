@@ -13,6 +13,8 @@ export interface ChromiumTargetInfo {
 
 /** A crash leaves the renderer gone: its renderer-side command never answers, the browser restarts it on a load. */
 const CRASH_COMMAND_TIMEOUT_MS = 5_000
+/** How long a load gets to fire its load event, as the navigation tools wait for one. */
+const LOAD_WAIT_MS = 15_000
 /** A visible tab's surface answers a capture at once; one that stays silent past this gets its view painted instead. */
 const SURFACE_CAPTURE_TIMEOUT_MS = 3_000
 
@@ -138,10 +140,42 @@ export class ChromiumPage extends EventEmitter implements BrowserPage {
     })
   }
 
+  /**
+   * Loads a page and returns once it has loaded, as Electron's does. Commands sent before the new renderer is up go to
+   * the one that crashed, which never answers them.
+   */
   async loadURL(url: string): Promise<void> {
     await this.crashing
-    const result = (await this.send('Page.navigate', { url })) as { errorText?: string }
-    if (result.errorText) throw new Error(`${result.errorText} loading ${url}`)
+    const loaded = this.loadEvent()
+    try {
+      const result = (await this.send('Page.navigate', { url })) as { errorText?: string }
+      if (result.errorText) throw new Error(`${result.errorText} loading ${url}`)
+    } catch (error) {
+      loaded.cancel()
+      throw error
+    }
+    await loaded.promise
+  }
+
+  /** Resolves when the page fires its load event, or after the wait a load is given; `cancel` stops listening. */
+  private loadEvent(): { promise: Promise<void>; cancel: () => void } {
+    let cancel = (): void => {}
+    const promise = new Promise<void>((resolve) => {
+      const onMessage = (_event: unknown, method: string): void => {
+        if (method === 'Page.loadEventFired') done()
+      }
+      const done = (): void => {
+        clearTimeout(timer)
+        this.debugger.off('message', onMessage)
+        this.removeListener('destroyed', done)
+        resolve()
+      }
+      const timer = setTimeout(done, LOAD_WAIT_MS)
+      this.debugger.on('message', onMessage)
+      this.once('destroyed', done)
+      cancel = done
+    })
+    return { promise, cancel }
   }
 
   /**

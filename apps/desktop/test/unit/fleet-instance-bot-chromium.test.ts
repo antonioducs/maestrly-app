@@ -1,3 +1,4 @@
+import path from 'node:path'
 import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -340,7 +341,7 @@ describe('BotChromium', () => {
         expires: 2_000_000_000,
       },
     ])
-    expect(files.has(`${PROFILE}/${COOKIES_IMPORTED_MARKER}`)).toBe(true)
+    expect(files.has(path.join(PROFILE, COOKIES_IMPORTED_MARKER))).toBe(true)
     expect(log).toHaveBeenCalledWith(expect.stringContaining('copied 2 shared site cookies'))
 
     await chromium.stop()
