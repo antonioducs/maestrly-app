@@ -15,6 +15,11 @@ export interface ChromiumTargetInfo {
 const CRASH_COMMAND_TIMEOUT_MS = 5_000
 /** How long a load gets to fire its load event, as the navigation tools wait for one. */
 const LOAD_WAIT_MS = 15_000
+/** How long the renderers' CPU use is watched to find the one running a script without stopping, and each reading's wait. */
+const BUSY_SAMPLE_MS = 500
+const BUSY_SAMPLE_TIMEOUT_MS = 3_000
+/** The share of that time a renderer must have used to count as busy. */
+const BUSY_SHARE = 0.2
 /** A visible tab's surface answers a capture at once; one that stays silent past this gets its view painted instead. */
 const SURFACE_CAPTURE_TIMEOUT_MS = 3_000
 
@@ -179,9 +184,10 @@ export class ChromiumPage extends EventEmitter implements BrowserPage {
   }
 
   /**
-   * Ends the page's renderer even while it is stuck in a script: the browser handles the crash, not the page. Unlike
-   * Electron's, the crash happens a moment later; a load waits for it, since one sent before would go to the dying
-   * renderer and leave the tab without any.
+   * Ends the page's renderer even while it is stuck in a script. Unlike Electron's, the crash happens a moment later; a
+   * load waits for it, since one sent before would go to the dying renderer and leave the tab without any. The browser
+   * ends the renderer itself when one process is busy running a script. Otherwise it asks the page to crash, which the
+   * page may only do after a long while: `Page.crash` is a command of the renderer, and a stuck one can answer it late.
    */
   forcefullyCrashRenderer(): void {
     this.crashed = true
@@ -201,9 +207,52 @@ export class ChromiumPage extends EventEmitter implements BrowserPage {
     }).finally(() => {
       this.crashing = null
     })
-    void this.send('Page.crash', {}, CRASH_COMMAND_TIMEOUT_MS).catch(() => {
+    void this.endRenderer()
+  }
+
+  private async endRenderer(): Promise<void> {
+    const busy = await this.busyRendererPid().catch(() => null)
+    if (busy !== null) {
+      try {
+        process.kill(busy, 'SIGKILL')
+        return
+      } catch {
+        /* Already gone, or not ours to end: ask the page instead. */
+      }
+    }
+    await this.send('Page.crash', {}, CRASH_COMMAND_TIMEOUT_MS).catch(() => {
       /* A crashed renderer never answers. */
     })
+  }
+
+  /**
+   * The renderer process that runs a script without stopping, found by its CPU use: the protocol names the renderers
+   * but not the tabs they host. None when no process stands out, such as a page blocked while it uses no CPU.
+   */
+  private async busyRendererPid(): Promise<number | null> {
+    const sample = async (): Promise<Map<number, number>> => {
+      const { processInfo } = (await this.pipe.send(
+        'SystemInfo.getProcessInfo',
+        {},
+        undefined,
+        BUSY_SAMPLE_TIMEOUT_MS
+      )) as {
+        processInfo: Array<{ type: string; id: number; cpuTime: number }>
+      }
+      return new Map(processInfo.filter((item) => item.type === 'renderer').map((item) => [item.id, item.cpuTime]))
+    }
+    const before = await sample()
+    const started = Date.now()
+    await new Promise((resolve) => setTimeout(resolve, BUSY_SAMPLE_MS))
+    const after = await sample()
+    const seconds = (Date.now() - started) / 1000
+    const used = [...after]
+      .flatMap(([pid, cpu]) => (before.has(pid) ? [{ pid, used: cpu - (before.get(pid) as number) }] : []))
+      .sort((a, b) => b.used - a.used)
+    const [top, next] = used
+    // A script loop keeps a thread busy all the while, less when the machine is shared; other pages use far less.
+    if (!top || top.used < seconds * BUSY_SHARE || (next && next.used > top.used / 2)) return null
+    return top.pid
   }
 
   /**
