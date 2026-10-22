@@ -234,7 +234,7 @@ reg.handle('fleet:getBot', (fleet, _event, botId: unknown) => fleet.call('botGet
 
 ## Status
 
-Plan 1 shipped in PR #278. Plans 2 and 3 are on `feat/connect-computers-ui`, with these choices made while building them:
+Plan 1 shipped in PR #278. Plans 2 and 3 are built, with these choices made along the way:
 
 - The installation id each server announced is kept in `fleet.gatewayIds`, apart from `fleet.servers`, which 0.24
   reads with a strict schema: an unknown field there would drop the record after a downgrade.
