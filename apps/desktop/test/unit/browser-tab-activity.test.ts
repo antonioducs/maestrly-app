@@ -79,7 +79,7 @@ describe('browser tab management activity lease', () => {
 
     ready()
     await navigated
-    expect(h.navigate).toHaveBeenCalledWith(webContents, 'https://page.test')
+    expect(h.navigate).toHaveBeenCalledWith(webContents, 'https://page.test', {})
     expect(release).toHaveBeenCalledTimes(1)
   })
 })

@@ -456,6 +456,22 @@ describe('DisplayManager apps displays', () => {
     expect(spawner.servers().filter((child) => child.running)).toEqual([])
   })
 
+  it("tells whether someone watches one of a bot's screens", async () => {
+    const { manager } = setup()
+    await manager.startBot('alpha', 2)
+    await manager.startBot('beta', 3)
+    expect(manager.watched('alpha')).toBe(false)
+    const apps = await manager.acquireScreen({ kind: 'apps', botId: 'alpha' })
+    expect(manager.watched('alpha')).toBe(true)
+    expect(manager.watched('beta')).toBe(false)
+    apps.release()
+    expect(manager.watched('alpha')).toBe(false)
+    const browser = await manager.acquireScreen({ kind: 'browser', botId: 'alpha' })
+    expect(manager.watched('alpha')).toBe(true)
+    browser.release()
+    expect(manager.watched('ghost')).toBe(false)
+  })
+
   it('kills processes that ignore SIGTERM before making the slot reusable', async () => {
     const { manager, spawner, clock } = setup()
     await manager.startBot('alpha', 2)

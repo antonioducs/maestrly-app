@@ -3,15 +3,19 @@ import { startBotRuntimes } from '../../runtime-assets/bot-runtimes'
 import { broadcast } from '../../window-ipc'
 import { holdScreenFocus, setScreenFocusOwner, showWindow } from '../../screen-focus'
 import { createInstanceControlServer } from './server'
-import { parseBotInstanceConfig } from './config'
+import { botBrowserKind, parseBotInstanceConfig } from './config'
 import { DisplayManager } from './displays'
 import { startBotDesktop } from './desktop/bot-desktop'
 import { LaneComputers } from './lane-computers'
 import { listDisplayWindows } from '../../remote-host/server/computer-windows'
+import { setBrowserBackendResolver } from '../../mcp/tools/browser-backend'
+import { createBotChromium } from './bot-browser'
+import { botChromiumBackend } from './bot-browser/backend'
 import {
   EnvironmentRuntime,
   currentEnvironmentRuntime,
   productionDisplayDeps,
+  type BotBrowserTarget,
   type BotDesktopTarget,
 } from './environment'
 import type { BotRuntime } from './runtime'
@@ -97,6 +101,10 @@ export async function startBotInstanceMode(
     ...(displays
       ? { desktop: (target: BotDesktopTarget) => startBotDesktop(target, { floatBrowser: hooks.floatBrowser }) }
       : {}),
+    // Each bot drives its own Chromium on that display, unless the server keeps them on the built-in browser.
+    ...(displays && botBrowserKind() === 'chromium'
+      ? { botBrowser: (target: BotBrowserTarget) => createBotChromium(target) }
+      : {}),
     closeConversation: hooks.closeConversation,
     purgeConversation: hooks.purgeConversation,
     openSettings: (target) => {
@@ -111,6 +119,11 @@ export async function startBotInstanceMode(
       }),
   })
   let stopRuntimes = () => {}
+  // The browser tools of a bot's conversations drive the bot's own Chromium, where it has one.
+  setBrowserBackendResolver((conversationId) => {
+    const chromium = environment.browserForConversation(conversationId)
+    return chromium ? botChromiumBackend(chromium) : null
+  })
   try {
     await environment.start()
     stopRuntimes = startBotRuntimes({
@@ -128,10 +141,12 @@ export async function startBotInstanceMode(
     window.on('closed', async () => {
       stopRuntimes()
       server.close()
+      setBrowserBackendResolver(null)
       await environment.dispose()
     })
   } catch (error) {
     stopRuntimes()
+    setBrowserBackendResolver(null)
     await environment.dispose()
     throw error
   }

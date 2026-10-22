@@ -29,6 +29,7 @@ class FakeWebContents extends EventEmitter {
   private readonly cdp = new FakeDebugger()
   private destroyed = false
   readonly reload = vi.fn()
+  readonly isCrashed = vi.fn(() => false)
 
   get debugger(): FakeDebugger {
     if (this.destroyed) throw new TypeError('Object has been destroyed')

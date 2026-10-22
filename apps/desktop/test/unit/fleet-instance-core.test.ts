@@ -419,6 +419,33 @@ describe('bot identity', () => {
     expect(screens).toContain('two screens of your own')
     expect(screens).not.toContain('one Linux desktop')
   })
+
+  it('tells a bot with its own Chromium that its site logins are its own', () => {
+    vi.stubEnv('MAESTRLY_BOT_MODE', '1')
+    const profile = {
+      botId: 'scout',
+      name: 'Scout',
+      instructions: '',
+      ceiling: 'ask' as const,
+      selection: null,
+      compaction: null,
+      gateway: { peersEnabled: false, artifactsEnabled: false, desktopBridgeEnabled: false },
+    }
+    let own = true
+    setBotIdentity('/bot/own', profile, () => [{ botId: 'partner', name: 'Partner' }], {
+      unifiedDesktop: () => true,
+      ownBrowser: () => own,
+    })
+    const chromium = botIdentityPrompt('/bot/own')
+    expect(chromium).toContain('your own Chromium is a window there, with your own profile and site logins')
+    expect(chromium).toContain('browser_tabs lists only the tabs of this conversation')
+    expect(chromium).not.toContain('site logins (browser cookies)')
+    expect(chromium).toContain('Your conversation, memory, screens and site logins stay your own.')
+    own = false
+    const shared = botIdentityPrompt('/bot/own')
+    expect(shared).toContain('your Maestrly browser is a window there')
+    expect(shared).toContain('MCP servers and site logins (browser cookies) with them')
+  })
 })
 
 describe('persistent input queue', () => {

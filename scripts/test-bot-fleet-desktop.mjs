@@ -861,6 +861,9 @@ async function main(chosen) {
       'seccomp=' + path.join(root, 'deploy/bot-fleet/seccomp-bot.json'),
       '-e',
       'MAESTRLY_BOT_MODE=1',
+      // These scenarios present the built-in browser on each desktop: its bots drive it here, not a Chromium of their own.
+      '-e',
+      'MAESTRLY_BOT_BROWSER=electron',
       '-e',
       'MAESTRLY_ENVIRONMENT_ID=desktop-test',
       ...Object.keys(credentials).flatMap((variable) => ['-e', variable]),

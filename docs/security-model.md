@@ -506,9 +506,8 @@ to eight bots. The environment, not the bot, is the fleet's isolation boundary.
 See [environments](bot-fleet.md#environments) for what its bots share.
 
 - **Inside an environment, bots trust each other.** They run as the same Linux
-  user with one home folder, one credential store and keyring, one set of
-  accounts, skills and MCP servers, and one browser session for `browser_*`. A
-  bot that runs commands can read and modify its neighbours' files,
+  user with one home folder, one credential store and keyring, and one set of
+  accounts, skills and MCP servers. A bot that runs commands can read and modify its neighbours' files,
   conversations, memories, queued inputs, browser profiles and stored
   credentials, operate their displays and programs, and use their gateway
   tokens to call the gateway as them, for example to message a peer or save the
@@ -545,10 +544,18 @@ See [environments](bot-fleet.md#environments) for what its bots share.
   of opening native windows. Popups suppress native dialogs, including confirmations,
   so they cannot block another screen. Each apps screen is a separate display
   with its own input.
-- **Browsers.** The browser that bots drive with `browser_*` keeps one set of
-  cookies and site logins for the whole environment. Programs on a bot's apps
-  screen open Chromium with a separate per-bot profile that uses Chromium's
-  basic password store, which the keyring does not protect.
+- **Browsers.** Each bot drives a Chromium of its own on its apps screen with
+  `browser_*`, with a separate per-bot profile that uses Chromium's basic
+  password store, which the keyring does not protect; its cookies and site
+  logins are that bot's, though the other bots of the environment can read the
+  profile like any of its files. Maestrly controls it through a DevTools pipe
+  (`--remote-debugging-pipe`) and opens no debugging port, so no other process of
+  the environment, and nothing on the fleet network, can drive it over the
+  network. Its renderers keep Chromium's own sandbox. On its first start it copies
+  the cookies of the environment's built-in browser once. A server that sets
+  `MAESTRLY_GATEWAY_BOT_BROWSER=electron` keeps its bots on that built-in
+  browser instead, which keeps one set of cookies and site logins for the whole
+  environment.
 - **Secrets** flow only from your computer through the gateway to the environment and
   are never returned. The gateway keeps each environment's control token and
   keyring password and each bot's gateway token in plaintext in its database;

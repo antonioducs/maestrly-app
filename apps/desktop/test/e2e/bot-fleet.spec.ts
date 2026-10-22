@@ -3037,9 +3037,7 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
     await expect(page.getByRole('heading', { name: 'Acme', exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Novo bot neste ambiente' }).click()
     await expect(where.getByRole('radio', { name: /Ambiente existente/ })).toHaveAttribute('aria-checked', 'true')
-    await expect(
-      createDialog.getByText('Usa as contas, skills, servidores MCP e logins de sites de Acme.')
-    ).toBeVisible()
+    await expect(createDialog.getByText('Usa as contas, skills e servidores MCP de Acme.')).toBeVisible()
     await expect(
       createDialog.getByText('Bots no mesmo ambiente podem ver os arquivos e as telas uns dos outros.')
     ).toBeVisible()

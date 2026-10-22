@@ -429,8 +429,7 @@ export default {
   environment: {
     label: 'Ambiente',
     link: 'Ambiente: {{name}}',
-    linkNote:
-      'Contas, skills, servidores MCP, logins de sites e recursos ficam no ambiente e são compartilhados pelos bots dele.',
+    linkNote: 'Contas, skills, servidores MCP e recursos ficam no ambiente e são compartilhados pelos bots dele.',
     overview: 'Visão geral',
     screen: 'Tela',
     overviewRegion: 'Visão geral de {{name}}',
@@ -448,7 +447,7 @@ export default {
     sharedTitle: 'Compartilhado pelos bots',
     allSettings: 'Todas as configurações',
     sharedSetupNote:
-      'Contas, skills, servidores MCP e logins de sites são configurados uma vez, aqui, e todos os bots deste ambiente usam.',
+      'Contas, skills e servidores MCP são configurados uma vez, aqui, e todos os bots deste ambiente usam.',
     tiles: {
       accounts_one: '{{count}} conta',
       accounts_other: '{{count}} contas',
@@ -475,6 +474,8 @@ export default {
       siteLogins: 'Logins de sites',
       siteLoginsValue: 'Na tela do ambiente',
       siteLoginsNote: 'Todos os bots daqui usam',
+      siteLoginsOwnValue: 'No navegador de cada bot',
+      siteLoginsOwnNote: 'Cada bot tem os seus',
     },
     runningFor: 'Ligado há',
     versionLabel: 'Versão',
@@ -999,7 +1000,7 @@ export default {
     howDescription:
       'Cada bot tem seu próprio desktop Linux e contêiner no servidor. O bot controla seu desktop lá; este computador é só o controle remoto.',
     howDescriptionEnvironments:
-      'Os bots rodam em ambientes no servidor. Um ambiente é um contêiner, com o desktop Linux, as contas, os arquivos e os logins de sites que os bots dele compartilham; cada bot tem o próprio navegador e a própria tela de apps lá. Este computador é só o controle remoto.',
+      'Os bots rodam em ambientes no servidor. Um ambiente é um contêiner, com o desktop Linux, as contas e os arquivos que os bots dele compartilham; cada bot tem o próprio navegador e a própria tela de apps lá. Este computador é só o controle remoto.',
     title: 'Servidor de bots',
     system: 'Sistema',
     compressedSwap: 'Swap comprimido',
@@ -1611,14 +1612,14 @@ export default {
       'Cada bot tem a própria conversa, memória, navegador e tela de apps. Escolha onde ele roda.',
     where: 'Onde ele roda',
     newEnvironment: 'Novo ambiente',
-    newEnvironmentHint: 'Contas, arquivos e logins de sites só dele',
+    newEnvironmentHint: 'Contas e arquivos só dele',
     existingEnvironment: 'Ambiente existente',
     existingEnvironmentHint: 'Entra em um ambiente já configurado',
     environmentName: 'Nome do ambiente',
     environment: 'Ambiente',
     chooseEnvironment: 'Escolha um ambiente',
     noEnvironments: 'Nenhum ambiente ainda.',
-    sharedHint: 'Usa as contas, skills, servidores MCP e logins de sites de {{environment}}.',
+    sharedHint: 'Usa as contas, skills e servidores MCP de {{environment}}.',
     progressDescription: 'Configurando o bot no servidor.',
     closeNote: 'Você pode fechar esta janela. A criação continua no servidor.',
     cancel: 'Cancelar',

@@ -115,6 +115,11 @@ export const FLEET_GATEWAY_ENV = {
   container: 'MAESTRLY_GATEWAY_CONTAINER',
   /** `off` stops bots from updating Claude Code and Codex on their own; manual checks in a bot still work. */
   botRuntimeUpdates: 'MAESTRLY_GATEWAY_BOT_RUNTIME_UPDATES',
+  /**
+   * The browser bots drive: `chromium` (the default), each bot's own Chromium on its desktop, or `electron`, the
+   * environment's built-in browser with site logins shared by its bots.
+   */
+  botBrowser: 'MAESTRLY_GATEWAY_BOT_BROWSER',
   /** `off` sends no push notifications to phones; `expo` (the default) sends them through Expo's push service. */
   push: 'MAESTRLY_GATEWAY_PUSH',
   /** An Expo access token, when the Expo account requires one for push notifications. */
@@ -143,6 +148,8 @@ export const FLEET_BOT_ENV = {
    */
   hostGatewayToken: 'MAESTRLY_HOST_GATEWAY_TOKEN',
   runtimeUpdates: 'MAESTRLY_BOT_RUNTIME_UPDATES',
+  /** `electron` keeps the bots on the environment's built-in browser; otherwise each bot drives its own Chromium. */
+  browser: 'MAESTRLY_BOT_BROWSER',
 } as const
 
 export const FLEET_BOT_EGRESS_MODES = ['open', 'public'] as const
@@ -151,6 +158,9 @@ export type FleetBotEgress = (typeof FLEET_BOT_EGRESS_MODES)[number]
 /** Whether bots check for and install new Claude Code and Codex releases on their own. */
 export const FLEET_BOT_RUNTIME_UPDATE_MODES = ['auto', 'off'] as const
 export type FleetBotRuntimeUpdates = (typeof FLEET_BOT_RUNTIME_UPDATE_MODES)[number]
+
+export const FLEET_BOT_BROWSERS = ['chromium', 'electron'] as const
+export type FleetBotBrowser = (typeof FLEET_BOT_BROWSERS)[number]
 
 export const FLEET_SCREEN_CLOSE_CODES = {
   released: 4001,
@@ -294,6 +304,11 @@ export const FLEET_RUNTIME_UPDATES_FEATURE = 'runtime-updates'
  * Apps areas.
  */
 export const FLEET_UNIFIED_DESKTOP_FEATURE = 'unified-desktop'
+/**
+ * Instance capability: each bot drives a Chromium of its own on its desktop, with its own profile, so its site logins
+ * are its own. Without it, the bots of an environment share the site logins of its built-in browser.
+ */
+export const FLEET_BOT_OWN_BROWSER_FEATURE = 'bot-own-browser'
 /**
  * Gateway feature (`/v1/meta`) and instance capability: screens stream as acknowledged H.264 video
  * (`FLEET_SCREEN_UPGRADE`, see `screen-stream.ts`). Gateways refuse screens of environments without it, which restart

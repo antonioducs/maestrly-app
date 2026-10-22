@@ -6,6 +6,7 @@ import { app } from 'electron'
 import {
   FLEET_ENVIRONMENT_LIMITS,
   FLEET_PROTOCOL_VERSION,
+  FLEET_BOT_OWN_BROWSER_FEATURE,
   FLEET_UNIFIED_DESKTOP_FEATURE,
   FLEET_SCREEN,
   fleetEnvironmentTile,
@@ -75,6 +76,7 @@ import {
   writeBotPackage,
   type BotRoots,
 } from './bot-move'
+import type { BotChromium } from './bot-browser/bot-chromium'
 import type { EnvironmentInstanceConfig } from './config'
 import { paintWallpaper } from './desktop/paint-wallpaper'
 import {
@@ -125,6 +127,8 @@ export interface EnvironmentDisplays {
   /** Paints the bot's wallpaper again after its name or color changed; it never rejects for a failed painting. */
   redecorate(botId: string): Promise<void>
   acquireScreen(surface: DisplaySurface): Promise<ScreenLease>
+  /** Whether someone watches or controls one of the bot's screens. */
+  watched?(botId: string): boolean
   dispose(): Promise<void>
 }
 
@@ -134,6 +138,19 @@ export interface BotDesktopTarget {
   display: BotDisplay
   conversationId(): string | null
   hold(): FleetInstanceHold
+  /** The bot's own Chromium, where it has one: its links and its dock's browser open there. */
+  browser?(): BotChromium | null
+}
+
+/** A bot whose own Chromium is created, on its apps display, for the `browser_*` tools of its conversations. */
+export interface BotBrowserTarget {
+  botId: string
+  display: BotDisplay
+  /** The conversation the bot's desktop shows: the tabs a person opens by hand are its. */
+  foregroundConversationId(): string | null
+  ownsConversation(conversationId: string): boolean
+  /** Whether someone watches or controls the bot's screens. */
+  watched(): boolean
 }
 /** The desktop services of one bot: its desktop socket, terminal windows and browser window. */
 export interface BotDesktopHandle {
@@ -175,6 +192,11 @@ export interface EnvironmentRuntimeDeps {
    * use. A failure is logged and the bot runs without them. Absent outside a container.
    */
   desktop?(target: BotDesktopTarget): Promise<BotDesktopHandle>
+  /**
+   * Creates a bot's own Chromium once its apps display runs; it starts only when used. Absent where the bots drive the
+   * environment's built-in browser (`MAESTRLY_BOT_BROWSER=electron`, or outside a container).
+   */
+  botBrowser?(target: BotBrowserTarget): BotChromium
 }
 
 function log(level: 'info' | 'error', message: string): void {
@@ -209,6 +231,8 @@ export class EnvironmentRuntime {
   private readonly registry = new Map<string, BotRuntime>()
   /** The desktop services of the bots whose apps display runs. */
   private readonly desktops = new Map<string, BotDesktopHandle>()
+  /** The bots' own Chromium, for the bots whose apps display runs, where bots drive one. */
+  private readonly browsers = new Map<string, BotChromium>()
   private readonly host: BotRuntimeHost
   private readonly displays: EnvironmentDisplays | null
   private options: FleetSelectionOption[] = []
@@ -268,9 +292,22 @@ export class EnvironmentRuntime {
           .filter((bot) => bot.botId !== botId && bot.name)
           .map((bot) => ({ botId: bot.botId, name: bot.name! })),
       capabilities: () => this.capabilities(),
-      floatBrowser: (conversationId) => this.deps.floatBrowser(conversationId),
+      // A bot with its own Chromium brings its tab forward there, without starting it; the drawer's browser floats.
+      floatBrowser: (conversationId) => {
+        const browser = this.browserForConversation(conversationId)
+        if (browser) browser.present(conversationId)
+        else this.deps.floatBrowser(conversationId)
+      },
+      stopBrowser: (botId) => this.stopBotBrowser(botId),
+      hasOwnBrowser: (botId) => this.browsers.has(botId),
       present: (conversationId, request) => this.desktopOf(conversationId)?.present(request),
-      closeConversation: (conversationId) => this.deps.closeConversation(conversationId),
+      closeConversation: async (conversationId) => {
+        // A side conversation's tabs in the bot's Chromium end with it, like its views of the drawer's browser.
+        await this.browserForConversation(conversationId)
+          ?.closeConversation(conversationId)
+          .catch((error: unknown) => log('error', errorMessage(error)))
+        await this.deps.closeConversation(conversationId)
+      },
       purgeConversation: (conversationId) => this.deps.purgeConversation(conversationId),
       laneComputers: deps.laneComputers ?? null,
     }
@@ -298,6 +335,7 @@ export class EnvironmentRuntime {
     this.unwireBrokers?.()
     this.unwireBrokers = null
     await this.logins.dispose()
+    for (const botId of [...this.browsers.keys()]) await this.stopBrowser(botId)
     for (const botId of [...this.desktops.keys()]) await this.stopDesktop(botId)
     for (const bot of [...this.registry.values()]) await bot.dispose()
     this.registry.clear()
@@ -320,7 +358,11 @@ export class EnvironmentRuntime {
    * one desktop where its browser is presented, so clients show one screen per bot.
    */
   private capabilities(): string[] {
-    return [...INSTANCE_CAPABILITIES, ...(this.displays && this.deps.desktop ? [FLEET_UNIFIED_DESKTOP_FEATURE] : [])]
+    return [
+      ...INSTANCE_CAPABILITIES,
+      ...(this.displays && this.deps.desktop ? [FLEET_UNIFIED_DESKTOP_FEATURE] : []),
+      ...(this.displays && this.deps.botBrowser ? [FLEET_BOT_OWN_BROWSER_FEATURE] : []),
+    ]
   }
 
   /** The installed bot, or NOT_FOUND. */
@@ -654,6 +696,23 @@ export class EnvironmentRuntime {
   }
   /** Starts the desktop services of a bot on its display; without them the bot still runs, so a failure is logged. */
   private async startDesktop(bot: BotRuntime, display: BotDisplay): Promise<void> {
+    await this.stopBrowser(bot.botId)
+    if (this.deps.botBrowser) {
+      try {
+        this.browsers.set(
+          bot.botId,
+          this.deps.botBrowser({
+            botId: bot.botId,
+            display,
+            foregroundConversationId: () => bot.foregroundConversationId,
+            ownsConversation: (conversationId) => bot.ownsConversation(conversationId),
+            watched: () => this.displays?.watched?.(bot.botId) ?? false,
+          })
+        )
+      } catch (error) {
+        log('error', `The Chromium of bot ${bot.botId} could not be prepared: ${errorMessage(error)}`)
+      }
+    }
     if (!this.deps.desktop) return
     await this.stopDesktop(bot.botId)
     try {
@@ -663,6 +722,7 @@ export class EnvironmentRuntime {
         // The conversation the bot's desktop shows: its own, or a side conversation while it asks the owner for help.
         conversationId: () => bot.foregroundConversationId,
         hold: () => bot.holdManager.state,
+        browser: () => this.browsers.get(bot.botId) ?? null,
       })
       this.desktops.set(bot.botId, handle)
     } catch (error) {
@@ -675,8 +735,29 @@ export class EnvironmentRuntime {
     this.desktops.delete(botId)
     await handle.dispose().catch((error: unknown) => log('error', errorMessage(error)))
   }
-  /** Stops a bot's desktop services, then the display they run on. */
+  private async stopBrowser(botId: string): Promise<void> {
+    const browser = this.browsers.get(botId)
+    if (!browser) return
+    this.browsers.delete(botId)
+    await browser.dispose().catch((error: unknown) => log('error', errorMessage(error)))
+  }
+  /** The bot's own Chromium for this conversation's tools, where its bots drive one. */
+  browserForConversation(conversationId: string | undefined): BotChromium | null {
+    const bot = this.botForConversation(conversationId)
+    return bot ? (this.browsers.get(bot.botId) ?? null) : null
+  }
+  /** Closes a bot's Chromium, keeping its tabs to reopen: a paused bot uses no browser until it resumes. */
+  stopBotBrowser(botId: string): void {
+    // Someone watching the bot's screen may be using its browser: it closes for idleness once they leave.
+    if (this.displays?.watched?.(botId)) return
+    void this.browsers
+      .get(botId)
+      ?.stop()
+      .catch((error: unknown) => log('error', errorMessage(error)))
+  }
+  /** Stops a bot's browser and desktop services, then the display they run on. */
   private async stopScreens(botId: string): Promise<void> {
+    await this.stopBrowser(botId)
     await this.stopDesktop(botId)
     await this.displays?.stopBot(botId).catch((error: unknown) => log('error', errorMessage(error)))
   }

@@ -178,7 +178,7 @@ async function reply(req) {
     if (tools.length === 1) return validatedTool(req, 'computer_type', { text: typed })
     return { text: 'E2E-APPS-TYPED text=' + typed }
   }
-  // One bot's browser stores a cookie of the local site; another bot's browser shows what the site received.
+  // A bot's browser stores a cookie of the local site; a bot's browser shows what the site received from it.
   if (text.includes('E2E-COOKIE-SET')) {
     const url = field(text, 'url'), value = field(text, 'value')
     const { tools, last } = turn(messages, 'E2E-COOKIE-SET')

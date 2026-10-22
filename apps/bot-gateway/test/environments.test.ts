@@ -451,6 +451,27 @@ describe('environments', () => {
     expect(container(f, 'maestrly-env-work')).toBe(auto)
   })
 
+  it('keeps bots on the built-in browser when the server says so, recreating containers that differ', async () => {
+    const f = fixture({ MAESTRLY_GATEWAY_BOT_BROWSER: 'electron' })
+    await f.instance('work')
+    await environment(f, 'Work', ['Ads'])
+    const electron = container(f, 'maestrly-env-work')!
+    expect(electron.spec.env).toContain('MAESTRLY_BOT_BROWSER=electron')
+    expect(electron.labels['org.maestrly.fleet.bot-browser']).toBe('electron')
+
+    f.cfg.botBrowser = 'chromium'
+    expect((await f.lifecycle.restartEnvironment('work')).lifecycle).toBe('running')
+    const chromium = container(f, 'maestrly-env-work')!
+    expect(chromium).not.toBe(electron)
+    expect(chromium.spec.env.some((item) => item.startsWith('MAESTRLY_BOT_BROWSER='))).toBe(false)
+    expect(chromium.labels['org.maestrly.fleet.bot-browser']).toBe('chromium')
+
+    // A container from before the setting runs each bot's own Chromium: it is kept.
+    delete chromium.labels['org.maestrly.fleet.bot-browser']
+    expect((await f.lifecycle.restartEnvironment('work')).lifecycle).toBe('running')
+    expect(container(f, 'maestrly-env-work')).toBe(chromium)
+  })
+
   it('guards public egress containers and recreates a container whose egress changed', async () => {
     const f = fixture({ MAESTRLY_GATEWAY_BOT_EGRESS: 'public' })
     await f.instance('work')

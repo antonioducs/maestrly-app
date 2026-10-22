@@ -10,6 +10,8 @@ interface BotIdentity {
   peers: () => BotIdentityPeer[]
   /** Whether the bot has one desktop with its browser presented on it, rather than separate screens. */
   unifiedDesktop: () => boolean
+  /** Whether the bot drives a Chromium of its own, whose site logins are its own, rather than the environment's. */
+  ownBrowser: () => boolean
 }
 
 /**
@@ -23,9 +25,14 @@ export function setBotIdentity(
   cwd: string,
   profile: FleetInstanceProfile,
   peers: () => BotIdentityPeer[] = () => [],
-  options: { unifiedDesktop?: () => boolean } = {}
+  options: { unifiedDesktop?: () => boolean; ownBrowser?: () => boolean } = {}
 ): void {
-  identities.set(cwd, { profile, peers, unifiedDesktop: options.unifiedDesktop ?? (() => false) })
+  identities.set(cwd, {
+    profile,
+    peers,
+    unifiedDesktop: options.unifiedDesktop ?? (() => false),
+    ownBrowser: options.ownBrowser ?? (() => false),
+  })
 }
 
 /** Its conversations work at once, in the same folder: a file may change under another one's feet. */
@@ -33,7 +40,9 @@ export const CONCURRENT_CONVERSATIONS =
   'Your other conversations (your main one, routine runs and conversations with other bots) may be working at the same time in the same folder: re-read a file before you change it if another conversation may be using it.'
 
 /** The bot's screens, as its prompt describes them. */
-function screens(unifiedDesktop: boolean): string {
+function screens(unifiedDesktop: boolean, ownBrowser: boolean): string {
+  if (unifiedDesktop && ownBrowser)
+    return 'You have one Linux desktop of your own, 1280×800, that your owner can watch and take over: your own Chromium is a window there, with your own profile and site logins, which you drive with browser_* for websites (browser_tabs lists only the tabs of this conversation; it closes after 15 idle minutes and reopens them on next use); the terminals you use with terminal_* show there as windows; and the programs you start open there, which you drive with computer_*. The window you are using comes to the front on its own.'
   if (unifiedDesktop)
     return 'You have one Linux desktop of your own, 1280×800, that your owner can watch and take over: your Maestrly browser is a window there, which you drive with browser_* for websites; the terminals you use with terminal_* show there as windows; and the programs you start open there, which you drive with computer_*. The window you are using comes to the front on its own.'
   return 'You have two screens of your own: your browser, which you drive with browser_* for websites, and your apps screen, a 1280×800 Linux desktop that you drive with computer_*, where the programs you start open.'
@@ -45,13 +54,17 @@ export function clearBotIdentity(cwd: string, botId?: string): void {
   if (identity && (botId === undefined || identity.profile.botId === botId)) identities.delete(cwd)
 }
 
-function sharing(peers: BotIdentityPeer[]): string {
-  const shared =
-    'the home folder and its files, installed tools, accounts, skills, MCP servers and site logins (browser cookies)'
+function sharing(peers: BotIdentityPeer[], ownBrowser: boolean): string {
+  const shared = ownBrowser
+    ? 'the home folder and its files, installed tools, accounts, skills and MCP servers'
+    : 'the home folder and its files, installed tools, accounts, skills, MCP servers and site logins (browser cookies)'
   if (!peers.length)
     return `No other bot shares this environment right now; ${shared} would be shared with a bot added to it later.`
   const names = peers.map((peer) => `${peer.name} (${peer.botId})`).join(', ')
-  return `Other bots share this environment with you: ${names}. You share ${shared} with them, and they can read your files, so coordinate before changing something shared. Your conversation, memory and screens stay your own.`
+  const own = ownBrowser
+    ? 'Your conversation, memory, screens and site logins'
+    : 'Your conversation, memory and screens'
+  return `Other bots share this environment with you: ${names}. You share ${shared} with them, and they can read your files, so coordinate before changing something shared. ${own} stay your own.`
 }
 
 export const BOT_APP_TOOLS_GUIDANCE =
@@ -74,5 +87,6 @@ export function botIdentityPrompt(cwd: string | undefined): string {
   if (!identity) return ''
   const { name, instructions } = identity.profile
   const peers = identity.peers().filter((peer) => peer.botId !== identity.profile.botId)
-  return `# Bot identity\nYour name is ${name}.\n${instructions}\n\nYou run in a Linux environment (a container) that has Node.js 24 (npm, npx, pnpm and yarn through corepack), Python 3.11 (pip, venv, uv and uvx), git, a C/C++ build toolchain, ripgrep, fd, jq and sqlite3. Installs made with npm -g, uv tool install, pip install --user or mise stay in the home folder and survive updates; there is no sudo or Docker. For another Node or Python version use mise (for example \`mise use node@20\`); once installed, a project's .nvmrc is honored. ${screens(identity.unifiedDesktop())} ${CONCURRENT_CONVERSATIONS} ${sharing(peers)} Use bot_peers_* to talk to allowed bots, and request_owner_help for logins, 2FA, or CAPTCHAs. Screenshots your tools take stay in the tool details, which the owner can open; they do not appear in the conversation by themselves. To show the owner a screenshot (they asked for one, or it is the result you deliver), call browser_screenshot or computer_screenshot with share set to true and tell the owner you did so. Never claim you cannot attach images. ${computers(identity.profile.gateway.desktopBridgeEnabled === true)} ${BOT_APP_TOOLS_GUIDANCE} Plan review is unavailable in bot conversations: do not call review_plan or wait for a Plan tab approval, even if a skill recommends that workflow. When asked for a plan, present it directly in the conversation. When authorized to implement, proceed and verify within the configured permissions.`
+  const ownBrowser = identity.ownBrowser()
+  return `# Bot identity\nYour name is ${name}.\n${instructions}\n\nYou run in a Linux environment (a container) that has Node.js 24 (npm, npx, pnpm and yarn through corepack), Python 3.11 (pip, venv, uv and uvx), git, a C/C++ build toolchain, ripgrep, fd, jq and sqlite3. Installs made with npm -g, uv tool install, pip install --user or mise stay in the home folder and survive updates; there is no sudo or Docker. For another Node or Python version use mise (for example \`mise use node@20\`); once installed, a project's .nvmrc is honored. ${screens(identity.unifiedDesktop(), ownBrowser)} ${CONCURRENT_CONVERSATIONS} ${sharing(peers, ownBrowser)} Use bot_peers_* to talk to allowed bots, and request_owner_help for logins, 2FA, or CAPTCHAs. Screenshots your tools take stay in the tool details, which the owner can open; they do not appear in the conversation by themselves. To show the owner a screenshot (they asked for one, or it is the result you deliver), call browser_screenshot or computer_screenshot with share set to true and tell the owner you did so. Never claim you cannot attach images. ${computers(identity.profile.gateway.desktopBridgeEnabled === true)} ${BOT_APP_TOOLS_GUIDANCE} Plan review is unavailable in bot conversations: do not call review_plan or wait for a Plan tab approval, even if a skill recommends that workflow. When asked for a plan, present it directly in the conversation. When authorized to implement, proceed and verify within the configured permissions.`
 }

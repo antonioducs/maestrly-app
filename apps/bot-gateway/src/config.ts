@@ -1,6 +1,7 @@
 import { chmodSync, mkdirSync, readFileSync } from 'node:fs'
 import { z } from 'zod'
 import {
+  FLEET_BOT_BROWSERS,
   FLEET_BOT_EGRESS_MODES,
   FLEET_BOT_RUNTIME_UPDATE_MODES,
   FLEET_GATEWAY_ENV,
@@ -32,6 +33,8 @@ const schema = z.object({
   botEgress: z.enum(FLEET_BOT_EGRESS_MODES),
   /** Whether bots update Claude Code and Codex on their own. */
   botRuntimeUpdates: z.enum(FLEET_BOT_RUNTIME_UPDATE_MODES),
+  /** The browser bots drive: their own Chromium, or the environment's built-in one. */
+  botBrowser: z.enum(FLEET_BOT_BROWSERS),
   botShm: bytes,
   /**
    * A directory of the Docker host whose subfolders are mounted into the workspaces environments, each at the same
@@ -82,6 +85,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GatewayConfig 
     botMemory: env[FLEET_GATEWAY_ENV.botMemory] ?? '4g',
     botEgress: env[FLEET_GATEWAY_ENV.botEgress] ?? 'open',
     botRuntimeUpdates: env[FLEET_GATEWAY_ENV.botRuntimeUpdates] || 'auto',
+    botBrowser: env[FLEET_GATEWAY_ENV.botBrowser]?.trim() || 'chromium',
     botShm: env[FLEET_GATEWAY_ENV.botShm] ?? '1g',
     workspacesRoot: env[FLEET_GATEWAY_ENV.workspacesRoot]?.trim() || null,
     gatewayContainer: env[FLEET_GATEWAY_ENV.container]?.trim() || null,

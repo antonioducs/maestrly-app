@@ -424,8 +424,7 @@ export default {
   environment: {
     label: 'Environment',
     link: 'Environment: {{name}}',
-    linkNote:
-      'Accounts, skills, MCP servers, site logins and resources are set up on the environment and shared by its bots.',
+    linkNote: 'Accounts, skills, MCP servers and resources are set up on the environment and shared by its bots.',
     overview: 'Overview',
     screen: 'Screen',
     overviewRegion: '{{name}} overview',
@@ -443,7 +442,7 @@ export default {
     sharedTitle: 'Shared by its bots',
     allSettings: 'All settings',
     sharedSetupNote:
-      'Accounts, skills, MCP servers and site logins are set up once, here, and every bot in this environment uses them.',
+      'Accounts, skills and MCP servers are set up once, here, and every bot in this environment uses them.',
     tiles: {
       accounts_one: '{{count}} account',
       accounts_other: '{{count}} accounts',
@@ -470,6 +469,8 @@ export default {
       siteLogins: 'Site logins',
       siteLoginsValue: 'On the environment screen',
       siteLoginsNote: 'Every bot here uses them',
+      siteLoginsOwnValue: "In each bot's browser",
+      siteLoginsOwnNote: 'Each bot keeps its own',
     },
     runningFor: 'Running for',
     versionLabel: 'Version',
@@ -992,7 +993,7 @@ export default {
     howDescription:
       'Each bot has its own Linux desktop and container on the server. The bot controls its desktop there; this computer is the remote control.',
     howDescriptionEnvironments:
-      'Bots run in environments on the server. An environment is one container, with the Linux desktop, accounts, files and site logins its bots share; each bot has its own browser and apps screen there. This computer is the remote control.',
+      'Bots run in environments on the server. An environment is one container, with the Linux desktop, accounts and files its bots share; each bot has its own browser and apps screen there. This computer is the remote control.',
     title: 'Bot server',
     system: 'System',
     compressedSwap: 'Compressed swap',
@@ -1599,14 +1600,14 @@ export default {
     environmentDescription: 'Each bot has its own conversation, memory, browser and apps screen. Choose where it runs.',
     where: 'Where it runs',
     newEnvironment: 'New environment',
-    newEnvironmentHint: 'Its own accounts, files and site logins',
+    newEnvironmentHint: 'Its own accounts and files',
     existingEnvironment: 'Existing environment',
     existingEnvironmentHint: 'Joins an environment that is already set up',
     environmentName: 'Environment name',
     environment: 'Environment',
     chooseEnvironment: 'Choose an environment',
     noEnvironments: 'No environments yet.',
-    sharedHint: 'Uses the accounts, skills, MCP servers and site logins of {{environment}}.',
+    sharedHint: 'Uses the accounts, skills and MCP servers of {{environment}}.',
     progressDescription: 'Setting up your bot on the server.',
     closeNote: 'You can close this window. Creation continues on the server.',
     cancel: 'Cancel',

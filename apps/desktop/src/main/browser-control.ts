@@ -1,41 +1,91 @@
+import { randomUUID } from 'node:crypto'
 import type { NativeImage, WebContents } from 'electron'
 import { nativeImage } from 'electron'
 import { MAX_EPHEMERAL_IMAGE_BYTES, decodedBase64ByteSize } from './chat/tool-output'
 import { incrementPerformanceCounter } from './performance/metrics'
 
 /**
- * Control the embedded browser through each WebContents' isolated CDP debugger, without opening a
- * remote-debugging port exposing all app targets. Supports navigation, evaluation, CSS-pixel input,
- * text insertion, and screenshots, including hidden windows. MCP tools drive this interface.
+ * Control a browser page through its own CDP session, without opening a remote-debugging port exposing all app
+ * targets. Supports navigation, evaluation, CSS-pixel input, text insertion, and screenshots, including hidden windows.
+ * MCP tools drive this interface.
+ *
+ * A page is an Electron WebContents (the drawer browser, each WebContents' isolated debugger) or a tab of a bot's own
+ * Chromium, reached through that Chromium's DevTools pipe (`fleet/instance/bot-browser`).
  */
 
-const attached = new WeakSet<WebContents>()
-const attachInFlight = new WeakMap<WebContents, Promise<void>>()
+type CdpMessageListener = (event: unknown, method: string, params: any, sessionId?: string) => void
+/** The DevTools session of one page: Electron's `webContents.debugger`, or a flattened session of a Chromium target. */
+export interface BrowserPageDebugger {
+  attach(protocolVersion?: string): void
+  sendCommand(method: string, commandParams?: any): Promise<any>
+  on(event: 'message', listener: CdpMessageListener): unknown
+  on(event: 'detach', listener: (event: unknown, reason: string) => void): unknown
+  off(event: 'message', listener: CdpMessageListener): unknown
+}
+/** What the control functions use of a page. An Electron WebContents has this shape as it is. */
+export interface BrowserPage {
+  readonly debugger: BrowserPageDebugger
+  getURL(): string
+  isDestroyed(): boolean
+  isCrashed(): boolean
+  canGoBack(): boolean
+  canGoForward(): boolean
+  goBack(): void
+  goForward(): void
+  reload(): void
+  loadURL(url: string): Promise<void>
+  forcefullyCrashRenderer(): void
+  once(event: 'destroyed', listener: () => void): unknown
+  removeListener(event: 'destroyed', listener: () => void): unknown
+  /** A page whose browser reports its history asynchronously reads it before going back or forward. */
+  navigationState?(): Promise<{ canGoBack: boolean; canGoForward: boolean }>
+}
+
+const attached = new WeakSet<BrowserPage>()
+const attachInFlight = new WeakMap<BrowserPage, Promise<void>>()
 type CdpCaptureDomain = 'runtime' | 'log' | 'network'
 type CdpDomainState = Record<CdpCaptureDomain, boolean>
-const cdpDomains = new WeakMap<WebContents, CdpDomainState>()
-const cdpCaptureActive = new WeakMap<WebContents, boolean>()
+const cdpDomains = new WeakMap<BrowserPage, CdpDomainState>()
+const cdpCaptureActive = new WeakMap<BrowserPage, boolean>()
 // Each capture-domain activation gets a generation. CDP request IDs can survive disable/enable cycles;
 // generations prevent late idle-tab responses from affecting the next network-idle wait.
-const cdpCaptureGeneration = new WeakMap<WebContents, number>()
+const cdpCaptureGeneration = new WeakMap<BrowserPage, number>()
 // The governor owns the long-lived capture decision; log/network reads add a short-lived explicit
 // lease so these helpers remain safe even when called outside the MCP wrapper.
-const cdpGovernorActive = new WeakMap<WebContents, boolean>()
-const cdpExplicitCaptureLeases = new WeakMap<WebContents, number>()
-const cdpActivityInFlight = new WeakMap<WebContents, Promise<void>>()
-// Last per-tab snapshot mapping refs to CSS-pixel centers.
-const lastRefs = new WeakMap<WebContents, Array<{ x: number; y: number }>>()
+const cdpGovernorActive = new WeakMap<BrowserPage, boolean>()
+const cdpExplicitCaptureLeases = new WeakMap<BrowserPage, number>()
+const cdpActivityInFlight = new WeakMap<BrowserPage, Promise<void>>()
+/**
+ * The last snapshot of each tab: the CSS-pixel center of each ref when it was taken, and the token under which the
+ * tools' isolated world keeps the elements themselves (none when the page had no such world).
+ */
+interface SnapshotRefs {
+  token: string | null
+  points: Array<{ x: number; y: number }>
+}
+const lastRefs = new WeakMap<BrowserPage, SnapshotRefs>()
+/**
+ * The tools read pages from an isolated world of the main frame: the page's scripts can neither change the DOM methods
+ * it uses nor see what it keeps. A navigation replaces the world, which is created again on the next read.
+ */
+const ISOLATED_WORLD_NAME = 'maestrly-tools'
+const isolatedWorlds = new WeakMap<BrowserPage, Promise<number | null>>()
 // Current synthetic cursor position per tab in CSS pixels.
-const mousePositions = new WeakMap<WebContents, { x: number; y: number }>()
+const mousePositions = new WeakMap<BrowserPage, { x: number; y: number }>()
 // Automatically answer alert/confirm/prompt dialogs so synchronous page dialogs cannot block subsequent
 // tools. Default is accept.
-const dialogBehavior = new WeakMap<WebContents, { accept: boolean; promptText?: string }>()
+const dialogBehavior = new WeakMap<BrowserPage, { accept: boolean; promptText?: string }>()
 // Bot browser views disable native GTK dialogs so another screen keeps its input. Their JavaScript responses use
 // the same per-tab policy, installed before the first page loads.
-const nativeDialogsDisabled = new WeakSet<WebContents>()
+const nativeDialogsDisabled = new WeakSet<BrowserPage>()
 // Per-tab prompt override script ID, removed before reinstalling because Electron does not support native
 // prompt().
-const promptScriptId = new WeakMap<WebContents, string>()
+const promptScriptId = new WeakMap<BrowserPage, string>()
+// The protocol listeners outlive a detached session: the next attach reuses them instead of doubling every event.
+const listenersInstalled = new WeakSet<BrowserPage>()
+// Pages whose renderer stopped answering: an operation ran out of time or Electron's hang monitor reported it. The
+// next navigation probes them and restarts the renderer when it is still stuck.
+const frozenPages = new WeakSet<BrowserPage>()
 
 // Bounded console/network ring buffers collect while the tab is active or within governor grace; existing
 // history remains available to tools.
@@ -67,9 +117,9 @@ interface Buffers {
   reqById: Map<string, { entry: NetworkEntry; generation: number; bytes: number }>
   reqByIdBytes: number
 }
-const buffers = new WeakMap<WebContents, Buffers>()
+const buffers = new WeakMap<BrowserPage, Buffers>()
 
-function getBuffers(wc: WebContents): Buffers {
+function getBuffers(wc: BrowserPage): Buffers {
   let b = buffers.get(wc)
   if (!b) {
     b = {
@@ -201,7 +251,7 @@ function refreshPending(b: Buffers, requestId: string): void {
   }
 }
 
-function setMousePosition(wc: WebContents, x: number, y: number): { x: number; y: number } {
+function setMousePosition(wc: BrowserPage, x: number, y: number): { x: number; y: number } {
   const pos = { x: Math.round(x), y: Math.round(y) }
   mousePositions.set(wc, pos)
   return pos
@@ -231,9 +281,25 @@ function isCaptureDomainMethod(method: string): boolean {
   return method.startsWith('Runtime.') || method.startsWith('Log.') || method.startsWith('Network.')
 }
 
-function attachCdpListeners(wc: WebContents): void {
+/**
+ * A session ends without the tab closing (the renderer process is replaced or another client takes over): forget it,
+ * so the next operation attaches again instead of sending commands to a session that is gone.
+ */
+function forgetAttachment(wc: BrowserPage): void {
+  attached.delete(wc)
+  cdpDomains.delete(wc)
+  cdpCaptureActive.set(wc, false)
+  promptScriptId.delete(wc)
+  isolatedWorlds.delete(wc)
+  clearPending(getBuffers(wc))
+}
+
+function attachCdpListeners(wc: BrowserPage): void {
   const b = getBuffers(wc)
+  wc.debugger.on('detach', () => forgetAttachment(wc))
   wc.debugger.on('message', (_e, method, params: Record<string, unknown>) => {
+    if (method === 'Page.frameNavigated' && !(params?.frame as { parentId?: string } | undefined)?.parentId)
+      isolatedWorlds.delete(wc)
     // Keep Page enabled for navigation, screenshots, and dialogs. Ignore and disable Runtime/Log/Network
     // domains when policy marks the tab idle.
     if (isCaptureDomainMethod(method) && !cdpCaptureActive.get(wc)) return
@@ -342,7 +408,7 @@ function attachCdpListeners(wc: WebContents): void {
   })
 }
 
-async function ensureAttached(wc: WebContents): Promise<void> {
+async function ensureAttached(wc: BrowserPage): Promise<void> {
   if (attached.has(wc)) return
   const previous = attachInFlight.get(wc)
   if (previous) return previous
@@ -354,24 +420,30 @@ async function ensureAttached(wc: WebContents): Promise<void> {
       // A racing attach by us is harmless; propagate conflicts with another debugger client.
       if (!String((e as Error).message).includes('already attached')) throw e
     }
-    attachCdpListeners(wc)
+    const reattaching = listenersInstalled.has(wc)
+    if (!reattaching) {
+      listenersInstalled.add(wc)
+      attachCdpListeners(wc)
+      wc.once('destroyed', () => {
+        attached.delete(wc)
+        cdpCaptureActive.delete(wc)
+        cdpCaptureGeneration.delete(wc)
+        cdpGovernorActive.delete(wc)
+        cdpExplicitCaptureLeases.delete(wc)
+        cdpDomains.delete(wc)
+      })
+    }
     await wc.debugger.sendCommand('Page.enable')
     cdpDomains.set(wc, { runtime: false, log: false, network: false })
     cdpCaptureActive.set(wc, false)
     attached.add(wc)
-    wc.once('destroyed', () => {
-      attached.delete(wc)
-      cdpCaptureActive.delete(wc)
-      cdpCaptureGeneration.delete(wc)
-      cdpGovernorActive.delete(wc)
-      cdpExplicitCaptureLeases.delete(wc)
-      cdpDomains.delete(wc)
-    })
     // Install prompt override on attach with default accept so unsupported native prompt() cannot break
     // pages before explicit configuration.
     await installPromptOverride(wc).catch(() => {
       /* best-effort: setDialogBehavior reinstala sob demanda */
     })
+    // A session attached again after a detach resumes the capture the governor or a reader still wants.
+    if (reattaching && wantsCdpCapture(wc)) void reconcileCdpCapture(wc).catch(() => {})
   })()
   attachInFlight.set(wc, current)
   try {
@@ -381,7 +453,7 @@ async function ensureAttached(wc: WebContents): Promise<void> {
   }
 }
 
-function enqueueCdpActivity(wc: WebContents, operation: () => Promise<void>): Promise<void> {
+function enqueueCdpActivity(wc: BrowserPage, operation: () => Promise<void>): Promise<void> {
   const previous = cdpActivityInFlight.get(wc) ?? Promise.resolve()
   const current = previous.catch(() => {}).then(operation)
   cdpActivityInFlight.set(wc, current)
@@ -393,7 +465,7 @@ function enqueueCdpActivity(wc: WebContents, operation: () => Promise<void>): Pr
   return current
 }
 
-async function ensureCdpDomain(wc: WebContents, domain: CdpCaptureDomain): Promise<void> {
+async function ensureCdpDomain(wc: BrowserPage, domain: CdpCaptureDomain): Promise<void> {
   await ensureAttached(wc)
   return enqueueCdpActivity(wc, async () => {
     const state = cdpDomains.get(wc)
@@ -403,12 +475,12 @@ async function ensureCdpDomain(wc: WebContents, domain: CdpCaptureDomain): Promi
   })
 }
 
-function wantsCdpCapture(wc: WebContents): boolean {
+function wantsCdpCapture(wc: BrowserPage): boolean {
   return cdpGovernorActive.get(wc) === true || (cdpExplicitCaptureLeases.get(wc) ?? 0) > 0
 }
 
 /** Reconciles the protocol domains with the governor plus any short-lived explicit reader lease. */
-async function reconcileCdpCapture(wc: WebContents): Promise<void> {
+async function reconcileCdpCapture(wc: BrowserPage): Promise<void> {
   await ensureAttached(wc)
   return enqueueCdpActivity(wc, async () => {
     const state = cdpDomains.get(wc)
@@ -442,12 +514,12 @@ async function reconcileCdpCapture(wc: WebContents): Promise<void> {
 }
 
 /** Follows the resource governor: Page stays available, expensive capture domains do not. */
-export async function setBrowserCdpActivity(wc: WebContents, active: boolean): Promise<void> {
+export async function setBrowserCdpActivity(wc: BrowserPage, active: boolean): Promise<void> {
   cdpGovernorActive.set(wc, active)
   return reconcileCdpCapture(wc)
 }
 
-async function withExplicitCdpCapture<T>(wc: WebContents, operation: () => Promise<T>): Promise<T> {
+async function withExplicitCdpCapture<T>(wc: BrowserPage, operation: () => Promise<T>): Promise<T> {
   cdpExplicitCaptureLeases.set(wc, (cdpExplicitCaptureLeases.get(wc) ?? 0) + 1)
   try {
     await reconcileCdpCapture(wc)
@@ -465,7 +537,7 @@ async function withExplicitCdpCapture<T>(wc: WebContents, operation: () => Promi
  * DevTools coexistence; enable Runtime/Log/Network only for governor activity or requested logs. Safe
  * fire-and-forget.
  */
-export function attachToView(wc: WebContents, options: { nativeDialogsDisabled?: boolean } = {}): Promise<void> {
+export function attachToView(wc: BrowserPage, options: { nativeDialogsDisabled?: boolean } = {}): Promise<void> {
   if (options.nativeDialogsDisabled) nativeDialogsDisabled.add(wc)
   return ensureAttached(wc)
     .then(async () => {
@@ -479,30 +551,36 @@ export function attachToView(wc: WebContents, options: { nativeDialogsDisabled?:
 
 /** Collected console/exception logs, oldest first. */
 export async function getConsoleLogs(
-  wc: WebContents,
-  opts?: { level?: string; limit?: number }
+  wc: BrowserPage,
+  opts?: { level?: string; limit?: number },
+  control: BrowserControlOperationOptions = {}
 ): Promise<ConsoleEntry[]> {
-  return withExplicitCdpCapture(wc, async () => {
-    let logs = getBuffers(wc).console
-    if (opts?.level) logs = logs.filter((l) => l.level === opts.level)
-    return logs.slice(-(opts?.limit ?? 100))
-  })
+  return pageOperation(wc, control, 'reading the console logs', BROWSER_COMMAND_TIMEOUT_MS, () =>
+    withExplicitCdpCapture(wc, async () => {
+      let logs = getBuffers(wc).console
+      if (opts?.level) logs = logs.filter((l) => l.level === opts.level)
+      return logs.slice(-(opts?.limit ?? 100))
+    })
+  )
 }
 
 /** Collected network requests, oldest first. */
 export async function getNetworkLogs(
-  wc: WebContents,
-  opts?: { onlyErrors?: boolean; limit?: number }
+  wc: BrowserPage,
+  opts?: { onlyErrors?: boolean; limit?: number },
+  control: BrowserControlOperationOptions = {}
 ): Promise<NetworkEntry[]> {
-  return withExplicitCdpCapture(wc, async () => {
-    let net = getBuffers(wc).network
-    if (opts?.onlyErrors) net = net.filter((n) => n.failed || (n.status ?? 0) >= 400)
-    return net.slice(-(opts?.limit ?? 100))
-  })
+  return pageOperation(wc, control, 'reading the network logs', BROWSER_COMMAND_TIMEOUT_MS, () =>
+    withExplicitCdpCapture(wc, async () => {
+      let net = getBuffers(wc).network
+      if (opts?.onlyErrors) net = net.filter((n) => n.failed || (n.status ?? 0) >= 400)
+      return net.slice(-(opts?.limit ?? 100))
+    })
+  )
 }
 
 /** Clear buffers before reproducing an issue. */
-export async function clearLogs(wc: WebContents): Promise<void> {
+export async function clearLogs(wc: BrowserPage): Promise<void> {
   const b = getBuffers(wc)
   b.console.length = 0
   b.consoleBytes = 0
@@ -517,7 +595,7 @@ export async function clearLogs(wc: WebContents): Promise<void> {
  * page because their native dialogs are disabled; the per-tab accept policy still applies.
  * addScriptToEvaluateOnNewDocument keeps behavior across navigation.
  */
-async function installPromptOverride(wc: WebContents): Promise<void> {
+async function installPromptOverride(wc: BrowserPage): Promise<void> {
   const beh = dialogBehavior.get(wc) ?? { accept: true }
   const ret = beh.accept
     ? beh.promptText !== undefined
@@ -548,13 +626,20 @@ async function installPromptOverride(wc: WebContents): Promise<void> {
  * Set automatic dialog responses. CDP handles alert/confirm; reinstall the JS prompt override so
  * accept/promptText changes apply immediately.
  */
-export async function setDialogBehavior(wc: WebContents, accept: boolean, promptText?: string): Promise<void> {
+export async function setDialogBehavior(
+  wc: BrowserPage,
+  accept: boolean,
+  promptText?: string,
+  opts: BrowserControlOperationOptions = {}
+): Promise<void> {
   dialogBehavior.set(wc, { accept, promptText })
-  await ensureCdpDomain(wc, 'runtime')
-  await installPromptOverride(wc)
+  await pageOperation(wc, opts, 'setting the dialog behavior', BROWSER_COMMAND_TIMEOUT_MS, async () => {
+    await ensureCdpDomain(wc, 'runtime')
+    await installPromptOverride(wc)
+  })
 }
 
-async function evalJs<T = unknown>(wc: WebContents, expression: string): Promise<T> {
+async function evalJs<T = unknown>(wc: BrowserPage, expression: string): Promise<T> {
   await ensureCdpDomain(wc, 'runtime')
   const r = (await wc.debugger.sendCommand('Runtime.evaluate', {
     expression,
@@ -563,6 +648,66 @@ async function evalJs<T = unknown>(wc: WebContents, expression: string): Promise
   })) as { result: { value: T }; exceptionDetails?: { text?: string } }
   if (r.exceptionDetails) throw new Error(r.exceptionDetails.text || 'JavaScript evaluation failed')
   return r.result.value
+}
+
+/** The tools' isolated world of the page's main frame, created on first use; null where it cannot be created. */
+function isolatedWorld(wc: BrowserPage): Promise<number | null> {
+  const existing = isolatedWorlds.get(wc)
+  if (existing) return existing
+  const world = (async () => {
+    const tree = (await wc.debugger.sendCommand('Page.getFrameTree')) as
+      | { frameTree?: { frame?: { id?: unknown } } }
+      | undefined
+    const frameId = tree?.frameTree?.frame?.id
+    if (typeof frameId !== 'string') return null
+    const created = (await wc.debugger.sendCommand('Page.createIsolatedWorld', {
+      frameId,
+      worldName: ISOLATED_WORLD_NAME,
+    })) as { executionContextId?: unknown } | undefined
+    return typeof created?.executionContextId === 'number' ? created.executionContextId : null
+  })().catch(() => null)
+  isolatedWorlds.set(wc, world)
+  // A world that could not be created is tried again on the next read.
+  void world.then((id) => {
+    if (id === null && isolatedWorlds.get(wc) === world) isolatedWorlds.delete(wc)
+  })
+  return world
+}
+
+function isStaleContextError(error: unknown): boolean {
+  return /Cannot find context with specified id|Execution context was destroyed/i.test(
+    error instanceof Error ? error.message : String(error)
+  )
+}
+
+/**
+ * Evaluates the tools' own script in their isolated world, so the page cannot change what it reads; a page where that
+ * world cannot be created is read from its own world instead. The script is built for the world that runs it
+ * (`isolated`), and `world` tells which one answered.
+ */
+async function evalIsolated<T = unknown>(
+  wc: BrowserPage,
+  script: (isolated: boolean) => string
+): Promise<{ value: T; world: number | null }> {
+  for (let attempt = 0; ; attempt++) {
+    const world = await isolatedWorld(wc)
+    if (world === null) return { value: await evalJs<T>(wc, script(false)), world: null }
+    try {
+      const r = (await wc.debugger.sendCommand('Runtime.evaluate', {
+        expression: script(true),
+        contextId: world,
+        returnByValue: true,
+        awaitPromise: true,
+      })) as { result: { value: T }; exceptionDetails?: { text?: string; exception?: { description?: string } } }
+      if (r.exceptionDetails)
+        throw new Error(r.exceptionDetails.exception?.description || r.exceptionDetails.text || 'evaluation failed')
+      return { value: r.result.value, world }
+    } catch (error) {
+      // The page navigated since the world was created: it is created again, once.
+      if (attempt > 0 || !isStaleContextError(error)) throw error
+      if ((await isolatedWorlds.get(wc)) === world) isolatedWorlds.delete(wc)
+    }
+  }
 }
 
 interface RemoteObject {
@@ -582,8 +727,34 @@ interface EvalResponse {
  * awaiting Promises. Return serializable values, explicit undefined, or runtime descriptions for
  * functions, DOM nodes, and other nonserializable results.
  */
-export async function evaluate(wc: WebContents, expression: string): Promise<{ type: string; value: string }> {
-  await ensureCdpDomain(wc, 'runtime')
+export async function evaluate(
+  wc: BrowserPage,
+  expression: string,
+  opts: BrowserControlOperationOptions = {}
+): Promise<{ type: string; value: string }> {
+  const timeoutMs = validTimeout(opts.timeoutMs, BROWSER_EVALUATE_TIMEOUT_MS)
+  return pageOperation(wc, opts, 'evaluating JavaScript', BROWSER_EVALUATE_TIMEOUT_MS, async () => {
+    await ensureCdpDomain(wc, 'runtime')
+    return evaluateInPage(wc, expression, timeoutMs)
+  })
+}
+
+/** Leaves the deadline a moment to report a script the page stopped itself, rather than a silent browser. */
+const SCRIPT_TERMINATION_MARGIN_MS = 1_000
+
+function scriptTerminatedError(timeoutMs: number): Error {
+  return new Error(
+    `the script ran for more than ${timeoutMs} ms and was stopped. ` +
+      'Return sooner, or await a promise instead of blocking the page.'
+  )
+}
+
+async function evaluateInPage(
+  wc: BrowserPage,
+  expression: string,
+  timeoutMs: number
+): Promise<{ type: string; value: string }> {
+  const scriptTimeoutMs = Math.max(1, timeoutMs - SCRIPT_TERMINATION_MARGIN_MS)
   let r: EvalResponse
   try {
     r = (await wc.debugger.sendCommand('Runtime.evaluate', {
@@ -594,16 +765,24 @@ export async function evaluate(wc: WebContents, expression: string): Promise<{ t
       // retaining last-expression semantics. Otherwise repeated declarations in the shared page context
       // would fail.
       replMode: true,
+      // As in DevTools, the script acts for the user: a real Chromium would otherwise block the popups it opens.
+      userGesture: true,
+      // Stops a synchronous script that never returns (a loop), which would otherwise freeze the page for good. An
+      // awaited promise is not affected: the deadline around this call covers it.
+      timeout: scriptTimeoutMs,
     })) as EvalResponse
   } catch (e) {
+    const message = (e as Error).message
+    if (/terminated/i.test(message)) throw scriptTerminatedError(scriptTimeoutMs)
     // CDP cannot serialize some results by value, including circular references and window.
     throw new Error(
-      `could not serialize the return value (${(e as Error).message}). ` +
+      `could not serialize the return value (${message}). ` +
         'Return a JSON-serializable value, e.g.: JSON.stringify(x), x.length, x.outerHTML.'
     )
   }
   if (r.exceptionDetails) {
     const msg = r.exceptionDetails.exception?.description || r.exceptionDetails.text || 'JavaScript evaluation failed'
+    if (/Execution was terminated/i.test(msg)) throw scriptTerminatedError(scriptTimeoutMs)
     // If a declaration conflict remains despite replMode, explain persistent scope rather than only echoing
     // the error.
     if (/already been declared/i.test(msg)) {
@@ -630,12 +809,12 @@ export async function evaluate(wc: WebContents, expression: string): Promise<{ t
  * Resolve on the first matching CDP method, timeout, or tab destruction. Back/forward can restore from
  * bfcache without loadEventFired, so also accept frameNavigated.
  */
-function waitForLoad(wc: WebContents, ms = 15000, methods = ['Page.loadEventFired']): Promise<void> {
+function waitForLoad(wc: BrowserPage, ms = 15000, methods = ['Page.loadEventFired']): Promise<void> {
   return new Promise<void>((resolve) => {
     const finish = (): void => {
       clearTimeout(timer)
       wc.removeListener('destroyed', finish)
-      // Every native accessor of a destroyed WebContents throws, and this may run from a timer where
+      // Every native accessor of a destroyed BrowserPage throws, and this may run from a timer where
       // nothing would catch it.
       if (!wc.isDestroyed()) wc.debugger.off('message', onMsg)
       resolve()
@@ -649,12 +828,23 @@ function waitForLoad(wc: WebContents, ms = 15000, methods = ['Page.loadEventFire
   })
 }
 
-export async function navigate(wc: WebContents, url: string): Promise<{ url: string }> {
-  await ensureAttached(wc)
-  const loaded = waitForLoad(wc)
-  await wc.debugger.sendCommand('Page.navigate', { url: normalizeUrl(url) })
-  await loaded
-  return { url: await currentUrl(wc) }
+export async function navigate(
+  wc: BrowserPage,
+  url: string,
+  opts: BrowserControlOperationOptions = {}
+): Promise<{ url: string }> {
+  const target = normalizeUrl(url)
+  return pageOperation(wc, opts, `navigating to ${target.slice(0, 200)}`, BROWSER_NAVIGATION_TIMEOUT_MS, async () => {
+    if (await restartFrozenRenderer(wc)) {
+      await loadInNewRenderer(wc, target)
+      return { url: wc.getURL() }
+    }
+    await ensureAttached(wc)
+    const loaded = waitForLoad(wc)
+    await wc.debugger.sendCommand('Page.navigate', { url: target })
+    await loaded
+    return { url: await currentUrl(wc) }
+  })
 }
 
 /**
@@ -662,20 +852,36 @@ export async function navigate(wc: WebContents, url: string): Promise<{ url: str
  * occurred.
  */
 export async function navHistory(
-  wc: WebContents,
-  dir: 'back' | 'forward' | 'reload'
+  wc: BrowserPage,
+  dir: 'back' | 'forward' | 'reload',
+  opts: BrowserControlOperationOptions = {}
 ): Promise<{ url: string; moved: boolean }> {
-  await ensureAttached(wc)
-  if (dir === 'back' && !wc.canGoBack()) return { url: await currentUrl(wc), moved: false }
-  if (dir === 'forward' && !wc.canGoForward()) return { url: await currentUrl(wc), moved: false }
-  // Reload waits for load up to 15 seconds; back/forward also accepts bfcache frameNavigated within 8 seconds.
-  const loaded =
-    dir === 'reload' ? waitForLoad(wc) : waitForLoad(wc, 8000, ['Page.loadEventFired', 'Page.frameNavigated'])
-  if (dir === 'back') wc.goBack()
-  else if (dir === 'forward') wc.goForward()
-  else wc.reload()
-  await loaded
-  return { url: await currentUrl(wc), moved: true }
+  const operation = dir === 'reload' ? 'reloading the page' : `going ${dir}`
+  return pageOperation(wc, opts, operation, BROWSER_NAVIGATION_TIMEOUT_MS, async () => {
+    // Reloading a stuck page loads it in a new renderer. Going back or forward from one starts a new renderer too,
+    // once the old one is ended; its address comes from the browser, since the page cannot answer.
+    const restarted = await restartFrozenRenderer(wc)
+    if (restarted && dir === 'reload') {
+      await loadInNewRenderer(wc, wc.getURL())
+      return { url: wc.getURL(), moved: true }
+    }
+    const pageUrl = (): Promise<string> => (restarted ? Promise.resolve(wc.getURL()) : currentUrl(wc))
+    await ensureAttached(wc)
+    if (dir !== 'reload') {
+      const history = wc.navigationState
+        ? await wc.navigationState()
+        : { canGoBack: wc.canGoBack(), canGoForward: wc.canGoForward() }
+      if (dir === 'back' ? !history.canGoBack : !history.canGoForward) return { url: await pageUrl(), moved: false }
+    }
+    // Reload waits for load up to 15 seconds; back/forward also accepts bfcache frameNavigated within 8 seconds.
+    const loaded =
+      dir === 'reload' ? waitForLoad(wc) : waitForLoad(wc, 8000, ['Page.loadEventFired', 'Page.frameNavigated'])
+    if (dir === 'back') wc.goBack()
+    else if (dir === 'forward') wc.goForward()
+    else wc.reload()
+    await loaded
+    return { url: await currentUrl(wc), moved: true }
+  })
 }
 
 /** CDP can reject one Runtime.evaluate while a same-tab navigation replaces its document. */
@@ -691,18 +897,31 @@ function isTransientNavigationEvaluationError(error: unknown): boolean {
  * and elapsed time, avoiding premature SPA snapshots. Requests without status count as pending.
  */
 export async function waitFor(
-  wc: WebContents,
+  wc: BrowserPage,
   opts: { selector?: string; text?: string; networkIdle?: boolean; timeoutMs?: number; signal?: AbortSignal }
 ): Promise<{ matched: boolean; waitedMs: number }> {
   opts.signal?.throwIfAborted()
+  const timeout = Number.isFinite(opts.timeoutMs) ? (opts.timeoutMs as number) : 10000
+  // The wait's own timeout ends a page that answers. A page that stops answering mid-poll ends at the deadline.
+  const deadline = { timeoutMs: timeout + BROWSER_COMMAND_TIMEOUT_MS, ...(opts.signal ? { signal: opts.signal } : {}) }
+  return pageOperation(wc, deadline, 'waiting on the page', BROWSER_COMMAND_TIMEOUT_MS, (signal) =>
+    waitForInPage(wc, opts, timeout, signal)
+  )
+}
+
+async function waitForInPage(
+  wc: BrowserPage,
+  opts: { selector?: string; text?: string; networkIdle?: boolean },
+  timeout: number,
+  signal: AbortSignal
+): Promise<{ matched: boolean; waitedMs: number }> {
   await ensureAttached(wc)
-  opts.signal?.throwIfAborted()
+  signal.throwIfAborted()
   const poll = async (): Promise<{ matched: boolean; waitedMs: number }> => {
-    const timeout = Number.isFinite(opts.timeoutMs) ? (opts.timeoutMs as number) : 10000
     const start = Date.now()
     let idleStreak = 0
     for (;;) {
-      opts.signal?.throwIfAborted()
+      signal.throwIfAborted()
       if (opts.selector) {
         try {
           if (await evalJs<boolean>(wc, `!!document.querySelector(${JSON.stringify(opts.selector)})`))
@@ -734,7 +953,7 @@ export async function waitFor(
   return opts.networkIdle ? withExplicitCdpCapture(wc, poll) : poll()
 }
 
-export async function currentUrl(wc: WebContents): Promise<string> {
+export async function currentUrl(wc: BrowserPage): Promise<string> {
   return evalJs<string>(wc, 'location.href')
 }
 
@@ -745,41 +964,91 @@ export interface SnapshotElement {
   name: string
 }
 
-/**
- * List visible interactive elements with stable refs and store click centers. Include viewport bounds
- * and current mouse position.
- */
-export async function snapshot(wc: WebContents): Promise<{
+export interface PageSnapshot {
   url: string
   elements: SnapshotElement[]
   viewport: { width: number; height: number }
   scroll: ScrollPosition
   mouse: { x: number; y: number }
-}> {
+}
+
+/**
+ * List visible interactive elements with stable refs and store click centers. Include viewport bounds
+ * and current mouse position.
+ */
+export function snapshot(wc: BrowserPage, opts: BrowserControlOperationOptions = {}): Promise<PageSnapshot> {
+  return pageOperation(wc, opts, 'reading the page elements', BROWSER_COMMAND_TIMEOUT_MS, () => snapshotPage(wc))
+}
+
+/**
+ * Lists the visible interactive elements in document order, inside open shadow roots and same-origin frames too, with
+ * their centers in the top page's CSS pixels. Run in the tools' isolated world, it keeps the elements there under
+ * `token`, so an action on a ref finds the element again where it is then; without a token (the page's own world, which
+ * the page could read) it keeps nothing.
+ */
+function snapshotScript(token: string | null): string {
+  return `(()=>{const out=[],refs=[];
+    const sel='a,button,input,textarea,select,[role=button],[role=link],[role=tab],[role=menuitem],[onclick],summary,[contenteditable=true]';
+    const visit=(root,frames,ox,oy,view)=>{
+      for(const el of root.querySelectorAll('*')){
+        if(el.matches(sel)){
+          const r=el.getBoundingClientRect();
+          const x=r.left+r.width/2,y=r.top+r.height/2;
+          if(r.width>0&&r.height>0&&r.bottom>=0&&r.top<=view.innerHeight&&r.right>=0&&r.left<=view.innerWidth&&oy+r.bottom>=0&&oy+r.top<=innerHeight&&ox+r.right>=0&&ox+r.left<=innerWidth){
+            const s=view.getComputedStyle(el);
+            if(s.display!=='none'&&s.visibility!=='hidden'&&s.opacity!=='0'){
+              const name=(el.getAttribute('aria-label')||el.innerText||el.value||el.getAttribute('placeholder')||el.getAttribute('title')||el.getAttribute('name')||'').replace(/\\s+/g,' ').trim().slice(0,100);
+              out.push({ref:refs.length,tag:el.tagName.toLowerCase(),type:el.getAttribute('type')||'',name,x:Math.round(ox+x),y:Math.round(oy+y)});
+              refs.push({el,frames});
+            }
+          }
+        }
+        if(el.shadowRoot)visit(el.shadowRoot,frames,ox,oy,view);
+        if(el.tagName==='IFRAME'||el.tagName==='FRAME'){
+          let doc=null;try{doc=el.contentDocument}catch(e){}
+          if(doc&&doc.defaultView){const fr=el.getBoundingClientRect();visit(doc,[...frames,el],ox+fr.left+el.clientLeft,oy+fr.top+el.clientTop,doc.defaultView)}
+        }
+      }
+    };
+    visit(document,[],0,0,window);
+    ${token ? `globalThis.__maestrlyRefs={token:${JSON.stringify(token)},refs};` : ''}
+    const de=document.documentElement;
+    return {viewport:{width:innerWidth,height:innerHeight},scroll:{x:Math.round(scrollX),y:Math.round(scrollY),maxX:Math.round(Math.max(0,de.scrollWidth-innerWidth)),maxY:Math.round(Math.max(0,de.scrollHeight-innerHeight))},elements:out};})()`
+}
+
+/**
+ * Finds a ref's element again: its center now, in the top page's CSS pixels, after scrolling it into view when it left
+ * the visible page (unless `scroll` is false). `stale` when the page changed since the snapshot.
+ */
+function resolveRefScript(token: string, ref: number, scroll: boolean): string {
+  return `(()=>{const kept=globalThis.__maestrlyRefs;
+    if(!kept||kept.token!==${JSON.stringify(token)})return {state:'stale'};
+    const item=kept.refs[${ref}];if(!item)return {state:'stale'};
+    const {el,frames}=item;
+    if(!el.isConnected||frames.some((f)=>!f.isConnected))return {state:'detached'};
+    const at=()=>{const r=el.getBoundingClientRect(),view=el.ownerDocument.defaultView||window;
+      let x=r.left+r.width/2,y=r.top+r.height/2;
+      const local=x>=0&&y>=0&&x<view.innerWidth&&y<view.innerHeight;
+      for(let i=frames.length-1;i>=0;i--){const f=frames[i],fr=f.getBoundingClientRect();x+=fr.left+f.clientLeft;y+=fr.top+f.clientTop}
+      return {x,y,empty:r.width===0&&r.height===0,inView:local&&x>=0&&y>=0&&x<innerWidth&&y<innerHeight}};
+    let p=at();
+    if(!p.inView&&${scroll ? 'true' : 'false'}){el.scrollIntoView({block:'center',inline:'center',behavior:'instant'});p=at()}
+    if(p.empty)return {state:'hidden'};
+    return {state:'ok',x:Math.round(p.x),y:Math.round(p.y)};})()`
+}
+
+async function snapshotPage(wc: BrowserPage): Promise<PageSnapshot> {
   await ensureAttached(wc)
-  const raw = await evalJs<{
+  const token = randomUUID()
+  const { value: raw, world } = await evalIsolated<{
     viewport: { width: number; height: number }
     scroll: ScrollPosition
     elements: Array<{ ref: number; tag: string; type: string; name: string; x: number; y: number }>
-  }>(
-    wc,
-    `(()=>{const out=[];let i=0;
-      const sel='a,button,input,textarea,select,[role=button],[role=link],[role=tab],[role=menuitem],[onclick],summary,[contenteditable=true]';
-      for(const el of document.querySelectorAll(sel)){
-        const r=el.getBoundingClientRect();
-        if(r.width===0||r.height===0)continue;
-        if(r.bottom<0||r.top>innerHeight||r.right<0||r.left>innerWidth)continue;
-        const s=getComputedStyle(el); if(s.display==='none'||s.visibility==='hidden'||s.opacity==='0')continue;
-        const name=(el.getAttribute('aria-label')||el.innerText||el.value||el.getAttribute('placeholder')||el.getAttribute('title')||el.getAttribute('name')||'').replace(/\\s+/g,' ').trim().slice(0,100);
-        out.push({ref:i++,tag:el.tagName.toLowerCase(),type:el.getAttribute('type')||'',name,x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)});
-      }
-      const de=document.documentElement;
-      return {viewport:{width:innerWidth,height:innerHeight},scroll:{x:Math.round(scrollX),y:Math.round(scrollY),maxX:Math.round(Math.max(0,de.scrollWidth-innerWidth)),maxY:Math.round(Math.max(0,de.scrollHeight-innerHeight))},elements:out};})()`
-  )
-  lastRefs.set(
-    wc,
-    raw.elements.map((e) => ({ x: e.x, y: e.y }))
-  )
+  }>(wc, (isolated) => snapshotScript(isolated ? token : null))
+  lastRefs.set(wc, {
+    token: world === null ? null : token,
+    points: raw.elements.map((e) => ({ x: e.x, y: e.y })),
+  })
   return {
     url: await currentUrl(wc),
     elements: raw.elements.map(({ ref, tag, type, name }) => ({ ref, tag, type, name })),
@@ -789,7 +1058,7 @@ export async function snapshot(wc: WebContents): Promise<{
   }
 }
 
-async function clickXY(wc: WebContents, x: number, y: number): Promise<void> {
+async function clickXY(wc: BrowserPage, x: number, y: number): Promise<void> {
   const base = { x, y, button: 'left' as const, clickCount: 1 }
   await wc.debugger.sendCommand('Input.dispatchMouseEvent', {
     ...base,
@@ -808,13 +1077,20 @@ async function clickXY(wc: WebContents, x: number, y: number): Promise<void> {
  * Move the synthetic cursor in CSS pixels from the top-left origin and record it. Dispatch real
  * mouseMoved so hover/mouseenter runs; snapshot/screenshot reports the position.
  */
-export async function moveMouse(wc: WebContents, x: number, y: number): Promise<{ x: number; y: number }> {
+export async function moveMouse(
+  wc: BrowserPage,
+  x: number,
+  y: number,
+  opts: BrowserControlOperationOptions = {}
+): Promise<{ x: number; y: number }> {
   if (!Number.isFinite(x) || !Number.isFinite(y)) {
     throw new Error('mouse coordinates must be finite numbers')
   }
-  await ensureAttached(wc)
-  await wc.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, buttons: 0 })
-  return setMousePosition(wc, x, y)
+  return pageOperation(wc, opts, 'moving the mouse', BROWSER_COMMAND_TIMEOUT_MS, async () => {
+    await ensureAttached(wc)
+    await wc.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, buttons: 0 })
+    return setMousePosition(wc, x, y)
+  })
 }
 
 /**
@@ -833,7 +1109,7 @@ export interface PresentedMouseInput {
   deltaX?: number
   deltaY?: number
 }
-export async function dispatchPresentedMouse(wc: WebContents, event: PresentedMouseInput): Promise<void> {
+export async function dispatchPresentedMouse(wc: BrowserPage, event: PresentedMouseInput): Promise<void> {
   if (!Number.isFinite(event.x) || !Number.isFinite(event.y)) throw new Error('mouse coordinates must be finite')
   await ensureAttached(wc)
   await wc.debugger.sendCommand('Input.dispatchMouseEvent', {
@@ -857,13 +1133,13 @@ export interface PresentedKeyInput {
   /** Editing commands the key runs, such as `deleteToBeginningOfLine`. */
   commands?: string[]
 }
-export async function dispatchPresentedKey(wc: WebContents, event: PresentedKeyInput): Promise<void> {
+export async function dispatchPresentedKey(wc: BrowserPage, event: PresentedKeyInput): Promise<void> {
   await ensureAttached(wc)
   await wc.debugger.sendCommand('Input.dispatchKeyEvent', event)
 }
 
 /** Inserts text as typing would (composition and dead keys resolved by the sender), without key events. */
-export async function insertPresentedText(wc: WebContents, text: string): Promise<void> {
+export async function insertPresentedText(wc: BrowserPage, text: string): Promise<void> {
   await ensureAttached(wc)
   await wc.debugger.sendCommand('Input.insertText', { text })
 }
@@ -872,18 +1148,18 @@ export async function insertPresentedText(wc: WebContents, text: string): Promis
  * Attaches this module's DevTools session to a view, as every control function does first. Other features (the
  * remote browser stream) send their own protocol commands through the same session.
  */
-export function ensureBrowserDebugger(wc: WebContents): Promise<void> {
+export function ensureBrowserDebugger(wc: BrowserPage): Promise<void> {
   return ensureAttached(wc)
 }
 
 /** Lets a view behave as focused (caret, focus events) while the desktop shows it, though its window is not. */
-export async function setPresentedFocusEmulation(wc: WebContents, enabled: boolean): Promise<void> {
+export async function setPresentedFocusEmulation(wc: BrowserPage, enabled: boolean): Promise<void> {
   await ensureAttached(wc)
   await wc.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled })
 }
 
 /** Current synthetic cursor position in CSS pixels. */
-export function mousePosition(wc: WebContents): { x: number; y: number } {
+export function mousePosition(wc: BrowserPage): { x: number; y: number } {
   return { ...(mousePositions.get(wc) ?? { x: 0, y: 0 }) }
 }
 
@@ -901,7 +1177,7 @@ const SCROLL_READ =
 
 /** Read current scroll position to accompany screenshots. */
 export async function scrollPosition(
-  wc: WebContents,
+  wc: BrowserPage,
   opts: BrowserControlOperationOptions = {}
 ): Promise<ScrollPosition> {
   return settleBrowserOperation(
@@ -919,18 +1195,25 @@ export async function scrollPosition(
  * Scroll the document deterministically using scrollBy/scrollTo. Priority: top/bottom target, absolute
  * coordinates, then deltas. Reread maxima afterward to reflect lazy/infinite loading.
  */
-export async function scroll(
-  wc: WebContents,
-  opts: {
-    dx?: number
-    dy?: number
-    x?: number
-    y?: number
-    to?: 'top' | 'bottom'
-    selector?: string
-    container?: string
-  }
+export interface ScrollRequest {
+  dx?: number
+  dy?: number
+  x?: number
+  y?: number
+  to?: 'top' | 'bottom'
+  selector?: string
+  container?: string
+}
+
+export function scroll(
+  wc: BrowserPage,
+  opts: ScrollRequest,
+  control: BrowserControlOperationOptions = {}
 ): Promise<ScrollPosition> {
+  return pageOperation(wc, control, 'scrolling the page', BROWSER_COMMAND_TIMEOUT_MS, () => scrollPage(wc, opts))
+}
+
+async function scrollPage(wc: BrowserPage, opts: ScrollRequest): Promise<ScrollPosition> {
   await ensureAttached(wc)
   const n = (v: number | undefined): number => (Number.isFinite(v) ? (v as number) : 0)
   // JavaScript expression returning a scrollable element's x, y, maxX, and maxY.
@@ -973,10 +1256,32 @@ export async function scroll(
   return r
 }
 
-function requireRef(wc: WebContents, ref: number): { x: number; y: number } {
-  const p = lastRefs.get(wc)?.[ref]
-  if (!p) throw new Error(`invalid ref ${ref}; call browser_snapshot first`)
-  return p
+const REF_ERRORS: Record<'stale' | 'detached' | 'hidden', string> = {
+  stale: 'is from before the page changed',
+  detached: 'is no longer on the page',
+  hidden: 'is no longer visible',
+}
+
+/**
+ * Where to act on a ref of the last snapshot: its element's center now, scrolled into view first when it left the
+ * visible page (unless `scroll` is false). A snapshot read from the page's own world kept no elements: its centers
+ * from then are used.
+ */
+async function requireRef(wc: BrowserPage, ref: number, scroll = true): Promise<{ x: number; y: number }> {
+  const kept = lastRefs.get(wc)
+  const point = kept?.points[ref]
+  if (!kept || !point) throw new Error(`invalid ref ${ref}; call browser_snapshot first`)
+  const { token } = kept
+  if (token === null) return point
+  const { value } = await evalIsolated<{ state: 'ok' | keyof typeof REF_ERRORS; x?: number; y?: number }>(
+    wc,
+    // Without the isolated world the elements kept in it are gone too.
+    (isolated) => (isolated ? resolveRefScript(token, ref, scroll) : `({state:'stale'})`)
+  )
+  if (value?.state === 'ok' && typeof value.x === 'number' && typeof value.y === 'number')
+    return { x: value.x, y: value.y }
+  const reason = value?.state && value.state !== 'ok' ? REF_ERRORS[value.state] : REF_ERRORS.stale
+  throw new Error(`ref ${ref} ${reason}; call browser_snapshot again`)
 }
 
 /**
@@ -984,7 +1289,7 @@ function requireRef(wc: WebContents, ref: number): { x: number; y: number } {
  * retaining selection. Injected Command/Control+A key events alone do not execute Chromium's native
  * editing command.
  */
-async function selectAllInFocused(wc: WebContents): Promise<void> {
+async function selectAllInFocused(wc: BrowserPage): Promise<void> {
   await evalJs(
     wc,
     `(()=>{const el=document.activeElement;if(!el)return;
@@ -994,26 +1299,36 @@ async function selectAllInFocused(wc: WebContents): Promise<void> {
   )
 }
 
-export async function clickRef(wc: WebContents, ref: number): Promise<void> {
-  await ensureAttached(wc)
-  const p = requireRef(wc, ref)
-  await clickXY(wc, p.x, p.y)
+export function clickRef(wc: BrowserPage, ref: number, opts: BrowserControlOperationOptions = {}): Promise<void> {
+  return pageOperation(wc, opts, `clicking ref ${ref}`, BROWSER_COMMAND_TIMEOUT_MS, async () => {
+    await ensureAttached(wc)
+    const p = await requireRef(wc, ref)
+    await clickXY(wc, p.x, p.y)
+  })
 }
 
-export async function typeRef(wc: WebContents, ref: number, text: string, clear = false): Promise<void> {
-  await ensureAttached(wc)
-  const p = requireRef(wc, ref)
-  await clickXY(wc, p.x, p.y) // foca o campo
-  if (clear) {
-    // After clicking, reselect all content through JavaScript and delete with Backspace, which generates
-    // actual beforeinput/input events for controlled inputs. This also supports empty replacement text;
-    // insertText adds the new value afterward.
-    await selectAllInFocused(wc)
-    const bs = { windowsVirtualKeyCode: 8, key: 'Backspace', code: 'Backspace' }
-    await wc.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...bs })
-    await wc.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', ...bs })
-  }
-  await wc.debugger.sendCommand('Input.insertText', { text })
+export function typeRef(
+  wc: BrowserPage,
+  ref: number,
+  text: string,
+  clear = false,
+  opts: BrowserControlOperationOptions = {}
+): Promise<void> {
+  return pageOperation(wc, opts, `typing into ref ${ref}`, BROWSER_COMMAND_TIMEOUT_MS, async () => {
+    await ensureAttached(wc)
+    const p = await requireRef(wc, ref)
+    await clickXY(wc, p.x, p.y) // foca o campo
+    if (clear) {
+      // After clicking, reselect all content through JavaScript and delete with Backspace, which generates
+      // actual beforeinput/input events for controlled inputs. This also supports empty replacement text;
+      // insertText adds the new value afterward.
+      await selectAllInFocused(wc)
+      const bs = { windowsVirtualKeyCode: 8, key: 'Backspace', code: 'Backspace' }
+      await wc.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...bs })
+      await wc.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', ...bs })
+    }
+    await wc.debugger.sendCommand('Input.insertText', { text })
+  })
 }
 
 const MODIFIER_BITS: Record<string, number> = { Alt: 1, Control: 2, Meta: 4, Shift: 8 }
@@ -1056,7 +1371,18 @@ function resolveKey(key: string): { keyCode: number; key: string; code: string }
 }
 
 /** Press a named or single-character key with optional modifiers. */
-export async function pressKey(wc: WebContents, key: string, modifiers?: string[]): Promise<void> {
+export function pressKey(
+  wc: BrowserPage,
+  key: string,
+  modifiers?: string[],
+  opts: BrowserControlOperationOptions = {}
+): Promise<void> {
+  return pageOperation(wc, opts, `pressing ${key}`, BROWSER_COMMAND_TIMEOUT_MS, () =>
+    pressKeyInPage(wc, key, modifiers)
+  )
+}
+
+async function pressKeyInPage(wc: BrowserPage, key: string, modifiers?: string[]): Promise<void> {
   await ensureAttached(wc)
   const k = resolveKey(key)
   const modList = modifiers ?? []
@@ -1080,34 +1406,50 @@ export async function pressKey(wc: WebContents, key: string, modifiers?: string[
   await wc.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', ...base })
 }
 
-export async function doubleClickRef(wc: WebContents, ref: number): Promise<void> {
-  await ensureAttached(wc)
-  const p = requireRef(wc, ref)
-  for (const clickCount of [1, 2]) {
-    const base = { x: p.x, y: p.y, button: 'left', clickCount }
-    await wc.debugger.sendCommand('Input.dispatchMouseEvent', { ...base, type: 'mousePressed', buttons: 1 })
-    await wc.debugger.sendCommand('Input.dispatchMouseEvent', { ...base, type: 'mouseReleased', buttons: 0 })
-  }
-  setMousePosition(wc, p.x, p.y)
+export function doubleClickRef(wc: BrowserPage, ref: number, opts: BrowserControlOperationOptions = {}): Promise<void> {
+  return pageOperation(wc, opts, `double-clicking ref ${ref}`, BROWSER_COMMAND_TIMEOUT_MS, async () => {
+    await ensureAttached(wc)
+    const p = await requireRef(wc, ref)
+    for (const clickCount of [1, 2]) {
+      const base = { x: p.x, y: p.y, button: 'left', clickCount }
+      await wc.debugger.sendCommand('Input.dispatchMouseEvent', { ...base, type: 'mousePressed', buttons: 1 })
+      await wc.debugger.sendCommand('Input.dispatchMouseEvent', { ...base, type: 'mouseReleased', buttons: 0 })
+    }
+    setMousePosition(wc, p.x, p.y)
+  })
 }
 
-export async function rightClickRef(wc: WebContents, ref: number): Promise<void> {
-  await ensureAttached(wc)
-  const p = requireRef(wc, ref)
-  const base = { x: p.x, y: p.y, button: 'right', clickCount: 1 }
-  await wc.debugger.sendCommand('Input.dispatchMouseEvent', { ...base, type: 'mousePressed', buttons: 2 })
-  await wc.debugger.sendCommand('Input.dispatchMouseEvent', { ...base, type: 'mouseReleased', buttons: 0 })
-  setMousePosition(wc, p.x, p.y)
+export function rightClickRef(wc: BrowserPage, ref: number, opts: BrowserControlOperationOptions = {}): Promise<void> {
+  return pageOperation(wc, opts, `right-clicking ref ${ref}`, BROWSER_COMMAND_TIMEOUT_MS, async () => {
+    await ensureAttached(wc)
+    const p = await requireRef(wc, ref)
+    const base = { x: p.x, y: p.y, button: 'right', clickCount: 1 }
+    await wc.debugger.sendCommand('Input.dispatchMouseEvent', { ...base, type: 'mousePressed', buttons: 2 })
+    await wc.debugger.sendCommand('Input.dispatchMouseEvent', { ...base, type: 'mouseReleased', buttons: 0 })
+    setMousePosition(wc, p.x, p.y)
+  })
 }
 
 /**
  * Drag between snapshot refs with mouse press, interpolated movement for drag-and-drop detection, then
  * release at the target.
  */
-export async function dragRef(wc: WebContents, fromRef: number, toRef: number): Promise<void> {
+export function dragRef(
+  wc: BrowserPage,
+  fromRef: number,
+  toRef: number,
+  opts: BrowserControlOperationOptions = {}
+): Promise<void> {
+  return pageOperation(wc, opts, `dragging ref ${fromRef} to ref ${toRef}`, BROWSER_COMMAND_TIMEOUT_MS, () =>
+    dragRefInPage(wc, fromRef, toRef)
+  )
+}
+
+async function dragRefInPage(wc: BrowserPage, fromRef: number, toRef: number): Promise<void> {
   await ensureAttached(wc)
-  const a = requireRef(wc, fromRef)
-  const b = requireRef(wc, toRef)
+  // Scrolling for one end of a drag would move the other: both are taken where they are.
+  const a = await requireRef(wc, fromRef, false)
+  const b = await requireRef(wc, toRef, false)
   await wc.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', x: a.x, y: a.y, buttons: 0 })
   await wc.debugger.sendCommand('Input.dispatchMouseEvent', {
     type: 'mousePressed',
@@ -1134,9 +1476,11 @@ export async function dragRef(wc: WebContents, fromRef: number, toRef: number): 
   setMousePosition(wc, b.x, b.y)
 }
 
-export async function readText(wc: WebContents): Promise<string> {
-  await ensureAttached(wc)
-  return evalJs<string>(wc, 'document.body ? document.body.innerText.slice(0, 8000) : ""')
+export function readText(wc: BrowserPage, opts: BrowserControlOperationOptions = {}): Promise<string> {
+  return pageOperation(wc, opts, 'reading the page text', BROWSER_COMMAND_TIMEOUT_MS, async () => {
+    await ensureAttached(wc)
+    return evalJs<string>(wc, 'document.body ? document.body.innerText.slice(0, 8000) : ""')
+  })
 }
 
 // Capture screenshots within the host byte limit. Large/ultrawide native PNGs may exceed
@@ -1175,15 +1519,91 @@ class BrowserControlInterruptedError extends Error {
   constructor(
     readonly reason: 'timeout' | 'aborted',
     operation: string,
-    timeoutMs: number
+    timeoutMs: number,
+    advice = 'try again.'
   ) {
     super(
       reason === 'aborted'
         ? `${operation} cancelled.`
-        : `${operation} exceeded ${timeoutMs} ms without a browser response; try again.`
+        : `${operation} exceeded ${timeoutMs} ms without a browser response; ${advice}`
     )
     this.name = 'BrowserControlInterruptedError'
   }
+}
+
+/**
+ * Default deadlines of page operations. A page whose renderer is stuck (a script in a loop, an overloaded tab) answers
+ * none of its protocol commands: without a deadline the tool call, and the tab lock other calls wait for, never end.
+ */
+export const BROWSER_COMMAND_TIMEOUT_MS = 15_000
+export const BROWSER_EVALUATE_TIMEOUT_MS = 30_000
+export const BROWSER_NAVIGATION_TIMEOUT_MS = 30_000
+/** How long a page suspected frozen gets to answer before its renderer is restarted. */
+export const BROWSER_FROZEN_PROBE_TIMEOUT_MS = 2_000
+const FROZEN_PAGE_ADVICE = 'the page may be frozen. browser_reload or browser_navigate restarts it.'
+
+/**
+ * Runs one page operation within its deadline. A deadline that runs out marks the page suspected frozen; any
+ * operation that completes shows the renderer answers again.
+ */
+function pageOperation<T>(
+  wc: BrowserPage,
+  opts: BrowserControlOperationOptions,
+  operation: string,
+  fallbackTimeoutMs: number,
+  run: (signal: AbortSignal) => Promise<T>
+): Promise<T> {
+  return settleBrowserOperation(run, opts, operation, fallbackTimeoutMs).then(
+    (value) => {
+      frozenPages.delete(wc)
+      return value
+    },
+    (error: unknown) => {
+      if (error instanceof BrowserControlInterruptedError && error.reason === 'timeout') {
+        frozenPages.add(wc)
+        throw new BrowserControlInterruptedError(
+          'timeout',
+          operation,
+          validTimeout(opts.timeoutMs, fallbackTimeoutMs),
+          FROZEN_PAGE_ADVICE
+        )
+      }
+      throw error
+    }
+  )
+}
+
+/** Electron's hang monitor reports a page that stopped (or resumed) answering input. */
+export function notePageResponsiveness(wc: BrowserPage, responsive: boolean): void {
+  if (responsive) frozenPages.delete(wc)
+  else frozenPages.add(wc)
+}
+
+/**
+ * A renderer that stopped answering cannot load the next document either: a same-site page would reuse its process.
+ * A crashed page, or one suspected frozen that still fails a short probe, gets its renderer restarted by loading
+ * through Electron instead of the protocol. Returns whether the caller must load that way.
+ */
+async function restartFrozenRenderer(wc: BrowserPage): Promise<boolean> {
+  if (wc.isCrashed()) return true
+  if (!frozenPages.has(wc)) return false
+  const answers = await settleBrowserOperation(
+    () => wc.debugger.sendCommand('Runtime.evaluate', { expression: '1', returnByValue: true }).then(() => true),
+    { timeoutMs: BROWSER_FROZEN_PROBE_TIMEOUT_MS },
+    'probing the page',
+    BROWSER_FROZEN_PROBE_TIMEOUT_MS
+  ).catch(() => false)
+  frozenPages.delete(wc)
+  if (answers) return false
+  wc.forcefullyCrashRenderer()
+  return true
+}
+
+/** Loads through Electron, which starts a new renderer for a crashed one. Its load failures are the page's own. */
+async function loadInNewRenderer(wc: BrowserPage, url: string): Promise<void> {
+  await wc.loadURL(url).catch(() => {
+    /* An aborted or failed load still leaves the tab on a live renderer, showing the error page. */
+  })
 }
 
 function validTimeout(value: number | undefined, fallback = SCREENSHOT_TIMEOUT_MS): number {
@@ -1243,7 +1663,16 @@ function settleBrowserOperation<T>(
   })
 }
 
-function capturePresentedFrame(wc: WebContents, signal: AbortSignal): Promise<NativeImage> {
+type FrameSource = Pick<WebContents, 'beginFrameSubscription' | 'endFrameSubscription' | 'invalidate'>
+
+function isFrameSource(page: BrowserPage): page is BrowserPage & FrameSource {
+  return typeof (page as Partial<FrameSource>).beginFrameSubscription === 'function'
+}
+
+/** The last frame Electron presented for a WebContents; other pages pass their own `captureFrame`. */
+function capturePresentedFrame(page: BrowserPage, signal: AbortSignal): Promise<NativeImage> {
+  if (!isFrameSource(page)) return Promise.reject(new Error('this page has no presented frame to capture'))
+  const wc = page
   return new Promise((resolve, reject) => {
     let settled = false
     let subscribed = false
@@ -1323,7 +1752,7 @@ function boundPngToBudget(data: string, initialSize: number, maxBytes: number): 
 }
 
 /** Full-viewport base64 PNG within the byte ceiling, including when the drawer is hidden. */
-export async function screenshot(wc: WebContents, opts: ScreenshotOptions = {}): Promise<string> {
+export async function screenshot(wc: BrowserPage, opts: ScreenshotOptions = {}): Promise<string> {
   let stage = 'preparing browser screenshot'
   return settleBrowserOperation(
     async (signal) => {

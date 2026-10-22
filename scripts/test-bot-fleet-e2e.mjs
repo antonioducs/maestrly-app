@@ -2124,7 +2124,8 @@ async function main() {
       `typed at the same time (overlap ${overlapMs} ms); PNG ${partnerAppsPng}`
   )
 
-  // Site logins are the environment's: a cookie Scout's browser stores on a local site is sent by Partner's browser.
+  // Each bot drives a Chromium of its own, on its own display and through a DevTools pipe: a cookie Scout's browser
+  // stores on a local site is sent by Scout's browser again, never by Partner's.
   const site = 'http://' + fakeName + ':8787'
   const cookieValue = 'e2e-' + randomUUID().slice(0, 8)
   await answer(
@@ -2133,13 +2134,19 @@ async function main() {
     { approve: true }
   )
   await answer(
-    await send(partnerId, `E2E-COOKIE-GET url=${site}/e2e/cookie/show`),
+    await send(scoutId, `E2E-COOKIE-GET url=${site}/e2e/cookie/show`),
     'E2E-COOKIE-SEEN value=' + cookieValue,
-    { approve: true }
+    {
+      approve: true,
+    }
   )
+  await answer(await send(partnerId, `E2E-COOKIE-GET url=${site}/e2e/cookie/show`), 'E2E-COOKIE-SEEN value=none', {
+    approve: true,
+  })
+  const shown = (await cookieRequests()).filter((entry) => entry.path === '/e2e/cookie/show')
   assert.ok(
-    (await cookieRequests()).some((entry) => entry.path === '/e2e/cookie/show' && entry.cookie === cookieValue),
-    'The site did not receive the shared cookie'
+    shown.some((entry) => entry.cookie === cookieValue) && shown.some((entry) => entry.cookie === null),
+    'The site did not see one bot with the cookie and one without: ' + JSON.stringify(shown)
   )
   for (const id of [scoutId, partnerId])
     assert.ok(
@@ -2147,7 +2154,40 @@ async function main() {
         (item) => item.kind === 'tool' && item.name.endsWith('browser_navigate') && item.state === 'done'
       )
     )
-  pass('shared site logins', "cookie stored by Scout's browser_navigate was sent by Partner's browser")
+  const browsers = []
+  const others = { ':1': ':2', ':2': ':1' }
+  for (const [botId, display] of [
+    [scoutId, ':1'],
+    [partnerId, ':2'],
+  ]) {
+    // Partner joined Scout's environment: both bots run in its container.
+    const found = await docker(
+      ['exec', containers[1], 'pgrep', '-a', '-f', `user-data-dir=.*/maestrly-bots/${botId}/chromium`],
+      { allowFailure: true }
+    )
+    const main = found.stdout.split('\n').find((line) => line.includes('--remote-debugging-pipe'))
+    assert.ok(main, `${botId} has no Chromium of its own with a DevTools pipe: ${found.stdout}`)
+    assert.ok(!/--remote-debugging-port/.test(main), `${botId}'s Chromium opened a DevTools port: ${main}`)
+    const pid = main.split(' ')[0]
+    // Chromium rewrites its environment block, so its display is read from the X server: the windows of its process.
+    const windowsOn = async (target) =>
+      (
+        await docker(['exec', '-e', 'DISPLAY=' + target, containers[1], 'xdotool', 'search', '--pid', pid], {
+          allowFailure: true,
+        })
+      ).stdout
+        .split('\n')
+        .filter(Boolean)
+    const own = await windowsOn(display)
+    assert.ok(own.length > 0, `${botId}'s Chromium (pid ${pid}) has no window on ${display}: ${main.slice(0, 300)}`)
+    const elsewhere = await windowsOn(others[display])
+    assert.deepEqual(elsewhere, [], `${botId}'s Chromium (pid ${pid}) has windows on ${others[display]}`)
+    browsers.push(`${botId} pid ${pid} on ${display}`)
+  }
+  pass(
+    "each bot's own Chromium",
+    `cookie stored by Scout's browser_navigate came back from Scout only; ${browsers.join(', ')}, DevTools pipe and no port`
+  )
 
   // The environment screen is tile 0 of :0: Maestrly's settings window fills it, frame included, and never reaches a
   // bot's browser tile. Opening it again leaves it in place.
@@ -2418,6 +2458,12 @@ async function main() {
     return installed.length === 1 && installed[0][0] === scoutId && installed[0][1] === 1
   })
   await poll('Partner apps display stopped', async () => !(await processRuns(containers[1], '^Xvfb :2 ')), 30000)
+  // Its Chromium stops with its screens; Scout's keeps running.
+  await poll(
+    'Partner Chromium stopped',
+    async () => !(await processRuns(containers[1], `user-data-dir=.*/maestrly-bots/${partnerId}/chromium`)),
+    30000
+  )
   const scoutContainerArchived = await containerState(containers[1])
   assert.deepEqual(
     [scoutContainerArchived.id, scoutContainerArchived.startedAt],
@@ -2512,9 +2558,9 @@ async function main() {
   const aliveTag = randomUUID().slice(0, 8)
   const alive = await Promise.all([scoutId, partnerId].map((id) => send(id, 'E2E-ALIVE tag=' + aliveTag)))
   await Promise.all(alive.map((sent) => answer(sent, 'E2E-ALIVE-OK tag=' + aliveTag, { noPermission: true })))
-  // Whether the shared cookie outlived the restart is reported, not required.
+  // Whether Scout's cookie outlived the restart in its own Chromium profile is reported, not required.
   observations.cookieAfterEnvironmentRestart = (
-    await answer(await send(partnerId, `E2E-COOKIE-GET url=${site}/e2e/cookie/show`), 'E2E-COOKIE-SEEN value=', {
+    await answer(await send(scoutId, `E2E-COOKIE-GET url=${site}/e2e/cookie/show`), 'E2E-COOKIE-SEEN value=', {
       approve: true,
     })
   ).text

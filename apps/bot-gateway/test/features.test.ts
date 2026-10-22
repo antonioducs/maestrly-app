@@ -326,6 +326,17 @@ describe('secrets and configuration', () => {
       loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: dir, MAESTRLY_GATEWAY_BOT_RUNTIME_UPDATES: 'never' })
     ).toThrow()
   })
+  it('reads the browser bots drive, each its own Chromium by default', () => {
+    const dir = temp()
+    expect(loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: dir }).botBrowser).toBe('chromium')
+    expect(loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: dir, MAESTRLY_GATEWAY_BOT_BROWSER: ' ' }).botBrowser).toBe(
+      'chromium'
+    )
+    expect(loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: dir, MAESTRLY_GATEWAY_BOT_BROWSER: 'electron' }).botBrowser).toBe(
+      'electron'
+    )
+    expect(() => loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: dir, MAESTRLY_GATEWAY_BOT_BROWSER: 'firefox' })).toThrow()
+  })
 })
 describe('instance link and takeover', () => {
   it('saves and forwards compaction settings and reports setup until configured', async () => {
