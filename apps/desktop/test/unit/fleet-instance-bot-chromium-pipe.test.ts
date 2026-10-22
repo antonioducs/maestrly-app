@@ -137,7 +137,11 @@ function fakeProcess(options: { answers?: boolean; ignoresTerm?: boolean } = {})
   }
 }
 
-function supervisor(processes: Array<ReturnType<typeof fakeProcess>>, onStarted = vi.fn(async () => {})) {
+function supervisor(
+  processes: Array<ReturnType<typeof fakeProcess>>,
+  onStarted = vi.fn(async () => {}),
+  startTimeoutMs?: number
+) {
   const spawn = vi.fn(() => {
     const next = processes.shift()
     if (!next) throw new Error('no more processes')
@@ -148,7 +152,7 @@ function supervisor(processes: Array<ReturnType<typeof fakeProcess>>, onStarted 
   let now = 0
   const instance = new ChromiumSupervisor(
     { spawn, now: () => now, setTimeout, clearTimeout, log },
-    { botId: 'bot-1', env: () => ({ DISPLAY: ':3' }), onStarted, onExited }
+    { botId: 'bot-1', env: () => ({ DISPLAY: ':3' }), onStarted, onExited, ...(startTimeoutMs ? { startTimeoutMs } : {}) }
   )
   return { instance, spawn, onExited, log, advance: (ms: number) => (now += ms) }
 }
@@ -232,6 +236,19 @@ describe('ChromiumSupervisor', () => {
     await outcome
     expect(silent.signals).toContain('SIGTERM')
     expect(log).toHaveBeenCalledWith(expect.stringContaining('chromium: some error'))
+  })
+
+  it('gives a browser the start timeout it was configured with', async () => {
+    vi.useFakeTimers()
+    const silent = fakeProcess({ answers: false })
+    const { instance } = supervisor([silent], undefined, CHROMIUM_START_TIMEOUT_MS * 3)
+    const start = instance.ensure()
+    const outcome = expect(start).rejects.toThrow(`within ${CHROMIUM_START_TIMEOUT_MS * 3} ms`)
+    await vi.advanceTimersByTimeAsync(CHROMIUM_START_TIMEOUT_MS * 2)
+    expect(silent.signals).toEqual([])
+    await vi.advanceTimersByTimeAsync(CHROMIUM_START_TIMEOUT_MS)
+    await outcome
+    expect(silent.signals).toContain('SIGTERM')
   })
 
   it('refuses to start without a display, and after disposal', async () => {

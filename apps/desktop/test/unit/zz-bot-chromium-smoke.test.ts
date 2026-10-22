@@ -75,6 +75,8 @@ const chromium = new BotChromium({
   },
   env: () => ({}),
   profile,
+  // A CI runner busy with the other test files can take longer than the 20 seconds a bot's Chromium gets to start.
+  startTimeoutMs: 90_000,
   savedTabsFile: path.join(root, 'chromium-tabs.json'),
   downloads: path.join(root, 'Downloads'),
   foregroundConversationId: () => 'conv-a',
