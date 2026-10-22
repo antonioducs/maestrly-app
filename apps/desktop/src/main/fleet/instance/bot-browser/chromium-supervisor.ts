@@ -58,8 +58,7 @@ export const BOT_CHROMIUM_ARGS: readonly string[] = [
   'about:blank',
 ]
 
-/** Cold start of a Chromium on a small, busy server; it answers within a few seconds on an idle one. */
-export const CHROMIUM_START_TIMEOUT_MS = 45_000
+export const CHROMIUM_START_TIMEOUT_MS = 20_000
 export const CHROMIUM_EXIT_WAIT_MS = 5_000
 export const CHROMIUM_RESTART_DELAY_MS = 1_000
 export const CHROMIUM_RESTART_BUDGET = 5

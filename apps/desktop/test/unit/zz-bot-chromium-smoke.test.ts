@@ -5,7 +5,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { Readable, Writable } from 'node:stream'
-import { afterAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, describe, expect, it, onTestFailed, vi } from 'vitest'
 import * as bc from '../../src/main/browser-control'
 import { BotChromium } from '../../src/main/fleet/instance/bot-browser/bot-chromium'
 import type { ChromiumProcess } from '../../src/main/fleet/instance/bot-browser/chromium-supervisor'
@@ -18,13 +18,24 @@ const logs: string[] = []
 let lastPid: number | undefined
 
 // Headless and unsandboxed: a CI runner may forbid the user namespaces of Chromium's sandbox, which the bot image allows.
+// The profile flags are `maestrly-bot-browser`'s; without a session bus, as in the image, Chromium does not wait on one.
 function spawnHeadless(args: string[]): ChromiumProcess {
+  const { DBUS_SESSION_BUS_ADDRESS: _bus, ...env } = process.env
   const child = spawn(
     'chromium',
-    ['--headless=new', '--no-sandbox', `--user-data-dir=${profile}`, '--no-first-run', ...args],
+    [
+      '--headless=new',
+      '--no-sandbox',
+      '--no-first-run',
+      '--no-default-browser-check',
+      '--password-store=basic',
+      `--user-data-dir=${profile}`,
+      ...args,
+    ],
     {
       stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'],
       detached: true,
+      env,
     }
   )
   lastPid = child.pid
@@ -95,6 +106,7 @@ const page = (body: string) => {
 
 describe.skipIf(!existsSync('/usr/bin/chromium'))('bot chromium smoke', () => {
   it('drives tabs, refs, history, popups, cookies, crash and restore', { timeout: 240_000 }, async () => {
+    onTestFailed(() => console.error(`The bot Chromium's log:\n${logs.join('\n')}`))
     const first = await chromium.state('conv-a')
     expect(first.tabs.length).toBe(1)
 
