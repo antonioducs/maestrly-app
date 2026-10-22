@@ -160,10 +160,16 @@ export interface BotMoveRows {
 /** A standalone chat's id, as its managed folder is named (`standaloneConversationRelPath`). */
 const conversationIdSchema = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
 const invalid = (message: string): InstanceHttpError => new InstanceHttpError(400, 'INVALID_REQUEST', message)
+/** Devices know this refusal by its exact text: it says files, but the limit is the bytes of the package. */
+const tooLarge = (): InstanceHttpError => new InstanceHttpError(409, 'CONFLICT', 'This bot has too many files to move.')
 /** How many files a move reads or places at once: a bot's folder may hold tens of thousands of small ones. */
 const FILE_CONCURRENCY = 16
 /** Runs `task` on each item, `limit` at a time, answering in their order; the first failure stops the rest. */
-async function mapLimit<T, R>(items: readonly T[], limit: number, task: (item: T) => Promise<R>): Promise<R[]> {
+async function mapLimit<T, R>(
+  items: readonly T[],
+  limit: number,
+  task: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
   const out = new Array<R>(items.length)
   let next = 0
   let failed = false
@@ -171,7 +177,7 @@ async function mapLimit<T, R>(items: readonly T[], limit: number, task: (item: T
     while (!failed && next < items.length) {
       const index = next++
       try {
-        out[index] = await task(items[index])
+        out[index] = await task(items[index], index)
       } catch (error) {
         failed = true
         throw error
@@ -429,6 +435,21 @@ const ROWS = 'rows.json'
 const entryPath = (kind: BotMoveFileKind, relative: string): string => `files/${kind}/${relative}`
 
 /**
+ * Refuses a move whose files already take more than a package may carry, before the bot is frozen: their sizes are
+ * cheap to read, while freezing hashes every one of them. The bot still runs, so a file that went meanwhile counts as
+ * nothing; the package checks its own total, rows included, when it is written.
+ */
+export async function assertBotFitsMove(botId: string, roots: BotRoots): Promise<void> {
+  const sources = await collectSources(botId, roots)
+  const sizes = await mapLimit(
+    sources.files,
+    FILE_CONCURRENCY,
+    async (source) => (await lstat(source.absolute).catch(() => null))?.size ?? 0
+  )
+  if (sizes.reduce((sum, size) => sum + size, 0) > FLEET_BOT_MOVE_LIMITS.packageMaxBytes) throw tooLarge()
+}
+
+/**
  * Packs a frozen bot into `destination`: its settings, its conversation's rows and files, its memory space and its
  * folders. Answers the package's size and SHA-256 with the digest of what it holds.
  */
@@ -464,21 +485,26 @@ export async function writeBotPackage(
   const sources = await collectSources(botId, roots)
   for (const item of [...sources.files, ...sources.links])
     if (!packageRelative(item.relative)) throw invalid(`Unsafe package path: ${item.relative}`)
-  const entries = await mapLimit(sources.files, FILE_CONCURRENCY, async (source): Promise<Entry> => {
+  const infos = await mapLimit(sources.files, FILE_CONCURRENCY, async (source) => {
     const info = await lstat(source.absolute)
     if (!info.isFile()) throw invalid('A file of the bot changed while it was packed.')
-    return {
+    return info
+  })
+  // Sizes first: a bot too large to move is refused before any of its files is read.
+  if (infos.reduce((sum, info) => sum + info.size, rowsBytes.length) > FLEET_BOT_MOVE_LIMITS.packageMaxBytes)
+    throw tooLarge()
+  const entries = await mapLimit(
+    sources.files,
+    FILE_CONCURRENCY,
+    async (source, index): Promise<Entry> => ({
       path: entryPath(source.kind, source.relative),
       kind: source.kind,
       relative: source.relative,
-      size: info.size,
+      size: infos[index].size,
       sha256: await hashFile(source.absolute),
-      mode: info.mode & 0o777,
-    }
-  })
-  const total = entries.reduce((sum, entry) => sum + entry.size, rowsBytes.length)
-  if (total > FLEET_BOT_MOVE_LIMITS.packageMaxBytes)
-    throw new InstanceHttpError(409, 'CONFLICT', 'This bot has too many files to move.')
+      mode: infos[index].mode & 0o777,
+    })
+  )
   const digest = await botMoveDigest(botId, roots, { sources, hashes: entries.map((entry) => entry.sha256) })
   const manifest: Manifest = {
     format: BOT_MOVE_PACKAGE_FORMAT,

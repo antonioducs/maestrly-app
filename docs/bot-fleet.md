@@ -500,7 +500,9 @@ The move runs on the server and continues if you close the dialog or this comput
 close, it is uninstalled from its environment), streams a package of its data from one environment to the other,
 checking its size and SHA-256 on the way, and installs it in the new environment once that environment holds the same
 conversation, memories, and files. Until then any failure puts everything back: the new environment deletes what it
-received, a new environment created for the move is removed, and the bot is installed again where it was. The dialog
+received, a new environment created for the move is removed, and the bot is installed again where it was. Pausing a
+bot reads all its files, and the gateway waits up to 10 minutes for it; if its former environment is still busy and
+does not answer the install, the bot shows as starting and is installed again once that environment answers. The dialog
 then says why it failed, and **Try again** starts over. If the gateway restarts during a move, a move that had not
 reached its new environment fails the same way when the gateway starts again; one that had is completed.
 
@@ -508,7 +510,9 @@ Once the bot runs in its new environment, its former environment deletes its cop
 does not answer, the copy waits and is deleted when the environment next starts; the bot is not held back meanwhile.
 
 Both environments must be running, run the same version of the bot image with move support, and the new one must have
-a free slot. A bot cannot move while you control its screen. The gateway API is `POST /v1/bots/:id/move` with
+a free slot. A bot cannot move while you control its screen, nor when its files, its working folder included, take more
+than 32 GB: that move is refused before the bot is paused. Delete what it no longer needs, such as installed packages it
+can install again, and try again. The gateway API is `POST /v1/bots/:id/move` with
 `environmentId` or `newEnvironment` (feature `bot-move`), and `GET /v1/bots/:id/move` reads the bot's last move; see
 [bot environment data](local-data.md#bot-environment-data) for what an environment keeps of each bot.
 

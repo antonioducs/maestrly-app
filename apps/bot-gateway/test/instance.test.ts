@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import http from 'node:http'
 import type net from 'node:net'
 import { FLEET_PROTOCOL_HEADER, type FleetInstanceBotInstall } from '@maestrly/bot-fleet-protocol'
@@ -116,6 +116,35 @@ describe('instance client', () => {
       expect(error).toBeInstanceOf(InstanceUnreachableError)
       expect(error).toMatchObject({ code: 'INSTANCE_UNAVAILABLE', message: 'Bot instance unavailable' })
     }
+  })
+
+  it('freezes a bot without fetch, which gives up on headers after five minutes, and makes other calls with it', async () => {
+    const sha = 'a'.repeat(64)
+    const digest = {
+      conversationId: null,
+      messages: 0,
+      lastSeq: -1,
+      messagesSha256: sha,
+      memories: 0,
+      memoriesSha256: sha,
+      files: 3,
+      filesSha256: sha,
+    }
+    const origin = await instance({
+      'POST /v1/bots/ads/freeze': json(200, { digest }),
+      'POST /v1/bots/cleo/freeze': json(409, { code: 'CONFLICT', message: 'Synthetic refusal' }),
+      'GET /v1/health': json(200, { ok: true, appVersion: '2.0.0', protocol: 1, ready: true, capabilities: [] }),
+    })
+    const client = new InstanceClient('work', 'control', origin)
+    vi.stubGlobal('fetch', () => Promise.reject(new TypeError('fetch failed')))
+    try {
+      await expect(client.botFreeze('ads')).resolves.toEqual({ digest })
+      await expect(client.botFreeze('cleo')).rejects.toMatchObject({ code: 'CONFLICT', message: 'Synthetic refusal' })
+      await expect(client.health()).rejects.toBeInstanceOf(InstanceUnreachableError)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+    await expect(client.health()).resolves.toMatchObject({ ok: true })
   })
 })
 

@@ -1945,7 +1945,8 @@ export default {
       screen: 'Devolva a tela do bot antes de movê-lo.',
       differs: 'O bot chegou diferente de como saiu, então continua onde estava.',
       interrupted: 'O servidor reiniciou durante a mudança. O bot continua onde estava.',
-      tooLarge: 'Este bot tem arquivos demais para ser movido.',
+      tooLarge:
+        'Os arquivos deste bot passam do que uma mudança consegue levar ({{gb}} GB). Apague da pasta de trabalho dele o que não precisa mais e tente de novo.',
       alreadyThere: 'O bot já está neste ambiente.',
       alreadyMoving: 'Este bot já está se movendo.',
     },

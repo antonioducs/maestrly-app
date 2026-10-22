@@ -1931,7 +1931,8 @@ export default {
       screen: 'Give back the bot screen before moving it.',
       differs: 'The bot arrived different from how it left, so it stays where it was.',
       interrupted: 'The server restarted during the move. The bot stays where it was.',
-      tooLarge: 'This bot has too many files to move.',
+      tooLarge:
+        "This bot's files take more than a move can carry ({{gb}} GB). Delete what it no longer needs from its working folder and try again.",
       alreadyThere: 'The bot is already in this environment.',
       alreadyMoving: 'This bot is already moving.',
     },

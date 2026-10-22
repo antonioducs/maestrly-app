@@ -2476,7 +2476,15 @@ export class Lifecycle {
     // A bot that was frozen is installed again where it was, as an archived bot comes back, before the move counts as
     // failed; one whose environment no longer runs comes back when it starts.
     const back = reached.freeze && this.store.getEnvironment(move.fromEnvironmentId)?.lifecycle === 'running'
-    if (back) await this.installOne(this.client(move.fromEnvironmentId), id, move.fromSlot, false)
+    if (back)
+      try {
+        await this.installOne(this.client(move.fromEnvironmentId), id, move.fromSlot, true)
+      } catch {
+        // An environment that did not answer may still be busy with the freeze the move gave up on, which its bot
+        // waits behind: the bot is starting, and the environment's reconcile installs it once it answers.
+        this.updateActive(id, { lifecycle: 'starting', setup: botSetup('profile') })
+        this.scheduleReconcile(move.fromEnvironmentId, 1000)
+      }
     this.store.updateBotMove(moveId, {
       state: 'failed',
       error: {

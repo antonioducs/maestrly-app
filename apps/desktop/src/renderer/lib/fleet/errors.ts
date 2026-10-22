@@ -1,4 +1,4 @@
-import { FLEET_ENVIRONMENT_LIMITS } from '@maestrly/bot-fleet-protocol'
+import { FLEET_BOT_MOVE_LIMITS, FLEET_ENVIRONMENT_LIMITS } from '@maestrly/bot-fleet-protocol'
 import {
   FLEET_ENVIRONMENTS_UNSUPPORTED,
   FLEET_UPDATES_UNSUPPORTED,
@@ -164,7 +164,11 @@ const KNOWN_REFUSALS: KnownRefusal[] = [
     matches: exactly('The server restarted during the move. The bot stays where it was.'),
     key: 'move.error.interrupted',
   },
-  { matches: exactly('This bot has too many files to move.'), key: 'move.error.tooLarge' },
+  {
+    matches: exactly('This bot has too many files to move.'),
+    key: 'move.error.tooLarge',
+    values: { gb: FLEET_BOT_MOVE_LIMITS.packageMaxBytes / 1024 ** 3 },
+  },
   { matches: exactly('The bot is already there.'), key: 'move.error.alreadyThere' },
   { matches: marked(FLEET_FILES_MANAGE_UNSUPPORTED), key: 'files.drawer.updateRequired' },
 ]
