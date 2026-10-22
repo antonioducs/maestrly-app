@@ -5,6 +5,7 @@ import {
   BOT_CHROMIUM_ARGS,
   CHROMIUM_RESTART_BUDGET,
   CHROMIUM_RESTART_DELAY_MS,
+  CHROMIUM_START_TIMEOUT_MS,
   ChromiumSupervisor,
   type ChromiumProcess,
 } from '../../src/main/fleet/instance/bot-browser/chromium-supervisor'
@@ -227,7 +228,7 @@ describe('ChromiumSupervisor', () => {
     const { instance, log } = supervisor([silent])
     const start = instance.ensure()
     const outcome = expect(start).rejects.toThrow('got no answer')
-    await vi.advanceTimersByTimeAsync(20_000)
+    await vi.advanceTimersByTimeAsync(CHROMIUM_START_TIMEOUT_MS)
     await outcome
     expect(silent.signals).toContain('SIGTERM')
     expect(log).toHaveBeenCalledWith(expect.stringContaining('chromium: some error'))

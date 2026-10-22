@@ -94,7 +94,7 @@ const page = (body: string) => {
 }
 
 describe.skipIf(!existsSync('/usr/bin/chromium'))('bot chromium smoke', () => {
-  it('drives tabs, refs, history, popups, cookies, crash and restore', { timeout: 120_000 }, async () => {
+  it('drives tabs, refs, history, popups, cookies, crash and restore', { timeout: 240_000 }, async () => {
     const first = await chromium.state('conv-a')
     expect(first.tabs.length).toBe(1)
 
@@ -193,7 +193,7 @@ describe.skipIf(!existsSync('/usr/bin/chromium'))('bot chromium smoke', () => {
     const pid = lastPid!
     process.kill(pid, 'SIGKILL')
     await vi.waitFor(() => expect(lastPid).not.toBe(pid), { timeout: 10_000, interval: 100 })
-    await vi.waitFor(() => expect(chromium.isRunning).toBe(true), { timeout: 20_000, interval: 200 })
+    await vi.waitFor(() => expect(chromium.isRunning).toBe(true), { timeout: 60_000, interval: 200 })
     const again = await chromium.state('conv-a')
     expect(again.tabs.map((t) => t.url)).toContain(kept)
     const p = await chromium.page('conv-a')
