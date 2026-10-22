@@ -71,6 +71,8 @@ export interface BotChromiumOptions {
   /** The environment's shared site logins, copied into the profile on its first start. */
   sharedCookies?(): Promise<SharedCookie[]>
   idleMs?: number
+  /** How long a started Chromium has to answer before the start fails (the supervisor's default otherwise). */
+  startTimeoutMs?: number
   fs?: BotChromiumFs
 }
 
@@ -125,6 +127,7 @@ export class BotChromium {
       botId: options.botId,
       env: options.env,
       ...(options.beforeStart ? { beforeStart: options.beforeStart } : {}),
+      ...(options.startTimeoutMs ? { startTimeoutMs: options.startTimeoutMs } : {}),
       onStarted: (pipe) => this.started(pipe),
       onExited: () => this.exited(),
     })

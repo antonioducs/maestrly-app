@@ -35,6 +35,8 @@ export interface ChromiumSupervisorOptions {
   onStarted(pipe: CdpPipe): Promise<void>
   /** The browser exited; `restarting` when it crashed and comes back on its own. */
   onExited(info: { code: number | null; restarting: boolean }): void
+  /** How long a started browser has to answer before the start fails; `CHROMIUM_START_TIMEOUT_MS` by default. */
+  startTimeoutMs?: number
 }
 
 /**
@@ -149,7 +151,7 @@ export class ChromiumSupervisor {
     this.running = running
     void child.exited.then((code) => this.exited(running, code))
     try {
-      await pipe.send('Browser.getVersion', {}, undefined, CHROMIUM_START_TIMEOUT_MS)
+      await pipe.send('Browser.getVersion', {}, undefined, this.options.startTimeoutMs ?? CHROMIUM_START_TIMEOUT_MS)
       if (this.disposed) throw new Error('The bot’s Chromium was stopped for good.')
       await this.options.onStarted(pipe)
       if (pipe.closed) throw new Error('it exited while it was being prepared')
