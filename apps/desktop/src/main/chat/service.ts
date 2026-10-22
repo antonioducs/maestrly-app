@@ -311,7 +311,15 @@ import {
 import { releaseTurnDelegationRuntimes } from './subagent-resume'
 import { registerPerformanceCache } from '../performance/metrics'
 import { builtinToolNamesForMode } from './tools'
-import { GENERATE_IMAGE_TOOL_NAME, generateImageToolEnabled, imageGenEnabledFor, IMAGE_GEN_FLAG } from './image-gen'
+import {
+  GENERATE_IMAGE_TOOL_NAME,
+  generateImageToolEnabled,
+  getImageGenProvider,
+  imageGenEnabledFor,
+  IMAGE_GEN_FLAG,
+  setImageGenProvider,
+} from './image-gen'
+import { isImageGenProvider } from '../../shared/image-generation'
 import { GENERATED_INTERFACES_FLAG, generatedInterfacesEnabled } from './generated-interfaces'
 import {
   clearWebSearchKey,
@@ -2240,6 +2248,7 @@ function buildConfig(): ChatConfig {
     appToolsEnabled: globalAppToolsEnabled(),
     appToolGroups: globalAppToolGroups(),
     imageGenEnabled: getAppFlag(IMAGE_GEN_FLAG, true),
+    imageGenProvider: getImageGenProvider(),
     generatedInterfacesEnabled: generatedInterfacesEnabled(),
     webSearch: { provider: getWebSearchProvider(), keys: webSearchKeysPresent() },
     bashFiltersEnabled: getAppFlag('chat.bashFilters', true),
@@ -11326,6 +11335,12 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
   // toggle. Default ON; conversations with explicit overrides keep their own values.
   deps.mhandle('chat:set-image-gen', (_e, enabled: boolean) => {
     setAppFlag(IMAGE_GEN_FLAG, enabled === true)
+    return { ok: true }
+  })
+  // Who draws images (Automatic, ChatGPT or Google AI) — GLOBAL, applies from the next turn.
+  deps.mhandle('chat:set-image-gen-provider', (_e, provider: unknown) => {
+    if (!isImageGenProvider(provider)) return { ok: false }
+    setImageGenProvider(provider)
     return { ok: true }
   })
   // Generated interfaces (prompt section + preview_interface) — GLOBAL toggle, default ON. Applies from the next turn.

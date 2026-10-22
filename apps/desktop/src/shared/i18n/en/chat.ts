@@ -1685,7 +1685,15 @@ export default {
       'Turn off a group to remove its tools from every chat — for example to save context on smaller models. Each conversation can still change its groups in the + menu.',
     imageGenHeading: 'Image generation',
     imageGenDescription:
-      'Lets models create images in the chat. Codex uses its native generator; other models (Claude, Copilot, API providers) get a `generate_image` tool that runs on the ChatGPT subscription you connected — so it requires a connected ChatGPT account and consumes it.',
+      'Lets models create images in the chat with a `generate_image` tool. Images are drawn on a subscription you connected, ChatGPT or Google AI, and use its quota.',
+    imageGenProviderLabel: 'Generator',
+    imageGenProviderDescription:
+      'Automatic uses ChatGPT first, then Google AI. Conversations on Google AI draw with their own account first.',
+    imageGenProvider: {
+      auto: 'Automatic',
+      chatgpt: 'ChatGPT',
+      google: 'Google AI (Gemini)',
+    },
     generatedInterfacesHeading: 'Interactive answers',
     generatedInterfacesDescription:
       'Lets models answer with small interfaces you can see and use, such as product pictures, charts and calculators, and preview them before showing them. The instructions add about 850 tokens to each conversation, mostly served from cache, and each preview adds a screenshot to the context. Turn it off to save those tokens; answers that already have interfaces keep showing them.',

@@ -866,7 +866,7 @@ The mobile app shows only a bot's conversation with you, and its **Stop** stops 
 A bot splits independent work into **tasks** that run at the same time: it calls `task` for each part in the same response, and each task works in a context of its own and brings back a short report with the paths of the files it wrote. Several images, several files to convert or transcribe, or separate research questions no longer wait for one another.
 
 - **Limit:** a bot runs at most four tasks at once, counting all its conversations together (its conversation with you, its routine runs and its conversations with other bots). The others wait for a free slot, and the task shows that it is waiting.
-- **Images:** several `generate_image` calls run at the same time, each on its own image generation. Two calls never write the same file: the second one is refused until the first ends.
+- **Images:** several `generate_image` calls run at the same time, each on its own image generation. Two calls never write the same file: the second one is refused until the first ends. Images are drawn on the environment's ChatGPT account, or on its Google AI account when no ChatGPT account is connected or the conversation runs on Google AI.
 - **Screen and browser:** tasks that run at the same time share the bot's desktop and browser, so the bot lets at most one of them use `computer_*` or `browser_*` tools.
 
 In the normal mode, tasks use the model of the conversation that started them. With an older environment image, a bot gets no task guidance and no limit, and its image generations run one after another.

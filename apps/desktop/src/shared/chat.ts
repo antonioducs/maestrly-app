@@ -9,6 +9,7 @@ import type { BackgroundCompactionConfig, BackgroundCompactionStatus } from './b
 import type { AppToolGroupState } from './app-tool-groups'
 import type { PluginScope } from './plugins'
 import type { WebSearchConfig } from './web-search'
+import type { ImageGenProvider } from './image-generation'
 
 export type ChatRole = 'user' | 'assistant'
 
@@ -1814,6 +1815,8 @@ export interface ChatConfig {
   appToolGroups?: AppToolGroupState
 
   imageGenEnabled: boolean
+  /** Subscription that draws images. Absent on hosts that predate the choice, whose settings then omit it. */
+  imageGenProvider?: ImageGenProvider
   /** Generated interfaces: the inline HTML instructions in the prompt and the preview tool. Default on. */
   generatedInterfacesEnabled: boolean
 

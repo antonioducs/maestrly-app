@@ -1,8 +1,8 @@
 /**
  * MAESTRLY CHAT `generate_image` tool: the SAME imagegen contract for every model, including Codex.
  *
- * Runs an ephemeral Codex app-server thread underneath (see codex-subscription/image-generation.ts), so
- * images use the SAME connected ChatGPT subscription — no separate Image API or OPENAI_API_KEY.
+ * Draws on a connected subscription — ChatGPT through an ephemeral Codex thread, or Google AI through an ephemeral
+ * Antigravity session (see `generateConversationImage` in ../image-gen.ts) — never a separate Image API or key.
  * The app-owned store writes the artifact; the runner publishes the `generated-image` part via
  * `ctx.emitGeneratedImage`: the model receives only a TEXTUAL REFERENCE (name + revised prompt), never base64
  * — the same invariant keeping parts_json and transcript reseeds small.
@@ -71,7 +71,7 @@ export const generateImageTool = defineTool<typeof parameters, GenerateImageResu
         // extensions for the same directory/stem — no variant may overwrite without authorization.
         await ctx.ask('edit', possibleTargets, ['*'])
       }
-      // Dynamic import keeps the tool registry lightweight (Codex manager pulls app-server runtime/protocol)
+      // Dynamic import keeps the tool registry lightweight (the Codex and Antigravity managers pull their runtimes)
       // and loads this path only when the model requests an image.
       let usageReported = false
       const reportUsage = (usage: NonNullable<GeneratedImageEmission['usage']>): void => {
@@ -90,8 +90,8 @@ export const generateImageTool = defineTool<typeof parameters, GenerateImageResu
       const image = ctx.generateImage
         ? await ctx.generateImage(args.prompt, ctx.signal, reportUsage)
         : await (async () => {
-            const { generateImageForConversation } = await import('../codex-subscription/image-generation')
-            return generateImageForConversation({
+            const { generateConversationImage } = await import('../image-gen')
+            return generateConversationImage({
               conversationId: ctx.conversationId,
               cwd: ctx.cwd,
               prompt: args.prompt,

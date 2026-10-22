@@ -1004,9 +1004,13 @@ cannot determine whether user-authored prompt content is sensitive.
 The Google Antigravity ACP server's native tools are all disabled, including its
 file viewer, which would otherwise read its working directory and the account
 home without asking. Its permission requests are approved once only for calls
-to Maestrly's own tool endpoint and rejected otherwise. The server's working
-directory is an app-owned folder, never the project, so it does not load hooks or
-settings from repository files.
+to Maestrly's own tool endpoint and rejected otherwise. The one exception is an
+image session started by `generate_image`: it has no tool endpoint, enables only
+the server's built-in image tool, and approves that tool's first call once, so a
+second call or any other native tool is still rejected. The image bytes are
+stored like other generated images, and the session's files are then deleted.
+The server's working directory is an app-owned folder, never the project, so it
+does not load hooks or settings from repository files.
 
 ## Runtime and package provenance
 

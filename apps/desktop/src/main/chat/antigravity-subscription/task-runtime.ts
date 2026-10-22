@@ -69,6 +69,12 @@ export interface CreateAntigravityTaskRuntimeArgs {
   apply: (event: ChatStreamEvent) => void
   emitGeneratedImage?: (toolCallId: string, image: GeneratedImageEmission) => void
   onGeneratedImageUsage?: (usage: GeneratedImageUsage) => void
+  /** The parent's image route, so Maestro workers draw with the same account. */
+  generateImage?: (
+    prompt: string,
+    signal: AbortSignal,
+    onUsage?: (usage: GeneratedImageUsage) => void
+  ) => Promise<GeneratedImageEmission>
   /** Turn state containing explicitly requested agents (host guard). */
   turnState: ExplicitSubagentTurnState
 }
@@ -264,6 +270,7 @@ export function createAntigravityTaskRuntime(args: CreateAntigravityTaskRuntimeA
           sessionRecorder,
           emitGeneratedImage: args.emitGeneratedImage,
           onGeneratedImageUsage: args.onGeneratedImageUsage,
+          ...(args.generateImage ? { generateImage: args.generateImage } : {}),
           account: {
             parentProviderId: args.selection.providerId,
             ...(args.manager && args.accountIdentity

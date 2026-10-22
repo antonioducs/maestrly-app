@@ -8,6 +8,8 @@ import { LOCAL_HOST_ID } from '../../../shared/host-key'
 import { cn } from '@/lib/utils'
 import type { ChatConfig, ChatUserPrompt, McpServerInfo } from '../../../shared/chat'
 import { APP_TOOL_GROUPS } from '../../../shared/app-tool-groups'
+import { IMAGE_GEN_PROVIDERS, isImageGenProvider, type ImageGenProvider } from '../../../shared/image-generation'
+import { OptionSelect, SelectOption } from '@/components/ui/option-select'
 import { SkillsSettings } from './SkillsSettings'
 import { McpAccounts } from './McpAccounts'
 import { PluginsSettings } from '../plugins/PluginsSettings'
@@ -159,6 +161,13 @@ export function ApiKeySettings({
             setEnabled={api.chatSetImageGen}
             onChanged={refresh}
           />
+          {config.imageGenProvider && (
+            <ImageGenProviderSetting
+              provider={config.imageGenProvider}
+              inactive={!config.imageGenEnabled}
+              onChanged={refresh}
+            />
+          )}
           {config.webSearch && <WebSearchSettings webSearch={config.webSearch} onChanged={refresh} />}
           {/* Dictation runs on this computer, where the microphone is: a remote host's settings do not show it. */}
           {hostId === LOCAL_HOST_ID && <DictationSettings />}
@@ -444,6 +453,48 @@ function FlagToggle({
       >
         <span className={cn('block h-3 w-3 rounded-full bg-white transition-transform', on && 'translate-x-3')} />
       </button>
+    </div>
+  )
+}
+
+/** Which subscription draws images; inactive while image generation is off. */
+function ImageGenProviderSetting({
+  provider,
+  inactive,
+  onChanged,
+}: {
+  provider: ImageGenProvider
+  inactive: boolean
+  onChanged: () => void
+}) {
+  const api = useHostApi()
+  const { t } = useTranslation('chat')
+  return (
+    <div
+      className={cn(
+        '-mt-1 flex items-start justify-between gap-3 border-l border-border pl-3',
+        inactive && 'opacity-50'
+      )}
+    >
+      <div className="min-w-0">
+        <span className="text-[12px] text-foreground">{t('settings.imageGenProviderLabel')}</span>
+        <p className="mt-0.5 text-[11px] text-muted-foreground">{t('settings.imageGenProviderDescription')}</p>
+      </div>
+      <OptionSelect
+        className="h-8 w-auto shrink-0 text-[12px]"
+        aria-label={t('settings.imageGenProviderLabel')}
+        disabled={inactive}
+        value={provider}
+        onValueChange={(value) => {
+          if (isImageGenProvider(value)) void api.chatSetImageGenProvider(value).then(onChanged)
+        }}
+      >
+        {IMAGE_GEN_PROVIDERS.map((option) => (
+          <SelectOption key={option} value={option}>
+            {t(`settings.imageGenProvider.${option}`)}
+          </SelectOption>
+        ))}
+      </OptionSelect>
     </div>
   )
 }

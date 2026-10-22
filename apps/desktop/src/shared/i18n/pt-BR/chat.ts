@@ -1702,7 +1702,15 @@ export default {
       'Desligue um grupo para tirar as ferramentas dele de todos os chats — por exemplo, para economizar contexto em modelos menores. Cada conversa ainda pode ajustar os grupos no menu +.',
     imageGenHeading: 'Geração de imagem',
     imageGenDescription:
-      'Permite que os modelos criem imagens no chat. O Codex usa o gerador nativo dele; os demais modelos (Claude, Copilot, provedores por API) ganham a ferramenta `generate_image`, que roda na assinatura do ChatGPT conectada — ou seja, exige uma conta ChatGPT conectada e consome ela.',
+      'Permite que os modelos criem imagens no chat com a ferramenta `generate_image`. As imagens são feitas numa assinatura conectada, ChatGPT ou Google AI, e consomem a cota dela.',
+    imageGenProviderLabel: 'Gerador',
+    imageGenProviderDescription:
+      'Automático usa primeiro o ChatGPT e depois o Google AI. Conversas no Google AI usam primeiro a própria conta.',
+    imageGenProvider: {
+      auto: 'Automático',
+      chatgpt: 'ChatGPT',
+      google: 'Google AI (Gemini)',
+    },
     generatedInterfacesHeading: 'Respostas interativas',
     generatedInterfacesDescription:
       'Permite que os modelos respondam com pequenas interfaces que você vê e usa, como fotos de produtos, gráficos e calculadoras, e que vejam uma prévia antes de mostrá-las. As instruções somam cerca de 850 tokens a cada conversa, quase sempre servidos do cache, e cada prévia acrescenta um print ao contexto. Desligue para economizar esses tokens; respostas que já têm interfaces continuam mostrando elas.',

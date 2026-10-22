@@ -89,7 +89,27 @@ through Maestrly's tools, served to the Antigravity server by a loopback-only MC
 endpoint that requires a per-session token. Every tool call goes through
 Maestrly's permission prompts, plan and ask modes, and conversation controls. The
 server only receives automatic approval for calls to that endpoint; other
-permission requests are rejected.
+permission requests are rejected, except for the image tool described below.
+
+## Image generation
+
+With **Image generation** on (**Settings › Maestrly Chat › Tools**), a Google AI
+account can draw the images of the `generate_image` tool with Google's Gemini
+image model, for conversations on any model. **Generator** chooses who draws:
+
+- **Automatic** (default) uses ChatGPT first, then Google AI. Conversations on
+  Google AI draw with their own account first, then ChatGPT.
+- **ChatGPT** or **Google AI (Gemini)** uses only that subscription; the tool is
+  not offered while it is not connected.
+
+When Google AI draws, a Flash model receives the request in a separate session
+that has no Maestrly tools and enables only the server's built-in image tool.
+Maestrly approves that tool's first call once and rejects any other. The session
+is closed as soon as the image arrives, and its files, including the server's
+copy of the image, are deleted. Images use the plan's quota and, like the rest of
+this provider, report no token usage. The image tool was validated with server
+1.4.0; if an older server does not offer it, the tool reports that Google AI did
+not generate an image.
 
 The server always runs in an app-owned working directory, never in your
 project, so project files such as `.agents/hooks.json` cannot run commands

@@ -8,6 +8,9 @@
 // FAKE_ACP_CHILD_PID_FILE (spawn a helper and write its pid), FAKE_ACP_STDERR_BYTES (stderr noise at startup).
 // Runtime 1.4.0 behavior: FAKE_ACP_TIER (tier name reported in `_meta.antigravity.tier`), FAKE_ACP_USAGE=1 (advertise
 // and answer the `/usage` command without a model turn).
+// Built-in image tool (1.4.0 wire format), only when the session enables `generate_image`:
+//   IMAGE <prompt> (image inline) | IMAGEPATH <prompt> (only `rawOutput.imagePath`) | IMAGE2 <prompt> (two calls).
+// After the image the model keeps writing until the turn is cancelled.
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
@@ -66,6 +69,13 @@ const requestClient = (method, params) =>
     outgoing.set(id, resolve)
     send({ id, method, params })
   })
+
+const PNG_1X1 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+const PERMISSION_OPTIONS = [
+  { optionId: 'allow_always', name: 'Allow Always', kind: 'allow_always' },
+  { optionId: 'allow', name: 'Allow', kind: 'allow_once' },
+  { optionId: 'deny', name: 'Deny', kind: 'reject_once' },
+]
 
 const sessions = new Map()
 const metaPath = (id) => path.join(conversationsDir, `${id}.meta`)
@@ -223,6 +233,59 @@ async function runPrompt(session, prompt) {
     })
     chunk(`permission:${decision?.outcome?.outcome === 'selected' ? decision.outcome.optionId : 'cancelled'}`)
     return { stopReason: 'end_turn' }
+  }
+  if (verb === 'IMAGE' || verb === 'IMAGEPATH' || verb === 'IMAGE2') {
+    if (!(session.meta?.agy?.enabledTools ?? []).includes('generate_image')) {
+      chunk('I cannot generate images here.')
+      return { stopReason: 'end_turn' }
+    }
+    const prompt = `${rest.join(' ')}, flat illustration`
+    for (let call = 0; call < (verb === 'IMAGE2' ? 2 : 1); call++) {
+      const toolCallId = randomUUID().replaceAll('-', '')
+      const rawInput = { AspectRatio: '1:1', ImageName: 'teal_robot', Prompt: prompt }
+      const title = 'Run generate_image?'
+      notifyUpdate(session.id, {
+        sessionUpdate: 'tool_call',
+        toolCallId,
+        title,
+        kind: 'other',
+        status: 'pending',
+        rawInput,
+      })
+      const decision = await requestClient('session/request_permission', {
+        sessionId: session.id,
+        toolCall: { toolCallId, kind: 'other', status: 'pending', title, rawInput },
+        options: PERMISSION_OPTIONS,
+      })
+      const selected = decision?.outcome?.outcome === 'selected' ? decision.outcome.optionId : 'cancelled'
+      if (selected !== 'allow' && selected !== 'allow_always') {
+        notifyUpdate(session.id, {
+          sessionUpdate: 'tool_call_update',
+          toolCallId,
+          status: 'failed',
+          content: [{ type: 'content', content: { type: 'text', text: `permission:${selected}` } }],
+        })
+        continue
+      }
+      const brain = path.join(acpHome, 'brain', session.id)
+      mkdirSync(brain, { recursive: true })
+      const imagePath = path.join(brain, `teal_robot_${call}.png`)
+      writeFileSync(imagePath, Buffer.from(PNG_1X1, 'base64'))
+      const image = { type: 'image', data: PNG_1X1, mimeType: 'image/png', uri: `file://${imagePath}` }
+      notifyUpdate(session.id, {
+        sessionUpdate: 'tool_call_update',
+        toolCallId,
+        status: 'completed',
+        ...(verb === 'IMAGEPATH' ? {} : { content: [{ type: 'content', content: image }] }),
+        rawOutput: { imageName: 'teal_robot', imagePath, prompt, aspectRatio: '1:1' },
+      })
+    }
+    const started = Date.now()
+    while (!session.cancelled && Date.now() - started < 10_000) {
+      chunk('The image has been generated. ')
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    return { stopReason: session.cancelled ? 'cancelled' : 'end_turn' }
   }
   if (verb === 'USAGE') {
     for (const call of rest) {

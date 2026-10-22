@@ -158,12 +158,12 @@ import { runnerContextHistory, upsertChatMessage, type StoredChatMessage } from 
 import { deleteGeneratedImages, saveGeneratedImage, type StoredGeneratedImage } from '../generated-images'
 import {
   emitGeneratedImagePart,
+  generateConversationImage,
   generateImageToolEnabled,
   GENERATE_IMAGE_TOOL_NAME,
   normalizeGeneratedImageUsage,
 } from '../image-gen'
 import type { CodexAppServerClient } from './client'
-import { generateImageForConversation } from './image-generation'
 import { getCodexSubscriptionManager, type CodexSubscriptionModel } from './manager'
 import { buildCodexThreadHarness, type CodexThreadHarness } from '../harness/adapters/codex'
 import { buildHarnessDeveloperInstructions } from '../harness/prompt-builder'
@@ -2577,7 +2577,7 @@ export async function runCodexSubscriptionChat(
         normalizeGeneratedImageUsage(usage)
       ),
     generateImage: async (prompt, signal, onUsage) =>
-      generateImageForConversation({
+      generateConversationImage({
         conversationId: args.conversationId,
         cwd: args.cwd,
         prompt,

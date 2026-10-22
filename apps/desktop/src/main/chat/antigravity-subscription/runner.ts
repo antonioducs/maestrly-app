@@ -41,6 +41,7 @@ import { describeEphemeralToolImage } from '../image-interpreter'
 import {
   emitGeneratedImagePart,
   GENERATE_IMAGE_TOOL_NAME,
+  generateConversationImage,
   generateImageToolEnabled,
   mergeGeneratedImageUsage,
 } from '../image-gen'
@@ -251,6 +252,16 @@ export async function runAntigravitySubscriptionChat(
     emitGeneratedImagePart(apply, assistantId, toolCallId, image)
   const onGeneratedImageUsage = (usage: import('../tools/util').GeneratedImageUsage) =>
     mergeGeneratedImageUsage(subagentUsage, usage)
+  // Images follow the preference; when Google AI draws, this conversation's own account and server go first.
+  const generateImage: NonNullable<ToolContext['generateImage']> = (prompt, signal, onUsage) =>
+    generateConversationImage({
+      conversationId: args.conversationId,
+      cwd: args.cwd,
+      prompt,
+      signal,
+      onUsage,
+      antigravityAccountId: accountId,
+    })
 
   const toolAbort = new AbortController()
   const toolSignal = AbortSignal.any([args.signal, toolAbort.signal])
@@ -310,6 +321,7 @@ export async function runAntigravitySubscriptionChat(
       },
       emitGeneratedImage: (image: GeneratedImageEmission) => emitGeneratedImage(toolCallId, image),
       onGeneratedImageUsage,
+      generateImage,
       ...(conversationDispatch ? { conversationDispatch } : {}),
       ...(conversationLink ? { conversationLink } : {}),
     })
@@ -318,7 +330,7 @@ export async function runAntigravitySubscriptionChat(
     const conversationDispatch = enableConversationDispatchTools(enabledBuiltins, args.conversationId, args.mode)
     // Reading and messaging other conversations: a turn typed by the person or started by another conversation.
     const conversationLink = enableConversationLinkTools(enabledBuiltins, args.conversationId, args.mode)
-    if (await generateImageToolEnabled(args.conversationId, args.mode)) {
+    if (await generateImageToolEnabled(args.conversationId, args.mode, { antigravityAccountId: accountId })) {
       enabledBuiltins.add(GENERATE_IMAGE_TOOL_NAME)
     }
     const core = buildTools({ enabled: enabledBuiltins, makeCtx: makeContext })
@@ -511,6 +523,7 @@ export async function runAntigravitySubscriptionChat(
         apply,
         emitGeneratedImage,
         onGeneratedImageUsage,
+        generateImage,
       })
     }
 
