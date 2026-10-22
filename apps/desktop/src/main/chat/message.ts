@@ -12,6 +12,7 @@
 import { z } from 'zod'
 import type { ModelMessage } from 'ai'
 import {
+  chatTodosFromInput,
   toolOutputImages,
   toolOutputText,
   type ChatMessage,
@@ -353,7 +354,37 @@ export function activeChatContext(messages: ChatMessage[]): { summary: string; m
   const markerMessage = messages[messageIndex]
   const suffix = markerMessage.parts.slice(partIndex + 1)
   if (suffix.length > 0) active.unshift({ ...markerMessage, parts: suffix })
-  return { summary, messages: active }
+  const todos = active.some((m) => m.parts.some(isTodoWritePart))
+    ? ''
+    : compactedTodoListText(messages, messageIndex, partIndex)
+  return { summary: todos ? `${summary}\n\n${todos}` : summary, messages: active }
+}
+
+function isTodoWritePart(part: MessagePart): part is Extract<MessagePart, { type: 'tool' }> {
+  return part.type === 'tool' && part.toolName.replace(/^mcp__maestrly__/, '') === 'todo_write'
+}
+
+/**
+ * The summary drops the todo_write calls, so without this the model forgets its open checklist after a compaction
+ * and stops updating it while the user still sees the last card.
+ */
+function compactedTodoListText(messages: ChatMessage[], messageIndex: number, partIndex: number): string {
+  for (let mi = messageIndex; mi >= 0; mi--) {
+    const parts = messages[mi].parts
+    for (let pi = (mi === messageIndex ? partIndex : parts.length) - 1; pi >= 0; pi--) {
+      const part = parts[pi]
+      if (!isTodoWritePart(part)) continue
+      const todos = chatTodosFromInput(part.input)
+      if (!todos.some((todo) => todo.status !== 'completed')) return ''
+      const mark = (status: string) => (status === 'completed' ? '[x]' : status === 'in_progress' ? '[~]' : '[ ]')
+      return (
+        'Your to-do list before the compaction (still shown to the user; keep it current with todo_write, ' +
+        'sending the full list):\n' +
+        todos.map((todo) => `${mark(todo.status)} ${todo.content}`).join('\n')
+      )
+    }
+  }
+  return ''
 }
 
 /** Projects persisted canonical results for the current execution model. */

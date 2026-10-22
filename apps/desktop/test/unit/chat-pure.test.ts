@@ -15,6 +15,7 @@ import {
   totalTokensOf,
   usageMetaForModel,
   type ChatMessage,
+  type MessagePart,
 } from '../../src/shared/chat'
 import {
   activeChatContext,
@@ -771,6 +772,46 @@ describe('toModelMessages (port of to-llm-message)', () => {
     expect(serialized).not.toContain('SUMMARY 1')
     expect(serialized).not.toContain('middle')
     expect(serialized).not.toContain('old')
+  })
+
+  it('carries the open to-do list across a compaction until the agent writes a new one', () => {
+    const todo = (id: string, todos: unknown, toolName = 'todo_write'): MessagePart => ({
+      type: 'tool',
+      id,
+      toolCallId: id,
+      toolName,
+      input: { todos },
+      state: { status: 'completed', output: '' },
+    })
+    const open = [
+      { content: 'Write the parser', status: 'completed' },
+      { content: 'Test the parser', status: 'in_progress' },
+      { content: 'Ship it', status: 'pending' },
+    ]
+    const message = (parts: MessagePart[]): ChatMessage => ({
+      id: 'a0',
+      conversationId: 'c1',
+      role: 'assistant',
+      createdAt: 1,
+      parts,
+    })
+    const marker: MessagePart = { type: 'compaction', id: 'cmp', text: 'SUMMARY' }
+
+    const carried = activeChatContext([
+      message([todo('t0', [{ content: 'old', status: 'pending' }]), todo('t1', open), marker]),
+    ])
+    expect(carried.summary).toBe(
+      'SUMMARY\n\nYour to-do list before the compaction (still shown to the user; keep it current with todo_write, ' +
+        'sending the full list):\n[x] Write the parser\n[~] Test the parser\n[ ] Ship it'
+    )
+    // The prefixed name a runtime puts on host tools counts too.
+    expect(activeChatContext([message([todo('t1', open, 'mcp__maestrly__todo_write'), marker])]).summary).toContain(
+      '[~] Test the parser'
+    )
+    // A finished list, or a newer one after the marker, needs no reminder.
+    const done = open.map((item) => ({ ...item, status: 'completed' }))
+    expect(activeChatContext([message([todo('t1', done), marker])]).summary).toBe('SUMMARY')
+    expect(activeChatContext([message([todo('t1', open), marker, todo('t2', done)])]).summary).toBe('SUMMARY')
   })
 
   it('adds handoff context without clearing history', () => {
