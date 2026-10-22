@@ -2155,6 +2155,7 @@ async function main() {
       )
     )
   const browsers = []
+  const others = { ':1': ':2', ':2': ':1' }
   for (const [botId, display] of [
     [scoutId, ':1'],
     [partnerId, ':2'],
@@ -2168,8 +2169,19 @@ async function main() {
     assert.ok(main, `${botId} has no Chromium of its own with a DevTools pipe: ${found.stdout}`)
     assert.ok(!/--remote-debugging-port/.test(main), `${botId}'s Chromium opened a DevTools port: ${main}`)
     const pid = main.split(' ')[0]
-    const environ = await docker(['exec', containers[1], 'sh', '-c', `tr '\\0' '\\n' < /proc/${pid}/environ`])
-    assert.ok(environ.stdout.split('\n').includes('DISPLAY=' + display), `${botId}'s Chromium is not on ${display}`)
+    // Chromium rewrites its environment block, so its display is read from the X server: the windows of its process.
+    const windowsOn = async (target) =>
+      (
+        await docker(['exec', '-e', 'DISPLAY=' + target, containers[1], 'xdotool', 'search', '--pid', pid], {
+          allowFailure: true,
+        })
+      ).stdout
+        .split('\n')
+        .filter(Boolean)
+    const own = await windowsOn(display)
+    assert.ok(own.length > 0, `${botId}'s Chromium (pid ${pid}) has no window on ${display}: ${main.slice(0, 300)}`)
+    const elsewhere = await windowsOn(others[display])
+    assert.deepEqual(elsewhere, [], `${botId}'s Chromium (pid ${pid}) has windows on ${others[display]}`)
     browsers.push(`${botId} pid ${pid} on ${display}`)
   }
   pass(
