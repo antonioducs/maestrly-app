@@ -5,6 +5,15 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Changed
+
+- The **Code** tab no longer stops to download each new VS Code version: while
+  you have opened it in the last 14 days, the app downloads new versions in the
+  background. When the tab still has to download one, it shows how far it is, in
+  percent and megabytes, then installing and starting, and keeps waiting as long
+  as the download moves. A download after the first setup says VS Code is being
+  updated.
+
 ## [0.26.0] - 2026-10-22
 
 ### Changed

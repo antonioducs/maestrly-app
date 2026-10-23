@@ -4,6 +4,7 @@ import https from 'node:https'
 import path from 'node:path'
 import { app } from 'electron'
 import { isWin } from '../platform'
+import { noteVSCodeSetup } from './setup-progress'
 
 /**
  * Download and maintain the official standalone VS Code CLI under userData for an isolated embedded
@@ -85,8 +86,10 @@ export function hasStagedCliUpdate(): boolean {
   return !!pending && pending !== readMarker('active') && commitReady(pending)
 }
 
+type DownloadProgress = (received: number, total: number | null) => void
+
 /** Download a URL to dest following redirects from the official endpoint to its CDN. */
-function download(url: string, dest: string, redirects = 5): Promise<void> {
+function download(url: string, dest: string, onProgress?: DownloadProgress, redirects = 5): Promise<void> {
   return new Promise((resolve, reject) => {
     const req = https.get(url, { timeout: HTTPS_TIMEOUT }, (res) => {
       const status = res.statusCode ?? 0
@@ -97,13 +100,23 @@ function download(url: string, dest: string, redirects = 5): Promise<void> {
           return
         }
         const next = new URL(res.headers.location, url).toString()
-        download(next, dest, redirects - 1).then(resolve, reject)
+        download(next, dest, onProgress, redirects - 1).then(resolve, reject)
         return
       }
       if (status !== 200) {
         res.resume()
         reject(new Error(`VS Code CLI download failed (HTTP ${status})`))
         return
+      }
+      if (onProgress) {
+        const length = Number(res.headers['content-length'])
+        const total = Number.isFinite(length) && length > 0 ? length : null
+        let received = 0
+        onProgress(0, total)
+        res.on('data', (chunk: Buffer) => {
+          received += chunk.length
+          onProgress(received, total)
+        })
       }
       const out = createWriteStream(dest)
       res.on('error', reject)
@@ -192,8 +205,8 @@ function getCliCommit(bin: string): Promise<string> {
 }
 
 /** Read latest stable commit from the official endpoint; silently return null on failure. */
-function fetchLatestCommit(): Promise<string | null> {
-  const url = `https://update.code.visualstudio.com/api/latest/${updateTarget()}/stable`
+function fetchLatestCommit(target = updateTarget()): Promise<string | null> {
+  const url = `https://update.code.visualstudio.com/api/latest/${target}/stable`
   return new Promise((resolve) => {
     const req = https.get(url, { timeout: 15_000 }, (res) => {
       if ((res.statusCode ?? 0) !== 200) {
@@ -221,13 +234,21 @@ function fetchLatestCommit(): Promise<string | null> {
   })
 }
 
+/**
+ * The latest stable VS Code server for the web, which serve-web downloads the first time it is asked for it whatever
+ * the CLI's own version; null when the update service cannot be reached.
+ */
+export function fetchLatestServerCommit(): Promise<string | null> {
+  return fetchLatestCommit(`server-${updateTarget()}-web`)
+}
+
 let dlSeq = 0
 
 /**
  * Download/extract the latest CLI into its commit directory and return the commit without changing
  * markers.
  */
-async function downloadCliVersion(): Promise<string> {
+async function downloadCliVersion(onProgress?: DownloadProgress): Promise<string> {
   const root = cliRoot()
   await fs.mkdir(root, { recursive: true })
   const tmp = path.join(root, `dl-tmp-${process.pid}-${dlSeq++}`)
@@ -235,7 +256,7 @@ async function downloadCliVersion(): Promise<string> {
   await fs.mkdir(tmp, { recursive: true })
   try {
     const archive = path.join(tmp, isWin ? 'cli.zip' : 'cli.tar.gz')
-    await download(`https://code.visualstudio.com/sha/download?build=stable&os=${cliTarget()}`, archive)
+    await download(`https://code.visualstudio.com/sha/download?build=stable&os=${cliTarget()}`, archive, onProgress)
     await extract(archive, tmp)
     await fs.rm(archive, { force: true })
     const staged = await locateBin(tmp)
@@ -282,12 +303,16 @@ export function ensureVSCodeCli(): Promise<string> {
   if (commitReady(active)) return Promise.resolve(binFor(active))
   if (ensuring) return ensuring
   ensuring = (async () => {
-    const commit = await downloadCliVersion()
+    // The loading page shows this first download as the start of the editor's setup.
+    const commit = await downloadCliVersion((received, total) =>
+      noteVSCodeSetup({ kind: 'cli-download', received, total })
+    )
     writeMarker('active', commit)
     return binFor(commit)
   })()
   ensuring.catch(() => {
     ensuring = null
+    noteVSCodeSetup({ kind: 'reset' })
   })
   return ensuring
 }
