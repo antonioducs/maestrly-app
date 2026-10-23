@@ -133,6 +133,10 @@ function BotViewContent({ bot, view, fleet, onView, onOpenBot, onDetachedChange,
     setPane('threads')
     setThreadId(id)
   }, [])
+  // A destination naming a thread, such as a notification about it, opens it.
+  useEffect(() => {
+    if (view.threadId) openThread(view.threadId)
+  }, [view.threadId, openThread])
   useEffect(() => {
     if (runsSupported) ensureRuns(bot.id)
   }, [bot.id, ensureRuns, runsSupported])
@@ -302,7 +306,9 @@ function BotViewContent({ bot, view, fleet, onView, onOpenBot, onDetachedChange,
                         unseenThreads: unseenThreadIds.size,
                         onPane: (next) => {
                           setPane(next)
-                          if (next === 'conversation' && view.tab === 'runs') onView(botView('conversation'))
+                          // The destination forgets the run or thread it named, so that naming it again opens it.
+                          if (next === 'conversation' && (view.tab === 'runs' || view.threadId))
+                            onView(botView('conversation'))
                         },
                         onOpenRun: (id) => openRun(id),
                         onOpenThread: (id) => openThread(id),
