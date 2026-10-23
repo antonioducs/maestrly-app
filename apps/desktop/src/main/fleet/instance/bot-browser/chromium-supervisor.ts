@@ -46,6 +46,8 @@ export interface ChromiumSupervisorOptions {
  */
 export const BOT_CHROMIUM_ARGS: readonly string[] = [
   '--remote-debugging-pipe',
+  // The pipe marks pages as automated (`navigator.webdriver`), and Google then refuses to sign in.
+  '--disable-blink-features=AutomationControlled',
   '--disable-gpu',
   '--disable-background-networking',
   '--disable-component-update',

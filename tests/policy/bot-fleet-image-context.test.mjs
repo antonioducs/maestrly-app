@@ -136,6 +136,7 @@ test('the bot image build context holds every file its Dockerfile copies from th
     'deploy/bot-fleet/desktop/applications',
     'deploy/bot-fleet/tint2rc',
     'deploy/bot-fleet/openbox-rc.xml',
+    'deploy/bot-fleet/chromium-policies.json',
   ])
     assert.ok(sources.includes(source), `the Dockerfile copies ${source}`)
   for (const source of sources) {
