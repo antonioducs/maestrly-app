@@ -45,6 +45,13 @@ describe('ConversationNotices', () => {
     ])
   })
 
+  it('stays quiet about a status that changed without needing the owner', () => {
+    const s = setup()
+    s.notices.status('chat-1', 'working', false)
+    expect(s.notices.status('chat-1', 'ready', false)).toBeNull()
+    expect(s.shown).toEqual([])
+  })
+
   it('stays quiet about the conversation the owner looks at, and removes a notice once it is seen', () => {
     const s = setup(new Set(['chat-1']))
     expect(s.notices.status('chat-1', 'ready')).toBe('finished')

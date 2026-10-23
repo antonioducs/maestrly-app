@@ -114,6 +114,14 @@ export class AgentRegistry extends EventEmitter {
     this.maybePlay(this.ensure('fleet-bot:' + botKey), event, 'lastSoundAt')
   }
 
+  /**
+   * Play an alert of a remote host's conversation, by its host key: the host reports its status, and plays nothing
+   * on this computer. Plans keep their own dedupe window, as this computer's conversations do.
+   */
+  playHostAlert(conversationKey: string, event: SoundEvent): void {
+    this.maybePlay(this.ensure(conversationKey), event, event === 'plan' ? 'lastPlanSoundAt' : 'lastSoundAt')
+  }
+
   private transition(a: AgentState, status: AgentStatus, sound = false): void {
     a.status = status
     if (sound) {
@@ -123,6 +131,8 @@ export class AgentRegistry extends EventEmitter {
         status === 'error' ? 'error' : status === 'waiting' || status === 'asking' ? 'permission' : 'ready'
       this.maybePlay(a, event, 'lastSoundAt')
     }
-    this.emit('status', { agentId: a.id, status })
+    // `alert` tells a status that needs the owner (a turn ended, a question) from one that does not, such as the end
+    // of a compaction or of a turn whose plan already alerted.
+    this.emit('status', { agentId: a.id, status, alert: sound })
   }
 }

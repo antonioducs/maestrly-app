@@ -638,7 +638,7 @@ async function applyVSCodeUpdateOnIdle(): Promise<void> {
   }
 }
 
-function broadcastStatus(payload: { agentId: string; status: string }): void {
+function broadcastStatus(payload: { agentId: string; status: string; alert?: boolean }): void {
   // The registry emits ready/error only when a turn ends, and asking once per question: either needs the person.
   // The host keeps the mark so that seeing it on one computer clears it on every other.
   let attention = false
@@ -1229,9 +1229,13 @@ app.whenReady().then(async () => {
       conversationLabel: notificationLabel,
       focusMainWindow,
       sendToMainWindow: (channel, target) => safeWindowSend(mainWindow, channel, target),
+      playHostAlert: (key, event) => registry.playHostAlert(key, event),
     })
   registry.on('status', broadcastStatus)
-  registry.on('status', ({ agentId, status }) => appNotifications?.conversations.status(agentId, status))
+  registry.on('status', ({ agentId, status, alert }) =>
+    appNotifications?.conversations.status(agentId, status, alert)
+  )
+  onHostEvent((hostId, channel, args) => appNotifications?.hosts.event(hostId, channel, args))
   applyAlertSettings(getSoundSettings())
 
   registerIpc()

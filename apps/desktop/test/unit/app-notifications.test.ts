@@ -18,6 +18,7 @@ function setupNotifications(revealed = false) {
     conversationLabel: () => null,
     focusMainWindow,
     sendToMainWindow: (channel, target) => void sent.push([channel, target]),
+    playHostAlert: vi.fn(),
   })
   return { notifications, sent, focusMainWindow, reveal }
 }

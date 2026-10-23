@@ -27,23 +27,18 @@ export class ConversationNotices {
 
   /**
    * A status the conversation's registry emitted, which emits ready and error only when a turn ends, and asking once
-   * per question. Returns what it tells the owner, shown or not, so that a host's conversation can sound it.
+   * per question. `alert` is false for a status that needs no one, such as the end of a compaction. Returns what it
+   * tells the owner, shown or not, so that a host's conversation can sound it.
    */
-  status(conversationId: string, status: string): ConversationNoticeKind | null {
+  status(conversationId: string, status: string, alert = true): ConversationNoticeKind | null {
     if (status === 'working') {
       this.planned.delete(conversationId)
       return null
     }
+    if (status === 'ready' && this.planned.delete(conversationId)) return null
+    if (!alert) return null
     const kind: ConversationNoticeKind | null =
-      status === 'ready'
-        ? this.planned.delete(conversationId)
-          ? null
-          : 'finished'
-        : status === 'error'
-          ? 'failed'
-          : status === 'asking'
-            ? 'question'
-            : null
+      status === 'ready' ? 'finished' : status === 'error' ? 'failed' : status === 'asking' ? 'question' : null
     if (kind) this.notify(conversationId, kind)
     return kind
   }
