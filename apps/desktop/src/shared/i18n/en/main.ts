@@ -141,6 +141,15 @@ export default {
     failed: 'The turn failed',
     question: 'Has a question for you',
     plan: 'Has a plan for you to review',
+    bot: {
+      untitled: 'Bot',
+      finished: 'Finished what you asked',
+      failed: 'Could not finish what you asked',
+      routineFinished: 'Finished a routine run',
+      routineFailed: 'A routine run failed',
+      needsYou: 'Needs you',
+      threadPaused: 'Paused a conversation with another bot',
+    },
   },
   chatProviderError: {
     http: '{{provider}} returned HTTP {{status}}: {{detail}}',

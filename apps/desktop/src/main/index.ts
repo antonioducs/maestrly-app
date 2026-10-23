@@ -267,6 +267,7 @@ import { handleGenUiWidgetProtocol } from './genui-widget-scheme'
 import { registerPrivilegedSchemes } from './privileged-schemes'
 import { noticeFleetDownload } from './fleet/client/download-notices'
 import { AppNotifications } from './notifications/app-notifications'
+import { registerNotificationsIpc } from './notifications/ipc'
 import { remoteConversationLabel } from './remote-conversation-labels'
 import type { SoundSettings } from '../shared/sound'
 import { artifactsDataDir, getArtifactsService, setArtifactsService } from './artifacts'
@@ -311,6 +312,8 @@ let mainWindow: BrowserWindow | null = null
 let chatWindowManager: ChatWindowManager | null = null
 /** System notifications and the app badge; none on a headless instance (a bot, or a server). */
 let appNotifications: AppNotifications | null = null
+/** The bots marked for the owner on this computer (see notifications/bot-attention). */
+const BOT_ATTENTION_KEY = 'notifications.botAttention.v1'
 let cancelProjectSetupsAndWait: (() => Promise<void>) | null = null
 let disposeConversationMigrationIpc: (() => void) | null = null
 let conversationMoveService: ConversationMoveService | null = null
@@ -673,6 +676,25 @@ function notificationLabel(convId: string): { name: string; projectName?: string
   return { name: conv.name, ...(project ? { projectName: project } : {}) }
 }
 
+/**
+ * Bots' marks go with their server when it is unpaired. Called once the paired servers have started: while they
+ * start, the list lacks those not added yet.
+ */
+function dropMarksOfUnpairedServers(): void {
+  const notifications = appNotifications
+  if (!notifications) return
+  let paired: string | null = null
+  const retain = () => {
+    const ids = fleetServers.list().map(({ id }) => id)
+    const key = ids.join('\n')
+    if (key === paired) return
+    paired = key
+    notifications.botAttention.retain(new Set(ids))
+  }
+  retain()
+  fleetServers.onChange(retain)
+}
+
 /** Sound settings also hold whether system notifications show; tests never raise them. */
 function applyAlertSettings(settings: SoundSettings): void {
   registry.setSoundSettings(settings)
@@ -767,6 +789,7 @@ async function createWindow(): Promise<void> {
             .bots.some((bot) => bot.id === target.id && bot.lifecycle !== 'archived') ?? false)
         : !!getConversation(target.id),
     focusSource: focusMainWindow,
+    onFocus: (key) => appNotifications?.chatWindowFocused(key),
     workArea: (bounds) =>
       (bounds ? screen.getDisplayMatching(bounds) : screen.getDisplayNearestPoint(screen.getCursorScreenPoint()))
         .workArea,
@@ -779,6 +802,7 @@ async function createWindow(): Promise<void> {
   wc.on('did-finish-load', sendFullscreen)
 
   mainWindow.on('blur', () => void applyVSCodeUpdateOnIdle())
+  mainWindow.on('focus', () => appNotifications?.mainWindowFocused())
 
   // Keep renderer zoom aligned with native view bounds, which use device-independent pixels.
 
@@ -1053,8 +1077,10 @@ function registerIpc(): void {
   // Set before the client starts, so that the first live event already sounds.
   fleetServers.setupClients((client) => {
     client.onAlert = (botId, alert) => registry.playBotAlert(fleetKey(client.serverId, botId), alert)
+    client.onLiveEvent = (entry) => appNotifications?.bots.live(client.serverId, entry)
     client.onDownloadSettled = noticeFleetDownload
   })
+  registerNotificationsIpc(reg, () => appNotifications)
   registerFleetInstallerIpc(reg)
   // Set before the client starts, so that its first stream already answers bots' desktop calls.
   registerFleetDesktopBridgeIpc(fleetScopedRegistrar(reg), fleetServers)
@@ -1230,6 +1256,18 @@ app.whenReady().then(async () => {
       focusMainWindow,
       sendToMainWindow: (channel, target) => safeWindowSend(mainWindow, channel, target),
       playHostAlert: (key, event) => registry.playHostAlert(key, event),
+      botName: (serverId, botId) =>
+        fleetServers
+          .get(serverId)
+          ?.getSnapshot()
+          .bots.find((bot) => bot.id === botId)?.name ?? null,
+      serverName: (serverId) =>
+        fleetServers.list().length > 1 ? (fleetServers.get(serverId)?.getConnection().hostname ?? null) : null,
+      botAttention: {
+        load: () => getAppSetting(BOT_ATTENTION_KEY),
+        save: (value) => setAppSetting(BOT_ATTENTION_KEY, value),
+        emit: (change) => broadcast('fleet:botAttention', change),
+      },
     })
   registry.on('status', broadcastStatus)
   registry.on('status', ({ agentId, status, alert }) =>
@@ -1239,6 +1277,7 @@ app.whenReady().then(async () => {
   applyAlertSettings(getSoundSettings())
 
   registerIpc()
+  dropMarksOfUnpairedServers()
   // Before anything resumes a turn: a conversation an unfinished move holds stays leased.
   restoreMoveEndpointLeases()
   conversationMoveService?.markInterrupted()

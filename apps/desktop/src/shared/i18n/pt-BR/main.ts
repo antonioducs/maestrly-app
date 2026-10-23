@@ -141,6 +141,15 @@ export default {
     failed: 'O turno falhou',
     question: 'Tem uma pergunta para você',
     plan: 'Tem um plano para você revisar',
+    bot: {
+      untitled: 'Bot',
+      finished: 'Terminou o que você pediu',
+      failed: 'Não conseguiu terminar o que você pediu',
+      routineFinished: 'Terminou uma execução de rotina',
+      routineFailed: 'Uma execução de rotina falhou',
+      needsYou: 'Precisa de você',
+      threadPaused: 'Pausou uma conversa com outro bot',
+    },
   },
   chatProviderError: {
     http: '{{provider}} retornou HTTP {{status}}: {{detail}}',
