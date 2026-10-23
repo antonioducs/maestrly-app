@@ -2291,7 +2291,8 @@ export class BotRuntime {
     for (const lane of this.runs.loadedLanes()) if (lane.help.pending().length > 0) continuing.add(lane.runId)
     if (value.continue)
       for (const key of continuing) {
-        if (key !== null && !this.runs.get(key)) continue
+        const lane = key === null ? null : this.runs.get(key)
+        if (lane === undefined) continue
         let idempotencyKey = this.releaseKeys.get(key)
         if (!idempotencyKey) {
           idempotencyKey = randomUUID()
@@ -2302,7 +2303,12 @@ export class BotRuntime {
           text: continuationText(previous.reason ?? 'takeover', value.durationMs, value.note),
           attachments: [],
           idempotencyKey,
-          ...(key !== null ? { run: { id: key } } : {}),
+          // A thread with another bot continues as a thread: as a run, its conversation would be refused.
+          ...(lane?.kind === 'thread'
+            ? { thread: { id: lane.runId, title: lane.title } }
+            : lane
+              ? { run: { id: lane.runId } }
+              : {}),
         })
       }
     await this.help.resolveAll(value.note)
