@@ -32,6 +32,8 @@ export class ChatWindowManager {
       targetExists: (target: ChatWindowTarget) => boolean
       workArea: (bounds?: Rectangle) => Rectangle
       focusSource?: () => void
+      /** A chat window got the focus, by its key. */
+      onFocus?: (key: string) => void
       now?: () => number
     }
   ) {
@@ -103,11 +105,23 @@ export class ChatWindowManager {
   focus(event: IpcMainInvokeEvent, key: unknown): void {
     this.assertOwner(event)
     this.assertKey(key)
+    this.reveal(key)
+  }
+
+  /** Whether the window of this key is open and has the focus. */
+  isFocused(key: string): boolean {
     const window = this.windows.get(key)?.window
-    if (!window || window.isDestroyed()) return
+    return !!window && !window.isDestroyed() && window.isFocused()
+  }
+
+  /** Brings the window of this key forward; false when it is not open. */
+  reveal(key: string): boolean {
+    const window = this.windows.get(key)?.window
+    if (!window || window.isDestroyed()) return false
     if (window.isMinimized()) window.restore()
     window.show()
     window.focus()
+    return true
   }
 
   showSource(event: IpcMainInvokeEvent, key: unknown): void {
@@ -188,6 +202,7 @@ export class ChatWindowManager {
     const { key } = ticket
     const entry: Entry = { window, frameName, closeRequested: false }
     this.windows.set(key, entry)
+    window.on('focus', () => this.dependencies.onFocus?.(key))
     if (this.previousThrottling === undefined) {
       this.previousThrottling = this.owner.getBackgroundThrottling()
       this.owner.setBackgroundThrottling(false)
