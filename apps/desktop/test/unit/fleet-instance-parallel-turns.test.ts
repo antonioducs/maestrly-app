@@ -90,6 +90,7 @@ async function bot() {
   const turns = new Map<string | null, { inputId: string; key: string | null }>()
   const runs = new BotRunConversations({
     file: path.join(dir, 'runs.json'),
+    threadsFile: path.join(dir, 'threads.json'),
     folder: path.join(dir, 'runs'),
     queue,
     images,
@@ -420,6 +421,26 @@ describe('turns of the bot conversations at the same time', () => {
     expect(continuations.map((item) => item.input.run?.id ?? null).sort()).toEqual([null, runId].sort())
     expect(lane.help.pending()).toEqual([])
     expect(runtime.help.pending()).toEqual([])
+  })
+
+  it('continues a conversation with another bot as its thread when the owner gives the screen back', async () => {
+    const { runtime, queue } = await bot()
+    const threadId = randomUUID()
+    await runtime.input({ ...peerInput('Post the clip, please'), thread: { id: threadId, title: 'Clip' } })
+    const lane = await (
+      runtime as unknown as { runLane(id: string): Promise<{ help: InstanceType<typeof InstanceHelpStore> }> }
+    ).runLane(threadId)
+    await lane.help.requestHelp('Log in to the video site')
+    Object.assign(runtime, { system: vi.fn(async () => {}) })
+    await runtime.hold('takeover')
+    expect(await runtime.release({ note: 'Done', durationMs: 30_000, continue: true })).toMatchObject({
+      state: 'none',
+    })
+    const continuations = queue.list().filter((item) => item.input.source === 'continuation')
+    expect(continuations.map((item) => [item.input.thread, item.input.run])).toEqual([
+      [{ id: threadId, title: 'Clip' }, undefined],
+    ])
+    expect(lane.help.pending()).toEqual([])
   })
 
   it("stops one conversation's turn, or every turn", async () => {
