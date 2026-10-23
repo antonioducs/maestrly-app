@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import type { FleetBot } from '@maestrly/bot-fleet-protocol'
 import { type FleetServerId, fleetKey } from '../../../shared/fleet-servers'
 import type { FleetBotAttentionChange, NotificationTarget } from '../../../shared/notifications'
-import type { FleetView } from '../use-main-panels'
 
 /** The marks after a change, by fleetKey; the same set when nothing changed. */
 export function applyBotAttention(marks: ReadonlySet<string>, change: FleetBotAttentionChange): ReadonlySet<string> {
@@ -33,10 +32,13 @@ export function botsTabCounts(
   ) as Record<FleetServerId, number>
 }
 
-/** The bot view a clicked notification opens: the bot, at the routine run or conversation between bots it names. */
+/**
+ * The bot view (a FleetView) a clicked notification opens: the bot, at the routine run or conversation between bots
+ * it names.
+ */
 export function notificationFleetView(
   target: Pick<Extract<NotificationTarget, { kind: 'bot' }>, 'botId' | 'runId' | 'threadId'>
-): Extract<FleetView, { kind: 'bot' }> {
+): { kind: 'bot'; botId: string; tab: 'conversation' | 'runs'; runId?: string; threadId?: string } {
   if (target.runId) return { kind: 'bot', botId: target.botId, tab: 'runs', runId: target.runId }
   return {
     kind: 'bot',
