@@ -786,6 +786,12 @@ function DesktopShell({
     [fleets.servers, onBotsServer, openFleetView]
   )
 
+  // The app icon counts the conversations of every host that wait for the owner, and what the Bots tab counts.
+  const badgeCount = attention.size + Object.values(pendingByServer).reduce((sum, count) => sum + count, 0)
+  useEffect(() => {
+    window.api.setAppBadgeCount(badgeCount)
+  }, [badgeCount])
+
   // The bot on screen notifies nothing and gets no mark; opening it clears its mark.
   const visibleBotId = mainOverride === 'fleet' && fleetView?.kind === 'bot' ? fleetView.botId : null
   useEffect(() => {

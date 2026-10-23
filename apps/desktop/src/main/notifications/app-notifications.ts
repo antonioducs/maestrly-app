@@ -4,6 +4,7 @@ import type { FleetServerId } from '../../shared/fleet-servers'
 import type { NotificationTarget } from '../../shared/notifications'
 import type { SoundEvent } from '../../shared/sound'
 import type { ChatWindowManager } from '../chat-window-manager'
+import { AppBadge, type AppBadgeDeps } from './app-badge'
 import { FleetBotAttention, type FleetBotAttentionDeps } from './bot-attention'
 import { FleetBotNotices } from './bot-notices'
 import { ConversationNotices } from './conversation-notices'
@@ -23,6 +24,7 @@ export interface AppNotificationsDeps {
   /** The server's name when the owner pairs several, to tell their bots apart; null otherwise. */
   serverName(serverId: FleetServerId): string | null
   botAttention: Omit<FleetBotAttentionDeps, 'max'>
+  badge: Omit<AppBadgeDeps, 'mainWindow'>
 }
 
 /** This computer's system notifications: of its conversations, of remote hosts' conversations, and of bots. */
@@ -34,8 +36,10 @@ export class AppNotifications {
   readonly hosts: HostConversationAlerts
   readonly botAttention: FleetBotAttention
   readonly bots: FleetBotNotices
+  readonly badge: AppBadge
 
   constructor(private readonly deps: AppNotificationsDeps) {
+    this.badge = new AppBadge({ ...deps.badge, mainWindow: deps.mainWindow })
     this.presence = new Presence({
       mainWindow: deps.mainWindow,
       visibleConversation: deps.visibleConversation,

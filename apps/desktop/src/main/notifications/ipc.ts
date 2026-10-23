@@ -13,10 +13,11 @@ function botTarget(value: unknown): { serverId: FleetServerId; botId: string } |
 }
 
 /**
- * What the main window tells of the owner's attention, and what it reads of bots' marks. A headless instance has no
- * notifications: it lists no marks and ignores what it is told.
+ * What the main window tells of the owner's attention and of what needs them, and what it reads of bots' marks. A
+ * headless instance has no notifications: it lists no marks and ignores what it is told.
  */
 export function registerNotificationsIpc(reg: IpcRegistrar, notifications: () => AppNotifications | null): void {
   reg.handle('fleet:listBotAttention', () => notifications()?.botAttention.list() ?? [])
   reg.mon('fleet:visibleBot', (_event, target: unknown) => notifications()?.setVisibleBot(botTarget(target)))
+  reg.mon('app:badge-count', (_event, count: unknown) => notifications()?.badge.set(count))
 }

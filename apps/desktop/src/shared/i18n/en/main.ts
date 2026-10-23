@@ -141,6 +141,7 @@ export default {
     failed: 'The turn failed',
     question: 'Has a question for you',
     plan: 'Has a plan for you to review',
+    badge: 'Things that need you: {{count}}',
     bot: {
       untitled: 'Bot',
       finished: 'Finished what you asked',

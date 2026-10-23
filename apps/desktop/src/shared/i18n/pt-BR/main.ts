@@ -141,6 +141,7 @@ export default {
     failed: 'O turno falhou',
     question: 'Tem uma pergunta para você',
     plan: 'Tem um plano para você revisar',
+    badge: 'Coisas que precisam de você: {{count}}',
     bot: {
       untitled: 'Bot',
       finished: 'Terminou o que você pediu',

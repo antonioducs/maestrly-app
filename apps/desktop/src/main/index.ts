@@ -803,6 +803,8 @@ async function createWindow(): Promise<void> {
 
   mainWindow.on('blur', () => void applyVSCodeUpdateOnIdle())
   mainWindow.on('focus', () => appNotifications?.mainWindowFocused())
+  // On Windows the badge marks the window's taskbar button: a new main window needs it again.
+  appNotifications?.badge.apply()
 
   // Keep renderer zoom aligned with native view bounds, which use device-independent pixels.
 
@@ -1267,6 +1269,11 @@ app.whenReady().then(async () => {
         load: () => getAppSetting(BOT_ATTENTION_KEY),
         save: (value) => setAppSetting(BOT_ATTENTION_KEY, value),
         emit: (change) => broadcast('fleet:botAttention', change),
+      },
+      badge: {
+        platform: process.platform,
+        setBadgeCount: (count) => void app.setBadgeCount(count),
+        description: (count) => tMain('main')('notices.badge', { count }),
       },
     })
   registry.on('status', broadcastStatus)

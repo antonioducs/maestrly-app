@@ -21,7 +21,10 @@ describe('notifications IPC', () => {
   it('lists bot marks and takes the visible bot only when it is a valid server bot', () => {
     const setVisibleBot = vi.fn()
     const list = vi.fn(() => [{ serverId: SERVER, botId: 'alex' }])
-    const handlers = setup({ setVisibleBot, botAttention: { list } } as unknown as AppNotifications)
+    const badge = { set: vi.fn() }
+    const handlers = setup({ setVisibleBot, botAttention: { list }, badge } as unknown as AppNotifications)
+    handlers.get('app:badge-count')!({}, 4)
+    expect(badge.set).toHaveBeenCalledWith(4)
     expect(handlers.get('fleet:listBotAttention')!({})).toEqual([{ serverId: SERVER, botId: 'alex' }])
     const visible = handlers.get('fleet:visibleBot')!
     visible({}, { serverId: SERVER, botId: 'alex' })
@@ -35,5 +38,6 @@ describe('notifications IPC', () => {
     const handlers = setup(null)
     expect(handlers.get('fleet:listBotAttention')!({})).toEqual([])
     expect(() => handlers.get('fleet:visibleBot')!({}, null)).not.toThrow()
+    expect(() => handlers.get('app:badge-count')!({}, 3)).not.toThrow()
   })
 })

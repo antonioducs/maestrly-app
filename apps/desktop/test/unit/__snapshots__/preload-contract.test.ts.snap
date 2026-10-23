@@ -618,6 +618,7 @@ exports[`preload API — exposure > preserves the public preload API inventory 1
   "savePlanDraft",
   "searchMemories",
   "searchPersonalMemories",
+  "setAppBadgeCount",
   "setCloseShortcut",
   "setConvMainTabOrder",
   "setConvOpenTabs",

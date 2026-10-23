@@ -34,6 +34,7 @@ function setupNotifications(revealed = false) {
     botName: () => null,
     serverName: () => null,
     botAttention: { load: () => null, save: () => {}, emit: (change) => void changes.push(change) },
+    badge: { platform: 'darwin', setBadgeCount: vi.fn(), description: String },
   })
   return { notifications, sent, changes, focusMainWindow, reveal, window }
 }

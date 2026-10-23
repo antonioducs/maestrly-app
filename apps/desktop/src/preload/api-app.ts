@@ -59,6 +59,9 @@ export const appApi = {
     return () => ipcRenderer.removeListener('window:fullscreen', listener)
   },
 
+  /** How many things need the owner, which the app icon shows: conversations, bots' requests, and bots' news. */
+  setAppBadgeCount: (count: number): void => ipcRenderer.send('app:badge-count', count),
+
   /** The owner clicked a system notification: the window shows what it is about. */
   onNotificationOpen: (cb: (target: NotificationTarget) => void): (() => void) => {
     const listener = (_event: unknown, target: NotificationTarget) => cb(target)
