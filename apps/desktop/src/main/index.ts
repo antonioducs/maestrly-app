@@ -66,7 +66,7 @@ import { hostFsRoots, registerHostFsIpc } from './remote-host/host-fs'
 import { hostRegistry, onHostEvent, originRole, registerHostsIpc } from './remote-host/client/ipc'
 import { RemoteEditors } from './remote-host/client/editor'
 import { loadRemoteVSCode, remoteVSCodeHandlers, restartRemoteVSCode } from './drawer/remote-vscode'
-import { noteRemoteEditorActivity, setRemoteVSCodeHandlers } from './drawer/vscode'
+import { noteRemoteEditorActivity, setRemoteVSCodeHandlers, stopVSCodeServerIfIdle } from './drawer/vscode'
 import { hostTransferEngine, registerHostTransfersIpc } from './host-transfers/ipc'
 import { createLocalMoveEndpoint, type MoveEndpoint } from './conversation-move/endpoint'
 import { registerConversationMoveEndpointIpc } from './conversation-move/endpoint-ipc'
@@ -156,7 +156,9 @@ import {
   stopVSCodeServer,
   isVSCodeServerRunning,
   vscodeServerEndpoint,
+  servedVSCodeCommit,
 } from './vscode/vscode-server'
+import { VSCodeWarmup } from './vscode/vscode-warmup'
 import { registerHostEditorIpc } from './remote-host/server/host-editor-ipc'
 import { HostEditor } from './remote-host/server/host-editor'
 import { HostFiles } from './remote-host/server/host-files'
@@ -164,7 +166,7 @@ import { registerPeerIpc } from './peer/ipc'
 import { localPeerOs, startPeerHosting } from './peer/service'
 import { requestVSCodeNavigation } from './vscode/vscode-navigation'
 import { hasVSCodeBridgeInFlight, requestVSCodeMemorySnapshot } from './vscode/vscode-memory'
-import { isVSCodeCliReady, hasStagedCliUpdate } from './vscode/vscode-cli-download'
+import { isVSCodeCliReady, hasStagedCliUpdate, fetchLatestServerCommit } from './vscode/vscode-cli-download'
 import {
   initStore,
   listAllConversations,
@@ -544,6 +546,26 @@ function detachByShortcut(convId: string, tab: FloatTab): boolean {
 let remoteEditors: RemoteEditors | null = null
 const remoteVSCodeDeps = () => ({ editors: remoteEditors!, settingsJson: getMergedSettingsJson })
 
+// Downloads each new VS Code server in the background for whoever opens this computer's editor.
+const vscodeWarmup = new VSCodeWarmup({
+  stateFile: () => path.join(app.getPath('userData'), 'vscode-warmup.json'),
+  now: Date.now,
+  cliReady: isVSCodeCliReady,
+  latestCommit: fetchLatestServerCommit,
+  running: isVSCodeServerRunning,
+  start: startVSCodeServer,
+  waitReady: (timeoutMs) => waitForEditorReady(timeoutMs),
+  servedCommit: () => servedVSCodeCommit(),
+  stopIfIdle: () => void stopVSCodeServerIfIdle(),
+  log: (message) => console.log('[vscode]', message),
+})
+
+/** This computer's editor server, started for someone who opens the editor here or from another computer. */
+function startVSCodeServerForUse(): Promise<void> {
+  vscodeWarmup.noteUse()
+  return startVSCodeServer()
+}
+
 async function loadVSCodeFolder(convId: string, folder: string): Promise<void> {
   // A remote host's conversation opens the host's editor in its own folder there; the renderer's folder is ignored.
   if (isRemoteConversation(convId)) {
@@ -560,9 +582,11 @@ async function loadVSCodeFolder(convId: string, folder: string): Promise<void> {
   }
   void watchConversation(convId, folder)
 
-  if (!isVSCodeCliReady()) showVSCodeLoading(convId, '', 'downloading')
+  // Without the CLI the editor was never set up here; otherwise a download can only be a new VS Code version.
+  const firstSetup = !isVSCodeCliReady()
+  if (firstSetup) showVSCodeLoading(convId, '', 'downloading')
   try {
-    await startVSCodeServer()
+    await startVSCodeServerForUse()
   } catch {
     showVSCodeError(convId)
     return
@@ -581,7 +605,7 @@ async function loadVSCodeFolder(convId: string, folder: string): Promise<void> {
     loadVSCode(convId, url, settingsJson)
     return
   }
-  showVSCodeLoading(convId, url, phase === 'downloading' ? 'downloading' : 'starting')
+  showVSCodeLoading(convId, url, phase === 'downloading' ? (firstSetup ? 'downloading' : 'updating') : 'starting')
   void waitForEditorReady().finally(() => loadVSCode(convId, url, settingsJson))
 }
 
@@ -1022,7 +1046,7 @@ function registerIpc(): void {
     standaloneFolder: validateStandaloneConversationDirectory,
     ignoreSidecars: ensureAppOwnedExcludes,
     watch: watchConversation,
-    start: startVSCodeServer,
+    start: startVSCodeServerForUse,
     running: isVSCodeServerRunning,
     cliReady: isVSCodeCliReady,
     probe: probeVSCode,
@@ -1126,6 +1150,8 @@ app.whenReady().then(async () => {
   )
   toolOutputCleanupTimer.unref()
   app.once('will-quit', () => clearInterval(toolOutputCleanupTimer))
+  // An E2E run never reaches Microsoft's update service: its editor is a server the test runs.
+  if (!isE2E()) app.once('will-quit', vscodeWarmup.schedule())
 
   const instanceId = getInstanceId()
   if (instanceId) writeInstanceLock(instanceId)
@@ -1320,7 +1346,7 @@ app.whenReady().then(async () => {
     })
     const editor = new HostEditor({
       ensureServer: async () => {
-        await startVSCodeServer()
+        await startVSCodeServerForUse()
         return vscodeServerEndpoint()
       },
       onActivity: noteRemoteEditorActivity,

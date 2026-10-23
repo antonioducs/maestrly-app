@@ -242,7 +242,8 @@ tools. On this computer it is a window of the drawer like the local editor, so t
 the display's sharpness are this computer's own.
 
 - **First opening.** The server downloads VS Code from Microsoft the first time its editor opens, which may take a
-  minute; the tab says so meanwhile. Later openings start it in a few seconds. The editor stops on its own 15 minutes
+  minute; the tab says so meanwhile. Later openings start it in a few seconds: while its editor was opened in the last
+  14 days, the server downloads each new VS Code version in the background. The editor stops on its own 15 minutes
   after the last window that showed it closes.
 - **Settings.** Your VS Code settings on this computer, including the color theme, apply to the server's editor the
   first time it opens there. Extensions are not copied: install them in the server's editor, where they stay. A theme

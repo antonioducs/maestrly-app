@@ -12,6 +12,7 @@ import { vscodeUserDir, vscodeExtDir, killProcessTree, isLinux, isWin, spawnCli 
 import { EXT_ID, EXT_DIRNAME, EXT_VERSION, EXT_PACKAGE_JSON, EXT_JS } from './vscode-ext-source'
 import { registerOwnedProcess, unregisterOwnedProcess } from '../performance/owned-processes'
 import { isE2E } from '../test-mode'
+import { lineSplitter, noteVSCodeSetup, onVSCodeSetupProgress, parseServeWebLine } from './setup-progress'
 
 /**
  * Run one authenticated loopback official VS Code serve-web for all conversations, varying folder in
@@ -272,6 +273,9 @@ export function startVSCodeServer(): Promise<void> {
         dataDir(),
         '--accept-server-license-terms',
         '--disable-telemetry',
+        // The server download reports its progress only at trace level; parseServeWebLine reads it for the loading page.
+        '--log',
+        'trace',
       ],
       // Use a dedicated POSIX process group to terminate children; hide the Windows launcher console.
       { stdio: ['ignore', 'pipe', 'pipe'], detached: true, windowsHide: true }
@@ -285,7 +289,14 @@ export function startVSCodeServer(): Promise<void> {
       state: () => (serverProc ? 'ready' : 'idle'),
       includeDescendants: true,
     })
-    proc.stdout?.on('data', (d) => console.log('[vscode]', String(d).trim()))
+    proc.stdout?.on(
+      'data',
+      lineSplitter((raw) => {
+        const line = parseServeWebLine(raw)
+        if (line.event) noteVSCodeSetup(line.event)
+        if (!line.trace) console.log('[vscode]', line.text)
+      })
+    )
     proc.stderr?.on('data', (d) => console.error('[vscode]', String(d).trim()))
     proc.on('exit', (code, signal) => {
       console.log('[vscode] serve-web saiu', code)
@@ -293,6 +304,7 @@ export function startVSCodeServer(): Promise<void> {
       // before termination, preventing expected old exits from clearing new-server state or logging false
       // failures.
       if (serverProc !== proc) return
+      noteVSCodeSetup({ kind: 'reset' })
       // Log unexpected current-server nonzero or signal exits locally.
       if (signal != null || (code !== 0 && code !== null)) {
         console.error('[vscode] serve-web exited unexpectedly', { exitCode: code, signal })
@@ -361,7 +373,12 @@ export function probeVSCode(timeoutMs = 2500): Promise<VSCodePhase> {
         body += chunk
         if (body.length >= 8192) res.destroy() // only the body prefix is needed
       })
-      const classify = (): void => done(/server is downloading|is downloading/i.test(body) ? 'downloading' : 'ready')
+      const classify = (): void => {
+        const phase = /server is downloading|is downloading/i.test(body) ? 'downloading' : 'ready'
+        // The latest server answers (or failed for good): nothing is being set up any more.
+        if (phase === 'ready' && !settled) noteVSCodeSetup({ kind: 'reset' })
+        done(phase)
+      }
       res.on('end', classify)
       res.on('close', classify)
     })
@@ -375,17 +392,59 @@ export function probeVSCode(timeoutMs = 2500): Promise<VSCodePhase> {
 
 /**
  * Poll until ready or timeout, advancing server download. On timeout callers may show the real server
- * page instead of trapping the user in custom loading UI.
+ * page instead of trapping the user in custom loading UI. The timeout counts only time without setup progress: a
+ * server download that keeps moving on a slow connection is waited for, with its progress on the loading page.
  */
 export function waitForEditorReady(timeoutMs = 120000): Promise<void> {
-  const deadline = Date.now() + timeoutMs
-  return new Promise((resolve, reject) => {
+  let deadline = Date.now() + timeoutMs
+  const stopWatching = onVSCodeSetupProgress(() => {
+    deadline = Date.now() + timeoutMs
+  })
+  return new Promise<void>((resolve, reject) => {
     const tick = async (): Promise<void> => {
       if ((await probeVSCode(2500)) === 'ready') return resolve()
       if (Date.now() > deadline) return reject(new Error('timed out waiting for VS Code editor'))
       setTimeout(() => void tick(), 1200)
     }
     void tick()
+  }).finally(stopWatching)
+}
+
+/**
+ * The VS Code server version the editor serves to a new window, read from the workbench page's asset paths
+ * (`/stable-<commit>/…`); null while it downloads, or when it does not answer. The token goes as the cookie the
+ * workbench sets, since the `?tkn=` address only answers with a redirect that sets it.
+ */
+export function servedVSCodeCommit(timeoutMs = 5000): Promise<string | null> {
+  return new Promise((resolve) => {
+    let settled = false
+    const done = (commit: string | null): void => {
+      if (!settled) {
+        settled = true
+        resolve(commit)
+      }
+    }
+    const req = http.get(`http://127.0.0.1:${port}/`, { headers: { Cookie: `vscode-tkn=${token}` } }, (res) => {
+      if (res.statusCode !== 200) {
+        res.resume()
+        done(null)
+        return
+      }
+      let body = ''
+      res.setEncoding('utf8')
+      res.on('data', (chunk: string) => {
+        body += chunk
+        if (body.length >= 65536) res.destroy()
+      })
+      const read = (): void => done(/\/(?:stable|insider)-([0-9a-f]{40})\//.exec(body)?.[1] ?? null)
+      res.on('end', read)
+      res.on('close', read)
+    })
+    req.on('error', () => done(null))
+    req.setTimeout(timeoutMs, () => {
+      req.destroy()
+      done(null)
+    })
   })
 }
 
@@ -413,6 +472,7 @@ export function stopVSCodeServer(): void {
   ready = null
   e2eServerRunning = false
   unregisterOwnedProcess('vscode-serve-web')
+  noteVSCodeSetup({ kind: 'reset' })
   if (!p?.pid) return
   // Kill launcher and descendant server together so no orphan retains the port: POSIX process group or
   // Windows taskkill /T /F.

@@ -33,6 +33,12 @@ import { VSCODE_SERVER_IDLE_TTL_MS, VSCODE_VIEW_COLD_TTL_MS } from '../performan
 import { getConversation } from '../store'
 import { hasVSCodeBridgeInFlight, onVSCodeBridgeIdle, requestVSCodeMemorySnapshot } from '../vscode/vscode-memory'
 import { isVSCodeServerRunning, stopVSCodeServer } from '../vscode/vscode-server'
+import {
+  getVSCodeSetupProgress,
+  onVSCodeSetupProgress,
+  vscodeSetupView,
+  type VSCodeSetupView,
+} from '../vscode/setup-progress'
 
 // VS Code theme settings are global across conversations.
 let vscodeSettingsJson = ''
@@ -220,6 +226,18 @@ function scheduleVSCodeServerIdle(): void {
 
 onVSCodeBridgeIdle(scheduleVSCodeServerIdle)
 
+/**
+ * Stop this computer's editor server now when nothing uses it, as the idle reclaimer would later: a background
+ * warm-up started it only to download a new VS Code version. Returns whether it stopped.
+ */
+export function stopVSCodeServerIfIdle(): boolean {
+  if (materializedVSCodeCount() > 0 || remoteEditorSockets > 0 || hasVSCodeBridgeInFlight()) return false
+  if (!isVSCodeServerRunning()) return false
+  stopVSCodeServer()
+  unregisterReclaimable(SERVER_IDLE_KEY)
+  return true
+}
+
 // Seed user VS Code settings once only if absent/empty. Thereafter persistent browser storage retains
 // in-editor changes. Return seeded for one applying reload, exists without changes, or error for retry on a
 // later load.
@@ -315,6 +333,7 @@ export function navigateFocusedVSCode(convId: string, direction: 'back' | 'forwa
 // editor has phases of its own: it downloads and starts on the host, and can be unreachable for several reasons.
 export type VSCodeLoadPhase =
   | 'downloading'
+  | 'updating'
   | 'starting'
   | 'restarting'
   | 'error'
@@ -327,18 +346,34 @@ export type VSCodeLoadPhase =
   | 'remoteFailed'
 const WAITING_PHASES: ReadonlySet<VSCodeLoadPhase> = new Set([
   'downloading',
+  'updating',
   'starting',
   'restarting',
   'remoteDownloading',
   'remoteStarting',
 ])
+// Pages of this computer's editor, whose server reports its download here: any of them can be waiting on one.
+const PROGRESS_PHASES: ReadonlySet<VSCodeLoadPhase> = new Set(['downloading', 'updating', 'starting', 'restarting'])
 
-function vscodeLoadingHtml(phase: VSCodeLoadPhase): string {
+function currentSetupView(): VSCodeSetupView {
+  return vscodeSetupView(getVSCodeSetupProgress(), tMain('main'), getMainLocale())
+}
+
+/** A view model as a script literal, safe inside an inline script element. */
+function scriptJson(value: unknown): string {
+  return JSON.stringify(value).replace(/</g, '\\u003c')
+}
+
+export function vscodeLoadingHtml(phase: VSCodeLoadPhase): string {
   const t = tMain('main')
   const copy: Record<VSCodeLoadPhase, { title: string; sub: string }> = {
     downloading: {
       title: t('drawerLoading.downloadingTitle'),
       sub: t('drawerLoading.downloadingSub'),
+    },
+    updating: {
+      title: t('drawerLoading.updatingTitle'),
+      sub: t('drawerLoading.updatingSub'),
     },
     starting: {
       title: t('drawerLoading.startingTitle'),
@@ -375,6 +410,23 @@ function vscodeLoadingHtml(phase: VSCodeLoadPhase): string {
   const { title, sub } = copy[phase]
   // Errors are final states without a spinner; reopening Code retries.
   const indicator = WAITING_PHASES.has(phase) ? `<div class="ring"></div>` : `<div class="warn">!</div>`
+  // The page starts from the current setup; pushVSCodeSetupProgress moves it without reloading.
+  const progress = PROGRESS_PHASES.has(phase)
+    ? `<div class="progress" id="setup" hidden>
+    <div class="track"><div class="fill" id="setup-fill"></div></div>
+    <div class="label" id="setup-label"></div>
+  </div>
+  <script>
+    window.__vscodeSetup=function(v){
+      var box=document.getElementById('setup'),fill=document.getElementById('setup-fill');
+      box.hidden=!v.visible;
+      document.getElementById('setup-label').textContent=v.label;
+      fill.classList.toggle('indeterminate',v.percent===null);
+      fill.style.width=v.percent===null?'':v.percent+'%';
+    };
+    window.__vscodeSetup(${scriptJson(currentSetupView())});
+  </script>`
+    : ''
   // Self-contained offline HTML using slot background, platinum accent, and app font.
   return `<!doctype html><html lang="${getMainLocale()}"><head><meta charset="utf-8">
 <style>
@@ -390,20 +442,61 @@ function vscodeLoadingHtml(phase: VSCodeLoadPhase): string {
   .warn{width:34px;height:34px;border-radius:50%;border:2.5px solid rgba(255,255,255,.14);
     display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;color:#EDEAE3}
   @keyframes spin{to{transform:rotate(360deg)}}
-  @media (prefers-reduced-motion:reduce){.ring{animation-duration:1.6s}}
   h1{font-size:15px;font-weight:600;letter-spacing:.2px}
   p{font-size:13px;line-height:1.5;color:rgba(178,182,196,.72)}
+  .progress{display:flex;flex-direction:column;align-items:center;gap:8px;width:260px;max-width:100%}
+  .progress[hidden]{display:none}
+  .track{position:relative;width:100%;height:4px;border-radius:2px;background:rgba(255,255,255,.10);overflow:hidden}
+  .fill{height:100%;width:0;border-radius:2px;background:#EDEAE3;transition:width .3s ease}
+  .fill.indeterminate{position:absolute;width:35%;transition:none;animation:slide 1.3s ease-in-out infinite}
+  @keyframes slide{from{left:-35%}to{left:100%}}
+  .label{font-size:12px;color:rgba(178,182,196,.86);font-variant-numeric:tabular-nums}
+  @media (prefers-reduced-motion:reduce){.ring{animation-duration:1.6s}.fill.indeterminate{animation-duration:2.6s}}
 </style></head>
 <body><div class="box">
   ${indicator}
   <h1>${title}</h1>
   <p>${sub}</p>
+  ${progress}
 </div></body></html>`
 }
 
 function vscodeLoadingDataUrl(phase: VSCodeLoadPhase): string {
   return `data:text/html;charset=utf-8,${encodeURIComponent(vscodeLoadingHtml(phase))}`
 }
+
+const SETUP_PUSH_MS = 250
+let setupPushTimer: ReturnType<typeof setTimeout> | null = null
+let setupPushPending = false
+
+/** Move the progress of every loading page of this computer's editor to the current setup, without reloading it. */
+function pushVSCodeSetupProgress(): void {
+  const script = `window.__vscodeSetup&&window.__vscodeSetup(${scriptJson(currentSetupView())})`
+  for (const [convId, d] of drawers) {
+    const wc = d.vscodeView?.webContents
+    if (!wc || wc.isDestroyed() || !isLocalEditor(convId)) continue
+    // The editor itself is never scripted: only its loading page, a data URL.
+    if (!wc.getURL().startsWith('data:')) continue
+    wc.executeJavaScript(script).catch(() => {})
+  }
+}
+
+/** At most one push per SETUP_PUSH_MS, the last state always included. */
+function scheduleVSCodeSetupPush(): void {
+  if (setupPushTimer) {
+    setupPushPending = true
+    return
+  }
+  pushVSCodeSetupProgress()
+  setupPushTimer = setTimeout(() => {
+    setupPushTimer = null
+    if (!setupPushPending) return
+    setupPushPending = false
+    scheduleVSCodeSetupPush()
+  }, SETUP_PUSH_MS)
+}
+
+onVSCodeSetupProgress(scheduleVSCodeSetupPush)
 
 /**
  * Show the loading page and mark targetUrl pending to deduplicate waits. Leave vscodeRequestedUrl

@@ -94,7 +94,14 @@ export default {
   drawerLoading: {
     downloadingTitle: 'Setting up VS Code',
     downloadingSub:
-      'Downloading VS Code to use right inside the app — nothing to install. This only happens the first time and may take a few seconds.',
+      'Downloading VS Code to use right inside the app — nothing to install. This may take a few minutes, depending on your connection.',
+    updatingTitle: 'Updating VS Code',
+    updatingSub:
+      'A new version of VS Code is out and is being downloaded. This may take a few minutes, depending on your connection.',
+    progressDownload: '{{percent}}% · {{received}} of {{total}} MB',
+    progressDownloading: 'Downloading…',
+    progressInstalling: 'Installing…',
+    progressStarting: 'Starting the editor…',
     startingTitle: 'Preparing the editor',
     startingSub: 'Starting VS Code for this conversation…',
     restartingTitle: 'Restarting VS Code',
