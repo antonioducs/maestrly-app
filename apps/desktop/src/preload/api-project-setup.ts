@@ -31,6 +31,9 @@ export function makeProjectSetupApi(ipcRenderer: IpcTransport) {
     /** Opens the folder picker and saves the choice; `ok` is false when the person cancels or the folder is invalid. */
     pickProjectsDirectory: (): Promise<{ ok: boolean; path: string | null; error?: string }> =>
       ipcRenderer.invoke('project-setup:projects-directory-pick'),
+    /** Saves a folder of the host chosen in this window, for hosts without a native picker. */
+    setProjectsDirectory: (path: string): Promise<{ ok: boolean; path: string | null; error?: string }> =>
+      ipcRenderer.invoke('project-setup:projects-directory-set', path),
     clearProjectsDirectory: (): Promise<null> => ipcRenderer.invoke('project-setup:projects-directory-clear'),
     onProjectsDirectoryChanged: (callback: (path: string | null) => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, path: string | null): void => callback(path)

@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils'
 import { useHostApi, useHostId } from '@/lib/hosts/host-context'
 import { useHostInfo } from '@/lib/hosts/use-hosts'
 import { hostKey } from '../../../shared/host-key'
+import { HostFolderDialog } from '@/components/HostFolderDialog'
 import { ToolCallCard } from './ToolCallCard'
 
 type ToolPart = Extract<MessagePart, { type: 'tool' }>
@@ -36,25 +37,29 @@ function inputOf(part: ToolPart): { requestKey?: string; name?: string; kind?: s
 function SetProjectsFolder() {
   const { t } = useTranslation('chat')
   const api = useHostApi()
+  // A host without a desktop to show the native picker on has its folders browsed in this window.
+  const nativePicker = useHostInfo().desktopEffects
   const [saved, setSaved] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [browsing, setBrowsing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const save = async (pick: () => Promise<{ ok: boolean; path: string | null; error?: string }>) => {
+    setBusy(true)
+    setError(null)
+    try {
+      const result = await pick()
+      if (result.ok && result.path) setSaved(result.path)
+      else if (result.error) setError(result.error)
+    } finally {
+      setBusy(false)
+    }
+  }
   return (
     <div className="mt-2 flex flex-col gap-1.5">
       <button
         type="button"
         disabled={busy}
-        onClick={async () => {
-          setBusy(true)
-          setError(null)
-          try {
-            const result = await api.pickProjectsDirectory()
-            if (result.ok && result.path) setSaved(result.path)
-            else if (result.error) setError(result.error)
-          } finally {
-            setBusy(false)
-          }
-        }}
+        onClick={() => (nativePicker ? void save(() => api.pickProjectsDirectory()) : setBrowsing(true))}
         className="flex w-fit items-center gap-1.5 rounded-md border border-white/[0.1] px-2.5 py-1 text-[12px] text-foreground hover:bg-white/[0.06] disabled:opacity-60"
       >
         {busy ? <Loader2 className="size-3.5 animate-spin" /> : <FolderOpen className="size-3.5" />}
@@ -62,6 +67,15 @@ function SetProjectsFolder() {
       </button>
       {saved && <p className="break-all text-[11px] text-muted-foreground">{t('workspaceCreation.folderSet', { path: saved })}</p>}
       {error && <p className="break-words text-[11px] text-amber-200/80">{error}</p>}
+      <HostFolderDialog
+        open={browsing}
+        purpose="parent"
+        onPick={(selected) => {
+          setBrowsing(false)
+          void save(() => api.setProjectsDirectory(selected))
+        }}
+        onClose={() => setBrowsing(false)}
+      />
     </div>
   )
 }
@@ -79,8 +93,6 @@ export function WorkspaceCreationCard({
   const { t } = useTranslation(['chat', 'ui'])
   const api = useHostApi()
   const hostId = useHostId()
-  // Choosing a folder opens a picker on the host's own desktop: a server has nobody there to answer it.
-  const canPickFolder = useHostInfo().desktopEffects
   const input = inputOf(part)
   const running =
     part.state.status === 'pending' || part.state.status === 'running' || part.state.status === 'awaiting-permission'
@@ -177,7 +189,7 @@ export function WorkspaceCreationCard({
               {result.error}
             </p>
           )}
-          {!result.ok && result.code && PROJECTS_DIRECTORY_ERROR_CODES.includes(result.code) && canPickFolder && (
+          {!result.ok && result.code && PROJECTS_DIRECTORY_ERROR_CODES.includes(result.code) && (
             <SetProjectsFolder />
           )}
         </div>

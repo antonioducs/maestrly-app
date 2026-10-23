@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useHostApi } from '@/lib/hosts/host-context'
 import { useHostInfo } from '@/lib/hosts/use-hosts'
+import { HostFolderDialog } from '@/components/HostFolderDialog'
 import type { TFn } from './shared'
 
 export function DefaultPermissionSection({
@@ -46,15 +47,16 @@ export function DefaultPermissionSection({
 }
 
 /**
- * Folder where chats create and clone projects; chosen with the native picker and validated in main. A server has no
- * picker anybody could answer: its chats use its workspaces folder until another is set there.
+ * Folder where chats create and clone projects, validated in main. A host with a desktop shows its native picker; a
+ * remote host's folders are browsed in this window instead, and a server uses its workspaces folder until one is set.
  */
 export function ProjectsDirectorySection({ t }: { t: TFn }) {
   const api = useHostApi()
-  const canPick = useHostInfo().desktopEffects
+  const nativePicker = useHostInfo().desktopEffects
   const [directory, setDirectory] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [browsing, setBrowsing] = useState(false)
 
   useEffect(() => {
     let alive = true
@@ -71,17 +73,19 @@ export function ProjectsDirectorySection({ t }: { t: TFn }) {
     }
   }, [api])
 
-  const choose = async () => {
+  const save = async (pick: () => Promise<{ ok: boolean; path: string | null; error?: string }>) => {
     setBusy(true)
     setError(null)
     try {
-      const result = await api.pickProjectsDirectory()
+      const result = await pick()
       setDirectory(result.path)
       if (!result.ok && result.error) setError(result.error)
     } finally {
       setBusy(false)
     }
   }
+
+  const choose = () => (nativePicker ? void save(() => api.pickProjectsDirectory()) : setBrowsing(true))
 
   return (
     <section className="flex flex-col gap-3 border-t border-border pt-6">
@@ -100,12 +104,10 @@ export function ProjectsDirectorySection({ t }: { t: TFn }) {
         >
           {directory ?? t('settings.projectsDirectory.empty')}
         </div>
-        {canPick && (
-          <Button variant="outline" size="sm" className="h-8 gap-1.5 text-[12px]" disabled={busy} onClick={choose}>
-            <FolderOpen className="size-3.5" />
-            {t('settings.projectsDirectory.choose')}
-          </Button>
-        )}
+        <Button variant="outline" size="sm" className="h-8 gap-1.5 text-[12px]" disabled={busy} onClick={choose}>
+          <FolderOpen className="size-3.5" />
+          {t('settings.projectsDirectory.choose')}
+        </Button>
         {directory && (
           <Button
             variant="ghost"
@@ -122,6 +124,15 @@ export function ProjectsDirectorySection({ t }: { t: TFn }) {
         )}
       </div>
       {error && <p className="break-words text-[11px] text-destructive">{error}</p>}
+      <HostFolderDialog
+        open={browsing}
+        purpose="parent"
+        onPick={(selected) => {
+          setBrowsing(false)
+          void save(() => api.setProjectsDirectory(selected))
+        }}
+        onClose={() => setBrowsing(false)}
+      />
     </section>
   )
 }

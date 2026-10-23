@@ -397,7 +397,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(658)
+    expect(keys).toHaveLength(659)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -610,10 +610,12 @@ describe('preload API — channels and argument order (ipcRenderer.invoke)', () 
   it('projects folder and chat-created workspaces use their own channels', () => {
     api.getProjectsDirectory()
     api.pickProjectsDirectory()
+    api.setProjectsDirectory('/srv/projects')
     api.clearProjectsDirectory()
     expect(invokeSpy.mock.calls).toEqual([
       ['project-setup:projects-directory-get'],
       ['project-setup:projects-directory-pick'],
+      ['project-setup:projects-directory-set', '/srv/projects'],
       ['project-setup:projects-directory-clear'],
     ])
     for (const [method, channel] of [
