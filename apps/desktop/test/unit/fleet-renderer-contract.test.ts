@@ -22,6 +22,13 @@ describe('fleet renderer wiring', () => {
     expect(sidebar).toContain("t('sidebar.ownerMemory')")
   })
 
+  it('brings the main window forward from a bot window by the key that window has, with its server', () => {
+    const view = source('components/fleet/BotView.tsx')
+    expect(view).toContain('window.api.chatWindowShowSource(chatWindowKey(windowTarget))')
+    expect(view).toContain("({ kind: 'bot' as const, serverId: fleet.serverId, id: bot.id })")
+    expect(view).not.toContain('chatWindowShowSource(`bot:')
+  })
+
   it('routes fleet views through the main override and clears them for local conversations', () => {
     const panels = source('lib/use-main-panels.ts')
     expect(panels).toContain("(fleetView ? 'fleet' : null)")
