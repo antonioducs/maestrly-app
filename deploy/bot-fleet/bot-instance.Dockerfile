@@ -123,6 +123,9 @@ COPY deploy/bot-fleet/bot-entrypoint.sh /usr/local/bin/bot-entrypoint
 COPY deploy/bot-fleet/egress-guard.sh /usr/local/bin/maestrly-egress-guard
 COPY deploy/bot-fleet/prepare-xvfb-display.sh /usr/local/bin/prepare-xvfb-display
 COPY deploy/bot-fleet/maestrly-bot-browser /usr/local/bin/maestrly-bot-browser
+# Chromium warns on every start about `--disable-blink-features=AutomationControlled`, which keeps the DevTools pipe
+# from marking pages as automated; only a policy turns that warning off.
+COPY deploy/bot-fleet/chromium-policies.json /etc/chromium/policies/managed/maestrly.json
 RUN useradd -m -u 1000 -s /bin/bash bot && chmod 755 /usr/local/bin/bot-entrypoint && \
     chmod 0755 /usr/local/bin/maestrly-egress-guard && \
     chmod 755 /usr/local/bin/prepare-xvfb-display && \

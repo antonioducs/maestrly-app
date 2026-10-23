@@ -551,7 +551,11 @@ See [environments](bot-fleet.md#environments) for what its bots share.
   profile like any of its files. Maestrly controls it through a DevTools pipe
   (`--remote-debugging-pipe`) and opens no debugging port, so no other process of
   the environment, and nothing on the fleet network, can drive it over the
-  network. Its renderers keep Chromium's own sandbox. On its first start it copies
+  network. Chromium starts with `--disable-blink-features=AutomationControlled`, so
+  `navigator.webdriver` stays false and sites such as Google sign-in do not refuse
+  the browser for being automated. A managed policy
+  (`CommandLineFlagSecurityWarningsEnabled: false`) hides the warning Chromium shows
+  for that flag. Its renderers keep Chromium's own sandbox. On its first start it copies
   the cookies of the environment's built-in browser once. A server that sets
   `MAESTRLY_GATEWAY_BOT_BROWSER=electron` keeps its bots on that built-in
   browser instead, which keeps one set of cookies and site logins for the whole

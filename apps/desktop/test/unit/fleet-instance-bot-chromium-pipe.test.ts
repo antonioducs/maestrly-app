@@ -175,6 +175,7 @@ describe('ChromiumSupervisor', () => {
     expect(spawn).toHaveBeenCalledTimes(1)
     expect(spawn).toHaveBeenCalledWith([...BOT_CHROMIUM_ARGS], { DISPLAY: ':3' })
     expect(BOT_CHROMIUM_ARGS).toContain('--remote-debugging-pipe')
+    expect(BOT_CHROMIUM_ARGS).toContain('--disable-blink-features=AutomationControlled')
     expect(BOT_CHROMIUM_ARGS.some((arg) => arg.startsWith('--remote-debugging-port'))).toBe(false)
     expect(instance.isRunning).toBe(true)
   })
