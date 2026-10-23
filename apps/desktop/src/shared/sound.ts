@@ -38,6 +38,8 @@ export interface SoundSettings {
   volumes: Record<SoundEvent, number>
   /** Whether remote bots also sound, with the same voices, when a turn the owner asked for ends or one needs them. */
   bots: boolean
+  /** Whether conversations and bots show system notifications when they end, ask, or need the owner unseen. */
+  notifications: boolean
 }
 
 export const DEFAULT_SOUND_SETTINGS: SoundSettings = {
@@ -47,6 +49,7 @@ export const DEFAULT_SOUND_SETTINGS: SoundSettings = {
   mutedEvents: { ready: false, error: false, permission: false, plan: false },
   volumes: { ready: 1, error: 1, permission: 1, plan: 1 },
   bots: true,
+  notifications: true,
 }
 
 function isVoice(v: unknown): v is SoundVoice {
@@ -87,6 +90,7 @@ export function coerceSoundSettings(raw: unknown): SoundSettings {
     mutedEvents,
     volumes,
     bots: typeof r.bots === 'boolean' ? r.bots : DEFAULT_SOUND_SETTINGS.bots,
+    notifications: typeof r.notifications === 'boolean' ? r.notifications : DEFAULT_SOUND_SETTINGS.notifications,
   }
 }
 

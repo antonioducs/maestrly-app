@@ -83,4 +83,10 @@ describe('AgentRegistry Chat-only', () => {
     expect(coerceSoundSettings({ bots: 'no' }).bots).toBe(true)
     expect(coerceSoundSettings({ bots: false })).toEqual({ ...DEFAULT_SOUND_SETTINGS, bots: false })
   })
+
+  it('turns system notifications on unless they were turned off', () => {
+    expect(coerceSoundSettings(undefined).notifications).toBe(true)
+    expect(coerceSoundSettings({ notifications: 'no' }).notifications).toBe(true)
+    expect(coerceSoundSettings({ notifications: false })).toEqual({ ...DEFAULT_SOUND_SETTINGS, notifications: false })
+  })
 })

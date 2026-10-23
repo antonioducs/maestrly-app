@@ -301,6 +301,8 @@ export function SettingsView({
 
   const toggleBotSounds = () => updateSound((cur) => ({ ...cur, bots: !cur.bots }))
 
+  const toggleNotifications = () => updateSound((cur) => ({ ...cur, notifications: !cur.notifications }))
+
   const setMasterVolume = (v: number) => updateSound((cur) => ({ ...cur, volume: v }))
 
   const setEventVoice = (event: SoundEvent, voice: SoundVoice) => {
@@ -460,6 +462,7 @@ export function SettingsView({
                 sound={sound}
                 toggleSoundMute={toggleSoundMute}
                 toggleBotSounds={toggleBotSounds}
+                toggleNotifications={toggleNotifications}
                 setMasterVolume={setMasterVolume}
                 setEventVoice={setEventVoice}
                 toggleEventMute={toggleEventMute}
