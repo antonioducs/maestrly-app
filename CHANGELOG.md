@@ -5,8 +5,29 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Added
+
+- System notifications. A conversation on this computer or on a server notifies
+  you when it finishes its turn, fails, asks you a question, or brings a plan,
+  unless you are looking at it. A bot notifies you when it finishes or fails
+  what you asked, ends a routine run its settings tell you about, needs you, or
+  pauses a conversation with another bot. Clicking a notification opens the
+  conversation, or the bot at that run or conversation. Notifications are
+  silent; turn them off with **System notifications** in **Settings →
+  Appearance & sound**. See
+  [Notifications and badges](docs/chat-context.md#notifications-and-badges).
+- A bot with something new since you last opened it, including an answer to
+  another bot, carries a red dot in the **Bots** tab until you open it. The tab
+  and the server switcher count these bots with the requests in **Awaiting
+  you**. The app icon counts what needs you: the conversations with a red dot
+  and the **Bots** tab's count. See
+  [Alerts, notifications, and marks](docs/bot-fleet.md#alerts-notifications-and-marks).
+
 ### Changed
 
+- Routine runs that their bot's **Tell me about finished runs** setting tells
+  you about now play the bot alert sounds, and conversations on a server play
+  the alert sounds on this computer.
 - The **Code** tab no longer stops to download each new VS Code version: while
   you have opened it in the last 14 days, the app downloads new versions in the
   background. When the tab still has to download one, it shows how far it is, in
@@ -21,6 +42,9 @@ User-visible changes by version. Downloads are on
   it restarts. It now closes on its own and saves the cookies sites changed in
   its last half minute, instead of being ended by a signal that lost them and
   left stale session tokens behind.
+- In a bot conversation open in its own window, opening the bot's screen,
+  settings, environment, or another bot, or giving back control, brings the
+  main window forward again.
 
 ## [0.26.0] - 2026-10-22
 

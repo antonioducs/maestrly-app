@@ -42,6 +42,28 @@ Window positions are remembered for the current app session. Detached windows
 are not reopened automatically after restarting Maestrly, and closing the whole
 application still follows its normal shutdown behavior.
 
+## Notifications and badges
+
+When a conversation finishes its turn, fails, asks you a question, or brings a
+plan to review, Maestrly shows a system notification, unless you are looking
+at that conversation: shown in the focused main window, or in its own focused
+window. This includes conversations on a server or another computer
+(see [Remote workspaces](remote-workspaces.md)). Clicking the notification
+opens the conversation, in its own window when it has one. A newer notification
+replaces the conversation's last one, and opening the conversation removes it.
+A turn that brought a plan shows only the plan's notification.
+
+Notifications are silent: the **Alert sounds** play for the same events. Turn
+them off with **System notifications** in **Settings → Appearance & sound**;
+muting the sounds does not turn them off. Bots notify too (see
+[Alerts, notifications, and marks](bot-fleet.md#alerts-notifications-and-marks)).
+
+The app icon counts what needs you: the conversations with a red dot in the
+sidebar, this computer's and those of the servers and computers it reaches,
+plus the count on the **Bots** tab. On macOS the
+count shows on the Dock icon, on Linux on launchers that support it, and on
+Windows a red mark shows on the taskbar button.
+
 ## Task lists
 
 The task card shows valid entries from the agent's latest task list. Malformed
