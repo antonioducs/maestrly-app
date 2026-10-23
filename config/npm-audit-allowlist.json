@@ -2,17 +2,24 @@
   "schema": 1,
   "exceptions": [
     {
-      "package": "braces",
-      "path": "node_modules/braces",
-      "advisories": ["GHSA-vfj7-8cjw-p6xm"],
-      "reason": "Build-time only: expo 58 -> @expo/metro -> metro-file-map -> micromatch 4 -> braces 3. Metro uses it to match the project's own watch and ignore globs while bundling the mobile app; it is not shipped in the app and never sees untrusted patterns. braces 3.0.3 is the latest release, so no patched version exists.",
-      "expiresOn": "2026-11-11"
-    },
-    {
       "package": "node-forge",
       "path": "node_modules/node-forge",
       "advisories": ["GHSA-86w9-cpqp-85rv"],
       "reason": "The advisory concerns verifying RSA PKCS#1 v1.5 signatures from others, which nothing here does with node-forge. The desktop app ships it only to create and sign the self-signed certificate of its peer identity (apps/desktop/src/main/peer/identity.ts); certificates are verified by Node's TLS against the certificate pinned at pairing. At build time, expo 58 -> @expo/cli (and @expo/code-signing-certificates) uses it for iOS signing identities and to sign update manifests, neither of which this repository configures. node-forge 1.4.0 is the latest release, so no patched version exists.",
+      "expiresOn": "2026-11-11"
+    },
+    {
+      "package": "zod",
+      "path": "apps/desktop/node_modules/@cursor/sdk/node_modules/zod",
+      "advisories": ["GHSA-mrhx-c7xc-m3w5"],
+      "reason": "The memory exhaustion is in zod 4's array parsing ($ZodArray, handleArrayResult in zod/v4/core), which this copy (3.25.76) has only under its zod/v4 subpath; the advisory marks it because the 3.x line has no patched release. @cursor/sdk 1.0.34 imports the v3 API from \"zod\", whose implementation (zod/v3) has no such code. The desktop app's own schemas use the patched zod 4.6.7. @cursor/sdk is pinned at 1.0.34 and bundles its own copy of zod/v4/mini inside its dist, which no dependency update changes; 1.0.38 and later take zod as a peer dependency, so a later SDK bump removes this copy.",
+      "expiresOn": "2026-11-11"
+    },
+    {
+      "package": "zod",
+      "path": "node_modules/@expo/cli/node_modules/zod",
+      "advisories": ["GHSA-mrhx-c7xc-m3w5"],
+      "reason": "Build-time only: expo 58 -> @expo/cli, the development server and bundler CLI of the mobile app, which is not shipped in it. The memory exhaustion is in zod 4's array parsing ($ZodArray, handleArrayResult in zod/v4/core); this copy (3.25.76) is used through the v3 API (require(\"zod\")), whose implementation has no such code, and the advisory marks it because the 3.x line has no patched release. It validates DevTools plugin and MCP extension descriptions (DevToolsPlugin.schema, createMCPDevToolsExtensionSchema) on the developer's machine. @expo/cli 58.1.14, the latest release, still depends on zod ^3.25.76.",
       "expiresOn": "2026-11-11"
     }
   ]

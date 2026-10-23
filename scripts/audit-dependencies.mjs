@@ -19,6 +19,12 @@ export function advisoryId(url) {
   return ADVISORY_URL.exec(url)?.[1] ?? null
 }
 
+// An exception covers one advisory on one package at one exact path, so the same advisory can be accepted at several
+// paths only by listing each of them, each with its own reason and expiry.
+function exceptionKey({ id, package: packageName, path: nodePath }) {
+  return `${id}\0${packageName}\0${nodePath}`
+}
+
 function validDate(value) {
   if (typeof value !== 'string' || !ISO_DATE.test(value)) return false
   const parsed = new Date(`${value}T00:00:00.000Z`)
@@ -55,8 +61,9 @@ function validateAllowlist(allowlist, failures) {
         failures.push(`${label} contains invalid advisory ${String(id)}`)
         continue
       }
-      if (seen.has(id)) failures.push(`duplicate exception ${id}`)
-      seen.add(id)
+      const key = exceptionKey({ id, package: packageName, path: nodePath })
+      if (seen.has(key)) failures.push(`duplicate exception ${id} at ${nodePath}`)
+      seen.add(key)
       normalized.push({ id, package: packageName, path: nodePath, reason, expiresOn })
     }
   }
@@ -124,7 +131,7 @@ export function evaluateAuditReport(report, allowlist, now = new Date()) {
       failures.push(`unapproved advisory ${finding.id} for ${finding.package} at ${finding.path}`)
       continue
     }
-    observed.add(exception.id)
+    observed.add(exceptionKey(exception))
     const expiry = new Date(`${exception.expiresOn}T00:00:00.000Z`)
     if (now.getTime() >= expiry.getTime()) {
       failures.push(`expired exception ${exception.id} (${exception.expiresOn})`)
@@ -134,7 +141,7 @@ export function evaluateAuditReport(report, allowlist, now = new Date()) {
   }
 
   for (const exception of exceptions) {
-    if (!observed.has(exception.id)) failures.push(`stale exception ${exception.id}`)
+    if (!observed.has(exceptionKey(exception))) failures.push(`stale exception ${exception.id} at ${exception.path}`)
   }
 
   accepted.sort((left, right) => left.id.localeCompare(right.id) || left.path.localeCompare(right.path))

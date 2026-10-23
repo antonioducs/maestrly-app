@@ -91,16 +91,37 @@ test('rejects a stale exception after an advisory disappears', () => {
   assert.ok(result.failures.some((message) => message.includes(`stale exception ${ghsa}`)))
 })
 
-test('rejects duplicate advisory identifiers across exception groups', () => {
+test('rejects the same advisory, package and path listed twice', () => {
   const duplicate = allowlist()
-  duplicate.exceptions.push({
-    ...duplicate.exceptions[0],
-    path: 'node_modules/another/undici',
-  })
+  duplicate.exceptions.push({ ...duplicate.exceptions[0] })
 
   const result = evaluateAuditReport(report(), duplicate, new Date('2026-09-05T12:00:00Z'))
 
-  assert.ok(result.failures.some((message) => message.includes(`duplicate exception ${ghsa}`)))
+  assert.ok(result.failures.some((message) => message.includes(`duplicate exception ${ghsa} at ${nodePath}`)))
+})
+
+test('accepts one advisory at several exact paths only with an exception for each', () => {
+  const otherPath = 'node_modules/another/undici'
+  const both = allowlist()
+  both.exceptions.push({ ...both.exceptions[0], path: otherPath })
+  const found = report(`https://github.com/advisories/${ghsa}`, [nodePath, otherPath])
+  const now = new Date('2026-09-05T12:00:00Z')
+
+  const covered = evaluateAuditReport(found, both, now)
+  assert.deepEqual(covered.failures, [])
+  assert.deepEqual(covered.accepted.map((item) => item.path).sort(), [otherPath, nodePath].sort())
+
+  const partial = evaluateAuditReport(found, allowlist(), now)
+  assert.deepEqual(partial.failures, [`unapproved advisory ${ghsa} for undici at ${otherPath}`])
+})
+
+test('rejects the exception of a path where the advisory disappeared while another path still has it', () => {
+  const both = allowlist()
+  both.exceptions.push({ ...both.exceptions[0], path: 'node_modules/another/undici' })
+
+  const result = evaluateAuditReport(report(), both, new Date('2026-09-05T12:00:00Z'))
+
+  assert.deepEqual(result.failures, [`stale exception ${ghsa} at node_modules/another/undici`])
 })
 
 test('rejects a malformed audit report instead of treating it as clean', () => {
