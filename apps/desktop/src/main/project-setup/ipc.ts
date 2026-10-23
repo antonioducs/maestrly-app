@@ -102,13 +102,7 @@ export function registerProjectSetupIpc(
     return pickDirectory(window, purpose)
   })
 
-  reg.mhandle('project-setup:projects-directory-get', () => projectsDirectory.get())
-  // Picks and persists in one step, so the chat card and Settings never hand a renderer-chosen path to main.
-  reg.mhandle('project-setup:projects-directory-pick', async (event) => {
-    const window = BrowserWindow.fromWebContents(event.sender)
-    if (!window) return { ok: false, path: projectsDirectory.get() }
-    const selected = await pickDirectory(window, 'parent')
-    if (!selected) return { ok: false, path: projectsDirectory.get() }
+  const saveProjectsDirectory = async (selected: string) => {
     try {
       const saved = await projectsDirectory.set(selected)
       projectsDirectory.changed(saved)
@@ -116,6 +110,22 @@ export function registerProjectSetupIpc(
     } catch (error) {
       return { ok: false, path: projectsDirectory.get(), error: error instanceof Error ? error.message : String(error) }
     }
+  }
+
+  reg.mhandle('project-setup:projects-directory-get', () => projectsDirectory.get())
+  // Picks and persists in one step on a host with a desktop to show the native picker on.
+  reg.mhandle('project-setup:projects-directory-pick', async (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender)
+    if (!window) return { ok: false, path: projectsDirectory.get() }
+    const selected = await pickDirectory(window, 'parent')
+    if (!selected) return { ok: false, path: projectsDirectory.get() }
+    return saveProjectsDirectory(selected)
+  })
+  // A host browsed from another computer has no picker anybody can answer: that window browses the host's folders
+  // and sends the chosen one, which is validated here like a picked one.
+  reg.mhandle('project-setup:projects-directory-set', async (_event, selected: unknown) => {
+    if (typeof selected !== 'string' || !selected.trim()) return { ok: false, path: projectsDirectory.get() }
+    return saveProjectsDirectory(selected)
   })
   reg.mhandle('project-setup:projects-directory-clear', async () => {
     await projectsDirectory.set(null)

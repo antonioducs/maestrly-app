@@ -241,6 +241,22 @@ describe('project setup IPC', () => {
       path: '/Users/me/Projects',
       error: 'The projects folder must be a directory.',
     })
+    // A remote host's window sends the folder it browsed; main validates it the same way.
+    expect(await handles.get('project-setup:projects-directory-set')!(event, '/srv/projects')).toEqual({
+      ok: true,
+      path: '/srv/projects',
+    })
+    expect(projectsDirectory.changed).toHaveBeenLastCalledWith('/srv/projects')
+    expect(await handles.get('project-setup:projects-directory-set')!(event, '/not-a-folder')).toEqual({
+      ok: false,
+      path: '/srv/projects',
+      error: 'The projects folder must be a directory.',
+    })
+    expect(await handles.get('project-setup:projects-directory-set')!(event, 42)).toEqual({
+      ok: false,
+      path: '/srv/projects',
+    })
+    expect(showDirectoryPicker).toHaveBeenCalledTimes(3)
     expect(await handles.get('project-setup:projects-directory-clear')!(event)).toBeNull()
     expect(saved).toBeNull()
     expect(projectsDirectory.changed).toHaveBeenLastCalledWith(null)
