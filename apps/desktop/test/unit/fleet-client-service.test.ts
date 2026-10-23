@@ -568,39 +568,47 @@ describe('fleet client service', () => {
     service.stop()
   })
 
-  it('sounds for live bot activity the owner is waiting on', async () => {
+  it('sounds for live bot activity the owner is waiting on, and hands every live entry on', async () => {
     const service = makeClient()
     const alerts: string[] = []
+    const seen: number[] = []
     service.onAlert = (botId, alert) => alerts.push(botId + ':' + alert)
+    service.onLiveEvent = (entry) => seen.push(entry.seq)
     service.start()
     await state.events[0].onConnected()
     const at = '2026-01-01T00:00:00Z'
     const entry = (
       seq: number,
       kind: 'bot_started' | 'turn_completed' | 'turn_failed' | 'needs_you',
-      data: Record<string, string> = {},
+      data: Record<string, string | boolean> = {},
       botId: string | null = 'scout'
     ) => ({ seq, at, botId, kind, summary: null, data })
     const live = [
       entry(3, 'turn_completed', { source: 'owner' }),
       entry(4, 'turn_failed', { source: 'continuation' }, 'orders'),
-      // Routines and peer messages end silently; what waits for the owner sounds whoever started it.
-      entry(5, 'turn_completed', { source: 'routine' }),
-      entry(6, 'turn_failed', { source: 'peer' }),
-      entry(7, 'needs_you', {}, 'ads'),
+      // A routine run sounds as the bot's settings say; peer messages end silently; what waits for the owner sounds
+      // whoever started it.
+      entry(5, 'turn_completed', { source: 'routine', alert: true }, 'digest'),
+      entry(6, 'turn_completed', { source: 'routine', alert: false }),
+      entry(7, 'turn_failed', { source: 'peer' }),
+      entry(8, 'needs_you', {}, 'ads'),
       // A gateway that does not say who started a turn still sounds.
-      entry(8, 'turn_failed', {}, 'crm'),
-      entry(9, 'bot_started'),
-      entry(10, 'turn_completed', { source: 'owner' }, null),
+      entry(9, 'turn_failed', {}, 'crm'),
+      entry(10, 'bot_started'),
+      entry(11, 'turn_completed', { source: 'owner' }, null),
     ]
     for (const item of live) state.events[0].onEvent({ type: 'activity', at, entry: item })
-    expect(alerts).toEqual(['scout:ready', 'orders:error', 'ads:permission', 'crm:error'])
-    // A failing sound does not keep the event from the window.
+    expect(alerts).toEqual(['scout:ready', 'orders:error', 'digest:ready', 'ads:permission', 'crm:error'])
+    expect(seen).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11])
+    // A failing sound or notice does not keep the event from the window.
     service.onAlert = () => {
       throw new Error('Synthetic sound failure')
     }
+    service.onLiveEvent = () => {
+      throw new Error('Synthetic notice failure')
+    }
     state.broadcasts.length = 0
-    state.events[0].onEvent({ type: 'activity', at, entry: entry(11, 'needs_you') })
+    state.events[0].onEvent({ type: 'activity', at, entry: entry(12, 'needs_you') })
     expect(state.broadcasts.map((item) => item.channel)).toEqual(['fleet:event'])
     service.stop()
   })

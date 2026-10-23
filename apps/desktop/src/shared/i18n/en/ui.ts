@@ -1250,7 +1250,7 @@ export default {
       unmute: 'Unmute this sound',
       botsTitle: 'Bot alerts',
       botsDesc:
-        'Plays the sounds above when a bot finishes or fails what you asked, or needs you. Routines and conversations between bots stay silent.',
+        'Plays the sounds above when a bot finishes or fails what you asked, finishes a routine run it tells you about, or needs you. Conversations between bots stay silent.',
       notificationsTitle: 'System notifications',
       notificationsDesc:
         'Shows a notification when a conversation or bot finishes, fails, asks you something, brings a plan, or needs you, unless you are looking at it. Muting the sounds does not turn them off.',
