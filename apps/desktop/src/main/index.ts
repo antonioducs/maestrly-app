@@ -266,6 +266,9 @@ import { isGenUiWidgetUrl } from '../shared/genui-widget'
 import { handleGenUiWidgetProtocol } from './genui-widget-scheme'
 import { registerPrivilegedSchemes } from './privileged-schemes'
 import { noticeFleetDownload } from './fleet/client/download-notices'
+import { AppNotifications } from './notifications/app-notifications'
+import { remoteConversationLabel } from './remote-conversation-labels'
+import type { SoundSettings } from '../shared/sound'
 import { artifactsDataDir, getArtifactsService, setArtifactsService } from './artifacts'
 import { createArtifactEventHandler } from './artifacts/activity'
 import { playSound } from './platform'
@@ -306,6 +309,8 @@ const registry = new AgentRegistry()
 
 let mainWindow: BrowserWindow | null = null
 let chatWindowManager: ChatWindowManager | null = null
+/** System notifications and the app badge; none on a headless instance (a bot, or a server). */
+let appNotifications: AppNotifications | null = null
 let cancelProjectSetupsAndWait: (() => Promise<void>) | null = null
 let disposeConversationMigrationIpc: (() => void) | null = null
 let conversationMoveService: ConversationMoveService | null = null
@@ -656,6 +661,24 @@ function broadcastStatus(payload: { agentId: string; status: string }): void {
   }
 }
 
+/** A conversation's name and project for a notification; a remote host's is named as the window lists it. */
+function notificationLabel(convId: string): { name: string; projectName?: string } | null {
+  if (isRemoteConversation(convId)) {
+    const label = remoteConversationLabel(convId)
+    return label ? { name: label.name, ...(label.projectName ? { projectName: label.projectName } : {}) } : null
+  }
+  const conv = getConversation(convId)
+  if (!conv) return null
+  const project = conv.scope === 'project' ? getWorkspace(conv.workspaceId)?.name : undefined
+  return { name: conv.name, ...(project ? { projectName: project } : {}) }
+}
+
+/** Sound settings also hold whether system notifications show; tests never raise them. */
+function applyAlertSettings(settings: SoundSettings): void {
+  registry.setSoundSettings(settings)
+  appNotifications?.notices.setEnabled(settings.notifications && !isE2E())
+}
+
 function setupSessionPermissions(): void {
   // Inline HTML answers get no permission at all, whatever their frame asks.
   session.defaultSession.setPermissionRequestHandler((_wc, permission, cb, details) =>
@@ -924,7 +947,10 @@ function registerIpc(): void {
   registerConversationIpc(reg, {
     stopChat,
     resumeBackgroundCompaction,
-    emitAttention: (conversationId, attention) => sendToWindow('conversation:attention', { conversationId, attention }),
+    emitAttention: (conversationId, attention) => {
+      sendToWindow('conversation:attention', { conversationId, attention })
+      if (!attention) appNotifications?.conversations.seen(conversationId)
+    },
   })
   registerLocalConversationIpc(reg)
   disposeConversationMigrationIpc?.()
@@ -1081,7 +1107,7 @@ function registerIpc(): void {
   registerConversationMove(reg)
 
   registerSettingsIpc(reg, {
-    applySoundSettings: (s) => registry.setSoundSettings(s),
+    applySoundSettings: (s) => applyAlertSettings(s),
     isPreventSleepEnabled,
     setPreventSleepEnabled,
   })
@@ -1195,8 +1221,18 @@ app.whenReady().then(async () => {
   applyProdCsp()
   handleFleetMediaProtocol((serverId) => fleetServers.get(serverId))
   handleGenUiWidgetProtocol()
+  if (!isHeadlessInstance())
+    appNotifications = new AppNotifications({
+      mainWindow: () => mainWindow,
+      chatWindows: () => chatWindowManager,
+      visibleConversation: popupManager.getVisibleConvId,
+      conversationLabel: notificationLabel,
+      focusMainWindow,
+      sendToMainWindow: (channel, target) => safeWindowSend(mainWindow, channel, target),
+    })
   registry.on('status', broadcastStatus)
-  registry.setSoundSettings(getSoundSettings())
+  registry.on('status', ({ agentId, status }) => appNotifications?.conversations.status(agentId, status))
+  applyAlertSettings(getSoundSettings())
 
   registerIpc()
   // Before anything resumes a turn: a conversation an unfinished move holds stays leased.
@@ -1217,7 +1253,11 @@ app.whenReady().then(async () => {
   app.once('will-quit', disposeRuntimeAssetUpdates)
   if (mainWindow) initSelectionBridge(mainWindow)
 
-  if (mainWindow) initPlanBroker((agentId) => registry.playPlanSound(agentId))
+  if (mainWindow)
+    initPlanBroker((agentId) => {
+      registry.playPlanSound(agentId)
+      appNotifications?.conversations.plan(agentId)
+    })
   if (mainWindow) initMemoryService(mainWindow)
 
   if (mainWindow) void initAppImageIntegration(mainWindow)

@@ -1,4 +1,5 @@
 import { ipcRenderer } from 'electron'
+import type { NotificationTarget } from '../shared/notifications'
 import type { IpcTransport } from './ipc-transport'
 
 export type PlatformOs = 'mac' | 'win' | 'linux'
@@ -56,6 +57,13 @@ export const appApi = {
     const listener = (_event: unknown, full: boolean) => cb(full)
     ipcRenderer.on('window:fullscreen', listener)
     return () => ipcRenderer.removeListener('window:fullscreen', listener)
+  },
+
+  /** The owner clicked a system notification: the window shows what it is about. */
+  onNotificationOpen: (cb: (target: NotificationTarget) => void): (() => void) => {
+    const listener = (_event: unknown, target: NotificationTarget) => cb(target)
+    ipcRenderer.on('notification:open', listener)
+    return () => ipcRenderer.removeListener('notification:open', listener)
   },
 }
 

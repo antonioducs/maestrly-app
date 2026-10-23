@@ -757,6 +757,17 @@ function DesktopShell({
     []
   )
 
+  useEffect(
+    () =>
+      window.api.onNotificationOpen((target) => {
+        if (target.kind !== 'conversation') return
+        window.dispatchEvent(
+          new CustomEvent('maestrly:open-conversation', { detail: { conversationId: target.conversationId } })
+        )
+      }),
+    []
+  )
+
   useEffect(() => {
     window.api.setVisibleConversation(mainOverride ? null : (active?.id ?? null))
   }, [active?.id, mainOverride])

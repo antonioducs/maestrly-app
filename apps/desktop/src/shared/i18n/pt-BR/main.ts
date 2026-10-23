@@ -135,6 +135,13 @@ export default {
       body: 'Abra o Maestrly para ver o código de pareamento.',
     },
   },
+  notices: {
+    untitled: 'Conversa',
+    finished: 'Terminou o turno',
+    failed: 'O turno falhou',
+    question: 'Tem uma pergunta para você',
+    plan: 'Tem um plano para você revisar',
+  },
   chatProviderError: {
     http: '{{provider}} retornou HTTP {{status}}: {{detail}}',
     httpWithoutDetail: '{{provider}} retornou HTTP {{status}} sem mensagem de erro.',
