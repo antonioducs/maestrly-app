@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CdpPipe, CdpPipeClosedError } from '../../src/main/fleet/instance/bot-browser/cdp-pipe'
 import {
   BOT_CHROMIUM_ARGS,
+  CHROMIUM_CLOSE_WAIT_MS,
+  CHROMIUM_EXIT_WAIT_MS,
   CHROMIUM_RESTART_BUDGET,
   CHROMIUM_RESTART_DELAY_MS,
   CHROMIUM_START_TIMEOUT_MS,
@@ -93,6 +95,26 @@ describe('CdpPipe', () => {
     expect(closed).toHaveBeenCalledTimes(1)
   })
 
+  it('closes with a last command, reading nothing the browser sends afterwards', async () => {
+    const ends = pipeEnds()
+    const pipe = new CdpPipe(ends.commands, ends.messages)
+    const events = vi.fn()
+    pipe.onEvent(events)
+    const pending = pipe.send('Page.navigate')
+    pipe.closeWith('Browser.close', 'it was stopped')
+    await expect(pending).rejects.toThrow('it was stopped')
+    await vi.waitFor(() =>
+      expect(ends.written.map((message) => message.method)).toEqual(['Page.navigate', 'Browser.close'])
+    )
+    ends.reply({ method: 'Target.targetDestroyed', params: { targetId: 't1' } })
+    ends.reply({ id: 2, result: {} })
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(events).not.toHaveBeenCalled()
+    pipe.closeWith('Browser.close', 'again')
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(ends.written).toHaveLength(2)
+  })
+
   it('ends the connection when a message goes over its size limit', async () => {
     const ends = pipeEnds()
     const pipe = new CdpPipe(ends.commands, ends.messages, { maxMessageBytes: 64 })
@@ -102,12 +124,13 @@ describe('CdpPipe', () => {
   })
 })
 
-/** A browser process that answers `Browser.getVersion` and exits when told to. */
-function fakeProcess(options: { answers?: boolean; ignoresTerm?: boolean } = {}) {
+/** A browser process that answers its commands, closes on `Browser.close` and exits when told to. */
+function fakeProcess(options: { answers?: boolean; ignoresClose?: boolean; ignoresTerm?: boolean } = {}) {
   const ends = pipeEnds()
   let exit!: (code: number | null) => void
   const exited = new Promise<number | null>((resolve) => (exit = resolve))
   const signals: string[] = []
+  const commands: string[] = []
   const process: ChromiumProcess = {
     pid: 4242,
     commands: ends.commands,
@@ -124,12 +147,23 @@ function fakeProcess(options: { answers?: boolean; ignoresTerm?: boolean } = {})
   }
   if (options.answers !== false) {
     ends.commands.on('data', () => {
-      for (const message of ends.written.splice(0)) ends.reply({ id: message.id, result: {} })
+      for (const message of ends.written.splice(0)) {
+        commands.push(message.method)
+        if (message.method === 'Browser.close' && !options.ignoresClose) {
+          // Chromium closes its tabs on the way out: these must not reach a stopping supervisor's listeners.
+          ends.reply({ method: 'Target.targetDestroyed', params: { targetId: 'tab-1' } })
+          ends.messages.end()
+          exit(0)
+          continue
+        }
+        ends.reply({ id: message.id, result: {} })
+      }
     })
   }
   return {
     process,
     signals,
+    commands,
     crash: (code: number | null = 139) => {
       ends.messages.end()
       exit(code)
@@ -213,16 +247,38 @@ describe('ChromiumSupervisor', () => {
     expect(instance.isRunning).toBe(false)
   })
 
-  it('stops with SIGTERM, then SIGKILL when the browser does not exit, and never restarts it', async () => {
+  it('stops by asking the browser to close, so it writes its cookies, without signalling it', async () => {
+    const one = fakeProcess()
+    const { instance, spawn, onExited } = supervisor([one])
+    const pipe = await instance.ensure()
+    const events = vi.fn()
+    pipe.onEvent(events)
+    await instance.stop()
+    expect(one.commands.at(-1)).toBe('Browser.close')
+    expect(one.signals).toEqual([])
+    expect(events).not.toHaveBeenCalled()
+    expect(onExited).toHaveBeenCalledWith({ code: 0, restarting: false })
+    expect(instance.isRunning).toBe(false)
+    expect(spawn).toHaveBeenCalledTimes(1)
+  })
+
+  it('ends a browser that does not close when asked with SIGTERM, then SIGKILL, and never restarts it', async () => {
     vi.useFakeTimers()
-    const stubborn = fakeProcess({ ignoresTerm: true })
-    const { instance, spawn, onExited } = supervisor([stubborn])
+    const stubborn = fakeProcess({ ignoresClose: true, ignoresTerm: true })
+    const { instance, spawn, onExited, log } = supervisor([stubborn])
     await instance.ensure()
     const stopped = instance.stop()
-    await vi.advanceTimersByTimeAsync(5_000)
+    await vi.advanceTimersByTimeAsync(CHROMIUM_CLOSE_WAIT_MS - 1)
+    expect(stubborn.commands).toContain('Browser.close')
+    expect(stubborn.signals).toEqual([])
+    await vi.advanceTimersByTimeAsync(1)
+    expect(stubborn.signals).toEqual(['SIGTERM'])
+    await vi.advanceTimersByTimeAsync(CHROMIUM_EXIT_WAIT_MS)
     await stopped
     expect(stubborn.signals).toEqual(['SIGTERM', 'SIGKILL'])
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('did not close when asked'))
     expect(onExited).toHaveBeenCalledWith({ code: null, restarting: false })
+    expect(vi.getTimerCount()).toBe(0)
     await vi.advanceTimersByTimeAsync(CHROMIUM_RESTART_DELAY_MS * 3)
     expect(spawn).toHaveBeenCalledTimes(1)
   })

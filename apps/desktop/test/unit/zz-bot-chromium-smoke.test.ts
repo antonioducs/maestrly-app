@@ -219,6 +219,15 @@ describe.skipIf(!existsSync('/usr/bin/chromium'))('bot chromium smoke', () => {
     // Stop: tabs are saved and reopened with their conversations.
     const kept = page('<p>kept</p>')
     await bc.navigate(await chromium.page('conv-a'), kept)
+    // A cookie changed just before the stop, as a site rotating its session token: Chromium writes its cookies every
+    // half minute, so only a browser that closes by itself keeps it.
+    const expires = Math.floor(Date.now() / 1000) + 86_400
+    await (await chromium.page('conv-a')).send('Network.setCookie', {
+      name: 'rotated',
+      value: 'v2',
+      url: 'https://example.com/',
+      expires,
+    })
     await chromium.stop()
     const saved = JSON.parse(readFileSync(path.join(root, 'chromium-tabs.json'), 'utf8'))
     expect(saved.tabs.some((t: { url: string }) => t.url === kept)).toBe(true)
@@ -226,6 +235,11 @@ describe.skipIf(!existsSync('/usr/bin/chromium'))('bot chromium smoke', () => {
     const restored = await chromium.state('conv-a')
     expect(restored.tabs.map((t) => t.url)).toContain(kept)
     expect(restored.activeId).not.toBeNull()
+    expect(logs.join('\n')).not.toContain('did not close when asked')
+    const { cookies: after } = await (await chromium.page('conv-a')).send('Network.getCookies', {
+      urls: ['https://example.com/'],
+    })
+    expect((after as Array<{ name: string; value: string }>).find((c) => c.name === 'rotated')?.value).toBe('v2')
 
     // A crash restarts the browser with its tabs.
     const pid = lastPid!
