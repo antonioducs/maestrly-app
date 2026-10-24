@@ -197,12 +197,40 @@ export interface EnvironmentRuntimeDeps {
    * environment's built-in browser (`MAESTRLY_BOT_BROWSER=electron`, or outside a container).
    */
   botBrowser?(target: BotBrowserTarget): BotChromium
+  /** How long an uninstall waits for each step that can hang (`UNINSTALL_STEP_MS`); tests shorten it. */
+  uninstallStepMs?: number
 }
 
 function log(level: 'info' | 'error', message: string): void {
   console.error(JSON.stringify({ component: 'bot-instance', level, message }))
 }
 const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error))
+
+/**
+ * How long an uninstall waits for a bot's conversations to close, then for its runtime to wind down. A turn stuck in a
+ * tool that ignores its stop would otherwise hold the environment's installs and uninstalls, which run one at a time,
+ * for as long as it lasts: no bot of the environment could be installed, archived, restarted or moved meanwhile.
+ */
+const UNINSTALL_STEP_MS = 20_000
+
+/** Waits for `work` at most `ms`; past that it goes on unawaited, and `what` is logged. */
+async function waitAtMost(work: Promise<unknown>, ms: number, what: string): Promise<void> {
+  let timer: NodeJS.Timeout | undefined
+  const late = await Promise.race([
+    work.then(
+      () => false,
+      (error: unknown) => {
+        log('error', errorMessage(error))
+        return false
+      }
+    ),
+    new Promise<boolean>((resolve) => {
+      timer = setTimeout(() => resolve(true), ms)
+    }),
+  ])
+  clearTimeout(timer)
+  if (late) log('error', `${what} did not finish within ${Math.round(ms / 1000)} s; the uninstall goes on.`)
+}
 
 function gatewayUrl(value: string | undefined): string | null {
   if (!value) return null
@@ -427,8 +455,9 @@ export class EnvironmentRuntime {
   }
   /**
    * Uninstalls a bot: it leaves the installed list first, then its turn stops, its conversation's windows close and its
-   * screens stop. With `purge`, its conversation, memory space, folders, browser profile and settings are deleted too;
-   * the environment's accounts, skills, MCP servers and shared files are never touched.
+   * screens stop. A turn that does not end in time is left to end on its own: the uninstall goes on without it. With
+   * `purge`, its conversation, memory space, folders, browser profile and settings are deleted too; the environment's
+   * accounts, skills, MCP servers and shared files are never touched.
    */
   async uninstallBot(botId: string, options: { purge: boolean }): Promise<void> {
     if (!isBotId(botId)) throw new InstanceHttpError(404, 'NOT_FOUND', 'Bot does not exist.')
@@ -520,9 +549,20 @@ export class EnvironmentRuntime {
       this.registry.delete(botId)
       conversationId = bot.primaryConversationId
       await bot.cancel().catch((error: unknown) => log('error', errorMessage(error)))
-      for (const id of [conversationId, ...bot.runs.list().map((record) => record.conversationId)])
-        if (id) await this.deps.closeConversation(id).catch((error: unknown) => log('error', errorMessage(error)))
-      await bot.dispose({ uninstall: true })
+      // The steps that wait for a turn to end are bounded, so a turn that never ends cannot hold the environment's
+      // lifecycle. `dispose` does its own cleanup before its first wait.
+      const step = this.deps.uninstallStepMs ?? UNINSTALL_STEP_MS
+      const ids = [conversationId, ...bot.runs.list().map((record) => record.conversationId)]
+      await waitAtMost(
+        Promise.all(
+          ids.flatMap((id) =>
+            id ? [this.deps.closeConversation(id).catch((error: unknown) => log('error', errorMessage(error)))] : []
+          )
+        ),
+        step,
+        `Closing the conversations of bot ${botId}`
+      )
+      await waitAtMost(bot.dispose({ uninstall: true }), step, `Stopping bot ${botId}`)
       await this.stopScreens(botId)
     }
     clearGatewayToken(botId)

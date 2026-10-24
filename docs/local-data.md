@@ -461,6 +461,9 @@ be reclaimed, the app stops saving full output until storage is available.
 A conversation's drawer terminals and the agent's `bash` commands can start
 programs that keep running, such as a development server sent to the background
 or a command started with `nohup` or `disown`. Closing one terminal keeps them.
+A `bash` command ends when its shell exits, even if a program it left running
+still holds its output: the agent gets what the command printed and a note that
+later output is not shown. Its timeout and the stop button also end it then.
 When the conversation is archived or deleted, and when Maestrly quits, Maestrly
 ends them: SIGTERM first, SIGKILL three seconds later for what is still there.
 Deleting a conversation waits for them to exit before its worktree is removed.

@@ -19,6 +19,12 @@ import { defineTool, resolveInside, type ToolContext } from './util'
 const DEFAULT_TIMEOUT_MS = 120_000
 const MAX_TIMEOUT_MS = 600_000
 const MAX_CAPTURE_BYTES = 1_048_576 // 1 MiB per stream.
+/**
+ * How long a command's output may still arrive once its shell exited. A program it left in the background (`server &`,
+ * or `xclip`, which forks to keep serving the clipboard) holds the output pipes open: waiting for them to close would
+ * wait for that program, past the timeout and any stop, since it may run outside the group the tool can signal.
+ */
+const EXIT_DRAIN_MS = 250
 
 const params = z.object({
   command: z.string().describe('Shell command to run.'),
@@ -40,6 +46,8 @@ export interface BashResult {
   output: string
   timedOut?: boolean
   truncated: boolean
+  /** Programs the command left running still held its output when it ended: what they print later is not shown. */
+  background?: boolean
 }
 
 function compact(stdout: string, stderr: string): string {
@@ -188,26 +196,22 @@ async function run(args: z.infer<typeof params>, ctx: ToolContext, shell: Comman
       timedOut = true
       kill()
     }, timeout)
+    let drain: NodeJS.Timeout | undefined
     const onAbort = () => kill()
     ctx.signal.addEventListener('abort', onAbort, { once: true })
 
+    // Read until the pipes close even after the result is out, so that a program left writing never blocks on them.
     child.stdout?.on('data', (c: Buffer) => {
-      out = cap(out, c, () => (outTrunc = true))
+      if (!done) out = cap(out, c, () => (outTrunc = true))
     })
     child.stderr?.on('data', (c: Buffer) => {
-      err = cap(err, c, () => (errTrunc = true))
+      if (!done) err = cap(err, c, () => (errTrunc = true))
     })
-    child.on('error', (e) => {
+    const finish = (code: number | null, background: boolean) => {
       if (done) return
       done = true
       clearTimeout(timer)
-      ctx.signal.removeEventListener('abort', onAbort)
-      reject(e)
-    })
-    child.on('close', (code) => {
-      if (done) return
-      done = true
-      clearTimeout(timer)
+      clearTimeout(drain)
       ctx.signal.removeEventListener('abort', onAbort)
       if (timedOut) {
         resolve({
@@ -225,15 +229,32 @@ async function run(args: z.infer<typeof params>, ctx: ToolContext, shell: Comman
         exitCode: code ?? undefined,
         output: compact(out.toString('utf8'), err.toString('utf8')),
         truncated: outTrunc || errTrunc,
+        ...(background ? { background: true } : {}),
       })
+    }
+    child.on('error', (e) => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      clearTimeout(drain)
+      ctx.signal.removeEventListener('abort', onAbort)
+      reject(e)
     })
+    // The command ends with its shell; the pipes normally close right after, unless a program it started holds them.
+    child.on('exit', (code) => {
+      if (!done) drain = setTimeout(() => finish(code, true), EXIT_DRAIN_MS)
+    })
+    child.on('close', (code) => finish(code, false))
   })
 }
 
 function toModelText(_args: z.infer<typeof params>, r: BashResult): string {
   if (r.timedOut) return r.output
   const warn = r.truncated ? '\n\n(output truncated)' : ''
-  return `${r.output}${warn}\n\nCommand exited with code ${r.exitCode ?? 'unknown'}.`
+  const background = r.background
+    ? '\n\n(A program this command left running still holds its output: what it prints from now on is not shown. Redirect its output to a file to read it later.)'
+    : ''
+  return `${r.output}${warn}${background}\n\nCommand exited with code ${r.exitCode ?? 'unknown'}.`
 }
 
 export const bashTool = defineTool({

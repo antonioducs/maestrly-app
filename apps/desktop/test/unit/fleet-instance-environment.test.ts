@@ -114,8 +114,9 @@ const environments: EnvironmentRuntime[] = []
 let override: MockInstance<typeof chatService.setConversationCompactionOverride>
 let globalConfig: MockInstance<typeof chatService.setBackgroundCompactionConfig>
 
-function environment(displays = fakeDisplays(home)) {
+function environment(displays = fakeDisplays(home), extra: Pick<EnvironmentRuntimeDeps, 'uninstallStepMs'> = {}) {
   const deps = {
+    ...extra,
     config: parseBotInstanceConfig({
       MAESTRLY_BOT_MODE: '1',
       MAESTRLY_BOT_CONTROL_TOKEN: randomBytes(32).toString('base64url'),
@@ -830,6 +831,43 @@ describe('bot environment registry', () => {
     await uninstall
     expect(start).not.toHaveBeenCalled()
     expect((await alpha.status()).queue).toHaveLength(1)
+  })
+
+  it('uninstalls a bot whose turn never ends without holding the installs that follow', async () => {
+    const setup = environment(undefined, { uninstallStepMs: 100 })
+    await setup.runtime.start()
+    // A turn stuck in a tool that ignores its stop: it never ends, and closing its conversation waits for it.
+    const start = vi.spyOn(chatService, 'startExecutorChatTurn').mockImplementation(
+      async (input) =>
+        ({
+          executionId: input.conversationId,
+          conversationId: input.conversationId,
+          assistantMessageId: () => null,
+          cancel: () => {},
+          done: new Promise(() => {}),
+        }) as never
+    )
+    setup.deps.closeConversation.mockImplementation(() => new Promise<void>(() => {}))
+    const configured = profile('alpha', 'Alpha', {
+      compaction: {
+        providerId: model.providerId,
+        modelId: model.modelId,
+        reasoning: null,
+        fastMode: false,
+        intervalTokens: 100_000,
+      },
+    })
+    await setup.runtime.installBot({ profile: configured, slot: 1, gatewayToken: tokenA })
+    const alpha = setup.runtime.bot('alpha')
+    await alpha.input({ idempotencyKey: randomUUID(), source: 'owner', text: 'A stuck task', attachments: [] })
+    await vi.waitFor(() => expect(start).toHaveBeenCalledOnce())
+
+    await setup.runtime.uninstallBot('alpha', { purge: false })
+
+    expect(setup.displays.stopBot).toHaveBeenCalledWith('alpha')
+    expect(() => setup.runtime.bot('alpha')).toThrow('Bot does not exist.')
+    await setup.runtime.installBot({ profile: configured, slot: 1, gatewayToken: tokenA })
+    expect(setup.runtime.bot('alpha')).not.toBe(alpha)
   })
 
   it('stops the running turn of a purged bot and writes nothing of it back afterwards', async () => {

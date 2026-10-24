@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -49,14 +49,14 @@ import type { ToolContext } from '../../src/main/chat/tools/util'
 const realPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!
 const pretend = (value: NodeJS.Platform) => Object.defineProperty(process, 'platform', { value, configurable: true })
 
-function context(cwd: string, ask = vi.fn(async () => {})): ToolContext {
+function context(cwd: string, ask = vi.fn(async () => {}), signal = new AbortController().signal): ToolContext {
   return {
     conversationId: 'shell-test',
     projectId: 'p1',
     messageId: 'm1',
     toolCallId: 't1',
     cwd,
-    signal: new AbortController().signal,
+    signal,
     ask,
     askQuestion: async () => [],
   }
@@ -184,6 +184,63 @@ describe('bash tool command assembly', () => {
     expect(h.spawns[0]).toMatchObject({ file: 'echo hi', args: [] })
     expect(h.spawns[0].options).toMatchObject({ shell: '/bin/sh', detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
   })
+})
+
+// A program that leaves the command's group and session yet keeps its output pipes, as `xclip` does once `timeout`
+// started it: the tool can neither signal it nor wait for those pipes to close.
+describe.skipIf(process.platform === 'win32')('a command whose output a detached program keeps', () => {
+  const holders: number[] = []
+  const holder = () => {
+    writeFileSync(
+      path.join(dir, 'holder.cjs'),
+      `const child = require('node:child_process').spawn('sleep', ['30'], { detached: true, stdio: ['ignore', 'inherit', 'inherit'] })
+require('node:fs').writeFileSync('holder.pid', String(child.pid))
+child.unref()
+`
+    )
+    return `"${process.execPath}" holder.cjs`
+  }
+  const holderPid = () => Number(readFileSync(path.join(dir, 'holder.pid'), 'utf8'))
+  afterEach(() => {
+    if (existsSync(path.join(dir, 'holder.pid'))) holders.push(holderPid())
+    for (const pid of holders.splice(0))
+      try {
+        process.kill(pid, 'SIGKILL')
+      } catch {
+        // Already gone.
+      }
+  })
+
+  it('ends with its shell and says what it could not wait for', async () => {
+    const command = `${holder()}; echo done`
+    const started = Date.now()
+
+    const result = await bashTool.execute({ command }, context(dir))
+
+    expect(Date.now() - started).toBeLessThan(5_000)
+    expect(result).toMatchObject({ exitCode: 0, output: 'done\n', background: true })
+    expect(bashTool.toModelText({ command }, result)).toContain('still holds its output')
+    // Still running: the tool only stopped waiting for it.
+    expect(() => process.kill(holderPid(), 0)).not.toThrow()
+  }, 10_000)
+
+  it('ends when it is stopped', async () => {
+    const controller = new AbortController()
+    const running = bashTool.execute({ command: `${holder()}; sleep 30` }, context(dir, undefined, controller.signal))
+    await vi.waitFor(() => expect(existsSync(path.join(dir, 'holder.pid'))).toBe(true), { timeout: 5_000 })
+    const stopped = Date.now()
+
+    controller.abort()
+
+    await expect(running).resolves.toMatchObject({ background: true })
+    expect(Date.now() - stopped).toBeLessThan(5_000)
+  }, 15_000)
+
+  it('ends at its timeout', async () => {
+    const result = await bashTool.execute({ command: `${holder()}; sleep 30`, timeout: 1_000 }, context(dir))
+
+    expect(result).toMatchObject({ timedOut: true })
+  }, 10_000)
 })
 
 describe('PowerShell permission segments', () => {
