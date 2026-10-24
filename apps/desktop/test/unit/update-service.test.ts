@@ -57,7 +57,7 @@ function setPlatform(value: NodeJS.Platform): void {
 }
 
 /** Execute the actual shutdown registration without booting the desktop or its user profile. */
-function quitHarness() {
+function quitHarness(options: { closeBrowsers?: () => Promise<void> } = {}) {
   const source = readFileSync(new URL('../../src/main/index.ts', import.meta.url), 'utf8')
   const start = source.indexOf('let projectSetupsFlushed = false')
   expect(start).toBeGreaterThan(0)
@@ -89,6 +89,17 @@ function quitHarness() {
     },
     console,
     isE2E: () => false,
+    // Bot mode has an environment runtime whose bots' browsers close first; the desktop has none.
+    getEnvironmentRuntime: () => {
+      const closeBrowsers = options.closeBrowsers
+      if (!closeBrowsers) return null
+      return {
+        closeBrowsers: async () => {
+          order.push('browsers')
+          await closeBrowsers()
+        },
+      }
+    },
     isInstalling: svc.isInstalling,
     confirmQuit,
     cancelProjectSetupsAndWait: async () => {
@@ -449,6 +460,32 @@ describe('update-service', () => {
       harness.restore()
     }
   })
+
+  it.each(['close', 'fail'])(
+    "the real quit handler closes the bots' browsers before anything else in bot mode (%s)",
+    async (outcome) => {
+      svc.configureUpdateService()
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const harness = quitHarness({
+        closeBrowsers: async () => {
+          if (outcome === 'fail') throw new Error('pipe gone')
+        },
+      })
+      try {
+        app.quit()
+        for (let i = 0; i < 40; i++) await Promise.resolve()
+        // Before the displays they run on can stop: a browser still closing then loses its newest cookies.
+        expect(harness.order.slice(0, 2)).toEqual(['browsers', 'projects'])
+        expect(harness.order.filter((step) => step === 'browsers')).toHaveLength(1)
+        expect(harness.events.at(-1)?.prevented).toBe(false)
+        expect(harness.cleanup).toHaveBeenCalledOnce()
+        if (outcome === 'fail') expect(warn).toHaveBeenCalledWith('[bot-browser] Close on quit failed:', 'pipe gone')
+      } finally {
+        harness.restore()
+        warn.mockRestore()
+      }
+    }
+  )
 
   it('skips a version until a newer one shows up; manual check ignores the skip', async () => {
     svc.configureUpdateService()

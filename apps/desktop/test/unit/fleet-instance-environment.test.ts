@@ -1173,6 +1173,11 @@ describe('bot environment registry', () => {
     await runtime.uninstallBot('beta', { purge: false })
     // The browser stops before the desktop and the display it runs on.
     expect(order.slice(0, 3)).toEqual(['browser beta', 'desktop beta', 'display beta'])
+    // The app closes the browsers first when it quits, before anything stops their displays.
+    await runtime.closeBrowsers()
+    expect(alpha.dispose).toHaveBeenCalledTimes(1)
+    expect(runtime.browserForConversation(alphaConversation)).toBeNull()
+    expect(order).not.toContain('display alpha')
     await runtime.dispose()
     expect(alpha.dispose).toHaveBeenCalledTimes(1)
   })

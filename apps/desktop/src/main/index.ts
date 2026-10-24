@@ -257,7 +257,7 @@ import { fleetInstallerService } from './fleet/installer/service'
 import { ArtifactServers } from './artifacts/servers'
 import { createDesktopSources } from './artifacts/sources'
 import { botArtifactSource, createBotSources } from './fleet/instance/artifacts'
-import { botRuntimeForConversation } from './fleet/instance'
+import { botRuntimeForConversation, getEnvironmentRuntime } from './fleet/instance'
 import { fleetServers } from './fleet/client/servers'
 import { fleetKey, isFleetServerId } from '../shared/fleet-servers'
 import { handleFleetMediaProtocol } from './fleet/client/media-scheme'
@@ -1533,6 +1533,8 @@ let conversationProcessesStopped = false
 let conversationProcessesStopping = false
 let backgroundServicesStopped = false
 let backgroundServicesStopping = false
+let botBrowsersClosed = false
+let botBrowsersClosing = false
 
 let appTray: Tray | null = null
 let backgroundQuit = false
@@ -1624,6 +1626,25 @@ app.on('before-quit', (e) => {
   if (!confirmQuitOnce(() => e.preventDefault())) return
 
   chatWindowManager?.dispose()
+
+  // First, within the container's stop grace: once this process exits, the bots' displays stop, and a Chromium still
+  // closing then loses the cookies it changed last (the session tokens Google rotates), signing the bots out.
+  const environment = getEnvironmentRuntime()
+  if (!botBrowsersClosed && environment) {
+    e.preventDefault()
+    if (!botBrowsersClosing) {
+      botBrowsersClosing = true
+      void environment
+        .closeBrowsers()
+        .catch((error) => console.warn('[bot-browser] Close on quit failed:', (error as Error).message))
+        .finally(() => {
+          botBrowsersClosed = true
+          botBrowsersClosing = false
+          app.quit()
+        })
+    }
+    return
+  }
 
   if (!projectSetupsFlushed && cancelProjectSetupsAndWait) {
     e.preventDefault()
