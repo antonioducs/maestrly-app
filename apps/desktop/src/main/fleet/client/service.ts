@@ -102,6 +102,8 @@ export class FleetClientService {
   onSideConversation:
     | ((event: Extract<FleetGatewayEvent, { type: 'routine_run.updated' | 'peer_thread.updated' }>) => void)
     | null = null
+  /** Hears that the server is reachable again and this computer read it anew, after what it may have missed. */
+  onResynced: (() => void) | null = null
   /** Tells the owner a bot file finished saving or failed; set by the main process, which shows the notice. */
   onDownloadSettled:
     | ((serverId: FleetServerId, download: FleetSettledDownload, botName: string | null) => void)
@@ -320,8 +322,14 @@ export class FleetClientService {
         if (meta.serverId) this.deps.onGatewayId?.(meta.serverId)
         this.setConnection({ features: fleetMetaFeatures(meta) })
         await this.refresh()
+        if (generation !== this.generation) return
         // Links may have changed while this computer was away; checking them needs the stream open, not this answer.
-        if (generation === this.generation) void this.desktopBridge?.connected().catch(() => undefined)
+        void this.desktopBridge?.connected().catch(() => undefined)
+        try {
+          this.onResynced?.()
+        } catch {
+          /* What listens must not break the connection. */
+        }
       },
       undefined,
       undefined,

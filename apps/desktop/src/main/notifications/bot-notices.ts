@@ -8,7 +8,7 @@ import type { SystemNotices } from './system-notices'
 
 export interface FleetBotNoticesDeps {
   notices: Pick<SystemNotices, 'show' | 'dismiss' | 'dismissPrefix'>
-  attention: Pick<FleetBotAttention, 'mark' | 'clear' | 'seenLane'>
+  attention: Pick<FleetBotAttention, 'mark' | 'clear' | 'seenLane' | 'lanesOf'>
   /** Whether the owner looks at this bot now. */
   sees(serverId: FleetServerId, botId: string): boolean
   botName(serverId: FleetServerId, botId: string): string | null
@@ -23,9 +23,17 @@ export type FleetSideConversationEvent = Extract<
   { type: 'routine_run.updated' | 'peer_thread.updated' }
 >
 
+/** Reads a run or a thread from its server as an event of it would tell it. */
+export type FleetSideConversationRead = (
+  botId: string,
+  side: { kind: 'run' | 'thread'; id: string }
+) => Promise<FleetSideConversationEvent>
+
 const noticePrefix = (serverId: FleetServerId, botId: string) => `bot:${fleetKey(serverId, botId)}:`
 /** Runs remembered as seen, so that one seen before it ended marks nothing when it ends. */
 const SEEN_RUNS_MAX = 500
+/** Side conversations one reconnection reads at most to settle the marks. */
+const RECONCILE_MAX = 100
 
 /**
  * System notifications and sidebar marks of bots, from the live activity of their servers (see fleetBotEventFor). A
@@ -89,6 +97,23 @@ export class FleetBotNotices {
     }
     this.deps.attention.seenLane(serverId, event.botId, lane)
     this.deps.notices.dismiss(noticePrefix(serverId, event.botId) + lane)
+  }
+
+  /**
+   * The server is reachable again: the side conversations that still mark a bot are read, since the owner may have
+   * seen them on another device while no event could reach this computer.
+   */
+  async reconcile(serverId: FleetServerId, read: FleetSideConversationRead): Promise<void> {
+    for (const { botId, lane } of this.deps.attention.lanesOf(serverId).slice(0, RECONCILE_MAX)) {
+      const at = lane.indexOf(':')
+      const kind = lane.slice(0, at)
+      if (kind !== 'run' && kind !== 'thread') continue
+      try {
+        this.sideConversation(serverId, await read(botId, { kind, id: lane.slice(at + 1) }))
+      } catch {
+        /* Gone or out of reach: the mark stays until the owner opens the bot. */
+      }
+    }
   }
 
   /** The owner sees the bot: its mark and notifications go. */

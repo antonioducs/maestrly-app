@@ -43,8 +43,7 @@ export class AppBadge {
   constructor(private readonly deps: AppBadgeDeps) {}
 
   set(count: unknown): void {
-    const next =
-      typeof count === 'number' && Number.isSafeInteger(count) && count > 0 ? Math.min(count, MAX_COUNT) : 0
+    const next = typeof count === 'number' && Number.isSafeInteger(count) && count > 0 ? Math.min(count, MAX_COUNT) : 0
     if (next === this.count) return
     this.count = next
     this.apply()

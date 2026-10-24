@@ -250,6 +250,7 @@ import { cleanupToolOutputs } from './chat/tool-output-store'
 import { attachmentPreviewRoot, clearAttachmentPreviews } from './chat/attachment-artifacts'
 import { registerRuntimeAssetIpc } from './runtime-assets/ipc'
 import { registerBotIpc } from './bot/ipc'
+import { FLEET_OWNER_SEEN_FEATURE } from '@maestrly/bot-fleet-protocol'
 import { fleetScopedRegistrar, registerFleetClientIpc } from './fleet/client/ipc'
 import { registerFleetDesktopBridgeIpc } from './fleet/client/desktop-bridge-ipc'
 import { registerFleetInstallerIpc } from './fleet/installer/ipc'
@@ -1081,6 +1082,26 @@ function registerIpc(): void {
     client.onAlert = (botId, alert) => registry.playBotAlert(fleetKey(client.serverId, botId), alert)
     client.onLiveEvent = (entry) => appNotifications?.bots.live(client.serverId, entry)
     client.onSideConversation = (event) => appNotifications?.bots.sideConversation(client.serverId, event)
+    // Runs and threads seen on another device while this computer was away or off no longer mark their bots.
+    client.onResynced = () => {
+      if (!client.hasFeature(FLEET_OWNER_SEEN_FEATURE)) return
+      const at = () => new Date().toISOString()
+      void appNotifications?.bots.reconcile(client.serverId, async (botId, side) =>
+        side.kind === 'run'
+          ? {
+              type: 'routine_run.updated',
+              at: at(),
+              botId,
+              run: await client.call('botRunGet', { params: { id: botId, runId: side.id } }),
+            }
+          : {
+              type: 'peer_thread.updated',
+              at: at(),
+              botId,
+              thread: await client.call('botPeerThreadGet', { params: { id: botId, threadId: side.id } }),
+            }
+      )
+    }
     client.onDownloadSettled = noticeFleetDownload
   })
   registerNotificationsIpc(reg, () => appNotifications)

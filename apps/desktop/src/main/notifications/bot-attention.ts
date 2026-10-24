@@ -80,6 +80,13 @@ export class FleetBotAttention {
     return this.marks.has(fleetKey(serverId, botId))
   }
 
+  /** The side conversations that alone keep a server's bots marked, which seeing them elsewhere clears. */
+  lanesOf(serverId: FleetServerId): Array<{ botId: string; lane: string }> {
+    return [...this.marks.values()]
+      .filter((mark) => mark.serverId === serverId && !mark.local)
+      .flatMap(({ botId, lanes }) => [...lanes].map((lane) => ({ botId, lane })))
+  }
+
   /** Marks the bot for a side conversation (`lane`), or for something only this computer clears. */
   mark(serverId: FleetServerId, botId: string, lane?: string): void {
     if (!botId || botId.length > MAX_BOT_ID) return

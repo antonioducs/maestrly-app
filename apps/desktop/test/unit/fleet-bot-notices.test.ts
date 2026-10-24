@@ -194,6 +194,27 @@ describe('FleetBotNotices of runs and threads seen on another device', () => {
     expect(s.marks()).toEqual([`${S1}/alex`])
   })
 
+  it('reads again, once back, the runs and threads that still mark a bot, and keeps a mark it cannot settle', async () => {
+    const s = setup()
+    s.notices.live(S1, entry('turn_completed', { source: 'routine', runId: 'run-1', alert: true }))
+    s.notices.live(S1, entry('needs_you', { threadId: 't-1' }))
+    s.notices.live(S1, { ...entry('turn_completed', { source: 'owner' }), botId: 'sam' })
+    const read = vi.fn(async (botId: string, side: { kind: 'run' | 'thread'; id: string }) => {
+      if (side.kind === 'thread') throw new Error('gone')
+      return { ...runSeen(LATER), botId }
+    })
+    await s.notices.reconcile(S1, read)
+    // Only side conversations are read; the bot's own conversation is this computer's to clear.
+    expect(read.mock.calls).toEqual([
+      ['alex', { kind: 'run', id: 'run-1' }],
+      ['alex', { kind: 'thread', id: 't-1' }],
+    ])
+    expect(s.marks()).toEqual([`${S1}/alex`, `${S1}/sam`])
+    expect(s.dismissed).toEqual([`bot:${S1}/alex:run:run-1`])
+    await s.notices.reconcile(S1, async () => threadSeen(LATER, LATER))
+    expect(s.marks()).toEqual([`${S1}/sam`])
+  })
+
   it('marks nothing for a run the owner opened before it ended, and still tells it ended', () => {
     const s = setup()
     s.notices.sideConversation(S1, runSeen(AT))
