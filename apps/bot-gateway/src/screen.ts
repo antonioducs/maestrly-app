@@ -10,6 +10,7 @@ import {
   FLEET_CONVERSATION_COMPUTERS_FEATURE,
   FLEET_SCREEN_UPGRADE,
   FLEET_VIDEO_SCREENS_FEATURE,
+  fleetBridgeOrigin,
   type FleetScreenSurface,
 } from '@maestrly/bot-fleet-protocol'
 import { WebSocket, WebSocketServer } from 'ws'
@@ -24,7 +25,8 @@ type Mode = 'view' | 'control'
  */
 type Surface = FleetScreenSurface | 'environment'
 type Target = { environmentId: string; botId: string | null; conversationId: string | null; surface: Surface }
-type Ticket = Target & { deviceId: string; mode: Mode; expiresAt: number }
+/** `origin`: the one Origin header the upgrade may carry (a phone's); none for a computer's ticket. */
+type Ticket = Target & { deviceId: string; mode: Mode; expiresAt: number; origin: string | null }
 type Connection = Target & { deviceId: string; mode: Mode; ws: WebSocket; tcp: Socket }
 type Reservation = Target & { deviceId: string; mode: Mode; ws: WebSocket }
 export const SCREEN_CONTROLLED = 'Another screen in this environment is being controlled.'
@@ -60,8 +62,17 @@ export class ScreenProxy {
         (entry) => entry.botId === id && entry.mode === 'control' && entry.ws.readyState === WebSocket.OPEN
       ).length
   }
-  /** A ticket for a bot's browser area or apps display; control needs the device's takeover of the bot. */
-  ticket(botId: string, deviceId: string, mode: Mode, surface: FleetScreenSurface = 'browser') {
+  /**
+   * A ticket for a bot's browser area or apps display; control needs the device's takeover of the bot. A phone names
+   * the `origin` its WebSocket sends.
+   */
+  ticket(
+    botId: string,
+    deviceId: string,
+    mode: Mode,
+    surface: FleetScreenSurface = 'browser',
+    origin: string | null = null
+  ) {
     const bot = this.lifecycle.get(botId)
     if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
     // A moving bot has no screen until it runs again.
@@ -70,7 +81,7 @@ export class ScreenProxy {
     if (!this.videoCapable(environmentId)) throw new GatewayError('CONFLICT', RESTART_TO_OPEN_SCREEN)
     if (mode === 'control' && (bot.takeover.state !== 'human' || bot.takeover.deviceId !== deviceId))
       throw new GatewayError('FORBIDDEN', 'Takeover required for control')
-    return this.issue({ environmentId, botId, conversationId: null, surface }, deviceId, mode)
+    return this.issue({ environmentId, botId, conversationId: null, surface }, deviceId, mode, origin)
   }
   /** A ticket for the environment screen: it shows only Maestrly's settings, so control needs no takeover. */
   environmentTicket(environmentId: string, deviceId: string, mode: Mode) {
@@ -112,12 +123,12 @@ export class ScreenProxy {
       this.lifecycle.environmentCapabilities(environmentId).includes(FLEET_CONVERSATION_COMPUTERS_FEATURE)
     )
   }
-  private issue(target: Target, deviceId: string, mode: Mode) {
+  private issue(target: Target, deviceId: string, mode: Mode, origin: string | null = null) {
     if (mode === 'control' && onSharedDisplay(target) && this.displayControls(target).length)
       throw new GatewayError('CONFLICT', SCREEN_CONTROLLED)
     const value = token()
     const expiresAt = this.now() + this.ticketTtlMs
-    this.tickets.set(value, { ...target, deviceId, mode, expiresAt })
+    this.tickets.set(value, { ...target, deviceId, mode, expiresAt, origin })
     setTimeout(() => this.tickets.delete(value), this.ticketTtlMs).unref()
     return {
       ticket: value,
@@ -166,10 +177,18 @@ export class ScreenProxy {
       surface: ticket.surface,
     })
   }
+  /**
+   * Opens a screen for a ticket, which is spent whether or not it then opens. The device named the one Origin its
+   * upgrade may carry when it asked for the ticket (a phone's); any other Origin is a page that got hold of the ticket,
+   * refused before the handshake with the `FORBIDDEN` thrown here.
+   */
   upgrade(req: IncomingMessage, socket: Duplex, head: Buffer) {
     const value = new URL(req.url ?? '/', 'http://gateway').searchParams.get('ticket') ?? ''
     const ticket = this.tickets.get(value)
     this.tickets.delete(value)
+    const origin = req.headers.origin
+    if (origin !== undefined && (!ticket?.origin || fleetBridgeOrigin(origin) !== ticket.origin))
+      throw new GatewayError('FORBIDDEN', 'Origin requests are forbidden')
     this.server.handleUpgrade(req, socket, head, (ws) => {
       ws.on('error', () => ws.terminate())
       if (!ticket || ticket.expiresAt <= this.now() || !this.usable(ticket)) {

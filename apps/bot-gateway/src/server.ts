@@ -384,6 +384,8 @@ export function createGatewayServers(ctx: GatewayContext) {
       const { pathname, search } = new URL(req.url ?? '/', 'http://gateway')
       // A bridge ticket says which Origin, if any, its upgrade may carry (`phones`).
       if (pathname === FLEET_GATEWAY_ROUTES.bridge.path) return bridge.upgrade(req, socket, head)
+      // So does a screen ticket (`phone-screens`); the screen refuses any other Origin itself.
+      if (pathname === FLEET_GATEWAY_ROUTES.screen.path) return screen.upgrade(req, socket, head)
       if (req.headers.origin !== undefined) throw new GatewayError('FORBIDDEN', 'Origin requests are forbidden')
       // The editor's WebSockets authenticate with the device token, as its requests do.
       const editor = parseFleetGatewayEditorPath(pathname)
@@ -393,9 +395,7 @@ export function createGatewayServers(ctx: GatewayContext) {
         const device = ctx.auth.device(req.headers.authorization)
         return hostEditor.upgrade(editor.environmentId, editor.editorPath + search, req, socket, head, device.id)
       }
-      if (pathname !== FLEET_GATEWAY_ROUTES.screen.path) throw new GatewayError('NOT_FOUND', 'Route not found')
-      screen.upgrade(req, socket, head)
-      return
+      throw new GatewayError('NOT_FOUND', 'Route not found')
     } catch (caught) {
       error = failure(caught)
       status = error.status

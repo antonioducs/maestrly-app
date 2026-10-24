@@ -191,6 +191,39 @@ try {
     await page.getByRole('tab', { name: 'Conversation', exact: true }).click()
   })
 
+  await step('help a bot through its screen', async () => {
+    await openMenu()
+    await page.getByRole('tab', { name: /^Bots/ }).click()
+    await button(/^Juno, Needs your help/).click()
+    await button('Open Juno’s screen').click()
+    // It opens watching, framed on where Juno stopped: the password it could not type.
+    await button('Where it stopped').first().waitFor()
+    const box = await page.locator('iframe[title="Juno’s screen"]').boundingBox()
+    if (!box) throw new Error('The screen did not show')
+    const middle = { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+    await page.mouse.click(middle.x, middle.y)
+    await page.getByText('Take control to tap on the screen.').waitFor()
+    await button('Take control').click()
+    await button('Got it').click()
+    await page.mouse.click(middle.x, middle.y)
+    // The phone's own field types on the screen, where its keyboard can offer a code from a text message.
+    const field = page.getByRole('textbox', { name: 'Type on the screen' })
+    await field.fill('correct horse')
+    await field.press('Enter')
+    if (await field.inputValue()) throw new Error('The typed text stayed in the field')
+    await button('Return').click()
+    // Closing the screen keeps control: the conversation leads back to it.
+    await button('Close the screen').click()
+    await page.getByText('You have Juno’s screen').first().waitFor()
+    await button('Give the screen back').click()
+    await page.getByText('Give the screen back to Juno?').waitFor()
+    await button('Signed in').click()
+    await button('Give back and carry on').click()
+    // The note answers Juno's request, and Juno carries on.
+    await page.getByText('Marked as resolved · “Signed in”').waitFor()
+    await page.getByText(/88 of 88 passed/).first().waitFor()
+  })
+
   await step('create a bot in an environment', async () => {
     await openMenu()
     await page.getByRole('tab', { name: /^Bots/ }).click()

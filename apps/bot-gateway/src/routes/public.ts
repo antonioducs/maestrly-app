@@ -26,6 +26,7 @@ import { createHash } from 'node:crypto'
 import {
   FLEET_CONTEXT_LIMIT_FEATURE,
   FLEET_PHONES_FEATURE,
+  FLEET_PHONE_SCREENS_FEATURE,
   FLEET_DEVICES_FEATURE,
   FLEET_ARTIFACTS_FEATURE,
   FLEET_ARTIFACTS_GATEWAY_VIEWER_FEATURE,
@@ -496,6 +497,7 @@ export async function publicRoute(
             FLEET_BOT_DELEGATION_FEATURE,
             FLEET_FILES_MANAGE_FEATURE,
             FLEET_BOT_RESTART_FEATURE,
+            FLEET_PHONE_SCREENS_FEATURE,
           ],
           botImage: ctx.config.botImage,
           botImageVersion: await ctx.host.botImageVersion(),
@@ -963,7 +965,7 @@ export async function publicRoute(
     case 'botScreenTicket': {
       requireBot(ctx, id)
       const device = ctx.auth.device(res.req?.headers.authorization)
-      return { body: ctx.screen!.ticket(id, device.id, body.mode, body.surface), status: 201 }
+      return { body: ctx.screen!.ticket(id, device.id, body.mode, body.surface, body.origin ?? null), status: 201 }
     }
     case 'screen':
     case 'bridge':

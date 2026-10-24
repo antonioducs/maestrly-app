@@ -58,6 +58,11 @@ function Root() {
             <Stack.Screen name="chat-setup/[id]" options={{ ...sheet, sheetAllowedDetents: [1] }} />
             <Stack.Screen name="chat-defaults" options={{ ...sheet, sheetAllowedDetents: [1] }} />
             <Stack.Screen name="usage" options={sheet} />
+            {/* The screen's own gestures pan and zoom it: no swipe closes it. */}
+            <Stack.Screen
+              name="bot-screen/[id]"
+              options={{ presentation: 'fullScreenModal', gestureEnabled: false, animation: 'slide_from_bottom' }}
+            />
           </Stack>
         </NotificationsProvider>
       ) : null}

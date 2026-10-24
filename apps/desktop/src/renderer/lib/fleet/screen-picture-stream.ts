@@ -1,6 +1,6 @@
+import { ScreenStreamCore } from '@maestrly/bot-fleet-protocol'
 import type { FleetScreenChannel } from './screen-channel'
 import { ScreenFrameDecoder } from './screen-frame-decoder'
-import { ScreenStreamCore } from './screen-stream-core'
 
 /** How a picture stream ended: the screen's close code, or `error` when it broke on this side. */
 export type ScreenPictureEnd = { code: number | null; error: boolean }

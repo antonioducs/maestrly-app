@@ -458,6 +458,12 @@ export const FLEET_DESKTOP_BRIDGE_LIMITS = {
  */
 export const FLEET_PHONES_FEATURE = 'phones'
 /**
+ * Gateway feature: a bot's screen ticket may name the Origin its WebSocket will send (`origin`), which phones always
+ * send, and the gateway accepts that one Origin on the ticket's upgrade. Phones open a bot's screen only through a
+ * gateway that announces it, in `moreFeatures` of `/v1/meta`.
+ */
+export const FLEET_PHONE_SCREENS_FEATURE = 'phone-screens'
+/**
  * Gateway feature: a paired device lists the devices paired with the server, and removes another one
  * (`/v1/devices`), as the CLI's `devices list` and `devices revoke` do. Announced in `moreFeatures` of `/v1/meta`.
  */

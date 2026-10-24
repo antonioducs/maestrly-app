@@ -436,4 +436,28 @@ describe('fleet controller with shared files', () => {
     controller.ensureFiles('pixel')
     await vi.waitFor(() => expect(controller.store.getState().files.pixel?.failed).toBe(true))
   })
+
+  it('takes a bot’s screen and gives it back with a note, showing each answer before its event', async () => {
+    const f = fakeSource()
+    const human = { state: 'human', deviceId: 's1', deviceName: 'Phone', since: at }
+    const none = { state: 'none', deviceId: null, deviceName: null, since: null }
+    f.responses.botTakeover = () => human
+    f.responses.botTakeoverRelease = () => none
+    const controller = createFleetController(f.source, memoryStores().kv)
+    await controller.start()
+    f.open()
+    await vi.waitFor(() => expect(controller.store.getState().bots).toHaveLength(1))
+    const takeover = () => controller.store.getState().bots[0].takeover
+
+    await expect(controller.takeover('juno')).resolves.toEqual(human)
+    expect(f.call).toHaveBeenLastCalledWith('botTakeover', { params: { id: 'juno' } })
+    expect(takeover()).toEqual(human)
+
+    await controller.releaseTakeover('juno', 'Signed in', true)
+    expect(f.call).toHaveBeenLastCalledWith('botTakeoverRelease', {
+      params: { id: 'juno' },
+      body: { note: 'Signed in', continue: true },
+    })
+    expect(takeover()).toEqual(none)
+  })
 })

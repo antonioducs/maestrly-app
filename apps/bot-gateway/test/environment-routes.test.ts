@@ -399,6 +399,21 @@ describe('environment routes', () => {
     expect(
       (await h.request('POST', `/v1/bots/${h.bot.id}/screen-tickets`, { mode: 'view', surface: 'desk' })).status
     ).toBe(400)
+    // A phone names the Origin its WebSocket sends: an origin, never an address with a path.
+    const phone = await h.request('POST', `/v1/bots/${h.bot.id}/screen-tickets`, {
+      mode: 'view',
+      surface: 'apps',
+      origin: 'https://bots.example.dev',
+    })
+    expect(phone.status).toBe(201)
+    expect(
+      (
+        await h.request('POST', `/v1/bots/${h.bot.id}/screen-tickets`, {
+          mode: 'view',
+          origin: 'https://bots.example.dev/path',
+        })
+      ).status
+    ).toBe(400)
     expect(
       (await h.request('POST', `/v1/bots/${h.bot.id}/screen-tickets`, { mode: 'control', surface: 'apps' })).status
     ).toBe(403)

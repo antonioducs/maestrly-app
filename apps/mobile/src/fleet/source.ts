@@ -6,6 +6,7 @@ import {
 } from '@maestrly/bot-fleet-protocol'
 import type { GatewayClient } from '../gateway/client'
 import type { StreamState } from '../gateway/event-stream'
+import type { OpenScreen } from '../screen/link'
 
 export type EventHandlers = {
   onEvent(event: FleetGatewayEvent): void
@@ -38,4 +39,6 @@ export interface FleetSource {
   fileSource(botId: string, fileId: string): { uri: string; headers: Record<string, string> }
   /** The base64 contents of a file chosen on the phone, read only when its message is sent. */
   readAttachment(uri: string): Promise<string>
+  /** Opens a bot's screen, through a server that lets phones (`phone-screens`); absent where none can. */
+  openScreen?: OpenScreen
 }

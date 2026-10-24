@@ -1,5 +1,7 @@
 import {
   FLEET_ENVIRONMENTS_FEATURE,
+  FLEET_UNIFIED_DESKTOP_FEATURE,
+  FLEET_VIDEO_SCREENS_FEATURE,
   type FleetBot,
   type FleetEnvironment,
   type FleetQuestion,
@@ -102,7 +104,8 @@ export function demoWorld(now: number): DemoWorld {
       id: 'studio',
       name: 'studio',
       botIds: ['juno', 'atlas', 'pixel'],
-      capabilities: [FLEET_ENVIRONMENTS_FEATURE],
+      // Its bots' screens open on the phone: one desktop each, streamed as video.
+      capabilities: [FLEET_ENVIRONMENTS_FEATURE, FLEET_VIDEO_SCREENS_FEATURE, FLEET_UNIFIED_DESKTOP_FEATURE],
     }),
     environmentRecord({
       id: 'research',

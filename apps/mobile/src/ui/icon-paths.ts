@@ -79,4 +79,14 @@ export const ICON_PATHS = {
   cite: '<path d="M5 4.5v6a4 4 0 0 0 4 4h10"/><path d="m15 10.5 4 4-4 4"/>',
   'bring-back': '<path d="M19 4.5v6a4 4 0 0 1-4 4H5"/><path d="m9 10.5-4 4 4 4"/>',
   more: '<circle cx="5.5" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="18.5" cy="12" r="1.4" fill="currentColor" stroke="none"/>',
+  // A bot's screen on the phone: where the bot stopped, the whole screen, its keys and gestures.
+  target:
+    '<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3"/>',
+  fit: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
+  backspace:
+    '<path d="M8.5 5.5h11A1.5 1.5 0 0 1 21 7v10a1.5 1.5 0 0 1-1.5 1.5h-11L3 12Z"/><path d="m11.5 9.5 5 5M16.5 9.5l-5 5"/>',
+  return: '<path d="M19.5 5.5v6a3 3 0 0 1-3 3h-12"/><path d="m8.5 10.5-4 4 4 4"/>',
+  tap: '<circle cx="12" cy="12" r="2.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="7.5"/>',
+  drag: '<path d="M12 3.5v17M3.5 12h17M12 3.5 9.8 5.7M12 3.5l2.2 2.2M12 20.5l-2.2-2.2M12 20.5l2.2-2.2M3.5 12l2.2-2.2M3.5 12l2.2 2.2M20.5 12l-2.2-2.2M20.5 12l-2.2 2.2"/>',
+  pinch: '<path d="M4.5 4.5 10 10M4.5 4.5v4M4.5 4.5h4M19.5 19.5 14 14M19.5 19.5v-4M19.5 19.5h-4"/>',
 } as const

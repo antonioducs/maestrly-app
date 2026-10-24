@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { FLEET_PHONES_FEATURE, fleetMetaFeatures } from '@maestrly/bot-fleet-protocol'
+import { FLEET_PHONE_SCREENS_FEATURE, FLEET_PHONES_FEATURE, fleetMetaFeatures } from '@maestrly/bot-fleet-protocol'
 import { Auth } from '../src/auth.js'
 import { harness } from './harness.js'
 
@@ -10,6 +10,8 @@ it('lets a paired device create a one-use code that pairs another device', async
   expect(meta.features).not.toContain(FLEET_PHONES_FEATURE)
   expect(meta.moreFeatures).toContain(FLEET_PHONES_FEATURE)
   expect(fleetMetaFeatures(meta)).toContain(FLEET_PHONES_FEATURE)
+  // Phones open bots' screens only through a gateway that accepts their Origin on a screen ticket.
+  expect(meta.moreFeatures).toContain(FLEET_PHONE_SCREENS_FEATURE)
 
   const created = await h.request('POST', '/v1/pairings', {})
   expect(created.status).toBe(201)

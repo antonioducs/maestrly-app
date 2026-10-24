@@ -726,6 +726,15 @@ export const fleetScreenTicketRequestSchema = z.object({
   mode: z.enum(['view', 'control']),
   /** Older Macs only know the browser area. */
   surface: fleetScreenSurfaceSchema.default('browser'),
+  /**
+   * The Origin a phone's WebSocket sends (React Native always sends one), which the gateway then accepts on this
+   * ticket's upgrade (`phone-screens`), as with a bridge ticket. Computers send no Origin and leave it out.
+   */
+  origin: z
+    .string()
+    .max(300)
+    .refine((value) => fleetBridgeOrigin(value) === value, 'Invalid origin')
+    .optional(),
 })
 export type FleetScreenTicketRequest = z.infer<typeof fleetScreenTicketRequestSchema>
 /** The environment screen shows only Maestrly's settings: control needs no takeover. */

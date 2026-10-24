@@ -1,7 +1,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'
 
-/** Small app preferences (theme, language, whether the intro played). Never secrets: tokens are in the secure store. */
-type PrefKey = 'prefs.theme' | 'prefs.locale' | 'prefs.intro'
+/**
+ * Small app preferences (theme, language, whether the intro and the screen's gesture guide were seen). Never secrets:
+ * tokens are in the secure store.
+ */
+type PrefKey = 'prefs.theme' | 'prefs.locale' | 'prefs.intro' | 'prefs.screenGuide'
 
 export const prefs = {
   async get(key: PrefKey): Promise<string | null> {

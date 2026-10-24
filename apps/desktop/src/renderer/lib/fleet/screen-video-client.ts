@@ -1,4 +1,4 @@
-import { FLEET_SCREEN, type ScreenHello } from '@maestrly/bot-fleet-protocol'
+import { FLEET_SCREEN, ScreenStreamCore, type ScreenHello } from '@maestrly/bot-fleet-protocol'
 import type { FleetScreenChannel } from './screen-channel'
 import {
   WheelSteps,
@@ -11,7 +11,6 @@ import {
   type ContentBox,
 } from './screen-geometry'
 import { ScreenFrameDecoder } from './screen-frame-decoder'
-import { ScreenStreamCore } from './screen-stream-core'
 
 /** noVNC's keyboard module (`@novnc/novnc/core/input/keyboard.js`), which `loadScreenKeyboard` loads. */
 type ScreenKeyboard = {
