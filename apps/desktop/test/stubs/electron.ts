@@ -133,6 +133,7 @@ const fakeSession = {
   setPermissionRequestHandler: (_fn: unknown): void => {},
   getUserAgent: (): string => 'Mozilla/5.0 Chrome/144.0.0.0 Safari/537.36',
   setUserAgent: (_userAgent: string): void => {},
+  registerPreloadScript: (_script: unknown): string => 'preload',
   clearCache: (): Promise<void> => Promise.resolve(),
   clearStorageData: (): Promise<void> => Promise.resolve(),
 }
