@@ -14,6 +14,14 @@ User-visible changes by version. Downloads are on
   as the download moves. A download after the first setup says VS Code is being
   updated.
 
+### Fixed
+
+- A bot's Chromium no longer signs the bot out of sites such as Google and
+  YouTube when it closes after 15 idle minutes, when the bot is paused or when
+  it restarts. It now closes on its own and saves the cookies sites changed in
+  its last half minute, instead of being ended by a signal that lost them and
+  left stale session tokens behind.
+
 ## [0.26.0] - 2026-10-22
 
 ### Changed

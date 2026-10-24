@@ -63,6 +63,8 @@ export const BOT_CHROMIUM_ARGS: readonly string[] = [
 ]
 
 export const CHROMIUM_START_TIMEOUT_MS = 20_000
+/** How long a browser asked to close has to write its profile and exit before its process group is signalled. */
+export const CHROMIUM_CLOSE_WAIT_MS = 10_000
 export const CHROMIUM_EXIT_WAIT_MS = 5_000
 export const CHROMIUM_RESTART_DELAY_MS = 1_000
 export const CHROMIUM_RESTART_BUDGET = 5
@@ -80,7 +82,7 @@ interface Running {
 /**
  * Starts, supervises and stops one bot's Chromium. It starts on demand; a crash restarts it after a moment, at most
  * five times a minute; an exit with code 0 (the person closed its last window) leaves it stopped until it is needed
- * again. Stopping signals its process group and waits for it, killing what is left after five seconds.
+ * again. Stopping asks it to close, and signals its process group only when it has not exited ten seconds later.
  */
 export class ChromiumSupervisor {
   private running: Running | null = null
@@ -124,7 +126,7 @@ export class ChromiumSupervisor {
     const stopping = (async () => {
       await this.starting?.catch(() => undefined)
       const running = this.running
-      if (running) await this.terminate(running)
+      if (running) await this.terminate(running, true)
     })().finally(() => {
       if (this.stopping === stopping) this.stopping = null
     })
@@ -152,8 +154,10 @@ export class ChromiumSupervisor {
     const running: Running = { process: child, pipe, stopping: false, ready: false }
     this.running = running
     void child.exited.then((code) => this.exited(running, code))
+    let answered = false
     try {
       await pipe.send('Browser.getVersion', {}, undefined, this.options.startTimeoutMs ?? CHROMIUM_START_TIMEOUT_MS)
+      answered = true
       if (this.disposed) throw new Error('The bot’s Chromium was stopped for good.')
       await this.options.onStarted(pipe)
       if (pipe.closed) throw new Error('it exited while it was being prepared')
@@ -164,7 +168,7 @@ export class ChromiumSupervisor {
         `The Chromium of bot ${this.options.botId} did not start: ${(error as Error).message}` +
           (tail ? ` (${tail.slice(-400)})` : '')
       )
-      await this.terminate(running)
+      await this.terminate(running, answered)
       throw error
     }
     this.deps.log(`Started the Chromium of bot ${this.options.botId} (pid ${child.pid ?? 'unknown'}).`)
@@ -211,24 +215,42 @@ export class ChromiumSupervisor {
     this.restartTimer = null
   }
 
-  /** Signals the process group and waits for the exit, killing what is left once the wait runs out. */
-  private async terminate(running: Running): Promise<void> {
+  /**
+   * Asks a browser that answers to close and waits for it; only one that has not exited by then gets SIGTERM, then
+   * SIGKILL, on its process group. A browser closing by itself writes its profile first, while a SIGTERM, even to the
+   * browser alone, ends it at once: the cookies changed in the last half minute are lost, among them the session
+   * tokens sites like Google rotate, and the stale ones left on disk sign the bot out at the next start.
+   */
+  private async terminate(running: Running, graceful: boolean): Promise<void> {
     running.stopping = true
-    running.pipe.close('it was stopped')
     let exited = false
     const exit = running.process.exited.then(() => {
       exited = true
     })
-    running.process.kill('SIGTERM')
-    await Promise.race([exit, this.sleep(CHROMIUM_EXIT_WAIT_MS)])
+    const asked = graceful && !running.pipe.closed
+    // What the browser sends while it closes its tabs is never read: those are not tabs the bot or a person closed.
+    if (asked) running.pipe.closeWith('Browser.close', 'it was stopped')
+    else running.pipe.close('it was stopped')
+    if (asked) await this.waitFor(exit, CHROMIUM_CLOSE_WAIT_MS)
+    if (!exited) {
+      if (asked) this.deps.log(`The Chromium of bot ${this.options.botId} did not close when asked; ending it.`)
+      running.process.kill('SIGTERM')
+      await this.waitFor(exit, CHROMIUM_EXIT_WAIT_MS)
+    }
     if (!exited) {
       running.process.kill('SIGKILL')
-      await Promise.race([exit, this.sleep(CHROMIUM_EXIT_WAIT_MS)])
+      await this.waitFor(exit, CHROMIUM_EXIT_WAIT_MS)
     }
     if (this.running === running) this.running = null
   }
 
-  private sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => this.deps.setTimeout(resolve, ms))
+  /** Waits for `done`, or `ms` at most, leaving no timer behind. */
+  private async waitFor(done: Promise<void>, ms: number): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([done, new Promise<void>((resolve) => (timer = this.deps.setTimeout(resolve, ms)))])
+    } finally {
+      if (timer) this.deps.clearTimeout(timer)
+    }
   }
 }

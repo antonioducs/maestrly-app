@@ -106,6 +106,10 @@ class FakeBrowser {
       case 'Storage.setCookies':
         this.cookies.push(...params.cookies)
         return reply()
+      case 'Browser.close':
+        // Chromium closes its tabs on the way out, then exits.
+        for (const id of this.targets.keys()) this.emit('Target.targetDestroyed', { targetId: id })
+        return this.crash(0)
       default:
         return reply()
     }

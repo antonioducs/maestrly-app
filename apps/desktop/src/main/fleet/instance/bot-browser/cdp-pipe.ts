@@ -130,6 +130,17 @@ export class CdpPipe {
     this.eventListeners.clear()
   }
 
+  /** Ends the connection like `close`, then writes one last command: nothing the browser sends afterwards is read. */
+  closeWith(method: string, reason: string): void {
+    if (this.closedWith) return
+    this.close(reason)
+    try {
+      this.output.write(`${JSON.stringify({ id: this.nextId++, method, params: {} })}\0`)
+    } catch {
+      /* The browser already closed its end. */
+    }
+  }
+
   private receive(chunk: Buffer): void {
     if (this.closedWith) return
     let start = 0
