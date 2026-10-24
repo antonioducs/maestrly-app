@@ -59,6 +59,15 @@ describe('drawer browser page preload', () => {
     expect(path.relative(APP_PATH, PRELOAD)).toBe(path.join('resources', 'browser-page-preload.cjs'))
   })
 
+  it('finds the resource when the app is launched from its bundled entry', () => {
+    expect(browserPagePreloadPath(path.join(APP_PATH, 'out', 'main'))).toBe(PRELOAD)
+  })
+
+  it('falls back to the app path when no folder has the resource', () => {
+    const elsewhere = path.join(APP_PATH, 'no-such-folder')
+    expect(browserPagePreloadPath(elsewhere)).toBe(path.join(elsewhere, 'resources', 'browser-page-preload.cjs'))
+  })
+
   it('hands one script to the page main world', () => {
     const executeJavaScript = vi.fn().mockResolvedValue(undefined)
     runPreload(executeJavaScript)

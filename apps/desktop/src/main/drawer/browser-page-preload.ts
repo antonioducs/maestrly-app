@@ -1,12 +1,19 @@
+import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { app, type Session } from 'electron'
 
+const PRELOAD_FILE = path.join('resources', 'browser-page-preload.cjs')
+
 /**
  * Where the preload of the drawer browser's pages ships. It is a plain CommonJS resource, not part of the bundle: a
- * sandboxed preload cannot load modules, and the file must not carry the app bridge of `src/preload`.
+ * sandboxed preload cannot load modules, and the file must not carry the app bridge of `src/preload`. The app path is
+ * the project folder when run from it and the archive when packaged, but the bundled entry itself (`out/main`) when it
+ * is launched by file, as the E2E tests do: the resource then sits two folders up.
  */
 export function browserPagePreloadPath(appPath: string = app.getAppPath()): string {
-  return path.join(appPath, 'resources', 'browser-page-preload.cjs')
+  const roots = [appPath, path.resolve(appPath, '..', '..')]
+  const root = roots.find((candidate) => existsSync(path.join(candidate, PRELOAD_FILE))) ?? appPath
+  return path.join(root, PRELOAD_FILE)
 }
 
 /**
