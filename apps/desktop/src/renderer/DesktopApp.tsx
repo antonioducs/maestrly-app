@@ -1073,7 +1073,13 @@ function DesktopShell({
                   (actions) => actions.deleteSiblings(members)
                 )
               }
-              onReorderWorkspaces={handleReorderWorkspaces}
+              onReorderWorkspaces={(ids) =>
+                onHost(
+                  ids[0] ?? '',
+                  () => handleReorderWorkspaces(ids),
+                  (actions) => actions.reorderWorkspaces(ids)
+                )
+              }
               onReorderConversations={(workspaceId, ids) =>
                 onHost(
                   workspaceId,
@@ -1082,12 +1088,46 @@ function DesktopShell({
                 )
               }
               groups={groups}
-              onCreateGroup={handleCreateGroup}
-              onRenameGroup={handleRenameGroup}
-              onDeleteGroup={handleDeleteGroup}
-              onReorderGroups={handleReorderGroups}
-              onToggleGroupCollapsed={handleToggleGroupCollapsed}
-              onMoveWorkspaceToGroup={handleMoveWorkspaceToGroup}
+              onCreateGroup={(name, hostId) =>
+                hostId === LOCAL_HOST_ID
+                  ? handleCreateGroup(name)
+                  : (remote[hostId]?.actions.createGroup(name) ?? Promise.resolve(null))
+              }
+              onRenameGroup={(id, name) =>
+                onHost(
+                  id,
+                  () => handleRenameGroup(id, name),
+                  (actions) => actions.renameGroup(id, name)
+                )
+              }
+              onDeleteGroup={(id) =>
+                onHost(
+                  id,
+                  () => handleDeleteGroup(id),
+                  (actions) => actions.deleteGroup(id)
+                )
+              }
+              onReorderGroups={(ids) =>
+                onHost(
+                  ids[0] ?? '',
+                  () => handleReorderGroups(ids),
+                  (actions) => actions.reorderGroups(ids)
+                )
+              }
+              onToggleGroupCollapsed={(id) =>
+                onHost(
+                  id,
+                  () => handleToggleGroupCollapsed(id),
+                  (actions) => actions.toggleGroupCollapsed(id)
+                )
+              }
+              onMoveWorkspaceToGroup={(wsId, groupId, flatIds) =>
+                onHost(
+                  wsId,
+                  () => handleMoveWorkspaceToGroup(wsId, groupId, flatIds),
+                  (actions) => actions.moveWorkspaceToGroup(wsId, groupId, flatIds)
+                )
+              }
               onToggleWorkspaceCollapsed={(id) =>
                 onHost(
                   id,

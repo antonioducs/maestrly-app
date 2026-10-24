@@ -179,11 +179,12 @@ interface Props {
   onReorderWorkspaces: (ids: string[]) => void
 
   onReorderConversations: (workspaceId: string, ids: string[]) => void
-  // Virtual workspace groups in the sidebar.
+  // Virtual workspace groups in the sidebar: this computer's here, a remote host's in its section's shell.
 
   groups: WorkspaceGroup[]
 
-  onCreateGroup: (name: string) => Promise<WorkspaceGroup>
+  /** Creates a group on a machine; null when that host is gone. */
+  onCreateGroup: (name: string, hostId: HostId) => Promise<WorkspaceGroup | null>
   onRenameGroup: (id: string, name: string) => void
 
   onDeleteGroup: (id: string) => void
@@ -329,6 +330,14 @@ export function Sidebar({
 
   const [renamingGroup, setRenamingGroup] = useState<string | null>(null)
   const [groupRenameValue, setGroupRenameValue] = useState('')
+  // Rename group, chosen in the group's menu, opens the name field while the menu still holds the focus: the field takes
+  // it once the menu closes, instead of the menu's button.
+  const groupRenameField = useRef<HTMLInputElement | null>(null)
+  const focusGroupRename = (event: Event) => {
+    if (!groupRenameField.current) return
+    event.preventDefault()
+    groupRenameField.current.focus()
+  }
   const creatingSiblingsRef = useRef(new Set<string>())
   const [creatingSiblings, setCreatingSiblings] = useState<Set<string>>(new Set())
   const [highlightedWorkspaceId, setHighlightedWorkspaceId] = useState<string | null>(null)
@@ -410,14 +419,20 @@ export function Sidebar({
   const pinned = useMemo(() => collectPinnedConversations(workspaces), [workspaces])
   const pinnedWorkspaceLabels = useMemo(() => buildPinnedWorkspaceLabels(workspaces), [workspaces])
 
+  // The machine the sidebar lists sorts and groups its own workspaces, with the groups kept on it. A host that does not
+  // answer keeps its last lists, which cannot change until it does.
+  const listedWorkspaces = selectedSection ? (selectedSection.shell?.workspaces ?? []) : workspaces
+  const listedGroups = selectedSection ? (selectedSection.shell?.groups ?? []) : groups
+  const listedEditable =
+    !selectedSection || (selectedSection.host.state === 'online' && Boolean(selectedSection.shell?.loaded))
   const { sensors, draggingWs, loose, byGroup, buildFlatIds, onDragStart, onDragCancel, onDragEnd } = useWorkspaceDnd({
-    workspaces,
-    groups,
+    workspaces: listedWorkspaces,
+    groups: listedGroups,
     onReorderWorkspaces,
     onReorderGroups,
     onMoveWorkspaceToGroup,
   })
-  const dndOff = renaming !== null || renamingGroup !== null
+  const dndOff = renaming !== null || renamingGroup !== null || !listedEditable
 
   const startRenameGroup = (group: WorkspaceGroup) => {
     setRenamingGroup(group.id)
@@ -429,7 +444,7 @@ export function Sidebar({
     setRenamingGroup(null)
   }
   const handleNewGroup = async () => {
-    const g = await onCreateGroup(t('sidebar.newGroupName'))
+    const g = await onCreateGroup(t('sidebar.newGroupName'), selectedHostId)
     if (g) startRenameGroup(g)
   }
 
@@ -469,7 +484,8 @@ export function Sidebar({
     },
     openTargets,
     onOpenExternal,
-    groups,
+    groups: listedGroups,
+    groupsEditable: listedEditable,
     startRename,
     onPinConversation,
     onArchiveConversation,
@@ -648,6 +664,7 @@ export function Sidebar({
         <ContextMenuTrigger asChild>
           <div
             {...(dragListeners ?? {})}
+            data-group-id={group.id}
             // Sticky inside its group: while its workspaces scroll by, the group they belong to stays in sight.
             className="group/grp sticky top-0 z-10 flex touch-none items-center gap-1.5 bg-sidebar px-2 py-1.5 backdrop-blur-xl"
           >
@@ -663,7 +680,9 @@ export function Sidebar({
               )}
               {isRenaming ? (
                 <input
+                  ref={groupRenameField}
                   autoFocus
+                  onFocus={(e) => e.currentTarget.select()}
                   value={groupRenameValue}
                   onChange={(e) => setGroupRenameValue(e.target.value)}
                   onBlur={() => commitRenameGroup(group)}
@@ -680,7 +699,7 @@ export function Sidebar({
                   className="truncate text-xs font-semibold text-sidebar-foreground/85"
                   onDoubleClick={(e) => {
                     e.stopPropagation()
-                    startRenameGroup(group)
+                    if (listedEditable) startRenameGroup(group)
                   }}
                   onMouseEnter={(e) => showQuickTooltip(e, group.name)}
                   onMouseLeave={hideQuickTooltip}
@@ -704,11 +723,13 @@ export function Sidebar({
                   <MoreHorizontal className="size-3.5" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">{groupMenuItems(group, dropdownKit)}</DropdownMenuContent>
+              <DropdownMenuContent align="end" onCloseAutoFocus={focusGroupRename}>
+                {groupMenuItems(group, dropdownKit)}
+              </DropdownMenuContent>
             </DropdownMenu>
           </div>
         </ContextMenuTrigger>
-        <ContextMenuContent>{groupMenuItems(group, contextKit)}</ContextMenuContent>
+        <ContextMenuContent onCloseAutoFocus={focusGroupRename}>{groupMenuItems(group, contextKit)}</ContextMenuContent>
       </ContextMenu>
     )
   }
@@ -743,7 +764,7 @@ export function Sidebar({
   const viewMenu = ((): ReactNode => {
     if (tab === 'bots') return null
     const items: ReactNode[] = []
-    if (tab === 'workspaces' && !selectedSection)
+    if (tab === 'workspaces' && listedEditable)
       items.push(
         <DropdownMenuItem key="group" onClick={() => void handleNewGroup()}>
           <Layers /> {t('sidebar.newGroup')}
@@ -834,9 +855,96 @@ export function Sidebar({
   )
 
   /**
+   * The listed machine's workspaces in its groups, outside a search: dragged to sort them, to move them into or out of a
+   * group, and to sort the groups themselves.
+   */
+  const renderWorkspaceTree = () => (
+    <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={onDragCancel}>
+      <Droppable id="rootdrop">
+        {(d) => (
+          <div
+            ref={d.setNodeRef}
+            className={cn(
+              'rounded-md',
+              d.isOver && 'ring-1 ring-inset ring-primary/50',
+              draggingWs && loose.length === 0 && 'mx-1 min-h-[26px] border border-dashed border-border/60'
+            )}
+          >
+            <SortableContext items={loose.map((w) => `ws-${w.id}`)} strategy={verticalListSortingStrategy}>
+              {loose.map((ws) => (
+                <Sortable key={ws.id} id={`ws-${ws.id}`} disabled={dndOff}>
+                  {(s) => renderWorkspace(ws, s)}
+                </Sortable>
+              ))}
+            </SortableContext>
+            {draggingWs && loose.length === 0 && (
+              <p className="px-3 py-1 text-center text-[10px] text-muted-foreground/50">
+                {t('sidebar.dropOutsideGroups')}
+              </p>
+            )}
+          </div>
+        )}
+      </Droppable>
+
+      <SortableContext items={listedGroups.map((g) => `group-${g.id}`)} strategy={verticalListSortingStrategy}>
+        {listedGroups.map((g) => {
+          const members = byGroup.get(g.id) ?? []
+          return (
+            <Sortable key={g.id} id={`group-${g.id}`} disabled={dndOff}>
+              {(s) => (
+                <div
+                  ref={s.setNodeRef}
+                  style={{
+                    transform: CSS.Transform.toString(s.transform),
+                    transition: s.transition,
+                  }}
+                  {...s.attributes}
+                  className={cn('mb-0.5', s.isDragging && 'opacity-60')}
+                >
+                  {renderGroupHeader(g, members, s.listeners)}
+                  {!g.collapsed && (
+                    <Droppable id={`groupdrop-${g.id}`}>
+                      {(d) => (
+                        <div
+                          ref={d.setNodeRef}
+                          className={cn(
+                            // Indented under the group, with a guide under its chevron.
+                            'relative mx-1 rounded-md pl-3 before:pointer-events-none before:absolute before:bottom-1 before:left-2.5 before:top-0 before:w-px before:bg-border',
+                            d.isOver && 'ring-1 ring-inset ring-primary/40'
+                          )}
+                        >
+                          <SortableContext
+                            items={members.map((w) => `ws-${w.id}`)}
+                            strategy={verticalListSortingStrategy}
+                          >
+                            {members.map((ws) => (
+                              <Sortable key={ws.id} id={`ws-${ws.id}`} disabled={dndOff}>
+                                {(sw) => renderWorkspace(ws, sw)}
+                              </Sortable>
+                            ))}
+                          </SortableContext>
+                          {members.length === 0 && (
+                            <p className="py-1.5 pl-9 pr-3 text-xs text-muted-foreground/50">
+                              {draggingWs ? t('sidebar.dropWorkspaceHere') : t('sidebar.emptyGroup')}
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </Droppable>
+                  )}
+                </div>
+              )}
+            </Sortable>
+          )
+        })}
+      </SortableContext>
+    </DndContext>
+  )
+
+  /**
    * A remote host's chats or workspaces, when the switcher shows that host. Its rows are the rows of this computer's
-   * lists: their ids carry the host, and the handlers above act on the host they belong to. While the host is
-   * unreachable its last lists stay, dimmed, under what is wrong.
+   * lists: their ids carry the host, and the handlers above act on the host they belong to. Its workspaces are sorted
+   * into the host's own groups. While the host is unreachable its last lists stay, dimmed, under what is wrong.
    */
   const renderHostSection = (section: SidebarHostSection, kind: 'chats' | 'workspaces') => {
     const { host, shell } = section
@@ -892,8 +1000,10 @@ export function Sidebar({
                   convItem(conv, { pl: 'pl-3', dnd, isOver, instanceKey: `chat:${conv.id}` })
                 }
               />
-            ) : (
+            ) : q ? (
               trees.map((ws) => renderWorkspace(ws))
+            ) : (
+              renderWorkspaceTree()
             )}
             {empty && !q && (
               <p className="px-3 pb-1 text-xs text-muted-foreground">
@@ -1057,103 +1167,7 @@ export function Sidebar({
                       </div>
                     )}
 
-                    {q ? (
-                      filtered.map((ws) => renderWorkspace(ws))
-                    ) : (
-                      <DndContext
-                        sensors={sensors}
-                        onDragStart={onDragStart}
-                        onDragEnd={onDragEnd}
-                        onDragCancel={onDragCancel}
-                      >
-                        <Droppable id="rootdrop">
-                          {(d) => (
-                            <div
-                              ref={d.setNodeRef}
-                              className={cn(
-                                'rounded-md',
-                                d.isOver && 'ring-1 ring-inset ring-primary/50',
-                                draggingWs &&
-                                  loose.length === 0 &&
-                                  'mx-1 min-h-[26px] border border-dashed border-border/60'
-                              )}
-                            >
-                              <SortableContext
-                                items={loose.map((w) => `ws-${w.id}`)}
-                                strategy={verticalListSortingStrategy}
-                              >
-                                {loose.map((ws) => (
-                                  <Sortable key={ws.id} id={`ws-${ws.id}`} disabled={dndOff}>
-                                    {(s) => renderWorkspace(ws, s)}
-                                  </Sortable>
-                                ))}
-                              </SortableContext>
-                              {draggingWs && loose.length === 0 && (
-                                <p className="px-3 py-1 text-center text-[10px] text-muted-foreground/50">
-                                  {t('sidebar.dropOutsideGroups')}
-                                </p>
-                              )}
-                            </div>
-                          )}
-                        </Droppable>
-
-                        <SortableContext
-                          items={groups.map((g) => `group-${g.id}`)}
-                          strategy={verticalListSortingStrategy}
-                        >
-                          {groups.map((g) => {
-                            const members = byGroup.get(g.id) ?? []
-                            return (
-                              <Sortable key={g.id} id={`group-${g.id}`} disabled={dndOff}>
-                                {(s) => (
-                                  <div
-                                    ref={s.setNodeRef}
-                                    style={{
-                                      transform: CSS.Transform.toString(s.transform),
-                                      transition: s.transition,
-                                    }}
-                                    {...s.attributes}
-                                    className={cn('mb-0.5', s.isDragging && 'opacity-60')}
-                                  >
-                                    {renderGroupHeader(g, members, s.listeners)}
-                                    {!g.collapsed && (
-                                      <Droppable id={`groupdrop-${g.id}`}>
-                                        {(d) => (
-                                          <div
-                                            ref={d.setNodeRef}
-                                            className={cn(
-                                              // Indented under the group, with a guide under its chevron.
-                                              'relative mx-1 rounded-md pl-3 before:pointer-events-none before:absolute before:bottom-1 before:left-2.5 before:top-0 before:w-px before:bg-border',
-                                              d.isOver && 'ring-1 ring-inset ring-primary/40'
-                                            )}
-                                          >
-                                            <SortableContext
-                                              items={members.map((w) => `ws-${w.id}`)}
-                                              strategy={verticalListSortingStrategy}
-                                            >
-                                              {members.map((ws) => (
-                                                <Sortable key={ws.id} id={`ws-${ws.id}`} disabled={dndOff}>
-                                                  {(sw) => renderWorkspace(ws, sw)}
-                                                </Sortable>
-                                              ))}
-                                            </SortableContext>
-                                            {members.length === 0 && (
-                                              <p className="py-1.5 pl-9 pr-3 text-xs text-muted-foreground/50">
-                                                {draggingWs ? t('sidebar.dropWorkspaceHere') : t('sidebar.emptyGroup')}
-                                              </p>
-                                            )}
-                                          </div>
-                                        )}
-                                      </Droppable>
-                                    )}
-                                  </div>
-                                )}
-                              </Sortable>
-                            )
-                          })}
-                        </SortableContext>
-                      </DndContext>
-                    )}
+                    {q ? filtered.map((ws) => renderWorkspace(ws)) : renderWorkspaceTree()}
                   </>
                 )}
             {otherHostResults('workspaces')}

@@ -35,6 +35,9 @@ Choose the computer in the machine switcher. Its chats and workspaces, a convers
 folders are the ones you browse. A conversation's **Browser** opens on a computer running macOS or Windows; on a Linux
 computer it is not available yet. A conversation's **Computer** tab is not available on a paired computer.
 
+Its workspaces are listed in that computer's own groups. A group you create, rename, or delete, and a workspace you move
+or reorder, change on that computer, for whoever uses it there too.
+
 While another computer uses this one, **In use by** shows at the bottom of this computer's sidebar. It lists each
 connected computer and since when, with **Disconnect**. While a computer is connected, this one does not go to sleep on
 its own.

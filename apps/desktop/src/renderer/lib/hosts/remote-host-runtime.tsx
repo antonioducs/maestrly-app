@@ -39,8 +39,16 @@ export interface HostShellActions {
   deleteSiblings: (members: Conversation[]) => void
   reorderStandaloneConversations: (keys: string[]) => void
   reorderConversations: (workspaceKey: string, keys: string[]) => void
+  reorderWorkspaces: (keys: string[]) => void
   removeWorkspace: (workspaceKey: string) => void
   toggleWorkspaceCollapsed: (workspaceKey: string) => void
+  /** The host's groups are kept on the host: whoever uses it sees and changes the same ones. */
+  createGroup: (name: string) => Promise<WorkspaceGroup>
+  renameGroup: (groupKey: string, name: string) => void
+  deleteGroup: (groupKey: string) => void
+  reorderGroups: (keys: string[]) => void
+  toggleGroupCollapsed: (groupKey: string) => void
+  moveWorkspaceToGroup: (workspaceKey: string, groupKey: string | null, flatKeys: string[]) => void
   /** The workspace after the host listed it again, as when it was just added; null when it is not there. */
   reconcileWorkspace: (workspaceKey: string) => Promise<WorkspaceWithConversations | null>
 }
@@ -224,8 +232,20 @@ export function RemoteHostRuntime({
       reorderStandaloneConversations: (keys) => void latest.current.handleReorderStandaloneConversations(rawIds(keys)),
       reorderConversations: (workspaceKey, keys) =>
         latest.current.handleReorderConversations(rawId(workspaceKey), rawIds(keys)),
+      reorderWorkspaces: (keys) => latest.current.handleReorderWorkspaces(rawIds(keys)),
       removeWorkspace: (workspaceKey) => void latest.current.handleRemoveWorkspace(rawId(workspaceKey)),
       toggleWorkspaceCollapsed: (workspaceKey) => latest.current.handleToggleWorkspaceCollapsed(rawId(workspaceKey)),
+      createGroup: async (name) => shellGroup(hostId, await latest.current.handleCreateGroup(name)),
+      renameGroup: (groupKey, name) => latest.current.handleRenameGroup(rawId(groupKey), name),
+      deleteGroup: (groupKey) => latest.current.handleDeleteGroup(rawId(groupKey)),
+      reorderGroups: (keys) => latest.current.handleReorderGroups(rawIds(keys)),
+      toggleGroupCollapsed: (groupKey) => latest.current.handleToggleGroupCollapsed(rawId(groupKey)),
+      moveWorkspaceToGroup: (workspaceKey, groupKey, flatKeys) =>
+        latest.current.handleMoveWorkspaceToGroup(
+          rawId(workspaceKey),
+          groupKey === null ? null : rawId(groupKey),
+          rawIds(flatKeys)
+        ),
       reconcileWorkspace: async (workspaceKey) => {
         const workspace = (await refresh()).find((item) => item.id === rawId(workspaceKey))
         return workspace ? shellWorkspace(hostId, workspace) : null

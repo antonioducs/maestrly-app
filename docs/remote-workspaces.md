@@ -60,6 +60,10 @@ the server hosts one environment and predates several: **Update bots** too.
   folder that is already on the server, create a project, or clone a Git repository. Folders are chosen in a dialog
   that browses the server, because the server has no desktop to show a system dialog on. Cloning uses the Git
   credentials of the server's environment, not this computer's.
+- **Group the server's workspaces.** With the server chosen, **New group** in the **⋯** menu next to **Workspaces**
+  creates a group on the server. Drag workspaces into it, or use **Move to group…** in a workspace's menu. Groups are
+  kept on the server, so everyone who uses it sees the same ones, and a change made on another computer shows at once.
+  A server's workspaces go only into that server's groups. While the server is not connected, its groups cannot change.
 - **Work in a conversation.** The chat view is the same as for a conversation of this computer. The drawer offers
   **Browser**, **Computer**, **Code**, **Terminal**, **Files**, **Plan**, **Review**, and **Notes**. The terminal is a
   shell on the server, in the conversation's folder. **Browser** shows the agent's browser on the server, live: see
@@ -338,8 +342,8 @@ notification goes away once you open the conversation on any computer. See
   on the server's own desktop, which nobody sees.
 - **On a conversation's computer:** sound, dragging files onto it, and uploading files through it; computers do not
   survive a restart of the server's Maestrly.
-- **ChatGPT Web** companion sessions, paired reviews between two conversations, moving a conversation between
-  folders, and workspace groups are for conversations of this computer.
+- **ChatGPT Web** companion sessions, paired reviews between two conversations, and moving a conversation between
+  folders are for conversations of this computer.
 - **Moving plain chats and multi-repository conversations** between this computer and the server: only conversations
   of a workspace with one repository move (see [Move a conversation](#move-a-conversation)).
 - **Isolation between workspaces of one environment.** They share one container, one user, and one set of accounts:

@@ -9,6 +9,14 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/compon
 import type { SidebarTab } from './sidebar-tabs'
 
 /**
+ * The menu gives the focus back to its button once it closes, unless what was chosen moved it on, as New group does to
+ * the name of the group it made.
+ */
+const keepMovedFocus = (event: Event): void => {
+  if (document.activeElement && document.activeElement !== document.body) event.preventDefault()
+}
+
+/**
  * The channel a build that is not production runs on, at the bottom of the rail. The rail only fits the channel's
  * name; the instance, which also picks a development build's color, and the version are in its tooltip.
  */
@@ -137,7 +145,7 @@ export function SidebarPanelHeader({
                   <MoreHorizontal className="size-[15px]" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="min-w-[200px]">
+              <DropdownMenuContent align="end" className="min-w-[200px]" onCloseAutoFocus={keepMovedFocus}>
                 {viewMenu}
               </DropdownMenuContent>
             </DropdownMenu>

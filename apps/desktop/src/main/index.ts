@@ -59,6 +59,7 @@ import {
   guardOn,
   focusMainWindow,
   sendToConversation,
+  sendToMainTargets,
 } from './window-ipc'
 import { isRemoteUiTarget, sendToRemoteMains } from './remote-ui-targets'
 import { ipcHandlerTable } from './remote-host/ipc-handler-table'
@@ -968,6 +969,7 @@ function registerIpc(): void {
   registerWorkspaceIpc(reg, {
     getMainWindow: () => mainWindow,
     stopChat,
+    notifyWorkspacesChanged: () => sendToMainTargets('workspace:changed'),
   })
   cancelProjectSetupsAndWait = registerProjectSetupIpc(reg).cancelAndWait
   registerConversationIpc(reg, {

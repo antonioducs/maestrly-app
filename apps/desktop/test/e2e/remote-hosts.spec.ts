@@ -195,6 +195,37 @@ test('remote host: mixed sidebar, a chat turn and a terminal that run on the hos
     await access(path.join(workspacesRoot, 'remote-project', '.git'))
     expect(await local('listWorkspaces', true)).toEqual([])
 
+    // The host's workspaces go into the host's own groups: one made here is kept on the host, and one the host gets
+    // from anywhere else shows here at once. The name of a group made or renamed through a menu is selected once the
+    // menu closes, so typing names it.
+    const groupName = workspacesSection.locator('[data-group-id] input')
+    const groupNames = async () => (await remote('listGroups')).map((item: { name: string }) => item.name)
+    await page.getByRole('button', { name: 'View options', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'New group', exact: true }).click()
+    await expect(groupName).toBeFocused()
+    await page.keyboard.type('Customers')
+    await page.keyboard.press('Enter')
+    await expect.poll(groupNames).toEqual(['Customers'])
+    expect(await local('listGroups')).toEqual([])
+    const [group] = await remote('listGroups')
+    const groupHeader = workspacesSection.locator(`[data-group-id="${HOST_ID}#${group.id}"]`)
+    await groupHeader.click({ button: 'right' })
+    await page.getByRole('menuitem', { name: 'Rename group', exact: true }).click()
+    await expect(groupName).toBeFocused()
+    await page.keyboard.type('Clients')
+    await page.keyboard.press('Enter')
+    await expect.poll(groupNames).toEqual(['Clients'])
+    await expect(groupHeader).toContainText('Clients')
+    await expect(groupHeader).toContainText('0')
+    await workspacesSection.locator('[data-workspace-header]').click({ button: 'right' })
+    await page.getByRole('menuitem', { name: 'Move to group…', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Clients', exact: true }).click()
+    await expect.poll(async () => (await remote('listWorkspaces', true))[0].groupId).toBe(group.id)
+    await expect(groupHeader).toContainText('1')
+    await remote('createGroup', 'Made on the host')
+    await expect(workspacesSection.locator('[data-group-id]')).toHaveCount(2)
+    await expect(workspacesSection.locator('[data-group-id]').last()).toContainText('Made on the host')
+
     // What needs the host's own desktop is refused there, and what is this computer's never goes to the host.
     await expect(remote('pickFolder')).rejects.toThrow(/not available on a remote host/)
 
