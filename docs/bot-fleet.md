@@ -465,9 +465,11 @@ it through a DevTools pipe, never a network port, so no other program of the env
   page; a tab you open by hand belongs to the conversation the desktop shows.
 - The browser starts when a tool, a link, or the dock needs it, and closes after 15 minutes without use while nobody
   watches or controls the bot's screen, or when you pause the bot. It closes cleanly, saving the cookies sites just
-  changed, so the bot stays signed in; only a browser still open 10 seconds later is ended. Its tabs reopen the next
-  time it starts. If it crashes, it starts again with them, at most five times a minute; if you close its window, it
-  stays closed until it is needed.
+  changed, so the bot stays signed in; only a browser still open 10 seconds later is ended. When Maestrly quits (an
+  environment restart, update or stop), it closes the bots' browsers before anything else, and the environment waits
+  for them before stopping the bots' screens: a browser whose screen stops first exits without saving. Its tabs reopen
+  the next time it starts. If it crashes, it starts again with them, at most five times a minute; if you close its
+  window, it stays closed until it is needed.
 - Downloads go to the environment's `~/Downloads` folder without a dialog.
 - The first time a bot's browser starts, it copies the site logins of the environment's built-in browser, which bots
   shared before this browser existed. Later sign-ins stay with that bot: sign in once in each bot that needs a site.

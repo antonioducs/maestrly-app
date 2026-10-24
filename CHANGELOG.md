@@ -5,6 +5,14 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Fixed
+
+- A bot no longer has to sign in to Google again after its environment restarts,
+  updates or stops. Maestrly now closes the bots' Chromium first when it quits,
+  and the environment waits for it before stopping the bots' screens: a browser
+  whose screen stopped while it was still closing lost the cookies it had just
+  changed, among them the session tokens Google rotates.
+
 ## [0.27.0] - 2026-10-24
 
 ### Added

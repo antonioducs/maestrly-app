@@ -37,6 +37,7 @@ sleep_pid=''
 stop_app_session() {
   local session="$1" tenth left
   [[ "$session" =~ ^[1-9][0-9]*$ ]] || return 0
+  wait_for_bot_browsers
   left=$(pgrep -c -s "$session" 2>/dev/null || true)
   [[ "$left" =~ ^[1-9][0-9]*$ ]] || return 0
   echo "[bot] Stopping $left programs left by Maestrly" >&2
@@ -47,6 +48,20 @@ stop_app_session() {
   done
   echo '[bot] Programs left by Maestrly did not exit; killing them' >&2
   pkill -KILL -s "$session" 2>/dev/null || true
+}
+
+# The bots' Chromium runs in sessions of its own and closes by itself once Maestrly exits, writing its profile first.
+# Ended before that, the displays it runs on make it exit at once: the cookies it changed in the last half minute,
+# Google's rotated session tokens among them, are lost and sign the bot out at its next start. Waits a few seconds at
+# most for it.
+wait_for_bot_browsers() {
+  local tenth
+  for ((tenth = 0; tenth < exit_wait_tenths; tenth++)); do
+    pgrep -u "$(id -u)" -f -- "--user-data-dir=$HOME/\.config/maestrly-(bots|desktops)/.* --remote-debugging-pipe" \
+      >/dev/null 2>&1 || return 0
+    sleep 0.1
+  done
+  echo '[bot] The bots'"'"' browsers did not close; stopping their displays anyway' >&2
 }
 
 # Waits a few seconds at most for a process to exit.

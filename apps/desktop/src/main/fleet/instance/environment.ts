@@ -363,7 +363,7 @@ export class EnvironmentRuntime {
     this.unwireBrokers?.()
     this.unwireBrokers = null
     await this.logins.dispose()
-    for (const botId of [...this.browsers.keys()]) await this.stopBrowser(botId)
+    await this.closeBrowsers()
     for (const botId of [...this.desktops.keys()]) await this.stopDesktop(botId)
     for (const bot of [...this.registry.values()]) await bot.dispose()
     this.registry.clear()
@@ -774,6 +774,13 @@ export class EnvironmentRuntime {
     if (!handle) return
     this.desktops.delete(botId)
     await handle.dispose().catch((error: unknown) => log('error', errorMessage(error)))
+  }
+  /**
+   * Closes every bot's Chromium for good, all at once. The app runs it first when it quits: a browser still closing
+   * when its display stops exits without writing its profile, and loses the cookies it changed last.
+   */
+  async closeBrowsers(): Promise<void> {
+    await Promise.all([...this.browsers.keys()].map((botId) => this.stopBrowser(botId)))
   }
   private async stopBrowser(botId: string): Promise<void> {
     const browser = this.browsers.get(botId)
