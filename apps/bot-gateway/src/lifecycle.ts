@@ -94,6 +94,7 @@ export const RESTART_TO_ADD_BOTS = 'Restart this environment to update it before
 export const RESTART_TO_CHOOSE_COMPACTION =
   'Restart this environment to update it before choosing its compaction model.'
 export const SHARED_ENVIRONMENT = 'This bot shares its environment. Restart the environment instead.'
+export const RESTART_TO_RESTART_BOT = 'Restart this environment to update it before restarting one of its bots.'
 export const RESTORE_ENVIRONMENT_FIRST = 'Restore its environment first'
 export const START_ENVIRONMENT_FIRST = 'Start its environment first'
 export const SLOT_IN_USE = 'Its display slot is still in use. Start the bot again to retry.'
@@ -110,6 +111,11 @@ const environmentSetup = (step: FleetEnvironmentSetup['step']): FleetEnvironment
   error: null,
   errorMessage: null,
 })
+/**
+ * How long a bot restarting on its own may take to leave its environment: its turns stop, its conversations' processes
+ * end and its browser, which may be the very thing that hangs, is killed once it does not exit.
+ */
+const BOT_RESTART_UNINSTALL_MS = 60_000
 const botKinds = { started: 'bot_started', stopped: 'bot_stopped', restarted: 'bot_restarted' } as const
 const environmentKinds = {
   started: 'environment_started',
@@ -177,6 +183,8 @@ export class Lifecycle {
   private readonly deletingEnvironments = new Set<string>()
   /** Updates being applied, by environment: a status arriving meanwhile waits for the same one instead of a second. */
   private readonly draining = new Map<string, Promise<void>>()
+  /** Bots restarting on their own in their running environment: devices see them restarting meanwhile. */
+  private readonly restartingBots = new Set<string>()
   /** Checks waiting updates while any exists: a bot may go idle without a status event reaching the gateway. */
   private updateTimer: NodeJS.Timeout | null = null
   /** Checks idle workspaces environments while any has an idle stop. */
@@ -535,8 +543,9 @@ export class Lifecycle {
     return this.store.listBots().map((bot) => this.assemble(bot))
   }
   /**
-   * A bot's lifecycle and setup as devices see them: its own while it is archived or being installed in a running
-   * environment, otherwise its environment's, whose setup steps it shows until the environment's desktop answers.
+   * A bot's lifecycle and setup as devices see them: its own while it is archived, being installed or restarting in a
+   * running environment, otherwise its environment's, whose setup steps it shows until the environment's desktop
+   * answers.
    */
   private placementState(
     bot: FleetBot,
@@ -545,8 +554,9 @@ export class Lifecycle {
     if (bot.lifecycle === 'archived' || !environment) return { lifecycle: bot.lifecycle, setup: bot.setup }
     if (environment.lifecycle === 'running')
       return {
-        lifecycle:
-          bot.lifecycle === 'running' || bot.lifecycle === 'failed' || bot.lifecycle === 'creating'
+        lifecycle: this.restartingBots.has(bot.id)
+          ? 'restarting'
+          : bot.lifecycle === 'running' || bot.lifecycle === 'failed' || bot.lifecycle === 'creating'
             ? bot.lifecycle
             : 'starting',
         setup: bot.setup,
@@ -1375,7 +1385,8 @@ export class Lifecycle {
     }
     return occupied.size > 0
   }
-  private async installOne(client: InstanceClient, id: string, slot: number, strict: boolean) {
+  /** Installs one bot; `restart` records its restart instead of its start, whatever it was before. */
+  private async installOne(client: InstanceClient, id: string, slot: number, strict: boolean, restart = false) {
     const bot = this.store.getBot(id),
       secrets = this.store.botGatewaySecrets(id)
     if (!bot || bot.lifecycle === 'archived' || !secrets) return
@@ -1391,7 +1402,8 @@ export class Lifecycle {
         takeover: takeover === 'human' || takeover === 'acquiring',
       })
       await this.settle(id, client.forBot(id, true), status)
-      if (fresh && this.store.getBot(id)?.lifecycle === 'running') this.recordActivity(id, 'bot_started')
+      if ((fresh || restart) && this.store.getBot(id)?.lifecycle === 'running')
+        this.recordActivity(id, restart ? 'bot_restarted' : 'bot_started')
     } catch (error) {
       if (strict && error instanceof InstanceUnreachableError) throw error
       this.failBot(id, error)
@@ -1478,9 +1490,9 @@ export class Lifecycle {
     this.updateStatus(id, status)
     this.updateActive(id, { lifecycle: 'running', setup: botSetup('ready') })
   }
-  private async uninstall(client: InstanceClient, id: string, purge: boolean) {
+  private async uninstall(client: InstanceClient, id: string, purge: boolean, timeoutMs?: number) {
     try {
-      await client.botUninstall(id, purge)
+      await client.botUninstall(id, purge, timeoutMs)
     } catch (error) {
       if (!(error instanceof GatewayError && error.code === 'NOT_FOUND')) throw error
     }
@@ -2009,7 +2021,7 @@ export class Lifecycle {
     this.requireSettled(id)
     return this.store.botPlacement(id)!.environmentId
   }
-  /** A bot's own start, stop and restart act on its environment, which only a bot alone in it may do. */
+  /** A bot's own start and stop act on its environment, which only a bot alone in it may do. */
   private soleEnvironment(id: string): string {
     const environmentId = this.activeEnvironment(id)
     if (this.store.botsOfEnvironment(environmentId).length > 1) throw new GatewayError('CONFLICT', SHARED_ENVIRONMENT)
@@ -2036,9 +2048,56 @@ export class Lifecycle {
     await this.stopEnvironment(this.soleEnvironment(id), { botId: id })
     return this.get(id)!
   }
+  /**
+   * Restarts a bot. A bot alone in its environment restarts its environment, which also moves it to the configured
+   * image. A bot that shares its environment restarts on its own (`bot-restart`), and its siblings keep running.
+   */
   async restart(id: string): Promise<FleetBot> {
-    await this.restartEnvironment(this.soleEnvironment(id), { botId: id })
+    const environmentId = this.activeEnvironment(id)
+    if (this.store.botsOfEnvironment(environmentId).length > 1)
+      await this.exclusive(environmentId, () => this.restartBotLocked(environmentId, id))
+    else await this.restartEnvironment(environmentId, { botId: id })
     return this.get(id)!
+  }
+  /**
+   * Restarts one bot of a running environment, which must be exclusive. Its Maestrly uninstalls the bot, which stops its
+   * turns, the processes of its conversations, its browser and its display, then installs it again from its record,
+   * paused if it was. Its data stays, and a takeover of its screen ends. A bot that does not leave fails the restart; a
+   * reconcile then installs it again, whatever state it is in.
+   */
+  private async restartBotLocked(environmentId: string, id: string) {
+    const bot = this.store.getBot(id)
+    if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
+    this.requireSettled(id)
+    // A move that finished while this restart waited took the bot elsewhere.
+    if (this.store.botPlacement(id)?.environmentId !== environmentId) throw new GatewayError('CONFLICT', BOT_MOVING)
+    if (this.store.getEnvironment(environmentId)?.lifecycle !== 'running')
+      throw new GatewayError('CONFLICT', START_ENVIRONMENT_FIRST)
+    // An image from before environments cannot uninstall its bot.
+    if (!this.capable(environmentId)) throw new GatewayError('CONFLICT', RESTART_TO_RESTART_BOT)
+    const client = this.client(environmentId)
+    this.clearTakeover(id, 4002)
+    this.removeStatus(id)
+    this.restartingBots.add(id)
+    this.emitBot(id)
+    try {
+      try {
+        await this.uninstall(client, id, false, BOT_RESTART_UNINSTALL_MS)
+      } catch (error) {
+        this.logger.warn('A restarting bot did not leave its environment', {
+          botId: id,
+          environmentId,
+          failure: failureCode(error),
+        })
+        this.scheduleReconcile(environmentId, 1000)
+        throw error
+      }
+      await this.installOne(client, id, this.store.botPlacement(id)!.slot, false, true)
+    } finally {
+      this.restartingBots.delete(id)
+      this.emitBot(id)
+    }
+    if (this.get(id)?.lifecycle === 'running') this.onReady(id)
   }
   /**
    * Archives one bot: its environment's instance uninstalls it and keeps its data, its slot becomes free and its

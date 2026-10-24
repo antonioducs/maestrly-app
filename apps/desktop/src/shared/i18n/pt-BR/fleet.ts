@@ -1952,6 +1952,21 @@ export default {
       alreadyMoving: 'Este bot já está se movendo.',
     },
   },
+  restartBot: {
+    action: 'Reiniciar bot',
+    actionHint:
+      'Reinicia só este bot: o turno, os programas, o navegador e a tela dele. Os outros bots do ambiente continuam trabalhando.',
+    title: 'Reiniciar {{name}}?',
+    confirm:
+      'Só {{name}} reinicia: o turno dele é interrompido, e os programas, o navegador e a tela dele fecham e abrem de novo. A conversa, os arquivos e as configurações continuam guardados. Os outros bots continuam trabalhando: {{bots}}.',
+    button: 'Reiniciar bot',
+    unavailable: {
+      moving: 'Este bot está se movendo.',
+      'not-running': 'Inicie o bot antes de reiniciá-lo.',
+      'restart-environment': 'Reinicie o ambiente dele para atualizá-lo antes de reiniciar um dos bots dele.',
+    },
+    restartEnvironment: 'Reinicie este ambiente para atualizá-lo antes de reiniciar um dos bots dele.',
+  },
   runs: {
     tab: 'Execuções',
     tabConversation: 'Conversa',

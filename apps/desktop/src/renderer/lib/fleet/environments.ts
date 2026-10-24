@@ -1,4 +1,5 @@
 import {
+  FLEET_BOT_RESTART_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
   type FleetArchivedBot,
   type FleetBot,
@@ -7,7 +8,7 @@ import {
   type FleetOwnerMemoryEntry,
 } from '@maestrly/bot-fleet-protocol'
 import type { FleetProvisioningTargetInput } from '../../../shared/fleet-targets'
-import { compareByName, groupBotsByEnvironment, type FleetEnvironmentGroup } from './selectors'
+import { compareByName, environmentOf, groupBotsByEnvironment, type FleetEnvironmentGroup } from './selectors'
 import type { FleetController } from './use-fleet'
 import type { FleetServerId } from '../../../shared/fleet-servers'
 
@@ -195,7 +196,10 @@ export function ownerMemoryScope(
   return { kind: 'environment', id: entry.environmentId, name: environment?.name ?? null }
 }
 
-/** Starting, stopping or restarting a bot of an environment acts on its environment, shared with its other bots. */
+/**
+ * Starting or stopping a bot of an environment acts on its environment, shared with its other bots. Restarting one
+ * that shares it restarts the bot alone, where the server can (see `botRestartAvailability`).
+ */
 export function lifecycleTarget(
   bot: Pick<FleetBot, 'id' | 'environmentId'>,
   enabled: boolean
@@ -212,6 +216,28 @@ export function startBot(
   return 'environmentId' in target
     ? fleet.environmentAction(target.environmentId, 'start')
     : fleet.botAction(target.botId, 'start')
+}
+
+/**
+ * Whether a bot can restart on its own (`bot-restart`), or why not. Only a bot that shares its environment does: one
+ * alone there (`alone`) restarts with its environment. It must run, and its environment's Maestrly must install bots
+ * one at a time, which an image from before environments does not.
+ */
+export type BotRestartAvailability =
+  | 'ready'
+  | 'alone'
+  | 'update-server'
+  | 'moving'
+  | 'not-running'
+  | 'restart-environment'
+export function botRestartAvailability(fleet: Pick<FleetController, 'state'>, bot: FleetBot): BotRestartAvailability {
+  const environment = environmentOf(fleet.state.snapshot.environments, bot)
+  if (!environment || environment.botIds.length < 2) return 'alone'
+  if (!fleet.state.connection.features.includes(FLEET_BOT_RESTART_FEATURE)) return 'update-server'
+  if (bot.move) return 'moving'
+  if (bot.lifecycle !== 'running') return 'not-running'
+  if (!environment.capabilities.includes(FLEET_ENVIRONMENTS_FEATURE)) return 'restart-environment'
+  return 'ready'
 }
 
 export function environmentBots(environment: Pick<FleetEnvironment, 'id'>, bots: FleetBot[]): FleetBot[] {
