@@ -543,7 +543,16 @@ See [environments](bot-fleet.md#environments) for what its bots share.
   Bot browser pages answer JavaScript dialogs with their per-tab policy instead
   of opening native windows. Popups suppress native dialogs, including confirmations,
   so they cannot block another screen. Each apps screen is a separate display
-  with its own input.
+  with its own input. A phone opens a bot's screen only where the gateway
+  announces `phone-screens`, under the same tickets and takeover as a computer.
+  Its WebSocket always sends an `Origin` header, so the phone names that origin
+  in the ticket request and `/v1/screen` accepts the upgrade with that one
+  origin only; a ticket asked for without one refuses any Origin, as for a
+  computer. On the phone the stream is decoded and drawn in a web view of its
+  own with no network, cookies, storage or navigation, under a policy that loads
+  nothing; its page has an https address in the reserved `.invalid` domain,
+  which resolves nowhere, only because WebCodecs needs a secure context; the app holds the ticket and the WebSocket and passes the page only
+  frames, and reads from it only taps, scrolls and its view, each checked.
 - **Browsers.** Each bot drives a Chromium of its own on its apps screen with
   `browser_*`, with a separate per-bot profile that uses Chromium's basic
   password store, which the keyring does not protect; its cookies and site

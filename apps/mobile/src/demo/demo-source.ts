@@ -9,6 +9,7 @@ import {
   FLEET_FILES_FEATURE,
   FLEET_FILES_MANAGE_FEATURE,
   FLEET_GATEWAY_ROUTES,
+  FLEET_PHONE_SCREENS_FEATURE,
   FLEET_PEER_CONVERSATIONS_FEATURE,
   FLEET_ROUTINE_CONVERSATIONS_FEATURE,
   FLEET_TRANSCRIPT_REASONING_FEATURE,
@@ -26,6 +27,8 @@ import {
   type FleetPatchBotRequest,
   type FleetPublishedFile,
   type FleetSendMessageRequest,
+  type FleetTakeoverReleaseRequest,
+  type FleetTakeoverState,
   type FleetTranscriptItem,
 } from '@maestrly/bot-fleet-protocol'
 import { GatewayError, type CallOptions, type GatewayClient, type RouteKey } from '../gateway/client'
@@ -35,6 +38,7 @@ import type { EventHandlers, FleetSource } from '../fleet/source'
 import type { PairedServer } from '../servers/registry'
 import { DEMO_FILES_BOT, demoFilesWorld } from './demo-files'
 import { createDemoLanes, DEMO_LANES_BOT, demoLaneWorld } from './demo-lanes'
+import { demoScreens } from './demo-screen'
 import { DEMO_OPTIONS, DEMO_SCRIPTS, demoWorld, pixelAnswered, REPLY_SCRIPT, type AskSpec, type Step } from './fixtures'
 
 export const DEMO_FEATURES = [
@@ -46,6 +50,7 @@ export const DEMO_FEATURES = [
   FLEET_ROUTINE_CONVERSATIONS_FEATURE,
   FLEET_PEER_CONVERSATIONS_FEATURE,
   FLEET_FILES_MANAGE_FEATURE,
+  FLEET_PHONE_SCREENS_FEATURE,
 ]
 
 /** The demo server as a paired server: it never leaves the phone. */
@@ -426,6 +431,64 @@ export function createDemoSource(options: { stepMs?: number; autoplay?: boolean 
     void run(botId, next)
   }
 
+  // The bots' screens: Juno waits on the staging admin's sign-in once it asks for help.
+  const screens = demoScreens({
+    controls: (botId) => {
+      const takeover = bots.get(botId)?.takeover
+      return takeover?.state === 'human' && takeover.deviceId === DEMO_SERVER.id
+    },
+    signedOut: (botId) => botId === 'juno',
+    scale,
+  })
+  /** What a bot was doing when this phone took its screen, which it goes back to when given the screen back. */
+  const held = new Map<string, Pick<FleetBot, 'status' | 'activity'>>()
+  const noTakeover: FleetTakeoverState = { state: 'none', deviceId: null, deviceName: null, since: null }
+
+  function takeover(botId: string): FleetTakeoverState {
+    const bot = requireBot(botId)
+    if (bot.lifecycle !== 'running') throw new GatewayError('BOT_NOT_RUNNING', 409, 'Bot not running')
+    if (bot.takeover.state !== 'none') {
+      if (bot.takeover.deviceId !== DEMO_SERVER.id)
+        throw new GatewayError('CONFLICT', 409, 'Bot controlled by another device')
+      return bot.takeover
+    }
+    held.set(botId, { status: bot.status, activity: bot.activity })
+    const human: FleetTakeoverState = {
+      state: 'human',
+      deviceId: DEMO_SERVER.id,
+      deviceName: DEMO_SERVER.deviceName,
+      since: stamp(),
+    }
+    updateBot(botId, { takeover: human, status: 'human' })
+    return human
+  }
+
+  /** As a bot does: the note answers the requests for help it waited on, and it carries on when asked to. */
+  function release(botId: string, request: FleetTakeoverReleaseRequest): FleetTakeoverState {
+    const bot = requireBot(botId)
+    if (bot.takeover.state !== 'human' || bot.takeover.deviceId !== DEMO_SERVER.id)
+      throw new GatewayError('CONFLICT', 409, 'Device does not hold this takeover')
+    screens.released(botId)
+    const durationMs = Math.max(0, Date.now() - Date.parse(bot.takeover.since ?? stamp()))
+    upsert(botId, { id: nextId(botId), at: stamp(), kind: 'system', code: 'takeover', text: request.note, durationMs })
+    const before = held.get(botId)
+    held.delete(botId)
+    updateBot(botId, { takeover: noTakeover, status: before?.status ?? 'idle', activity: before?.activity ?? null })
+    const helps = inbox.filter((entry) => entry.botId === botId && entry.interaction.kind === 'help')
+    let next: Step[] | null = null
+    for (const open of helps) {
+      const asked = pending.get(open.interaction.id)
+      pending.delete(open.interaction.id)
+      const item = transcripts[botId].find((existing) => existing.id === open.interaction.itemId)
+      if (item?.kind === 'help') upsert(botId, { ...item, state: 'resolved', resolvedAt: stamp(), note: request.note })
+      if (!next && asked?.spec.kind === 'help') next = DEMO_SCRIPTS[asked.spec.next]
+    }
+    if (helps.length) setInbox(inbox.filter((entry) => !helps.includes(entry)))
+    if (next && request.continue) void run(botId, next)
+    else if (helps.length) finish(botId, null)
+    return noTakeover
+  }
+
   function send(botId: string, body: FleetSendMessageRequest) {
     const bot = requireBot(botId)
     if (['offline', 'starting', 'setup'].includes(bot.status))
@@ -579,6 +642,10 @@ export function createDemoSource(options: { stepMs?: number; autoplay?: boolean 
       case 'botInteractionResolve':
         resolve(id, String(o.params?.interactionId), body as FleetInteractionResolution)
         return undefined
+      case 'botTakeover':
+        return takeover(id)
+      case 'botTakeoverRelease':
+        return release(id, body as FleetTakeoverReleaseRequest)
       case 'botPatch': {
         requireBot(id)
         const patch = body as FleetPatchBotRequest
@@ -744,5 +811,6 @@ export function createDemoSource(options: { stepMs?: number; autoplay?: boolean 
     fileSource: () => ({ uri: '', headers: {} }),
     // The demo keeps nothing it is sent: any file reads as the placeholder image, which every kind accepts.
     readAttachment: async () => PLACEHOLDER_IMAGE.slice(PLACEHOLDER_IMAGE.indexOf(',') + 1),
+    openScreen: screens.open,
   }
 }

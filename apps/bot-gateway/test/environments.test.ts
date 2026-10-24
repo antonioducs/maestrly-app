@@ -1786,6 +1786,45 @@ describe('environment screens', () => {
     expect(() => screen.environmentTicket('work', 'one', 'view')).toThrow()
   })
 
+  it("opens a phone's screen with the Origin its ticket names, and refuses any other Origin", async () => {
+    const f = fixture()
+    const work = await f.instance('work', true, [FLEET_VIDEO_SCREENS_FEATURE])
+    const {
+      ids: [ads],
+    } = await environment(f, 'Work', ['Ads'])
+    const { screen, base } = await screens(f, work, 'work')
+    const phone = 'https://bots.example.dev'
+    /** 101 once the screen opened, the HTTP status of a refused upgrade, or the close code of a refused ticket. */
+    const outcome = (path: string, origin?: string) =>
+      new Promise<number>((resolve) => {
+        const ws = new WebSocket(base + path, origin === undefined ? {} : { origin })
+        ws.once('open', () => {
+          ws.once('close', (code) => resolve(code === 1005 ? 101 : code))
+          setTimeout(() => ws.close(), 50)
+        })
+        ws.once('unexpected-response', (_request, response) => {
+          response.resume()
+          resolve(response.statusCode ?? 0)
+        })
+        ws.once('error', () => resolve(0))
+      })
+    const ticket = (origin: string | null = phone) => screen.ticket(ads, 'one', 'view', 'apps', origin).path
+    expect(await outcome(ticket(), phone)).toBe(101)
+    // Browsers and React Native may write the host in capitals; the Origin is compared as WebSockets send it.
+    expect(await outcome(ticket(), 'https://Bots.Example.dev')).toBe(101)
+    // A native client that sends no Origin opens it as a computer does.
+    expect(await outcome(ticket())).toBe(101)
+    // A page that got hold of the ticket is refused before the handshake, and the ticket is spent.
+    const stolen = ticket()
+    expect(await outcome(stolen, 'https://evil.example')).toBe(403)
+    expect(await outcome(stolen)).toBe(4003)
+    expect(await outcome(stolen, phone)).toBe(403)
+    // A computer's ticket names no Origin: none may carry one.
+    expect(await outcome(ticket(null), phone)).toBe(403)
+    expect(await outcome(ticket(null))).toBe(101)
+    expect(work.upgrades.filter((path) => path === '/v1/bots/' + ads + '/screen/apps/view')).toHaveLength(4)
+  })
+
   it('refuses every screen of an image without video screens', async () => {
     const f = fixture()
     // An image from before environments, and one with environments from before video screens.

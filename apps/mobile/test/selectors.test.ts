@@ -1,14 +1,21 @@
-import type { FleetBot } from '@maestrly/bot-fleet-protocol'
+import {
+  FLEET_PHONE_SCREENS_FEATURE,
+  FLEET_UNIFIED_DESKTOP_FEATURE,
+  FLEET_VIDEO_SCREENS_FEATURE,
+  type FleetBot,
+} from '@maestrly/bot-fleet-protocol'
 import { describe, expect, it } from 'vitest'
 import { translator } from '../src/i18n/translate'
 import { botRecord, environmentRecord } from '../src/fleet/factories'
 import { fleetReducer, initialFleetState } from '../src/fleet/state'
 import {
+  botScreenSurface,
   botStatusLine,
   botWorksHere,
   botsByEnvironment,
   interactionForItem,
   isComposerLocked,
+  ownsTakeover,
   statusLineText,
   waitingItems,
 } from '../src/fleet/selectors'
@@ -96,7 +103,7 @@ describe('fleet selectors', () => {
     expect(line({ status: 'paused' }).text).toBe('Paused')
     expect(line({ status: 'offline' }).text).toBe('Stopped')
     expect(line({ status: 'starting' }).text).toBe('Starting…')
-    expect(line({ status: 'human' }).text).toBe('Being used from a computer')
+    expect(line({ status: 'human' }).text).toBe('You are using its screen')
   })
 
   it('shows a shell command as a prompt line', () => {
@@ -151,5 +158,30 @@ describe('fleet selectors', () => {
       expect(isComposerLocked(botRecord({ id: 'b', name: 'B', status }))).toBe(true)
     for (const status of ['idle', 'working', 'waiting'] as const)
       expect(isComposerLocked(botRecord({ id: 'b', name: 'B', status }))).toBe(false)
+  })
+
+  it('opens a bot’s screen only where the server lets phones and its environment streams video', () => {
+    const video = (unified: boolean) =>
+      environmentRecord({
+        id: 'studio',
+        name: 'studio',
+        capabilities: [FLEET_VIDEO_SCREENS_FEATURE, ...(unified ? [FLEET_UNIFIED_DESKTOP_FEATURE] : [])],
+      })
+    const state = (features: string[], environment = video(true)) => ({ features, environments: [environment] })
+    const juno = botRecord({ id: 'juno', name: 'Juno', environmentId: 'studio' })
+    const phones = [FLEET_PHONE_SCREENS_FEATURE]
+    // One desktop with the bot's browser as one more window; older images show the browser's area.
+    expect(botScreenSurface(state(phones), juno)).toBe('apps')
+    expect(botScreenSurface(state(phones, video(false)), juno)).toBe('browser')
+    expect(botScreenSurface(state([]), juno)).toBeNull()
+    expect(botScreenSurface(state(phones, environmentRecord({ id: 'studio', name: 'studio' })), juno)).toBeNull()
+    expect(botScreenSurface(state(phones), { ...juno, status: 'offline' })).toBeNull()
+    expect(botScreenSurface(state(phones), { ...juno, lifecycle: 'stopped' })).toBeNull()
+    expect(botScreenSurface(state(phones, { ...video(true), lifecycle: 'stopped' }), juno)).toBeNull()
+
+    const human = { state: 'human' as const, deviceId: 'phone', deviceName: 'Phone', since: at(1) }
+    expect(ownsTakeover(human, 'phone')).toBe(true)
+    expect(ownsTakeover(human, 'mac')).toBe(false)
+    expect(ownsTakeover({ ...human, state: 'acquiring' }, 'phone')).toBe(false)
   })
 })

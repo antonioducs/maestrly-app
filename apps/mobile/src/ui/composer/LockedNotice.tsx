@@ -9,6 +9,7 @@ import { useTheme } from '../../theme/ThemeProvider'
 import { Icon, type IconName } from '../icons'
 import { Button } from '../primitives/Button'
 import { AppText } from '../primitives/Text'
+import { openBotScreen, useScreenAccess } from '../screen/screen-access'
 
 /** Shown instead of the composer while the bot cannot take messages from the phone, with what would let it. */
 export function LockedNotice({ bot }: { bot: FleetBot }) {
@@ -19,8 +20,21 @@ export function LockedNotice({ bot }: { bot: FleetBot }) {
   const [busy, setBusy] = useState(false)
   const name = bot.name
   const needsCompaction = bot.activity?.kind === 'setup' && bot.activity.need === 'compaction'
-  const spec: { icon: IconName; title: MessageKey; body: MessageKey; action?: { label: string; run: BotAction } } =
-    bot.status === 'offline'
+  const screen = useScreenAccess(bot.status === 'human' ? bot : null)
+  const device = bot.takeover.deviceName
+  const spec: {
+    icon: IconName
+    title: MessageKey
+    body: MessageKey
+    action?: { label: string; run: BotAction | (() => void) }
+  } = screen?.owned
+    ? {
+        icon: 'hand',
+        title: 'locked.humanHere.title',
+        body: 'locked.humanHere.body',
+        action: { label: t('locked.openScreen'), run: () => openBotScreen(bot.id) },
+      }
+    : bot.status === 'offline'
       ? {
           icon: 'pause',
           title: 'locked.offline.title',
@@ -37,7 +51,13 @@ export function LockedNotice({ bot }: { bot: FleetBot }) {
               action: { label: t('locked.resume'), run: 'resume' },
             }
           : bot.status === 'human'
-            ? { icon: 'hand', title: 'locked.human.title', body: 'locked.human.body' }
+            ? {
+                icon: 'hand',
+                title: device ? 'locked.humanOn.title' : 'locked.human.title',
+                body: 'locked.human.body',
+                // Watching shows what the other device does with it.
+                ...(screen ? { action: { label: t('locked.watchScreen'), run: () => openBotScreen(bot.id) } } : {}),
+              }
             : {
                 icon: 'alert',
                 title: needsCompaction ? 'locked.setupCompaction.title' : 'locked.setupAccount.title',
@@ -61,9 +81,11 @@ export function LockedNotice({ bot }: { bot: FleetBot }) {
       >
         <Icon name={spec.icon} size={20} color={palette.muted} />
         <View style={{ flex: 1 }}>
-          <AppText style={{ fontSize: 15, lineHeight: 20, fontWeight: '600' }}>{t(spec.title, { name })}</AppText>
+          <AppText style={{ fontSize: 15, lineHeight: 20, fontWeight: '600' }}>
+            {t(spec.title, { name, device: device ?? '' })}
+          </AppText>
           <AppText variant="sub" tone="muted">
-            {t(spec.body)}
+            {t(spec.body, { name })}
           </AppText>
         </View>
         {action ? (
@@ -72,8 +94,10 @@ export function LockedNotice({ bot }: { bot: FleetBot }) {
             size="sm"
             busy={busy}
             onPress={() => {
+              const run = action.run
+              if (typeof run === 'function') return run()
               setBusy(true)
-              void controller.action(bot.id, action.run).finally(() => setBusy(false))
+              void controller.action(bot.id, run).finally(() => setBusy(false))
             }}
           />
         ) : null}

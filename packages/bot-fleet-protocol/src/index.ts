@@ -5,6 +5,7 @@ export * from './helpers.js'
 export * from './host-files.js'
 export * from './host-editor.js'
 export * from './screen-stream.js'
+export * from './screen-stream-core.js'
 
 export * from './environment-settings.js'
 export * from './plugins.js'

@@ -14,6 +14,7 @@ import {
   type FleetPeerThreadPatchRequest,
   type FleetPeerThreadSettings,
   type FleetRoutineRunSettings,
+  type FleetTakeoverState,
 } from '@maestrly/bot-fleet-protocol'
 import { z } from 'zod'
 import type { KeyValueStore } from '../servers/registry'
@@ -415,6 +416,11 @@ export function createFleetController(
 
   const applyBot = (bot: FleetBot) =>
     dispatch({ type: 'event', event: { type: 'bot.updated', at: new Date(now()).toISOString(), bot } })
+  /** A takeover the gateway answered with, before its event arrives. */
+  const applyTakeover = (botId: string, takeover: FleetTakeoverState) => {
+    const bot = state.bots.find((item) => item.id === botId)
+    if (bot) applyBot({ ...bot, takeover })
+  }
 
   const openStream = () => {
     stream = source.openEvents(handlers)
@@ -648,6 +654,24 @@ export function createFleetController(
     },
     resolve(botId: string, interactionId: string, resolution: FleetInteractionResolution) {
       return source.call('botInteractionResolve', { params: { id: botId, interactionId }, body: resolution })
+    },
+    /** Takes control of a bot's screen: the bot holds still until this phone gives the screen back. */
+    async takeover(botId: string): Promise<FleetTakeoverState> {
+      const takeover = await source.call('botTakeover', { params: { id: botId } })
+      applyTakeover(botId, takeover)
+      return takeover
+    },
+    /**
+     * Gives a bot its screen back. The note answers the requests for help it was waiting on, and reaches the bot with
+     * the news; `resume` lets it carry on with its turn.
+     */
+    async releaseTakeover(botId: string, note: string | null, resume: boolean): Promise<FleetTakeoverState> {
+      const takeover = await source.call('botTakeoverRelease', {
+        params: { id: botId },
+        body: { note, continue: resume },
+      })
+      applyTakeover(botId, takeover)
+      return takeover
     },
     async action(botId: string, action: BotAction) {
       // Every action answers with the bot except cancel, which answers with nothing. The phone shows the bot's own

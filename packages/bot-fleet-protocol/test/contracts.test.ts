@@ -1314,6 +1314,14 @@ describe('environment contracts', () => {
       surface: 'apps',
     })
     expect(fleetScreenTicketRequestSchema.safeParse({ mode: 'view', surface: 'environment' }).success).toBe(false)
+    // A phone names the Origin its WebSocket sends, written as WebSockets write it.
+    expect(fleetScreenTicketRequestSchema.parse({ mode: 'view', origin: 'https://bots.example.dev' })).toEqual({
+      mode: 'view',
+      surface: 'browser',
+      origin: 'https://bots.example.dev',
+    })
+    for (const origin of ['https://bots.example.dev/', 'https://Bots.example.dev', 'https://bots.example.dev/a', 'x'])
+      expect(fleetScreenTicketRequestSchema.safeParse({ mode: 'view', origin }).success).toBe(false)
     expect(fleetEnvironmentScreenTicketRequestSchema.parse({ mode: 'control' })).toEqual({ mode: 'control' })
     expect(fleetEnvironmentScreenTicketRequestSchema.safeParse({ mode: 'drive' }).success).toBe(false)
   })

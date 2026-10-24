@@ -1,14 +1,15 @@
+import { describe, expect, it } from 'vitest'
 import {
   ScreenMessageReader,
+  ScreenStreamCore,
   decodeClientMessage,
   encodeClipboard,
   encodeCursor,
   encodeFrame,
   encodeHello,
   encodePointer,
-} from '@maestrly/bot-fleet-protocol'
-import { describe, expect, it } from 'vitest'
-import { ScreenStreamCore, type ScreenCoreSink } from '../../src/renderer/lib/fleet/screen-stream-core'
+  type ScreenCoreSink,
+} from '../src/index.js'
 
 const KEY = Uint8Array.of(0, 0, 0, 1, 0x67, 0x64, 0x00, 0x28, 1, 0, 0, 1, 0x65, 9)
 const DELTA = Uint8Array.of(0, 0, 1, 0x41, 7)

@@ -23,6 +23,7 @@ import { Button } from '../../ui/primitives/Button'
 import { Cell } from '../../ui/primitives/Cell'
 import { Group } from '../../ui/primitives/Group'
 import { AppText } from '../../ui/primitives/Text'
+import { openBotScreen, useScreenAccess } from '../../ui/screen/screen-access'
 import { RoutineList } from '../../ui/sheets/RoutineList'
 import { SheetScreen } from '../../ui/SheetScreen'
 
@@ -192,6 +193,7 @@ function Details({ bot }: { bot: FleetBot }) {
   )
   const { option } = useBotSelections(bot)
   const files = useBotFiles(bot)
+  const screen = useScreenAccess(bot)
   const [busy, setBusy] = useState<BotAction | null>(null)
   const [error, setError] = useState<string | null>(null)
   const line = botStatusLine(bot, text)
@@ -268,6 +270,23 @@ function Details({ bot }: { bot: FleetBot }) {
         >
           {error}
         </AppText>
+      ) : null}
+      {screen ? (
+        <Group>
+          <Cell
+            icon="laptop"
+            label={t('details.screen')}
+            value={
+              screen.owned
+                ? t('details.screenYours')
+                : screen.other !== null
+                  ? screen.other || t('details.screenOther')
+                  : null
+            }
+            chevron
+            onPress={() => openBotScreen(bot.id)}
+          />
+        </Group>
       ) : null}
       <Group label={t('details.setup')}>
         <Cell

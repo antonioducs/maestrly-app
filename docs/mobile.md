@@ -65,9 +65,28 @@ and workspaces on your [bot server](bot-fleet.md) from your phone.
   Each tab opens its settings. **Stop** stops only the conversation you see.
   See [Routine runs](bot-fleet.md#routine-runs) and
   [Conversations with other bots](bot-fleet.md#conversations-with-other-bots).
-- **Requests:** approve or deny a command, answer a question, or mark a request
-  for help as resolved; in a chat, also review a plan and confirm the
+- **Requests:** approve or deny a command, answer a question, or help a bot
+  that asked for help; in a chat, also review a plan and confirm the
   conversations an agent wants to start.
+- **A bot's screen:** when a bot asks for something only you can do, such as a
+  password, a code sent by text message or a CAPTCHA, its card offers to open
+  the bot's screen, or **Mark as resolved without it**. The screen opens
+  watching, framed on where the bot's pointer stopped; **Where it stopped** and
+  **Whole screen** move the view, and you pan and pinch it freely. **Take
+  control** pauses the bot, as on a computer. Then a tap clicks where you tap,
+  two fingers moving together scroll, and the field under the screen types
+  where the bot's screen has focus: the keyboard offers the code a text message
+  brought, and **Return**, **Tab**, **Esc** and delete are keys beside it.
+  **Done** gives the screen back with an optional note; the note answers the
+  bot's request, and with **Carry on** the bot picks up its work right away.
+  Closing the screen keeps control: the conversation says you have the screen,
+  with **Open** to go back, and the screen goes back to the bot on its own
+  five minutes after you leave it. While another device controls it, you can
+  watch. **Screen** in a bot's details opens it at any time. This is not a
+  remote desktop: there is no drag, right click or clipboard. It needs a bot
+  server that lets phones open screens (`phone-screens`) and an environment
+  whose image streams them as video; a phone whose system cannot decode that
+  video says so.
 - **Plans:** a chat in Plan mode shows its plan as a card with its steps, never
   the whole text. **Read and review** opens the plan in a sheet, as the Plan tab
   does on your computer: comment on a part of it with **+**, **Edit** its
@@ -227,9 +246,11 @@ phone also removes its push registration from the server.
 - The device token for each server is in the iOS Keychain or the Android
   Keystore, readable after the first unlock and never moved to another device.
 - The list of paired servers, your theme, language and notification choices, the
-  defaults for new chats, messages not yet sent, and which routine runs and
-  conversations between bots you have already seen are kept in the app's
-  storage. Photos, pasted images and files waiting to be sent stay in the app's
+  defaults for new chats, messages not yet sent, which routine runs and
+  conversations between bots you have already seen, and whether you saw the
+  gestures of a bot's screen are kept in the app's storage. A bot's screen
+  streams to the phone while it is open and is not saved; what you type into it
+  is sent and leaves the field. Photos, pasted images and files waiting to be sent stay in the app's
   cache until they are. The app checks whether the clipboard holds an image
   without reading it, and reads it only when you choose **Paste image**.
 - The app talks only to the servers you paired and, when you turn notifications
@@ -433,6 +454,9 @@ For App Review and the stores:
 | **Update this app to use chats on** a server | The server's workspaces environment uses another version of the mobile API than this app. |
 | A notification setting says the server **sends no notifications** | The server sets `MAESTRLY_GATEWAY_PUSH=off`. |
 | **Pages open on a phone through the server's public HTTPS address** | Set an HTTPS **Public address** in **Settings → Artifacts** on your computer. |
+| A help card offers no screen | The server predates `phone-screens`, or the bot's environment runs an image from before video screens. Update the server, or restart the environment onto the current image. |
+| **This phone can’t show the screen** | The phone's web view cannot decode H.264 video with WebCodecs. Update the phone's system (and Android System WebView), or open the screen on your computer. |
+| **This environment needs a restart** on a screen | Restart the environment from Maestrly on your computer to update its image. |
 
 ## Device checklist
 
@@ -443,16 +467,22 @@ Before a release, on a real phone with a `preview` build:
    the bots, and the offer to turn notifications on.
 2. Send a message to a bot and watch the reply arrive as it streams.
 3. Approve a request from its card.
-4. In **Chats**, start a new chat in a workspace on a new branch from a branch
+4. Have a bot ask for help with a sign-in, then open its screen from the card:
+   the screen shows (on iOS and on Android) framed on where the bot stopped.
+   Take control, tap the field, type with the phone's keyboard, and have a code
+   texted to the phone: the keyboard offers it. Switch to another app and back:
+   the screen connects again on its own. Give it back with a note: the bot
+   carries on.
+5. In **Chats**, start a new chat in a workspace on a new branch from a branch
    you choose, send a message, and change its mode from the setup pill. Attach
    a photo and a file from **+**, and paste a copied image.
-5. Lock the phone and have a bot ask for approval: a notification arrives;
+6. Lock the phone and have a bot ask for approval: a notification arrives;
    tapping it opens the bot. **Send a test notification** arrives too.
-6. Dictate a message with **Settings → Language** on English, then on
+7. Dictate a message with **Settings → Language** on English, then on
    Português: each listens in its language.
-7. Ask a chat for an artifact and open it from its card.
-8. Turn on airplane mode and send a message: it shows **Not sent yet**. Turn
+8. Ask a chat for an artifact and open it from its card.
+9. Turn on airplane mode and send a message: it shows **Not sent yet**. Turn
    airplane mode off: it sends on its own.
-9. Close and reopen the app: it is still paired.
-10. Unpair from **Settings**: `devices list` on the server shows the phone as
+10. Close and reopen the app: it is still paired.
+11. Unpair from **Settings**: `devices list` on the server shows the phone as
     revoked, and it receives no more notifications.

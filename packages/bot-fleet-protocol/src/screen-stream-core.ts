@@ -11,7 +11,7 @@ import {
   h264CodecString,
   type ScreenHello,
   type ScreenServerEvent,
-} from '@maestrly/bot-fleet-protocol'
+} from './screen-stream.js'
 
 /** What a screen's stream asks of the view that shows it. */
 export interface ScreenCoreSink {
@@ -29,7 +29,7 @@ export interface ScreenCoreSink {
 /**
  * The app's side of a screen stream, apart from the DOM: it reads the screen's messages, holds delta frames back until
  * the decoder has a key frame to start from, and writes acknowledgements and input. A frame it does not decode is
- * acknowledged all the same, so the screen never counts it as in flight.
+ * acknowledged all the same, so the screen never counts it as in flight. The desktop and the phone share it.
  */
 export class ScreenStreamCore {
   private readonly reader = new ScreenMessageReader(SCREEN_LIMITS.serverPayloadMax)

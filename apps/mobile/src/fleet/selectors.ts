@@ -1,4 +1,13 @@
-import { type FleetBot, type FleetPendingInteraction, fleetPrimaryWorking } from '@maestrly/bot-fleet-protocol'
+import {
+  FLEET_PHONE_SCREENS_FEATURE,
+  FLEET_UNIFIED_DESKTOP_FEATURE,
+  FLEET_VIDEO_SCREENS_FEATURE,
+  type FleetBot,
+  type FleetPendingInteraction,
+  type FleetScreenSurface,
+  type FleetTakeoverState,
+  fleetPrimaryWorking,
+} from '@maestrly/bot-fleet-protocol'
 import type { Text } from '../i18n/translate'
 import type { FleetState } from './state'
 
@@ -108,3 +117,25 @@ export function botWorksHere(bot: FleetBot): boolean {
 /** A bot in these states takes no messages from the phone, as on the desktop. */
 export const isComposerLocked = (bot: FleetBot): boolean =>
   ['paused', 'human', 'offline', 'starting', 'setup'].includes(bot.status)
+
+/**
+ * The area of a bot's screen the phone opens, or null when it cannot open one now: the server must let phones open
+ * screens (`phone-screens`), and the bot must run in an environment whose image streams them as video. An image with
+ * the unified desktop shows one desktop, the bot's apps screen, with its browser as one more window; older images
+ * show the bot's browser area, where its sign-ins happen.
+ */
+export function botScreenSurface(
+  state: Pick<FleetState, 'features' | 'environments'>,
+  bot: FleetBot
+): FleetScreenSurface | null {
+  if (!state.features.includes(FLEET_PHONE_SCREENS_FEATURE)) return null
+  if (bot.lifecycle !== 'running' || bot.move || bot.status === 'offline' || bot.status === 'starting') return null
+  const environment = state.environments.find((item) => item.id === bot.environmentId)
+  if (environment?.lifecycle !== 'running' || !environment.capabilities.includes(FLEET_VIDEO_SCREENS_FEATURE))
+    return null
+  return environment.capabilities.includes(FLEET_UNIFIED_DESKTOP_FEATURE) ? 'apps' : 'browser'
+}
+
+/** Whether this device controls the bot's screen: its takeover is complete and this device's. */
+export const ownsTakeover = (takeover: FleetTakeoverState, deviceId: string): boolean =>
+  takeover.state === 'human' && takeover.deviceId === deviceId

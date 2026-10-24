@@ -2,6 +2,8 @@ import { FLEET_FILE_LIMITS, type FleetGatewayEvent } from '@maestrly/bot-fleet-p
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createDemoSource, DEMO_SERVER } from '../src/demo/demo-source'
 import { GatewayError } from '../src/gateway/client'
+import { SCREEN_KEYS, textKeysyms } from '../src/screen/keysyms'
+import type { ScreenLinkEvent } from '../src/screen/link'
 
 const KEY = '550e8400-e29b-41d4-a716-446655440000'
 
@@ -178,6 +180,64 @@ describe('demo server', () => {
     expect(items.some((item) => item.kind === 'assistant')).toBe(true)
     const last = events.filter((event) => event.type === 'peer_thread.updated').at(-1)
     expect(last?.type === 'peer_thread.updated' && last.thread.working).toBe(false)
+  })
+
+  it('lets this phone take Juno’s screen to sign in, and give it back to answer its request', async () => {
+    const source = createDemoSource({ stepMs: 0 })
+    const open = source.openScreen
+    if (!open) throw new Error('The demo opens no screens')
+    listen(source)
+    await vi.runAllTimersAsync()
+    const { items } = await source.call('inbox')
+    const help = items.find((item) => item.botId === 'juno')?.interaction
+    expect(help?.kind).toBe('help')
+
+    // Control takes the bot's takeover first.
+    const refused: ScreenLinkEvent[] = []
+    open({ botId: 'juno', mode: 'control', surface: 'apps' }, (event) => refused.push(event))
+    await vi.runAllTimersAsync()
+    expect(refused).toMatchObject([{ type: 'end', end: { error: { code: 'FORBIDDEN' } } }])
+
+    // Watching shows where Juno stopped: on the password field it could not fill.
+    const watched: ScreenLinkEvent[] = []
+    open({ botId: 'juno', mode: 'view', surface: 'apps' }, (event) => watched.push(event))
+    await vi.runAllTimersAsync()
+    expect(watched.map((event) => event.type)).toEqual(['open', 'picture', 'pointer'])
+    expect(watched[2]).toEqual({ type: 'pointer', x: 640, y: 441 })
+
+    const takeover = await source.call('botTakeover', { params: { id: 'juno' } })
+    expect(takeover).toMatchObject({ state: 'human', deviceId: DEMO_SERVER.id })
+    expect((await source.call('botGet', { params: { id: 'juno' } })).status).toBe('human')
+    const seen: ScreenLinkEvent[] = []
+    const link = open({ botId: 'juno', mode: 'control', surface: 'apps' }, (event) => seen.push(event))
+    await vi.runAllTimersAsync()
+    link.pointer(640, 441, 0)
+    link.pointer(640, 441, 1)
+    link.pointer(640, 441, 0)
+    for (const keysym of [...textKeysyms('hunter2'), SCREEN_KEYS.Return]) {
+      link.key(keysym, true)
+      link.key(keysym, false)
+    }
+    await vi.runAllTimersAsync()
+    const pictures = seen.flatMap((event) => (event.type === 'picture' ? [decodeURIComponent(event.uri)] : []))
+    expect(pictures.some((picture) => picture.includes('•••••••'))).toBe(true)
+    expect(pictures.at(-1)).toContain('Signed in as e2e-admin@example.dev')
+
+    const events = listen(source)
+    await source.call('botTakeoverRelease', { params: { id: 'juno' }, body: { note: 'Signed in', continue: true } })
+    await vi.runAllTimersAsync()
+    // Giving the screen back ends its control session, answers the request with the note, and Juno carries on.
+    expect(seen.at(-1)).toEqual({ type: 'end', end: { code: 4001, reason: 'released' } })
+    const upserts = events.flatMap((event) => (event.type === 'transcript.upsert' ? [event.item] : []))
+    expect(upserts).toContainEqual(expect.objectContaining({ kind: 'system', code: 'takeover', text: 'Signed in' }))
+    expect(upserts).toContainEqual(expect.objectContaining({ kind: 'help', state: 'resolved', note: 'Signed in' }))
+    expect((await source.call('inbox')).items.some((item) => item.botId === 'juno')).toBe(false)
+    const juno = await source.call('botGet', { params: { id: 'juno' } })
+    expect(juno.takeover.state).toBe('none')
+    expect(juno.activity).toMatchObject({ kind: 'idle', lastTurnSummary: 'Nightly regression: 88 of 88 passed' })
+    await expect(
+      source.call('botTakeoverRelease', { params: { id: 'juno' }, body: { note: null, continue: true } })
+    ).rejects.toMatchObject({ code: 'CONFLICT' })
   })
 
   it('refuses what the demo does not offer', async () => {
