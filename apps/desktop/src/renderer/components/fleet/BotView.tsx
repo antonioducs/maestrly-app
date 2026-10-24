@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, Repeat, X } from 'lucide-react'
 import {
   FLEET_ENVIRONMENT_SETTINGS_FEATURE,
+  FLEET_OWNER_SEEN_FEATURE,
   FLEET_PEER_CONVERSATIONS_FEATURE,
   FLEET_ROUTINE_CONVERSATIONS_FEATURE,
   type FleetBot,
@@ -22,7 +23,7 @@ import { BotChatHeader, type BotConversationPane } from './BotChatHeader'
 import { RoutineRunsView } from './RoutineRunsView'
 import { PeerThreadsView } from './PeerThreadsView'
 import { emptyRuns, emptyThreads } from '@/lib/fleet/state'
-import { readSeenThreads, threadSeenKey, unseenThreads, writeSeenThreads } from '@/lib/fleet/threads'
+import { readSeenThreads, type SeenThreads, threadSeenKey, unseenThreads, writeSeenThreads } from '@/lib/fleet/threads'
 import {
   readSeenRuns,
   runAlerts,
@@ -30,6 +31,7 @@ import {
   runSeenKey,
   runSettingsOf,
   runTitle,
+  type SeenRuns,
   unseenRuns,
   writeSeenRuns,
 } from '@/lib/fleet/runs'
@@ -110,25 +112,34 @@ function BotViewContent({ bot, view, fleet, onView, onOpenBot, onDetachedChange,
   }, [bot.id, ensureThreads, threadsSupported])
   const threads = (fleet.state.threads[bot.id] ?? emptyThreads).threads
   const threadsLoaded = !!fleet.state.threads[bot.id]?.loaded
-  // What the owner has seen of each thread, kept on this computer: activity after that, and a pause, count as new.
+  // What the owner has seen: kept by the gateway for all their devices (`owner-seen`), or else on this computer.
+  const ownerSeen = fleet.state.connection.features.includes(FLEET_OWNER_SEEN_FEATURE)
+  const { seeRun, seeThread } = fleet
+  // What the owner has seen of each thread: activity after that, and a pause, count as new.
   const threadSeenStorage = threadSeenKey(fleet.state.connection.url, bot.id)
   const [seenThreads, setSeenThreads] = useState<Map<string, string> | null>(null)
   useEffect(() => {
     setSeenThreads(null)
   }, [threadSeenStorage])
   useEffect(() => {
-    if (threadsLoaded && !seenThreads) setSeenThreads(readSeenThreads(threadSeenStorage, threads))
-  }, [seenThreads, threadSeenStorage, threads, threadsLoaded])
+    if (!ownerSeen && threadsLoaded && !seenThreads) setSeenThreads(readSeenThreads(threadSeenStorage, threads))
+  }, [ownerSeen, seenThreads, threadSeenStorage, threads, threadsLoaded])
   const showingThread = active && shownPane === 'threads' ? threads.find((thread) => thread.id === threadId) : undefined
   useEffect(() => {
-    if (!seenThreads || !showingThread || seenThreads.get(showingThread.id) === showingThread.lastActivityAt) return
+    if (!showingThread) return
+    if (ownerSeen) {
+      seeThread(bot.id, showingThread.id)
+      return
+    }
+    if (!seenThreads || seenThreads.get(showingThread.id) === showingThread.lastActivityAt) return
     const next = new Map(seenThreads).set(showingThread.id, showingThread.lastActivityAt)
     writeSeenThreads(threadSeenStorage, next)
     setSeenThreads(next)
-  }, [seenThreads, showingThread, threadSeenStorage])
+  }, [bot.id, ownerSeen, seeThread, seenThreads, showingThread, threadSeenStorage])
+  const threadsSeen: SeenThreads | null = ownerSeen ? 'gateway' : seenThreads
   const unseenThreadIds = useMemo(
-    () => new Set(seenThreads ? unseenThreads(threads, seenThreads).map((thread) => thread.id) : []),
-    [seenThreads, threads]
+    () => new Set(threadsSeen ? unseenThreads(threads, threadsSeen).map((thread) => thread.id) : []),
+    [threadsSeen, threads]
   )
   const openThread = useCallback((id: string | null) => {
     setPane('threads')
@@ -148,7 +159,7 @@ function BotViewContent({ bot, view, fleet, onView, onOpenBot, onDetachedChange,
     [runSettings, runs, runsSupported]
   )
   const [citation, setCitation] = useState<FleetRoutineRun | null>(null)
-  // The runs the owner opened, kept on this computer: the others that ended with something new count as new.
+  // The runs the owner opened: the others that ended with something new count as new.
   const seenKey = runSeenKey(fleet.state.connection.url, bot.id)
   const runsLoaded = !!fleet.state.runs[bot.id]?.loaded
   const [seen, setSeen] = useState<Set<string> | null>(null)
@@ -156,16 +167,28 @@ function BotViewContent({ bot, view, fleet, onView, onOpenBot, onDetachedChange,
     setSeen(null)
   }, [seenKey])
   useEffect(() => {
-    if (runsLoaded && !seen) setSeen(readSeenRuns(seenKey, runs))
-  }, [runs, runsLoaded, seen, seenKey])
+    if (!ownerSeen && runsLoaded && !seen) setSeen(readSeenRuns(seenKey, runs))
+  }, [ownerSeen, runs, runsLoaded, seen, seenKey])
   const showingRun = active && shownPane === 'runs' ? runId : null
+  // Whether the gateway says the run shown was opened, once the run is loaded: when it says it was not, it is told.
+  const showingRunSeen = showingRun ? runs.find((run) => run.id === showingRun)?.seenAt !== null : false
   useEffect(() => {
-    if (!seen || !showingRun || seen.has(showingRun)) return
+    if (!showingRun) return
+    if (ownerSeen) {
+      if (!showingRunSeen) seeRun(bot.id, showingRun)
+      return
+    }
+    if (!seen || seen.has(showingRun)) return
     const next = new Set(seen).add(showingRun)
     writeSeenRuns(seenKey, next)
     setSeen(next)
-  }, [seen, seenKey, showingRun])
-  const unseen = seen ? unseenRuns(runs, seen, bot).length : 0
+  }, [bot.id, ownerSeen, seeRun, seen, seenKey, showingRun, showingRunSeen])
+  const runsSeen: SeenRuns | null = ownerSeen ? 'gateway' : seen
+  const unseenRunIds = useMemo(
+    () => new Set(runsSeen ? unseenRuns(runs, runsSeen, bot).map((run) => run.id) : []),
+    [bot, runs, runsSeen]
+  )
+  const unseen = unseenRunIds.size
   const openRun = useCallback((id: string | null) => {
     setPane('runs')
     setRunId(id)
@@ -350,7 +373,7 @@ function BotViewContent({ bot, view, fleet, onView, onOpenBot, onDetachedChange,
                         bot={bot}
                         fleet={fleet}
                         selectedRunId={runId}
-                        seen={seen}
+                        unseen={unseenRunIds}
                         onSelect={setRunId}
                         visible={inWindow || (active && layout.showChat)}
                         onCite={(run) => {

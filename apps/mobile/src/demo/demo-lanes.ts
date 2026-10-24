@@ -8,6 +8,7 @@ import {
   type FleetPeerThreadSettings,
   type FleetRoutineRunCitation,
   type FleetRoutineRun,
+  type FleetRoutineRunPatchRequest,
   type FleetRoutineRunSettings,
   type FleetSendMessageRequest,
   type FleetTranscriptItem,
@@ -373,8 +374,15 @@ export function createDemoLanes(world: ReturnType<typeof demoLaneWorld>, deps: D
       case 'botRunTranscript':
         requireRun(id, runId)
         return page(runId)
-      case 'botRunPatch':
-        return setRun({ ...requireRun(id, runId), pinned: (body as { pinned: boolean }).pinned })
+      case 'botRunPatch': {
+        const run = requireRun(id, runId)
+        const patch = body as FleetRoutineRunPatchRequest
+        return setRun({
+          ...run,
+          ...(patch.pinned !== undefined ? { pinned: patch.pinned } : {}),
+          ...(patch.seen && !run.seenAt ? { seenAt: stamp() } : {}),
+        })
+      }
       case 'botRunConversationDelete': {
         const run = requireRun(id, runId)
         return setRun({
@@ -421,6 +429,7 @@ export function createDemoLanes(world: ReturnType<typeof demoLaneWorld>, deps: D
             ? { pinned: patch.pinned, expiresAt: patch.pinned ? null : thread.expiresAt }
             : {}),
           ...(resumed ? { status: 'open' as const, hops: 0, working: true } : {}),
+          ...(patch.seen || resumed ? { seenActivityAt: thread.lastActivityAt } : {}),
         })
         if (resumed)
           void goOn(id, threadId, 'Pixel, let’s get Stacked ready with the spacing fix while the owner decides.')

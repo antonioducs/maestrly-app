@@ -35,7 +35,7 @@ describe('server dictation key', () => {
   it('starts with no key on schema 20', () => {
     const store = open(tempDir())
     expect(store.dictationSettings()).toBeNull()
-    expect(version(store.db)).toBe('21')
+    expect(version(store.db)).toBe('22')
   })
 
   it('keeps one key, replaced by the next one', () => {
@@ -64,7 +64,7 @@ describe('server dictation key', () => {
     raw.prepare("UPDATE meta SET value='19' WHERE key='schema_version'").run()
     raw.close()
     const store = open(dir)
-    expect(version(store.db)).toBe('21')
+    expect(version(store.db)).toBe('22')
     expect(store.dictationSettings()).toBeNull()
     store.saveDictationSettings('groq', 'gk-1', 'Mac')
     expect(store.dictationSettings()?.provider).toBe('groq')

@@ -132,7 +132,9 @@ describe('conversations between bots', () => {
   })
 
   it('describes a thread as one of its bots sees it, with settings within their choices', () => {
-    expect(fleetPeerThreadSchema.parse(thread)).toEqual(thread)
+    // A gateway before `owner-seen` does not say what the owner saw.
+    expect(fleetPeerThreadSchema.parse(thread)).toEqual({ ...thread, seenActivityAt: null })
+    expect(fleetPeerThreadSchema.parse({ ...thread, seenActivityAt: at }).seenActivityAt).toBe(at)
     expect(fleetPeerThreadSchema.safeParse({ ...thread, origin: 'owner' }).success).toBe(false)
     expect(fleetPeerThreadSettingsSchema.parse({})).toEqual({ retentionDays: 30, hopLimit: 8 })
     expect(fleetPeerThreadSettingsSchema.safeParse({ retentionDays: 45, hopLimit: 8 }).success).toBe(false)
@@ -176,7 +178,10 @@ describe('conversations between bots', () => {
     const patch = FLEET_GATEWAY_ROUTES.botPeerThreadPatch.body
     expect(patch.parse({ pinned: true })).toEqual({ pinned: true })
     expect(patch.parse({ resume: true })).toEqual({ resume: true })
+    expect(patch.parse({ seen: true })).toEqual({ seen: true })
     expect(patch.safeParse({ resume: false }).success).toBe(false)
+    expect(patch.safeParse({ seen: false }).success).toBe(false)
+    expect(patch.safeParse({}).success).toBe(false)
     expect(patch.safeParse({ hops: 0 }).success).toBe(false)
   })
 })

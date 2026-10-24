@@ -1080,6 +1080,7 @@ function registerIpc(): void {
   fleetServers.setupClients((client) => {
     client.onAlert = (botId, alert) => registry.playBotAlert(fleetKey(client.serverId, botId), alert)
     client.onLiveEvent = (entry) => appNotifications?.bots.live(client.serverId, entry)
+    client.onSideConversation = (event) => appNotifications?.bots.sideConversation(client.serverId, event)
     client.onDownloadSettled = noticeFleetDownload
   })
   registerNotificationsIpc(reg, () => appNotifications)
@@ -1277,9 +1278,7 @@ app.whenReady().then(async () => {
       },
     })
   registry.on('status', broadcastStatus)
-  registry.on('status', ({ agentId, status, alert }) =>
-    appNotifications?.conversations.status(agentId, status, alert)
-  )
+  registry.on('status', ({ agentId, status, alert }) => appNotifications?.conversations.status(agentId, status, alert))
   onHostEvent((hostId, channel, args) => appNotifications?.hosts.event(hostId, channel, args))
   applyAlertSettings(getSoundSettings())
 
@@ -1565,7 +1564,10 @@ function registerConversationMove(reg: IpcRegistrar): void {
   registerConversationMoveEndpointIpc(reg, local)
   if (isHeadlessInstance()) return
   const online = (hostId: HostId): boolean =>
-    hostId === LOCAL_HOST_ID || !!hostRegistry()?.list().some((host) => host.id === hostId && host.state === 'online')
+    hostId === LOCAL_HOST_ID ||
+    !!hostRegistry()
+      ?.list()
+      .some((host) => host.id === hostId && host.state === 'online')
   const remote = (hostId: HostId): MoveEndpoint =>
     createRemoteMoveEndpoint(hostId, {
       call: (channel, input) => {

@@ -24,13 +24,14 @@ describe('fleetBotEventFor', () => {
       notice: 'failed',
       mark: true,
       threadId: 't-1',
+      lane: 'thread:t-1',
       summary: null,
     })
-    // A gateway that does not say who started a turn: the owner did.
-    expect(fleetBotEventFor(entry('turn_completed', { runId: 'run-1' }))).toMatchObject({
-      notice: 'finished',
-      runId: 'run-1',
-    })
+    // A gateway that does not say who started a turn: the owner did. Their change in a run's conversation stays
+    // marked here: the run was seen already.
+    const change = fleetBotEventFor(entry('turn_completed', { runId: 'run-1' }))
+    expect(change).toMatchObject({ notice: 'finished', runId: 'run-1' })
+    expect(change).not.toHaveProperty('lane')
   })
 
   it('tells about a finished routine run as the bot settings say', () => {
@@ -40,6 +41,7 @@ describe('fleetBotEventFor', () => {
       notice: 'routineFinished',
       mark: true,
       runId: 'run-1',
+      lane: 'run:run-1',
       summary: null,
     })
     expect(fleetBotEventFor(entry('turn_failed', { source: 'routine', runId: 'run-1' }))).toMatchObject({
@@ -56,6 +58,7 @@ describe('fleetBotEventFor', () => {
       notice: null,
       mark: true,
       threadId: 't-1',
+      lane: 'thread:t-1',
       summary: null,
     })
   })
@@ -72,6 +75,7 @@ describe('fleetBotEventFor', () => {
       notice: 'threadPaused',
       mark: true,
       threadId: 't-1',
+      lane: 'thread:t-1',
     })
   })
 

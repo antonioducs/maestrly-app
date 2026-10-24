@@ -405,13 +405,13 @@ export function RoutineRunsView({
   onOpenBot,
   onOpenScreen,
   visible,
-  seen,
+  unseen,
 }: {
   bot: FleetBot
   fleet: FleetController
   selectedRunId: string | null
-  /** The runs the owner has opened; the others that ended with something new are marked new. */
-  seen: ReadonlySet<string> | null
+  /** The runs that ended with something new the owner has not opened: they are marked new. */
+  unseen: ReadonlySet<string>
   onSelect: (runId: string | null) => void
   onCite: (run: FleetRoutineRun) => void
   onOpenBot: (id: string) => void
@@ -580,7 +580,7 @@ export function RoutineRunsView({
                     bot={bot}
                     run={entry.run}
                     selected={entry.run.id === selectedRunId}
-                    fresh={!!seen && !seen.has(entry.run.id) && ['ok', 'failed'].includes(runState(entry.run, bot))}
+                    fresh={unseen.has(entry.run.id)}
                     pendingDelete={pendingIds.includes(entry.run.id)}
                     onOpen={() => onSelect(entry.run.id)}
                   />

@@ -10,6 +10,7 @@ import {
   type FleetRoutineRunCitation,
   type FleetRoutineRunMedia,
   type FleetRoutineRunPage,
+  type FleetRoutineRunPatchRequest,
   type FleetRoutineRunReport,
   type FleetRoutineRunSettings,
   type FleetSendMessageRequest,
@@ -295,11 +296,27 @@ export class Routines {
   get(botId: string, runId: string): FleetRoutineRun {
     return this.view(this.requireRun(botId, runId))
   }
+  /** What the owner changes of a run: whether they keep it, and that they opened it. */
+  patchRun(botId: string, runId: string, request: FleetRoutineRunPatchRequest): FleetRoutineRun {
+    let run = this.get(botId, runId)
+    if (request.pinned !== undefined) run = this.setPinned(botId, runId, request.pinned)
+    if (request.seen) run = this.setSeen(botId, runId)
+    return run
+  }
   setPinned(botId: string, runId: string, pinned: boolean): FleetRoutineRun {
     const run = { ...this.requireRun(botId, runId), pinned }
     this.store.updateRoutineRun(run)
     this.emit(run)
     return this.view(run)
+  }
+  /** The owner opened a run on one of their devices: it is no longer new on any of them. */
+  setSeen(botId: string, runId: string): FleetRoutineRun {
+    const run = this.requireRun(botId, runId)
+    if (run.seenAt !== null) return this.view(run)
+    const next = { ...run, seenAt: new Date(this.now()).toISOString() }
+    this.store.setRoutineRunSeen(run.id, next.seenAt)
+    this.emit(next)
+    return this.view(next)
   }
   /** A run an owner's message in the bot's conversation refers to. */
   citation(botId: string, runId: string): FleetRoutineRunCitation {
@@ -330,8 +347,11 @@ export class Routines {
     // Read again: the run may have changed while the message was on its way.
     const run = this.store.routineRunById(runId)
     if (run) {
-      const next = { ...run, adjustments: run.adjustments + 1, lastActivityAt: new Date(this.now()).toISOString() }
+      const at = new Date(this.now()).toISOString()
+      // The owner wrote there: they saw the run, whatever device they did it from.
+      const next = { ...run, adjustments: run.adjustments + 1, lastActivityAt: at, seenAt: run.seenAt ?? at }
       this.store.updateRoutineRun(next)
+      if (!run.seenAt) this.store.setRoutineRunSeen(run.id, at)
       this.emit(next)
     }
     return receipt
@@ -607,6 +627,7 @@ export class Routines {
           media: null,
           kept: null,
           adjustments: 0,
+          seenAt: null,
         })
         this.prunePendingFinishes()
         const finishKey = JSON.stringify([routine.botId, receipt.inputId])

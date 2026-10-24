@@ -52,8 +52,9 @@ and workspaces on your [bot server](bot-fleet.md) from your phone.
   with other bots work apart from its conversation with you, at the same time.
   Tabs under the bot's name switch between **Conversation**, **Runs** and
   **Bots**, and count the runs that ended with something new and the
-  conversations with news or waiting for you; while one works, a line under
-  them names it and opens it. **Runs** lists the runs by day, folds a routine's
+  conversations with news or waiting for you; what you see there, on the phone
+  or on a computer, counts as seen on all of them with a bot server that keeps
+  it. While one works, a line under them names it and opens it. **Runs** lists the runs by day, folds a routine's
   runs that found nothing new into one line, and filters by routine. **Bots**
   lists the conversations that paused after their messages without you first.
   Open one to read everything it did, with its report or what the bot brought
@@ -247,7 +248,8 @@ phone also removes its push registration from the server.
   Keystore, readable after the first unlock and never moved to another device.
 - The list of paired servers, your theme, language and notification choices, the
   defaults for new chats, messages not yet sent, which routine runs and
-  conversations between bots you have already seen, and whether you saw the
+  conversations between bots you have already seen (on the bot server instead
+  when it keeps them for all your devices), and whether you saw the
   gestures of a bot's screen are kept in the app's storage. A bot's screen
   streams to the phone while it is open and is not saved; what you type into it
   is sent and leaves the field. Photos, pasted images and files waiting to be sent stay in the app's

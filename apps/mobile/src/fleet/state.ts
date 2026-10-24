@@ -1,6 +1,7 @@
 import {
   compareFleetTranscriptItems,
   FLEET_FILE_LIMITS,
+  FLEET_OWNER_SEEN_FEATURE,
   type FleetBot,
   type FleetEnvironment,
   type FleetFilesDeleted,
@@ -15,7 +16,7 @@ import {
   type FleetTranscriptPage,
 } from '@maestrly/bot-fleet-protocol'
 import type { StreamState } from '../gateway/event-stream'
-import { botOfLaneKey, laneKey, sortRuns, sortThreads } from './lanes'
+import { botOfLaneKey, laneKey, type SeenRuns, type SeenThreads, sortRuns, sortThreads } from './lanes'
 import type { OutboxEntry } from './outbox'
 
 export type TranscriptState = {
@@ -132,6 +133,20 @@ export const emptyTranscript: TranscriptState = {
 export const emptyRuns: RunsState = { runs: [], before: null, loaded: false, loading: false, failed: false }
 export const emptyThreads: ThreadsState = { threads: [], loaded: false, loading: false, failed: false }
 export const emptyFiles: FilesState = { list: null, version: null, loaded: false, loading: false, failed: false }
+
+/**
+ * What a bot's lists count as seen: `gateway` when the gateway keeps it for all the owner's devices (`owner-seen`),
+ * or else the phone's own record of the bot, null until its runs or threads were first read.
+ */
+export const selectRunsSeen = (state: FleetState, botId: string): 'gateway' | string[] | null =>
+  state.features.includes(FLEET_OWNER_SEEN_FEATURE) ? 'gateway' : (state.seen.runs[botId] ?? null)
+export const selectThreadsSeen = (state: FleetState, botId: string): 'gateway' | Record<string, string> | null =>
+  state.features.includes(FLEET_OWNER_SEEN_FEATURE) ? 'gateway' : (state.seen.threads[botId] ?? null)
+/** The runs' seen state as `unseenRuns` reads it. */
+export const runsSeenSet = (seen: 'gateway' | string[]): SeenRuns => (seen === 'gateway' ? seen : new Set(seen))
+/** The threads' seen state as `unseenThreads` reads it. */
+export const threadsSeenMap = (seen: 'gateway' | Record<string, string>): SeenThreads =>
+  seen === 'gateway' ? seen : new Map(Object.entries(seen))
 
 /** Items by id, in transcript order: a newer copy of an item replaces the older one. */
 function merge(existing: FleetTranscriptItem[], incoming: FleetTranscriptItem[]): FleetTranscriptItem[] {

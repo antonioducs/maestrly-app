@@ -4,6 +4,7 @@ import {
   FLEET_GATEWAY_ROUTES,
   FLEET_INSTANCE_ROUTES,
   FLEET_INTERNAL_ROUTES,
+  FLEET_OWNER_SEEN_FEATURE,
   FLEET_ROUTINE_CONVERSATIONS_FEATURE,
   FLEET_ROUTINE_RUN_SETTINGS_DEFAULT,
   buildPath,
@@ -179,8 +180,21 @@ describe('routine runs in conversations of their own', () => {
       path: '/v1/bots/:id/routine-run-settings',
     })
     expect(FLEET_GATEWAY_ROUTES.botRunPatch.body.safeParse({ pinned: true, other: 1 }).success).toBe(false)
+    expect(FLEET_GATEWAY_ROUTES.botRunPatch.body.parse({ pinned: false })).toEqual({ pinned: false })
     expect(FLEET_INTERNAL_ROUTES.routineRunsList.path).toBe('/internal/v1/routine-runs')
     expect(FLEET_INSTANCE_ROUTES.botRunTranscript.path).toBe('/v1/bots/:botId/runs/:runId/transcript')
     expect(FLEET_INSTANCE_ROUTES.botRunDelete).toMatchObject({ method: 'DELETE', path: '/v1/bots/:botId/runs/:runId' })
+  })
+
+  it('keeps on the gateway when the owner opened a run, which older gateways do not say', () => {
+    expect(FLEET_OWNER_SEEN_FEATURE).toBe('owner-seen')
+    expect(fleetRoutineRunSchema.parse(run).seenAt).toBeNull()
+    expect(fleetRoutineRunSchema.parse({ ...run, seenAt: at }).seenAt).toBe(at)
+    expect(fleetRoutineRunSchema.safeParse({ ...run, seenAt: 'yesterday' }).success).toBe(false)
+    const patch = FLEET_GATEWAY_ROUTES.botRunPatch.body
+    expect(patch.parse({ seen: true })).toEqual({ seen: true })
+    expect(patch.parse({ pinned: true, seen: true })).toEqual({ pinned: true, seen: true })
+    expect(patch.safeParse({ seen: false }).success).toBe(false)
+    expect(patch.safeParse({}).success).toBe(false)
   })
 })

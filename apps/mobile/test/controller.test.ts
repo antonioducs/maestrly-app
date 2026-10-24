@@ -1,7 +1,9 @@
 import {
+  FLEET_OWNER_SEEN_FEATURE,
   FLEET_PARALLEL_TURNS_FEATURE,
   FLEET_PEER_CONVERSATIONS_FEATURE,
   FLEET_ROUTINE_CONVERSATIONS_FEATURE,
+  fleetPeerThreadSchema,
   fleetRoutineRunSchema,
   type FleetFilesList,
   type FleetFilesUsage,
@@ -283,6 +285,65 @@ describe('fleet controller with side conversations', () => {
     const again = createFleetController(fakeSource(both).source, kv)
     await again.start()
     expect(again.store.getState().seen.runs.juno).toEqual(['r1', 'r2', 'r3'])
+  })
+
+  it('keeps what the owner saw on the gateway when it can, for every device, and nothing on the phone', async () => {
+    const f = fakeSource([...both, FLEET_OWNER_SEEN_FEATURE])
+    const seenAt = '2026-10-12T12:05:00.000Z'
+    f.responses.botRuns = () => ({ runs: [run('r2', 2), run('r1', 1)], before: null })
+    f.responses.botRunPatch = () => ({ ...run('r2', 2), seenAt })
+    const thread = fleetPeerThreadSchema.parse({
+      id: 't1',
+      botId: 'juno',
+      peer: { botId: 'nina', name: 'Nina' },
+      title: 'Release',
+      origin: 'peer',
+      status: 'open',
+      hops: 1,
+      hopLimit: 8,
+      messages: 1,
+      pinned: false,
+      conversation: 'own',
+      report: null,
+      reportAt: null,
+      working: false,
+      peerWorking: false,
+      createdAt: at,
+      lastActivityAt: at,
+      expiresAt: null,
+      conversationDeletedAt: null,
+      kept: null,
+    })
+    f.responses.botPeerThreads = () => ({ threads: [thread] })
+    f.responses.botPeerThreadPatch = () => ({ ...thread, seenActivityAt: at })
+    const { kv } = memoryStores()
+    const controller = createFleetController(f.source, kv)
+    await controller.start()
+    f.open()
+    controller.ensureRuns('juno')
+    controller.ensureThreads('juno')
+    await vi.waitFor(() => expect(controller.store.getState().threads.juno?.loaded).toBe(true))
+    await vi.waitFor(() => expect(controller.store.getState().runs.juno?.loaded).toBe(true))
+    const state = () => controller.store.getState()
+    expect(state().seen).toEqual({ runs: {}, threads: {} })
+
+    controller.markRunSeen('juno', 'r2')
+    controller.markRunSeen('juno', 'r2')
+    expect(state().runs.juno?.runs.find((item) => item.id === 'r2')?.seenAt).not.toBeNull()
+    await vi.waitFor(() => expect(state().runs.juno?.runs.find((item) => item.id === 'r2')?.seenAt).toBe(seenAt))
+    expect(f.call.mock.calls.filter(([key]) => key === 'botRunPatch')).toEqual([
+      ['botRunPatch', { params: { id: 'juno', runId: 'r2' }, body: { seen: true } }],
+    ])
+    controller.markThreadSeen('juno', 't1', at)
+    expect(state().threads.juno?.threads[0].seenActivityAt).toBe(at)
+    expect(f.call).toHaveBeenCalledWith('botPeerThreadPatch', {
+      params: { id: 'juno', threadId: 't1' },
+      body: { seen: true },
+    })
+    // Another device opened r1: its event says so here.
+    f.emit({ type: 'routine_run.updated', at, botId: 'juno', run: { ...run('r1', 1), seenAt } })
+    expect(state().runs.juno?.runs.find((item) => item.id === 'r1')?.seenAt).toBe(seenAt)
+    expect(await kv.get(lanesSeenKey('s1'))).toBeNull()
   })
 
   it('opens a run’s conversation, reloads it after a reset, and sends the owner’s word there', async () => {

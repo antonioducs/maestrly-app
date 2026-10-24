@@ -61,4 +61,56 @@ describe('FleetBotAttention', () => {
     for (const bot of ['a', 'b', 'c']) s.attention.mark(S1, bot)
     expect(s.attention.list().map(({ botId }) => botId)).toEqual(['b', 'c'])
   })
+
+  it('lets the side conversations a mark is for clear it once all are seen, across restarts', () => {
+    const s = setup()
+    s.attention.mark(S1, 'alex', 'run:r1')
+    s.attention.mark(S1, 'alex', 'thread:t1')
+    s.attention.mark(S1, 'alex', 'thread:t1')
+    expect(s.changes).toEqual([{ serverId: S1, botId: 'alex', attention: true }])
+    expect(s.attention.seenLane(S1, 'alex', 'run:r1')).toBe(false)
+    expect(s.attention.seenLane(S1, 'alex', 'run:other')).toBe(false)
+    const reopened = setup(s.saved())
+    expect(reopened.attention.list()).toEqual([{ serverId: S1, botId: 'alex' }])
+    expect(reopened.attention.seenLane(S1, 'alex', 'thread:t1')).toBe(true)
+    expect(reopened.changes).toEqual([{ serverId: S1, botId: 'alex', attention: false }])
+    expect(setup(reopened.saved()).attention.list()).toEqual([])
+  })
+
+  it('keeps a mark that something only this computer clears holds, as a key older versions read', () => {
+    const s = setup()
+    s.attention.mark(S1, 'alex', 'run:r1')
+    s.attention.mark(S1, 'alex')
+    expect(s.attention.seenLane(S1, 'alex', 'run:r1')).toBe(false)
+    expect(s.attention.has(S1, 'alex')).toBe(true)
+    s.attention.mark(S2, 'sam', 'run:r2')
+    expect(JSON.parse(s.saved()!)).toEqual([`${S1}/alex`, { key: `${S2}/sam`, lanes: ['run:r2'] }])
+    // A mark stored before side conversations were told apart is this computer's to clear.
+    const legacy = setup(JSON.stringify([`${S1}/alex`]))
+    expect(legacy.attention.seenLane(S1, 'alex', 'run:r1')).toBe(false)
+    expect(legacy.attention.has(S1, 'alex')).toBe(true)
+  })
+
+  it('reads back only valid marks of side conversations, and keeps one for too many as its own', () => {
+    const many = Array.from({ length: 21 }, (_, index) => `run:r${index}`)
+    const stored = JSON.stringify([
+      { key: `${S1}/alex`, lanes: ['run:r1', 42, ''] },
+      { key: `${S1}/sam`, lanes: [] },
+      { key: 'Not A Server/alex', lanes: ['run:r1'] },
+      { key: `${S2}/many`, lanes: many },
+    ])
+    const s = setup(stored)
+    expect(s.attention.list()).toEqual([
+      { serverId: S1, botId: 'alex' },
+      { serverId: S2, botId: 'many' },
+    ])
+    expect(s.attention.seenLane(S1, 'alex', 'run:r1')).toBe(true)
+    expect(s.attention.seenLane(S2, 'many', 'run:r0')).toBe(false)
+    expect(s.attention.has(S2, 'many')).toBe(true)
+    // Past the side conversations a mark names, it becomes this computer's to clear.
+    const t = setup()
+    for (const lane of many) t.attention.mark(S1, 'alex', lane)
+    expect(t.attention.seenLane(S1, 'alex', 'run:r0')).toBe(false)
+    expect(t.attention.has(S1, 'alex')).toBe(true)
+  })
 })

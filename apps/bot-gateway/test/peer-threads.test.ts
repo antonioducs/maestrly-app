@@ -169,6 +169,44 @@ describe('threads between bots', () => {
     expect(h.instance.botRequests.filter((request) => request.path === '/inputs').at(-1)?.botId).toBe(atlas)
   })
 
+  it("keeps what the owner saw of each bot's side, tells every device, and counts what they do there as seen", async () => {
+    const { h, atlas, nina, send, clock } = await setup()
+    const told = (botId: string, thread: string) =>
+      h.events.flatMap((event) =>
+        event.type === 'peer_thread.updated' && event.botId === botId && event.thread.id === thread
+          ? [event.thread]
+          : []
+      )
+    const { thread } = await send(atlas, nina, 'Hi Nina')
+    const opened = h.store.peerThread(thread!)!
+    const read = async (botId: string) =>
+      fleetPeerThreadSchema.parse(await (await h.request('GET', `/v1/bots/${botId}/peer-threads/${thread}`)).json())
+    // A new thread is new on both sides.
+    expect((await read(atlas)).seenActivityAt).toBeNull()
+    expect((await read(nina)).seenActivityAt).toBeNull()
+    const seen = await h.request('PATCH', `/v1/bots/${atlas}/peer-threads/${thread}`, { seen: true })
+    expect(seen.status).toBe(200)
+    expect(fleetPeerThreadSchema.parse(await seen.json()).seenActivityAt).toBe(opened.lastActivityAt)
+    expect(told(atlas, thread!).at(-1)?.seenActivityAt).toBe(opened.lastActivityAt)
+    // Only Atlas's side: the owner has not seen Nina's.
+    expect((await read(nina)).seenActivityAt).toBeNull()
+    expect(told(nina, thread!).at(-1)?.seenActivityAt).toBeNull()
+    // Later activity is new again, until the owner looks or writes there; a pin keeps what they saw.
+    clock.advance(60_000)
+    await send(nina, atlas, 'Hello Atlas', { thread })
+    const later = await read(atlas)
+    expect(later.lastActivityAt).not.toBe(later.seenActivityAt)
+    await h.request('PATCH', `/v1/bots/${atlas}/peer-threads/${thread}`, { pinned: true })
+    expect((await read(atlas)).seenActivityAt).toBe(opened.lastActivityAt)
+    clock.advance(60_000)
+    const message = { text: 'Settle it today', attachments: [], idempotencyKey: randomUUID() }
+    expect((await h.request('POST', `/v1/bots/${atlas}/peer-threads/${thread}/messages`, message)).status).toBe(201)
+    const written = await read(atlas)
+    expect(written.seenActivityAt).toBe(written.lastActivityAt)
+    expect(told(atlas, thread!).at(-1)?.seenActivityAt).toBe(written.lastActivityAt)
+    expect((await h.request('PATCH', `/v1/bots/${atlas}/peer-threads/${thread}`, {})).status).toBe(400)
+  })
+
   it("brings an answer back only from the side opened from the owner's conversation", async () => {
     const { h, atlas, nina, send, threads } = await setup()
     const { thread } = await send(atlas, nina, 'Ask', { origin: 'primary' })

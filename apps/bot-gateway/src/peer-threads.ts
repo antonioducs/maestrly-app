@@ -7,6 +7,7 @@ import {
   type FleetInputReceipt,
   type FleetInternalPeerMessageRequest,
   type FleetPeerThread,
+  type FleetPeerThreadPatchRequest,
   type FleetPeerThreadSettings,
   type FleetSendMessageRequest,
   type FleetTranscriptPage,
@@ -170,8 +171,11 @@ export class PeerThreads {
     return this.view(thread, side)
   }
 
-  /** The owner keeps a thread, or lets a paused one go on: the bot whose message was refused continues it. */
-  async patch(botId: string, threadId: string, patch: { pinned?: boolean; resume?: true }): Promise<FleetPeerThread> {
+  /**
+   * The owner keeps a thread, lets a paused one go on (the bot whose message was refused continues it), or looked at
+   * it: what it holds so far is seen on all their devices, as it is once they let it go on.
+   */
+  async patch(botId: string, threadId: string, patch: FleetPeerThreadPatchRequest): Promise<FleetPeerThread> {
     let { thread, side } = this.require(botId, threadId)
     if (patch.pinned !== undefined && patch.pinned !== side.pinned) {
       side = { ...side, pinned: patch.pinned }
@@ -197,6 +201,10 @@ export class PeerThreads {
           thread: { id: thread.id, title: thread.title },
         })
     }
+    if ((patch.seen || patch.resume) && side.seenActivityAt !== thread.lastActivityAt) {
+      side = { ...side, seenActivityAt: thread.lastActivityAt }
+      this.store.setPeerThreadSideSeen(threadId, botId, thread.lastActivityAt)
+    }
     this.emit(thread)
     return this.view(thread, side)
   }
@@ -221,6 +229,8 @@ export class PeerThreads {
       lastActivityAt: new Date(this.now()).toISOString(),
     }
     this.store.updatePeerThread(next)
+    // The owner wrote there: they saw it as it is now, whatever device they did it from.
+    this.store.setPeerThreadSideSeen(threadId, botId, next.lastActivityAt)
     this.emit(next)
     return receipt
   }
@@ -350,6 +360,7 @@ export class PeerThreads {
       peerWorking: this.working(peerId, thread.id),
       createdAt: thread.createdAt,
       lastActivityAt: thread.lastActivityAt,
+      seenActivityAt: side.seenActivityAt,
       expiresAt: this.expiresAt(thread, side),
       conversationDeletedAt: side.conversationDeletedAt,
       kept: side.kept,
@@ -398,6 +409,7 @@ export class PeerThreads {
       kept: null,
       report: null,
       reportAt: null,
+      seenActivityAt: null,
     }
   }
   private require(botId: string, threadId: string): { thread: StoredPeerThread; side: StoredPeerThreadSide } {

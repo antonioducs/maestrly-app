@@ -19,7 +19,7 @@ import {
   type RunListEntry,
 } from '../../fleet/lanes'
 import { useFleet, useFleetController } from '../../fleet/react'
-import { emptyRuns, type FleetState } from '../../fleet/state'
+import { emptyRuns, type FleetState, runsSeenSet, selectRunsSeen } from '../../fleet/state'
 import { useI18n } from '../../i18n'
 import { useTheme } from '../../theme/ThemeProvider'
 import { fonts } from '../../theme/tokens'
@@ -199,7 +199,7 @@ export function RunsPane({ bot, onOpen }: { bot: FleetBot; onOpen: (run: FleetRo
   const { t, plural, locale } = useI18n()
   const controller = useFleetController()
   const runsState = useFleet(useCallback((state: FleetState) => state.runs[bot.id] ?? emptyRuns, [bot.id]))
-  const seenIds = useFleet(useCallback((state: FleetState) => state.seen.runs[bot.id] ?? null, [bot.id]))
+  const seenIds = useFleet(useCallback((state: FleetState) => selectRunsSeen(state, bot.id), [bot.id]))
   const [filter, setFilter] = useState<string | null>(null)
   const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set())
   const [settings, setSettings] = useState(false)
@@ -211,7 +211,7 @@ export function RunsPane({ bot, onOpen }: { bot: FleetBot; onOpen: (run: FleetRo
     [filter, runsState.runs]
   )
   const fresh = useMemo(
-    () => new Set(seenIds ? unseenRuns(runsState.runs, new Set(seenIds), bot).map((run) => run.id) : []),
+    () => new Set(seenIds ? unseenRuns(runsState.runs, runsSeenSet(seenIds), bot).map((run) => run.id) : []),
     [bot, runsState.runs, seenIds]
   )
   const rows = useMemo<Row[]>(() => {

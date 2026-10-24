@@ -11,6 +11,7 @@ import {
   FLEET_PARALLEL_TURNS_FEATURE,
   FLEET_BOT_DELEGATION_FEATURE,
   FLEET_PEER_CONVERSATIONS_FEATURE,
+  FLEET_OWNER_SEEN_FEATURE,
   FLEET_CANCEL_CONVERSATION_QUERY,
   fleetReaderWantsPeerThreads,
   type FleetPeerThreadPatchRequest,
@@ -18,6 +19,7 @@ import {
   FLEET_DICTATION_FEATURE,
   type FleetDictationKeyRequest,
   type FleetDictationTranscribeRequest,
+  type FleetRoutineRunPatchRequest,
   type FleetRoutineRunSettings,
 } from '@maestrly/bot-fleet-protocol'
 import { ownerMemoryRequestHash } from '../owner-memory.js'
@@ -359,7 +361,7 @@ export async function publicRoute(
       return { body: ctx.routines!.get(id, params.runId) }
     case 'botRunPatch':
       requireBot(ctx, id)
-      return { body: ctx.routines!.setPinned(id, params.runId, (body as { pinned: boolean }).pinned) }
+      return { body: ctx.routines!.patchRun(id, params.runId, body as FleetRoutineRunPatchRequest) }
     case 'botRunConversationDelete':
       requireBot(ctx, id)
       return { body: await ctx.routines!.deleteConversation(id, params.runId) }
@@ -498,6 +500,7 @@ export async function publicRoute(
             FLEET_FILES_MANAGE_FEATURE,
             FLEET_BOT_RESTART_FEATURE,
             FLEET_PHONE_SCREENS_FEATURE,
+            FLEET_OWNER_SEEN_FEATURE,
           ],
           botImage: ctx.config.botImage,
           botImageVersion: await ctx.host.botImageVersion(),

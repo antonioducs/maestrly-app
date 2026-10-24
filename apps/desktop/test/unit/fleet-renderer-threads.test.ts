@@ -10,8 +10,12 @@ import {
   unseenThreads,
   writeSeenThreads,
 } from '../../src/renderer/lib/fleet/threads'
+import { createFleetActions } from '../../src/renderer/lib/fleet/use-fleet'
+import type { FleetServerId } from '../../src/shared/fleet-servers'
 
 const AT = '2026-10-18T12:00:00.000Z'
+const LATER = '2026-10-18T12:05:00.000Z'
+const SERVER = 'aaaaaaaa-0000-4000-8000-000000000001' as FleetServerId
 const thread = (id: string, lastActivityAt: string, fields: Partial<FleetPeerThread> = {}): FleetPeerThread =>
   fleetPeerThreadSchema.parse({
     id,
@@ -206,5 +210,77 @@ describe('seen threads', () => {
     writeSeenThreads(key, new Map([...again, ['t1', later[0].lastActivityAt], ['t3', later[2].lastActivityAt]]))
     // A paused thread waits for the owner whether they saw it or not.
     expect(unseenThreads(later, readSeenThreads(key, later)).map((item) => item.id)).toEqual(['t2'])
+  })
+
+  it('counts as new the activity the gateway says no device of the owner saw, and every paused thread', () => {
+    const threads = [
+      thread('t1', LATER, { seenActivityAt: AT }),
+      thread('t2', LATER, { seenActivityAt: LATER }),
+      thread('t3', LATER, { seenActivityAt: LATER, status: 'paused' }),
+      thread('t4', LATER),
+      thread('t5', LATER, { conversation: 'deleted' }),
+    ]
+    expect(unseenThreads(threads, 'gateway').map((item) => item.id)).toEqual(['t1', 't3', 't4'])
+  })
+})
+
+describe('telling the gateway the owner saw a thread', () => {
+  afterEach(() => vi.unstubAllGlobals())
+  function setup(patch: (...args: unknown[]) => Promise<FleetPeerThread>) {
+    let state = fleetReducer(initialFleetState, {
+      type: 'threads.list',
+      botId: 'alpha',
+      threads: [thread('t1', AT), thread('t2', AT, { seenActivityAt: AT })],
+    })
+    const api = { fleetPatchPeerThread: vi.fn(patch) }
+    vi.stubGlobal('window', { api })
+    const actions = createFleetActions(
+      SERVER,
+      (action) => {
+        state = fleetReducer(state, action)
+      },
+      () => state,
+      () => undefined
+    )
+    const find = (id: string) => state.threads.alpha.threads.find((item) => item.id === id)!
+    const apply = (action: Parameters<typeof fleetReducer>[1]) => {
+      state = fleetReducer(state, action)
+    }
+    return { actions, api, find, apply }
+  }
+
+  it('shows it seen at once and asks once for each activity the owner sees', async () => {
+    let answer!: (thread: FleetPeerThread) => void
+    const s = setup(() => new Promise((resolve) => (answer = resolve)))
+    s.actions.seeThread('alpha', 't1')
+    s.actions.seeThread('alpha', 't1')
+    s.actions.seeThread('alpha', 't2')
+    expect(s.find('t1').seenActivityAt).toBe(AT)
+    expect(s.api.fleetPatchPeerThread.mock.calls).toEqual([[SERVER, 'alpha', 't1', { seen: true }]])
+    answer(thread('t1', AT, { seenActivityAt: AT }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(s.find('t1').seenActivityAt).toBe(AT)
+    // Later activity, seen while it is shown, is told too.
+    s.apply({ type: 'threads.upsert', botId: 'alpha', thread: thread('t1', LATER, { seenActivityAt: AT }) })
+    s.actions.seeThread('alpha', 't1')
+    expect(s.api.fleetPatchPeerThread).toHaveBeenCalledTimes(2)
+    expect(s.find('t1').seenActivityAt).toBe(LATER)
+  })
+
+  it('shows as seen a thread the owner saw on another device, from its event', () => {
+    const s = setup(async () => thread('t1', AT))
+    expect(unseenThreads([s.find('t1')], 'gateway')).toHaveLength(1)
+    s.apply({
+      type: 'event',
+      value: {
+        type: 'peer_thread.updated',
+        at: AT,
+        botId: 'alpha',
+        thread: thread('t1', AT, { seenActivityAt: AT }),
+      },
+    })
+    expect(unseenThreads([s.find('t1')], 'gateway')).toEqual([])
+    s.actions.seeThread('alpha', 't1')
+    expect(s.api.fleetPatchPeerThread).not.toHaveBeenCalled()
   })
 })

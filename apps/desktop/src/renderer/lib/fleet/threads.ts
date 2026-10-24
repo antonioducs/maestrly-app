@@ -80,11 +80,18 @@ export function writeSeenThreads(key: string, seen: ReadonlyMap<string, string>)
   } catch {}
 }
 
+/**
+ * What the owner has seen of a bot's threads: `gateway` when the gateway keeps it for all their devices
+ * (`owner-seen`, each thread's `seenActivityAt`), or else each thread's last activity as this computer kept it.
+ */
+export type SeenThreads = ReadonlyMap<string, string> | 'gateway'
+
 /** Threads with activity the owner has not seen, and the paused ones, which wait for them. */
-export function unseenThreads(threads: readonly FleetPeerThread[], seen: ReadonlyMap<string, string>) {
+export function unseenThreads(threads: readonly FleetPeerThread[], seen: SeenThreads) {
   return threads.filter(
     (thread) =>
       thread.conversation === 'own' &&
-      (threadState(thread) === 'paused' || seen.get(thread.id) !== thread.lastActivityAt)
+      (threadState(thread) === 'paused' ||
+        (seen === 'gateway' ? thread.seenActivityAt : seen.get(thread.id)) !== thread.lastActivityAt)
   )
 }

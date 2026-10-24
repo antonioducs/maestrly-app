@@ -805,6 +805,11 @@ export const fleetPeerThreadSchema = z.object({
   peerWorking: z.boolean(),
   createdAt: fleetTimestampSchema,
   lastActivityAt: fleetTimestampSchema,
+  /**
+   * The `lastActivityAt` the owner last saw this bot's side at, on any device (`owner-seen`): later activity is new.
+   * Null when they never looked, and from gateways before it.
+   */
+  seenActivityAt: fleetTimestampSchema.nullable().default(null),
   /** When its conversation is deleted on its own; null when never (pinned, or kept until deleted). */
   expiresAt: fleetTimestampSchema.nullable(),
   conversationDeletedAt: fleetTimestampSchema.nullable(),
@@ -841,6 +846,8 @@ export const fleetRoutineRunSchema = z.object({
   kept: fleetRoutineRunKeptSchema.nullable().default(null),
   /** Messages the owner sent in its conversation after it started. */
   adjustments: fleetNonNegativeIntSchema.default(0),
+  /** When the owner first opened it, on any device (`owner-seen`); null until then, and from gateways before it. */
+  seenAt: fleetTimestampSchema.nullable().default(null),
 })
 export type FleetRoutineRun = z.infer<typeof fleetRoutineRunSchema>
 /** A routine run an owner's message refers to, as the bot's conversation shows it. */

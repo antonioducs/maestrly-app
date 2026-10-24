@@ -1,6 +1,7 @@
 import {
   FLEET_CANCEL_CONVERSATION_QUERY,
   FLEET_ENVIRONMENTS_FEATURE,
+  FLEET_OWNER_SEEN_FEATURE,
   FLEET_PARALLEL_TURNS_FEATURE,
   FLEET_TRANSCRIPT_REASONING_FEATURE,
   fleetMetaFeatures,
@@ -184,6 +185,49 @@ export function createFleetController(
       ...state.seen,
       threads: { ...state.seen.threads, [botId]: Object.fromEntries(entries.slice(-SEEN_MAX)) },
     })
+  // What the owner saw, on its way to the gateway (`owner-seen`): each run, or thread activity, is told once at a time.
+  const seeing = new Set<string>()
+  /**
+   * The owner opened a run: it shows as seen at once, and the gateway tells all their devices. Only `seenAt` is taken
+   * from the answer: the run's events, which may have overtaken it, say the rest.
+   */
+  function seeRun(botId: string, runId: string) {
+    const find = () => state.runs[botId]?.runs.find((run) => run.id === runId)
+    const shown = find()
+    const key = laneKey(botId, runId)
+    if (shown?.seenAt || seeing.has(key)) return
+    seeing.add(key)
+    if (shown) dispatch({ type: 'run', botId, run: { ...shown, seenAt: new Date(now()).toISOString() } })
+    void source
+      .call('botRunPatch', { params: { id: botId, runId }, body: { seen: true } })
+      .then((run) => {
+        // The gateway's time is the one every device shows; it never changes once set.
+        const current = find()
+        if (current && current.seenAt !== run.seenAt)
+          dispatch({ type: 'run', botId, run: { ...current, seenAt: run.seenAt } })
+      })
+      .catch(() => {})
+      .finally(() => seeing.delete(key))
+  }
+  /** The owner looked at a thread as it is now: later activity is new, on all their devices. */
+  function seeThread(botId: string, threadId: string, lastActivityAt: string) {
+    const find = () => state.threads[botId]?.threads.find((thread) => thread.id === threadId)
+    const shown = find()
+    const key = `${laneKey(botId, threadId)}\u0000${lastActivityAt}`
+    if (shown?.seenActivityAt === lastActivityAt || seeing.has(key)) return
+    seeing.add(key)
+    if (shown?.lastActivityAt === lastActivityAt)
+      dispatch({ type: 'thread', botId, thread: { ...shown, seenActivityAt: lastActivityAt } })
+    void source
+      .call('botPeerThreadPatch', { params: { id: botId, threadId }, body: { seen: true } })
+      .then((thread) => {
+        const current = find()
+        if (current && current.lastActivityAt === thread.lastActivityAt)
+          dispatch({ type: 'thread', botId, thread: { ...current, seenActivityAt: thread.seenActivityAt } })
+      })
+      .catch(() => {})
+      .finally(() => seeing.delete(key))
+  }
 
   async function refresh() {
     const seen = watch()
@@ -254,7 +298,9 @@ export function createFleetController(
       })
       dispatch({ type: 'runs-page', botId, page, mode: before ? 'older' : 'latest' })
       // The first time a bot's runs are read, every run there counts as seen: only runs that end afterwards are new.
-      if (!state.seen.runs[botId]) await seenRuns(botId, page.runs.map((run) => run.id).reverse())
+      // A gateway that keeps what the owner saw (`owner-seen`) says it instead.
+      if (!has(FLEET_OWNER_SEEN_FEATURE) && !state.seen.runs[botId])
+        await seenRuns(botId, page.runs.map((run) => run.id).reverse())
     } catch {
       dispatch({ type: 'runs-failed', botId })
     }
@@ -266,7 +312,7 @@ export function createFleetController(
     try {
       const { threads } = await source.call('botPeerThreads', { params: { id: botId } })
       dispatch({ type: 'threads-list', botId, threads })
-      if (!state.seen.threads[botId])
+      if (!has(FLEET_OWNER_SEEN_FEATURE) && !state.seen.threads[botId])
         await seenThreads(
           botId,
           threads.map((thread) => [thread.id, thread.lastActivityAt])
@@ -617,14 +663,19 @@ export function createFleetController(
       const bot = state.bots.find((item) => item.id === botId)
       if (bot) applyBot({ ...bot, peerSettings })
     },
-    /** The owner opened a run: it no longer counts as new. A bot not read before counts all its runs as seen. */
+    /**
+     * The owner opened a run: it no longer counts as new, on any of their devices when the gateway keeps it
+     * (`owner-seen`). Otherwise the phone keeps it, and a bot not read before counts all its runs as seen.
+     */
     markRunSeen(botId: string, runId: string) {
+      if (has(FLEET_OWNER_SEEN_FEATURE)) return seeRun(botId, runId)
       const seen = state.seen.runs[botId] ?? (state.runs[botId]?.runs ?? []).map((run) => run.id).reverse()
       if (!seen.includes(runId) || !state.seen.runs[botId])
         void seenRuns(botId, [...seen.filter((id) => id !== runId), runId])
     },
     /** The owner looked at a thread as it is now: only later activity counts as new. */
     markThreadSeen(botId: string, threadId: string, lastActivityAt: string) {
+      if (has(FLEET_OWNER_SEEN_FEATURE)) return seeThread(botId, threadId, lastActivityAt)
       const seen =
         state.seen.threads[botId] ??
         Object.fromEntries((state.threads[botId]?.threads ?? []).map((thread) => [thread.id, thread.lastActivityAt]))

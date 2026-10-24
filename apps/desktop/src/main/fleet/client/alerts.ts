@@ -24,6 +24,12 @@ export interface FleetBotEvent {
   runId?: string
   /** The conversation between bots it happened in, which the notification opens. */
   threadId?: string
+  /**
+   * The side conversation whose mark the owner clears by seeing it on any device (`owner-seen`): a run's own end
+   * (`run:<id>`) or a thread's activity (`thread:<id>`). Absent for what only this computer clears: the bot's own
+   * conversation, and the bot's answers to the owner's changes in a run, which a run's seen state does not cover.
+   */
+  lane?: string
   /** What the bot said last, or what waits for the owner. */
   summary: string | null
 }
@@ -44,6 +50,7 @@ export function fleetBotEventFor(entry: FleetActivityEntry): FleetBotEvent | nul
   const threadId = typeof data.threadId === 'string' ? data.threadId : undefined
   const runId = !threadId && typeof data.runId === 'string' ? data.runId : undefined
   const where = { ...(runId ? { runId } : {}), ...(threadId ? { threadId } : {}) }
+  const threadLane = threadId ? { lane: `thread:${threadId}` } : {}
   if (kind === 'needs_you')
     return {
       botId,
@@ -51,6 +58,7 @@ export function fleetBotEventFor(entry: FleetActivityEntry): FleetBotEvent | nul
       notice: threadId ? 'threadPaused' : 'needsYou',
       mark: !!threadId,
       ...where,
+      ...threadLane,
       summary,
     }
   if (kind !== 'turn_completed' && kind !== 'turn_failed') return null
@@ -66,16 +74,18 @@ export function fleetBotEventFor(entry: FleetActivityEntry): FleetBotEvent | nul
           notice: completed ? 'routineFinished' : 'routineFailed',
           mark: true,
           ...where,
+          ...(runId ? { lane: `run:${runId}` } : {}),
           summary,
         }
   if (typeof source === 'string' && !ownerSources.includes(source))
-    return { botId, alert: null, notice: null, mark: true, ...where, summary }
+    return { botId, alert: null, notice: null, mark: true, ...where, ...threadLane, summary }
   return {
     botId,
     alert: completed ? 'ready' : 'error',
     notice: completed ? 'finished' : 'failed',
     mark: true,
     ...where,
+    ...threadLane,
     summary,
   }
 }

@@ -63,6 +63,8 @@ export interface StoredPeerThreadSide {
   kept: FleetRoutineRunKept | null
   report: string | null
   reportAt: string | null
+  /** The thread's `lastActivityAt` when the owner last saw this side, on any device; null when never. */
+  seenActivityAt: string | null
 }
 function peerThreadOf(row: Row): StoredPeerThread {
   return {
@@ -89,6 +91,7 @@ function peerThreadSideOf(row: Row): StoredPeerThreadSide {
     kept: row.kept_json ? (JSON.parse(String(row.kept_json)) as FleetRoutineRunKept) : null,
     report: row.report ? String(row.report) : null,
     reportAt: row.report_at ? String(row.report_at) : null,
+    seenActivityAt: row.seen_activity_at ? String(row.seen_activity_at) : null,
   }
 }
 
@@ -319,7 +322,7 @@ export class Store {
     const version = Number(
       (this.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get() as Row | undefined)?.value ?? 0
     )
-    if (version > 21) throw new Error('Gateway database schema is newer than this binary')
+    if (version > 22) throw new Error('Gateway database schema is newer than this binary')
     if (version === 0) {
       this.db.exec(`
         CREATE TABLE devices (id TEXT PRIMARY KEY, name TEXT NOT NULL, token_sha256 TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, last_seen_at TEXT, revoked_at TEXT);
@@ -484,6 +487,25 @@ export class Store {
       if (!bots.has('delegation_json')) this.db.exec('ALTER TABLE bots ADD COLUMN delegation_json TEXT')
       this.db.prepare("UPDATE meta SET value='21' WHERE key='schema_version'").run()
     }
+    if (version <= 21) {
+      // Schema 22: what the owner has seen of each run and of each bot's side of a thread, on any device
+      // (`owner-seen`). Runs and threads from before count as seen, so updating shows nothing old as new.
+      const columns = (table: string) =>
+        new Set((this.db.prepare(`PRAGMA table_info(${table})`).all() as Row[]).map((row) => row.name))
+      const runs = columns('routine_runs')
+      if (runs.size && !runs.has('seen_at')) {
+        this.db.exec('ALTER TABLE routine_runs ADD COLUMN seen_at TEXT')
+        this.db.exec('UPDATE routine_runs SET seen_at=COALESCE(last_activity_at, finished_at, delivered_at)')
+      }
+      const sides = columns('peer_thread_sides')
+      if (sides.size && !sides.has('seen_activity_at')) {
+        this.db.exec('ALTER TABLE peer_thread_sides ADD COLUMN seen_activity_at TEXT')
+        this.db.exec(
+          'UPDATE peer_thread_sides SET seen_activity_at=(SELECT last_activity_at FROM peer_threads WHERE peer_threads.id=peer_thread_sides.thread_id)'
+        )
+      }
+      this.db.prepare("UPDATE meta SET value='22' WHERE key='schema_version'").run()
+    }
 
     if (this.db.prepare('PRAGMA foreign_key_check').all().length)
       throw new Error('Gateway migration foreign key check failed')
@@ -637,12 +659,13 @@ export class Store {
       media: json<FleetRoutineRun['media']>(row.media_json),
       kept: json<FleetRoutineRun['kept']>(row.kept_json),
       adjustments: Number(row.adjustments ?? 0),
+      seenAt: (row.seen_at as string | null) ?? null,
     }
   }
   insertRoutineRun(run: StoredRoutineRun) {
     this.db
       .prepare(
-        'INSERT OR IGNORE INTO routine_runs(id,routine_id,bot_id,input_id,trigger,status,delivered_at,finished_at,report_json,final_text,routine_title,conversation,quiet,pinned,last_activity_at,conversation_deleted_at,media_json,kept_json,adjustments) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
+        'INSERT OR IGNORE INTO routine_runs(id,routine_id,bot_id,input_id,trigger,status,delivered_at,finished_at,report_json,final_text,routine_title,conversation,quiet,pinned,last_activity_at,conversation_deleted_at,media_json,kept_json,adjustments,seen_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
       )
       .run(
         run.id,
@@ -663,9 +686,11 @@ export class Store {
         run.conversationDeletedAt ?? null,
         run.media ? JSON.stringify(run.media) : null,
         run.kept ? JSON.stringify(run.kept) : null,
-        run.adjustments ?? 0
+        run.adjustments ?? 0,
+        run.seenAt ?? null
       )
   }
+  /** Leaves out when the owner saw the run: only `setRoutineRunSeen` writes it, so a stale copy never takes it back. */
   updateRoutineRun(run: StoredRoutineRun) {
     this.db
       .prepare(
@@ -686,6 +711,10 @@ export class Store {
         run.adjustments,
         run.id
       )
+  }
+  /** The first time the owner saw a run; returns whether this was it. */
+  setRoutineRunSeen(id: string, at: string): boolean {
+    return this.db.prepare('UPDATE routine_runs SET seen_at=? WHERE id=? AND seen_at IS NULL').run(at, id).changes > 0
   }
   routineRuns(routineId: string, limit: number): StoredRoutineRun[] {
     return (
@@ -2030,11 +2059,12 @@ export class Store {
       .get(threadId, botId) as Row | undefined
     return row ? peerThreadSideOf(row) : null
   }
+  /** Leaves out what the owner saw of a side once it is recorded: only `setPeerThreadSideSeen` changes it then. */
   savePeerThreadSide(side: StoredPeerThreadSide) {
     this.db
       .prepare(
-        `INSERT INTO peer_thread_sides(thread_id,bot_id,origin,pinned,conversation,conversation_deleted_at,kept_json,report,report_at)
-         VALUES(?,?,?,?,?,?,?,?,?)
+        `INSERT INTO peer_thread_sides(thread_id,bot_id,origin,pinned,conversation,conversation_deleted_at,kept_json,report,report_at,seen_activity_at)
+         VALUES(?,?,?,?,?,?,?,?,?,?)
          ON CONFLICT(thread_id,bot_id) DO UPDATE SET pinned=excluded.pinned, conversation=excluded.conversation,
            conversation_deleted_at=excluded.conversation_deleted_at, kept_json=excluded.kept_json, report=excluded.report,
            report_at=excluded.report_at`
@@ -2048,14 +2078,21 @@ export class Store {
         side.conversationDeletedAt,
         side.kept ? JSON.stringify(side.kept) : null,
         side.report,
-        side.reportAt
+        side.reportAt,
+        side.seenActivityAt ?? null
       )
+  }
+  /** The owner saw a bot's side of a thread as it was at `activityAt`, the thread's last activity then. */
+  setPeerThreadSideSeen(threadId: string, botId: string, activityAt: string) {
+    this.db
+      .prepare('UPDATE peer_thread_sides SET seen_activity_at=? WHERE thread_id=? AND bot_id=?')
+      .run(activityAt, threadId, botId)
   }
   /** A bot's sides of its threads with the threads themselves, the most recently active first. */
   botPeerThreads(botId: string, limit: number): Array<{ thread: StoredPeerThread; side: StoredPeerThreadSide }> {
     const rows = this.db
       .prepare(
-        'SELECT t.*, s.thread_id, s.bot_id, s.origin, s.pinned, s.conversation, s.conversation_deleted_at, s.kept_json, s.report, s.report_at FROM peer_thread_sides s JOIN peer_threads t ON t.id=s.thread_id WHERE s.bot_id=? ORDER BY t.last_activity_at DESC, t.id LIMIT ?'
+        'SELECT t.*, s.thread_id, s.bot_id, s.origin, s.pinned, s.conversation, s.conversation_deleted_at, s.kept_json, s.report, s.report_at, s.seen_activity_at FROM peer_thread_sides s JOIN peer_threads t ON t.id=s.thread_id WHERE s.bot_id=? ORDER BY t.last_activity_at DESC, t.id LIMIT ?'
       )
       .all(botId, limit) as Row[]
     return rows.map((row) => ({ thread: peerThreadOf(row), side: peerThreadSideOf(row) }))
@@ -2064,7 +2101,7 @@ export class Store {
   ownPeerThreadSides(): Array<{ thread: StoredPeerThread; side: StoredPeerThreadSide }> {
     const rows = this.db
       .prepare(
-        "SELECT t.*, s.thread_id, s.bot_id, s.origin, s.pinned, s.conversation, s.conversation_deleted_at, s.kept_json, s.report, s.report_at FROM peer_thread_sides s JOIN peer_threads t ON t.id=s.thread_id WHERE s.conversation='own' ORDER BY t.last_activity_at"
+        "SELECT t.*, s.thread_id, s.bot_id, s.origin, s.pinned, s.conversation, s.conversation_deleted_at, s.kept_json, s.report, s.report_at, s.seen_activity_at FROM peer_thread_sides s JOIN peer_threads t ON t.id=s.thread_id WHERE s.conversation='own' ORDER BY t.last_activity_at"
       )
       .all() as Row[]
     return rows.map((row) => ({ thread: peerThreadOf(row), side: peerThreadSideOf(row) }))

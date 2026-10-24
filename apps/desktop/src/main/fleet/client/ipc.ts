@@ -48,6 +48,7 @@ import {
   FLEET_ROUTINE_CONVERSATIONS_FEATURE,
   FLEET_ROUTINE_RUN_LIMITS,
   FLEET_PEER_CONVERSATIONS_FEATURE,
+  FLEET_OWNER_SEEN_FEATURE,
   fleetPeerThreadSettingsSchema,
   fleetPeerThreadPatchRequestSchema,
   fleetAddApiKeyAccountRequestSchema,
@@ -70,6 +71,7 @@ import {
   FLEET_EDIT_CONFLICT,
   FLEET_EDIT_UNSUPPORTED,
   FLEET_FILES_MANAGE_UNSUPPORTED,
+  FLEET_OWNER_SEEN_UNSUPPORTED,
   FLEET_RUN_CONFLICT,
   FLEET_RUNS_UNSUPPORTED,
   FLEET_PEER_THREAD_CONFLICT,
@@ -481,6 +483,14 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
       body: { pinned: z.boolean().parse(pinned) },
     })
   )
+  // The owner opened a run: the gateway keeps it for all their devices (`owner-seen`).
+  scoped.mhandle('fleet:seeRun', (fleet, _event, botId: unknown, runId: unknown) => {
+    if (!fleet.hasFeature(FLEET_OWNER_SEEN_FEATURE)) throw new Error(FLEET_OWNER_SEEN_UNSUPPORTED)
+    return fleet.call('botRunPatch', {
+      params: { id: id.parse(botId), runId: opaqueId.parse(runId) },
+      body: { seen: true },
+    })
+  })
   scoped.mhandle('fleet:deleteRunConversation', (fleet, _event, botId: unknown, runId: unknown) =>
     fleet
       .call('botRunConversationDelete', { params: { id: id.parse(botId), runId: opaqueId.parse(runId) } })
@@ -536,10 +546,9 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
   )
   scoped.mhandle('fleet:patchPeerThread', (fleet, _event, botId: unknown, threadId: unknown, patch: unknown) => {
     requireThreads(fleet)
-    return fleet.call('botPeerThreadPatch', {
-      params: threadParams(botId, threadId),
-      body: fleetPeerThreadPatchRequestSchema.parse(patch),
-    })
+    const body = fleetPeerThreadPatchRequestSchema.parse(patch)
+    if (body.seen && !fleet.hasFeature(FLEET_OWNER_SEEN_FEATURE)) throw new Error(FLEET_OWNER_SEEN_UNSUPPORTED)
+    return fleet.call('botPeerThreadPatch', { params: threadParams(botId, threadId), body })
   })
   scoped.mhandle('fleet:deletePeerThreadConversation', (fleet, _event, botId: unknown, threadId: unknown) => {
     requireThreads(fleet)

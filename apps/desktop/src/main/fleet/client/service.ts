@@ -98,6 +98,10 @@ export class FleetClientService {
   onAlert: ((botId: string, alert: FleetAlert) => void) | null = null
   /** Hears each live activity entry; set by the main process, which shows notifications and marks bots. */
   onLiveEvent: ((entry: FleetActivityEntry) => void) | null = null
+  /** Hears each change of a run or a thread, with what the owner saw of it on any device; set by the main process. */
+  onSideConversation:
+    | ((event: Extract<FleetGatewayEvent, { type: 'routine_run.updated' | 'peer_thread.updated' }>) => void)
+    | null = null
   /** Tells the owner a bot file finished saving or failed; set by the main process, which shows the notice. */
   onDownloadSettled:
     | ((serverId: FleetServerId, download: FleetSettledDownload, botName: string | null) => void)
@@ -454,6 +458,14 @@ export class FleetClientService {
         }
         break
       }
+      case 'routine_run.updated':
+      case 'peer_thread.updated':
+        try {
+          this.onSideConversation?.(event)
+        } catch {
+          /* Nor a mark's. */
+        }
+        break
     }
     broadcast('fleet:event', { serverId: this.serverId, event })
     this.changed()
