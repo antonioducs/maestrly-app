@@ -11,6 +11,7 @@ import { SCREEN_KEY_COLOR, SCREEN_KEY_FRAME, ScreenClientReader, screenStream, w
 import {
   FLEET_GATEWAY_ROUTES,
   FLEET_UNIFIED_DESKTOP_FEATURE,
+  FLEET_BOT_RESTART_FEATURE,
   fleetArchivedBotSchema,
   fleetArchivedEnvironmentSchema,
   fleetBotSchema,
@@ -2655,6 +2656,7 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
         value = {
           protocol: 1,
           features: ['provisioning', 'environments', 'environment-updates', 'runtime-updates', 'video-screens'],
+          moreFeatures: [FLEET_BOT_RESTART_FEATURE],
           gatewayVersion: '0.9.3',
           botImage: 'test-image',
           botImageVersion: '0.9.3',
@@ -2662,6 +2664,10 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
         break
       case 'pair':
         value = { deviceId: 'device-env-e2e', token: 'fixture-token' }
+        break
+      case 'botRestart':
+        if (!bot) return notFound()
+        value = bot
         break
       case 'environmentUpdate': {
         if (!environment) return notFound()
@@ -3221,9 +3227,18 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
       .getByRole('button', { name: /Partner/ })
       .click()
     const partnerSettings = await openBotSettings(page, 'Partner', 'Ambiente')
-    await expect(
-      page.getByRole('region', { name: 'Ambiente', exact: true }).getByRole('button', { name: 'Abrir ambiente' })
-    ).toBeVisible()
+    const partnerEnvironment = page.getByRole('region', { name: 'Ambiente', exact: true })
+    await expect(partnerEnvironment.getByRole('button', { name: 'Abrir ambiente' })).toBeVisible()
+    // A bot that shares its environment restarts on its own; the confirmation names the bots that keep working.
+    await partnerEnvironment.getByRole('button', { name: 'Reiniciar bot' }).click()
+    const restartBot = page.getByRole('dialog', { name: 'Reiniciar Partner?' })
+    await expect(restartBot).toContainText('Os outros bots continuam trabalhando: Scout.')
+    await restartBot.getByRole('button', { name: 'Reiniciar bot' }).click()
+    await expect
+      .poll(() => requests.filter((item) => item.key === 'botRestart').map((item) => item.path))
+      .toEqual(['/v1/bots/partner/restart'])
+    await expect(restartBot).toHaveCount(0)
+    expect(requests.filter((item) => item.key === 'environmentRestart')).toHaveLength(1)
     // An environment's bots get their accounts, skills and MCP servers from it.
     await settingsTab(partnerSettings, 'Modelo').click()
     await expect(page.getByRole('region', { name: 'Contas do bot', exact: true })).toHaveCount(0)
@@ -3244,6 +3259,10 @@ test('fleet UI organizes bots in environments that share accounts, screens and l
     // The server lists each environment once with its resources, and its bots under it without counting them again.
     await expect(page.getByRole('row').filter({ hasText: 'Acme' }).first()).toContainText('1.0 GB')
     await expect(page.getByRole('row').filter({ hasText: 'Scout' })).toContainText('—')
+    // Alone in its environment again, Scout restarts with it: its row offers no restart of its own.
+    await expect(
+      page.getByRole('row').filter({ hasText: 'Scout' }).getByRole('button', { name: 'Reiniciar bot' })
+    ).toHaveCount(0)
     // What environments swapped out, the swap the server keeps compressed in memory, and processes the kernel ended
     // for lack of memory show where memory went instead of leaving it all to the system.
     await expect(page.getByRole('meter', { name: 'Swap', exact: true })).toHaveCount(0)

@@ -202,7 +202,9 @@ in that one process, and therefore on one display.
 - **`POST /v1/bots`** accepts either `environmentId` (existing environment) or `environment: { name }` (new one). With
   neither, as an older Mac sends it, it creates a new environment named after the bot.
 - **Bot `start`, `stop` and `restart`** act on the environment when it has one bot. With more bots they answer
-  `CONFLICT` ("This bot shares its environment. Restart the environment instead.").
+  `CONFLICT` ("This bot shares its environment. Restart the environment instead."). Later, gateways with the
+  `bot-restart` feature restart such a bot on its own instead: the environment's Maestrly uninstalls and reinstalls
+  it, and its siblings keep running.
 - **Screen ticket.** `POST /v1/bots/:id/screen-tickets` gains `surface: 'browser' | 'apps'`, default `browser`.
 - **Events.** New `environment.updated` and `environment.removed`.
 - **Bot fields.** `FleetBot` gains `environmentId` (null for older gateways). `resources` stays filled only when the

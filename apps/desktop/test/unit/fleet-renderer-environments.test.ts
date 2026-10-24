@@ -10,6 +10,7 @@ import { resources } from '../../src/shared/i18n/resources'
 import { groupBotsByEnvironment } from '../../src/renderer/lib/fleet/selectors'
 import {
   archivedBotPurge,
+  botRestartAvailability,
   createKeyWatcher,
   creationStepReached,
   creationSteps,
@@ -214,6 +215,21 @@ describe('environment helpers', () => {
     expect(lifecycleTarget(bots[0], true)).toEqual({ environmentId: 'acme' })
     expect(lifecycleTarget(bots[0], false)).toEqual({ botId: 'scout' })
     expect(lifecycleTarget(bot('legacy', 'Legacy', null), true)).toEqual({ botId: 'legacy' })
+  })
+
+  it('restarts on its own only a running bot that shares its environment, where the server and image can', () => {
+    const controller = (environments: FleetEnvironment[], features = ['environments', 'bot-restart']) =>
+      ({ state: { connection: { features }, snapshot: { environments, bots } } }) as unknown as FleetController
+    const fleet = controller([acme, home])
+    expect(botRestartAvailability(fleet, bots[0])).toBe('ready')
+    // A bot alone restarts with its environment; so does one the server lists in no environment.
+    expect(botRestartAvailability(fleet, bots[2])).toBe('alone')
+    expect(botRestartAvailability(fleet, bots[3])).toBe('alone')
+    expect(botRestartAvailability(controller([acme], ['environments']), bots[0])).toBe('update-server')
+    expect(botRestartAvailability(fleet, { ...bots[0], lifecycle: 'restarting' })).toBe('not-running')
+    expect(botRestartAvailability(fleet, { ...bots[0], lifecycle: 'failed' })).toBe('not-running')
+    const older = environment('acme', 'Acme', ['scout', 'partner'], { capabilities: ['provisioning'] })
+    expect(botRestartAvailability(controller([older]), bots[0])).toBe('restart-environment')
   })
 
   it('lists the bots of an environment by name for confirmations', () => {

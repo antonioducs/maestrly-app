@@ -1938,6 +1938,21 @@ export default {
       alreadyMoving: 'This bot is already moving.',
     },
   },
+  restartBot: {
+    action: 'Restart bot',
+    actionHint:
+      'Restarts only this bot: its turn, programs, browser and screen. The other bots of its environment keep working.',
+    title: 'Restart {{name}}?',
+    confirm:
+      'Only {{name}} restarts: its turn stops, and its programs, browser and screen close and start again. Its conversation, files and settings are kept. The other bots keep working: {{bots}}.',
+    button: 'Restart bot',
+    unavailable: {
+      moving: 'This bot is moving.',
+      'not-running': 'Start the bot before restarting it.',
+      'restart-environment': 'Restart its environment to update it before restarting one of its bots.',
+    },
+    restartEnvironment: 'Restart this environment to update it before restarting one of its bots.',
+  },
   runs: {
     tab: 'Runs',
     tabConversation: 'Conversation',

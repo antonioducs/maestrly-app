@@ -129,6 +129,10 @@ const KNOWN_REFUSALS: KnownRefusal[] = [
     matches: exactly('This bot shares its environment. Restart the environment instead.'),
     key: 'errors.sharedEnvironment',
   },
+  {
+    matches: exactly('Restart this environment to update it before restarting one of its bots.'),
+    key: 'restartBot.restartEnvironment',
+  },
   { matches: exactly('Restore its environment first'), key: 'errors.restoreEnvironmentFirst' },
   { matches: exactly('Start its environment first'), key: 'errors.startEnvironmentFirst' },
   { matches: exactly('Its display slot is still in use. Start the bot again to retry.'), key: 'errors.slotInUse' },

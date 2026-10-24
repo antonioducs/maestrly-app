@@ -794,14 +794,14 @@ describe('environments', () => {
     })
   })
 
-  it('refuses bot lifecycle commands for a bot that shares its environment', async () => {
+  it('refuses the start and stop of a bot that shares its environment', async () => {
     const f = fixture()
     await f.instance('work')
     await f.instance('home')
     const {
       ids: [ads],
     } = await environment(f, 'Work', ['Ads', 'Scout'])
-    for (const command of ['start', 'stop', 'restart'] as const)
+    for (const command of ['start', 'stop'] as const)
       await expect(f.lifecycle[command](ads)).rejects.toMatchObject({
         code: 'CONFLICT',
         message: 'This bot shares its environment. Restart the environment instead.',
@@ -819,6 +819,109 @@ describe('environments', () => {
       ])
     )
   })
+
+  it('restarts a bot that shares its environment on its own, leaving its container and siblings alone', async () => {
+    const f = fixture()
+    const work = await f.instance('work')
+    const {
+      ids: [ads, scout],
+    } = await environment(f, 'Work', ['Ads', 'Scout'])
+    await f.lifecycle.pause(ads)
+    const before = container(f, 'maestrly-env-work')!
+    const startedAt = before.startedAt
+    const docker: string[] = []
+    for (const method of ['start', 'stop', 'restart'] as const) {
+      const original = f.docker[method].bind(f.docker)
+      f.docker[method] = async (id: string) => {
+        docker.push(method + ' ' + id)
+        return original(id)
+      }
+    }
+    const requests = work.requests.length,
+      events = f.events.length
+    const restarted = await f.lifecycle.restart(ads)
+    expect(restarted).toMatchObject({ lifecycle: 'running', status: 'paused', paused: true })
+    expect(docker).toEqual([])
+    expect(container(f, 'maestrly-env-work')).toBe(before)
+    expect(container(f, 'maestrly-env-work')?.startedAt).toBe(startedAt)
+    // Only the bot leaves and comes back, in its slot, with its token and its pause.
+    expect(
+      work.requests
+        .slice(requests)
+        .filter((item) => item.method !== 'GET')
+        .map((item) => item.method + ' ' + item.path)
+    ).toEqual(['DELETE /v1/bots/' + ads, 'PUT /v1/bots/' + ads])
+    expect(work.installed.get(ads)).toMatchObject({ slot: 1, hold: { reason: 'paused' } })
+    expect(new Set(work.installs().flatMap((item) => (item.botId === ads ? [item.gatewayToken] : []))).size).toBe(1)
+    expect(f.lifecycle.get(scout)).toMatchObject({ lifecycle: 'running', status: 'idle' })
+    expect(work.lastUninstall(scout)).toBe(-1)
+    expect(f.lifecycle.environment('work')?.lifecycle).toBe('running')
+    // Devices saw it restarting, then running again; its activity says the bot restarted, not its environment.
+    expect(
+      collapse(
+        f.events
+          .slice(events)
+          .flatMap((event) => (event.type === 'bot.updated' && event.bot.id === ads ? [event.bot.lifecycle] : []))
+      )
+    ).toEqual(['restarting', 'running'])
+    expect(
+      f.events
+        .slice(events)
+        .some(
+          (event) => (event.type === 'bot.updated' && event.bot.id === scout) || event.type === 'environment.updated'
+        )
+    ).toBe(false)
+    expect(
+      f.store
+        .activity()
+        .filter((entry) => entry.kind.endsWith('_restarted') || entry.kind === 'bot_started')
+        .map((entry) => [entry.botId, entry.kind])
+    ).toEqual(
+      expect.arrayContaining([
+        [ads, 'bot_started'],
+        [scout, 'bot_started'],
+        [ads, 'bot_restarted'],
+      ])
+    )
+    expect(f.store.activity().filter((entry) => entry.kind.endsWith('_restarted'))).toHaveLength(1)
+    expect(f.store.activity().filter((entry) => entry.kind === 'bot_started')).toHaveLength(2)
+  })
+
+  it('ends the takeover of a bot restarting on its own, and fails its restart when it does not leave', async () => {
+    const f = fixture()
+    const work = await f.instance('work')
+    const {
+      ids: [ads, scout],
+    } = await environment(f, 'Work', ['Ads', 'Scout'])
+    const closed: Array<[string, number]> = []
+    f.lifecycle.onCloseScreens = (id, code) => closed.push([id, code])
+    await f.lifecycle.takeover(ads, 'one', 'Mac')
+    expect(f.lifecycle.get(ads)?.status).toBe('human')
+    expect(await f.lifecycle.restart(ads)).toMatchObject({ lifecycle: 'running', status: 'idle' })
+    expect(f.lifecycle.get(ads)?.takeover.state).toBe('none')
+    expect(work.installed.get(ads)?.hold).toEqual(noHold)
+    expect(closed).toEqual([[ads, 4002]])
+
+    // The bot does not leave: the restart fails, and a reconcile installs the bot again as it is.
+    work.failures.push({ method: 'DELETE', path: '/v1/bots/' + ads, status: 503, code: 'INSTANCE_UNAVAILABLE' })
+    await expect(f.lifecycle.restart(ads)).rejects.toMatchObject({ code: 'INSTANCE_UNAVAILABLE' })
+    expect(f.lifecycle.get(ads)?.lifecycle).toBe('running')
+    work.failures.length = 0
+    const failed = work.lastUninstall(ads)
+    await until(() => work.lastInstall(ads) > failed)
+    await until(() => f.lifecycle.get(ads)?.status === 'idle')
+    expect(work.installed.has(ads)).toBe(true)
+    expect(f.lifecycle.get(scout)?.lifecycle).toBe('running')
+    expect(f.store.activity().filter((entry) => entry.kind === 'bot_restarted')).toHaveLength(1)
+
+    // A bot does not restart on its own in a stopped environment.
+    await f.lifecycle.stopEnvironment('work')
+    await expect(f.lifecycle.restart(ads)).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: 'Start its environment first',
+    })
+    expect(f.lifecycle.environment('work')?.lifecycle).toBe('stopped')
+  }, 10_000)
 
   it('archives an environment with its bots and restores only the bots archived with it', async () => {
     const f = fixture()
@@ -1086,6 +1189,14 @@ describe('environments', () => {
       },
     })
     expect([...solo.installed.keys()]).toEqual([bot])
+    // Such an instance cannot uninstall its bot, so no bot of it restarts on its own.
+    const beforeRestart = solo.requests.length
+    await expect(next.restart(bot)).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: 'Restart this environment to update it before restarting one of its bots.',
+    })
+    expect(solo.requests.slice(beforeRestart).filter((item) => item.method !== 'GET')).toEqual([])
+    expect(next.get(bot)?.lifecycle).toBe('running')
     // Archiving the bot that waits leaves the environment, and the bot its instance runs, alone.
     const holds = solo.requests.filter((item) => item.path === '/v1/hold').length
     await next.archive(pal.id)
@@ -1346,10 +1457,9 @@ describe('installation failures', () => {
     ).toHaveLength(4)
     // Starting a running bot is still a no-op for a bot alone, and still refused for a bot that shares.
     expect((await f.lifecycle.start(solo)).lifecycle).toBe('running')
-    for (const command of ['start', 'stop', 'restart'] as const)
+    for (const command of ['start', 'stop'] as const)
       await expect(f.lifecycle[command](alpha)).rejects.toMatchObject({ code: 'CONFLICT' })
-    for (const command of ['stop', 'restart'] as const)
-      await expect(f.lifecycle[command](beta)).rejects.toMatchObject({ code: 'CONFLICT' })
+    await expect(f.lifecycle.stop(beta)).rejects.toMatchObject({ code: 'CONFLICT' })
     expect(docker).toEqual([])
     // A bot of a stopped shared environment cannot start it on its own.
     await f.lifecycle.stopEnvironment('work')

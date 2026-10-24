@@ -484,3 +484,11 @@ export const FLEET_BOT_MOVE_SHA256_HEADER = 'X-Maestrly-Package-Sha256'
 
 /** Gateway feature (`/v1/meta`, in `moreFeatures`): the server transcribes phone dictation with its own API key. */
 export const FLEET_DICTATION_FEATURE = 'dictation'
+
+/**
+ * Gateway feature (`/v1/meta`, in `moreFeatures`): `POST /v1/bots/:id/restart` restarts a bot that shares its
+ * environment on its own. The environment's Maestrly uninstalls the bot and installs it again, which stops its turns,
+ * programs, display and browser, while its siblings keep running. Gateways before it refuse with `CONFLICT`. A bot alone
+ * in its environment restarts its environment, as before.
+ */
+export const FLEET_BOT_RESTART_FEATURE = 'bot-restart'

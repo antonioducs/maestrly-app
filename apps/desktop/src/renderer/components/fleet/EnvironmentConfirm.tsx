@@ -1,10 +1,10 @@
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { FleetEnvironment } from '@maestrly/bot-fleet-protocol'
+import type { FleetBot, FleetEnvironment } from '@maestrly/bot-fleet-protocol'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { environmentBots, formatNames } from '@/lib/fleet/environments'
 import { fleetErrorText } from '@/lib/fleet/errors'
-import { isWorkspacesEnvironment } from '@/lib/fleet/selectors'
+import { environmentOf, isWorkspacesEnvironment } from '@/lib/fleet/selectors'
 import { updateBlockers } from '@/lib/fleet/updates'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 
@@ -115,6 +115,62 @@ export function EnvironmentConfirm({
       message={message}
       confirmLabel={confirmLabel}
       destructive={kind === 'archive' || kind === 'stop' || (kind === 'updateNow' && blockers.length > 0)}
+      busy={busy}
+      error={error || null}
+      onCancel={cancel}
+      onConfirm={() => void run()}
+    />
+  )
+}
+
+/**
+ * Asks before restarting one bot that shares its environment (`bot-restart`), naming the bots that keep working, and
+ * restarts it. It stays open with the reason when the restart fails.
+ */
+export function RestartBotConfirm({
+  bot,
+  fleet,
+  onCancel,
+  onDone,
+}: {
+  bot: FleetBot
+  fleet: FleetController
+  onCancel: () => void
+  onDone: () => void
+}) {
+  const { t, i18n } = useTranslation('fleet')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const environment = environmentOf(fleet.state.snapshot.environments, bot)
+  const others = formatNames(
+    (environment ? environmentBots(environment, fleet.state.snapshot.bots) : [])
+      .filter((item) => item.id !== bot.id)
+      .map((item) => item.name),
+    i18n.language
+  )
+  const cancel = useCallback(() => {
+    if (!busy) onCancel()
+  }, [busy, onCancel])
+  async function run() {
+    if (busy) return
+    setBusy(true)
+    setError('')
+    try {
+      const restarted = await window.api.fleetBotAction(fleet.serverId, bot.id, 'restart')
+      if (restarted)
+        fleet.dispatch({ type: 'event', value: { type: 'bot.updated', at: new Date().toISOString(), bot: restarted } })
+      onDone()
+    } catch (cause) {
+      setError(fleetErrorText(cause, t))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <ConfirmDialog
+      title={t('restartBot.title', { name: bot.name })}
+      message={t('restartBot.confirm', { name: bot.name, bots: others })}
+      confirmLabel={t('restartBot.button')}
       busy={busy}
       error={error || null}
       onCancel={cancel}

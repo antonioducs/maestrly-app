@@ -21,13 +21,20 @@ import {
   isWorkspacesEnvironment,
   workspacesEnvironments,
 } from '@/lib/fleet/selectors'
-import { environmentBots, formatNames, hasEnvironments } from '@/lib/fleet/environments'
+import {
+  botRestartAvailability,
+  environmentBots,
+  formatNames,
+  hasEnvironments,
+  type BotRestartAvailability,
+} from '@/lib/fleet/environments'
 import { fleetErrorText } from '@/lib/fleet/errors'
 import { useFleetInstaller } from '@/lib/fleet/use-fleet-installer'
 import { ArchivedBots } from './ArchivedBots'
 import { ArchivedEnvironments } from './ArchivedEnvironments'
 import { BotUpdateBanner } from './BotUpdateBanner'
 import { CreateWorkspacesDialog } from './CreateWorkspacesDialog'
+import { RestartBotConfirm } from './EnvironmentConfirm'
 
 function ResourceBar({ label, fraction, value }: { label: string; fraction: number; value: string }) {
   return (
@@ -126,19 +133,26 @@ function BotRow({
   )
 }
 
-/** An environment's row, with its resources and lifecycle, and its bots under it (their resources are its own). */
+/**
+ * An environment's row, with its resources and lifecycle, and its bots under it (their resources are its own). A bot
+ * that shares it restarts on its own from its row, where the server can.
+ */
 function EnvironmentRows({
   environment,
   bots,
   onOpenEnvironment,
   onOpenBot,
   onAction,
+  restartAvailability,
+  onRestartBot,
 }: {
   environment: FleetEnvironment
   bots: FleetBot[]
   onOpenEnvironment: (id: string) => void
   onOpenBot: (id: string) => void
   onAction: (action: 'restart' | 'stop' | 'start') => void
+  restartAvailability: (bot: FleetBot) => BotRestartAvailability
+  onRestartBot: (bot: FleetBot) => void
 }) {
   const { t } = useTranslation('fleet')
   const { cpuPercent, startedAt } = environment.resources
@@ -196,10 +210,36 @@ function EnvironmentRows({
               —
             </td>
           ))}
-          <td className="p-3" />
+          <td className="p-3">
+            <BotRestartAction availability={restartAvailability(bot)} onRestart={() => onRestartBot(bot)} />
+          </td>
         </tr>
       ))}
     </>
+  )
+}
+
+/** Restarts one bot of a shared environment; a bot alone there, or a server that cannot, offers nothing. */
+function BotRestartAction({
+  availability,
+  onRestart,
+}: {
+  availability: BotRestartAvailability
+  onRestart: () => void
+}) {
+  const { t } = useTranslation('fleet')
+  if (availability === 'alone' || availability === 'update-server') return null
+  return (
+    <button
+      type="button"
+      disabled={availability !== 'ready'}
+      title={availability === 'ready' ? t('restartBot.actionHint') : t(`restartBot.unavailable.${availability}`)}
+      aria-label={t('restartBot.action')}
+      onClick={onRestart}
+      className="text-primary disabled:opacity-40"
+    >
+      {t('action.restart')}
+    </button>
   )
 }
 
@@ -285,6 +325,9 @@ export function ServerView({
   const [confirmBusy, setConfirmBusy] = useState(false)
   // Stable: the dialog refocuses on a new callback, and this view re-renders with every resource sample.
   const cancelConfirm = useCallback(() => setConfirm(null), [])
+  const [restartingBot, setRestartingBot] = useState<string | null>(null)
+  const closeRestart = useCallback(() => setRestartingBot(null), [])
+  const restartTarget = restartingBot ? bots.find((bot) => bot.id === restartingBot) : undefined
   const [version, setVersion] = useState(desktopVersion)
   // The server's chats and workspaces: environments of their own kind, one per scope of the owner's work, shown apart
   // from the ones bots run in.
@@ -500,6 +543,8 @@ export function ServerView({
                         ? void fleet.environmentAction(group.environment.id, 'start')
                         : setConfirm({ environment: group.environment, action })
                     }
+                    restartAvailability={(bot) => botRestartAvailability(fleet, bot)}
+                    onRestartBot={(bot) => setRestartingBot(bot.id)}
                   />
                 ))}
                 {(grouped ? grouped.ungrouped : bots).map((bot) => (
@@ -558,6 +603,9 @@ export function ServerView({
           onCancel={cancelConfirm}
           onConfirm={() => void confirmAction()}
         />
+      )}
+      {restartTarget && (
+        <RestartBotConfirm bot={restartTarget} fleet={fleet} onCancel={closeRestart} onDone={closeRestart} />
       )}
     </section>
   )

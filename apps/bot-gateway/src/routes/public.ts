@@ -2,6 +2,7 @@ import { environmentSettingsRoute } from './environment-settings.js'
 import {
   FLEET_ACCOUNT_FAILOVER_FEATURE,
   FLEET_BOT_MOVE_FEATURE,
+  FLEET_BOT_RESTART_FEATURE,
   FLEET_ENVIRONMENT_PLUGINS_FEATURE,
   FLEET_ENVIRONMENT_SETTINGS_FEATURE,
   FLEET_HOST_DESKTOP_CALLS_FEATURE,
@@ -494,6 +495,7 @@ export async function publicRoute(
             FLEET_DICTATION_FEATURE,
             FLEET_BOT_DELEGATION_FEATURE,
             FLEET_FILES_MANAGE_FEATURE,
+            FLEET_BOT_RESTART_FEATURE,
           ],
           botImage: ctx.config.botImage,
           botImageVersion: await ctx.host.botImageVersion(),
@@ -698,7 +700,8 @@ export async function publicRoute(
       return { body: requireBot(ctx, id) }
     case 'botPatch':
       return { body: await ctx.lifecycle.patch(id, body as FleetPatchBotRequest) }
-    // A bot's own start, stop and restart act on its environment when it is alone there.
+    // A bot's own start and stop act on its environment when it is alone there; its restart too, otherwise it restarts
+    // on its own.
     case 'botStart':
       return { body: await ctx.lifecycle.start(id) }
     case 'botStop':

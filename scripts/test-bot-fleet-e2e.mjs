@@ -1942,9 +1942,9 @@ async function main() {
     async () => (await bot(scoutId)).compaction?.intervalTokens === 100000
   )
   pass('environment default compaction change', 'Scout (inherits) took 120000 tokens and back; Partner kept its own')
-  // Older Macs start, stop and restart bots; a shared bot's environment is restarted instead.
+  // Older Macs start and stop bots; a shared bot's environment is started or stopped instead.
   for (const [id, action] of [
-    [scoutId, 'restart'],
+    [scoutId, 'stop'],
     [partnerId, 'stop'],
     [partnerId, 'start'],
   ]) {
@@ -1957,7 +1957,42 @@ async function main() {
   pass(
     'shared environment join',
     `Partner joined ${scoutEnvId} in slot 2 in ${timings.partnerJoinToRunningMs} ms with no new container; ` +
-      'accounts, skills and MCP servers shared; its own model (e2e-model-b) and compaction; bot lifecycle refused'
+      'accounts, skills and MCP servers shared; its own model (e2e-model-b) and compaction; bot start and stop refused'
+  )
+  // A shared bot restarts on its own: its display starts again, while the container, the environment's Maestrly and
+  // Scout's display keep running.
+  const displayPid = async (display) =>
+    (await docker(['exec', containers[1], 'pgrep', '-f', `^Xvfb ${display} `], { allowFailure: true })).stdout.trim()
+  const [scoutDisplay, partnerDisplay, maestrlyPid] = [
+    await displayPid(':1'),
+    await displayPid(':2'),
+    await instanceProcess(containers[1]),
+  ]
+  assert.ok(scoutDisplay && partnerDisplay, `Bot displays not found: ${scoutDisplay} ${partnerDisplay}`)
+  const partnerRestartStarted = Date.now()
+  assert.equal((await request('POST', '/v1/bots/' + partnerId + '/restart')).lifecycle, 'running')
+  timings.partnerRestartMs = Date.now() - partnerRestartStarted
+  const restartedDisplay = await poll('Partner apps display :2 again', async () => {
+    const pid = await displayPid(':2')
+    return pid && pid !== partnerDisplay && pid
+  })
+  assert.equal(await displayPid(':1'), scoutDisplay)
+  assert.equal(await instanceProcess(containers[1]), maestrlyPid)
+  assert.equal((await containerState(containers[1])).startedAt, scoutContainer.startedAt)
+  assert.equal((await bot(scoutId)).lifecycle, 'running')
+  assert.deepEqual(slots(await instanceStatus(containers[1])), [
+    [scoutId, 1],
+    [partnerId, 2],
+  ])
+  await poll('Partner ready after its restart', async () => {
+    const state = await bot(partnerId)
+    return state.status === 'idle' && state.compactionState?.configured === true
+  })
+  assert.ok((await activityEntries()).some((entry) => entry.botId === partnerId && entry.kind === 'bot_restarted'))
+  pass(
+    'shared bot restart',
+    `Partner restarted alone in ${timings.partnerRestartMs} ms: display :2 pid ${partnerDisplay} -> ${restartedDisplay}; ` +
+      `Scout's display, the container and Maestrly (pid ${maestrlyPid}) kept running`
   )
   // The owner changes the environment's memory limit live, then goes back to the gateway's default.
   const limited = await request('PATCH', environmentRoute, { memoryLimitBytes: 3 * GiB })

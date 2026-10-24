@@ -214,10 +214,10 @@ describe('environment routes', () => {
     expect(bots.find((bot) => bot.id === ads.id)?.environmentId).toBe('work')
   })
 
-  it("answers a shared bot's own start, stop and restart with CONFLICT and acts on a bot alone", async () => {
+  it("answers a shared bot's own start and stop with CONFLICT, restarts it alone and acts on a bot alone", async () => {
     const h = await harness(Date.now, { environments: true })
     const scout = await createBot(h, 'Scout', { environmentId: 'test' })
-    for (const command of ['start', 'stop', 'restart']) {
+    for (const command of ['start', 'stop']) {
       const response = await h.request('POST', `/v1/bots/${scout.id}/${command}`)
       expect(response.status).toBe(409)
       expect(await response.json()).toMatchObject({
@@ -225,6 +225,15 @@ describe('environment routes', () => {
         message: 'This bot shares its environment. Restart the environment instead.',
       })
     }
+    // Its own restart reinstalls it alone (`bot-restart`), while the environment and its other bot keep running.
+    const uninstalls = h.instance.uninstalls.length
+    const restarted = await h.request('POST', `/v1/bots/${scout.id}/restart`)
+    expect(restarted.status).toBe(200)
+    expect((await restarted.json()).lifecycle).toBe('running')
+    expect(h.instance.uninstalls.slice(uninstalls)).toEqual([{ botId: scout.id, purge: false }])
+    expect(h.instance.installs.at(-1)?.profile.botId).toBe(scout.id)
+    expect(h.lifecycle.get(h.bot.id)?.lifecycle).toBe('running')
+    expect((await json(await h.request('GET', '/v1/meta'))).moreFeatures).toContain('bot-restart')
     const stopped = await h.request('POST', '/v1/environments/test/stop')
     expect(stopped.status).toBe(200)
     expect((await stopped.json()).lifecycle).toBe('stopped')

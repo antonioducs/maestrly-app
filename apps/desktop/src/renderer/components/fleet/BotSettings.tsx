@@ -3,7 +3,7 @@ import { ApiKeyAccountForm } from './ApiKeyAccountForm'
 import { BotAccountsSection } from './BotAccountsSection'
 import { BotSkillsMcpSection } from './BotSkillsMcpSection'
 import { BotTasksSection } from './BotTasksSection'
-import { hasEnvironments } from '@/lib/fleet/environments'
+import { botRestartAvailability, hasEnvironments } from '@/lib/fleet/environments'
 import { botEnvironments, environmentOf } from '@/lib/fleet/selectors'
 import {
   botProvisioningKey,
@@ -14,6 +14,7 @@ import {
 } from '@/lib/fleet/provisioning'
 import { fleetErrorMessage, fleetErrorText } from '@/lib/fleet/errors'
 import {
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -61,6 +62,7 @@ import { BotRoutinesSection } from './BotRoutinesSection'
 import { BotSaveBar, LeaveSettingsDialog } from './BotSaveBar'
 import { CompactionFields } from './CompactionFields'
 import { MoveBotDialog } from './MoveBotDialog'
+import { RestartBotConfirm } from './EnvironmentConfirm'
 import { SettingsCard, SettingsSection } from './SettingsSection'
 import { botMoveAvailability } from '@/lib/fleet/move'
 
@@ -232,6 +234,18 @@ export function BotSettings({
   // A server that moves bots offers it; why this bot cannot move now is shown beside the action.
   const canMove = shared && fleet.state.connection.features.includes(FLEET_BOT_MOVE_FEATURE)
   const moveAvailability = botMoveAvailability(fleet, bot)
+  // A bot that shares its environment restarts on its own where the server can; one alone restarts its environment.
+  const restartAvailability = shared ? botRestartAvailability(fleet, bot) : 'alone'
+  const canRestart = restartAvailability !== 'alone' && restartAvailability !== 'update-server'
+  // Why each action waits, below them; the same reason for both is said once.
+  const moveHint = canMove && moveAvailability !== 'ready' && moveAvailability !== 'moving'
+  const restartHint =
+    canRestart &&
+    restartAvailability !== 'ready' &&
+    restartAvailability !== 'moving' &&
+    !(moveHint && moveAvailability === restartAvailability)
+  const [restarting, setRestarting] = useState(false)
+  const closeRestart = useCallback(() => setRestarting(false), [])
   const [error, setError] = useState('')
   const [screenBusy, setScreenBusy] = useState(false)
   const [screenError, setScreenError] = useState('')
@@ -889,10 +903,33 @@ export function BotSettings({
                         {bot.move ? t('move.moving') : t('move.action')}
                       </Button>
                     )}
+                    {canRestart && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={restartAvailability !== 'ready'}
+                        aria-describedby={
+                          restartHint
+                            ? 'fleet-settings-restart-hint'
+                            : restartAvailability !== 'ready' && moveHint
+                              ? 'fleet-settings-move-hint'
+                              : undefined
+                        }
+                        title={t('restartBot.actionHint')}
+                        onClick={() => setRestarting(true)}
+                      >
+                        {t('restartBot.action')}
+                      </Button>
+                    )}
                   </div>
-                  {canMove && moveAvailability !== 'ready' && moveAvailability !== 'moving' && (
+                  {moveHint && (
                     <p id="fleet-settings-move-hint" className="text-[12.5px] text-muted-foreground">
                       {t(`move.unavailable.${moveAvailability}`)}
+                    </p>
+                  )}
+                  {restartHint && (
+                    <p id="fleet-settings-restart-hint" className="text-[12.5px] text-muted-foreground">
+                      {t(`restartBot.unavailable.${restartAvailability}`)}
                     </p>
                   )}
                   {inheritable && (
@@ -1014,6 +1051,7 @@ export function BotSettings({
           }
         />
       )}
+      {restarting && <RestartBotConfirm bot={bot} fleet={fleet} onCancel={closeRestart} onDone={closeRestart} />}
       {archiving && (
         <ConfirmDialog
           title={t('botSettings.archiveTitle')}

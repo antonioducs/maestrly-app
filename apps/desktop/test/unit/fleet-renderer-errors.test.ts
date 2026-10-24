@@ -87,6 +87,7 @@ describe('fleet renderer errors', () => {
     const cases: Array<[string, string]> = [
       [gatewayMessage('lifecycle.ts', 'RESTART_TO_ADD_BOTS'), 'environment.restartToJoin'],
       [gatewayMessage('lifecycle.ts', 'SHARED_ENVIRONMENT'), 'errors.sharedEnvironment'],
+      [gatewayMessage('lifecycle.ts', 'RESTART_TO_RESTART_BOT'), 'restartBot.restartEnvironment'],
       [gatewayMessage('lifecycle.ts', 'RESTORE_ENVIRONMENT_FIRST'), 'errors.restoreEnvironmentFirst'],
       [gatewayMessage('lifecycle.ts', 'START_ENVIRONMENT_FIRST'), 'errors.startEnvironmentFirst'],
       [gatewayMessage('lifecycle.ts', 'SLOT_IN_USE'), 'errors.slotInUse'],

@@ -562,8 +562,8 @@ export class InstanceClient {
     return this.call('botInstall', { botId }, undefined, body)
   }
   /** Uninstalls a bot and keeps its data, or with `purge` deletes its conversation, memory space and folders too. */
-  botUninstall(botId: string, purge: boolean): Promise<void> {
-    return this.call('botUninstall', { botId }, purge ? { purge: 1 } : undefined)
+  botUninstall(botId: string, purge: boolean, timeoutMs = this.timeoutMs): Promise<void> {
+    return this.call('botUninstall', { botId }, purge ? { purge: 1 } : undefined, undefined, timeoutMs)
   }
   /** Freezes a bot for its move (`bot-move`); hashing what it moves with may take a while. */
   botFreeze(botId: string): Promise<FleetInstanceBotFreeze> {
