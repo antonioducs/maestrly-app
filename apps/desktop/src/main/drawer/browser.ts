@@ -15,6 +15,7 @@ import { getConvUiPrefs, patchConvUiPrefs } from '../store'
 import { attachHotkeyCapture } from '../hotkeys'
 import { attachBrowserHotkeyCapture } from '../browser-hotkeys'
 import { isPopupDisposition, oauthChildWindowOptions } from '../oauth-popup'
+import { registerBrowserPagePreload } from './browser-page-preload'
 import { websiteUserAgent } from './browser-user-agent'
 import { attachMacMouseNavigation } from '../mouse-navigation'
 import { conversationBrowserArea, presentedBrowserSize } from '../conversation-screen'
@@ -522,6 +523,7 @@ export function hardenBrowserSession(): void {
   browserSession.setPermissionRequestHandler((_wc, _permission, cb) => cb(false))
   // Set before any page exists: a session's user agent applies to the pages created after it.
   browserSession.setUserAgent(websiteUserAgent(browserSession.getUserAgent()))
+  registerBrowserPagePreload(browserSession)
 }
 
 /** Where a conversation's popups stay: inside its presented browser, or its whole screen area; none without one. */
