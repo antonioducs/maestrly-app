@@ -20,6 +20,29 @@ describe('AgentRegistry Chat-only', () => {
     expect(playSound).toHaveBeenCalledTimes(1)
   })
 
+  it('tells which statuses need the owner: a silent end of turn does not', () => {
+    const registry = new AgentRegistry()
+    const alerts: boolean[] = []
+    registry.on('status', ({ alert }) => alerts.push(alert))
+    registry.markWorking('chat-1')
+    registry.markReady('chat-1', true)
+    registry.markWorking('chat-1')
+    registry.markError('chat-1')
+    expect(alerts).toEqual([false, false, false, true])
+  })
+
+  it('plays a remote host conversation alert apart from plan alerts', () => {
+    const registry = new AgentRegistry()
+    registry.setSoundSettings(DEFAULT_SOUND_SETTINGS)
+    registry.playHostAlert('host/env:chat-1', 'ready')
+    registry.playHostAlert('host/env:chat-1', 'ready')
+    registry.playHostAlert('host/env:chat-1', 'plan')
+    expect(playSound.mock.calls).toEqual([
+      [DEFAULT_SOUND_SETTINGS.events.ready, 1],
+      [DEFAULT_SOUND_SETTINGS.events.plan, 1],
+    ])
+  })
+
   it('ignores ready/error without an active turn', () => {
     const registry = new AgentRegistry()
     const listener = vi.fn()
@@ -59,8 +82,8 @@ describe('AgentRegistry Chat-only', () => {
       ['glass', 1],
     ])
     expect(statuses.mock.calls.map(([event]) => event)).toEqual([
-      { agentId: 'scout', status: 'working' },
-      { agentId: 'scout', status: 'ready' },
+      { agentId: 'scout', status: 'working', alert: false },
+      { agentId: 'scout', status: 'ready', alert: true },
     ])
     registry.setSoundSettings({ ...DEFAULT_SOUND_SETTINGS, bots: false })
     registry.playBotAlert('ads', 'ready')
@@ -82,5 +105,11 @@ describe('AgentRegistry Chat-only', () => {
     expect(coerceSoundSettings(undefined).bots).toBe(true)
     expect(coerceSoundSettings({ bots: 'no' }).bots).toBe(true)
     expect(coerceSoundSettings({ bots: false })).toEqual({ ...DEFAULT_SOUND_SETTINGS, bots: false })
+  })
+
+  it('turns system notifications on unless they were turned off', () => {
+    expect(coerceSoundSettings(undefined).notifications).toBe(true)
+    expect(coerceSoundSettings({ notifications: 'no' }).notifications).toBe(true)
+    expect(coerceSoundSettings({ notifications: false })).toEqual({ ...DEFAULT_SOUND_SETTINGS, notifications: false })
   })
 })

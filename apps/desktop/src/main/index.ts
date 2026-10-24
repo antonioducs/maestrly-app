@@ -266,6 +266,10 @@ import { isGenUiWidgetUrl } from '../shared/genui-widget'
 import { handleGenUiWidgetProtocol } from './genui-widget-scheme'
 import { registerPrivilegedSchemes } from './privileged-schemes'
 import { noticeFleetDownload } from './fleet/client/download-notices'
+import { AppNotifications } from './notifications/app-notifications'
+import { registerNotificationsIpc } from './notifications/ipc'
+import { remoteConversationLabel } from './remote-conversation-labels'
+import type { SoundSettings } from '../shared/sound'
 import { artifactsDataDir, getArtifactsService, setArtifactsService } from './artifacts'
 import { createArtifactEventHandler } from './artifacts/activity'
 import { playSound } from './platform'
@@ -306,6 +310,10 @@ const registry = new AgentRegistry()
 
 let mainWindow: BrowserWindow | null = null
 let chatWindowManager: ChatWindowManager | null = null
+/** System notifications and the app badge; none on a headless instance (a bot, or a server). */
+let appNotifications: AppNotifications | null = null
+/** The bots marked for the owner on this computer (see notifications/bot-attention). */
+const BOT_ATTENTION_KEY = 'notifications.botAttention.v1'
 let cancelProjectSetupsAndWait: (() => Promise<void>) | null = null
 let disposeConversationMigrationIpc: (() => void) | null = null
 let conversationMoveService: ConversationMoveService | null = null
@@ -633,7 +641,7 @@ async function applyVSCodeUpdateOnIdle(): Promise<void> {
   }
 }
 
-function broadcastStatus(payload: { agentId: string; status: string }): void {
+function broadcastStatus(payload: { agentId: string; status: string; alert?: boolean }): void {
   // The registry emits ready/error only when a turn ends, and asking once per question: either needs the person.
   // The host keeps the mark so that seeing it on one computer clears it on every other.
   let attention = false
@@ -654,6 +662,43 @@ function broadcastStatus(payload: { agentId: string; status: string }): void {
   } catch {
     /* The conversation may no longer exist in the store. */
   }
+}
+
+/** A conversation's name and project for a notification; a remote host's is named as the window lists it. */
+function notificationLabel(convId: string): { name: string; projectName?: string } | null {
+  if (isRemoteConversation(convId)) {
+    const label = remoteConversationLabel(convId)
+    return label ? { name: label.name, ...(label.projectName ? { projectName: label.projectName } : {}) } : null
+  }
+  const conv = getConversation(convId)
+  if (!conv) return null
+  const project = conv.scope === 'project' ? getWorkspace(conv.workspaceId)?.name : undefined
+  return { name: conv.name, ...(project ? { projectName: project } : {}) }
+}
+
+/**
+ * Bots' marks go with their server when it is unpaired. Called once the paired servers have started: while they
+ * start, the list lacks those not added yet.
+ */
+function dropMarksOfUnpairedServers(): void {
+  const notifications = appNotifications
+  if (!notifications) return
+  let paired: string | null = null
+  const retain = () => {
+    const ids = fleetServers.list().map(({ id }) => id)
+    const key = ids.join('\n')
+    if (key === paired) return
+    paired = key
+    notifications.botAttention.retain(new Set(ids))
+  }
+  retain()
+  fleetServers.onChange(retain)
+}
+
+/** Sound settings also hold whether system notifications show; tests never raise them. */
+function applyAlertSettings(settings: SoundSettings): void {
+  registry.setSoundSettings(settings)
+  appNotifications?.notices.setEnabled(settings.notifications && !isE2E())
 }
 
 function setupSessionPermissions(): void {
@@ -744,6 +789,7 @@ async function createWindow(): Promise<void> {
             .bots.some((bot) => bot.id === target.id && bot.lifecycle !== 'archived') ?? false)
         : !!getConversation(target.id),
     focusSource: focusMainWindow,
+    onFocus: (key) => appNotifications?.chatWindowFocused(key),
     workArea: (bounds) =>
       (bounds ? screen.getDisplayMatching(bounds) : screen.getDisplayNearestPoint(screen.getCursorScreenPoint()))
         .workArea,
@@ -756,6 +802,9 @@ async function createWindow(): Promise<void> {
   wc.on('did-finish-load', sendFullscreen)
 
   mainWindow.on('blur', () => void applyVSCodeUpdateOnIdle())
+  mainWindow.on('focus', () => appNotifications?.mainWindowFocused())
+  // On Windows the badge marks the window's taskbar button: a new main window needs it again.
+  appNotifications?.badge.apply()
 
   // Keep renderer zoom aligned with native view bounds, which use device-independent pixels.
 
@@ -924,7 +973,10 @@ function registerIpc(): void {
   registerConversationIpc(reg, {
     stopChat,
     resumeBackgroundCompaction,
-    emitAttention: (conversationId, attention) => sendToWindow('conversation:attention', { conversationId, attention }),
+    emitAttention: (conversationId, attention) => {
+      sendToWindow('conversation:attention', { conversationId, attention })
+      if (!attention) appNotifications?.conversations.seen(conversationId)
+    },
   })
   registerLocalConversationIpc(reg)
   disposeConversationMigrationIpc?.()
@@ -1027,8 +1079,10 @@ function registerIpc(): void {
   // Set before the client starts, so that the first live event already sounds.
   fleetServers.setupClients((client) => {
     client.onAlert = (botId, alert) => registry.playBotAlert(fleetKey(client.serverId, botId), alert)
+    client.onLiveEvent = (entry) => appNotifications?.bots.live(client.serverId, entry)
     client.onDownloadSettled = noticeFleetDownload
   })
+  registerNotificationsIpc(reg, () => appNotifications)
   registerFleetInstallerIpc(reg)
   // Set before the client starts, so that its first stream already answers bots' desktop calls.
   registerFleetDesktopBridgeIpc(fleetScopedRegistrar(reg), fleetServers)
@@ -1081,7 +1135,7 @@ function registerIpc(): void {
   registerConversationMove(reg)
 
   registerSettingsIpc(reg, {
-    applySoundSettings: (s) => registry.setSoundSettings(s),
+    applySoundSettings: (s) => applyAlertSettings(s),
     isPreventSleepEnabled,
     setPreventSleepEnabled,
   })
@@ -1195,10 +1249,42 @@ app.whenReady().then(async () => {
   applyProdCsp()
   handleFleetMediaProtocol((serverId) => fleetServers.get(serverId))
   handleGenUiWidgetProtocol()
+  if (!isHeadlessInstance())
+    appNotifications = new AppNotifications({
+      mainWindow: () => mainWindow,
+      chatWindows: () => chatWindowManager,
+      visibleConversation: popupManager.getVisibleConvId,
+      conversationLabel: notificationLabel,
+      focusMainWindow,
+      sendToMainWindow: (channel, target) => safeWindowSend(mainWindow, channel, target),
+      playHostAlert: (key, event) => registry.playHostAlert(key, event),
+      botName: (serverId, botId) =>
+        fleetServers
+          .get(serverId)
+          ?.getSnapshot()
+          .bots.find((bot) => bot.id === botId)?.name ?? null,
+      serverName: (serverId) =>
+        fleetServers.list().length > 1 ? (fleetServers.get(serverId)?.getConnection().hostname ?? null) : null,
+      botAttention: {
+        load: () => getAppSetting(BOT_ATTENTION_KEY),
+        save: (value) => setAppSetting(BOT_ATTENTION_KEY, value),
+        emit: (change) => broadcast('fleet:botAttention', change),
+      },
+      badge: {
+        platform: process.platform,
+        setBadgeCount: (count) => void app.setBadgeCount(count),
+        description: (count) => tMain('main')('notices.badge', { count }),
+      },
+    })
   registry.on('status', broadcastStatus)
-  registry.setSoundSettings(getSoundSettings())
+  registry.on('status', ({ agentId, status, alert }) =>
+    appNotifications?.conversations.status(agentId, status, alert)
+  )
+  onHostEvent((hostId, channel, args) => appNotifications?.hosts.event(hostId, channel, args))
+  applyAlertSettings(getSoundSettings())
 
   registerIpc()
+  dropMarksOfUnpairedServers()
   // Before anything resumes a turn: a conversation an unfinished move holds stays leased.
   restoreMoveEndpointLeases()
   conversationMoveService?.markInterrupted()
@@ -1217,7 +1303,11 @@ app.whenReady().then(async () => {
   app.once('will-quit', disposeRuntimeAssetUpdates)
   if (mainWindow) initSelectionBridge(mainWindow)
 
-  if (mainWindow) initPlanBroker((agentId) => registry.playPlanSound(agentId))
+  if (mainWindow)
+    initPlanBroker((agentId) => {
+      registry.playPlanSound(agentId)
+      appNotifications?.conversations.plan(agentId)
+    })
   if (mainWindow) initMemoryService(mainWindow)
 
   if (mainWindow) void initAppImageIntegration(mainWindow)

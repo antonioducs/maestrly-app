@@ -28,6 +28,8 @@ const LOCAL_ONLY_PREFIXES = [
 ]
 const LOCAL_ONLY_CHANNELS = new Set([
   'app:info',
+  // The count on this computer's app icon.
+  'app:badge-count',
   'open:url',
   'chat:ensure-mic-access',
   'chat:transcribe',

@@ -124,6 +124,8 @@ interface Props {
   requestedTab?: { tab: SidebarTab; requestId: number } | null
   fleet: FleetController
   selectedFleet: string | null
+  /** The ids of the shown server's bots with something new for the owner. */
+  markedBots?: ReadonlySet<string>
   onOpenFleetBot: (id: string) => void
   onOpenFleetEnvironment: (id: string) => void
   onOpenFleetServer: () => void
@@ -229,6 +231,7 @@ export function Sidebar({
   requestedTab,
   fleet,
   selectedFleet,
+  markedBots,
   onOpenFleetBot,
   onOpenFleetEnvironment,
   onOpenFleetServer,
@@ -1179,6 +1182,7 @@ export function Sidebar({
               fleet={fleet}
               query={q}
               selected={selectedFleet}
+              marked={markedBots}
               onOpenBotSettings={onOpenBotSettings}
               onOpenBot={onOpenFleetBot}
               onOpenEnvironment={onOpenFleetEnvironment}

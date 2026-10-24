@@ -714,6 +714,7 @@ export default {
     memory: '{{used}} de {{total}} GB usados',
     botMemory: '{{count}} bots · {{used}} de {{total}} GB',
     awaiting: 'Aguardando você',
+    botAttention: 'Novidades enquanto você estava fora (some ao abrir o bot)',
     noResults: 'Nenhum bot encontrado',
     noBots: 'Nenhum bot ainda. Crie um no +.',
     environmentLabel: 'Ambiente {{name}} · {{status}} · {{bots}}',

@@ -321,6 +321,11 @@ either can answer a permission request, a question, or a plan. A chat or workspa
 renamed, or removed appears here when this window gets the focus again. The red dot of a conversation that needs you is
 kept by the server: opening the conversation on one computer clears it on the other.
 
+A conversation on a server alerts you as one of this computer's does: when it finishes its turn, fails, asks you a
+question, or brings a plan, its **Alert sounds** play and a system notification shows unless you are looking at it. The
+notification goes away once you open the conversation on any computer. See
+[Notifications and badges](chat-context.md#notifications-and-badges).
+
 ## Not available yet
 
 - **In the server's editor:** this computer's extensions, forwarding a port of the server to this computer (the
@@ -331,7 +336,6 @@ kept by the server: opening the conversation on one computer clears it on the ot
 - **Downloading a folder as a `.zip`, or leaving files out of a folder transfer.** A folder always moves whole, and
   arrives extracted. Revealing a file or folder of the server in a file manager is unavailable, because it would open
   on the server's own desktop, which nobody sees.
-- **Alert sounds** do not play for conversations on a server.
 - **On a conversation's computer:** sound, dragging files onto it, and uploading files through it; computers do not
   survive a restart of the server's Maestrly.
 - **ChatGPT Web** companion sessions, paired reviews between two conversations, moving a conversation between

@@ -35,11 +35,14 @@ export function FleetSidebarPanel({
   onOpenServer,
   onOpenInbox,
   onOpenOwnerMemory,
+  marked,
 }: {
   fleet: FleetController
   query: string
   /** A bot id, `environment:<id>` for an environment (ids of both kinds can be equal), or a view kind. */
   selected: string | null
+  /** The ids of the bots with something new for the owner, marked until the owner opens them. */
+  marked?: ReadonlySet<string>
   onOpenBotSettings: () => void
   onOpenBot: (id: string) => void
   onOpenEnvironment: (id: string) => void
@@ -200,6 +203,7 @@ export function FleetSidebarPanel({
                     key={bot.id}
                     bot={bot}
                     selected={selected === bot.id}
+                    marked={!!marked?.has(bot.id)}
                     onOpen={() => onOpenBot(bot.id)}
                     draggable={movable(bot)}
                     onDragStart={() => setDragging(bot)}
@@ -211,7 +215,13 @@ export function FleetSidebarPanel({
           )
         })}
         {bots.map((bot) => (
-          <BotRow key={bot.id} bot={bot} selected={selected === bot.id} onOpen={() => onOpenBot(bot.id)} />
+          <BotRow
+            key={bot.id}
+            bot={bot}
+            selected={selected === bot.id}
+            marked={!!marked?.has(bot.id)}
+            onOpen={() => onOpenBot(bot.id)}
+          />
         ))}
         {empty && (
           <p className="px-2 py-4 text-center text-muted-foreground">
@@ -296,6 +306,7 @@ const BOT_DRAG_TYPE = 'application/x-maestrly-bot'
 function BotRow({
   bot,
   selected,
+  marked = false,
   onOpen,
   draggable = false,
   onDragStart,
@@ -303,6 +314,8 @@ function BotRow({
 }: {
   bot: FleetBot
   selected: boolean
+  /** The bot has something new for the owner. */
+  marked?: boolean
   onOpen: () => void
   /** The bot can be dragged onto another environment to move there. */
   draggable?: boolean
@@ -343,6 +356,14 @@ function BotRow({
       </span>
       {bot.pendingCount > 0 && (
         <span className="rounded-full bg-amber-500/15 px-1.5 text-amber-500">{bot.pendingCount}</span>
+      )}
+      {marked && (
+        <span
+          role="img"
+          aria-label={t('sidebar.botAttention')}
+          title={t('sidebar.botAttention')}
+          className="size-2 shrink-0 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.9)]"
+        />
       )}
     </button>
   )

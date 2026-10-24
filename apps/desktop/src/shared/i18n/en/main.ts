@@ -135,6 +135,23 @@ export default {
       body: 'Open Maestrly to see the pairing code.',
     },
   },
+  notices: {
+    untitled: 'Conversation',
+    finished: 'Finished its turn',
+    failed: 'The turn failed',
+    question: 'Has a question for you',
+    plan: 'Has a plan for you to review',
+    badge: 'Things that need you: {{count}}',
+    bot: {
+      untitled: 'Bot',
+      finished: 'Finished what you asked',
+      failed: 'Could not finish what you asked',
+      routineFinished: 'Finished a routine run',
+      routineFailed: 'A routine run failed',
+      needsYou: 'Needs you',
+      threadPaused: 'Paused a conversation with another bot',
+    },
+  },
   chatProviderError: {
     http: '{{provider}} returned HTTP {{status}}: {{detail}}',
     httpWithoutDetail: '{{provider}} returned HTTP {{status}} without an error message.',

@@ -24,6 +24,7 @@ import type { FleetDesktopAccessInput, FleetDesktopAccessView } from '../shared/
 import type { FleetDownloadEvent, FleetDownloadFileKey, FleetDownloadProgress } from '../shared/fleet-downloads'
 import { ipcRenderer } from 'electron'
 import type { FleetConnectionView, FleetServerId, FleetServerView } from '../shared/fleet-servers'
+import type { FleetBotAttentionChange, FleetBotAttentionEntry } from '../shared/notifications'
 import type {
   FleetOwnerMemory,
   FleetOwnerMemoryEntry,
@@ -253,6 +254,13 @@ export const fleetApi = {
   /** The servers this computer is paired with. */
   fleetServers: (): Promise<FleetServerView[]> => ipcRenderer.invoke('fleet:servers'),
   onFleetServers: (cb: (servers: FleetServerView[]) => void): (() => void) => subscribe('fleet:servers', cb),
+  /** The bots with something new for the owner on this computer, marked until the owner opens them. */
+  fleetBotAttention: (): Promise<FleetBotAttentionEntry[]> => ipcRenderer.invoke('fleet:listBotAttention'),
+  onFleetBotAttention: (cb: (change: FleetBotAttentionChange) => void): (() => void) =>
+    subscribe('fleet:botAttention', cb),
+  /** The bot the main window shows, which notifies nothing and is not marked; null when it shows anything else. */
+  fleetSetVisibleBot: (target: { serverId: FleetServerId; botId: string } | null): void =>
+    ipcRenderer.send('fleet:visibleBot', target),
   /** Pairs this computer with a server; with `serverId`, pairs that server again. */
   fleetConnect: (
     input: { url: string; code: string; deviceName?: string },

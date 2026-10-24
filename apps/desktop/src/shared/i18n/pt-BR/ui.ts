@@ -1260,7 +1260,10 @@ export default {
       unmute: 'Ativar este som',
       botsTitle: 'Alertas dos bots',
       botsDesc:
-        'Toca os sons acima quando um bot termina ou falha no que você pediu, ou precisa de você. Rotinas e conversas entre bots não tocam.',
+        'Toca os sons acima quando um bot termina ou falha no que você pediu, termina uma execução de rotina que avisa você ou precisa de você. Conversas entre bots não tocam.',
+      notificationsTitle: 'Notificações do sistema',
+      notificationsDesc:
+        'Mostra uma notificação quando uma conversa ou um bot termina, falha, pergunta algo, traz um plano ou precisa de você, a menos que você esteja olhando para ele. Silenciar os sons não as desliga.',
       events: {
         ready: 'Turno pronto',
         error: 'Turno falhou',

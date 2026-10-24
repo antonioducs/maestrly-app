@@ -7,6 +7,7 @@ import {
   FLEET_FILES_FEATURE,
   fleetMetaFeatures,
   isAllowedFleetUrl,
+  type FleetActivityEntry,
   type FleetBot,
   type FleetEnvironment,
   type FleetFilesDeleted,
@@ -92,9 +93,11 @@ export class FleetClientService {
         this.snapshot.bots.find((bot) => bot.id === download.botId)?.name ?? null
       ),
   })
-  /** Plays a bot's alert; set by the main process, which owns the sound settings. */
   onArtifactEvent: ((event: ArtifactHostEvent | { type: 'changed' }) => void) | null = null
+  /** Plays a bot's alert; set by the main process, which owns the sound settings. */
   onAlert: ((botId: string, alert: FleetAlert) => void) | null = null
+  /** Hears each live activity entry; set by the main process, which shows notifications and marks bots. */
+  onLiveEvent: ((entry: FleetActivityEntry) => void) | null = null
   /** Tells the owner a bot file finished saving or failed; set by the main process, which shows the notice. */
   onDownloadSettled:
     | ((serverId: FleetServerId, download: FleetSettledDownload, botName: string | null) => void)
@@ -434,7 +437,8 @@ export class FleetClientService {
         ].slice(0, 200)
         break
       case 'activity': {
-        // Only live entries arrive here: nothing that happened while the Mac was away is fetched, or sounds.
+        // Only live entries arrive here: nothing that happened while this computer was away is fetched, sounds, or
+        // notifies.
         const alert = fleetAlertFor(event.entry)
         if (alert && event.entry.botId) {
           try {
@@ -442,6 +446,11 @@ export class FleetClientService {
           } catch {
             /* A sound failure must not stop the event from reaching the window. */
           }
+        }
+        try {
+          this.onLiveEvent?.(event.entry)
+        } catch {
+          /* Nor must a notification's. */
         }
         break
       }

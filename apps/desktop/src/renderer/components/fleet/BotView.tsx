@@ -16,6 +16,7 @@ import { botComputerMode } from '@/lib/fleet/provisioning'
 import { fleetErrorText } from '@/lib/fleet/errors'
 import { useBotWorkspaceLayout } from '@/lib/fleet/use-bot-workspace-layout'
 import { ChatWindowHost } from '@/components/chat/ChatWindowHost'
+import { chatWindowKey } from '../../../shared/chat-window'
 import type { EnvironmentSettingsSection } from './environment-settings/sections'
 import { BotChatHeader, type BotConversationPane } from './BotChatHeader'
 import { RoutineRunsView } from './RoutineRunsView'
@@ -133,6 +134,10 @@ function BotViewContent({ bot, view, fleet, onView, onOpenBot, onDetachedChange,
     setPane('threads')
     setThreadId(id)
   }, [])
+  // A destination naming a thread, such as a notification about it, opens it.
+  useEffect(() => {
+    if (view.threadId) openThread(view.threadId)
+  }, [view.threadId, openThread])
   useEffect(() => {
     if (runsSupported) ensureRuns(bot.id)
   }, [bot.id, ensureRuns, runsSupported])
@@ -195,16 +200,24 @@ function BotViewContent({ bot, view, fleet, onView, onOpenBot, onDetachedChange,
     : undefined
   // Settings with unsaved changes ask before this view leaves them.
   const leaveGuard = useRef<SettingsLeaveGuard | null>(null)
+  // The conversation's own window is keyed by server and bot: bots of two servers may share an id.
+  const windowTarget = useMemo(
+    () => ({ kind: 'bot' as const, serverId: fleet.serverId, id: bot.id }),
+    [fleet.serverId, bot.id]
+  )
+  /** From the conversation's own window, a destination in the main window brings that window forward. */
+  const showSource = () => {
+    if (detached) void window.api.chatWindowShowSource(chatWindowKey(windowTarget))
+  }
   const go = (next: FleetView) => {
-    // From the conversation's own window, a destination in the main window brings that window forward.
-    if (detached) void window.api.chatWindowShowSource(`bot:${bot.id}`)
+    showSource()
     const guard = settingsOpen ? leaveGuard.current : null
     if (guard) guard(() => onView(next))
     else onView(next)
   }
   const botView = (tab: 'conversation' | 'screen' | 'settings'): FleetView => ({ kind: 'bot', botId: bot.id, tab })
   const showComputer = () => {
-    if (detached) void window.api.chatWindowShowSource(`bot:${bot.id}`)
+    showSource()
     openComputer()
     onView(botView('screen'))
   }
@@ -213,7 +226,7 @@ function BotViewContent({ bot, view, fleet, onView, onOpenBot, onDetachedChange,
     onView(botView('conversation'))
   }
   const openSettings = () => {
-    if (detached) void window.api.chatWindowShowSource(`bot:${bot.id}`)
+    showSource()
     onView(botView('settings'))
   }
   const environmentSettings =
@@ -302,7 +315,9 @@ function BotViewContent({ bot, view, fleet, onView, onOpenBot, onDetachedChange,
                         unseenThreads: unseenThreadIds.size,
                         onPane: (next) => {
                           setPane(next)
-                          if (next === 'conversation' && view.tab === 'runs') onView(botView('conversation'))
+                          // The destination forgets the run or thread it named, so that naming it again opens it.
+                          if (next === 'conversation' && (view.tab === 'runs' || view.threadId))
+                            onView(botView('conversation'))
                         },
                         onOpenRun: (id) => openRun(id),
                         onOpenThread: (id) => openThread(id),
@@ -311,7 +326,7 @@ function BotViewContent({ bot, view, fleet, onView, onOpenBot, onDetachedChange,
                 }
               />
               <ChatWindowHost
-                target={{ kind: 'bot', serverId: fleet.serverId, id: bot.id }}
+                target={windowTarget}
                 title={bot.name}
                 onDetachedChange={handleDetachedChange}
                 onReattach={() => go(botView('conversation'))}
@@ -368,7 +383,7 @@ function BotViewContent({ bot, view, fleet, onView, onOpenBot, onDetachedChange,
                         onRevealed={handleRevealed}
                         onOpenBot={(id) => {
                           onOpenBot(id)
-                          if (detached) void window.api.chatWindowShowSource(`bot:${bot.id}`)
+                          showSource()
                         }}
                         onOpenScreen={showComputer}
                         onOpenSettings={openSettings}
@@ -379,7 +394,7 @@ function BotViewContent({ bot, view, fleet, onView, onOpenBot, onDetachedChange,
                             : undefined
                         }
                         onGiveBack={() => {
-                          if (detached) void window.api.chatWindowShowSource(`bot:${bot.id}`)
+                          showSource()
                           setGiveBackRequest((value) => value + 1)
                         }}
                       />

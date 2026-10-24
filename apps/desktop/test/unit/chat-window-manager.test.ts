@@ -24,6 +24,7 @@ function setup() {
   const owner = contents()
   let now = 0
   const focusSource = vi.fn()
+  const onFocus = vi.fn()
   const asked: ChatWindowTarget[] = []
   const manager = new ChatWindowManager(owner as never, {
     targetExists: (target) => {
@@ -33,6 +34,7 @@ function setup() {
     workArea: () => ({ x: 0, y: 0, width: 1000, height: 900 }),
     now: () => now,
     focusSource,
+    onFocus,
   })
   const event = { sender: owner, senderFrame: owner.mainFrame } as never
   const request = { kind: 'conversation', id: 'test-chat', title: 'Test chat' } as const
@@ -43,6 +45,7 @@ function setup() {
       webContents: contents(),
       isDestroyed: () => destroyed,
       isMinimized: (): boolean => true,
+      isFocused: vi.fn((): boolean => false),
       isMaximized: () => false,
       isFullScreen: () => false,
       restore: vi.fn(),
@@ -65,6 +68,7 @@ function setup() {
     prepare,
     create,
     focusSource,
+    onFocus,
     asked,
     advance: () => {
       now += 15_001
@@ -126,6 +130,22 @@ describe('ChatWindowManager', () => {
     child.webContents.emit('will-navigate', { preventDefault })
     expect(preventDefault).toHaveBeenCalled()
     expect(s.owner.setBackgroundThrottling).toHaveBeenCalledWith(false)
+  })
+  it('tells whether a chat window has the focus, brings it forward, and reports when it gets the focus', () => {
+    const s = setup()
+    const prepared = s.prepare()
+    s.owner.open(prepared.frameName)
+    const child = s.create(prepared.frameName)
+    expect(s.manager.isFocused(prepared.key)).toBe(false)
+    child.isFocused.mockReturnValue(true)
+    expect(s.manager.isFocused(prepared.key)).toBe(true)
+    expect(s.manager.isFocused('conversation:other')).toBe(false)
+    expect(s.manager.reveal(prepared.key)).toBe(true)
+    expect(child.restore).toHaveBeenCalled()
+    expect(child.focus).toHaveBeenCalled()
+    expect(s.manager.reveal('conversation:other')).toBe(false)
+    child.emit('focus')
+    expect(s.onFocus).toHaveBeenCalledWith(prepared.key)
   })
   it('waits for acknowledgement on close and restores throttling and clamped bounds', () => {
     const s = setup()

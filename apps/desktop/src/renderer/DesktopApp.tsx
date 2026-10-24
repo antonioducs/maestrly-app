@@ -37,6 +37,7 @@ import { useFleets, type FleetServers } from '@/lib/fleet/use-fleet'
 import { FleetServerProvider } from '@/lib/fleet/server-context'
 import { defaultFleetServer, type FleetServerId, isFleetServerId, NO_FLEET_SERVER } from '../shared/fleet-servers'
 import { useBotUpdates } from '@/lib/fleet/use-bot-updates'
+import { botsTabCounts, markedBots, notificationFleetView, useBotAttention } from '@/lib/fleet/bot-attention'
 import { PersistentBotViews } from '@/components/fleet/PersistentBotViews'
 import { EnvironmentView } from '@/components/fleet/EnvironmentView'
 import { ServerView } from '@/components/fleet/ServerView'
@@ -345,9 +346,19 @@ function DesktopShell({
   })
   const fleet = fleets.controller(botsServer)
   const botUpdates = useBotUpdates(fleet)
-  // The Bots tab's badge counts what waits for the owner on every server; the switcher, on each.
-  const pendingByServer = Object.fromEntries(
-    fleets.servers.map((server) => [server.id, fleets.controller(server.id).state.snapshot.inbox.length])
+  const botMarks = useBotAttention()
+  // The Bots tab's badge counts what waits for the owner on every server, and the bots with something new; the
+  // switcher, on each.
+  const pendingByServer = botsTabCounts(
+    botMarks,
+    fleets.servers.map((server) => {
+      const { snapshot } = fleets.controller(server.id).state
+      return { serverId: server.id, inbox: snapshot.inbox.length, bots: snapshot.bots }
+    })
+  )
+  const shownMarkedBots = useMemo(
+    () => markedBots(botMarks, botsServer, fleet.state.snapshot.bots),
+    [botMarks, botsServer, fleet.state.snapshot.bots]
   )
   const [fleetTabRequest, setFleetTabRequest] = useState(0)
   // A machine Settings asks the sidebar to show, such as a computer just paired.
@@ -757,6 +768,38 @@ function DesktopShell({
     []
   )
 
+  // A clicked notification shows what it is about: a conversation of any host, or a bot of any server at the run or
+  // thread it names.
+  useEffect(
+    () =>
+      window.api.onNotificationOpen((target) => {
+        if (target.kind === 'conversation') {
+          window.dispatchEvent(
+            new CustomEvent('maestrly:open-conversation', { detail: { conversationId: target.conversationId } })
+          )
+          return
+        }
+        if (!fleets.servers.some((server) => server.id === target.serverId)) return
+        onBotsServer(target.serverId)
+        openFleetView(notificationFleetView(target))
+      }),
+    [fleets.servers, onBotsServer, openFleetView]
+  )
+
+  // The app icon counts the conversations of every host that wait for the owner, and what the Bots tab counts.
+  const badgeCount = attention.size + Object.values(pendingByServer).reduce((sum, count) => sum + count, 0)
+  useEffect(() => {
+    window.api.setAppBadgeCount(badgeCount)
+  }, [badgeCount])
+
+  // The bot on screen notifies nothing and gets no mark; opening it clears its mark.
+  const visibleBotId = mainOverride === 'fleet' && fleetView?.kind === 'bot' ? fleetView.botId : null
+  useEffect(() => {
+    window.api.fleetSetVisibleBot(
+      visibleBotId && botsServer !== NO_FLEET_SERVER ? { serverId: botsServer, botId: visibleBotId } : null
+    )
+  }, [botsServer, visibleBotId])
+
   useEffect(() => {
     window.api.setVisibleConversation(mainOverride ? null : (active?.id ?? null))
   }, [active?.id, mainOverride])
@@ -921,6 +964,7 @@ function DesktopShell({
                     ? `environment:${fleetView.environmentId}`
                     : (fleetView?.kind ?? null)
               }
+              markedBots={shownMarkedBots}
               onOpenFleetBot={openFleetBot}
               onOpenFleetEnvironment={openFleetEnvironment}
               onOpenFleetServer={() => openFleetView({ kind: 'server' })}

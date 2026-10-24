@@ -633,7 +633,7 @@ Bots can create up to 10 of their own routines through tools, subject to their a
 
 The **Server** page shows versions, CPU, memory, swap, and disk. With environments, it lists one row per environment, with memory, CPU, uptime, **Restart**, **Stop**, and **Start**, and its bots under it, each bot of a shared environment with a **Restart** of its own (see [Restart one bot](#restart-one-bot)); memory and CPU are measured for the whole environment, and the memory bar has one segment per environment, with its size in the legend. Memory an environment moved out to swap is not counted in its memory; its row shows it as **+N GB in swap**. A server that swaps to memory compressed by zram, such as an OrbStack VM, keeps those pages in memory that belongs to no container: the bar shows it as a striped **Compressed swap** segment instead of counting it as **System**. **System** is the rest: the operating system, Docker, the gateway, and containers outside the fleet. A warning sign by an environment, in its row and in the sidebar, means the kernel ended processes in it for lack of memory since it started; its view says how many, and whether its own memory limit or the whole server ran out. Raise the environment's limit in the first case; give the server more memory or lower the environments' limits in the second. Swap and these counts need a server with cgroup v2 and a gateway that reports them; otherwise they are not shown. **Restart** and **Stop** ask for confirmation and name the environment's bots. Bots on a VPS keep working while your computer is off; when it reconnects, open a bot to see what it did in its conversation and routine runs, and check **Awaiting you** for anything that waits for you.
 
-While your computer is connected, bots use the **Alert sounds** in **Settings → Appearance & sound**. **Turn ready** or **Turn failed** plays when a bot finishes a message you sent, or the work it resumes after you give back control. **Permission request** plays when a bot needs you, such as a new request in **Awaiting you** or a blocked conversation between bots, whatever started its turn. Routine runs and conversations between bots end silently, and nothing that happened while your computer was off sounds when it reconnects. Turn off **Bot alerts** to silence bots without silencing your own conversations. A gateway or environment image that predates this does not report who started a turn, so every finished turn sounds, routines included, until both are updated.
+While your computer is connected, bots alert you with sounds, system notifications, and a mark in the **Bots** tab; see [Alerts, notifications, and marks](#alerts-notifications-and-marks).
 
 The conversation composer offers the bot's available models, reasoning effort and Fast mode when supported, an access ceiling, and context and estimated cost when available. The model list follows visibility filters in **Environment → Settings → Models**. Hiding a model removes it from new choices, while a bot's existing main model and compacting model keep working. Hiding every model of a provider does not sign its account out. Attach PNG, JPEG, WebP, or GIF images (up to 5 MiB each, eight per message, 20 MiB total). Images you send and images returned by tools appear in the conversation. As in chats, each answer shows the bot's reasoning and tool steps as one activity line that follows the current step while the bot works and summarizes them afterwards; open it to see every step, or choose **Expanded** in **Settings → Appearance & sound → Agent activity**. Tool images stay visible under the line. Tool images are copied into the bot's folder in the environment's persistent home when captured; older images may become unavailable as its 400 MiB or 1,000-image budget evicts them.
 
@@ -965,7 +965,7 @@ The button above the list opens the bot's settings for its runs, saved as you ch
 | **Delete run conversations after** | 30 days | 30, 60, or 90 days after the run's last activity (a change you ask for starts the time again), or **Never**. |
 | **Keep at most 50 runs per routine** | On | Older runs' conversations are deleted and the runs leave the history. Off keeps up to 1,000. |
 | **Delete runs with nothing new sooner** | On | Runs that found nothing new keep their conversations 7 days. |
-| **Tell me about finished runs** | New things and failures | Which runs show a notice in your conversation and send a **Routine reports** notification to your phone: **New things and failures**, **All**, or **None**. |
+| **Tell me about finished runs** | New things and failures | Which runs show a notice in your conversation, [alert you on your computer](#alerts-notifications-and-marks), and send a **Routine reports** notification to your phone: **New things and failures**, **All**, or **None**. |
 
 Runs you keep and runs still working are never deleted on their own. Retention runs only while the bot runs, and deletes at most a few conversations at a time. Deleting the bot deletes all its runs.
 
@@ -997,6 +997,22 @@ The button above the list opens the bot's settings for these conversations, save
 | **Pause after** | 8 messages | 4, 8, or 16 messages in a row between the bots without one of yours. |
 
 Conversations you keep and those where a bot is answering are never deleted on their own. Retention deletes a bot's side only while the bot runs. The mobile app does not list these conversations; a message that opened one says so in the bot's conversation.
+
+## Alerts, notifications, and marks
+
+While your computer is connected, it alerts you of what its bots do as their server reports it. Nothing that happened while your computer was off alerts you when it reconnects.
+
+| What happened | Notification | Mark on the bot | Sound |
+| --- | --- | --- | --- |
+| A bot finished or failed a message you sent, or the work it resumes after you give back control | Yes | Yes | **Turn ready** or **Turn failed** |
+| A routine run ended, as its bot's **Tell me about finished runs** says (see [Routine runs](#routine-runs)) | Yes | Yes | **Turn ready** or **Turn failed** |
+| A bot needs you, such as a new request in **Awaiting you** | Yes | No: **Awaiting you** counts it | **Permission request** |
+| A conversation between bots paused | Yes | Yes | **Permission request** |
+| A bot answered another bot | No | Yes | No |
+
+Nothing alerts you about the bot you are looking at: shown in the focused main window, or its conversation in its own focused window. A mark is a red dot on the bot's row in the **Bots** tab, kept on this computer across restarts until you open the bot. The **Bots** tab and the server switcher count the requests in **Awaiting you** and the marked bots; the app icon adds that count to the conversations that need you (see [Notifications and badges](chat-context.md#notifications-and-badges)). Clicking a notification opens the bot at the run or conversation between bots it is about, and opening the bot removes its notifications.
+
+Notifications are silent and follow **System notifications** in **Settings → Appearance & sound**. Sounds use the **Alert sounds** there; turn off **Bot alerts** to silence bots without silencing your own conversations. A gateway or environment image that predates this does not report who started a turn, so every finished turn alerts, until both are updated.
 
 ## Work in the projects of your computers
 

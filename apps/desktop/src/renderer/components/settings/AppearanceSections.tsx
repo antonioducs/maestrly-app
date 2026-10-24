@@ -1,4 +1,4 @@
-import { Bell, BellOff, Bot, CheckCircle2, Languages, ListCollapse, Volume2, VolumeX } from 'lucide-react'
+import { Bell, BellOff, BellRing, Bot, CheckCircle2, Languages, ListCollapse, Volume2, VolumeX } from 'lucide-react'
 import { LOCALES, LOCALE_LABELS, type SupportedLocale } from '../../../shared/locale'
 import { AGENT_ACTIVITY_MODES, setAgentActivityMode, useAgentActivityMode } from '../../lib/agent-activity-preference'
 import {
@@ -101,11 +101,13 @@ export function SoundSection({
   setEventVolume,
   previewEventVolume,
   toggleBotSounds,
+  toggleNotifications,
 }: {
   t: TFn
   sound: SoundSettings
   toggleSoundMute: () => void
   toggleBotSounds: () => void
+  toggleNotifications: () => void
   setMasterVolume: (v: number) => void
   setEventVoice: (event: SoundEvent, voice: SoundVoice) => void
   toggleEventMute: (event: SoundEvent) => void
@@ -264,6 +266,31 @@ export function SoundSection({
           )}
         >
           <span className={cn('size-4 rounded-full bg-white transition-transform', sound.bots && 'translate-x-4')} />
+        </span>
+      </button>
+
+      {/* Muting the sounds leaves notifications as they are: they show without sound either way. */}
+      <button
+        type="button"
+        role="switch"
+        aria-checked={sound.notifications}
+        onClick={toggleNotifications}
+        className="flex items-start gap-2.5 rounded-lg border border-border bg-white/[0.02] px-3 py-2.5 text-left transition-colors hover:bg-white/[0.04]"
+      >
+        <BellRing className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-medium text-foreground">{t('settings.sound.notificationsTitle')}</div>
+          <div className="text-[11px] leading-snug text-muted-foreground">{t('settings.sound.notificationsDesc')}</div>
+        </div>
+        <span
+          className={cn(
+            'mt-0.5 flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors',
+            sound.notifications ? 'bg-primary' : 'bg-white/15'
+          )}
+        >
+          <span
+            className={cn('size-4 rounded-full bg-white transition-transform', sound.notifications && 'translate-x-4')}
+          />
         </span>
       </button>
     </section>
