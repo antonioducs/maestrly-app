@@ -5,6 +5,8 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-10-24
+
 ### Added
 
 - System notifications. A conversation on this computer or on a server notifies
@@ -22,6 +24,21 @@ User-visible changes by version. Downloads are on
   you**. The app icon counts what needs you: the conversations with a red dot
   and the **Bots** tab's count. See
   [Alerts, notifications, and marks](docs/bot-fleet.md#alerts-notifications-and-marks).
+- A bot that shares its environment can restart on its own, without restarting
+  the environment or interrupting the other bots, for example when its browser
+  stopped responding. Choose **Restart** on the bot's row of the **Server**
+  page or **Restart bot** in its **Environment** settings; its conversation,
+  queue, files, memory, settings and pause are kept. It needs a bot server on
+  this version and an environment on its image. See
+  [Restart one bot](docs/bot-fleet.md#restart-one-bot).
+- The mobile app helps a bot through its screen. When a bot asks for something
+  only you can do, such as a password, a code sent by text message or a CAPTCHA,
+  its help card opens the bot's screen, which also opens from **Screen** in the
+  bot's details. **Take control** to tap, scroll and type with the phone's
+  keyboard, then give the screen back with an optional note so the bot carries
+  on; **Mark as resolved without it** stays available. It needs a bot server
+  and a bot environment image on this version. See
+  [Mobile app](docs/mobile.md#what-it-does).
 
 ### Changed
 
@@ -34,6 +51,7 @@ User-visible changes by version. Downloads are on
   percent and megabytes, then installing and starting, and keeps waiting as long
   as the download moves. A download after the first setup says VS Code is being
   updated.
+- Update Electron to 44.9.3, which fixes a security advisory in 44.7.2.
 
 ### Fixed
 
@@ -45,6 +63,22 @@ User-visible changes by version. Downloads are on
 - In a bot conversation open in its own window, opening the bot's screen,
   settings, environment, or another bot, or giving back control, brings the
   main window forward again.
+- Bots can sign in to Google again. Their Chromium no longer reports itself as
+  automated, which Google's sign-in refused; its menu now shows "Managed by your
+  organization" because of the policy that hides the warning that flag brings.
+  Environments pick this up when their image is updated.
+- Giving a bot's computer back after you took control resumes its conversations
+  with other bots. Before, the release failed and control stayed with you.
+- A `bash` command a bot runs ends when its shell does, even when a program it
+  left running keeps the output open. Before, the call could ignore its timeout
+  and the stop button and keep the turn working for hours, and then block
+  archiving the bot and every start, restore or move in its environment. Taking
+  a bot out of an environment now stops waiting for its conversations after 20
+  seconds.
+- You can set the projects folder of another computer, or of a server's
+  workspaces environment, from **Settings** and from the chat card that asks for
+  it. **Choose…** now shows on every host and browses the folders of a remote
+  one, instead of leaving it "Not set".
 
 ## [0.26.0] - 2026-10-22
 
