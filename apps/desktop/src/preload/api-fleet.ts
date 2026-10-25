@@ -437,6 +437,9 @@ export const fleetApi = {
   /** A run kept is never deleted on its own. */
   fleetPinRun: (serverId: FleetServerId, botId: string, runId: string, pinned: boolean): Promise<FleetRoutineRun> =>
     ipcRenderer.invoke('fleet:pinRun', serverId, botId, runId, pinned),
+  /** The owner opened the run: it is new on none of their devices (`owner-seen`). */
+  fleetSeeRun: (serverId: FleetServerId, botId: string, runId: string): Promise<FleetRoutineRun> =>
+    ipcRenderer.invoke('fleet:seeRun', serverId, botId, runId),
   /** Deletes the run's conversation; its report and files stay. Rejects with FLEET_RUN_CONFLICT while it works. */
   fleetDeleteRunConversation: (serverId: FleetServerId, botId: string, runId: string): Promise<FleetRoutineRun> =>
     ipcRenderer.invoke('fleet:deleteRunConversation', serverId, botId, runId),
@@ -465,7 +468,7 @@ export const fleetApi = {
     limit?: number
   ): Promise<FleetTranscriptPage> =>
     ipcRenderer.invoke('fleet:getPeerThreadTranscript', serverId, botId, threadId, before, limit),
-  /** Keeps a thread (`pinned`), or lets a paused one go on (`resume`). */
+  /** Keeps a thread (`pinned`), lets a paused one go on (`resume`), or saw it as it is now (`seen`, `owner-seen`). */
   fleetPatchPeerThread: (
     serverId: FleetServerId,
     botId: string,

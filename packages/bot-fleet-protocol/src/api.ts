@@ -153,7 +153,11 @@ export const fleetRoutineRunPageSchema = z.object({
   before: fleetIdSchema.nullable(),
 })
 export type FleetRoutineRunPage = z.infer<typeof fleetRoutineRunPageSchema>
-export const fleetRoutineRunPatchRequestSchema = z.object({ pinned: z.boolean() }).strict()
+/** The owner keeps a run (`pinned`), or opened it (`seen`, from gateways with `owner-seen`). */
+export const fleetRoutineRunPatchRequestSchema = z
+  .object({ pinned: z.boolean().optional(), seen: z.literal(true).optional() })
+  .strict()
+  .refine((value) => value.pinned !== undefined || value.seen !== undefined, 'nothing to change')
 export type FleetRoutineRunPatchRequest = z.infer<typeof fleetRoutineRunPatchRequestSchema>
 /** What a bot kept of a run whose conversation it deleted. */
 export const fleetInstanceRunDeletedSchema = z.object({ kept: fleetRoutineRunKeptSchema })
@@ -868,11 +872,17 @@ export const fleetPeerThreadListSchema = z.object({
   threads: z.array(fleetPeerThreadSchema).max(FLEET_PEER_THREAD_LIMITS.listMax),
 })
 export type FleetPeerThreadList = z.infer<typeof fleetPeerThreadListSchema>
-/** The owner keeps a thread (`pinned`), or lets a paused one go on for `hopLimit` more messages (`resume`). */
+/**
+ * The owner keeps a thread (`pinned`), lets a paused one go on for `hopLimit` more messages (`resume`), or saw its
+ * activity so far (`seen`, from gateways with `owner-seen`).
+ */
 export const fleetPeerThreadPatchRequestSchema = z
-  .object({ pinned: z.boolean().optional(), resume: z.literal(true).optional() })
+  .object({ pinned: z.boolean().optional(), resume: z.literal(true).optional(), seen: z.literal(true).optional() })
   .strict()
-  .refine((value) => value.pinned !== undefined || value.resume !== undefined, 'nothing to change')
+  .refine(
+    (value) => value.pinned !== undefined || value.resume !== undefined || value.seen !== undefined,
+    'nothing to change'
+  )
 export type FleetPeerThreadPatchRequest = z.infer<typeof fleetPeerThreadPatchRequestSchema>
 export type FleetInternalPeerMessageResponse = z.infer<typeof fleetInternalPeerMessageResponseSchema>
 /**

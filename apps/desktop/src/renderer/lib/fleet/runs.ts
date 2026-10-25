@@ -168,11 +168,18 @@ export function writeSeenRuns(key: string, seen: ReadonlySet<string>): void {
   } catch {}
 }
 
+/**
+ * What the owner has opened of a bot's runs: `gateway` when the gateway keeps it for all their devices (`owner-seen`,
+ * each run's `seenAt`), or else the runs this computer kept.
+ */
+export type SeenRuns = ReadonlySet<string> | 'gateway'
+
 /** Finished runs with something new the owner has not opened yet. */
-export function unseenRuns(runs: FleetRoutineRun[], seen: ReadonlySet<string>, bot: RunBot) {
+export function unseenRuns(runs: FleetRoutineRun[], seen: SeenRuns, bot: RunBot) {
   return runs.filter((run) => {
     const state = runState(run, bot)
-    return !seen.has(run.id) && (state === 'ok' || state === 'failed')
+    const opened = seen === 'gateway' ? run.seenAt !== null : seen.has(run.id)
+    return !opened && (state === 'ok' || state === 'failed')
   })
 }
 

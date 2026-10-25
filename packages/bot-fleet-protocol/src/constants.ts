@@ -223,6 +223,12 @@ export const FLEET_PEER_CONVERSATIONS_FEATURE = 'peer-conversations'
 /** The query parameter a reader of events sets to `1` to receive the threads between bots and their transcripts. */
 export const FLEET_PEER_THREADS_QUERY = 'peerThreads'
 /**
+ * Gateway feature (`moreFeatures` of `/v1/meta`): the gateway keeps what the owner has seen of each routine run
+ * (`seenAt`) and of each bot's side of a thread (`seenActivityAt`), which devices mark with `seen: true`, so every
+ * device the owner pairs shows the same runs and threads as new. Runs and threads from before it count as seen.
+ */
+export const FLEET_OWNER_SEEN_FEATURE = 'owner-seen'
+/**
  * Bots that split their work into tasks routed to the models their owner allows (`bot-delegation`): the bot's
  * `delegation` settings, which the gateway stores and sends in the profile, and the `task` details of transcript tool
  * items. A gateway feature (`moreFeatures`) and an instance capability.

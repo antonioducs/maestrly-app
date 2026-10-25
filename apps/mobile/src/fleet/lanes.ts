@@ -192,11 +192,18 @@ export function runMarkers(runs: FleetRoutineRun[], settings: FleetRoutineRunSet
   )
 }
 
+/**
+ * What the owner has opened of a bot's runs: `gateway` when the gateway keeps it for all their devices (`owner-seen`,
+ * each run's `seenAt`), or else the runs the phone kept.
+ */
+export type SeenRuns = ReadonlySet<string> | 'gateway'
+
 /** Finished runs with something new the owner has not opened yet. */
-export function unseenRuns(runs: FleetRoutineRun[], seen: ReadonlySet<string>, bot: RunBot): FleetRoutineRun[] {
+export function unseenRuns(runs: FleetRoutineRun[], seen: SeenRuns, bot: RunBot): FleetRoutineRun[] {
   return runs.filter((run) => {
     const state = runState(run, bot)
-    return !seen.has(run.id) && (state === 'ok' || state === 'failed')
+    const opened = seen === 'gateway' ? run.seenAt !== null : seen.has(run.id)
+    return !opened && (state === 'ok' || state === 'failed')
   })
 }
 
@@ -247,12 +254,19 @@ export function threadGroups(
   ].filter((group) => group.threads.length > 0)
 }
 
+/**
+ * What the owner has seen of a bot's threads: `gateway` when the gateway keeps it for all their devices
+ * (`owner-seen`, each thread's `seenActivityAt`), or else each thread's last activity as the phone kept it.
+ */
+export type SeenThreads = ReadonlyMap<string, string> | 'gateway'
+
 /** Threads with activity the owner has not seen, and the paused ones, which wait for them. */
-export function unseenThreads(threads: readonly FleetPeerThread[], seen: ReadonlyMap<string, string>) {
+export function unseenThreads(threads: readonly FleetPeerThread[], seen: SeenThreads) {
   return threads.filter(
     (thread) =>
       thread.conversation === 'own' &&
-      (threadState(thread) === 'paused' || seen.get(thread.id) !== thread.lastActivityAt)
+      (threadState(thread) === 'paused' ||
+        (seen === 'gateway' ? thread.seenActivityAt : seen.get(thread.id)) !== thread.lastActivityAt)
   )
 }
 

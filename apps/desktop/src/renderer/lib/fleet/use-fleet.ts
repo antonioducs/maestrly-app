@@ -17,7 +17,7 @@ import { fleetErrorMessage } from './errors'
 type ActionError = { botId: string | null; environmentId: string | null; message: string }
 
 /** What a view does with one server's bots and environments; the same functions for as long as the window lives. */
-function createFleetActions(
+export function createFleetActions(
   serverId: FleetServerId,
   dispatch: (action: FleetAction) => void,
   stateOf: () => FleetState,
@@ -100,6 +100,49 @@ function createFleetActions(
     const entry = stateOf().transcripts[botId] ?? emptyTranscript
     if (!entry.loaded && !entry.loading) void loadTranscript(botId).catch(() => {})
   }
+  // What the owner saw, on its way to the gateway (`owner-seen`): each run, or thread activity, is told once at a time.
+  const seeing = new Set<string>()
+  /**
+   * The owner opened a run: it shows as seen at once, and the gateway tells all their devices. Only `seenAt` is taken
+   * from the answer: the run's events, which may have overtaken it, say the rest.
+   */
+  const seeRun = (botId: string, runId: string) => {
+    const key = runTranscriptKey(botId, runId)
+    const run = () => stateOf().runs[botId]?.runs.find((item) => item.id === runId)
+    const shown = run()
+    if ((shown && shown.seenAt !== null) || seeing.has(key)) return
+    seeing.add(key)
+    if (shown) dispatch({ type: 'runs.upsert', botId, run: { ...shown, seenAt: new Date().toISOString() } })
+    void window.api
+      .fleetSeeRun(serverId, botId, runId)
+      .then((updated) => {
+        // The gateway's time is the one every device shows; it never changes once set.
+        const current = run()
+        if (current && current.seenAt !== updated.seenAt)
+          dispatch({ type: 'runs.upsert', botId, run: { ...current, seenAt: updated.seenAt } })
+      })
+      .catch(() => {})
+      .finally(() => seeing.delete(key))
+  }
+  /** The owner saw a thread as it is now: later activity is new, on all their devices. */
+  const seeThread = (botId: string, threadId: string) => {
+    const thread = () => stateOf().threads[botId]?.threads.find((item) => item.id === threadId)
+    const shown = thread()
+    if (!shown || shown.seenActivityAt === shown.lastActivityAt) return
+    const key = `${runTranscriptKey(botId, threadId)}\u0000${shown.lastActivityAt}`
+    if (seeing.has(key)) return
+    seeing.add(key)
+    dispatch({ type: 'threads.upsert', botId, thread: { ...shown, seenActivityAt: shown.lastActivityAt } })
+    void window.api
+      .fleetPatchPeerThread(serverId, botId, threadId, { seen: true })
+      .then((updated) => {
+        const current = thread()
+        if (current && current.lastActivityAt === updated.lastActivityAt)
+          dispatch({ type: 'threads.upsert', botId, thread: { ...current, seenActivityAt: updated.seenActivityAt } })
+      })
+      .catch(() => {})
+      .finally(() => seeing.delete(key))
+  }
   const botAction = async (botId: string, action: Parameters<typeof window.api.fleetBotAction>[2]) => {
     setActionError(null)
     try {
@@ -173,6 +216,8 @@ function createFleetActions(
     ensureThreads,
     loadThreadTranscript,
     ensureThreadTranscript,
+    seeRun,
+    seeThread,
     botAction,
     environmentAction,
     updateEnvironment,

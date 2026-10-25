@@ -5,6 +5,18 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Changed
+
+- Your computers and phones share which routine runs and conversations between
+  bots you have seen. A run you open, or a conversation you read or write in,
+  no longer counts as new on your other devices. Its notification goes there
+  too, and so does its bot's red dot once nothing else of the bot is new. It
+  needs a bot server on this version; with an older one, each device keeps its
+  own count. The bot gateway database moves to schema 22 for this, counting the
+  runs and conversations from before as seen. Older gateways cannot open it, so
+  back up the gateway volume before updating the server. See
+  [compatibility](docs/bot-fleet.md#compatibility).
+
 ### Fixed
 
 - A bot no longer has to sign in to Google again after its environment restarts,

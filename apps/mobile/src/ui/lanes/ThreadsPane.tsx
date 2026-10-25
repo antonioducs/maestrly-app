@@ -12,7 +12,7 @@ import {
   unseenThreads,
 } from '../../fleet/lanes'
 import { useFleet, useFleetController } from '../../fleet/react'
-import { emptyThreads, type FleetState } from '../../fleet/state'
+import { emptyThreads, type FleetState, selectThreadsSeen, threadsSeenMap } from '../../fleet/state'
 import { useI18n } from '../../i18n'
 import { useTheme } from '../../theme/ThemeProvider'
 import { fonts, mix } from '../../theme/tokens'
@@ -157,7 +157,7 @@ export function ThreadsPane({ bot, onOpen }: { bot: FleetBot; onOpen: (thread: F
   const { t, plural } = useI18n()
   const controller = useFleetController()
   const threadsState = useFleet(useCallback((state: FleetState) => state.threads[bot.id] ?? emptyThreads, [bot.id]))
-  const seen = useFleet(useCallback((state: FleetState) => state.seen.threads[bot.id] ?? null, [bot.id]))
+  const seen = useFleet(useCallback((state: FleetState) => selectThreadsSeen(state, bot.id), [bot.id]))
   const [filter, setFilter] = useState<string | null>(null)
   const [settings, setSettings] = useState(false)
   useEffect(() => controller.ensureThreads(bot.id), [controller, bot.id])
@@ -168,8 +168,7 @@ export function ThreadsPane({ bot, onOpen }: { bot: FleetBot; onOpen: (thread: F
     [filter, threadsState.threads]
   )
   const fresh = useMemo(
-    () =>
-      new Set(seen ? unseenThreads(threadsState.threads, new Map(Object.entries(seen))).map((item) => item.id) : []),
+    () => new Set(seen ? unseenThreads(threadsState.threads, threadsSeenMap(seen)).map((item) => item.id) : []),
     [seen, threadsState.threads]
   )
   const rows = useMemo<Row[]>(

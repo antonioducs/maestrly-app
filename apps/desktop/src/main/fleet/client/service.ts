@@ -98,6 +98,12 @@ export class FleetClientService {
   onAlert: ((botId: string, alert: FleetAlert) => void) | null = null
   /** Hears each live activity entry; set by the main process, which shows notifications and marks bots. */
   onLiveEvent: ((entry: FleetActivityEntry) => void) | null = null
+  /** Hears each change of a run or a thread, with what the owner saw of it on any device; set by the main process. */
+  onSideConversation:
+    | ((event: Extract<FleetGatewayEvent, { type: 'routine_run.updated' | 'peer_thread.updated' }>) => void)
+    | null = null
+  /** Hears that the server is reachable again and this computer read it anew, after what it may have missed. */
+  onResynced: (() => void) | null = null
   /** Tells the owner a bot file finished saving or failed; set by the main process, which shows the notice. */
   onDownloadSettled:
     | ((serverId: FleetServerId, download: FleetSettledDownload, botName: string | null) => void)
@@ -316,8 +322,14 @@ export class FleetClientService {
         if (meta.serverId) this.deps.onGatewayId?.(meta.serverId)
         this.setConnection({ features: fleetMetaFeatures(meta) })
         await this.refresh()
+        if (generation !== this.generation) return
         // Links may have changed while this computer was away; checking them needs the stream open, not this answer.
-        if (generation === this.generation) void this.desktopBridge?.connected().catch(() => undefined)
+        void this.desktopBridge?.connected().catch(() => undefined)
+        try {
+          this.onResynced?.()
+        } catch {
+          /* What listens must not break the connection. */
+        }
       },
       undefined,
       undefined,
@@ -454,6 +466,14 @@ export class FleetClientService {
         }
         break
       }
+      case 'routine_run.updated':
+      case 'peer_thread.updated':
+        try {
+          this.onSideConversation?.(event)
+        } catch {
+          /* Nor a mark's. */
+        }
+        break
     }
     broadcast('fleet:event', { serverId: this.serverId, event })
     this.changed()

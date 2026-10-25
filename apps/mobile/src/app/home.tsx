@@ -10,7 +10,7 @@ import { DEMO_SERVER } from '../demo/demo-source'
 import { lanesSupported, threadState, unseenRuns, unseenThreads } from '../fleet/lanes'
 import { useFleet, useFleetController } from '../fleet/react'
 import { isComposerLocked } from '../fleet/selectors'
-import type { FleetState } from '../fleet/state'
+import { type FleetState, runsSeenSet, selectRunsSeen, selectThreadsSeen, threadsSeenMap } from '../fleet/state'
 import { editableItemId } from '../fleet/transcript-search'
 import { GatewayError } from '../gateway/client'
 import { useI18n } from '../i18n'
@@ -42,7 +42,6 @@ import { AppText } from '../ui/primitives/Text'
 const selectOnline = (state: FleetState) => state.connection === 'open'
 const selectEditFeature = (state: FleetState) => state.features.includes(FLEET_MESSAGE_EDIT_FEATURE)
 const selectFeatures = (state: FleetState) => state.features
-const selectSeen = (state: FleetState) => state.seen
 
 function EmptyState({ chats }: { chats: boolean }) {
   const { palette } = useTheme()
@@ -129,17 +128,16 @@ function BotConversation({ bot }: { bot: FleetBot }) {
   }, [controller, bot.id, runsApart, threadsApart])
   const runs = useFleet(useCallback((state: FleetState) => state.runs[bot.id]?.runs ?? null, [bot.id]))
   const threads = useFleet(useCallback((state: FleetState) => state.threads[bot.id]?.threads ?? null, [bot.id]))
-  const seen = useFleet(selectSeen)
+  const seenRuns = useFleet(useCallback((state: FleetState) => selectRunsSeen(state, bot.id), [bot.id]))
+  const seenThreads = useFleet(useCallback((state: FleetState) => selectThreadsSeen(state, bot.id), [bot.id]))
   const counts = useMemo(() => {
-    const seenRuns = seen.runs[bot.id]
-    const seenThreads = seen.threads[bot.id]
-    const fresh = threads && seenThreads ? unseenThreads(threads, new Map(Object.entries(seenThreads))) : []
+    const fresh = threads && seenThreads ? unseenThreads(threads, threadsSeenMap(seenThreads)) : []
     return {
-      runs: runs && seenRuns ? unseenRuns(runs, new Set(seenRuns), bot).length : 0,
+      runs: runs && seenRuns ? unseenRuns(runs, runsSeenSet(seenRuns), bot).length : 0,
       threads: fresh.length,
       waiting: fresh.filter((thread) => threadState(thread, bot) === 'paused').length,
     }
-  }, [bot, runs, threads, seen])
+  }, [bot, runs, threads, seenRuns, seenThreads])
   // A citation chosen in a run's conversation brings the composer it goes to.
   useEffect(() => {
     if (citation) setPane('conversation')

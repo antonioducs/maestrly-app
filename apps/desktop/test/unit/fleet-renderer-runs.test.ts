@@ -19,8 +19,12 @@ import {
   writeSeenRuns,
 } from '../../src/renderer/lib/fleet/runs'
 import { fleetReducer, initialFleetState, runTranscriptKey, type FleetState } from '../../src/renderer/lib/fleet/state'
+import { createFleetActions } from '../../src/renderer/lib/fleet/use-fleet'
+import type { FleetServerId } from '../../src/shared/fleet-servers'
 
 const AT = '2026-10-18T12:00:00.000Z'
+const LATER = '2026-10-18T12:05:00.000Z'
+const SERVER = 'aaaaaaaa-0000-4000-8000-000000000001' as FleetServerId
 const run = (id: string, deliveredAt: string, fields: Partial<FleetRoutineRun> = {}): FleetRoutineRun =>
   fleetRoutineRunSchema.parse({
     id,
@@ -161,6 +165,72 @@ describe('seen routine runs', () => {
     expect(unseenRuns(runs, seen, idle).map((item) => item.id)).toEqual(['r3'])
     writeSeenRuns(key, new Set([...seen, 'r3']))
     expect(unseenRuns(runs, readSeenRuns(key, runs), idle)).toEqual([])
+  })
+
+  it('counts as new what the gateway says no device of the owner opened, whatever this computer kept', () => {
+    const runs = [
+      run('r1', AT),
+      run('r2', AT, { seenAt: AT }),
+      run('r3', AT, { status: 'failed' }),
+      run('r4', AT, { quiet: true }),
+      run('r5', AT, { status: 'delivered', finishedAt: null }),
+    ]
+    expect(unseenRuns(runs, 'gateway', idle).map((item) => item.id)).toEqual(['r1', 'r3'])
+  })
+})
+
+describe('telling the gateway the owner opened a run', () => {
+  afterEach(() => vi.unstubAllGlobals())
+  function setup(seeRun: (serverId: string, botId: string, runId: string) => Promise<FleetRoutineRun>) {
+    let state = fleetReducer(initialFleetState, {
+      type: 'runs.page',
+      botId: 'alpha',
+      page: { runs: [run('r1', AT), run('r2', AT, { seenAt: AT })], before: null },
+      older: false,
+    })
+    const api = { fleetSeeRun: vi.fn(seeRun) }
+    vi.stubGlobal('window', { api })
+    const actions = createFleetActions(
+      SERVER,
+      (action) => {
+        state = fleetReducer(state, action)
+      },
+      () => state,
+      () => undefined
+    )
+    const runs = () => state.runs.alpha.runs
+    const seenAt = (id: string) => runs().find((item) => item.id === id)?.seenAt
+    const apply = (action: Parameters<typeof fleetReducer>[1]) => {
+      state = fleetReducer(state, action)
+    }
+    return { actions, api, runs, seenAt, apply }
+  }
+
+  it('shows it seen at once, asks once while the answer is on its way, and never for one seen already', async () => {
+    let answer!: (run: FleetRoutineRun) => void
+    const s = setup(() => new Promise((resolve) => (answer = resolve)))
+    s.actions.seeRun('alpha', 'r1')
+    expect(s.seenAt('r1')).not.toBeNull()
+    // An event sent before the gateway heard of it says it is not seen; the request on its way is not sent twice.
+    s.apply({ type: 'event', value: { type: 'routine_run.updated', at: AT, botId: 'alpha', run: run('r1', AT) } })
+    s.actions.seeRun('alpha', 'r1')
+    s.actions.seeRun('alpha', 'r2')
+    expect(s.api.fleetSeeRun.mock.calls).toEqual([[SERVER, 'alpha', 'r1']])
+    answer(run('r1', AT, { seenAt: LATER }))
+    await vi.waitFor(() => expect(s.seenAt('r1')).toBe(LATER))
+  })
+
+  it('shows as seen a run the owner opened on another device, from its event', () => {
+    const s = setup(async () => run('r1', AT))
+    expect(unseenRuns(s.runs(), 'gateway', idle).map((item) => item.id)).toEqual(['r1'])
+    s.apply({
+      type: 'event',
+      value: { type: 'routine_run.updated', at: AT, botId: 'alpha', run: run('r1', AT, { seenAt: LATER }) },
+    })
+    expect(unseenRuns(s.runs(), 'gateway', idle)).toEqual([])
+    // Opening it here then tells the gateway nothing more.
+    s.actions.seeRun('alpha', 'r1')
+    expect(s.api.fleetSeeRun).not.toHaveBeenCalled()
   })
 })
 

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import {
+  FLEET_OWNER_SEEN_FEATURE,
   FLEET_PARALLEL_TURNS_FEATURE,
   FLEET_ROUTINE_CONVERSATIONS_FEATURE,
   FLEET_ROUTINE_RUN_LIMITS,
@@ -88,6 +89,7 @@ function stored(
     media: null,
     kept: null,
     adjustments: 0,
+    seenAt: null,
     ...overrides,
   }
 }
@@ -220,6 +222,46 @@ describe('routine runs in conversations of their own', () => {
       quiet: true,
       alert: true,
     })
+  })
+
+  it('keeps once when the owner opened a run, tells every device, and counts their changes there as seen', async () => {
+    const { h, base, run, clock } = await setup()
+    const meta = await (await h.request('GET', '/v1/meta')).json()
+    expect(meta.moreFeatures).toContain(FLEET_OWNER_SEEN_FEATURE)
+    const { run: record, inputId } = await run()
+    expect(record.seenAt).toBeNull()
+    const listed = fleetRoutineRunPageSchema.parse(await (await h.request('GET', `${base}/routine-runs`)).json())
+    expect(listed.runs[0]).toMatchObject({ id: record.id, seenAt: null })
+    const before = runEvents(h.events, record.id).length
+    clock.advance(60_000)
+    const seenAt = new Date(clock.get()).toISOString()
+    const seen = await h.request('PATCH', `${base}/routine-runs/${record.id}`, { seen: true })
+    expect(seen.status).toBe(200)
+    expect(fleetRoutineRunSchema.parse(await seen.json()).seenAt).toBe(seenAt)
+    expect(
+      runEvents(h.events, record.id)
+        .slice(before)
+        .map((event) => event.run.seenAt)
+    ).toEqual([seenAt])
+    // Seeing it again changes nothing, and neither its end nor a copy read before it was seen takes it back.
+    clock.advance(60_000)
+    const again = await h.request('PATCH', `${base}/routine-runs/${record.id}`, { seen: true })
+    expect((await again.json()).seenAt).toBe(seenAt)
+    expect(runEvents(h.events, record.id)).toHaveLength(before + 1)
+    h.lifecycle.onTurnFinished!(h.bot.id, { outcome: 'completed', inputId, text: 'Done' })
+    expect(runEvents(h.events, record.id).at(-1)?.run).toMatchObject({ status: 'completed', seenAt })
+    h.store.updateRoutineRun({ ...record, finalText: 'Stale' })
+    expect(h.store.routineRunById(record.id)).toMatchObject({ finalText: 'Stale', seenAt })
+    const kept = await h.request('PATCH', `${base}/routine-runs/${record.id}`, { pinned: true, seen: true })
+    expect(await kept.json()).toMatchObject({ pinned: true, seenAt })
+    expect((await h.request('PATCH', `${base}/routine-runs/${record.id}`, {})).status).toBe(400)
+    expect((await h.request('PATCH', `${base}/routine-runs/unknown`, { seen: true })).status).toBe(404)
+    // The owner who writes in a run's conversation, from any device, saw it.
+    const { run: other } = await run()
+    const message = { text: 'Use the other chart', attachments: [], idempotencyKey: randomUUID() }
+    expect((await h.request('POST', `${base}/routine-runs/${other.id}/messages`, message)).status).toBe(201)
+    expect(h.store.routineRunById(other.id)?.seenAt).toBe(new Date(clock.get()).toISOString())
+    expect(runEvents(h.events, other.id).at(-1)?.run.seenAt).toBe(new Date(clock.get()).toISOString())
   })
 
   it("tells devices every conversation working at once, the bot's own and its runs'", async () => {

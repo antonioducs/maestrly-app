@@ -154,6 +154,9 @@ describe('side conversations', () => {
   it('counts finished runs with news or failures the owner has not opened as new', () => {
     const runs = [run({ id: 'a' }), run({ id: 'b', status: 'failed' }), run({ id: 'c', quiet: true }), run({ id: 'd' })]
     expect(unseenRuns(runs, new Set(['d']), idle).map((item) => item.id)).toEqual(['a', 'b'])
+    // A gateway with `owner-seen` says which ones any device of the owner opened.
+    const kept = [run({ id: 'a' }), run({ id: 'b', seenAt: local(19, 9) }), run({ id: 'c', status: 'failed' })]
+    expect(unseenRuns(kept, 'gateway', idle).map((item) => item.id)).toEqual(['a', 'c'])
   })
 
   it('puts the threads that wait for the owner first, and counts them as new until answered', () => {
@@ -177,6 +180,9 @@ describe('side conversations', () => {
     ])
     // A paused thread waits whatever was seen of it; another counts once it moved on; a deleted one never does.
     expect(unseenThreads(threads, seen).map((item) => item.id)).toEqual(['open', 'paused'])
+    const kept = threads.map((item) => ({ ...item, seenActivityAt: seen.get(item.id) ?? null }))
+    expect(unseenThreads(kept, 'gateway').map((item) => item.id)).toEqual(['open', 'paused'])
+    expect(unseenThreads([{ ...kept[0], seenActivityAt: kept[0].lastActivityAt }], 'gateway')).toEqual([])
   })
 
   it('shows a run’s notice where the conversation was when it ended, without splitting a turn', () => {
