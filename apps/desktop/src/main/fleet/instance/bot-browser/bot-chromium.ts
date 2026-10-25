@@ -12,6 +12,8 @@ const IDLE_CHECK_MS = 60_000
 const SAVE_DELAY_MS = 500
 /** Left in the profile once the shared site logins were copied into it, so they are copied only once. */
 export const COOKIES_IMPORTED_MARKER = '.maestrly-shared-cookies-imported'
+/** Chromium's own record of its windows and tabs, in the profile, which `--restore-last-session` would reopen. */
+export const CHROMIUM_SESSIONS_FOLDER = path.join('Default', 'Sessions')
 const DEFAULT_TAB_URL = 'https://www.google.com'
 
 export interface BotChromiumTab {
@@ -48,6 +50,8 @@ export interface BotChromiumFs {
   readFile(file: string): Promise<string>
   writeFile(file: string, data: string): Promise<void>
   exists(file: string): Promise<boolean>
+  /** Removes a folder with its contents; one that does not exist is fine. */
+  removeFolder(folder: string): Promise<void>
 }
 
 export interface BotChromiumOptions {
@@ -57,7 +61,7 @@ export interface BotChromiumOptions {
   env(): Record<string, string> | null
   /** Runs before each start of the browser: stops one left holding the profile. */
   beforeStart?(): Promise<void>
-  /** The bot's Chromium profile (`MAESTRLY_BOT_BROWSER_PROFILE`), which holds the cookie marker. */
+  /** The bot's Chromium profile (`MAESTRLY_BOT_BROWSER_PROFILE`), which holds the cookie marker and its sessions. */
   profile: string
   /** Where the tabs to reopen are kept, beside the profile, so a move takes them along. */
   savedTabsFile: string
@@ -89,12 +93,13 @@ const nodeFs: BotChromiumFs = {
       () => true,
       () => false
     ),
+  removeFolder: (folder) => fs.rm(folder, { recursive: true, force: true }),
 }
 
 /**
  * One bot's own Chromium: a real browser on the bot's apps display, with the bot's own profile, driven by the
  * `browser_*` tools through its DevTools pipe. It starts when a tool, a link or the dock needs it and closes after
- * fifteen idle minutes; its tabs are reopened on the next start, and after a crash.
+ * fifteen idle minutes; its tabs are reopened on the next start, and after a crash, and its session cookies are kept.
  *
  * Every tab belongs to a conversation of the bot: the one whose tool or link opened it, the opener's for a popup, and
  * the conversation the desktop shows for a tab a person opened. A delegated worker's tabs are its own too. A
@@ -126,7 +131,7 @@ export class BotChromium {
     this.supervisor = new ChromiumSupervisor(options.deps, {
       botId: options.botId,
       env: options.env,
-      ...(options.beforeStart ? { beforeStart: options.beforeStart } : {}),
+      beforeStart: () => this.prepareProfile(),
       ...(options.startTimeoutMs ? { startTimeoutMs: options.startTimeoutMs } : {}),
       onStarted: (pipe) => this.started(pipe),
       onExited: () => this.exited(),
@@ -285,6 +290,19 @@ export class BotChromium {
     const pipe = await this.supervisor.ensure()
     this.touch()
     return pipe
+  }
+
+  /**
+   * Before each start, once no other browser holds the profile: removes Chromium's record of its tabs, so that
+   * `--restore-last-session` brings back the session cookies of the last run without reopening tabs of its own; the
+   * tabs this class kept reopen with their conversations.
+   */
+  private async prepareProfile(): Promise<void> {
+    try {
+      await this.options.beforeStart?.()
+    } finally {
+      await this.files.removeFolder(path.join(this.options.profile, CHROMIUM_SESSIONS_FOLDER))
+    }
   }
 
   private async started(pipe: CdpPipe): Promise<void> {

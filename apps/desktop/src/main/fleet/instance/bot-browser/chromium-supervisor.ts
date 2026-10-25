@@ -29,7 +29,7 @@ export interface ChromiumSupervisorOptions {
   botId: string
   /** The variables of the bot's programs (its display, bus and profile), read at each start; null without a display. */
   env(): Record<string, string> | null
-  /** Runs before each start: stops a browser left holding the profile. */
+  /** Runs before each start: prepares the profile; a failure is logged and the browser starts anyway. */
   beforeStart?(): Promise<void>
   /** Prepares a browser that just answered (targets, downloads, tabs to restore); a failure fails the start. */
   onStarted(pipe: CdpPipe): Promise<void>
@@ -55,6 +55,11 @@ export const BOT_CHROMIUM_ARGS: readonly string[] = [
   '--disable-default-apps',
   '--disable-features=Translate,MediaRouter,OptimizationHints,AutofillServerCommunication',
   '--disable-renderer-backgrounding',
+  // Keeps the session cookies (those without an expiry) of the last run, as Chrome's "Continue where you left off"
+  // does: otherwise Chromium deletes them at each start, and the browser closes after its idle time, signing the bot out
+  // of the sites that keep their login in one. The bot restores its tabs itself: the profile has no tabs of Chromium's
+  // own to reopen (`BotChromium` removes its record before each start).
+  '--restore-last-session',
   '--hide-crash-restore-bubble',
   '--window-position=0,0',
   '--window-size=1280,800',
@@ -146,7 +151,9 @@ export class ChromiumSupervisor {
     await this.options
       .beforeStart?.()
       .catch((error: unknown) =>
-        this.deps.log(`Could not stop a Chromium left by bot ${this.options.botId}: ${(error as Error).message}`)
+        this.deps.log(
+          `Could not prepare the Chromium profile of bot ${this.options.botId}: ${(error as Error).message}`
+        )
       )
     if (this.disposed) throw new Error('The bot’s Chromium was stopped for good.')
     const child = this.deps.spawn([...BOT_CHROMIUM_ARGS], env)
