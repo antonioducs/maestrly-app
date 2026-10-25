@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   BOT_CHROMIUM_IDLE_MS,
   BotChromium,
+  CHROMIUM_SESSIONS_FOLDER,
   COOKIES_IMPORTED_MARKER,
   type BotChromiumFs,
 } from '../../src/main/fleet/instance/bot-browser/bot-chromium'
@@ -121,7 +122,7 @@ function memoryFs(initial: Record<string, string> = {}, order: string[] = []) {
   const fs: BotChromiumFs = {
     removeFolder: async (folder) => {
       order.push(`remove ${folder}`)
-      for (const file of [...files.keys()]) if (file.startsWith(`${folder}/`)) files.delete(file)
+      for (const file of [...files.keys()]) if (file.startsWith(`${folder}${path.sep}`)) files.delete(file)
     },
     readFile: async (file) => {
       const data = files.get(file)
@@ -258,10 +259,12 @@ describe('BotChromium', () => {
   })
 
   it('removes Chromium’s own record of its tabs before each start, once a browser left behind is stopped', async () => {
-    const sessions = `${PROFILE}/Default/Sessions`
+    const sessions = path.join(PROFILE, CHROMIUM_SESSIONS_FOLDER)
+    const record = path.join(sessions, 'Session_1')
+    const cookies = path.join(PROFILE, 'Default', 'Cookies')
     let failStaleStop = false
     const { chromium, order, files, log } = setup({
-      files: { [`${sessions}/Session_1`]: 'tabs', [`${PROFILE}/Default/Cookies`]: 'db' },
+      files: { [record]: 'tabs', [cookies]: 'db' },
       beforeStart: async () => {
         order.push('stop stale')
         if (failStaleStop) throw new Error('still running')
@@ -270,8 +273,8 @@ describe('BotChromium', () => {
     await chromium.state('conv-a')
     // `--restore-last-session` then brings back the session cookies without reopening tabs of Chromium's own.
     expect(order).toEqual(['stop stale', `remove ${sessions}`, 'spawn'])
-    expect(files.has(`${sessions}/Session_1`)).toBe(false)
-    expect(files.has(`${PROFILE}/Default/Cookies`)).toBe(true)
+    expect(files.has(record)).toBe(false)
+    expect(files.has(cookies)).toBe(true)
 
     // The record goes even when the browser left behind could not be stopped, and the browser starts anyway.
     await chromium.stop()
