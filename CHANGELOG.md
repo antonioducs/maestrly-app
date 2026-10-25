@@ -5,6 +5,20 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-10-25
+
+### Added
+
+- Group the workspaces of a remote host or a paired computer, as you do on this
+  computer. A host's workspaces are listed in the host's own groups, with drag
+  and drop, **Move to group…** and the group menu, and **New group** in the
+  **⋯** menu creates the group on the machine that is shown. The groups stay on
+  the host, so everyone who uses it sees the same ones, and a change made on
+  another computer shows at once. A workspace moves only among its own
+  machine's groups, and while a host is not connected its last lists stay dimmed
+  and its groups cannot change. See
+  [Remote workspaces and chats](docs/remote-workspaces.md#use-it).
+
 ### Changed
 
 - Your computers and phones share which routine runs and conversations between
@@ -24,6 +38,11 @@ User-visible changes by version. Downloads are on
   and the environment waits for it before stopping the bots' screens: a browser
   whose screen stopped while it was still closing lost the cookies it had just
   changed, among them the session tokens Google rotates.
+- Signing in to Google in the drawer browser no longer ends on "This browser or
+  app may not be secure". Bots that still use the environment's built-in browser
+  get the same fix.
+- After **⋯ › New group** the name field no longer closes at once, and **Rename
+  group** opens it focused with the name selected, so typing names the group.
 
 ## [0.27.0] - 2026-10-24
 
