@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   BOT_CHROMIUM_IDLE_MS,
   BotChromium,
+  CHROMIUM_SESSIONS_FOLDER,
   COOKIES_IMPORTED_MARKER,
   type BotChromiumFs,
 } from '../../src/main/fleet/instance/bot-browser/bot-chromium'
@@ -116,9 +117,13 @@ class FakeBrowser {
   }
 }
 
-function memoryFs(initial: Record<string, string> = {}) {
+function memoryFs(initial: Record<string, string> = {}, order: string[] = []) {
   const files = new Map(Object.entries(initial))
   const fs: BotChromiumFs = {
+    removeFolder: async (folder) => {
+      order.push(`remove ${folder}`)
+      for (const file of [...files.keys()]) if (file.startsWith(`${folder}${path.sep}`)) files.delete(file)
+    },
     readFile: async (file) => {
       const data = files.get(file)
       if (data === undefined) throw Object.assign(new Error('missing'), { code: 'ENOENT' })
@@ -139,16 +144,19 @@ function setup(
     files?: Record<string, string>
     watched?: () => boolean
     cookies?: () => Promise<any[]>
+    beforeStart?: () => Promise<void>
   } = {}
 ) {
   const browsers: FakeBrowser[] = []
-  const { fs, files } = memoryFs(options.files)
+  const order: string[] = []
+  const { fs, files } = memoryFs(options.files, order)
   let now = 1_000
   const log = vi.fn()
   const chromium = new BotChromium({
     botId: 'bot-1',
     deps: {
       spawn: () => {
+        order.push('spawn')
         const browser = new FakeBrowser()
         browsers.push(browser)
         return browser.process
@@ -168,12 +176,14 @@ function setup(
     ownsConversation: (id) => id.startsWith('conv-'),
     watched: options.watched ?? (() => false),
     ...(options.cookies ? { sharedCookies: options.cookies } : {}),
+    ...(options.beforeStart ? { beforeStart: options.beforeStart } : {}),
     fs,
   })
   return {
     chromium,
     browsers,
     files,
+    order,
     log,
     browser: () => browsers.at(-1)!,
     advance: (ms: number) => (now += ms),
@@ -246,6 +256,33 @@ describe('BotChromium', () => {
     expect((await chromium.state('conv-a')).activeId).toBe(third)
     await chromium.closeTab('conv-a', third)
     expect((await chromium.state('conv-a')).activeId).toBe(first)
+  })
+
+  it('removes Chromium’s own record of its tabs before each start, once a browser left behind is stopped', async () => {
+    const sessions = path.join(PROFILE, CHROMIUM_SESSIONS_FOLDER)
+    const record = path.join(sessions, 'Session_1')
+    const cookies = path.join(PROFILE, 'Default', 'Cookies')
+    let failStaleStop = false
+    const { chromium, order, files, log } = setup({
+      files: { [record]: 'tabs', [cookies]: 'db' },
+      beforeStart: async () => {
+        order.push('stop stale')
+        if (failStaleStop) throw new Error('still running')
+      },
+    })
+    await chromium.state('conv-a')
+    // `--restore-last-session` then brings back the session cookies without reopening tabs of Chromium's own.
+    expect(order).toEqual(['stop stale', `remove ${sessions}`, 'spawn'])
+    expect(files.has(record)).toBe(false)
+    expect(files.has(cookies)).toBe(true)
+
+    // The record goes even when the browser left behind could not be stopped, and the browser starts anyway.
+    await chromium.stop()
+    failStaleStop = true
+    order.length = 0
+    await chromium.state('conv-a')
+    expect(order).toEqual(['stop stale', `remove ${sessions}`, 'spawn'])
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('Could not prepare the Chromium profile of bot bot-1'))
   })
 
   it('saves the conversations’ tabs and reopens them on the next start, not the workers’', async () => {

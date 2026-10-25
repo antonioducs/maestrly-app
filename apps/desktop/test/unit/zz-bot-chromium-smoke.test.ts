@@ -228,18 +228,30 @@ describe.skipIf(!existsSync('/usr/bin/chromium'))('bot chromium smoke', () => {
       url: 'https://example.com/',
       expires,
     })
+    // A session cookie, without an expiry, as some sites keep their login in: Chromium deletes those at each start
+    // unless it restores its last session.
+    await (await chromium.page('conv-a')).send('Network.setCookie', {
+      name: 'session-login',
+      value: 's1',
+      url: 'https://example.com/',
+    })
     await chromium.stop()
     const saved = JSON.parse(readFileSync(path.join(root, 'chromium-tabs.json'), 'utf8'))
     expect(saved.tabs.some((t: { url: string }) => t.url === kept)).toBe(true)
     expect(saved.tabs.every((t: { conversationId: string }) => t.conversationId === 'conv-a')).toBe(true)
     const restored = await chromium.state('conv-a')
     expect(restored.tabs.map((t) => t.url)).toContain(kept)
+    // Restoring its last session brings back its cookies only: the tabs are the bot's, each reopened once.
+    expect(restored.tabs.filter((t) => t.url === kept)).toHaveLength(1)
     expect(restored.activeId).not.toBeNull()
     expect(logs.join('\n')).not.toContain('did not close when asked')
     const { cookies: after } = await (await chromium.page('conv-a')).send('Network.getCookies', {
       urls: ['https://example.com/'],
     })
-    expect((after as Array<{ name: string; value: string }>).find((c) => c.name === 'rotated')?.value).toBe('v2')
+    const cookieValue = (name: string) =>
+      (after as Array<{ name: string; value: string }>).find((c) => c.name === name)?.value
+    expect(cookieValue('rotated')).toBe('v2')
+    expect(cookieValue('session-login')).toBe('s1')
 
     // A crash restarts the browser with its tabs.
     const pid = lastPid!

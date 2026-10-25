@@ -5,6 +5,14 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Fixed
+
+- A bot's Chromium no longer loses the logins that sites keep in session
+  cookies (those without an expiry date) when it reopens after 15 idle minutes,
+  a pause or a restart. Chromium deleted them at each start; it now keeps them,
+  as Chrome's **Continue where you left off** does, while the bot still reopens
+  its own tabs. A login made before this version may need to be made once more.
+
 ## [0.28.0] - 2026-10-25
 
 ### Added

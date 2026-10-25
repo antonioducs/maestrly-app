@@ -210,6 +210,8 @@ describe('ChromiumSupervisor', () => {
     expect(spawn).toHaveBeenCalledWith([...BOT_CHROMIUM_ARGS], { DISPLAY: ':3' })
     expect(BOT_CHROMIUM_ARGS).toContain('--remote-debugging-pipe')
     expect(BOT_CHROMIUM_ARGS).toContain('--disable-blink-features=AutomationControlled')
+    // Without it, Chromium deletes the session cookies of its last run at each start.
+    expect(BOT_CHROMIUM_ARGS).toContain('--restore-last-session')
     expect(BOT_CHROMIUM_ARGS.some((arg) => arg.startsWith('--remote-debugging-port'))).toBe(false)
     expect(instance.isRunning).toBe(true)
   })
