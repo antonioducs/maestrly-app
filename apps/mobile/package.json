@@ -32,7 +32,7 @@
     "@expo/metro-runtime": "58.0.14",
     "@maestrly/bot-fleet-protocol": "0.1.0",
     "@react-native-async-storage/async-storage": "2.2.0",
-    "expo": "58.0.14",
+    "expo": "58.0.17",
     "expo-audio": "~58.0.9",
     "expo-camera": "58.0.10",
     "expo-clipboard": "58.0.3",
