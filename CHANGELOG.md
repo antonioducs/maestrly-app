@@ -5,6 +5,8 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.28.1] - 2026-10-25
+
 ### Fixed
 
 - A bot's Chromium no longer loses the logins that sites keep in session
