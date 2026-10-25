@@ -70,7 +70,18 @@ vi.mock('../../src/main/memory-service', () => ({
 
 import { registerWorkspaceIpc } from '../../src/main/workspace-ipc'
 import { deleteConversation, removeWorkspace } from '../../src/main/workspace-service'
-import { listConversations, listConvIdsByWorkspaceRepo } from '../../src/main/store'
+import {
+  createWorkspaceGroup,
+  deleteWorkspaceGroup,
+  listConversations,
+  listConvIdsByWorkspaceRepo,
+  renameWorkspaceGroup,
+  setGroupCollapsed,
+  setGroupOrder,
+  setWorkspaceCollapsed,
+  setWorkspaceGroupAndOrder,
+  setWorkspaceOrder,
+} from '../../src/main/store'
 import { clearPlan } from '../../src/main/plan-broker'
 import { stopConversationProcesses } from '../../src/main/process-ownership/conversation-processes'
 import * as floatingManager from '../../src/main/floating-manager'
@@ -103,6 +114,7 @@ function setupWorkspaceRemove(): {
   registerWorkspaceIpc(reg, {
     getMainWindow: () => null,
     stopChat,
+    notifyWorkspacesChanged: vi.fn(),
   })
   const remove = handles.get('workspace:remove')
   expect(remove).toBeTypeOf('function')
@@ -178,5 +190,56 @@ describe('registerWorkspaceIpc', () => {
       'memory:ws-1',
       'remove:ws-1',
     ])
+  })
+})
+
+describe('workspace order and groups', () => {
+  function setup() {
+    const { reg, handles, listeners } = createRegistrar()
+    const notifyWorkspacesChanged = vi.fn()
+    registerWorkspaceIpc(reg, { getMainWindow: () => null, stopChat: vi.fn(), notifyWorkspacesChanged })
+    // As ipcRenderer.invoke does, a handler that throws rejects the call.
+    const invoke = async (channel: string, ...args: unknown[]) => handles.get(channel)!({} as never, ...args)
+    const send = (channel: string, ...args: unknown[]) => listeners.get(channel)!({} as never, ...args)
+    return { invoke, send, notifyWorkspacesChanged }
+  }
+
+  it('announces each change of the order or the groups once it is stored, to every window that lists them', async () => {
+    const group = { id: 'g1', name: 'Group', position: 0, collapsed: false }
+    const { invoke, notifyWorkspacesChanged } = setup()
+    vi.mocked(createWorkspaceGroup).mockImplementationOnce(() => {
+      expect(notifyWorkspacesChanged).not.toHaveBeenCalled()
+      return group
+    })
+
+    expect(await invoke('group:create', 'Group')).toBe(group)
+    await invoke('group:rename', 'g1', 'Renamed')
+    await invoke('group:reorder', ['g1'])
+    await invoke('group:assign', 'ws-1', 'g1', ['ws-1'])
+    await invoke('workspace:reorder', ['ws-1'])
+    await invoke('group:delete', 'g1')
+
+    expect(renameWorkspaceGroup).toHaveBeenCalledWith('g1', 'Renamed')
+    expect(setGroupOrder).toHaveBeenCalledWith(['g1'])
+    expect(setWorkspaceGroupAndOrder).toHaveBeenCalledWith('ws-1', 'g1', ['ws-1'])
+    expect(setWorkspaceOrder).toHaveBeenCalledWith(['ws-1'])
+    expect(deleteWorkspaceGroup).toHaveBeenCalledWith('g1')
+    expect(notifyWorkspacesChanged).toHaveBeenCalledTimes(6)
+  })
+
+  it('announces neither a change the store refused nor a listing or a collapse', async () => {
+    vi.mocked(setWorkspaceGroupAndOrder).mockImplementationOnce(() => {
+      throw new Error('refused')
+    })
+    const { invoke, send, notifyWorkspacesChanged } = setup()
+
+    await expect(invoke('group:assign', 'ws-1', 'g1', ['ws-1'])).rejects.toThrow('refused')
+    await invoke('group:list')
+    send('group:set-collapsed', 'g1', true)
+    send('workspace:set-collapsed', 'ws-1', true)
+
+    expect(setGroupCollapsed).toHaveBeenCalledWith('g1', true)
+    expect(setWorkspaceCollapsed).toHaveBeenCalledWith('ws-1', true)
+    expect(notifyWorkspacesChanged).not.toHaveBeenCalled()
   })
 })

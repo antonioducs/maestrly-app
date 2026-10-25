@@ -40,6 +40,7 @@ export function useSidebarMenus({
   openTargets,
   onOpenExternal,
   groups,
+  groupsEditable,
   startRename,
   onPinConversation,
   onOpenChatWindow,
@@ -62,7 +63,10 @@ export function useSidebarMenus({
 }: {
   openTargets: OpenTargets
   onOpenExternal: (scope: 'conv' | 'workspace', id: string, target: OpenExternalTarget) => void
+  /** The groups of the machine whose workspaces are listed: a workspace moves only among its own machine's groups. */
   groups: WorkspaceGroup[]
+  /** False while that machine does not answer: its groups cannot change until it does. */
+  groupsEditable: boolean
   startRename: (conv: Conversation, instanceKey: string) => void
 
   onPinConversation: (conv: Conversation, pinned: boolean) => Promise<void> | void
@@ -299,9 +303,8 @@ export function useSidebarMenus({
       {openSubmenu('workspace', ws.id, m)}
       <m.Separator />
 
-      {/* A remote host's workspaces are listed flat in its section. */}
       <m.Sub>
-        <m.SubTrigger disabled={isRemoteKey(ws.id)}>
+        <m.SubTrigger disabled={!groupsEditable}>
           <Layers /> {t('sidebar.moveToGroup')}
         </m.SubTrigger>
         <m.SubContent>
@@ -328,11 +331,11 @@ export function useSidebarMenus({
 
   const groupMenuItems = (group: WorkspaceGroup, m: MenuKit) => (
     <>
-      <m.Item onClick={() => startRenameGroup(group)}>
+      <m.Item disabled={!groupsEditable} onClick={() => startRenameGroup(group)}>
         <Pencil /> {t('sidebar.renameGroup')}
       </m.Item>
       <m.Separator />
-      <m.Item destructive onClick={() => onDeleteGroup(group.id)}>
+      <m.Item destructive disabled={!groupsEditable} onClick={() => onDeleteGroup(group.id)}>
         <Trash2 /> {t('sidebar.deleteGroup')}
       </m.Item>
     </>

@@ -35,6 +35,8 @@ import { assertConversationMigrationMutationAllowed } from './conversation-migra
 export interface WorkspaceIpcDeps {
   getMainWindow: () => BrowserWindow | null
   stopChat: (conversationId: string) => void | Promise<void>
+  /** Tells this computer's window and the computers connected to it to list the workspaces again. */
+  notifyWorkspacesChanged: () => void
 }
 
 export function registerWorkspaceIpc(reg: IpcRegistrar, deps: WorkspaceIpcDeps): void {
@@ -85,16 +87,22 @@ export function registerWorkspaceIpc(reg: IpcRegistrar, deps: WorkspaceIpcDeps):
   // Manual sidebar reorder (#31) uses invoke for reconciliation. Store normalizes IDs, excludes
   // invalid or foreign entries, and merges hidden archived conversations. Optimistic UI refreshes
   // after rejection or divergence.
-  reg.mhandle('workspace:reorder', (_e, ids: string[]) => setWorkspaceOrder(ids))
+  // The order and the groups of a host's workspaces are the same for everyone who uses it: this computer's window and
+  // the connected computers list them again once they change. Collapsing is not announced.
+  const announced = <T>(value: T): T => {
+    deps.notifyWorkspacesChanged()
+    return value
+  }
+  reg.mhandle('workspace:reorder', (_e, ids: string[]) => announced(setWorkspaceOrder(ids)))
   // Workspace groups (#218) are virtual sidebar organization with no disk/Git changes. Ordering/moving uses
   // invoke for reconciliation; collapse uses optimistic send.
   reg.handle('group:list', () => listWorkspaceGroups())
-  reg.mhandle('group:create', (_e, name: string) => createWorkspaceGroup(name))
-  reg.mhandle('group:rename', (_e, id: string, name: string) => renameWorkspaceGroup(id, name))
-  reg.mhandle('group:delete', (_e, id: string) => deleteWorkspaceGroup(id))
-  reg.mhandle('group:reorder', (_e, ids: string[]) => setGroupOrder(ids))
+  reg.mhandle('group:create', (_e, name: string) => announced(createWorkspaceGroup(name)))
+  reg.mhandle('group:rename', (_e, id: string, name: string) => announced(renameWorkspaceGroup(id, name)))
+  reg.mhandle('group:delete', (_e, id: string) => announced(deleteWorkspaceGroup(id)))
+  reg.mhandle('group:reorder', (_e, ids: string[]) => announced(setGroupOrder(ids)))
   reg.mhandle('group:assign', (_e, wsId: string, groupId: string | null, flatIds: string[]) =>
-    setWorkspaceGroupAndOrder(wsId, groupId, flatIds)
+    announced(setWorkspaceGroupAndOrder(wsId, groupId, flatIds))
   )
   reg.mon('group:set-collapsed', (_e, id: string, collapsed: boolean) => setGroupCollapsed(id, collapsed))
   reg.mon('workspace:set-collapsed', (_e, id: string, collapsed: boolean) => setWorkspaceCollapsed(id, collapsed))
