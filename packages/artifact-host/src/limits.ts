@@ -49,3 +49,5 @@ export const COMMENTS_PAGE_SIZE = 200
 /** Responses kept for one artifact: one per person, plus those brought with it from another host. */
 export const MAX_RESPONSES_PER_ARTIFACT = 500
 export const RESPONSES_PAGE_SIZE = 50
+/** One response's size as UTF-8 JSON, and how deep its values may nest. */
+export { MAX_RESPONSE_BYTES, MAX_RESPONSE_DEPTH } from './shell/contract.js'

@@ -64,9 +64,12 @@ describe('host schema', () => {
     expect({ ...(db.prepare('SELECT responses_enabled FROM artifacts').get() as object) }).toEqual({
       responses_enabled: 1,
     })
-    expect(db.prepare('SELECT id, kind, data_json FROM events').all().map((row) => ({ ...row }))).toEqual([
-      { id: 'E1', kind: 'comment_added', data_json: '{"name":"Maria"}' },
-    ])
+    expect(
+      db
+        .prepare('SELECT id, kind, data_json FROM events')
+        .all()
+        .map((row) => ({ ...row }))
+    ).toEqual([{ id: 'E1', kind: 'comment_added', data_json: '{"name":"Maria"}' }])
     addEvent(db, 'E2', 'response_submitted')
     expect(() => addEvent(db, 'E3', 'unknown')).toThrow()
     expect(db.prepare(`SELECT 1 AS ok FROM sqlite_master WHERE name = 'events_unseen'`).get()).toBeDefined()

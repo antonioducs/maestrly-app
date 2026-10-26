@@ -117,6 +117,65 @@ export interface CommentPage {
   nextCursor: string | null
 }
 
+/** A response's size as UTF-8 JSON, and how deep its values may nest. */
+export const MAX_RESPONSE_BYTES = 32 * 1024
+export const MAX_RESPONSE_DEPTH = 16
+
+export type ResponseValue = string | number | boolean | null | ResponseValue[] | { [key: string]: ResponseValue }
+/** What a page saves as one person's response: a JSON object. */
+export type ResponseData = { [key: string]: ResponseValue }
+
+/** What the page gets back about the response of the person viewing it, and nothing about anyone else's. */
+export interface ResponseSnapshot {
+  data: ResponseData
+  version: number
+  updatedAt: number
+}
+
+/** Why a response could not be read or saved, as the page learns it. */
+export const RESPONSE_ERRORS = [
+  'closed',
+  'unavailable',
+  'cancelled',
+  'invalid',
+  'too_large',
+  'full',
+  'rate_limited',
+  'failed',
+] as const
+export type ResponseError = (typeof RESPONSE_ERRORS)[number]
+
+const isRecord = (value: unknown): value is Record<string, unknown> => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const proto = Object.getPrototypeOf(value)
+  return proto === Object.prototype || proto === null
+}
+
+/**
+ * A response as a page may save it: a JSON object of strings, finite numbers, booleans, null, arrays and objects, at
+ * most MAX_RESPONSE_DEPTH levels deep and MAX_RESPONSE_BYTES as UTF-8 JSON. The walk is iterative and stops after as
+ * many values as the size allows, so neither depth nor breadth can exhaust the caller.
+ */
+export function isResponseData(value: unknown): value is ResponseData {
+  if (!isRecord(value)) return false
+  const stack: [unknown, number][] = [[value, 1]]
+  let seen = 0
+  while (stack.length) {
+    const [item, depth] = stack.pop()!
+    if (++seen > MAX_RESPONSE_BYTES) return false
+    if (item === null || typeof item === 'string' || typeof item === 'boolean') continue
+    if (typeof item === 'number') {
+      if (!Number.isFinite(item)) return false
+      continue
+    }
+    if (depth > MAX_RESPONSE_DEPTH) return false
+    const children = Array.isArray(item) ? item : isRecord(item) ? Object.values(item) : null
+    if (!children) return false
+    for (const child of children) stack.push([child, depth + 1])
+  }
+  return new TextEncoder().encode(JSON.stringify(value)).byteLength <= MAX_RESPONSE_BYTES
+}
+
 export interface SelectionRect {
   x: number
   y: number
