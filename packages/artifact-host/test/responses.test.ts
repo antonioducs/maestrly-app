@@ -4,6 +4,7 @@ import { type ArtifactAdmin, createArtifactAdmin } from '../src/admin.js'
 import { ArtifactHostError } from '../src/errors.js'
 import { MAX_RESPONSE_BYTES, RESPONSES_PAGE_SIZE } from '../src/limits.js'
 import { createResponseService, type ResponseAuthor, type ResponseService } from '../src/responses.js'
+import { ADMIN_METHODS } from '../src/rpc.js'
 import { createActivityRecorder } from '../src/sharing-admin.js'
 import { isResponseData } from '../src/shell/contract.js'
 import { ArtifactStore } from '../src/store/artifact-store.js'
@@ -241,5 +242,27 @@ describe('responses', () => {
     service.save(id, maria, { version: 1, data: { a: 1 } })
     await admin.delete(id)
     expect(new ResponseStore(store.db).count(id)).toBe(0)
+  })
+})
+
+describe('admin responses', () => {
+  it('lists and deletes the responses of an artifact for the owner', async () => {
+    const service = makeService()
+    const sent = service.save(id, maria, { version: 1, data: { a: 1 } }).response
+    service.save(other, maria, { version: 1, data: { b: 1 } })
+    expect(await admin.listResponses(id)).toEqual({ responses: [sent], nextCursor: null })
+    expect(await admin.listResponses(id, { limit: 1 })).toEqual({ responses: [sent], nextCursor: null })
+    const elsewhere = (await admin.listResponses(other)).responses[0]!
+    await expect(admin.deleteResponse(id, elsewhere.id)).rejects.toMatchObject({ code: 'not_found' })
+    await expect(admin.listResponses('A'.repeat(22))).rejects.toMatchObject({ code: 'not_found' })
+    onChange.mockClear()
+    await admin.deleteResponse(id, sent.id)
+    expect(onChange).toHaveBeenCalledWith(id)
+    expect((await admin.listResponses(id)).responses).toEqual([])
+    expect((await admin.listResponses(other)).responses).toHaveLength(1)
+  })
+
+  it('reaches the response methods across processes', () => {
+    expect(ADMIN_METHODS).toEqual(expect.arrayContaining(['listResponses', 'deleteResponse']))
   })
 })

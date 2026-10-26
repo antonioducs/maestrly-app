@@ -19,6 +19,7 @@ import {
   MAX_FILES_PER_VERSION,
   MAX_NAME_CHARS,
   MAX_PATH_CHARS,
+  MAX_RESPONSES_PER_ARTIFACT,
   MAX_SUMMARY_CHARS,
   MAX_THUMBNAIL_BYTES,
   MAX_TITLE_CHARS,
@@ -26,6 +27,13 @@ import {
   MAX_VERSIONS_PER_ARTIFACT,
   OWNER_TICKET_TTL_MS,
 } from './limits.js'
+import {
+  createResponseService,
+  type ResponseListInput,
+  type ResponseView,
+  responseDataSchema,
+  toResponseView,
+} from './responses.js'
 import {
   type ArtifactDetail,
   type ArtifactExport,
@@ -47,6 +55,7 @@ import { createSharingAdmin, type SharingAdmin } from './sharing-admin.js'
 import type { ArtifactStore, FileRecord, ImportedArtifact } from './store/artifact-store.js'
 import { BlobStore } from './store/blobs.js'
 import { type CommentRecord, CommentStore } from './store/comment-store.js'
+import { type ResponseRecord, ResponseStore } from './store/response-store.js'
 import { type ArtifactEventKind, SharingStore } from './store/sharing-store.js'
 
 /** The owner's interface to a host: used in-process, or across a process boundary through `rpc.ts`. */
@@ -75,7 +84,14 @@ export interface ArtifactAdmin extends SharingAdmin {
   setCommentResolved(id: string, commentId: string, resolved: boolean): Promise<void>
   /** Deletes a comment; deleting the one that starts a thread deletes its replies too. */
   deleteComment(id: string, commentId: string): Promise<void>
-  /** Everything needed to recreate an artifact on another host, except the file bytes and its sharing. */
+  /** Responses in the order they were first sent, a page at a time. */
+  listResponses(
+    id: string,
+    filter?: ResponseListInput
+  ): Promise<{ responses: ResponseView[]; nextCursor: string | null }>
+  /** Deletes a response; whoever sent it may send a new one. */
+  deleteResponse(id: string, responseId: string): Promise<void>
+  /** Everything needed to recreate an artifact on another host, except the file bytes and who it is shared with. */
   exportArtifact(id: string): Promise<ArtifactExport>
   /** Stores file bytes ahead of an import, once each; returns their SHA-256 in the order given. */
   putBlobs(blobs: Uint8Array[]): Promise<{ sha256: string[] }>
@@ -120,6 +136,10 @@ const sha256 = z.string().regex(/^[0-9a-f]{64}$/, 'Invalid SHA-256')
 const timestamp = z.number().int().min(0)
 const recordId = z.string().regex(ARTIFACT_ID_PATTERN, 'Invalid ID')
 const ref = z.string().min(1).max(128)
+const importedName = z
+  .string()
+  .max(MAX_NAME_CHARS)
+  .regex(/^\P{Cc}*$/u, 'Use a single line of text')
 /** Sizes and types in a manifest are not trusted: they are taken from the stored files and their paths. */
 const importInput = z.object({
   id: recordId,
@@ -133,6 +153,8 @@ const importInput = z.object({
     .nullable()
     .transform((value) => (value === null ? null : value.slice(0, 300))),
   commentsEnabled: z.boolean(),
+  // Hosts older than responses export neither field.
+  responsesEnabled: z.boolean().default(true),
   createdAt: timestamp,
   updatedAt: timestamp,
   versions: z
@@ -161,10 +183,7 @@ const importInput = z.object({
         version: z.number().int().min(1),
         parentId: recordId.nullable(),
         authorKind: z.enum(['owner', 'agent', 'invited', 'approved', 'guest']),
-        authorName: z
-          .string()
-          .max(MAX_NAME_CHARS)
-          .regex(/^\P{Cc}*$/u, 'Use a single line of text'),
+        authorName: importedName,
         body: commentBody,
         anchor: commentAnchorSchema.nullable(),
         status: z.enum(['open', 'resolved']),
@@ -172,6 +191,20 @@ const importInput = z.object({
       })
     )
     .max(MAX_COMMENTS_PER_ARTIFACT),
+  responses: z
+    .array(
+      z.object({
+        id: recordId,
+        version: z.number().int().min(1),
+        authorKind: z.enum(['owner', 'invited', 'approved', 'guest']),
+        authorName: importedName,
+        data: responseDataSchema,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      })
+    )
+    .max(MAX_RESPONSES_PER_ARTIFACT)
+    .default([]),
 })
 const blobList = z
   .array(z.custom<Uint8Array>((value) => value instanceof Uint8Array, 'Expected file bytes'))
@@ -206,6 +239,8 @@ export function createArtifactAdmin(deps: ArtifactAdminDeps): ArtifactAdmin {
     maxComments: deps.maxComments,
     onChange: deps.onChange,
   })
+  const responseStore = new ResponseStore(store.db)
+  const responses = createResponseService({ store, responses: responseStore, clock, onChange: deps.onChange })
   const ownerName = (deps.ownerName ?? '').trim().slice(0, MAX_NAME_CHARS)
 
   // Writes run one at a time, so deleting unreferenced blobs never races a version that is about to reference them.
@@ -284,6 +319,7 @@ export function createArtifactAdmin(deps: ArtifactAdminDeps): ArtifactAdmin {
       conversationId: artifact.conversationId,
       conversationTitle: artifact.conversationTitle,
       commentsEnabled: sharing.getSharing(id)?.commentsEnabled ?? true,
+      responsesEnabled: sharing.getSharing(id)?.responsesEnabled ?? true,
       createdAt: artifact.createdAt,
       updatedAt: artifact.updatedAt,
       versions: store
@@ -312,13 +348,25 @@ export function createArtifactAdmin(deps: ArtifactAdminDeps): ArtifactAdmin {
           createdAt: view.createdAt,
         }
       }),
+      responses: responseStore
+        .listAll(id)
+        .map(toResponseView)
+        .map(({ id: responseId, version, author, data, createdAt, updatedAt }) => ({
+          id: responseId,
+          version,
+          authorKind: author.kind,
+          authorName: author.name,
+          data,
+          createdAt,
+          updatedAt,
+        })),
     }
   }
 
   /** Turns a validated manifest into rows, checking it as the host checks what it creates itself. */
   async function importRecord(
     input: z.output<typeof importInput>
-  ): Promise<{ record: ImportedArtifact; comments: CommentRecord[] }> {
+  ): Promise<{ record: ImportedArtifact; comments: CommentRecord[]; responses: ResponseRecord[] }> {
     const sizeOf = (sha: string): number => {
       const size = blobs.size(sha)
       if (size === null) throw missingBlob(sha)
@@ -377,6 +425,27 @@ export function createArtifactAdmin(deps: ArtifactAdminDeps): ArtifactAdmin {
         createdAt: comment.createdAt,
       })
     }
+    const importedResponses: ResponseRecord[] = []
+    for (const response of input.responses) {
+      if (!numbers.has(response.version)) throw invalidImport(`responses: Version ${response.version} does not exist`)
+      if (importedResponses.some((other) => other.id === response.id) || responseStore.exists(response.id))
+        throw new ArtifactHostError('already_exists', 'A response with this ID already exists')
+      const owner = response.authorKind === 'owner'
+      if (owner && importedResponses.some((other) => other.respondent === 'owner'))
+        throw invalidImport('responses: One response per person')
+      importedResponses.push({
+        id: response.id,
+        artifactId: input.id,
+        // The people an artifact was shared with stay behind; the owner is the owner on every host.
+        respondent: owner ? 'owner' : null,
+        authorKind: response.authorKind,
+        authorName: response.authorName,
+        version: response.version,
+        dataJson: JSON.stringify(response.data),
+        createdAt: response.createdAt,
+        updatedAt: response.updatedAt,
+      })
+    }
     return {
       record: {
         artifact: {
@@ -389,6 +458,7 @@ export function createArtifactAdmin(deps: ArtifactAdminDeps): ArtifactAdmin {
           conversationId: input.conversationId,
           conversationTitle: input.conversationTitle,
           commentsEnabled: input.commentsEnabled,
+          responsesEnabled: input.responsesEnabled,
           createdAt: input.createdAt,
           updatedAt: input.updatedAt,
         },
@@ -403,6 +473,7 @@ export function createArtifactAdmin(deps: ArtifactAdminDeps): ArtifactAdmin {
         thumbnails,
       },
       comments: imported,
+      responses: importedResponses,
     }
   }
 
@@ -434,6 +505,14 @@ export function createArtifactAdmin(deps: ArtifactAdminDeps): ArtifactAdmin {
 
     async deleteComment(id, commentId) {
       comments.remove(id, commentId)
+    },
+
+    async listResponses(id, filter) {
+      return responses.list(id, filter)
+    },
+
+    async deleteResponse(id, responseId) {
+      responses.remove(id, responseId)
     },
 
     async status() {
@@ -656,8 +735,11 @@ export function createArtifactAdmin(deps: ArtifactAdminDeps): ArtifactAdmin {
             return detail(input.id)!
           throw new ArtifactHostError('already_exists', 'An artifact with this ID already exists')
         }
-        const { record, comments: imported } = await importRecord(input)
-        store.importArtifact(record, () => commentStore.importComments(imported))
+        const { record, comments: imported, responses: importedResponses } = await importRecord(input)
+        store.importArtifact(record, () => {
+          commentStore.importComments(imported)
+          responseStore.importResponses(importedResponses)
+        })
         deps.onChange?.(input.id)
         return detail(input.id)!
       })

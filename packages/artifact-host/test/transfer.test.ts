@@ -6,12 +6,14 @@ import { ArtifactHostError } from '../src/errors.js'
 import { digest, randomId } from '../src/ids.js'
 import { MAX_FILE_BYTES, MAX_VERSION_BYTES } from '../src/limits.js'
 import { callAdmin, createRemoteAdmin, UPLOAD_METHODS } from '../src/remote-admin.js'
+import { createResponseService } from '../src/responses.js'
 import { ADMIN_METHODS } from '../src/rpc.js'
 import { type ArtifactExport, sameContent } from '../src/schemas.js'
 import { ArtifactStore } from '../src/store/artifact-store.js'
 import { BlobStore } from '../src/store/blobs.js'
 import { CommentStore } from '../src/store/comment-store.js'
 import { openDatabase } from '../src/store/db.js'
+import { ResponseStore } from '../src/store/response-store.js'
 import { SharingStore } from '../src/store/sharing-store.js'
 import { tempDir, testClock, text, utf8 } from './helpers.js'
 
@@ -21,6 +23,7 @@ interface Host {
   blobs: BlobStore
   sharing: SharingStore
   comments: CommentStore
+  responses: ResponseStore
 }
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 7, 8, 9])
@@ -45,6 +48,7 @@ function host(quotaBytes = 8 * 1024 * 1024): Host {
     blobs,
     sharing,
     comments: new CommentStore(store.db),
+    responses: new ResponseStore(store.db),
   }
 }
 
@@ -67,7 +71,8 @@ async function errorOf(promise: Promise<unknown>): Promise<ArtifactHostError> {
 
 /**
  * Three versions that share files, an image, a preview of version 2, a comment by an invited person answered by the
- * owner, a resolved thread, and a link share with that person's session.
+ * owner, a resolved thread, a link share with that person's session, and responses from a guest and the owner, which
+ * are turned off.
  */
 async function richArtifact(source: Host): Promise<string> {
   const css = utf8('h1{color:rgb(1,2,3)}')
@@ -99,7 +104,7 @@ async function richArtifact(source: Host): Promise<string> {
     change: { kind: 'edits', edits: [{ path: 'index.html', oldText: 'v2', newText: 'v3' }] },
   })
   await source.admin.setThumbnail(id, 2, PNG)
-  await source.admin.setSharing(id, { visibility: 'link', commentsEnabled: false })
+  await source.admin.setSharing(id, { visibility: 'link', commentsEnabled: false, responsesEnabled: false })
   const invite = await source.admin.createInvite(id, { name: 'Maria' })
   source.store.createSession({
     id: randomId(),
@@ -127,6 +132,11 @@ async function richArtifact(source: Host): Promise<string> {
   await source.admin.setCommentResolved(id, done.id, true)
   const gone = await source.admin.addComment(id, { author: 'owner', version: 3, body: 'Draft note' })
   await source.admin.deleteComment(id, gone.id)
+  const responses = createResponseService({ store: source.store, responses: source.responses, clock: clock.now })
+  clock.advance(1000)
+  responses.save(id, { kind: 'guest', name: 'Paula', respondent: 'G1' }, { version: 2, data: { answer: 'yes' } })
+  clock.advance(1000)
+  responses.save(id, { kind: 'owner', name: 'Owner', respondent: 'owner' }, { version: 3, data: { test: [1, 2] } })
   return id
 }
 
@@ -156,7 +166,12 @@ describe('artifact transfer', () => {
       conversationId: 'conv-1',
       conversationTitle: 'Report chat',
       commentsEnabled: false,
+      responsesEnabled: false,
     })
+    expect(manifest.responses.map((r) => [r.authorKind, r.authorName, r.version, r.data])).toEqual([
+      ['guest', 'Paula', 2, { answer: 'yes' }],
+      ['owner', 'Owner', 3, { test: [1, 2] }],
+    ])
     expect(manifest.versions.map((v) => v.number)).toEqual([1, 2, 3])
     expect(manifest.thumbnails).toEqual([expect.objectContaining({ version: 2, contentType: 'image/png' })])
     // The deleted comment stays behind.
@@ -198,10 +213,37 @@ describe('artifact transfer', () => {
       sourceComments.map((comment) => ({ ...comment, author: { ...comment.author, principalId: null } }))
     )
 
+    expect(await target.admin.listResponses(id)).toEqual(await source.admin.listResponses(id))
+    expect((await target.admin.listResponses(id)).responses.map((r) => r.author.name)).toEqual(['Paula', 'Owner'])
+
     const sharing = await target.admin.getSharing(id)
-    expect(sharing).toMatchObject({ visibility: 'private', hasAccessCode: false, commentsEnabled: false, people: [] })
+    expect(sharing).toMatchObject({
+      visibility: 'private',
+      hasAccessCode: false,
+      commentsEnabled: false,
+      responsesEnabled: false,
+      people: [],
+    })
     expect(target.store.db.prepare('SELECT COUNT(*) AS n FROM sessions').get()).toEqual({ n: 0 })
     expect(sameContent(await target.admin.exportArtifact(id), manifest)).toBe(true)
+  })
+
+  it('imports what a host older than responses exports, and notices responses a copy left behind', async () => {
+    const source = host()
+    const target = host()
+    const id = await richArtifact(source)
+    const manifest = await source.admin.exportArtifact(id)
+    await sendBlobs(source, target.admin, manifest)
+    const { responses: _responses, responsesEnabled: _enabled, ...older } = manifest
+    await target.admin.importArtifact({ ...older, owner: DEVICE } as never)
+    const copy = await target.admin.exportArtifact(id)
+    expect(copy).toMatchObject({ responses: [], responsesEnabled: true })
+    expect(sameContent(older as never, copy)).toBe(true)
+    // What a move checks: a copy without the responses, or with them turned back on, is not the same artifact.
+    expect(sameContent(older as never, manifest)).toBe(false)
+    expect(sameContent({ ...manifest, responses: [] }, manifest)).toBe(false)
+    expect(sameContent({ ...manifest, responsesEnabled: true }, manifest)).toBe(false)
+    expect(sameContent({ ...manifest }, manifest)).toBe(true)
   })
 
   it('answers a repeated import with the same artifact, and refuses a different one with that ID', async () => {
@@ -279,6 +321,17 @@ describe('artifact transfer', () => {
       ],
       [{ ...manifest, owner: DEVICE, comments: [{ ...manifest.comments[0]!, version: 9 }] }, 'invalid_input'],
       [{ ...manifest, owner: DEVICE, thumbnails: [{ ...manifest.thumbnails[0]!, version: 9 }] }, 'invalid_input'],
+      [{ ...manifest, owner: DEVICE, responses: [{ ...manifest.responses[0]!, version: 9 }] }, 'invalid_input'],
+      [{ ...manifest, owner: DEVICE, responses: [{ ...manifest.responses[0]!, data: [] }] }, 'invalid_input'],
+      [
+        {
+          ...manifest,
+          owner: DEVICE,
+          responses: [manifest.responses[1]!, { ...manifest.responses[1]!, id: 'B'.repeat(22) }],
+        },
+        'invalid_input',
+      ],
+      [{ ...manifest, owner: DEVICE, responses: [manifest.responses[0]!, manifest.responses[0]!] }, 'already_exists'],
       [
         {
           ...manifest,
@@ -293,6 +346,7 @@ describe('artifact transfer', () => {
     }
     expect(target.store.countArtifacts()).toBe(0)
     expect(target.store.db.prepare('SELECT COUNT(*) AS n FROM comments').get()).toEqual({ n: 0 })
+    expect(target.store.db.prepare('SELECT COUNT(*) AS n FROM responses').get()).toEqual({ n: 0 })
   })
 
   it('takes its sizes and types from the stored files, not from the manifest', async () => {

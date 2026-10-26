@@ -22,7 +22,8 @@ export {
   serializeAdminError,
   serveAdmin,
 } from './rpc.js'
-export { ARTIFACT_HEADER } from './shell/contract.js'
+export type { ResponseAuthorKind, ResponseData, ResponseListInput, ResponseView } from './responses.js'
+export { ARTIFACT_HEADER, isResponseData } from './shell/contract.js'
 export { sameContent } from './schemas.js'
 export type {
   ArtifactContent,
