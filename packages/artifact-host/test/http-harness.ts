@@ -51,7 +51,9 @@ export interface Harness {
 
 export const PAGE = '<html><head></head><body><p id="p">The quick brown fox jumps over the lazy dog.</p></body></html>'
 
-export async function startHarness(options: { ownerName?: string; publicOrigins?: string[] } = {}): Promise<Harness> {
+export async function startHarness(
+  options: { ownerName?: string; publicOrigins?: string[]; maxResponses?: number } = {}
+): Promise<Harness> {
   const temp = tempDir()
   const store = new ArtifactStore(openDatabase(path.join(temp.dir, 'artifacts.sqlite')))
   const sharing = new SharingStore(store.db)
@@ -78,6 +80,7 @@ export async function startHarness(options: { ownerName?: string; publicOrigins?
     sharing,
     ownerName,
     recordActivity: createActivityRecorder({ sharing, clock: clock.now, onActivity }),
+    maxResponses: options.maxResponses,
   })
   const port = await server.listen()
   const origin = `http://127.0.0.1:${port}`

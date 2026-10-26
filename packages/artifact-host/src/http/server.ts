@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net'
 import { gateFor, resolveAccess } from '../access.js'
 import { isHtmlPath, normalizeBundlePath } from '../bundle-paths.js'
 import { createCommentService } from '../comments.js'
+import { createResponseService } from '../responses.js'
 import { ArtifactHostError } from '../errors.js'
 import { BRIDGE_SCRIPT, SHELL_FILES, SHELL_VERSION } from '../generated/shell-assets.js'
 import { digest, newSecretToken, randomId } from '../ids.js'
@@ -26,6 +27,7 @@ import {
 import type { ArtifactStore, SessionRecord } from '../store/artifact-store.js'
 import type { BlobStore } from '../store/blobs.js'
 import { CommentStore } from '../store/comment-store.js'
+import { ResponseStore } from '../store/response-store.js'
 import { type PrincipalRecord, type SharingFields, SharingStore } from '../store/sharing-store.js'
 import { signCapability, verifyCapability } from './capability.js'
 import { createCommentRoutes } from './comment-routes.js'
@@ -33,6 +35,7 @@ import { deviceInfo } from './device-info.js'
 import { contentHeaders, shellHeaders } from './headers.js'
 import { injectBridge } from './inject-bridge.js'
 import { createRateLimiter } from './rate-limit.js'
+import { createResponseRoutes } from './response-routes.js'
 import {
   type ApiContext,
   apiForbidden,
@@ -70,6 +73,7 @@ export interface PublicServerDeps {
   recordActivity?: ActivityRecorder
   onChange?: (artifactId: string) => void
   maxComments?: number
+  maxResponses?: number
 }
 
 export interface PublicServer {
@@ -256,7 +260,11 @@ export function createPublicServer(deps: PublicServerDeps): PublicServer {
           },
           identity: identityOf(ctx),
           ownerName,
-          can: { comment: ctx.sharing.commentsEnabled, resolve: ctx.access?.kind === 'owner' },
+          can: {
+            comment: ctx.sharing.commentsEnabled,
+            resolve: ctx.access?.kind === 'owner',
+            respond: ctx.sharing.responsesEnabled,
+          },
           ...(ctx.access?.kind === 'owner' ? { sharing: sharingSummary(ctx) } : {}),
         }
         json(ctx.res, 200, state)
@@ -338,6 +346,21 @@ export function createPublicServer(deps: PublicServerDeps): PublicServer {
   route('POST', 'comments/:id/replies', commentRoutes.reply)
   route('POST', 'comments/:id/resolve', commentRoutes.resolve)
   route('DELETE', 'comments/:id', commentRoutes.remove)
+
+  const responseRoutes = createResponseRoutes({
+    responses: createResponseService({
+      store,
+      responses: new ResponseStore(store.db),
+      clock,
+      maxResponses: deps.maxResponses,
+      onChange,
+      record,
+    }),
+    ownerName,
+  })
+  // Reading one's own response is a read that must come from the viewer's script, like a write.
+  route('GET', 'responses/mine', responseRoutes.mine, true)
+  route('PUT', 'responses/mine', responseRoutes.save)
 
   async function handleApi(
     req: http.IncomingMessage,

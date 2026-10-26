@@ -41,7 +41,8 @@ export interface ViewerState {
   identity: ViewerIdentity
   /** The owner's display name, or an empty string when they did not set one. */
   ownerName: string
-  can: { comment: boolean; resolve: boolean }
+  /** `respond`: the page may save the response of the person viewing it. */
+  can: { comment: boolean; resolve: boolean; respond: boolean }
   /** Present for the owner only. */
   sharing?: ViewerSharing
 }

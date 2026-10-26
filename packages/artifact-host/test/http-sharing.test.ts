@@ -64,7 +64,7 @@ describe('personal links', () => {
       artifact: { id, title: 'Probe', currentVersion: 1 },
       identity: { kind: 'invited', name: 'Maria' },
       ownerName: 'Antonio',
-      can: { comment: true, resolve: false },
+      can: { comment: true, resolve: false, respond: true },
     })
     expect((await maria.raw('GET', await contentUrl(maria))).status).toBe(200)
     expect((await h.admin.getSharing(id)).people[0]?.devices).toEqual([
@@ -271,7 +271,7 @@ describe('access requests', () => {
     expect(approved.headers['set-cookie']?.[0]).toContain('maestrly_artifact_session=')
     expect((await joao.get(`${api}/state`)).json).toMatchObject({
       identity: { kind: 'approved', name: 'João Silva' },
-      can: { comment: true, resolve: false },
+      can: { comment: true, resolve: false, respond: true },
     })
     // Checking again does not add a device.
     expect((await joao.get(`${api}/access-requests/current`)).json).toEqual({ status: 'approved' })
