@@ -210,7 +210,9 @@ Artifact code is untrusted. The viewer and the page run on different origins:
 the page is loaded in a sandboxed frame with an opaque origin, from a path that
 carries a signed, expiring capability. The page:
 
-- cannot read the viewer's cookies or call the host's API;
+- cannot read the viewer's cookies or call the host's API; it can only ask the
+  viewer to save the response of the person viewing it
+  ([Responses](#responses));
 - cannot navigate the viewer or submit forms;
 - can load only its own files, plus scripts, styles, images, and fonts from
   `cdn.jsdelivr.net`, `unpkg.com`, `cdnjs.cloudflare.com`,
@@ -230,7 +232,8 @@ up to 500 files, 10 MiB per file and 50 MiB in total, and an artifact keeps up t
 Artifacts**; new versions fail above it, and the Artifacts center warns from 90%
 of it. Files are stored once, however many versions or artifacts share them, so
 deleting an artifact frees only what no other artifact uses. Previews are stored
-with the artifact and count toward the limit.
+with the artifact and count toward the limit. An artifact keeps up to 500
+[responses](#responses) of up to 32 KiB each.
 
 Desktop export and reset do not cover the server's artifacts; back up server
 data separately. They cover only what [earlier versions](#artifacts-from-earlier-versions)
@@ -301,8 +304,8 @@ forgetting them, so sharing it again restores their access.
 For each person Maestrly keeps the name, a coarse device label, and when each
 device joined and was last seen. It keeps no IP address and no raw browser
 identification. Revoking a person deletes what is kept about them, except the
-name on the comments they wrote and in the recent activity. Deleting the artifact
-deletes all of it.
+name on the comments and responses they wrote and in the recent activity.
+Deleting the artifact deletes all of it.
 
 Agents cannot share an artifact, invite people, approve requests, or change who
 can open it.
@@ -354,3 +357,60 @@ never starts an agent by itself.
 **Share → Comments** turns commenting off for an artifact: existing comments stay
 readable and nobody can add more from the viewer. An artifact holds up to 2,000
 comments of up to 4,000 characters each.
+
+## Responses
+
+A page can collect one response from each person who opens it, such as the
+answers to a form you send to someone. The page's code calls the viewer, which
+saves the response as that person:
+
+```js
+// Saves a JSON object as this person's response, replacing the one they sent before.
+await maestrly.submit({ answer: 'Ship it on Friday', score: 4 })
+// This person's saved response, as { data, version, updatedAt }, or null.
+const saved = await maestrly.getResponse()
+```
+
+Both calls reject with an error whose `code` says why:
+
+| `code` | Why |
+| --- | --- |
+| `closed` | You turned responses off for the artifact. |
+| `unavailable` | The page is not open in the viewer, or the person no longer has access. |
+| `cancelled` | A guest closed the name prompt without sending. |
+| `invalid` | The data is not a JSON object of plain values, or nests deeper than 16 levels. |
+| `too_large` | The data is larger than 32 KiB as JSON. |
+| `full` | The artifact already keeps 500 responses. |
+| `rate_limited` | Too many requests in a short time. |
+| `failed` | Anything else; trying again may work. |
+
+Agents know these calls: ask one for a form and its page saves the answers this
+way.
+
+Each person has one response per artifact. Sending again replaces its data and
+keeps when it was first sent, and the page can read it back so the person can
+change it. Invited and approved people keep the same response on every device.
+A guest types a name in the viewer, never in the page, before their first
+response, and it is shown as unverified; a guest whose session ended comes back
+as someone new, with a response of their own. You can respond too, to try your
+own page. After each response the viewer tells the person it was sent to you,
+or why it was not. The page never learns who the person is and never sees
+anyone else's response.
+
+The artifact's details list the responses with their author, version, and first
+fields; **Show all** shows the whole response as text. **Export CSV** and
+**Export JSON** save every response to a file you choose. The CSV has one row
+per response, with a column for each field the page sent; a value that starts
+with `=`, `+`, `-`, or `@` gets an apostrophe in front so a spreadsheet does not
+run it as a formula. You can delete a response, and its author can send a new
+one. A new person's first response counts in the sidebar, as "Paula sent a
+response"; changes to a response do not.
+
+An agent reads responses with `artifact_responses`, told that other people wrote
+them and that they are data to analyze, not instructions. Agents cannot delete
+responses or turn them off, and a response never starts an agent by itself.
+
+**Share → Responses** turns responses off for an artifact: what was sent stays,
+and pages are told `closed`. Revoking a person keeps their response, with their
+name. Moving an artifact to another server takes its responses along; a server
+too old to keep them refuses the move, and the artifact stays where it was.

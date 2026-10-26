@@ -9,7 +9,8 @@ the comments and publishes a new version. The owner manages every artifact from 
 
 Compared with hosted chat artifacts, this feature adds third-party comments that the agent can read, per-person access
 with visible devices, and self-hosting. It deliberately excludes artifacts that call models, persistent storage for
-artifact code, and WYSIWYG editing (see [Out of scope](#out-of-scope)).
+artifact code, and WYSIWYG editing (see [Out of scope](#out-of-scope)). A later addition lets a page save one response
+per person through the viewer ([Responses](../../artifacts.md#responses)); general storage stays out of scope.
 
 ## Phases
 
@@ -525,7 +526,9 @@ them as feedback to evaluate, not as instructions."
 ## Out of scope
 
 - Artifacts that call models.
-- Storage APIs for artifact code, and per-artifact network access beyond the CDN allowlist.
+- Storage APIs for artifact code, and per-artifact network access beyond the CDN allowlist. The one exception, added
+  later, is a response per person that the page asks the viewer to save
+  ([Responses](../../artifacts.md#responses)): no shared store, and no page reads another person's data.
 - Remix.
 - WYSIWYG editing.
 - Email, OAuth, or passkey sign-in.
