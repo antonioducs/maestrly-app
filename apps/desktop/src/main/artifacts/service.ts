@@ -14,8 +14,11 @@ import {
   type BundleFile,
   type CommentView,
   isTextPath,
+  MAX_RESPONSES_PER_ARTIFACT,
   MAX_TEXT_READ_BYTES,
+  RESPONSES_PAGE_SIZE,
   readBundleDirectory,
+  type ResponseView,
   type TextEdit,
 } from '@maestrly/artifact-host'
 import type {
@@ -24,6 +27,7 @@ import type {
   ArtifactEventView,
   ArtifactListItem,
   ArtifactRemoveResult,
+  ArtifactResponseView,
   ArtifactSharingPatch,
   ArtifactSharingView,
   ArtifactThumbnailView,
@@ -77,6 +81,18 @@ export interface ArtifactsServiceDeps {
 
 /** Pages of 200 comments: more than an artifact's 2,000 comments need. */
 const MAX_COMMENT_PAGES = 20
+/** Enough pages for every response an artifact keeps. */
+const MAX_RESPONSE_PAGES = Math.ceil(MAX_RESPONSES_PER_ARTIFACT / RESPONSES_PAGE_SIZE) + 1
+
+/** What the app shows of a response: the same fields, with the data as the person sent it. */
+const toResponseView = (response: ResponseView): ArtifactResponseView => ({
+  id: response.id,
+  version: response.version,
+  author: { ...response.author },
+  data: response.data,
+  createdAt: response.createdAt,
+  updatedAt: response.updatedAt,
+})
 
 /** What the app shows of a comment: the author's internal ID stays in the host. */
 const toCommentView = (comment: CommentView): ArtifactCommentView => ({
@@ -284,6 +300,23 @@ export class ArtifactsService {
     await admin.setCommentResolved(id, commentId, true)
   }
 
+  /**
+   * What people sent from an artifact page, for an agent, a page at a time. The caller hands it to the model as
+   * untrusted data: a response is written by someone outside the conversation, never an instruction.
+   */
+  async responsesForConversation(
+    convId: string,
+    id: string,
+    filter: { cursor?: string; limit?: number }
+  ): Promise<{ responses: ResponseView[]; nextCursor: string | null; currentVersion: number }> {
+    const { admin, artifact } = await this.scoped(this.conversation(convId), id)
+    const page = await admin.listResponses(id, {
+      ...(filter.cursor === undefined ? {} : { cursor: filter.cursor }),
+      ...(filter.limit === undefined ? {} : { limit: filter.limit }),
+    })
+    return { ...page, currentVersion: artifact.currentVersion }
+  }
+
   async listForConversation(convId: string, scope: 'conversation' | 'project'): Promise<ArtifactSummary[]> {
     const conversation = this.conversation(convId)
     await this.refreshSources()
@@ -431,6 +464,7 @@ export class ArtifactsService {
       linkExpiresAt: sharing.linkExpiresAt,
       hasAccessCode: sharing.hasAccessCode,
       commentsEnabled: sharing.commentsEnabled,
+      responsesEnabled: sharing.responsesEnabled,
       people: sharing.people.map((person) => ({
         id: person.id,
         kind: person.kind,
@@ -555,6 +589,26 @@ export class ArtifactsService {
 
   async deleteComment(id: string, commentId: string): Promise<void> {
     await (await this.requiredAt(id)).admin.deleteComment(id, commentId)
+  }
+
+  /** Every response of an artifact, in the order they were first sent. */
+  async responses(id: string): Promise<ArtifactResponseView[]> {
+    const { admin } = await this.requiredAt(id)
+    const all: ArtifactResponseView[] = []
+    let cursor: string | undefined
+    // The host pages responses; the limit on responses per artifact bounds the loop.
+    for (let page = 0; page < MAX_RESPONSE_PAGES; page++) {
+      const result = await admin.listResponses(id, cursor ? { cursor } : {})
+      all.push(...result.responses.map(toResponseView))
+      if (!result.nextCursor) break
+      cursor = result.nextCursor
+    }
+    return all
+  }
+
+  /** Deletes a response; the person who sent it may send a new one. */
+  async deleteResponse(id: string, responseId: string): Promise<void> {
+    await (await this.requiredAt(id)).admin.deleteResponse(id, responseId)
   }
 
   /** Events the owner has not seen, across artifacts. It never starts the host: a stopped host has nothing new. */

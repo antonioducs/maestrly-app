@@ -440,6 +440,7 @@ export default {
       access_requested: '{{name}} pediu acesso',
       invite_declined: 'Alguém disse que não é {{name}}',
       comment_added: '{{name}} comentou',
+      response_submitted: '{{name}} enviou uma resposta',
       unseen_one: '{{count}} evento novo nos seus artefatos',
       unseen_other: '{{count}} eventos novos nos seus artefatos',
     },
@@ -2139,7 +2140,8 @@ export default {
       'A revisão espera suas decisões na conversa. As decisões do plano voltam depois que você entregar ou descartar a revisão.',
     reviewLockCode:
       'Uma revisão de código está segurando esta conversa. As decisões do plano voltam depois que ela for entregue ou descartada.',
-    reviewLockCheck: 'O verificador está checando o que uma revisão enviou. As decisões do plano voltam em alguns segundos.',
+    reviewLockCheck:
+      'O verificador está checando o que uma revisão enviou. As decisões do plano voltam em alguns segundos.',
     reviewCheckResolved_one: 'Revisão: o comentário foi atendido nesta versão.',
     reviewCheckResolved_other: 'Revisão: os {{count}} comentários foram atendidos nesta versão.',
     reviewCheckOpen_one: 'Revisão: {{count}} comentário continua aberto nesta versão. Veja a conversa.',

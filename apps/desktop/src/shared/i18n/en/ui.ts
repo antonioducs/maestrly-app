@@ -434,6 +434,7 @@ export default {
       access_requested: '{{name}} asked for access',
       invite_declined: 'Someone said they are not {{name}}',
       comment_added: '{{name}} commented',
+      response_submitted: '{{name}} sent a response',
       unseen_one: '{{count}} new event in your artifacts',
       unseen_other: '{{count}} new events in your artifacts',
     },

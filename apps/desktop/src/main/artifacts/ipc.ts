@@ -1,14 +1,18 @@
+import { promises as fsp } from 'node:fs'
 import { fleetArtifactSettingsPatchSchema } from '@maestrly/bot-fleet-protocol'
 import { isArtifactId } from '@maestrly/artifact-host'
 import { z } from 'zod'
 import {
+  type ArtifactResponsesExportResult,
   MAX_ACCESS_CODE_CHARS,
   MAX_ARTIFACT_COMMENT_CHARS,
   MAX_ARTIFACT_NAME_CHARS,
   MIN_ACCESS_CODE_CHARS,
 } from '../../shared/artifacts'
 import { type FleetServerId, parseFleetServerId } from '../../shared/fleet-servers'
+import type { IpcMainInvokeEvent } from 'electron'
 import type { IpcRegistrar } from '../ipc-registrar'
+import { fileStem, responsesToCsv, responsesToJson } from './responses-export'
 import type { ArtifactsService } from './service'
 
 const artifactId = z.string().refine(isArtifactId, 'Invalid artifact ID')
@@ -28,6 +32,7 @@ const sharingPatch = z
     linkExpiresAt: z.number().int().positive().nullable().optional(),
     accessCode: z.string().min(MIN_ACCESS_CODE_CHARS).max(MAX_ACCESS_CODE_CHARS).nullable().optional(),
     commentsEnabled: z.boolean().optional(),
+    responsesEnabled: z.boolean().optional(),
   })
   .strict()
 const requestDecision = z.object({ approve: z.boolean(), name: personName.optional() }).strict()
@@ -38,9 +43,35 @@ const idList = z.array(artifactId).min(1).max(1000).optional()
 const optionalServer = (value: unknown): FleetServerId | undefined =>
   value === undefined || value === null ? undefined : parseFleetServerId(value)
 
+const exportFormat = z.enum(['csv', 'json'])
+
+export interface SaveFileOptions {
+  defaultPath: string
+  filters: { name: string; extensions: string[] }[]
+}
+
+/** Where the owner chose to save a file, asked in the window that sent the request; null when they canceled. */
+export type ChooseSaveFile = (sender: IpcMainInvokeEvent['sender'], options: SaveFileOptions) => Promise<string | null>
+
+async function chooseWithDialog(
+  sender: IpcMainInvokeEvent['sender'],
+  options: SaveFileOptions
+): Promise<string | null> {
+  const { BrowserWindow, dialog } = await import('electron')
+  const window = BrowserWindow.fromWebContents(sender)
+  if (!window) throw new Error('No window to save from')
+  const result = await dialog.showSaveDialog(window, options)
+  return result.canceled || !result.filePath ? null : result.filePath
+}
+
 /** Owner actions from the renderer. Every channel is guarded and validates its input before the service sees it. */
-export function registerArtifactsIpc(reg: IpcRegistrar, deps: { service: () => ArtifactsService }): void {
+export function registerArtifactsIpc(
+  reg: IpcRegistrar,
+  deps: { service: () => ArtifactsService; chooseSaveFile?: ChooseSaveFile; now?: () => number }
+): void {
   const service = deps.service
+  const chooseSaveFile = deps.chooseSaveFile ?? chooseWithDialog
+  const now = deps.now ?? Date.now
   reg.mhandle('artifacts:list', async () => service().listAll())
   reg.mhandle('artifacts:detail', async (_e, id: unknown) => service().detail(artifactId.parse(id)))
   reg.mhandle('artifacts:delete', async (_e, id: unknown) => service().remove(artifactId.parse(id)))
@@ -123,4 +154,28 @@ export function registerArtifactsIpc(reg: IpcRegistrar, deps: { service: () => A
   reg.mhandle('artifacts:comment-delete', async (_e, id: unknown, commentId: unknown) => {
     await service().deleteComment(artifactId.parse(id), recordId.parse(commentId))
   })
+
+  // Responses: what people sent from a page. The owner reads, deletes and exports them in the app.
+  reg.mhandle('artifacts:responses', async (_e, id: unknown) => service().responses(artifactId.parse(id)))
+  reg.mhandle('artifacts:response-delete', async (_e, id: unknown, responseId: unknown) => {
+    await service().deleteResponse(artifactId.parse(id), recordId.parse(responseId))
+  })
+  reg.mhandle(
+    'artifacts:responses-export',
+    async (event, id: unknown, format: unknown): Promise<ArtifactResponsesExportResult> => {
+      const artifact = artifactId.parse(id)
+      const kind = exportFormat.parse(format)
+      const title = (await service().detail(artifact))?.title ?? ''
+      const target = await chooseSaveFile(event.sender, {
+        defaultPath: `${fileStem(title)}-responses.${kind}`,
+        filters: [{ name: kind.toUpperCase(), extensions: [kind] }],
+      })
+      if (!target) return { ok: false, canceled: true }
+      const responses = await service().responses(artifact)
+      const text =
+        kind === 'csv' ? responsesToCsv(responses) : responsesToJson({ id: artifact, title }, responses, now())
+      await fsp.writeFile(target, text, { encoding: 'utf8', mode: 0o600 })
+      return { ok: true, path: target }
+    }
+  )
 }

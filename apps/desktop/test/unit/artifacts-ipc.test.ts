@@ -1,11 +1,14 @@
+import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { registerArtifactsIpc } from '../../src/main/artifacts/ipc'
+import { type ChooseSaveFile, registerArtifactsIpc } from '../../src/main/artifacts/ipc'
 import type { ArtifactsService } from '../../src/main/artifacts/service'
 import type { IpcRegistrar } from '../../src/main/ipc-registrar'
 
 type Handler = (event: unknown, ...args: unknown[]) => unknown
 
-function setup() {
+function setup(chooseSaveFile?: ChooseSaveFile) {
   const guarded = new Map<string, Handler>()
   const unguarded: string[] = []
   const reg: IpcRegistrar = {
@@ -46,8 +49,23 @@ function setup() {
     replyComment: vi.fn(async () => ({})),
     resolveComment: vi.fn(async () => {}),
     deleteComment: vi.fn(async () => {}),
+    responses: vi.fn(async () => [
+      {
+        id: person,
+        version: 1,
+        author: { kind: 'guest', name: 'Paula', verified: false },
+        data: { answer: '=1+1' },
+        createdAt: 0,
+        updatedAt: 0,
+      },
+    ]),
+    deleteResponse: vi.fn(async () => {}),
   }
-  registerArtifactsIpc(reg, { service: () => service as unknown as ArtifactsService })
+  registerArtifactsIpc(reg, {
+    service: () => service as unknown as ArtifactsService,
+    chooseSaveFile,
+    now: () => 0,
+  })
   const call = (channel: string, ...args: unknown[]) => guarded.get(channel)!({}, ...args)
   return { guarded, unguarded, service, call }
 }
@@ -82,6 +100,9 @@ describe('artifacts IPC', () => {
       'artifacts:person-revoke',
       'artifacts:publish-server-set',
       'artifacts:request-decide',
+      'artifacts:response-delete',
+      'artifacts:responses',
+      'artifacts:responses-export',
       'artifacts:server-host-get',
       'artifacts:server-host-set',
       'artifacts:server-status',
@@ -166,6 +187,62 @@ describe('artifacts IPC', () => {
     expect(service.resolveComment).toHaveBeenLastCalledWith(id, person, false)
     await call('artifacts:comment-delete', id, person)
     expect(service.deleteComment).toHaveBeenCalledWith(id, person)
+  })
+
+  it('validates response input before reaching the service', async () => {
+    const { call, service } = setup()
+    const refused: [string, ...unknown[]][] = [
+      ['artifacts:responses', 'nope'],
+      ['artifacts:response-delete', id, '../x'],
+      ['artifacts:response-delete', 'nope', person],
+      ['artifacts:responses-export', 'nope', 'csv'],
+      ['artifacts:responses-export', id, 'xlsx'],
+      ['artifacts:sharing-set', id, { responsesEnabled: 'yes' }],
+    ]
+    for (const [channel, ...args] of refused) await expect(call(channel, ...args), channel).rejects.toThrow()
+    for (const method of Object.values(service)) expect(method).not.toHaveBeenCalled()
+
+    await call('artifacts:responses', id)
+    expect(service.responses).toHaveBeenCalledWith(id)
+    await call('artifacts:response-delete', id, person)
+    expect(service.deleteResponse).toHaveBeenCalledWith(id, person)
+    await call('artifacts:sharing-set', id, { responsesEnabled: false })
+    expect(service.setSharing).toHaveBeenCalledWith(id, { responsesEnabled: false })
+  })
+
+  it('exports the responses where the owner chose, and nothing when they cancel', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'responses-export-'))
+    try {
+      const target = path.join(dir, 'out.csv')
+      const choose = vi.fn<ChooseSaveFile>(async () => target)
+      const { call, service } = setup(choose)
+      service.detail.mockResolvedValueOnce({ title: 'Formulário da PO' } as never)
+      expect(await call('artifacts:responses-export', id, 'csv')).toEqual({ ok: true, path: target })
+      expect(choose.mock.calls[0]?.[1]).toEqual({
+        defaultPath: 'formulario-da-po-responses.csv',
+        filters: [{ name: 'CSV', extensions: ['csv'] }],
+      })
+      const csv = readFileSync(target, 'utf8')
+      expect(csv).toContain('"Paula","guest","false"')
+      expect(csv).toContain(`"'=1+1"`)
+      if (process.platform !== 'win32') expect(statSync(target).mode & 0o777).toBe(0o600)
+
+      const json = path.join(dir, 'out.json')
+      choose.mockResolvedValueOnce(json)
+      expect(await call('artifacts:responses-export', id, 'json')).toEqual({ ok: true, path: json })
+      expect(JSON.parse(readFileSync(json, 'utf8'))).toMatchObject({
+        artifact: { id, title: '' },
+        exportedAt: '1970-01-01T00:00:00.000Z',
+        responses: [{ author: { name: 'Paula' }, data: { answer: '=1+1' } }],
+      })
+
+      choose.mockResolvedValueOnce(null)
+      service.responses.mockClear()
+      expect(await call('artifacts:responses-export', id, 'csv')).toEqual({ ok: false, canceled: true })
+      expect(service.responses).not.toHaveBeenCalled()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('validates sharing input before reaching the service', async () => {
