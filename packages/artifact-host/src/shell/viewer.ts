@@ -15,6 +15,7 @@ import { showEntry } from './gate.js'
 import { entryScreen, hasAccess, type LinkFragment, parseFragment } from './gate-model.js'
 import { format, pickLocale, type ShellKey } from './i18n.js'
 import { closePopover, popoverOpen } from './popover.js'
+import { createResponses } from './responses.js'
 
 const VIEWER_PATH = /^\/a\/([A-Za-z0-9_-]{22})$/
 const languages = navigator.languages?.length ? navigator.languages : [navigator.language]
@@ -162,6 +163,8 @@ function renderViewer(api: ArtifactApi, state: ViewerState, initialVersion: numb
       onShowVersion: setVersion,
     })
 
+  const responses = createResponses({ api, t, state, frame, preview, version: () => version, onIdentity: sync })
+
   function onKey(key: string): void {
     if (key === 'Escape') {
       if (popoverOpen()) closePopover()
@@ -174,6 +177,7 @@ function renderViewer(api: ArtifactApi, state: ViewerState, initialVersion: numb
   function onMessage(message: BridgeMessage): void {
     if (message.type === 'error') toast(t('pageError', { message: message.message }))
     else if (message.type === 'key') onKey(message.key)
+    else if (message.type === 'response-get' || message.type === 'response-submit') responses.handle(message)
     else {
       if (message.type === 'pointer') closePopover(false)
       comments?.handle(message)

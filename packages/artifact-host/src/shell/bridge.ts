@@ -2,8 +2,13 @@
 //
 // It tells the viewer shell where the comment anchors are in the page, what the reader selected, and, in comment mode,
 // which passage or spot the reader chose. The shell draws the pins above the frame and treats every message from here
-// as an untrusted hint. What the shell sends in is only the page's own text and places in it, never names or comments.
+// as an untrusted hint. What the shell sends in is only the page's own text and places in it, and the response of the
+// person viewing the page, never names, comments or other people's responses.
 // Nothing here changes the page's DOM: the active passage is painted with the CSS Custom Highlight API.
+//
+// It also gives the page `window.maestrly`: `submit(data)` saves a JSON object as the response of the person viewing
+// the page, replacing the one they sent before, and `getResponse()` returns it, or null. Both reject with an error
+// whose `code` is one of `closed`, `unavailable`, `cancelled`, `invalid`, `too_large`, `full`, `rate_limited`, `failed`.
 ;(() => {
   const MAX_QUOTE_CHARS = 500
   const MAX_CONTEXT_CHARS = 64
@@ -338,6 +343,45 @@
       post({ type: 'key', key: event.key })
   })
 
+  // --- Responses: one per person, kept by the host. The page hands its data to the viewer, which saves it as the
+  // person viewing it. The page never learns who that is, and gets back only what that person saved.
+
+  const MAX_RESPONSE_BYTES = 32 * 1024
+  let nextRequest = 0
+  const pending = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void }>()
+  const failure = (code: string) => Object.assign(new Error(`maestrly: ${code}`), { code })
+
+  function ask(type: 'response-get' | 'response-submit', extra: Record<string, unknown>): Promise<unknown> {
+    // Opened outside the viewer, nobody can save anything.
+    if (window.parent === window) return Promise.reject(failure('unavailable'))
+    const requestId = `r${++nextRequest}`
+    return new Promise((resolve, reject) => {
+      pending.set(requestId, { resolve, reject })
+      post({ type, requestId, ...extra })
+    })
+  }
+
+  const api = Object.freeze({
+    /** Saves `data` (a JSON object) as this person's response, replacing the one they sent before. */
+    submit(data: unknown): Promise<unknown> {
+      let copy: unknown
+      try {
+        copy = JSON.parse(JSON.stringify(data))
+      } catch {
+        return Promise.reject(failure('invalid'))
+      }
+      if (typeof copy !== 'object' || copy === null || Array.isArray(copy)) return Promise.reject(failure('invalid'))
+      if (new TextEncoder().encode(JSON.stringify(copy)).byteLength > MAX_RESPONSE_BYTES)
+        return Promise.reject(failure('too_large'))
+      return ask('response-submit', { data: copy })
+    },
+    /** This person's saved response, as { data, version, updatedAt }, or null. */
+    getResponse(): Promise<unknown> {
+      return ask('response-get', {})
+    },
+  })
+  if (!('maestrly' in window)) Object.defineProperty(window, 'maestrly', { value: api, configurable: true })
+
   // --- What the shell asks. Only the viewer that frames this page may ask.
 
   const text = (value: unknown, max: number): string => (typeof value === 'string' ? value.slice(0, max) : '')
@@ -391,6 +435,12 @@
       layout()
     } else if (data.type === 'clear-selection') {
       document.getSelection()?.removeAllRanges()
+    } else if (data.type === 'response-result' && typeof data.requestId === 'string') {
+      const request = pending.get(data.requestId)
+      if (!request) return
+      pending.delete(data.requestId)
+      if (data.ok === true) request.resolve(data.response ?? null)
+      else request.reject(failure(typeof data.error === 'string' ? data.error : 'failed'))
     }
   })
 
