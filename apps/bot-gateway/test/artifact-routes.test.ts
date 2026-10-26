@@ -52,7 +52,15 @@ test('bot creation and lists enforce ownership and all id calls enforce scope', 
     )
   ).json()
   expect(list.value.map((item: { id: string }) => item.id)).toEqual([own.value.id])
-  for (const method of ['get', 'listFiles', 'readFile', 'listComments', 'addComment', 'setCommentResolved']) {
+  for (const method of [
+    'get',
+    'listFiles',
+    'readFile',
+    'listComments',
+    'addComment',
+    'setCommentResolved',
+    'listResponses',
+  ]) {
     const result = await (
       await h.request('POST', '/internal/v1/artifacts/admin', call(method, [device.value.id]), true)
     ).json()
@@ -67,7 +75,7 @@ test('bot creation and lists enforce ownership and all id calls enforce scope', 
     )
   ).json()
   expect(update).toMatchObject({ ok: false, error: { code: 'not_found' } })
-  for (const method of ['delete', 'mintOwnerTicket', 'snapshot', 'setSharing', 'setThumbnail']) {
+  for (const method of ['delete', 'mintOwnerTicket', 'snapshot', 'setSharing', 'setThumbnail', 'deleteResponse']) {
     expect(
       await (await h.request('POST', '/internal/v1/artifacts/admin', call(method, [own.value.id]), true)).json()
     ).toMatchObject({ ok: false, error: { code: 'invalid_input' } })
@@ -75,6 +83,16 @@ test('bot creation and lists enforce ownership and all id calls enforce scope', 
   expect(
     await (await h.request('POST', '/v1/artifacts/admin', call('snapshot', ['/tmp/forbidden']))).json()
   ).toMatchObject({ ok: false, error: { code: 'invalid_input' } })
+})
+
+test('a bot reads the responses of its own artifacts', async () => {
+  const h = await harness()
+  await h.artifacts.update({ enabled: true })
+  await h.lifecycle.patch(h.bot.id, { publishArtifacts: true })
+  const made = await (await h.request('POST', '/internal/v1/artifacts/upload', call('create', [bundle()]), true)).json()
+  expect(
+    await (await h.request('POST', '/internal/v1/artifacts/admin', call('listResponses', [made.value.id]), true)).json()
+  ).toEqual({ ok: true, value: { responses: [], nextCursor: null } })
 })
 
 test('bot malformed arguments are rejected before dereference and replies require parents', async () => {

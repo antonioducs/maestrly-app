@@ -1284,7 +1284,7 @@ export const fleetGatewayEventSchema = z.discriminatedUnion('type', [
     type: z.literal('artifact.activity'),
     at: fleetTimestampSchema,
     artifactId: fleetArtifactIdSchema,
-    kind: z.enum(['device_added', 'access_requested', 'invite_declined', 'comment_added']),
+    kind: z.enum(['device_added', 'access_requested', 'invite_declined', 'comment_added', 'response_submitted']),
   }),
   z.object({ type: z.literal('owner_memory.updated'), at: fleetTimestampSchema, revision: fleetNonNegativeIntSchema }),
   z.object({ type: z.literal('hello'), at: fleetTimestampSchema, lastActivitySeq: fleetNonNegativeIntSchema }),
