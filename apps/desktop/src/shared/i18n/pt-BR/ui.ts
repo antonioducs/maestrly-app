@@ -240,7 +240,7 @@ export default {
       destination: 'Eles vão para o servidor de bots ao qual este computador está conectado.',
       facts: {
         content:
-          'Vão as versões, os comentários e as prévias. Os cards nas conversas continuam abrindo os mesmos artefatos.',
+          'Vão as versões, os comentários, as respostas e as prévias. Os cards nas conversas continuam abrindo os mesmos artefatos.',
         safe: 'Cada um só sai deste computador depois de conferido no servidor. Se algo falhar no meio, ele continua aqui.',
         enable: 'A hospedagem no servidor de bots será ligada antes.',
         sharedOne:
@@ -433,6 +433,22 @@ export default {
         outro: 'Diga quais deles você atenderia e como, antes de mudar o artefato.',
       },
     },
+    responses: {
+      title: 'Respostas',
+      count_one: '{{count}} resposta',
+      count_other: '{{count}} respostas',
+      more_one: 'e mais {{count}} campo',
+      more_other: 'e mais {{count}} campos',
+      showAll: 'Ver tudo',
+      hide: 'Ocultar',
+      delete: 'Excluir',
+      confirmDelete: 'Excluir esta resposta? A pessoa poderá enviar outra.',
+      exportCsv: 'Exportar CSV',
+      exportJson: 'Exportar JSON',
+      exported: 'Salvo em {{path}}',
+      allow: 'Respostas',
+      allowHint: 'A página pode salvar uma resposta de cada pessoa que a abre. Só você vê as respostas.',
+    },
     events: {
       title: 'Atividade recente',
       someone: 'Alguém',
@@ -440,6 +456,7 @@ export default {
       access_requested: '{{name}} pediu acesso',
       invite_declined: 'Alguém disse que não é {{name}}',
       comment_added: '{{name}} comentou',
+      response_submitted: '{{name}} enviou uma resposta',
       unseen_one: '{{count}} evento novo nos seus artefatos',
       unseen_other: '{{count}} eventos novos nos seus artefatos',
     },
@@ -2139,7 +2156,8 @@ export default {
       'A revisão espera suas decisões na conversa. As decisões do plano voltam depois que você entregar ou descartar a revisão.',
     reviewLockCode:
       'Uma revisão de código está segurando esta conversa. As decisões do plano voltam depois que ela for entregue ou descartada.',
-    reviewLockCheck: 'O verificador está checando o que uma revisão enviou. As decisões do plano voltam em alguns segundos.',
+    reviewLockCheck:
+      'O verificador está checando o que uma revisão enviou. As decisões do plano voltam em alguns segundos.',
     reviewCheckResolved_one: 'Revisão: o comentário foi atendido nesta versão.',
     reviewCheckResolved_other: 'Revisão: os {{count}} comentários foram atendidos nesta versão.',
     reviewCheckOpen_one: 'Revisão: {{count}} comentário continua aberto nesta versão. Veja a conversa.',

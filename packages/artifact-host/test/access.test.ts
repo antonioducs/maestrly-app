@@ -10,6 +10,7 @@ const sharing = (visibility: Visibility, overrides: Partial<SharingFields> = {})
   linkExpiresAt: null,
   accessCodeHash: null,
   commentsEnabled: true,
+  responsesEnabled: true,
   ...overrides,
 })
 

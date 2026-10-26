@@ -171,7 +171,13 @@ describe('artifact contracts', () => {
   it('validates artifact notifications and their IDs', () => {
     const events = [
       { type: 'artifact.changed', at, artifactId },
-      ...['device_added', 'access_requested', 'invite_declined', 'comment_added'].map((kind) => ({
+      ...[
+        'device_added',
+        'access_requested',
+        'invite_declined',
+        'comment_added',
+        'response_submitted',
+      ].map((kind) => ({
         type: 'artifact.activity',
         at,
         artifactId,

@@ -1,4 +1,8 @@
 // Shared by the host (Node) and the viewer shell (browser): no DOM and no Node APIs.
+//
+// The page and the shell talk through `postMessage`. The page reports what the reader does in it and asks the shell to
+// save or read the response of the person viewing it; the shell sends in only the page's own text and places in it,
+// and that person's own response. Never anyone's name, a comment, or another person's response.
 
 export const ARTIFACT_HEADER = 'x-maestrly-artifact'
 export const SESSION_COOKIE = 'maestrly_artifact_session'
@@ -41,7 +45,8 @@ export interface ViewerState {
   identity: ViewerIdentity
   /** The owner's display name, or an empty string when they did not set one. */
   ownerName: string
-  can: { comment: boolean; resolve: boolean }
+  /** `respond`: the page may save the response of the person viewing it. */
+  can: { comment: boolean; resolve: boolean; respond: boolean }
   /** Present for the owner only. */
   sharing?: ViewerSharing
 }
@@ -117,6 +122,65 @@ export interface CommentPage {
   nextCursor: string | null
 }
 
+/** A response's size as UTF-8 JSON, and how deep its values may nest. */
+export const MAX_RESPONSE_BYTES = 32 * 1024
+export const MAX_RESPONSE_DEPTH = 16
+
+export type ResponseValue = string | number | boolean | null | ResponseValue[] | { [key: string]: ResponseValue }
+/** What a page saves as one person's response: a JSON object. */
+export type ResponseData = { [key: string]: ResponseValue }
+
+/** What the page gets back about the response of the person viewing it, and nothing about anyone else's. */
+export interface ResponseSnapshot {
+  data: ResponseData
+  version: number
+  updatedAt: number
+}
+
+/** Why a response could not be read or saved, as the page learns it. */
+export const RESPONSE_ERRORS = [
+  'closed',
+  'unavailable',
+  'cancelled',
+  'invalid',
+  'too_large',
+  'full',
+  'rate_limited',
+  'failed',
+] as const
+export type ResponseError = (typeof RESPONSE_ERRORS)[number]
+
+const isRecord = (value: unknown): value is Record<string, unknown> => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const proto = Object.getPrototypeOf(value)
+  return proto === Object.prototype || proto === null
+}
+
+/**
+ * A response as a page may save it: a JSON object of strings, finite numbers, booleans, null, arrays and objects, at
+ * most MAX_RESPONSE_DEPTH levels deep and MAX_RESPONSE_BYTES as UTF-8 JSON. The walk is iterative and stops after as
+ * many values as the size allows, so neither depth nor breadth can exhaust the caller.
+ */
+export function isResponseData(value: unknown): value is ResponseData {
+  if (!isRecord(value)) return false
+  const stack: [unknown, number][] = [[value, 1]]
+  let seen = 0
+  while (stack.length) {
+    const [item, depth] = stack.pop()!
+    if (++seen > MAX_RESPONSE_BYTES) return false
+    if (item === null || typeof item === 'string' || typeof item === 'boolean') continue
+    if (typeof item === 'number') {
+      if (!Number.isFinite(item)) return false
+      continue
+    }
+    if (depth > MAX_RESPONSE_DEPTH) return false
+    const children = Array.isArray(item) ? item : isRecord(item) ? Object.values(item) : null
+    if (!children) return false
+    for (const child of children) stack.push([child, depth + 1])
+  }
+  return new TextEncoder().encode(JSON.stringify(value)).byteLength <= MAX_RESPONSE_BYTES
+}
+
 export interface SelectionRect {
   x: number
   y: number
@@ -146,13 +210,17 @@ export type BridgeMessage =
   | { type: 'pointer' }
   /** A viewer shortcut pressed while the page had the focus. */
   | { type: 'key'; key: ForwardedKey }
+  /** The page asks for the response of the person viewing it. */
+  | { type: 'response-get'; requestId: string }
+  /** The page saves the response of the person viewing it; `data` is null when it is not a valid response. */
+  | { type: 'response-submit'; requestId: string; data: ResponseData | null }
 
 /** An anchor as the page receives it: the page's own text or a place in it, never names or comment text. */
 export type ShellAnchor = { id: string } & Pick<CommentAnchor, 'quote' | 'point'>
 
 /**
- * What the shell sends into the page, as `{ source: 'maestrly-shell', ...message }`. None of it carries a name or a
- * comment's text.
+ * What the shell sends into the page, as `{ source: 'maestrly-shell', ...message }`. None of it carries a name, a
+ * comment's text, or anyone's response but the one of the person viewing the page.
  */
 export type ShellMessage =
   | { type: 'anchors'; anchors: ShellAnchor[]; active: string | null }
@@ -160,8 +228,13 @@ export type ShellMessage =
   | { type: 'reveal'; id: string }
   | { type: 'measure' }
   | { type: 'clear-selection' }
+  | { type: 'response-result'; requestId: string; ok: true; response: ResponseSnapshot | null }
+  | { type: 'response-result'; requestId: string; ok: false; error: ResponseError }
 
 const ANCHOR_ID = /^[A-Za-z0-9_-]{22}$/
+/** Chosen by the page to match the shell's answer to its request. */
+const REQUEST_ID = /^[A-Za-z0-9_-]{1,32}$/
+const isRequestId = (value: unknown): value is string => typeof value === 'string' && REQUEST_ID.test(value)
 const isAnchorId = (id: string): boolean => ANCHOR_ID.test(id) || id === DRAFT_ANCHOR_ID
 
 const capped = (value: unknown, max: number): string => (typeof value === 'string' ? value.slice(0, max) : '')
@@ -255,6 +328,12 @@ export function parseBridgeMessage(value: unknown): BridgeMessage | null {
       return { type: 'pointer' }
     case 'key':
       return (FORWARDED_KEYS as readonly unknown[]).includes(v.key) ? { type: 'key', key: v.key as ForwardedKey } : null
+    case 'response-get':
+      return isRequestId(v.requestId) ? { type: 'response-get', requestId: v.requestId } : null
+    case 'response-submit':
+      // An invalid response is kept as null, so the shell answers it instead of leaving the page waiting.
+      if (!isRequestId(v.requestId)) return null
+      return { type: 'response-submit', requestId: v.requestId, data: isResponseData(v.data) ? v.data : null }
     default:
       return null
   }

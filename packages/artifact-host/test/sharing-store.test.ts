@@ -97,15 +97,20 @@ describe('SharingStore', () => {
       linkExpiresAt: null,
       accessCodeHash: null,
       commentsEnabled: true,
+      responsesEnabled: true,
     })
     sharing.setSharing('A', { visibility: 'link', linkExpiresAt: 5000, accessCodeHash: 'scrypt$a$b' })
     sharing.setSharing('A', { commentsEnabled: false })
+    sharing.setSharing('A', { responsesEnabled: false })
     expect(sharing.getSharing('A')).toEqual({
       visibility: 'link',
       linkExpiresAt: 5000,
       accessCodeHash: 'scrypt$a$b',
       commentsEnabled: false,
+      responsesEnabled: false,
     })
+    sharing.setSharing('A', { responsesEnabled: true })
+    expect(sharing.getSharing('A')?.responsesEnabled).toBe(true)
     sharing.setSharing('A', { linkExpiresAt: null, accessCodeHash: null })
     expect(sharing.getSharing('A')).toMatchObject({ linkExpiresAt: null, accessCodeHash: null })
     expect(sharing.getSharing('B')?.visibility).toBe('private')
@@ -212,9 +217,11 @@ describe('SharingStore', () => {
     const event = sharing.addEvent('A', 'device_added', { name: 'Maria', device: 'Safari/iPhone' }, 1000)
     sharing.addEvent('A', 'comment_added', { name: 'Maria' }, 2000)
     sharing.addEvent('B', 'invite_declined', { name: 'Ana' }, 3000)
+    sharing.addEvent('B', 'response_submitted', { name: 'Ana' }, 3000)
     expect(event).toMatchObject({ artifactId: 'A', kind: 'device_added', seenAt: null })
     expect(store.getArtifact('A')).toMatchObject({ unseenEvents: 2 })
     expect(sharing.listEvents({}).map((item) => item.kind)).toEqual([
+      'response_submitted',
       'invite_declined',
       'comment_added',
       'device_added',
@@ -226,8 +233,8 @@ describe('SharingStore', () => {
 
     sharing.markSeen('A', 4000)
     expect(store.getArtifact('A')).toMatchObject({ unseenEvents: 0 })
-    expect(store.getArtifact('B')).toMatchObject({ unseenEvents: 1 })
-    expect(sharing.listEvents({ unseenOnly: true }).map((item) => item.artifactId)).toEqual(['B'])
+    expect(store.getArtifact('B')).toMatchObject({ unseenEvents: 2 })
+    expect(sharing.listEvents({ unseenOnly: true }).map((item) => item.artifactId)).toEqual(['B', 'B'])
     sharing.markSeen(undefined, 5000)
     expect(sharing.listEvents({ unseenOnly: true })).toEqual([])
   })

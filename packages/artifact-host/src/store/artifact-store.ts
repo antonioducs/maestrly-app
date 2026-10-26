@@ -80,7 +80,7 @@ export interface NewVersion {
 
 /** An artifact arriving from another host, as a whole: every version, its previews, and its sharing defaults. */
 export interface ImportedArtifact {
-  artifact: NewArtifact & { updatedAt: number; commentsEnabled: boolean }
+  artifact: NewArtifact & { updatedAt: number; commentsEnabled: boolean; responsesEnabled: boolean }
   /** Numbered from 1 without gaps. */
   versions: (NewVersion & { number: number })[]
   thumbnails: ThumbnailRecord[]
@@ -211,7 +211,7 @@ export class ArtifactStore {
 
   /**
    * Writes an imported artifact, private, in one transaction; `also` adds the rows that belong to it in other
-   * stores (its comments) within that transaction.
+   * stores (its comments and responses) within that transaction.
    */
   importArtifact(record: ImportedArtifact, also: () => void = () => {}): void {
     const { artifact, versions, thumbnails } = record
@@ -219,8 +219,9 @@ export class ArtifactStore {
       this.db
         .prepare(
           `INSERT INTO artifacts (id, title, description, owner_kind, owner_id, workspace_id, conversation_id,
-             conversation_title, current_version, visibility, comments_enabled, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'private', ?, ?, ?)`
+             conversation_title, current_version, visibility, comments_enabled, responses_enabled, created_at,
+             updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'private', ?, ?, ?, ?)`
         )
         .run(
           artifact.id,
@@ -233,6 +234,7 @@ export class ArtifactStore {
           artifact.conversationTitle,
           versions.length,
           artifact.commentsEnabled ? 1 : 0,
+          artifact.responsesEnabled ? 1 : 0,
           artifact.createdAt,
           artifact.updatedAt
         )

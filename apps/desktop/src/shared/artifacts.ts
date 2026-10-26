@@ -26,7 +26,7 @@ export interface ArtifactListItem {
   storageBytes: number
   /** The newest version with a preview image, or null while none was captured. */
   thumbnailVersion: number | null
-  /** New devices, access requests, declined invitations and comments the owner has not seen yet. */
+  /** New devices, access requests, declined invitations, comments and responses the owner has not seen yet. */
   unseenEvents: number
   pendingRequests: number
   /** Comment threads that are neither resolved nor deleted. */
@@ -54,6 +54,21 @@ export interface ArtifactCommentView {
   status: 'open' | 'resolved'
   createdAt: number
 }
+
+/** The response a person sent from an artifact page: one per person, replaced when they send again. */
+export interface ArtifactResponseView {
+  id: string
+  /** The version it was last sent from. */
+  version: number
+  /** Guests are unverified: nobody confirmed the name they typed. */
+  author: { kind: 'owner' | 'invited' | 'approved' | 'guest'; name: string; verified: boolean }
+  /** Whatever the page sent: a JSON object written by the person, untrusted. */
+  data: Record<string, unknown>
+  createdAt: number
+  updatedAt: number
+}
+
+export type ArtifactResponsesExportResult = { ok: true; path: string } | { ok: false; canceled: true }
 
 export type ArtifactPersonKind = 'invited' | 'approved' | 'guest'
 
@@ -88,6 +103,8 @@ export interface ArtifactSharingView {
   linkExpiresAt: number | null
   hasAccessCode: boolean
   commentsEnabled: boolean
+  /** Whether the page may save the responses of the people who open it. */
+  responsesEnabled: boolean
   people: ArtifactPersonView[]
   requests: ArtifactAccessRequestView[]
   /** The configured public address, or null when links only work on this computer. */
@@ -102,9 +119,15 @@ export interface ArtifactSharingPatch {
   /** A new access code, or null to remove it. */
   accessCode?: string | null
   commentsEnabled?: boolean
+  responsesEnabled?: boolean
 }
 
-export type ArtifactEventKind = 'device_added' | 'access_requested' | 'invite_declined' | 'comment_added'
+export type ArtifactEventKind =
+  | 'device_added'
+  | 'access_requested'
+  | 'invite_declined'
+  | 'comment_added'
+  | 'response_submitted'
 
 export interface ArtifactEventView {
   id: string

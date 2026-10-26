@@ -100,7 +100,13 @@ describe('sharing admin', () => {
     expect(sharing.findPrincipalByInvite(digest(token), id)?.id).toBe(principalId)
     expect(onChange).toHaveBeenCalledWith(id)
     const view = await admin.getSharing(id)
-    expect(view).toMatchObject({ visibility: 'private', hasAccessCode: false, commentsEnabled: true, requests: [] })
+    expect(view).toMatchObject({
+      visibility: 'private',
+      hasAccessCode: false,
+      commentsEnabled: true,
+      responsesEnabled: true,
+      requests: [],
+    })
     expect(view.people).toEqual([
       {
         id: principalId,
@@ -178,13 +184,17 @@ describe('sharing admin', () => {
       accessCode: '123456',
       linkExpiresAt: clock.now() + 1000,
       commentsEnabled: false,
+      responsesEnabled: false,
     })
     expect(view).toMatchObject({
       visibility: 'link',
       hasAccessCode: true,
       linkExpiresAt: clock.now() + 1000,
       commentsEnabled: false,
+      responsesEnabled: false,
     })
+    expect(sharing.getSharing(id)?.responsesEnabled).toBe(false)
+    expect((await admin.setSharing(id, { responsesEnabled: true })).responsesEnabled).toBe(true)
     expect(JSON.stringify(view)).not.toContain('scrypt')
     expect(sharing.getSharing(id)?.accessCodeHash).toMatch(/^scrypt\$/)
     expect((await admin.get(id))?.visibility).toBe('link')

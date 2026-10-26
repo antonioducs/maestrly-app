@@ -175,7 +175,7 @@ describe('public server', () => {
     expect(reply.headers['cache-control']).toBe('no-store')
     const state = JSON.parse(reply.body)
     expect(state.identity).toEqual({ kind: 'owner' })
-    expect(state).toMatchObject({ ownerName: '', can: { comment: true, resolve: true } })
+    expect(state).toMatchObject({ ownerName: '', can: { comment: true, resolve: true, respond: true } })
     // Without a public address the owner's link is the one they opened, on this computer.
     expect(state.sharing).toEqual({
       visibility: 'private',

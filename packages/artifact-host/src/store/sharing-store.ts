@@ -31,7 +31,13 @@ export interface AccessRequestRecord {
   decidedAt: number | null
 }
 
-export const ARTIFACT_EVENT_KINDS = ['device_added', 'access_requested', 'invite_declined', 'comment_added'] as const
+export const ARTIFACT_EVENT_KINDS = [
+  'device_added',
+  'access_requested',
+  'invite_declined',
+  'comment_added',
+  'response_submitted',
+] as const
 export type ArtifactEventKind = (typeof ARTIFACT_EVENT_KINDS)[number]
 export type EventData = Record<string, string | number>
 
@@ -49,6 +55,8 @@ export interface SharingFields {
   linkExpiresAt: number | null
   accessCodeHash: string | null
   commentsEnabled: boolean
+  /** Whether the page may save the responses of the people who open it. */
+  responsesEnabled: boolean
 }
 
 type Row = Record<string, unknown>
@@ -58,6 +66,7 @@ const SHARING_COLUMNS: Record<keyof SharingFields, string> = {
   linkExpiresAt: 'link_expires_at',
   accessCodeHash: 'access_code_hash',
   commentsEnabled: 'comments_enabled',
+  responsesEnabled: 'responses_enabled',
 }
 
 const toPrincipal = (row: Row): PrincipalRecord => ({
@@ -110,7 +119,10 @@ export class SharingStore {
 
   getSharing(artifactId: string): SharingFields | null {
     const row = this.db
-      .prepare('SELECT visibility, link_expires_at, access_code_hash, comments_enabled FROM artifacts WHERE id = ?')
+      .prepare(
+        `SELECT visibility, link_expires_at, access_code_hash, comments_enabled, responses_enabled FROM artifacts
+         WHERE id = ?`
+      )
       .get(artifactId) as Row | undefined
     if (!row) return null
     return {
@@ -118,6 +130,7 @@ export class SharingStore {
       linkExpiresAt: (row.link_expires_at as number | null) ?? null,
       accessCodeHash: (row.access_code_hash as string | null) ?? null,
       commentsEnabled: row.comments_enabled === 1,
+      responsesEnabled: row.responses_enabled === 1,
     }
   }
 

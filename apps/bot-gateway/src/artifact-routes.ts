@@ -22,6 +22,7 @@ export const AGENT_ADMIN_METHODS = [
   'listComments',
   'addComment',
   'setCommentResolved',
+  'listResponses',
 ] as const satisfies readonly AdminMethod[]
 export const AGENT_UPLOAD_METHODS = ['create', 'update'] as const satisfies readonly AdminMethod[]
 const invalid = () => new ArtifactHostError('invalid_input', 'Invalid artifact arguments')

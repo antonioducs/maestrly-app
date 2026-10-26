@@ -6,7 +6,7 @@ const state: ViewerState = {
   artifact: { id: 'A'.repeat(22), title: 'Probe', currentVersion: 1, versions: [] },
   identity: { kind: 'invited', name: 'Maria' },
   ownerName: 'Antonio',
-  can: { comment: true, resolve: false },
+  can: { comment: true, resolve: false, respond: true },
 }
 
 const gate = (overrides: Partial<ViewerGate['gate']>): ViewerGate => ({

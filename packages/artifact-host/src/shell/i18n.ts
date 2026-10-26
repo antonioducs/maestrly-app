@@ -13,7 +13,7 @@ const en = {
   retry: 'Try again',
   theOwner: 'the owner',
   stored:
-    'The owner of this page sees your name, when you opened it, and a device label such as “Chrome on macOS”. Leaving ends this device’s access.',
+    'The owner of this page sees your name, when you opened it, a device label such as “Chrome on macOS”, and the responses you send from the page. Leaving ends this device’s access.',
 
   // Entry screens.
   inviteTitle: '{owner} invited you as {name}',
@@ -193,6 +193,18 @@ const en = {
   tagPage: 'About the page',
   tagMissing: 'Not found',
   unread: 'unread',
+
+  // Responses the page sends.
+  responseSent: 'Your response was sent to {owner}.',
+  responseSentNoOwner: 'Your response was sent.',
+  responseSavedOwner: 'Your response was saved.',
+  responsesClosed: 'This page is no longer accepting responses.',
+  responsesFull: 'This page cannot take more responses.',
+  responseFailed: 'Your response could not be sent. Try again.',
+  responseNameTitle: 'What is your name?',
+  responseNameDetail: '{owner} will see it with your response.',
+  responseNameDetailNoOwner: 'The owner of this page will see it with your response.',
+  responseNameSend: 'Send',
 }
 
 export type ShellKey = keyof typeof en
@@ -208,7 +220,7 @@ const ptBR: Record<ShellKey, string> = {
   retry: 'Tentar de novo',
   theOwner: 'o dono',
   stored:
-    'O dono desta página vê seu nome, quando você abriu a página e um rótulo do dispositivo, como “Chrome no macOS”. Sair encerra o acesso deste dispositivo.',
+    'O dono desta página vê seu nome, quando você abriu a página, um rótulo do dispositivo, como “Chrome no macOS”, e as respostas que você enviar pela página. Sair encerra o acesso deste dispositivo.',
 
   inviteTitle: '{owner} convidou você como {name}',
   inviteTitleNoOwner: 'Você recebeu um convite para ver esta página como {name}',
@@ -381,6 +393,17 @@ const ptBR: Record<ShellKey, string> = {
   tagPage: 'Sobre a página',
   tagMissing: 'Não encontrado',
   unread: 'não lido',
+
+  responseSent: 'Sua resposta foi enviada para {owner}.',
+  responseSentNoOwner: 'Sua resposta foi enviada.',
+  responseSavedOwner: 'Sua resposta foi salva.',
+  responsesClosed: 'Esta página não está mais recebendo respostas.',
+  responsesFull: 'Esta página não aceita mais respostas.',
+  responseFailed: 'Não foi possível enviar sua resposta. Tente de novo.',
+  responseNameTitle: 'Qual é o seu nome?',
+  responseNameDetail: '{owner} vai ver seu nome junto com a resposta.',
+  responseNameDetailNoOwner: 'O dono desta página vai ver seu nome junto com a resposta.',
+  responseNameSend: 'Enviar',
 }
 
 export const SHELL_CATALOGS: Readonly<Record<ShellLocale, Readonly<Record<ShellKey, string>>>> = {

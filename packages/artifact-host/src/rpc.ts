@@ -34,6 +34,8 @@ export const ADMIN_METHODS = [
   'addComment',
   'setCommentResolved',
   'deleteComment',
+  'listResponses',
+  'deleteResponse',
   'exportArtifact',
   'putBlobs',
   'importArtifact',

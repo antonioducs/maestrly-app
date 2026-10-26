@@ -13,8 +13,9 @@ import {
   MAX_TITLE_CHARS,
   MIN_ACCESS_CODE_CHARS,
 } from './limits.js'
-import type { CommentAnchor, CommentAuthorKind } from './shell/contract.js'
+import type { CommentAnchor, CommentAuthorKind, ResponseData } from './shell/contract.js'
 import type { ArtifactRecord, VersionAuthor, Visibility } from './store/artifact-store.js'
+import type { ResponseAuthorKind } from './store/response-store.js'
 import type { ArtifactEventKind, EventData, PrincipalKind } from './store/sharing-store.js'
 
 export type BundleFile = { path: string; bytes: Uint8Array }
@@ -132,6 +133,7 @@ export const sharingPatch = z
     linkExpiresAt: z.number().int().nullable().optional(),
     accessCode: z.string().min(MIN_ACCESS_CODE_CHARS).max(MAX_ACCESS_CODE_CHARS).nullable().optional(),
     commentsEnabled: z.boolean().optional(),
+    responsesEnabled: z.boolean().optional(),
   })
   .strict()
 
@@ -177,6 +179,8 @@ export interface SharingView {
   linkExpiresAt: number | null
   hasAccessCode: boolean
   commentsEnabled: boolean
+  /** Whether the page may save the responses of the people who open it. */
+  responsesEnabled: boolean
   people: PersonView[]
   requests: AccessRequestView[]
 }
@@ -197,8 +201,8 @@ export interface HostStatusInfo {
 }
 
 /**
- * An artifact as it moves to another host: its content, history and comments, but nobody it was shared with. File
- * bytes travel separately (`putBlobs`) and are referenced by SHA-256. Deleted comments are left behind.
+ * An artifact as it moves to another host: its content, history, comments and responses, but nobody it was shared
+ * with. File bytes travel separately (`putBlobs`) and are referenced by SHA-256. Deleted comments are left behind.
  */
 export interface ArtifactExport {
   id: string
@@ -208,6 +212,7 @@ export interface ArtifactExport {
   conversationId: string | null
   conversationTitle: string | null
   commentsEnabled: boolean
+  responsesEnabled: boolean
   createdAt: number
   updatedAt: number
   /** Oldest first, numbered from 1. */
@@ -232,6 +237,16 @@ export interface ArtifactExport {
     status: 'open' | 'resolved'
     createdAt: number
   }[]
+  /** In the order they were first sent. Who sent them is kept as a name, like the authors of comments. */
+  responses: {
+    id: string
+    version: number
+    authorKind: ResponseAuthorKind
+    authorName: string
+    data: ResponseData
+    createdAt: number
+    updatedAt: number
+  }[]
 }
 
 /** JSON with object keys in a fixed order, so equal anchors compare equal however they were built. */
@@ -246,14 +261,20 @@ function canonical(value: unknown): string {
 }
 
 /** What `sameContent` compares: an export, or a manifest whose sizes and types were not derived from its files yet. */
-export interface ArtifactContent extends Omit<ArtifactExport, 'versions' | 'thumbnails' | 'updatedAt'> {
+export interface ArtifactContent
+  extends Omit<ArtifactExport, 'versions' | 'thumbnails' | 'updatedAt' | 'responses' | 'responsesEnabled'> {
   versions: (Omit<ArtifactExport['versions'][number], 'files'> & { files: { path: string; sha256: string }[] })[]
   thumbnails: { version: number; sha256: string }[]
+  /** Absent in exports from hosts older than responses. */
+  responses?: ArtifactExport['responses']
+  /** Absent in exports from hosts older than responses. */
+  responsesEnabled?: boolean
 }
 
 /**
- * Whether two exports hold the same artifact: the same content, history and comments. Sizes and types are derived
- * from the files, and `updatedAt` from the history, so neither is compared.
+ * Whether two exports hold the same artifact: the same content, history, comments and responses. Sizes and types are
+ * derived from the files, and `updatedAt` from the history, so neither is compared. A host older than responses
+ * exports none and keeps them on: a copy there of an artifact with responses, or with them off, is not the same.
  */
 export function sameContent(a: ArtifactContent, b: ArtifactContent): boolean {
   const key = (value: ArtifactContent) =>
@@ -289,6 +310,16 @@ export function sameContent(a: ArtifactContent, b: ArtifactContent): boolean {
         comment.anchor,
         comment.status,
         comment.createdAt,
+      ]),
+      value.responsesEnabled ?? true,
+      (value.responses ?? []).map((response) => [
+        response.id,
+        response.version,
+        response.authorKind,
+        response.authorName,
+        response.data,
+        response.createdAt,
+        response.updatedAt,
       ]),
     ])
   return key(a) === key(b)

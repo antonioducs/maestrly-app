@@ -2,6 +2,8 @@ import { randomBytes } from 'node:crypto'
 import { chmodSync } from 'node:fs'
 import { DatabaseSync } from 'node:sqlite'
 
+const EVENT_KINDS = "'device_added', 'access_requested', 'invite_declined', 'comment_added', 'response_submitted'"
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS host_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS artifacts (
@@ -18,6 +20,7 @@ CREATE TABLE IF NOT EXISTS artifacts (
   link_expires_at INTEGER,
   access_code_hash TEXT,
   comments_enabled INTEGER NOT NULL DEFAULT 1,
+  responses_enabled INTEGER NOT NULL DEFAULT 1,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
@@ -95,7 +98,7 @@ CREATE INDEX IF NOT EXISTS access_requests_artifact ON access_requests (artifact
 CREATE TABLE IF NOT EXISTS events (
   id TEXT PRIMARY KEY,
   artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
-  kind TEXT NOT NULL CHECK (kind IN ('device_added', 'access_requested', 'invite_declined', 'comment_added')),
+  kind TEXT NOT NULL CHECK (kind IN (${EVENT_KINDS})),
   data_json TEXT NOT NULL DEFAULT '{}',
   created_at INTEGER NOT NULL,
   seen_at INTEGER
@@ -116,11 +119,46 @@ CREATE TABLE IF NOT EXISTS comments (
   deleted_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS comments_artifact ON comments (artifact_id, created_at);
+CREATE TABLE IF NOT EXISTS responses (
+  id TEXT PRIMARY KEY,
+  artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
+  respondent TEXT,
+  author_kind TEXT NOT NULL CHECK (author_kind IN ('owner', 'invited', 'approved', 'guest')),
+  author_name TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  data_json TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  UNIQUE (artifact_id, respondent)
+);
 CREATE TABLE IF NOT EXISTS owner_tickets (
   token_hash TEXT PRIMARY KEY,
   artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
   expires_at INTEGER NOT NULL
 );`
+
+/** Bumped with every change that tables created by an earlier build need applied through `MIGRATIONS`. */
+export const SCHEMA_VERSION = 2
+
+/** What brings tables created at version N - 1 to N. A new database is created current by `SCHEMA`. */
+const MIGRATIONS: Record<number, string> = {
+  // Responses can be turned off per artifact, and a new one is an event for the owner.
+  2: `
+ALTER TABLE artifacts ADD COLUMN responses_enabled INTEGER NOT NULL DEFAULT 1;
+CREATE TABLE events_next (
+  id TEXT PRIMARY KEY,
+  artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN (${EVENT_KINDS})),
+  data_json TEXT NOT NULL DEFAULT '{}',
+  created_at INTEGER NOT NULL,
+  seen_at INTEGER
+);
+INSERT INTO events_next (id, artifact_id, kind, data_json, created_at, seen_at)
+  SELECT id, artifact_id, kind, data_json, created_at, seen_at FROM events;
+DROP TABLE events;
+ALTER TABLE events_next RENAME TO events;
+CREATE INDEX IF NOT EXISTS events_unseen ON events (artifact_id, seen_at);`,
+}
 
 export function transaction<T>(db: DatabaseSync, fn: () => T): T {
   db.exec('BEGIN IMMEDIATE')
@@ -142,9 +180,21 @@ export function openDatabase(file: string): DatabaseSync {
     db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;')
     transaction(db, () => {
       db.exec(SCHEMA)
-      const insert = db.prepare('INSERT OR IGNORE INTO host_meta (key, value) VALUES (?, ?)')
-      insert.run('schema_version', '1')
-      insert.run('capability_key', randomBytes(32).toString('base64'))
+      const row = db.prepare(`SELECT value FROM host_meta WHERE key = 'schema_version'`).get() as
+        | { value: string }
+        | undefined
+      // Without a version, `SCHEMA` has just created every table as this build defines it.
+      for (let version = row ? Number(row.value) : SCHEMA_VERSION; version < SCHEMA_VERSION; version++)
+        db.exec(MIGRATIONS[version + 1]!)
+      // A database from a newer host keeps its version: this build never lowers it.
+      db.prepare(
+        `INSERT INTO host_meta (key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value
+         WHERE CAST(host_meta.value AS INTEGER) < CAST(excluded.value AS INTEGER)`
+      ).run(String(SCHEMA_VERSION))
+      db.prepare('INSERT OR IGNORE INTO host_meta (key, value) VALUES (?, ?)').run(
+        'capability_key',
+        randomBytes(32).toString('base64')
+      )
     })
   } catch (error) {
     db.close()

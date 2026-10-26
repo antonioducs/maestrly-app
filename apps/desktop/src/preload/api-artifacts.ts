@@ -9,6 +9,8 @@ import type {
   ArtifactEventView,
   ArtifactListItem,
   ArtifactRemoveResult,
+  ArtifactResponsesExportResult,
+  ArtifactResponseView,
   ArtifactSharingPatch,
   ArtifactSharingView,
   ArtifactThumbnailView,
@@ -69,6 +71,12 @@ export const artifactsApi = {
       ipcRenderer.invoke('artifacts:comment-resolve', id, commentId, resolved),
     deleteComment: (id: string, commentId: string): Promise<void> =>
       ipcRenderer.invoke('artifacts:comment-delete', id, commentId),
+    responses: (id: string): Promise<ArtifactResponseView[]> => ipcRenderer.invoke('artifacts:responses', id),
+    deleteResponse: (id: string, responseId: string): Promise<void> =>
+      ipcRenderer.invoke('artifacts:response-delete', id, responseId),
+    /** Asks where to save, then writes every response of the artifact as CSV or JSON. */
+    exportResponses: (id: string, format: 'csv' | 'json'): Promise<ArtifactResponsesExportResult> =>
+      ipcRenderer.invoke('artifacts:responses-export', id, format),
     onChanged: (cb: () => void): (() => void) => {
       const listener = () => cb()
       ipcRenderer.on('artifacts:changed', listener)

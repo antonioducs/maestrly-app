@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { BRIDGE_SCRIPT, SHELL_FILES, SHELL_VERSION } from '../src/generated/shell-assets.js'
-import { MAX_BRIDGE_MESSAGE_CHARS, parseBridgeMessage } from '../src/shell/contract.js'
+import { MAX_BRIDGE_MESSAGE_CHARS, MAX_RESPONSE_BYTES, parseBridgeMessage } from '../src/shell/contract.js'
 import { format, pickLocale, SHELL_CATALOGS } from '../src/shell/i18n.js'
 
 describe('embedded shell assets', () => {
@@ -26,6 +26,8 @@ describe('embedded shell assets', () => {
       'thread.js',
       'api.js',
       'dom.js',
+      'responses.js',
+      'responses-model.js',
       'viewer.css',
     ])
       expect(names).toContain(name)
@@ -47,6 +49,12 @@ describe('embedded shell assets', () => {
   it('ship the bridge as a classic script', () => {
     expect(BRIDGE_SCRIPT).not.toMatch(/^\s*(?:import|export)\b/m)
     expect(BRIDGE_SCRIPT).toContain('maestrly-bridge')
+  })
+
+  it('give pages a way to save and read their visitor’s response', () => {
+    expect(BRIDGE_SCRIPT).toContain('response-submit')
+    expect(BRIDGE_SCRIPT).toContain('response-get')
+    expect(BRIDGE_SCRIPT).toContain('getResponse')
   })
 })
 
@@ -170,5 +178,31 @@ describe('parseBridgeMessage', () => {
     const message = parseBridgeMessage({ source: 'maestrly-bridge', type: 'error', message: 'x'.repeat(1000) })
     expect(message).toEqual({ type: 'error', message: 'x'.repeat(MAX_BRIDGE_MESSAGE_CHARS) })
     expect(MAX_BRIDGE_MESSAGE_CHARS).toBe(300)
+  })
+})
+
+describe('parseBridgeMessage responses', () => {
+  const message = (fields: Record<string, unknown>) => parseBridgeMessage({ source: 'maestrly-bridge', ...fields })
+
+  it('accepts requests for the response with a short request ID', () => {
+    expect(message({ type: 'response-get', requestId: 'r1' })).toEqual({ type: 'response-get', requestId: 'r1' })
+    for (const requestId of ['', 'x'.repeat(33), 5, 'a b', undefined]) {
+      expect(message({ type: 'response-get', requestId })).toBeNull()
+      expect(message({ type: 'response-submit', requestId, data: {} })).toBeNull()
+    }
+  })
+
+  it('keeps a valid response, and marks anything else so the shell can answer it', () => {
+    expect(message({ type: 'response-submit', requestId: 'r2', data: { a: 1 } })).toEqual({
+      type: 'response-submit',
+      requestId: 'r2',
+      data: { a: 1 },
+    })
+    for (const data of [[], { n: Number.NaN }, { t: 'x'.repeat(MAX_RESPONSE_BYTES) }, undefined, 'text'])
+      expect(message({ type: 'response-submit', requestId: 'r2', data })).toEqual({
+        type: 'response-submit',
+        requestId: 'r2',
+        data: null,
+      })
   })
 })

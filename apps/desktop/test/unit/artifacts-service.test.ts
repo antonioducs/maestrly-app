@@ -48,6 +48,27 @@ async function join(link: string): Promise<number> {
   return response.status
 }
 
+/** Enters a shared link as a guest named `name` and sends a response, the way the viewer does for a page. */
+async function respondAsGuest(id: string, name: string, data: Record<string, unknown>, expected = 200): Promise<void> {
+  const origin = `http://127.0.0.1:${host.port}`
+  const api = `${origin}/a/${id}/api`
+  const headers: Record<string, string> = { origin, 'content-type': 'application/json', 'x-maestrly-artifact': '1' }
+  const entered = await fetch(`${api}/session/code`, { method: 'POST', headers, body: '{}' })
+  expect(entered.status).toBe(204)
+  headers.cookie = entered.headers
+    .getSetCookie()
+    .map((cookie) => cookie.split(';')[0])
+    .join('; ')
+  const named = await fetch(`${api}/session/name`, { method: 'PUT', headers, body: JSON.stringify({ name }) })
+  expect(named.status).toBe(204)
+  const sent = await fetch(`${api}/responses/mine`, {
+    method: 'PUT',
+    headers,
+    body: JSON.stringify({ version: 1, data }),
+  })
+  expect(sent.status).toBe(expected)
+}
+
 function standalone(name = 'Standalone chat'): StandaloneConversation {
   const conversation: StandaloneConversation = {
     id: crypto.randomUUID(),
@@ -410,6 +431,45 @@ describe('ArtifactsService', () => {
     expect(view.people).toEqual([
       expect.objectContaining({ kind: 'approved', name: 'João Silva', linkAvailable: false }),
     ])
+  })
+
+  it('lets the owner read, delete and close responses, and agents read them within their scope', async () => {
+    const conversation = makeConversation(makeWorkspace().id)
+    const outsider = makeConversation(makeWorkspace().id)
+    const { detail } = await service.create(conversation.id, { title: 'Form', files: page })
+    const id = detail.id
+    await service.setSharing(id, { visibility: 'link' })
+    expect((await service.sharing(id)).responsesEnabled).toBe(true)
+    await respondAsGuest(id, 'Paula', { answer: 'yes' })
+    await respondAsGuest(id, 'Ana', { answer: 'no' })
+
+    const responses = await service.responses(id)
+    expect(responses).toEqual([
+      {
+        id: expect.any(String),
+        version: 1,
+        author: { kind: 'guest', name: 'Paula', verified: false },
+        data: { answer: 'yes' },
+        createdAt: expect.any(Number),
+        updatedAt: expect.any(Number),
+      },
+      expect.objectContaining({ author: { kind: 'guest', name: 'Ana', verified: false }, data: { answer: 'no' } }),
+    ])
+    expect((await service.events(id)).filter((event) => event.kind === 'response_submitted')).toHaveLength(2)
+
+    const read = await service.responsesForConversation(conversation.id, id, { limit: 1 })
+    expect(read).toMatchObject({ currentVersion: 1, nextCursor: expect.any(String) })
+    expect(read.responses.map((item) => item.data)).toEqual([{ answer: 'yes' }])
+    const rest = await service.responsesForConversation(conversation.id, id, { cursor: read.nextCursor! })
+    expect(rest).toMatchObject({ nextCursor: null })
+    expect(rest.responses.map((item) => item.data)).toEqual([{ answer: 'no' }])
+    // Out of scope, the artifact and its responses do not exist.
+    expect((await errorOf(service.responsesForConversation(outsider.id, id, {}))).code).toBe('not_found')
+
+    await service.deleteResponse(id, responses[0]!.id)
+    expect((await service.responses(id)).map((item) => item.author.name)).toEqual(['Ana'])
+    expect(await service.setSharing(id, { responsesEnabled: false })).toMatchObject({ responsesEnabled: false })
+    await respondAsGuest(id, 'Late', { answer: 'maybe' }, 403)
   })
 
   it('lets agents read, answer and resolve comments within their scope', async () => {

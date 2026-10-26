@@ -93,6 +93,9 @@ describe('eventText', () => {
       'artifacts.events.invite_declined {"name":"Maria"}'
     )
     expect(eventText(t, event('comment_added', { name: 'Ana' }))).toBe('artifacts.events.comment_added {"name":"Ana"}')
+    expect(eventText(t, event('response_submitted', { name: 'Ana' }))).toBe(
+      'artifacts.events.response_submitted {"name":"Ana"}'
+    )
   })
 
   it('falls back to “Someone” when the event has no name', () => {

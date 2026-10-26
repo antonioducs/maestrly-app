@@ -476,6 +476,22 @@ export function ShareDialog({
               </section>
             )}
 
+            {/* A bot server older than responses does not report them, and has no switch to show. */}
+            {sharing.visibility !== 'private' && typeof sharing.responsesEnabled === 'boolean' && (
+              <section className="flex items-start justify-between gap-3 py-4 hairline-t">
+                <div className="min-w-0">
+                  <h3 className="text-xs font-semibold text-foreground/85">{t('artifacts.responses.allow')}</h3>
+                  <p className="mt-0.5 text-xs text-muted-foreground">{t('artifacts.responses.allowHint')}</p>
+                </div>
+                <SettingsSwitch
+                  checked={sharing.responsesEnabled}
+                  label={t('artifacts.responses.allow')}
+                  disabled={busy}
+                  onChange={() => void patch({ responsesEnabled: !sharing.responsesEnabled })}
+                />
+              </section>
+            )}
+
             <section className="py-3 hairline-t">
               {confirmAll ? (
                 <InlineConfirm

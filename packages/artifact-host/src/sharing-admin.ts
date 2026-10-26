@@ -104,6 +104,7 @@ export function createSharingAdmin(deps: SharingAdminDeps): SharingAdmin {
       linkExpiresAt: current.linkExpiresAt,
       hasAccessCode: current.accessCodeHash !== null,
       commentsEnabled: current.commentsEnabled,
+      responsesEnabled: current.responsesEnabled,
       people,
       requests,
     }
@@ -134,6 +135,7 @@ export function createSharingAdmin(deps: SharingAdminDeps): SharingAdmin {
       if (patch.visibility !== undefined) next.visibility = patch.visibility
       if (patch.linkExpiresAt !== undefined) next.linkExpiresAt = patch.linkExpiresAt
       if (patch.commentsEnabled !== undefined) next.commentsEnabled = patch.commentsEnabled
+      if (patch.responsesEnabled !== undefined) next.responsesEnabled = patch.responsesEnabled
       if (patch.accessCode !== undefined) {
         next.accessCodeHash = patch.accessCode === null ? null : hashAccessCode(patch.accessCode)
         // Whoever entered with the previous code, or without one, enters again with the new one.

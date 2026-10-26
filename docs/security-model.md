@@ -400,12 +400,28 @@ JSON inside an envelope in which every `<` is escaped, so a comment cannot close
 it or pose as the host. No comment starts an agent turn by itself, and an agent
 can only reply to and resolve threads of artifacts in its own scope.
 
+A page can save one response for the person viewing it. It cannot reach the
+host for that: it asks the viewer through `postMessage`, and the viewer checks
+the data with the same limits as the host (a JSON object of plain values, at
+most 16 levels deep and 32 KiB) and saves it with its own session, so the
+response is attributed to that session's person and to nobody the page names.
+The page gets back only that person's own response, never a name or anyone
+else's response. A guest without a name types one in the viewer first. After
+each response the viewer tells the person it was sent, so a page cannot collect
+what they type without them seeing it. The owner can turn responses off, and
+the offscreen preview neither reads nor saves them. Agents read responses only
+through `artifact_responses`, after a notice that they come from outside the
+conversation and inside an envelope in which every `<` is escaped; they cannot
+delete responses or turn them off, and only the owner deletes them.
+
 Artifact content is served from a separate path carrying an HMAC-signed
 capability bound to the session, the artifact, the version, and an expiry of 12
 hours. Its responses carry a sandbox Content Security Policy without
 `allow-same-origin` or `allow-top-navigation`, so content has an opaque origin
 even when opened directly: it cannot read cookies, call the host API, navigate
-the viewer, submit forms, or register service workers. Network access is limited
+the viewer, submit forms, or register service workers. The one write it can ask
+for, its viewer's response, goes through the viewer as described above. Network
+access is limited
 to its own files and a fixed allowlist of CDNs. Messages from content to the
 viewer are validated, capped, and rendered as text.
 
