@@ -9,7 +9,7 @@ describe('memory permission rules', () => {
     expect(ruleEffect('mcp', 'some_external_tool', BYOK_DEFAULT_RULESET)).toBe('ask')
   })
   it('never prompts for artifact reads, but asks before publishing, opening or answering comments', () => {
-    for (const tool of ['artifact_get', 'artifact_list', 'artifact_comments'])
+    for (const tool of ['artifact_get', 'artifact_list', 'artifact_comments', 'artifact_responses'])
       expect(ruleEffect('mcp', tool, BYOK_DEFAULT_RULESET)).toBe('allow')
     for (const tool of [
       'artifact_create',

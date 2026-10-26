@@ -12,6 +12,7 @@ import { registerBotModeTools } from './mcp/tools/bot-instance'
 import { registerServerModeTools } from './mcp/tools/server-computer'
 import { registerArtifactTools } from './mcp/tools/artifacts'
 import { registerArtifactCommentTools } from './mcp/tools/artifact-comments'
+import { registerArtifactResponseTools } from './mcp/tools/artifact-responses'
 import { botRuntimeForConversation } from './fleet/instance'
 import { isBotMode } from './fleet/instance/config'
 import { registerInterfaceTools } from './mcp/tools/interfaces'
@@ -49,9 +50,11 @@ export function buildAppToolsServer(conversationId: string, workerScope?: Maestr
   if (!isBotMode()) {
     registerArtifactTools(ctx)
     registerArtifactCommentTools(ctx)
+    registerArtifactResponseTools(ctx)
   } else if (botRuntimeForConversation(conversationId)?.artifactsEnabled) {
     registerArtifactTools(ctx, undefined, { open: false })
     registerArtifactCommentTools(ctx)
+    registerArtifactResponseTools(ctx)
   }
   registerBotModeTools(ctx)
   registerServerModeTools(ctx)

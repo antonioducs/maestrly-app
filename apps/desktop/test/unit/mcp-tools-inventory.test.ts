@@ -149,6 +149,7 @@ const EXPECTED_TOOL_NAMES = [
   'artifact_comments',
   'artifact_comment_reply',
   'artifact_comment_resolve',
+  'artifact_responses',
   'preview_interface',
 ] as const
 
@@ -250,6 +251,7 @@ const EXPECTED_SHAPES: ToolShape[] = [
   shape('artifact_comments', ['cursor', 'id', 'status', 'version'], ['id']),
   shape('artifact_comment_reply', ['body', 'commentId', 'id'], ['body', 'commentId', 'id']),
   shape('artifact_comment_resolve', ['commentId', 'id'], ['commentId', 'id']),
+  shape('artifact_responses', ['cursor', 'id', 'limit'], ['id']),
   shape('preview_interface', ['html', 'width'], ['html']),
 ]
 
@@ -322,7 +324,7 @@ describe('MCP app tools inventory', () => {
     closeDb()
   })
 
-  it.each([true, false])('gates the seven bot artifact tools by runtime authorization: %s', async (enabled) => {
+  it.each([true, false])('gates the eight bot artifact tools by runtime authorization: %s', async (enabled) => {
     vi.stubEnv('MAESTRLY_BOT_MODE', '1')
     botState.enabled = enabled
     botState.conversationId = convId
@@ -339,6 +341,7 @@ describe('MCP app tools inventory', () => {
             'artifact_comments',
             'artifact_comment_reply',
             'artifact_comment_resolve',
+            'artifact_responses',
           ]
         : []
     )
@@ -444,7 +447,7 @@ describe('MCP app tools inventory', () => {
   it('classifies every registered app-tool exactly once with no orphan policy entries', async () => {
     const registered = (await listToolInventory(convId)).map((tool) => tool.name).sort()
     const classified = Object.keys(APP_TOOL_POLICY).sort()
-    expect(registered).toHaveLength(86)
+    expect(registered).toHaveLength(87)
     expect(classified).toEqual([...registered, ...LINKED_BOARD_TOOL_NAMES, ...BOT_INSTANCE_TOOL_NAMES].sort())
   })
 
@@ -530,6 +533,8 @@ describe('MCP app tools inventory', () => {
     expect(appToolAllowed('maestro', 'artifact_open')).toBe(false)
     expect(appToolAllowed('ask', 'artifact_comments')).toBe(true)
     expect(appToolAllowed('maestro', 'artifact_comments')).toBe(true)
+    expect(appToolAllowed('ask', 'artifact_responses')).toBe(true)
+    expect(appToolAllowed('maestro', 'artifact_responses')).toBe(true)
     expect(appToolAllowed('plan', 'artifact_comment_reply')).toBe(true)
     expect(appToolAllowed('maestro', 'artifact_comment_reply')).toBe(false)
     expect(appToolAllowed('maestro', 'artifact_comment_resolve')).toBe(false)
