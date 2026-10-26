@@ -46,3 +46,6 @@ export const MAX_COMMENT_CHARS = 4000
 /** The quoted passage a comment is anchored to, and the text kept before and after it to find it again. */
 export { MAX_QUOTE_CHARS, MAX_QUOTE_CONTEXT_CHARS, MAX_SELECTOR_CHARS } from './shell/contract.js'
 export const COMMENTS_PAGE_SIZE = 200
+/** Responses kept for one artifact: one per person, plus those brought with it from another host. */
+export const MAX_RESPONSES_PER_ARTIFACT = 500
+export const RESPONSES_PAGE_SIZE = 50
