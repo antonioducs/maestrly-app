@@ -234,7 +234,8 @@ export default {
       title_other: 'Move {{count}} artifacts to the bot server',
       destination: 'They go to the bot server this computer is connected to.',
       facts: {
-        content: 'Versions, comments and previews go along. Cards in conversations keep opening the same artifacts.',
+        content:
+          'Versions, comments, responses and previews go along. Cards in conversations keep opening the same artifacts.',
         safe: 'Each one leaves this computer only after it is checked on the server. If something fails midway, it stays here.',
         enable: 'Hosting on the bot server is turned on first.',
         sharedOne:
@@ -426,6 +427,22 @@ export default {
         agent: 'You (the agent)',
         outro: 'Tell me which of these you would act on and how, before changing the artifact.',
       },
+    },
+    responses: {
+      title: 'Responses',
+      count_one: '{{count}} response',
+      count_other: '{{count}} responses',
+      more_one: 'and {{count}} more field',
+      more_other: 'and {{count}} more fields',
+      showAll: 'Show all',
+      hide: 'Hide',
+      delete: 'Delete',
+      confirmDelete: 'Delete this response? The person can send a new one.',
+      exportCsv: 'Export CSV',
+      exportJson: 'Export JSON',
+      exported: 'Saved to {{path}}',
+      allow: 'Responses',
+      allowHint: 'The page can save one response from each person who opens it. Only you see them.',
     },
     events: {
       title: 'Recent activity',

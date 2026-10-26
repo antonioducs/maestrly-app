@@ -240,7 +240,7 @@ export default {
       destination: 'Eles vão para o servidor de bots ao qual este computador está conectado.',
       facts: {
         content:
-          'Vão as versões, os comentários e as prévias. Os cards nas conversas continuam abrindo os mesmos artefatos.',
+          'Vão as versões, os comentários, as respostas e as prévias. Os cards nas conversas continuam abrindo os mesmos artefatos.',
         safe: 'Cada um só sai deste computador depois de conferido no servidor. Se algo falhar no meio, ele continua aqui.',
         enable: 'A hospedagem no servidor de bots será ligada antes.',
         sharedOne:
@@ -432,6 +432,22 @@ export default {
         agent: 'Você (o agente)',
         outro: 'Diga quais deles você atenderia e como, antes de mudar o artefato.',
       },
+    },
+    responses: {
+      title: 'Respostas',
+      count_one: '{{count}} resposta',
+      count_other: '{{count}} respostas',
+      more_one: 'e mais {{count}} campo',
+      more_other: 'e mais {{count}} campos',
+      showAll: 'Ver tudo',
+      hide: 'Ocultar',
+      delete: 'Excluir',
+      confirmDelete: 'Excluir esta resposta? A pessoa poderá enviar outra.',
+      exportCsv: 'Exportar CSV',
+      exportJson: 'Exportar JSON',
+      exported: 'Salvo em {{path}}',
+      allow: 'Respostas',
+      allowHint: 'A página pode salvar uma resposta de cada pessoa que a abre. Só você vê as respostas.',
     },
     events: {
       title: 'Atividade recente',

@@ -7,6 +7,7 @@ import type {
   ArtifactDetailView,
   ArtifactEventView,
   ArtifactListItem,
+  ArtifactResponseView,
   ArtifactSharingView,
 } from '../../../shared/artifacts'
 import { Button } from '@/components/ui/button'
@@ -17,6 +18,7 @@ import { useLocale } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 import { AccessRequests } from './AccessRequests'
 import { CommentThreads } from './CommentThreads'
+import { ResponseList } from './ResponseList'
 import { draftFromComments } from './comments-view'
 import { ArtifactThumbnail } from './ArtifactThumbnail'
 import { VersionStack } from './ArtifactGridCard'
@@ -59,8 +61,10 @@ export function ArtifactDetailSheet({
   const [sharing, setSharing] = useState<ArtifactSharingView | null>(null)
   const [events, setEvents] = useState<ArtifactEventView[]>([])
   const [comments, setComments] = useState<ArtifactCommentView[]>([])
+  const [responses, setResponses] = useState<ArtifactResponseView[]>([])
   const [deciding, setDeciding] = useState(false)
   const [commenting, setCommenting] = useState(false)
+  const [responding, setResponding] = useState(false)
   const closeRef = useRef<HTMLButtonElement>(null)
   const errorRef = useRef(onError)
   errorRef.current = onError
@@ -103,19 +107,23 @@ export function ArtifactDetailSheet({
     setSharing(null)
     setEvents([])
     setComments([])
+    setResponses([])
     const load = () =>
       Promise.all([
         window.api.artifacts.sharing(item.id),
         window.api.artifacts.events(item.id),
         window.api.artifacts.comments(item.id),
+        // A bot server older than responses refuses the call; the rest of the panel still shows.
+        window.api.artifacts.responses(item.id).catch((): ArtifactResponseView[] => []),
       ])
-        .then(([nextSharing, nextEvents, nextComments]) => {
+        .then(([nextSharing, nextEvents, nextComments, nextResponses]) => {
           if (!alive) return
           const unseen = nextEvents.filter((event) => !event.seen)
           for (const event of unseen) fresh.current.add(event.id)
           setSharing(nextSharing)
           setEvents(nextEvents)
           setComments(nextComments)
+          setResponses(nextResponses)
           if (unseen.length) void window.api.artifacts.markSeen(item.id).catch(() => {})
         })
         // The artifact may have just been deleted; the list reports what matters.
@@ -154,6 +162,30 @@ export function ArtifactDetailSheet({
       return false
     } finally {
       setCommenting(false)
+    }
+  }
+
+  const deleteResponse = async (responseId: string) => {
+    setResponding(true)
+    try {
+      await window.api.artifacts.deleteResponse(item.id, responseId)
+      setResponses(await window.api.artifacts.responses(item.id))
+    } catch (reason) {
+      onError(reason instanceof Error ? reason.message : String(reason))
+    } finally {
+      setResponding(false)
+    }
+  }
+
+  const exportResponses = async (format: 'csv' | 'json') => {
+    setResponding(true)
+    try {
+      const result = await window.api.artifacts.exportResponses(item.id, format)
+      if (result.ok) onNotice(t('artifacts.responses.exported', { path: result.path }))
+    } catch (reason) {
+      onError(reason instanceof Error ? reason.message : String(reason))
+    } finally {
+      setResponding(false)
     }
   }
 
@@ -348,6 +380,25 @@ export function ArtifactDetailSheet({
                   <p className="mt-1.5 text-[11.5px] text-muted-foreground">{t('artifacts.comments.sendHint')}</p>
                 </div>
               )}
+            </section>
+          )}
+          {responses.length > 0 && (
+            <section className="mb-[22px]" aria-labelledby="artifact-detail-responses" data-testid="artifact-responses">
+              <h3
+                id="artifact-detail-responses"
+                className="mb-2 flex items-baseline justify-between text-xs font-semibold text-foreground/75"
+              >
+                {t('artifacts.responses.title')}
+                <span className="font-normal text-muted-foreground">
+                  {t('artifacts.responses.count', { count: responses.length })}
+                </span>
+              </h3>
+              <ResponseList
+                responses={responses}
+                busy={responding}
+                onDelete={(responseId) => void deleteResponse(responseId)}
+                onExport={(format) => void exportResponses(format)}
+              />
             </section>
           )}
           {events.length > 0 && (
