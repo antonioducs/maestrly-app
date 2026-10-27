@@ -5,6 +5,23 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-10-26
+
+### Added
+
+- Artifact pages can collect one response from each person who opens them, such
+  as the answers to a form you send to someone. The page saves it through the
+  viewer with `maestrly.submit()` and reads it back with
+  `maestrly.getResponse()`, without reaching the network or the host. A guest
+  types their name once before their first response, and everyone sees a notice
+  after each one. The artifact's details list the responses, delete them, and
+  export them as CSV or JSON; **Share → Responses** turns them off. Agents read
+  them with the new `artifact_responses` tool and know the page API, so asking
+  one for a form works. An artifact keeps up to 500 responses of up to 32 KiB
+  each. It needs a bot server on this version, and moving an artifact with
+  responses to an older one fails without losing them. See
+  [Responses](docs/artifacts.md#responses).
+
 ## [0.28.1] - 2026-10-25
 
 ### Fixed
