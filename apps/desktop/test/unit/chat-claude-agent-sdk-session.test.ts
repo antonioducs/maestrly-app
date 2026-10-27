@@ -3,10 +3,13 @@ import type { ChatMessage } from '../../src/shared/chat'
 import {
   buildClaudeSessionBinding,
   buildClaudeSessionPrompt,
-  claudeSeedTranscript,
+  claudeSessionSeed,
+  estimateClaudeSeedTokens,
   isClaudeSessionBindingCompatible,
+  renderClaudeSeed,
   resolveClaudeSession,
 } from '../../src/main/chat/claude-agent-sdk/session'
+import { PORTABLE_IMAGE_TOKENS, estimateTextTokens } from '../../src/main/chat/portable-context'
 import { CLAUDE_HARNESS_PROFILE, type ClaudeSessionBinding } from '../../src/main/chat/claude-agent-sdk/session-store'
 import { pdfFallbackText } from '../../src/main/chat/pdf-attachments'
 import { storedPdfPart } from '../helpers/pdf-parts'
@@ -275,8 +278,128 @@ describe('Claude Agent SDK session resolution', () => {
         createdAt: 2,
       },
     ] as ChatMessage[]
-    expect(claudeSeedTranscript(history, 'session-1')).toBe('')
-    expect(claudeSeedTranscript(history, undefined)).toContain('first')
-    expect(claudeSeedTranscript(history, undefined)).not.toContain('second')
+    expect(claudeSessionSeed(history, 'session-1')).toEqual({ transcript: '', images: [] })
+    expect(claudeSessionSeed(history, undefined).transcript).toContain('first')
+    expect(claudeSessionSeed(history, undefined).transcript).not.toContain('second')
+  })
+})
+
+describe('Claude session seed images', () => {
+  const png = (payload: string) => `data:image/png;base64,${Buffer.from(payload).toString('base64')}`
+  const imagePart = (name: string, data: string, extra: Record<string, unknown> = {}) => ({
+    type: 'file',
+    id: `file-${name}`,
+    kind: 'image',
+    name,
+    mediaType: 'image/png',
+    data,
+    ...extra,
+  })
+  const userMessage = (id: string, parts: unknown[]) =>
+    ({ id, conversationId: 'conversation-1', role: 'user', parts, createdAt: 1 }) as ChatMessage
+  const assistantMessage = (id: string, text: string) =>
+    ({
+      id,
+      conversationId: 'conversation-1',
+      role: 'assistant',
+      parts: [{ type: 'text', id: `${id}-text`, text }],
+      createdAt: 1,
+    }) as ChatMessage
+  const contentOf = async (prompt: ReturnType<typeof buildClaudeSessionPrompt>) => {
+    prompt.release()
+    return (await prompt.prompt[Symbol.asyncIterator]().next()).value?.message.content
+  }
+
+  it('re-sends earlier images as image blocks referenced from the transcript', async () => {
+    const history = [
+      userMessage('user-1', [{ type: 'text', id: 't1', text: 'see this' }, imagePart('one.png', png('first'))]),
+      assistantMessage('assistant-1', 'I see it'),
+      userMessage('user-2', [{ type: 'text', id: 't2', text: 'and now?' }]),
+    ]
+    const seed = claudeSessionSeed(history, undefined)
+    expect(seed.transcript).toContain('[image "one.png" — re-sent below as transcript image 1]')
+    expect(seed.transcript).not.toContain('does not accept images')
+    expect(seed.images).toHaveLength(1)
+    expect(estimateClaudeSeedTokens(seed)).toBe(estimateTextTokens(seed.transcript) + PORTABLE_IMAGE_TOKENS)
+
+    const content = await contentOf(buildClaudeSessionPrompt(history[2], seed))
+    expect(content).toEqual([
+      { type: 'text', text: `Previous Maestrly transcript (continue from this context):\n\n${seed.transcript}` },
+      { type: 'text', text: 'Transcript image 1 ("one.png"):' },
+      {
+        type: 'image',
+        source: { type: 'base64', media_type: 'image/png', data: Buffer.from('first').toString('base64') },
+      },
+      { type: 'text', text: 'and now?' },
+    ])
+  })
+
+  it('keeps the newest images within the budget left by the message sent with the seed', () => {
+    const earlier = Array.from({ length: 5 }, (_, index) =>
+      userMessage(`user-${index}`, [imagePart(`old-${index}.png`, png(`old-${index}`))])
+    )
+    const current = userMessage(
+      'user-current',
+      Array.from({ length: 5 }, (_, index) => imagePart(`new-${index}.png`, png(`new-${index}`)))
+    )
+    const seed = claudeSessionSeed([...earlier, current], undefined)
+    // 8 images per request, 5 of them in the current message: only the 3 newest earlier images are re-sent.
+    expect(seed.images.map((image) => [image.index, image.name])).toEqual([
+      [1, 'old-2.png'],
+      [2, 'old-3.png'],
+      [3, 'old-4.png'],
+    ])
+    expect(seed.transcript).toContain(
+      '[image "old-1.png" attached earlier; its pixels are not part of this text transcript]'
+    )
+    expect(seed.transcript).toContain('[image "old-4.png" — re-sent below as transcript image 3]')
+  })
+
+  it('carries the current images into a continuation and skips those before a compaction summary', () => {
+    const history = [
+      userMessage('user-1', [imagePart('compacted.png', png('compacted'))]),
+      {
+        ...assistantMessage('assistant-1', ''),
+        parts: [{ type: 'compaction', id: 'summary', text: 'summary of the earlier work', strategy: 'summary' }],
+      } as ChatMessage,
+      userMessage('user-2', [
+        { type: 'text', id: 't2', text: 'what is on screen?' },
+        imagePart('screen.png', png('screen')),
+      ]),
+      assistantMessage('assistant-2', 'partial answer'),
+    ]
+    const seed = renderClaudeSeed(history)
+    expect(seed.images.map((image) => image.name)).toEqual(['screen.png'])
+    expect(seed.transcript).toContain('[image "screen.png" — re-sent below as transcript image 1]')
+    expect(seed.transcript).not.toContain('compacted.png')
+
+    expect(renderClaudeSeed(history, { budget: { images: 0, bytes: 0 } })).toEqual({
+      transcript: expect.stringContaining('[image "screen.png" attached earlier;'),
+      images: [],
+    })
+  })
+
+  it('marks unreadable images instead of dropping them silently', async () => {
+    const missing = imagePart('gone.png', undefined as unknown as string, { artifactId: 'a'.repeat(32), byteSize: 10 })
+    const seed = renderClaudeSeed([userMessage('user-1', [missing])])
+    expect(seed.images).toEqual([])
+    expect(seed.transcript).toContain('[Image attachment gone.png could not be decoded by the host.]')
+
+    const content = await contentOf(buildClaudeSessionPrompt(userMessage('user-2', [missing]), ''))
+    expect(content).toEqual([{ type: 'text', text: '[Image attachment gone.png could not be decoded by the host.]' }])
+  })
+
+  it('describes images as text when the runtime drops them', () => {
+    const history = [
+      userMessage('user-1', [
+        imagePart('one.png', png('first'), { description: 'A chart.', descriptionModel: 'Vision' }),
+      ]),
+      userMessage('user-2', [{ type: 'text', id: 't2', text: 'next' }]),
+    ]
+    const seed = claudeSessionSeed(history, undefined, { dropImages: true })
+    expect(seed.images).toEqual([])
+    expect(seed.transcript).toContain(
+      '[image "one.png" — the selected model cannot see images, so here is a description by Vision]\nA chart.'
+    )
   })
 })
