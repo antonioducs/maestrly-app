@@ -100,7 +100,7 @@ exchanging images and text messages.
 
 ## Set up the bot server
 
-Open **Settings → Bot servers** and choose where bots will run. The desktop app sets up the gateway, connects this computer, and keeps the server on the app's version. Each environment has a **4 GiB memory limit by default** and 1 GiB of shared memory; budget more for open browsers and other programs. Each bot's Chromium takes roughly 300 to 500 MiB while it is open, and closes after 15 minutes without use. The included desktop uses CPU rendering; no GPU is required. Downloading the bot runtime requires substantial disk space, and each environment needs its own persistent home volume. An artifact-only setup downloads just the gateway image.
+Open **Settings → Bot servers** and choose where bots will run. The desktop app sets up the gateway, connects this computer, and keeps the server on the app's version. Each environment has a **4 GiB memory limit by default** and 1 GiB of shared memory; budget more for open browsers and other programs. Each bot's Chromium takes roughly 300 to 500 MiB and, once a bot has used it, stays open until the bot pauses or its environment restarts. The included desktop uses CPU rendering; no GPU is required. Downloading the bot runtime requires substantial disk space, and each environment needs its own persistent home volume. An artifact-only setup downloads just the gateway image.
 
 ### On this computer
 
@@ -465,8 +465,11 @@ it through a DevTools pipe, never a network port, so no other program of the env
 - Each of the bot's conversations sees and drives only its own tabs: `browser_tabs` in a routine run or a conversation
   with another bot never lists the main conversation's tabs. A tab a page opens belongs to the conversation of that
   page; a tab you open by hand belongs to the conversation the desktop shows.
-- The browser starts when a tool, a link, or the dock needs it, and closes after 15 minutes without use while nobody
-  watches or controls the bot's screen, or when you pause the bot. It closes cleanly, saving the cookies sites just
+- The browser starts when a tool, a link, or the dock needs it and stays open, as the built-in browser does: a restart
+  is where sites such as Google sign the bot out. It closes when you pause the bot, unless someone watches or controls
+  its screen. Signing in to the browser itself is turned off, so a Google login is a site's login: Debian builds
+  Chromium with Google API keys, and with browser sign-in on, Chromium reconciles the web's Google accounts with its
+  own at each start. It closes cleanly, saving the cookies sites just
   changed, so the bot stays signed in; only a browser still open 10 seconds later is ended. When Maestrly quits (an
   environment restart, update or stop), it closes the bots' browsers before anything else, and the environment waits
   for them before stopping the bots' screens: a browser whose screen stops first exits without saving. Its tabs reopen

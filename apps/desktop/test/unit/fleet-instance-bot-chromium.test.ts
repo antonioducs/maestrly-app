@@ -2,7 +2,6 @@ import path from 'node:path'
 import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
-  BOT_CHROMIUM_IDLE_MS,
   BotChromium,
   CHROMIUM_SESSIONS_FOLDER,
   COOKIES_IMPORTED_MARKER,
@@ -142,7 +141,6 @@ function setup(
   options: {
     foreground?: string | null
     files?: Record<string, string>
-    watched?: () => boolean
     cookies?: () => Promise<any[]>
     beforeStart?: () => Promise<void>
   } = {}
@@ -164,8 +162,6 @@ function setup(
       now: () => now,
       setTimeout,
       clearTimeout,
-      setInterval,
-      clearInterval,
       log,
     },
     env: () => ({ DISPLAY: ':1' }),
@@ -174,7 +170,6 @@ function setup(
     downloads: '/home/bot/Downloads',
     foregroundConversationId: () => (options.foreground === undefined ? 'conv-a' : options.foreground),
     ownsConversation: (id) => id.startsWith('conv-'),
-    watched: options.watched ?? (() => false),
     ...(options.cookies ? { sharedCookies: options.cookies } : {}),
     ...(options.beforeStart ? { beforeStart: options.beforeStart } : {}),
     fs,
@@ -390,22 +385,17 @@ describe('BotChromium', () => {
     expect(cookies).toHaveBeenCalledTimes(1)
   })
 
-  it('closes after its idle time unless someone watches the bot’s screen', async () => {
+  it('stays open however long it goes unused, as the built-in browser does', async () => {
     vi.useFakeTimers()
-    let watched = true
-    const { chromium, advance } = setup({ watched: () => watched })
+    const { chromium, browsers, advance } = setup()
     await chromium.state('conv-a')
-    advance(BOT_CHROMIUM_IDLE_MS + 1)
-    await vi.advanceTimersByTimeAsync(60_000)
+    // A restart is where sites such as Google sign the bot out.
+    advance(24 * 60 * 60_000)
+    await vi.advanceTimersByTimeAsync(24 * 60 * 60_000)
     expect(chromium.isRunning).toBe(true)
-    watched = false
-    // Watching counted as use: the idle time starts once they leave.
-    advance(BOT_CHROMIUM_IDLE_MS - 1)
-    await vi.advanceTimersByTimeAsync(60_000)
-    expect(chromium.isRunning).toBe(true)
-    advance(2)
-    await vi.advanceTimersByTimeAsync(60_000)
-    expect(chromium.isRunning).toBe(false)
+    await chromium.state('conv-a')
+    expect(browsers).toHaveLength(1)
+    expect(browsers[0].calls.some((call) => call.method === 'Browser.close')).toBe(false)
   })
 
   it('ends its pages when the browser exits, and starts again for the next use', async () => {

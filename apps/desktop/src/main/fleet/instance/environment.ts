@@ -149,8 +149,6 @@ export interface BotBrowserTarget {
   /** The conversation the bot's desktop shows: the tabs a person opens by hand are its. */
   foregroundConversationId(): string | null
   ownsConversation(conversationId: string): boolean
-  /** Whether someone watches or controls the bot's screens. */
-  watched(): boolean
 }
 /** The desktop services of one bot: its desktop socket, terminal windows and browser window. */
 export interface BotDesktopHandle {
@@ -746,7 +744,6 @@ export class EnvironmentRuntime {
             display,
             foregroundConversationId: () => bot.foregroundConversationId,
             ownsConversation: (conversationId) => bot.ownsConversation(conversationId),
-            watched: () => this.displays?.watched?.(bot.botId) ?? false,
           })
         )
       } catch (error) {
@@ -795,7 +792,7 @@ export class EnvironmentRuntime {
   }
   /** Closes a bot's Chromium, keeping its tabs to reopen: a paused bot uses no browser until it resumes. */
   stopBotBrowser(botId: string): void {
-    // Someone watching the bot's screen may be using its browser: it closes for idleness once they leave.
+    // Someone watching the bot's screen may be using its browser: it stays open.
     if (this.displays?.watched?.(botId)) return
     void this.browsers
       .get(botId)

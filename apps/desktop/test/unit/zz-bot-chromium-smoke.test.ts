@@ -69,8 +69,6 @@ const chromium = new BotChromium({
     now: Date.now,
     setTimeout,
     clearTimeout,
-    setInterval,
-    clearInterval,
     log: (m) => logs.push(m),
   },
   env: () => ({}),
@@ -81,7 +79,6 @@ const chromium = new BotChromium({
   downloads: path.join(root, 'Downloads'),
   foregroundConversationId: () => 'conv-a',
   ownsConversation: (id) => id.startsWith('conv-'),
-  watched: () => false,
   sharedCookies: async () => [
     { name: 'sid', value: 'abc', domain: 'example.com', hostOnly: true, path: '/', secure: true, httpOnly: true },
     { name: 'wide', value: '1', domain: '.example.com', path: '/', secure: false },

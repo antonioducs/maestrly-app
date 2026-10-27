@@ -63,7 +63,6 @@ function fakeChromium() {
   const tabs: FakeTab[] = []
   const active = new Map<string, string>()
   let seq = 0
-  const touch = vi.fn()
   const pages = new Map<string, { targetId: string; captureScreenshot: () => Promise<Buffer> }>()
   const pageOf = (id: string) => {
     let page = pages.get(id)
@@ -76,7 +75,6 @@ function fakeChromium() {
   const owned = (conversationId: string, scopeId?: string) =>
     tabs.filter((tab) => tab.conversationId === conversationId && tab.scopeId === scopeId)
   const chromium = {
-    touch,
     state: vi.fn(async (conversationId: string, scopeId?: string) => {
       const list = owned(conversationId, scopeId).map(({ id, url, title }) => ({ id, url, title }))
       return { tabs: list, activeId: scopeId ? (list[0]?.id ?? null) : (active.get(conversationId) ?? null) }
@@ -160,8 +158,6 @@ describe('browser tools on a bot’s own Chromium', () => {
     await handlers.browser_navigate({ url: 'https://b.test' })
     expect(h.navigate).toHaveBeenCalledWith(fake.pages.get('T1'), 'https://b.test', {})
     expect(fake.mock.page).toHaveBeenCalledWith('bot-conv')
-    // Each call renews the browser's activity.
-    expect(fake.mock.touch).toHaveBeenCalled()
     expect(h.acquireBrowserForControl).not.toHaveBeenCalled()
 
     const listed = await handlers.browser_tabs({})

@@ -5,6 +5,16 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Fixed
+
+- A bot's Chromium no longer signs the bot out of Google after it goes unused
+  for a while. It no longer closes after 15 idle minutes: like the built-in
+  browser, it stays open until the bot pauses or its environment restarts.
+  Signing in to the browser itself is turned off, so Chromium no longer
+  reconciles the web's Google accounts with its own at each start. A bot's
+  open Chromium takes roughly 300 to 500 MiB. Sign in to Google once more after
+  updating.
+
 ## [0.29.0] - 2026-10-26
 
 ### Added

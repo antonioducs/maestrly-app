@@ -212,6 +212,8 @@ describe('ChromiumSupervisor', () => {
     expect(BOT_CHROMIUM_ARGS).toContain('--disable-blink-features=AutomationControlled')
     // Without it, Chromium deletes the session cookies of its last run at each start.
     expect(BOT_CHROMIUM_ARGS).toContain('--restore-last-session')
+    // Debian's Google API keys would otherwise make it reconcile the web's Google accounts with its own at each start.
+    expect(BOT_CHROMIUM_ARGS).toContain('--allow-browser-signin=false')
     expect(BOT_CHROMIUM_ARGS.some((arg) => arg.startsWith('--remote-debugging-port'))).toBe(false)
     expect(instance.isRunning).toBe(true)
   })

@@ -24,8 +24,6 @@ export function createBotChromium(target: BotBrowserTarget): BotChromium {
       now: Date.now,
       setTimeout,
       clearTimeout,
-      setInterval,
-      clearInterval,
       log,
     },
     env: () => ({ ...target.display.env }),
@@ -35,7 +33,6 @@ export function createBotChromium(target: BotBrowserTarget): BotChromium {
     downloads: app.getPath('downloads'),
     foregroundConversationId: target.foregroundConversationId,
     ownsConversation: target.ownsConversation,
-    watched: target.watched,
     sharedCookies: () => session.fromPartition(BROWSER_PARTITION).cookies.get({}),
   })
 }
