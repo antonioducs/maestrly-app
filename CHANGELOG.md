@@ -5,6 +5,8 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.29.1] - 2026-10-27
+
 ### Fixed
 
 - A bot's Chromium no longer signs the bot out of Google after it goes unused
