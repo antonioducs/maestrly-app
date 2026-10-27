@@ -931,6 +931,21 @@ export async function buildMcpTools(args: BuildMcpToolsArgs): Promise<{ tools: T
   return { tools, close: async () => {} }
 }
 
+let appToolsRegistry: Promise<typeof import('../app-tools-registry')> | undefined
+
+/**
+ * The registry reaches this module again through the fleet instance, so it is loaded on first use. Every turn shares the
+ * first load: a test runner treats the registry as a circular import and answers a second `import()` made while it is
+ * still evaluating with the half-built module, whose tools then run against imports not yet bound.
+ */
+function loadAppToolsRegistry(): Promise<typeof import('../app-tools-registry')> {
+  appToolsRegistry ??= import('../app-tools-registry').catch((error: unknown) => {
+    appToolsRegistry = undefined
+    throw error
+  })
+  return appToolsRegistry
+}
+
 /**
  * Native app tools connect in-process over an in-memory transport without HTTP or bearer tokens.
  * Reuse conversation-scoped tools from the registry while preserving their stable public names.
@@ -952,7 +967,7 @@ export async function buildAppTools(args: {
   /** Host-owned fallback for runtimes without vision. */
   describeImage?: (image: ChatToolImage) => Promise<{ text: string; model?: string } | null>
 }): Promise<{ tools: ToolSet; close: () => Promise<void> }> {
-  const { buildAppToolsServer } = await import('../app-tools-registry')
+  const { buildAppToolsServer } = await loadAppToolsRegistry()
   const [clientT, serverT] = InMemoryTransport.createLinkedPair()
   const server = buildAppToolsServer(args.conversationId, args.workerScope)
   const client = new Client({ name: 'maestrly-chat-app', version: '1.0.0' })

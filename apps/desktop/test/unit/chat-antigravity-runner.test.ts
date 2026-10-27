@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { tool } from 'ai'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import type { ChatStreamEvent } from '../../src/shared/chat'
 
@@ -25,6 +25,7 @@ import {
   runAntigravitySubscriptionChat,
 } from '../../src/main/chat/antigravity-subscription/runner'
 import { getAntigravitySessionBinding } from '../../src/main/chat/antigravity-subscription/session-store'
+import { PRELOAD_APP_TOOLS_TIMEOUT_MS, preloadAppToolsRegistry } from '../helpers/app-tools'
 import { createFakeAntigravity, type FakeAntigravity } from '../helpers/antigravity-fake'
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
@@ -40,6 +41,8 @@ let manager: AntigravitySubscriptionManager
 let cwd: string
 let conversationId: string
 let userSeq = 0
+
+beforeAll(preloadAppToolsRegistry, PRELOAD_APP_TOOLS_TIMEOUT_MS)
 
 beforeEach(async () => {
   freshDb()
