@@ -678,6 +678,11 @@ describe('toModelMessages (port of to-llm-message)', () => {
     // Portable transcripts include descriptions for native seeds and compaction.
     expect(renderTranscript(history)).toContain('Terminal with an ENOENT error.')
     expect(renderTranscript(history)).toContain('Vision Co/gpt-vision')
+    // A text transcript drops pixels for any destination; it must not tell a vision model it cannot see images.
+    expect(renderTranscript(history)).not.toContain('cannot see images')
+    expect(renderTranscript([{ ...history[0], parts: [{ ...history[0].parts[0], description: undefined }] }])).toBe(
+      'User: [image "foto.png" attached earlier; its pixels are not part of this text transcript]'
+    )
   })
 
   it('replaces pre-compaction history with summary and suffix', () => {

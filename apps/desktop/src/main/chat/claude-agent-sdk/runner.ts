@@ -50,7 +50,7 @@ import { chatDiag } from '../diag-log'
 import { buildAppTools, buildMcpTools } from '../mcp'
 import { describeEphemeralToolImage } from '../image-interpreter'
 import { adaptToolSetForModel } from '../tool-capabilities'
-import { clipPersistedToolOutput, renderNativeSeedTranscript } from '../message'
+import { clipPersistedToolOutput } from '../message'
 import type { PermissionBroker } from '../permission'
 import { buildProjectContext } from '../project-context'
 import type { QuestionBroker } from '../question-broker'
@@ -92,10 +92,13 @@ import { buildClaudeChatQueryOptions, buildClaudeCompactionQueryOptions } from '
 import {
   buildClaudeSessionBinding,
   buildClaudeSessionPrompt,
-  claudeSeedTranscript,
   claudeSessionBindingMismatches,
+  claudeSessionSeed,
+  estimateClaudeSeedTokens,
   isClaudeSessionBindingCompatible,
+  renderClaudeSeed,
   resolveClaudeSession,
+  type ClaudeSeed,
 } from './session'
 import {
   clearClaudeSessionCleanup,
@@ -138,7 +141,7 @@ import { generatedInterfacesEnabled } from '../generated-interfaces'
 import { createHarnessPostToolUseHooks } from '../harness/adapters/claude'
 import { createHarnessSnapshot } from '../harness/compatibility'
 import type { ResolvedHarness } from '../harness/types'
-import { estimateTextTokens, portableContextLoad, type PortableSummaryProgress } from '../portable-context'
+import { portableContextLoad, type PortableSummaryProgress } from '../portable-context'
 import { createContextProgressPublisher } from '../context-progress'
 import { classifyClaudeQuotaFailure } from './quota-error'
 import { createClaudeToolJournal, type ClaudeToolJournal } from './tool-journal'
@@ -1367,10 +1370,14 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
         `${args.selection.providerId}\0${runtimeModelId}\0${args.accountIdentity.fingerprint}\0${runtime.promptHash}`
       )
       .digest('hex')
-    let nextPrompt = buildClaudeSessionPrompt(currentUser, claudeSeedTranscript(history, resolution.resume), {
-      dropImages: args.dropImages,
-      transientContext: runtime.transientContext,
-    })
+    let nextPrompt = buildClaudeSessionPrompt(
+      currentUser,
+      claudeSessionSeed(history, resolution.resume, { dropImages: args.dropImages }),
+      {
+        dropImages: args.dropImages,
+        transientContext: runtime.transientContext,
+      }
+    )
     let nextResume: Pick<
       Parameters<typeof buildClaudeChatQueryOptions>[0],
       'resume' | 'resumeSessionAt' | 'forkSession'
@@ -1428,7 +1435,7 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
       }
       currentAttemptUsageArchived = true
     }
-    const fullTranscript = (): string => renderNativeSeedTranscript(liveHistory())
+    const fullTranscript = (): ClaudeSeed => renderClaudeSeed(liveHistory(), { dropImages: args.dropImages })
     const performFailover = async (error: unknown): Promise<boolean> => {
       if (args.signal.aborted || state.planSubmitted || switchingAccount) return false
       if (!accountAttempt) return false
@@ -1464,7 +1471,7 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
       let transcript = fullTranscript()
       if (
         portableContextWindow &&
-        portableContextLoad(portableContextWindow, estimateTextTokens(transcript), 0).shouldCompact
+        portableContextLoad(portableContextWindow, estimateClaudeSeedTokens(transcript), 0).shouldCompact
       ) {
         if (!args.compactHistory)
           throw new Error('Claude continuation requires portable compaction, which is unavailable.')
@@ -1514,7 +1521,7 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
           )
         }
         transcript = fullTranscript()
-        if (portableContextLoad(portableContextWindow, estimateTextTokens(transcript), 0).overflow) {
+        if (portableContextLoad(portableContextWindow, estimateClaudeSeedTokens(transcript), 0).overflow) {
           throw new Error('Claude continuation still exceeds the fallback context window after compaction.')
         }
       }
@@ -1525,7 +1532,7 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
         args.signal.throwIfAborted()
       }
       const window = safeTokens(admitted.target.contextWindow)
-      if (window && portableContextLoad(window, estimateTextTokens(transcript), 0).overflow) {
+      if (window && portableContextLoad(window, estimateClaudeSeedTokens(transcript), 0).overflow) {
         settleClaudeAttempt(admitted.target, 'other')
         throw new Error('Claude fallback context changed before continuation could start.')
       }
@@ -1565,7 +1572,7 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
               createdAt: Date.now(),
             }
           : currentUser,
-        hasPartial ? transcript : claudeSeedTranscript(history, undefined),
+        hasPartial ? transcript : claudeSessionSeed(history, undefined, { dropImages: args.dropImages }),
         {
           dropImages: args.dropImages,
           transientContext: runtime!.transientContext,
@@ -1617,10 +1624,14 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
       args.signal.throwIfAborted()
       forksExisting = resume.forkSession === true
       nextResume = resume
-      nextPrompt = buildClaudeSessionPrompt(currentUser, claudeSeedTranscript(history, resume.resume), {
-        dropImages: args.dropImages,
-        transientContext: runtime!.transientContext,
-      })
+      nextPrompt = buildClaudeSessionPrompt(
+        currentUser,
+        claudeSessionSeed(history, resume.resume, { dropImages: args.dropImages }),
+        {
+          dropImages: args.dropImages,
+          transientContext: runtime!.transientContext,
+        }
+      )
       return true
     }
 
@@ -1963,7 +1974,11 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
             const delegations = await waitForTurnDelegationsTerminal(args.conversationId, assistantId, args.signal)
             for (const delegation of delegations) markDelegationObserved(delegation.id)
             persist()
-            const continuationTranscript = renderNativeSeedTranscript(liveHistory())
+            // A resumed session already holds the turn's images natively; only a fresh one needs them re-sent.
+            const continuationTranscript = renderClaudeSeed(liveHistory(), {
+              dropImages: args.dropImages,
+              ...(resumeSessionId ? { budget: { images: 0, bytes: 0 } } : {}),
+            })
             const guardMessage: ChatMessage = {
               id: randomUUID(),
               conversationId: args.conversationId,
@@ -2143,7 +2158,7 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
           )
           .digest('hex')
 
-        const continuationTranscript = renderNativeSeedTranscript(liveHistory())
+        const continuationTranscript = renderClaudeSeed(liveHistory(), { dropImages: args.dropImages })
         const continueMessage: ChatMessage = {
           id: randomUUID(),
           conversationId: args.conversationId,

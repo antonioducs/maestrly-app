@@ -10,6 +10,9 @@ export function estimateTextTokens(text: string): number {
   return Math.ceil(Buffer.byteLength(text, 'utf8') / 3)
 }
 
+/** Image payloads are provider-tokenized; counting base64 would overestimate by orders of magnitude. */
+export const PORTABLE_IMAGE_TOKENS = 8_192
+
 function toolOutput(part: Extract<MessagePart, { type: 'tool' }>): string {
   switch (part.state.status) {
     case 'completed':
@@ -32,11 +35,10 @@ export function estimatePortablePartsTokens(parts: readonly MessagePart[]): numb
     if (part.type === 'text') {
       if (part.checkpoint !== 'openai-native') tokens += estimateTextTokens(part.text)
     } else if (part.type === 'file') {
-      // Image payloads are provider-tokenized; counting base64 would overestimate by orders of magnitude.
       // Native PDFs cost roughly 1.5k-3k tokens per page (text plus page images), far above their extracted text.
       tokens +=
         part.kind === 'image'
-          ? 8_192
+          ? PORTABLE_IMAGE_TOKENS
           : part.kind === 'pdf'
             ? Math.max(estimateTextTokens(part.data ?? ''), (part.pageCount ?? 0) * 2_000)
             : estimateTextTokens(part.data ?? '')

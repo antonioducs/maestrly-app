@@ -289,6 +289,18 @@ export function droppedImageText(part: Extract<MessagePart, { type: 'file' }>): 
   return `[image "${part.name}" — the selected model cannot see images, so here is a description${by}]\n${description}`
 }
 
+/**
+ * Text for an image inside a rebuilt TEXT transcript. Unlike {@link droppedImageText} it must not claim the model
+ * cannot see images: a transcript drops pixels because it is text, whatever the destination model accepts.
+ */
+export function transcriptImageText(part: Extract<MessagePart, { type: 'file' }>): string {
+  const note = `[image "${part.name}" attached earlier; its pixels are not part of this text transcript]`
+  const description = part.description?.trim()
+  if (!description) return note
+  const by = part.descriptionModel ? ` by ${part.descriptionModel}` : ''
+  return `${note}\nDescription${by}:\n${description}`
+}
+
 function joinText(parts: MessagePart[]): string {
   return parts
     .filter((p): p is Extract<MessagePart, { type: 'text' }> => p.type === 'text' && p.checkpoint !== 'openai-native')
@@ -704,9 +716,16 @@ function toolStateText(state: Extract<MessagePart, { type: 'tool' }>['state']): 
  */
 export function renderTranscript(
   messages: ChatMessage[],
-  opts: { maxChars?: number; maxToolOutputChars?: number; includeSkillBodies?: boolean } = {}
+  opts: {
+    maxChars?: number
+    maxToolOutputChars?: number
+    includeSkillBodies?: boolean
+    /** Replaces the default reference for an image attachment (e.g. one re-sent as a real image block). */
+    imageText?: (part: Extract<MessagePart, { type: 'file' }>) => string
+  } = {}
 ): string {
   const active = activeChatContext(messages)
+  const imageText = opts.imageText ?? transcriptImageText
   const blocks: string[] = active.summary ? [`Previous summary:\n${active.summary}`] : []
   const maxToolOutputChars = opts.maxToolOutputChars ?? 16_000
   for (const m of active.messages) {
@@ -717,9 +736,9 @@ export function renderTranscript(
         if (p.checkpoint === 'openai-native') continue
         if (p.text.trim()) parts.push(p.text.trim())
       } else if (p.type === 'file') {
-        // Interpreter description accompanies images in transcripts: destinations always receive
-        // TEXT only (portable compaction, native thread/session seed).
-        if (p.kind === 'image') parts.push(droppedImageText(p))
+        // Interpreter description accompanies images in transcripts: the transcript itself is TEXT only
+        // (portable compaction, native thread/session seed); a vision runtime may re-send pixels alongside it.
+        if (p.kind === 'image') parts.push(imageText(p))
         else if (p.kind === 'pdf') parts.push(pdfFallbackText(p))
         else if (p.data?.trim()) {
           parts.push(
@@ -774,10 +793,14 @@ export function renderTranscript(
 export const NATIVE_SEED_CONTEXT_PREFIX =
   'Context imported from the existing Maestrly conversation. Treat it as prior dialogue and continue from it:\n\n'
 
-export function renderNativeSeedTranscript(messages: readonly ChatMessage[]): string {
+export function renderNativeSeedTranscript(
+  messages: readonly ChatMessage[],
+  opts: { imageText?: (part: Extract<MessagePart, { type: 'file' }>) => string } = {}
+): string {
   return renderTranscript([...messages], {
     maxToolOutputChars: Number.POSITIVE_INFINITY,
     includeSkillBodies: true,
+    ...(opts.imageText ? { imageText: opts.imageText } : {}),
   })
 }
 
