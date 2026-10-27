@@ -1141,9 +1141,6 @@ describe('bot environment registry', () => {
     expect(alpha.target.foregroundConversationId()).toBe(alphaConversation)
     expect(alpha.target.ownsConversation(alphaConversation)).toBe(true)
     expect(alpha.target.ownsConversation(runtime.bot('beta').primaryConversationId!)).toBe(false)
-    displays.watched.mockReturnValueOnce(true)
-    expect(alpha.target.watched()).toBe(true)
-    expect(displays.watched).toHaveBeenCalledWith('alpha')
     // Its desktop opens links and the dock's browser in it.
     expect(desktop.mock.calls[0][0].browser?.()).toBe(alpha)
     expect(runtime.browserForConversation(alphaConversation)).toBe(alpha)
@@ -1161,7 +1158,7 @@ describe('bot environment registry', () => {
     expect(alpha.present).toHaveBeenCalledWith(alphaConversation)
     expect(setup.deps.floatBrowser).not.toHaveBeenCalledWith(alphaConversation)
 
-    // Pausing frees its memory; a pause while someone watches leaves it to its idle time.
+    // Pausing frees its memory; a pause while someone watches leaves it open for them.
     await runtime.bot('alpha').hold('paused')
     expect(alpha.stop).toHaveBeenCalledTimes(1)
     const beta = browsers.get('beta')!

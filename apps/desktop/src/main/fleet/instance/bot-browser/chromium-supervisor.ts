@@ -52,13 +52,17 @@ export const BOT_CHROMIUM_ARGS: readonly string[] = [
   '--disable-background-networking',
   '--disable-component-update',
   '--disable-sync',
+  // Debian builds Chromium with Google API keys, which turns on signing in to the browser: Google sign-ins then get
+  // `X-Chrome-ID-Consistency` headers, and at each start Chromium reconciles the web's Google accounts with the
+  // browser's own, which can sign the bot out of Google. Without it a Google login is a site's login, as in Electron.
+  '--allow-browser-signin=false',
   '--disable-default-apps',
   '--disable-features=Translate,MediaRouter,OptimizationHints,AutofillServerCommunication',
   '--disable-renderer-backgrounding',
   // Keeps the session cookies (those without an expiry) of the last run, as Chrome's "Continue where you left off"
-  // does: otherwise Chromium deletes them at each start, and the browser closes after its idle time, signing the bot out
-  // of the sites that keep their login in one. The bot restores its tabs itself: the profile has no tabs of Chromium's
-  // own to reopen (`BotChromium` removes its record before each start).
+  // does: otherwise Chromium deletes them at each start (after a pause or a restart), signing the bot out of the sites
+  // that keep their login in one. The bot restores its tabs itself: the profile has no tabs of Chromium's own to reopen
+  // (`BotChromium` removes its record before each start).
   '--restore-last-session',
   '--hide-crash-restore-bubble',
   '--window-position=0,0',

@@ -18,7 +18,8 @@ export function botChromiumBackend(chromium: BotChromium): BrowserBackend {
       signal.throwIfAborted()
       return nativeImage.createFromBuffer(await page.captureScreenshot())
     },
-    release: () => chromium.touch(),
+    // The bot's Chromium stays open whether or not it is used: there is no use to record.
+    release: () => {},
   })
   backend = {
     kind: 'bot-chromium',
@@ -33,7 +34,7 @@ export function botChromiumBackend(chromium: BotChromium): BrowserBackend {
     tabIdsOwnedByScope: (convId, scopeId) => chromium.tabIdsOwnedByScope(convId, scopeId),
     // A worker's popups are tabs of its own, closed with its tabs.
     closeScopeWindows: () => {},
-    touch: () => chromium.touch(),
+    touch: () => {},
   }
   backends.set(chromium, backend)
   return backend

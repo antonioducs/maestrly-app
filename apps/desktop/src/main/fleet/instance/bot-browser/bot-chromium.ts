@@ -6,9 +6,6 @@ import { ChromiumPage, type ChromiumTargetInfo } from './chromium-page'
 import { ChromiumSupervisor, type ChromiumSupervisorDeps } from './chromium-supervisor'
 import { importSharedCookies, type SharedCookie } from './cookie-import'
 
-/** How long a bot's Chromium stays open without its tools or anyone watching its screen. */
-export const BOT_CHROMIUM_IDLE_MS = 15 * 60_000
-const IDLE_CHECK_MS = 60_000
 const SAVE_DELAY_MS = 500
 /** Left in the profile once the shared site logins were copied into it, so they are copied only once. */
 export const COOKIES_IMPORTED_MARKER = '.maestrly-shared-cookies-imported'
@@ -56,7 +53,7 @@ export interface BotChromiumFs {
 
 export interface BotChromiumOptions {
   botId: string
-  deps: ChromiumSupervisorDeps & { setInterval: typeof setInterval; clearInterval: typeof clearInterval }
+  deps: ChromiumSupervisorDeps
   /** The variables of the bot's programs: its display, bus and profile. Null while it has no display. */
   env(): Record<string, string> | null
   /** Runs before each start of the browser: stops one left holding the profile. */
@@ -70,11 +67,8 @@ export interface BotChromiumOptions {
   /** The conversation the bot's desktop shows: tabs a person opens by hand are its. */
   foregroundConversationId(): string | null
   ownsConversation(conversationId: string): boolean
-  /** Whether someone watches or controls the bot's screen: its browser never closes while they do. */
-  watched(): boolean
   /** The environment's shared site logins, copied into the profile on its first start. */
   sharedCookies?(): Promise<SharedCookie[]>
-  idleMs?: number
   /** How long a started Chromium has to answer before the start fails (the supervisor's default otherwise). */
   startTimeoutMs?: number
   fs?: BotChromiumFs
@@ -98,8 +92,9 @@ const nodeFs: BotChromiumFs = {
 
 /**
  * One bot's own Chromium: a real browser on the bot's apps display, with the bot's own profile, driven by the
- * `browser_*` tools through its DevTools pipe. It starts when a tool, a link or the dock needs it and closes after
- * fifteen idle minutes; its tabs are reopened on the next start, and after a crash, and its session cookies are kept.
+ * `browser_*` tools through its DevTools pipe. It starts when a tool, a link or the dock needs it and stays open, as the
+ * built-in browser does: a restart is where sites such as Google sign the bot out. It closes when the bot pauses or
+ * stops; its tabs are reopened on the next start, and after a crash, with its session cookies.
  *
  * Every tab belongs to a conversation of the bot: the one whose tool or link opened it, the opener's for a popup, and
  * the conversation the desktop shows for a tab a person opened. A delegated worker's tabs are its own too. A
@@ -108,7 +103,6 @@ const nodeFs: BotChromiumFs = {
 export class BotChromium {
   private readonly supervisor: ChromiumSupervisor
   private readonly files: BotChromiumFs
-  private readonly idleMs: number
   private readonly records = new Map<string, TabRecord>()
   private readonly sessions = new Map<string, ChromiumPage>()
   private readonly active = new Map<string, string>()
@@ -118,16 +112,12 @@ export class BotChromium {
   private creating = 0
   /** While it restores tabs or shuts down, closing tabs are not what the person or the bot closed. */
   private quiet = false
-  private lastUsed: number
-  private idleTimer: ReturnType<typeof setInterval> | null = null
   private saveTimer: ReturnType<typeof setTimeout> | null = null
   private saving: Promise<void> = Promise.resolve()
   private disposed = false
 
   constructor(private readonly options: BotChromiumOptions) {
     this.files = options.fs ?? nodeFs
-    this.idleMs = options.idleMs ?? BOT_CHROMIUM_IDLE_MS
-    this.lastUsed = options.deps.now()
     this.supervisor = new ChromiumSupervisor(options.deps, {
       botId: options.botId,
       env: options.env,
@@ -140,11 +130,6 @@ export class BotChromium {
 
   get isRunning(): boolean {
     return this.supervisor.isRunning
-  }
-
-  /** Marks the browser in use, so it does not close for idleness. */
-  touch(): void {
-    this.lastUsed = this.options.deps.now()
   }
 
   /** The conversation's tabs (or a delegated worker's), starting the browser first. */
@@ -286,10 +271,7 @@ export class BotChromium {
 
   private async ready(): Promise<CdpPipe> {
     if (this.disposed) throw new Error('The bot’s Chromium was stopped for good.')
-    this.touch()
-    const pipe = await this.supervisor.ensure()
-    this.touch()
-    return pipe
+    return this.supervisor.ensure()
   }
 
   /**
@@ -319,11 +301,9 @@ export class BotChromium {
       .catch((error: unknown) => this.log(`downloads keep Chromium's default folder: ${(error as Error).message}`))
     await this.importCookiesOnce(pipe)
     await this.restoreTabs(pipe)
-    this.startIdleTimer()
   }
 
   private exited(): void {
-    this.stopIdleTimer()
     this.flushSave()
     this.stopEvents?.()
     this.stopEvents = null
@@ -585,28 +565,6 @@ export class BotChromium {
 
   private writeTabs(tabs: SavedTab[]): Promise<void> {
     return this.files.writeFile(this.options.savedTabsFile, `${JSON.stringify({ version: 1, tabs })}\n`)
-  }
-
-  private startIdleTimer(): void {
-    this.stopIdleTimer()
-    this.idleTimer = this.options.deps.setInterval(() => {
-      if (!this.isRunning) return
-      // Someone watching the bot's screen may be using the browser: the idle time starts once they leave.
-      if (this.options.watched()) {
-        this.touch()
-        return
-      }
-      if (this.options.deps.now() - this.lastUsed < this.idleMs) return
-      this.log('closes after its idle time; its tabs reopen on the next use.')
-      void this.shutdown().catch(() => {})
-    }, IDLE_CHECK_MS)
-    ;(this.idleTimer as { unref?: () => void }).unref?.()
-  }
-
-  private stopIdleTimer(): void {
-    if (!this.idleTimer) return
-    this.options.deps.clearInterval(this.idleTimer)
-    this.idleTimer = null
   }
 
   private log(message: string): void {
