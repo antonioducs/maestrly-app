@@ -5,7 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { setImmediate as waitImmediate } from 'node:timers/promises'
 import { tool, type ToolSet } from 'ai'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 
 import {
@@ -66,6 +66,7 @@ import { toolOutputImages, toolOutputText } from '../../src/shared/chat'
 import { resolveSubagentExecutionProfile } from '../../src/main/chat/subagent-execution-profile'
 import { setSubagentRouter } from '../../src/main/chat/subagent-route'
 import { runSubagent } from '../../src/main/chat/subagent-runner'
+import { PRELOAD_APP_TOOLS_TIMEOUT_MS, preloadAppToolsRegistry } from '../helpers/app-tools'
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
 import { setConversationShellEnv } from '../../src/main/chat/conversation-env'
@@ -717,6 +718,7 @@ function assistantMessages(conversationId: string): ChatMessage[] {
 }
 
 describe('Codex subscription runner', () => {
+  beforeAll(preloadAppToolsRegistry, PRELOAD_APP_TOOLS_TIMEOUT_MS)
   beforeEach(() => {
     freshDb()
     // These cases predate the default-on app tools; tests that exercise them turn the flag on explicitly.
