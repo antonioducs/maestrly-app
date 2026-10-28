@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FleetOwnerMemory } from '@maestrly/bot-fleet-protocol'
 import { OwnerMemoryClient } from '../../src/main/fleet/instance/owner-memory'
+import { ThreadWaits } from '../../src/main/fleet/instance/thread-waits'
 import { BotRuntime } from '../../src/main/fleet/instance/runtime'
 import { LiveTranscript } from '../../src/main/fleet/instance/live-transcript'
 import { InstanceHoldManager } from '../../src/main/fleet/instance/gate'
@@ -239,6 +240,7 @@ describe('runtime turn memory integration', () => {
       threadReports: {
         section: async () => ({ key: 'peer-reports', heading: 'Answers', intro: '', entries: [], budgetChars: 1 }),
       },
+      threadWaits: new ThreadWaits(),
       usageTask: Promise.resolve(),
       turns: new Map(),
     })

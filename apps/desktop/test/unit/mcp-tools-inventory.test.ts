@@ -39,6 +39,7 @@ const BOT_INSTANCE_TOOL_NAMES = [
   'computer_key',
   'bot_peers_list',
   'bot_peers_send',
+  'bot_peers_wait',
   'bot_share_file',
   'bot_routines_list',
   'bot_routines_create',
@@ -522,6 +523,8 @@ describe('MCP app tools inventory', () => {
     expect(appToolAllowed('plan', 'terminal_run')).toBe(false)
     expect(appToolAllowed('ask', 'debug_status')).toBe(false)
     expect(appToolAllowed('ask', 'bot_routines_list')).toBe(true)
+    expect(appToolAllowed('ask', 'bot_peers_wait')).toBe(true)
+    expect(appToolMetadata('bot_peers_wait')).toEqual({ readOnly: true, parallelSafe: false })
     expect(appToolAllowed('ask', 'bot_routines_create')).toBe(false)
     expect(appToolAllowed('ask', 'bot_routines_update')).toBe(false)
     expect(appToolAllowed('ask', 'bot_routines_delete')).toBe(false)

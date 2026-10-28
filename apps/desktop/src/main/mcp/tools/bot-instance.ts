@@ -18,6 +18,7 @@ import { runConversationText } from '../../fleet/instance/run-files'
 import { getConversation } from '../../store'
 import { gatewayRequest, keyForToolCall, type GatewayConfig } from '../../fleet/instance/gateway-client'
 import { OwnerMemoryClient } from '../../fleet/instance/owner-memory'
+import { THREAD_WAIT_SECONDS } from '../../fleet/instance/thread-waits'
 import { isBotMode } from '../../fleet/instance/config'
 import { canUseComputer, registerComputerTools, type ComputerToolOptions } from './computer'
 import { conversationScreen } from '../../conversation-screen'
@@ -155,7 +156,7 @@ export function registerBotInstanceTools(
     'bot_peers_send',
     {
       description:
-        'Send a concise message to another bot by bot ID. The owner reads it rendered as Markdown: give a longer message short headings, lists or a table instead of one long paragraph. A message to a bot you are not already talking with here opens a conversation of its own with it, apart from this one, named by topic; its replies come there, and messages you send from it to the same bot stay in it. Use only when coordination is useful; do not keep retrying rate limits. Answer another bot only when it moves the work forward, never to thanks or confirmations: not sending ends the exchange.',
+        'Send a concise message to another bot by bot ID. The owner reads it rendered as Markdown: give a longer message short headings, lists or a table instead of one long paragraph. A message to a bot you are not already talking with here opens a conversation of its own with it, apart from this one, named by topic; its replies come there, and messages you send from it to the same bot stay in it. If you need the answer to finish this turn, call bot_peers_wait with the returned thread. Use only when coordination is useful; do not keep retrying rate limits. Answer another bot only when it moves the work forward, never to thanks or confirmations: not sending ends the exchange.',
       inputSchema: {
         to: fleetBotIdSchema,
         text: fleetPeerTextSchema,
@@ -183,6 +184,7 @@ export function registerBotInstanceTools(
           ...(continuing ? { thread: continuing } : { origin, ...(topic ? { topic } : {}) }),
         })
         const name = peerNames().get(to) ?? to
+        if (continuing && runtime) runtime.noteThreadSent(continuing)
         if (result.thread && !continuing && runtime) {
           const asked = runtime.currentInput(ctx.convId)
           await runtime.recordThread(
@@ -215,7 +217,9 @@ export function registerBotInstanceTools(
             name,
             status: result.delivered ? 'delivered' : 'queued',
             ...(result.thread && !continuing
-              ? { note: 'This opened a conversation of its own with this bot. Its replies come there, not here.' }
+              ? {
+                  note: 'This opened a conversation of its own with this bot. Its replies come there, not here. If you need the answer to finish this turn, call bot_peers_wait with this thread.',
+                }
               : {}),
           })
         )
@@ -243,6 +247,51 @@ export function registerBotInstanceTools(
         await gatewayRequest(gatewayFor(), 'peerThreadReport', { text }, { threadId: lane.runId })
         await runtime.reportThread(lane.runId, text)
         return ok(JSON.stringify({ reported: true }))
+      } catch (error) {
+        return err(error instanceof Error ? error.message : String(error))
+      }
+    }
+  )
+  ctx.server.registerTool(
+    'bot_peers_wait',
+    {
+      description:
+        'Wait, within this turn, for the answer of a conversation with another bot that you opened with bot_peers_send: pass the thread it returned. Returns once that conversation brings back its answer (bot_peers_report there), or once the other bot answered and your side of that conversation ended its turn without writing again; or after timeoutSeconds while it is still working, when you may call it again or end your turn. Use it only when you need the answer to finish what you are doing.',
+      inputSchema: {
+        thread: z.string().trim().min(1).max(80).describe('The thread bot_peers_send returned.'),
+        timeoutSeconds: z
+          .number()
+          .int()
+          .min(THREAD_WAIT_SECONDS.min)
+          .max(THREAD_WAIT_SECONDS.max)
+          .optional()
+          .describe(`Default ${THREAD_WAIT_SECONDS.default}.`),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ thread, timeoutSeconds }, extra) => {
+      const runtime = bot()
+      if (!runtime) return err('bot_peers_wait works only in a conversation of a bot.')
+      if (runtime.runs.byConversation(ctx.convId)?.kind === 'thread')
+        return err(
+          "bot_peers_wait works outside your conversations with other bots: here, the other bot's replies come to you as messages. End your turn to wait for them."
+        )
+      try {
+        const result = await runtime.waitThread(thread, {
+          timeoutMs: (timeoutSeconds ?? THREAD_WAIT_SECONDS.default) * 1000,
+          signal: extra.signal,
+        })
+        const record = runtime.runs.thread(thread)
+        const name = record?.peerName ?? peerNames().get(record?.peerBotId ?? '') ?? record?.peerBotId ?? null
+        const note =
+          result.status === 'reported'
+            ? 'That conversation brought back this answer.'
+            : result.status === 'answered'
+              ? 'The other bot answered and that conversation settled: peerReply is its last message, finalText what you concluded there.'
+              : result.status === 'waiting'
+                ? `Still working: call bot_peers_wait again, or end your turn.${record?.origin === 'primary' ? ' The answer it reports will be in your memory on your next turn here.' : ''}`
+                : 'The wait was cancelled.'
+        return ok(JSON.stringify({ ...result, thread, name, note }))
       } catch (error) {
         return err(error instanceof Error ? error.message : String(error))
       }

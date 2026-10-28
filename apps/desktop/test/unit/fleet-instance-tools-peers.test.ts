@@ -10,6 +10,7 @@ import { FLEET_PROTOCOL_HEADER, fleetInternalPeerMessageRequestSchema } from '@m
 import { registerBotModeTools } from '../../src/main/mcp/tools/bot-instance'
 import { InstanceTranscriptExtras, projectChatMessages, toolTarget } from '../../src/main/fleet/instance/transcript'
 import { InstanceHelpStore } from '../../src/main/fleet/instance/help'
+import { ThreadWaits } from '../../src/main/fleet/instance/thread-waits'
 import type { ChatMessage } from '../../src/shared/chat'
 import { mkdtemp, rm } from 'node:fs/promises'
 import os from 'node:os'
@@ -21,10 +22,16 @@ type FakeBot = {
   gatewayConfig: { url: string; token: string } | null
   peerNames: Map<string, string>
   primaryConversationId: string
-  runs: { byConversation: (conversationId: string | undefined) => unknown }
+  runs: {
+    byConversation: (conversationId: string | undefined) => unknown
+    thread: (threadId: string) => unknown
+  }
   currentInput: (conversationId: string) => { source: string; text: string } | null
   recordThread: ReturnType<typeof vi.fn>
   reportThread: ReturnType<typeof vi.fn>
+  noteThreadSent: ReturnType<typeof vi.fn>
+  waits: ThreadWaits
+  waitThread: ReturnType<typeof vi.fn>
 }
 // The bot of the conversation 'primary', and of the side conversations listed; every other conversation has none.
 const conversationBot = vi.hoisted(() => ({ bot: null as FakeBot | null, sides: new Set<string>() }))
@@ -45,16 +52,27 @@ afterEach(async () => {
   conversationBot.bot = null
   conversationBot.sides.clear()
 })
-const botWith = (gatewayConfig: FakeBot['gatewayConfig'], lanes: Record<string, unknown> = {}): FakeBot => ({
-  gatewayConfigured: true,
-  gatewayConfig,
-  peerNames: new Map(),
-  primaryConversationId: 'primary',
-  runs: { byConversation: (conversationId) => (conversationId ? lanes[conversationId] : undefined) },
-  currentInput: () => ({ source: 'owner', text: 'Ask Nina whether 4.2 passed' }),
-  recordThread: vi.fn(async () => {}),
-  reportThread: vi.fn(async () => {}),
-})
+const botWith = (gatewayConfig: FakeBot['gatewayConfig'], lanes: Record<string, unknown> = {}): FakeBot => {
+  const waits = new ThreadWaits()
+  const threads = Object.values(lanes) as Array<{ kind: string; runId: string }>
+  const thread = (threadId: string) => threads.find((lane) => lane.kind === 'thread' && lane.runId === threadId)
+  return {
+    gatewayConfigured: true,
+    gatewayConfig,
+    peerNames: new Map(),
+    primaryConversationId: 'primary',
+    runs: { byConversation: (conversationId) => (conversationId ? lanes[conversationId] : undefined), thread },
+    currentInput: () => ({ source: 'owner', text: 'Ask Nina whether 4.2 passed' }),
+    recordThread: vi.fn(async () => {}),
+    reportThread: vi.fn(async () => {}),
+    noteThreadSent: vi.fn((threadId: string) => waits.sent(threadId)),
+    waits,
+    waitThread: vi.fn(async (threadId: string, options: { timeoutMs: number; signal?: AbortSignal }) => {
+      if (!thread(threadId)) throw new Error('No conversation with another bot has this id here.')
+      return waits.wait(threadId, options)
+    }),
+  }
+}
 
 async function appClient(
   env: NodeJS.ProcessEnv,
@@ -176,6 +194,7 @@ describe('bot instance tool registration and gateway', () => {
       'bot_peers_list',
       'bot_peers_send',
       'bot_peers_report',
+      'bot_peers_wait',
       'bot_routines_list',
       'bot_routines_create',
       'bot_routines_update',
@@ -284,6 +303,7 @@ describe('bot instance tool registration and gateway', () => {
         arguments: { to: 'scout', text: 'Did 4.2 pass?', topic: 'Release 4.2' },
       })
       expect(firstContent(opened)).toMatchObject({ text: expect.stringContaining('opened a conversation of its own') })
+      expect(firstContent(opened)).toMatchObject({ text: expect.stringContaining('call bot_peers_wait') })
       expect(bodies().at(-1)).toMatchObject({ origin: 'primary', topic: 'Release 4.2' })
       expect(bodies().at(-1)).not.toHaveProperty('thread')
       expect(bot.recordThread).toHaveBeenCalledWith(
@@ -302,6 +322,8 @@ describe('bot instance tool registration and gateway', () => {
       expect(bodies().at(-1)).toMatchObject({ thread: 'thread-1' })
       expect(bodies().at(-1)).not.toHaveProperty('origin')
       expect(bot.recordThread).toHaveBeenCalledTimes(1)
+      // Writing there again tells whoever waits for the thread that its exchange goes on; opening one does not.
+      expect(bot.noteThreadSent.mock.calls).toEqual([['thread-1']])
       // From a thread with another bot, a message to Scout opens a thread of its own.
       gateway.setThread('thread-3')
       await inOther.client.callTool({ name: 'bot_peers_send', arguments: { to: 'scout', text: 'Also this' } })
@@ -316,6 +338,8 @@ describe('bot instance tool registration and gateway', () => {
       expect(firstContent(refused)).toMatchObject({ text: 'refused' })
       const denied = await own.client.callTool({ name: 'bot_peers_send', arguments: { to: 'scout', text: 'No' } })
       expect(firstContent(denied)).toMatchObject({ text: expect.stringContaining('bot ACL') })
+      // A message the gateway refused never reached the other bot: the exchange did not go on.
+      expect(bot.noteThreadSent).toHaveBeenCalledTimes(1)
     } finally {
       for (const { client, server } of [own, inThread, inOther]) {
         await client.close()
@@ -356,6 +380,69 @@ describe('bot instance tool registration and gateway', () => {
     }
   })
 
+  it("waits, within the turn, for a thread's answer outside the thread's own conversation", async () => {
+    const gateway = await fakeGateway()
+    const opened = { kind: 'thread', runId: 'thread-1', peerBotId: 'scout', peerName: 'Scout', origin: 'primary' }
+    const bot = botWith({ url: gateway.url, token: 'secret' }, { mine: opened })
+    conversationBot.sides.add('mine')
+    const own = await appClient({ MAESTRLY_BOT_MODE: '1' }, () => false, bot)
+    const inThread = await appClient({ MAESTRLY_BOT_MODE: '1' }, () => false, bot, 'mine')
+    const wait = (args: Record<string, unknown>, options?: { signal: AbortSignal }) =>
+      own.client.callTool({ name: 'bot_peers_wait', arguments: args }, undefined, options)
+    const parsed = (result: unknown) => JSON.parse(String(firstContent(result).text)) as Record<string, unknown>
+    try {
+      // The thread reports its answer while the bot's own conversation waits for it.
+      const reported = wait({ thread: 'thread-1' })
+      await vi.waitFor(() => expect(bot.waitThread).toHaveBeenCalledTimes(1))
+      expect(bot.waitThread.mock.calls[0][1]).toMatchObject({ timeoutMs: 300_000, signal: expect.any(AbortSignal) })
+      bot.waits.reported('thread-1', '4.2 passed.')
+      expect(parsed(await reported)).toMatchObject({
+        status: 'reported',
+        text: '4.2 passed.',
+        thread: 'thread-1',
+        name: 'Scout',
+      })
+      // Its turn answering the other bot ends without writing again: the other bot's message is the answer.
+      const answered = wait({ thread: 'thread-1', timeoutSeconds: 10 })
+      await vi.waitFor(() => expect(bot.waitThread).toHaveBeenCalledTimes(2))
+      expect(bot.waitThread.mock.calls[1][1]).toMatchObject({ timeoutMs: 10_000 })
+      bot.waits.turnEnded('thread-1', bot.waits.mark('thread-1'), 'It passed.', 'Scout says it passed.')
+      expect(parsed(await answered)).toMatchObject({
+        status: 'answered',
+        peerReply: 'It passed.',
+        finalText: 'Scout says it passed.',
+        note: expect.stringContaining('settled'),
+      })
+      // Still working after the timeout: the bot may wait again, or end its turn and read the report then.
+      bot.waitThread.mockResolvedValueOnce({ status: 'waiting' })
+      const waiting = parsed(await wait({ thread: 'thread-1' }))
+      expect(waiting).toMatchObject({ status: 'waiting', note: expect.stringContaining('call bot_peers_wait again') })
+      expect(waiting.note).toContain('in your memory on your next turn')
+      // The owner's Stop cancels the call, and with it the wait.
+      const stop = new AbortController()
+      const stopped = wait({ thread: 'thread-1' }, { signal: stop.signal })
+      await vi.waitFor(() => expect(bot.waitThread).toHaveBeenCalledTimes(4))
+      stop.abort()
+      await expect(stopped).rejects.toThrow()
+      await expect(bot.waitThread.mock.results[3].value).resolves.toEqual({ status: 'cancelled' })
+      // A thread that is not here, or a wait from the thread's own conversation, is refused.
+      const unknown = await wait({ thread: 'missing' })
+      expect(unknown.isError).toBe(true)
+      expect(firstContent(unknown)).toMatchObject({ text: expect.stringContaining('No conversation with another bot') })
+      const inside = await inThread.client.callTool({ name: 'bot_peers_wait', arguments: { thread: 'thread-1' } })
+      expect(inside.isError).toBe(true)
+      expect(firstContent(inside)).toMatchObject({ text: expect.stringContaining('outside your conversations') })
+      const short = await wait({ thread: 'thread-1', timeoutSeconds: 1 })
+      expect(short.isError).toBe(true)
+      expect(bot.waitThread).toHaveBeenCalledTimes(5)
+    } finally {
+      for (const { client, server } of [own, inThread]) {
+        await client.close()
+        await server.close()
+      }
+    }
+  })
+
   it('requests owner help and instructs the bot to stop its turn', async () => {
     const { client, server } = await appClient({ MAESTRLY_BOT_MODE: '1' })
     try {
@@ -366,6 +453,57 @@ describe('bot instance tool registration and gateway', () => {
       await client.close()
       await server.close()
     }
+  })
+})
+
+describe("waits for a thread's answer", () => {
+  it('settles on a report, or on a turn that answered without writing to the other bot again', async () => {
+    const waits = new ThreadWaits()
+    const first = waits.wait('t', { timeoutMs: 5000 })
+    const second = waits.wait('t', { timeoutMs: 5000 })
+    // A turn that wrote to the other bot again: the exchange goes on.
+    const replying = waits.mark('t')
+    waits.sent('t')
+    waits.turnEnded('t', replying, 'Which build?', 'Asked back.')
+    // A turn that reported its answer settles once, by its report.
+    const reporting = waits.mark('t')
+    waits.reported('t', 'Build 912 passed.')
+    waits.turnEnded('t', reporting, 'Build 912 passed.', 'Reported.')
+    for (const wait of [first, second])
+      await expect(wait).resolves.toEqual({ status: 'reported', text: 'Build 912 passed.' })
+    expect(waits.pending('t')).toBe(false)
+    const quiet = waits.mark('t')
+    waits.turnEnded('t', quiet, 'Done.', null)
+    expect(waits.pending('t')).toBe(true)
+    await expect(waits.wait('t', { timeoutMs: 5000 })).resolves.toEqual({
+      status: 'answered',
+      peerReply: 'Done.',
+      finalText: null,
+    })
+    expect(waits.pending('t')).toBe(false)
+  })
+
+  it('drops a kept answer once the bot writes in the thread again, and ends waits on timeout, abort or dispose', async () => {
+    let now = 1000
+    const waits = new ThreadWaits(() => now)
+    waits.reported('t', 'Old answer.')
+    expect(waits.lastSentAt('t')).toBe(0)
+    now = 2000
+    waits.sent('t')
+    expect(waits.pending('t')).toBe(false)
+    expect(waits.lastSentAt('t')).toBe(2000)
+    await expect(waits.wait('t', { timeoutMs: 10 })).resolves.toEqual({ status: 'waiting' })
+    const stop = new AbortController()
+    const stopped = waits.wait('t', { timeoutMs: 5000, signal: stop.signal })
+    stop.abort()
+    await expect(stopped).resolves.toEqual({ status: 'cancelled' })
+    await expect(waits.wait('t', { timeoutMs: 5000, signal: stop.signal })).resolves.toEqual({ status: 'cancelled' })
+    const pending = [waits.wait('t', { timeoutMs: 5000 }), waits.wait('u', { timeoutMs: 5000 })]
+    waits.cancelAll()
+    for (const wait of pending) await expect(wait).resolves.toEqual({ status: 'cancelled' })
+    // A wait that ended takes no later answer: it is kept for the next one.
+    waits.reported('t', 'New answer.')
+    expect(waits.pending('t')).toBe(true)
   })
 })
 
