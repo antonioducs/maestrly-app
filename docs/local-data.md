@@ -439,11 +439,14 @@ The storage folder, `runner/` in the profile unless you choose another, holds:
 | Named caches of Native jobs, per bot and server | `caches/<scope>/<name>/`, until **Clear caches** |
 | A job's folder, log, and output archive | `jobs/<job>/`, removed when the job ends |
 | The jobs this computer holds, to report them after a restart | `state.json` |
+| The last 20 jobs that ended here: bot, server, first line of the command, how it ended, its times, peak memory, and CPU time | `history.json` |
+| The end of each of those jobs' logs, at most 1 MiB | `history/<job>.log`, removed with its entry |
 | Which server and bot each scope belongs to | `scopes/<scope>.json` |
 
 Named caches of Container jobs are Docker volumes named `maestrly-runner-<scope>-<name>`, and each job's container
 carries the label `maestrly.runner.job`; at startup the runner removes the containers of jobs it no longer holds.
-When a bot's link to this computer ends, the runner deletes that bot's files, caches, and volumes.
+When a bot's link to this computer ends, the runner deletes that bot's files, caches, volumes, and recent jobs with
+their logs.
 
 ## Drawer browser history
 

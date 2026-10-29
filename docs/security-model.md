@@ -837,17 +837,22 @@ A computer with **Run jobs for bots** on runs commands that the bots it linked s
 - **Clean environment.** A native job gets only the user's login `PATH`, `HOME`, `LANG`, its own temporary folder,
   `MAESTRLY_JOB_ID`, `MAESTRLY_JOB_DIR`, and the job's variables: none of the app's environment. A container job's
   variables travel in a file readable only by the user, never on a command line. The runner redacts the values of
-  the job's variables from the log it sends.
+  the job's variables from the log it sends and the command line it shows.
+- **A stopped job stops whole.** Cancelling or timing out a native job signals every process the runner knows as the
+  job's: by parent, by process group, and on Linux by the inherited `MAESTRLY_JOB_ID`, each checked by its start time
+  so a reused process id is never signalled. A container job is stopped by Docker.
 - **Checked files.** The runner checks every input file against the SHA-256 in the manifest before caching it, and
   builds the job folder from copies, so a job never changes the cache. The bot's environment refuses output archives
   with absolute paths, `..`, special files, or links that leave the folder, and never writes through an existing link
   that leads outside it.
 - **Per-bot data.** Files and caches are kept per bot and server and are never used by another bot's jobs. When a link
   ends (turned off, removed, the device revoked, or the bot deleted), the bot's jobs there are cancelled and the
-  runner deletes its files, caches, and volumes.
+  runner deletes its files, caches, volumes, and its recent jobs with their logs.
 - **What the gateway keeps.** Links (bot, device, opaque `runnerId`, name, last reported capabilities) and job
-  metadata; a job's command, image, and environment variables only until it ends. Never file contents, logs, or
-  conversations.
+  metadata; a job's command, image, and environment variables only until it ends; the last usage sample of a running
+  job, in memory only. Never file contents, logs, or conversations. Any paired device can read a job's log: the
+  gateway asks the bot's environment for the piece it is asked for and passes it on without keeping it, as paired
+  devices already read bots' conversations.
 
 ## MCP, skills, and memory
 

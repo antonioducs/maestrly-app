@@ -1219,11 +1219,33 @@ sequenceDiagram
 | --- | --- |
 | `runner_list` | The computers that run jobs for the bot: name, online, how jobs run, operating system, processors, memory, GPU, slots, and jobs waiting. |
 | `runner_submit` | Send a job: folder, command, output patterns, and optionally a runner, requirements, image, variables, caches, exclusions, and timeouts. |
-| `runner_status`, `runner_logs` | One job, or the jobs of this conversation; the end of a job's log. |
+| `runner_status`, `runner_logs` | One job, or the jobs of this conversation, with what a running job uses on its runner; the end of a job's log. |
 | `runner_cancel` | Cancel one job. |
 
 Reading never asks. Sending and cancelling follow the bot's approval ceiling: under **Ask for approval** you approve
-each in **Awaiting you**. You can cancel a job running on a computer in that computer's **Settings → Runner**.
+each in **Awaiting you**.
+
+### Follow and stop jobs
+
+| Where | What you see and do |
+| --- | --- |
+| The bot's **Settings → Runners**, on any of your computers | **Latest jobs**: state, runner, and when each was sent; for a running job, its CPU, memory now and at its peak, and processes. **Log** shows the job's output as it comes; **Cancel** stops a job that has not ended, wherever it runs. The list refreshes every 5 seconds while a job has not ended. |
+| **Settings → Runner**, on the computer that runs them | **Jobs on this computer**: bot, server, the first line of the command, what the job is doing, how long it has run, and what it uses, with **Log** and **Cancel**. **Recent jobs**: the last 20 jobs that ended there, with how each ended, its exit code or error, how long it took, its peak memory and CPU time, and its log. |
+| The bot's conversation | The command in the `runner_submit` step, and, when the job ends, a message with the result and the end of its log. |
+
+CPU is counted in processors: 3.5 of 12 means three and a half of the computer's 12 processors are busy. The runner
+samples a native job's processes every second and a container's every 5 seconds, and tells the bot server at most
+every 10 seconds; the server keeps only the last sample, in memory, until the job ends. A log is read from the bot's
+environment as you look at it: on the runner computer from its own copy, elsewhere through the bot server, while the
+bot's environment runs.
+
+A job stops when you cancel it, when the bot cancels it, when its run timeout passes (60 minutes by default, at most
+24 hours), when you turn off **Run jobs for bots**, or when its link ends. Cancelling a native job sends SIGTERM to
+every process it started, including those that started a session of their own, and SIGKILL 10 seconds later; when
+its command ends, whatever it left running is stopped too. The runner knows a native job's processes by their parent
+and process group, and on Linux also by the job's `MAESTRLY_JOB_ID`, which they inherit; on macOS, a process that
+leaves the job's session before the runner's first look at it (within a second) can survive. A container job is
+stopped with `docker stop` and removed.
 
 A link ends when either side ends it: turning the switch off on the runner computer, removing it from any of your
 computers, unpairing or revoking that computer, or deleting the bot. The bot's jobs on that computer are cancelled,
