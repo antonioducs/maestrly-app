@@ -23,7 +23,7 @@ Video rendering is one use; nothing in this design is specific to it.
 | Who submits jobs | Fleet bots only. Workspaces conversations and local conversations can become clients of the same broker later. |
 | Access | Per bot, given on the runner itself in the bot's Settings → **Runners**. Only that computer can link itself, as with project access; any paired device can remove a link. |
 | Broker | The gateway keeps the queue and each job's state in its database, assigns jobs to runners, and relays bytes without storing them. It keeps a job's command, image, and environment variables only until the job ends. |
-| Transport | A runner receives jobs on the event stream it already holds, opened with `runner=1`, and calls device-token routes. A bot calls internal routes with its gateway token. Files stream through the gateway between the environment's control server and the runner. |
+| Transport | A runner receives jobs on the event stream it already holds, opened with `runners=1`, and calls device-token routes. A bot calls internal routes with its gateway token. Files stream through the gateway between the environment's control server and the runner. |
 | Inputs | The bot names a folder. Its environment sends a manifest of paths, sizes, modes, and SHA-256 digests. The runner keeps a blob cache per bot and asks only for the blobs it lacks, which arrive as one zstd-compressed tar stream. |
 | Outputs | Globs relative to the folder. After the command ends, the runner sends the matching files that differ from the inputs as a chunked, SHA-256-checked, resumable archive, which the environment writes back into the folder. |
 | Caches | A job names caches, such as `node_modules` or model weights, at paths inside its folder. A runner keeps each bot's caches across jobs; they never travel. |
@@ -108,7 +108,8 @@ sequenceDiagram
 ### 1. Protocol (`packages/bot-fleet-protocol`)
 
 - Constants: `FLEET_RUNNERS_FEATURE = 'runners'` (announced in `moreFeatures`, since `features` is full),
-  `FLEET_RUNNER_JOBS_CAPABILITY = 'runner-jobs'`, the event-stream query flag `runner`, and `FLEET_RUNNER_LIMITS`:
+  `FLEET_RUNNER_JOBS_CAPABILITY = 'runner-jobs'`, the event-stream query flag `FLEET_RUNNERS_QUERY = 'runners'`, the
+  job protocol version, and `FLEET_RUNNER_LIMITS`:
 
   | Limit | Value |
   | --- | --- |
@@ -132,7 +133,8 @@ sequenceDiagram
   `caches: [{name, path}]` with paths relative to the folder, `exclude`, `timeoutMinutes`, `queueTimeoutMinutes`); runner
   capabilities (job protocol version, OS, architecture, logical CPUs, memory, executor, GPU `{vendor, name, memory}` or
   none, slots); job states `queued`, `assigned`, `running`, `finishing`, `succeeded`, `failed`, `cancelled`,
-  `expired`, `lost`; error codes; gateway events `runner.job`, `runner.cancel`, and `runner_link.updated`. Unknown
+  `expired`, `lost`; error codes; gateway events `runner.job` and `runner.cancel` (to one runner), and `runner_link.updated` and
+  `runner_job.updated` (to every stream with `runners=1`). Unknown
   events are already ignored by older apps.
 - Route families, each added to the route tables and their pinning tests:
   - **Internal, bot token**: list the bot's runners; create, read, and cancel its jobs.
@@ -148,24 +150,29 @@ sequenceDiagram
 - **Schema 23** adds:
 
   ```sql
-  runner_links(bot_id, device_id, runner_id UNIQUE, name, created_at, PRIMARY KEY (bot_id, device_id))
-  runner_jobs(id PRIMARY KEY, bot_id, runner_id,
+  runner_links(bot_id, device_id, runner_id UNIQUE, name, linked_at, updated_at, PRIMARY KEY (bot_id, device_id))
+  runner_devices(device_id PRIMARY KEY, capabilities_json, updated_at)
+  runner_jobs(id PRIMARY KEY, bot_id, requested_runner_id, runner_id, device_id,
               state CHECK (state IN ('queued', 'assigned', 'running', 'finishing', 'succeeded', 'failed',
                                      'cancelled', 'expired', 'lost')),
               spec_json, requires_json,
               created_at, queue_deadline, assigned_at, started_at, ended_at,
-              exit_code, error_code, error_message, outputs_json, notify_pending)
+              exit_code, error_code, error_message, cancel_requested, seq, notified_seq)
   ```
 
-  `runner_id` stays empty until assignment. `spec_json` is cleared when the job ends. Ended jobs are deleted after
-  7 days.
-- **Runner presence** is in memory: a runner is online while its runner stream is open, with the capabilities, slots,
-  and held jobs of its last state report.
+  The environment names each job (`job_…`), so its record exists before any runner asks for the job's files; a repeated
+  create with the same id returns the same job. `runner_id` and `device_id` stay empty until assignment.
+  `runner_devices` keeps each runner's last reported capabilities, so a submit is checked while the runner is offline.
+  `spec_json` is cleared when the job ends. `seq` counts the job's changes and `notified_seq` the last one its
+  environment received. Ended jobs are deleted after 7 days.
+- **Runner presence** is in memory: a computer runs jobs while a stream it opened with `runners=1` is open and its last
+  state report says it accepts jobs, with that report's capabilities, slots, and held jobs.
 - **Scheduler** (`runners.ts`) runs on a submit, a runner state report, a job's end, and every 15 s. Jobs go out in
   creation order. A job can go to any online runner linked to its bot (or only to the one it names) that meets its
   requirements and has a free slot; among several, the one with the most free slots, then the one linked first. The
-  gateway sends `runner.job` and marks the job `assigned`. Without an accept in
-  30 s, the job returns to `queued` and that runner is skipped for it for 5 minutes.
+  gateway sends `runner.job` and marks the job `assigned`; the runner's accept makes it `running`, which covers the
+  input transfer and the command. Without an accept in 30 s, the job returns to `queued` and that runner is skipped for
+  it for 5 minutes.
 - **Submit** fails with `runner_not_linked` when the bot has no runner, `runner_unmatched` when no linked runner's
   last known capabilities meet the requirements, and `runner_busy` past the per-bot job limit. Otherwise the job is
   `queued`, and it becomes `expired` at its queue deadline.
@@ -174,8 +181,8 @@ sequenceDiagram
   does not report `lost` and sends `runner.cancel` for reported jobs that already ended on the gateway.
 - **Cancel** from the bot or the owner ends a queued job at once. For an assigned or running job it sends
   `runner.cancel`; the job becomes `cancelled` when the runner finishes it, or after the grace period.
-- **Job states reach the environment** through its control server. While the environment is unavailable, the job keeps
-  `notify_pending` and the state is sent again when the environment is ready, as peer messages are.
+- **Job states reach the environment** through its control server. While the environment is unavailable, the job's
+  latest state stays unsent (`seq` above `notified_seq`) and is sent when the bot is ready again, as peer messages are.
 - **Relay.** Manifest, blob, log, and output routes pipe bodies between the runner and the environment as host-files
   does: no buffering, a
   `Content-Length` cap per route, and SHA-256 checked by the endpoints. Each route checks that the caller is the job's
@@ -221,7 +228,8 @@ The default excludes are `.git/`, `node_modules/`, `.venv/`, and `__pycache__/`;
   - `runner_status`: one job, or the jobs of this conversation.
   - `runner_logs`: the tail of the environment's copy of the log.
   - `runner_cancel`: one job.
-- **Job records** are kept per bot under `fleet-instance/bots/<botId>/runner-jobs/`: the submitting conversation
+- **Job records** are written before the job is submitted, under the id the environment mints, and kept per bot under
+  `fleet-instance/bots/<botId>/runner-jobs/`: the submitting conversation
   (primary, routine run, or thread), the folder, the output globs, the state, and the log as batches arrive. The gateway
   never learns the conversation.
 - **Completion.** On a final state the runtime adds a `continuation` input to the recorded conversation, targeting its
@@ -231,7 +239,7 @@ The default excludes are `.git/`, `node_modules/`, `.venv/`, and `__pycache__/`;
 ### 5. Runner (`apps/desktop/src/main/runner`)
 
 - **Connection.** While **Run jobs for bots** is on, the app opens its event stream to every paired bot server with
-  `runner=1` and reports its state on connect and whenever its slots or jobs change.
+  `runners=1` and reports its state on connect and whenever its slots or jobs change.
 - **Capabilities.** OS, architecture, logical CPUs, and memory; the GPU from `nvidia-smi` or the Apple silicon chip;
   Docker's status from the installer's `fleet/installer/docker-host.ts`, and whether `--gpus` works, probed once.
 - **Storage.** A runner folder, by default inside the app's data folder and configurable, holds `blobs/<bot>/`,
