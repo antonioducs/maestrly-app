@@ -40,6 +40,7 @@ import {
   FLEET_PROVISIONING_FEATURE,
   FLEET_RUNTIME_UPDATES_FEATURE,
   FLEET_ROUTINE_CONVERSATIONS_FEATURE,
+  FLEET_RUNNER_JOBS_CAPABILITY,
   FLEET_SCREEN_UPGRADE,
   FLEET_SKILL_BODY_MAX,
   FLEET_TRANSCRIPT_REASONING_FEATURE,
@@ -114,6 +115,8 @@ import {
   sendInstanceError,
   writeJson,
 } from './http'
+import type { RunnerJobFiles } from './runner-jobs/files'
+import { isRunnerJobsRoute, serveRunnerJobsRoute } from './runner-jobs/http'
 import type { ScreenClientHandle } from './screen-session'
 
 export { InstanceHttpError } from './http'
@@ -128,7 +131,8 @@ export type { HostFilesRoutes } from './host-files-http'
  * last message, streams its screens as video, moves its bots to other environments with everything that is theirs,
  * says why an MCP connection test failed, runs routines in conversations of their own when the gateway asks,
  * routes the tasks of a bot that delegates to the models its owner allows, and lets the owner list, delete and size
- * the files its bots shared. Its health and every status advertise them.
+ * the files its bots shared, and keeps the files of the jobs its bots send to runners (their manifests, blobs, logs and
+ * outputs). Its health and every status advertise them.
  */
 export const INSTANCE_CAPABILITIES: readonly string[] = [
   FLEET_FILES_FEATURE,
@@ -151,6 +155,7 @@ export const INSTANCE_CAPABILITIES: readonly string[] = [
   FLEET_PEER_CONVERSATIONS_FEATURE,
   FLEET_BOT_DELEGATION_FEATURE,
   FLEET_FILES_MANAGE_FEATURE,
+  FLEET_RUNNER_JOBS_CAPABILITY,
 ]
 
 type MemoryStatus = 'active' | 'archived' | 'superseded' | 'all'
@@ -196,6 +201,8 @@ export interface InstanceBot {
   hold(reason: 'takeover' | 'paused'): Promise<FleetInstanceHold>
   release(value: FleetInstanceReleaseRequest): Promise<FleetInstanceHold>
   conversationCall(value: FleetConversationCallRequest): Promise<{ result: unknown }>
+  /** The files of the jobs this bot sent to runners (`runner-jobs`). */
+  runnerJobs(): RunnerJobFiles
 }
 
 /** The environment behind the control API: its provisioning, its bots and its screens. */
@@ -775,6 +782,15 @@ export function createInstanceControlServer(
       if (isHostFilesRoute(match.key))
         return await serveHostFilesRoute(hostFiles(), { key: match.key, params: match.params }, request, response, url)
       if (match.key.startsWith('hostDesktop')) desktopCalls()
+      // A runner's transfers stream raw bytes both ways, so they never reach the JSON body parsing below.
+      if (isRunnerJobsRoute(match.key))
+        return await serveRunnerJobsRoute(
+          bot(match.params).runnerJobs(),
+          { key: match.key, params: match.params },
+          request,
+          response,
+          url
+        )
       // A bot's package streams both ways as raw bytes.
       if (match.key === 'botExport' || match.key === 'botImport') {
         if (!isBotId(match.params.botId)) throw botNotFound()

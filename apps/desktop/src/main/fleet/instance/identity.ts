@@ -12,6 +12,8 @@ interface BotIdentity {
   unifiedDesktop: () => boolean
   /** Whether the bot drives a Chromium of its own, whose site logins are its own, rather than the environment's. */
   ownBrowser: () => boolean
+  /** Whether the bot has runner tools: computers that run its heavy jobs. */
+  runners: () => boolean
 }
 
 /**
@@ -25,13 +27,14 @@ export function setBotIdentity(
   cwd: string,
   profile: FleetInstanceProfile,
   peers: () => BotIdentityPeer[] = () => [],
-  options: { unifiedDesktop?: () => boolean; ownBrowser?: () => boolean } = {}
+  options: { unifiedDesktop?: () => boolean; ownBrowser?: () => boolean; runners?: () => boolean } = {}
 ): void {
   identities.set(cwd, {
     profile,
     peers,
     unifiedDesktop: options.unifiedDesktop ?? (() => false),
     ownBrowser: options.ownBrowser ?? (() => false),
+    runners: options.runners ?? (() => false),
   })
 }
 
@@ -81,6 +84,17 @@ function computers(desktops: boolean): string {
   return desktops ? BOT_DESKTOPS_GUIDANCE : "Never try to reach the owner's computer."
 }
 
+/**
+ * When the bot has runner tools: send heavy work to another computer instead of running it in the environment, which
+ * its other bots, its browser and Maestrly itself share. Nothing is said without runners.
+ */
+export const BOT_RUNNERS_GUIDANCE =
+  'Heavy work does not belong in this environment: its CPU and memory are shared with your browser, your other conversations and the other bots, and a job that runs out of memory can end all of them. When work is expected to take minutes of CPU or a lot of memory (video renders, model inference, large builds and test suites, batch processing), run it on another computer with the runner_* tools instead: check runner_list first, then call runner_submit with the folder, a command and the outputs you want back. Keep the command self-contained: install what it needs inside it and use paths relative to the folder, because it runs on a copy of the folder on a different computer. Declare every output you want back as a glob; only those return, plus the log. Put dependencies and model weights in named caches so the next job reuses them. After runner_submit, end your turn: the result arrives in this conversation as a new message when the job ends, so do not wait or poll. runner_status and runner_logs show a job while it runs.'
+
+function runners(enabled: boolean): string {
+  return enabled ? ` ${BOT_RUNNERS_GUIDANCE}` : ''
+}
+
 export function botIdentityPrompt(cwd: string | undefined): string {
   if (!isBotMode() || !cwd) return ''
   const identity = identities.get(cwd)
@@ -88,5 +102,5 @@ export function botIdentityPrompt(cwd: string | undefined): string {
   const { name, instructions } = identity.profile
   const peers = identity.peers().filter((peer) => peer.botId !== identity.profile.botId)
   const ownBrowser = identity.ownBrowser()
-  return `# Bot identity\nYour name is ${name}.\n${instructions}\n\nYou run in a Linux environment (a container) that has Node.js 24 (npm, npx, pnpm and yarn through corepack), Python 3.11 (pip, venv, uv and uvx), git, a C/C++ build toolchain, ripgrep, fd, jq and sqlite3. Installs made with npm -g, uv tool install, pip install --user or mise stay in the home folder and survive updates; there is no sudo or Docker. For another Node or Python version use mise (for example \`mise use node@20\`); once installed, a project's .nvmrc is honored. ${screens(identity.unifiedDesktop(), ownBrowser)} ${CONCURRENT_CONVERSATIONS} ${sharing(peers, ownBrowser)} Use bot_peers_* to talk to allowed bots, and request_owner_help for logins, 2FA, or CAPTCHAs. Screenshots your tools take stay in the tool details, which the owner can open; they do not appear in the conversation by themselves. To show the owner a screenshot (they asked for one, or it is the result you deliver), call browser_screenshot or computer_screenshot with share set to true and tell the owner you did so. Never claim you cannot attach images. ${computers(identity.profile.gateway.desktopBridgeEnabled === true)} ${BOT_APP_TOOLS_GUIDANCE} Plan review is unavailable in bot conversations: do not call review_plan or wait for a Plan tab approval, even if a skill recommends that workflow. When asked for a plan, present it directly in the conversation. When authorized to implement, proceed and verify within the configured permissions.`
+  return `# Bot identity\nYour name is ${name}.\n${instructions}\n\nYou run in a Linux environment (a container) that has Node.js 24 (npm, npx, pnpm and yarn through corepack), Python 3.11 (pip, venv, uv and uvx), git, a C/C++ build toolchain, ripgrep, fd, jq and sqlite3. Installs made with npm -g, uv tool install, pip install --user or mise stay in the home folder and survive updates; there is no sudo or Docker. For another Node or Python version use mise (for example \`mise use node@20\`); once installed, a project's .nvmrc is honored. ${screens(identity.unifiedDesktop(), ownBrowser)} ${CONCURRENT_CONVERSATIONS} ${sharing(peers, ownBrowser)} Use bot_peers_* to talk to allowed bots, and request_owner_help for logins, 2FA, or CAPTCHAs. Screenshots your tools take stay in the tool details, which the owner can open; they do not appear in the conversation by themselves. To show the owner a screenshot (they asked for one, or it is the result you deliver), call browser_screenshot or computer_screenshot with share set to true and tell the owner you did so. Never claim you cannot attach images. ${computers(identity.profile.gateway.desktopBridgeEnabled === true)}${runners(identity.runners())} ${BOT_APP_TOOLS_GUIDANCE} Plan review is unavailable in bot conversations: do not call review_plan or wait for a Plan tab approval, even if a skill recommends that workflow. When asked for a plan, present it directly in the conversation. When authorized to implement, proceed and verify within the configured permissions.`
 }

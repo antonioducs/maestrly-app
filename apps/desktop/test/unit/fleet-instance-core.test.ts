@@ -394,6 +394,34 @@ describe('bot identity', () => {
     expect(open).toContain('Permission prompts and plan approvals in those conversations stay with the owner')
   })
 
+  it('says nothing of runners without them, and with them tells the bot to send heavy work there and end its turn', () => {
+    vi.stubEnv('MAESTRLY_BOT_MODE', '1')
+    const profile = {
+      botId: 'scout',
+      name: 'Scout',
+      instructions: '',
+      ceiling: 'ask' as const,
+      selection: null,
+      compaction: null,
+      gateway: { peersEnabled: false, artifactsEnabled: false, desktopBridgeEnabled: false },
+    }
+    let runners = false
+    setBotIdentity('/bot/runners', profile, () => [], { runners: () => runners })
+    expect(botIdentityPrompt('/bot/runners')).not.toContain('runner_')
+    setBotIdentity('/bot/plain', profile)
+    expect(botIdentityPrompt('/bot/plain')).not.toContain('runner_')
+    runners = true
+    const open = botIdentityPrompt('/bot/runners')
+    expect(open).toContain('minutes of CPU or a lot of memory')
+    expect(open).toContain('video renders, model inference, large builds and test suites, batch processing')
+    expect(open).toContain('check runner_list first')
+    expect(open).toContain('Keep the command self-contained')
+    expect(open).toContain('Declare every output')
+    expect(open).toContain('named caches')
+    expect(open).toContain('end your turn')
+    expect(open).toContain('as a new message')
+  })
+
   it('describes one desktop with the browser and terminals as windows, or else two screens', () => {
     vi.stubEnv('MAESTRLY_BOT_MODE', '1')
     const profile = {

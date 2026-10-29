@@ -27,6 +27,7 @@ import type { McpToolContext } from './context'
 import { err, ok } from './context'
 import { registerBotFileTools } from './bot-files'
 import { registerBotDesktopTools } from './bot-desktops'
+import { registerBotRunnerTools } from './bot-runners'
 
 const reasonSchema = z.string().trim().min(1).max(500)
 const routineTitle = z.string().trim().min(1).max(FLEET_ROUTINE_TITLE_MAX).describe('Short name the owner sees.')
@@ -95,12 +96,12 @@ function weekly(
 /**
  * Registers the bot tools of a conversation. Each call resolves the conversation's own bot: its gateway token, current
  * input, owner-memory client and peer names. `gateway`, when given, replaces the bot's gateway access, and `desktops`
- * then says whether that gateway routes desktop calls (the bot's profile says so otherwise).
+ * and `runners` then say whether that gateway routes desktop calls and runner jobs (the bot's profile says so otherwise).
  */
 export function registerBotInstanceTools(
   ctx: McpToolContext,
   gateway?: GatewayConfig | null,
-  options: { desktops?: boolean } = {}
+  options: { desktops?: boolean; runners?: boolean } = {}
 ): void {
   const bot = () => botRuntimeForConversation(ctx.convId)
   if (bot()) registerBotFileTools(ctx)
@@ -135,6 +136,8 @@ export function registerBotInstanceTools(
   // The computers that linked this bot: offered once its gateway routes desktop calls, even before any links it,
   // so the bot can tell its owner how to give it access.
   if (gateway === undefined ? bot()?.desktopBridgeEnabled : options.desktops) registerBotDesktopTools(ctx, gatewayFor)
+  // The computers that run this bot's heavy jobs, once its gateway sends them.
+  if (gateway === undefined ? bot()?.runnersEnabled : options.runners) registerBotRunnerTools(ctx, gatewayFor, bot)
   ctx.server.registerTool(
     'bot_peers_list',
     {

@@ -31,6 +31,13 @@ import {
   FLEET_ROUTINE_RUN_SETTINGS_DEFAULT,
   FLEET_PEER_THREAD_SETTINGS_DEFAULT,
   fleetBotDelegationSchema,
+  FLEET_RUNNER_JOB_FINAL_STATES,
+  fleetRunnerCapabilitiesSchema,
+  type FleetRunnerCapabilities,
+  type FleetRunnerErrorCode,
+  type FleetRunnerJobSpec,
+  type FleetRunnerJobState,
+  type FleetRunnerRequirements,
 } from '@maestrly/bot-fleet-protocol'
 import { GatewayError } from './errors.js'
 
@@ -193,6 +200,52 @@ export type StoredEnvironmentDesktopLink = {
 export type StoredDesktopTarget =
   | { kind: 'device'; link: StoredDesktopLink }
   | { kind: 'environment'; link: StoredEnvironmentDesktopLink }
+/** A computer that runs jobs for a bot: the device that paired, and the id and name the bot sees. */
+export type StoredRunnerLink = {
+  botId: string
+  deviceId: string
+  runnerId: string
+  name: string
+  linkedAt: string
+  updatedAt: string
+}
+/** A bot's job as the gateway keeps it; `spec` is null once the job ended. */
+export type StoredRunnerJob = {
+  id: string
+  botId: string
+  requestedRunnerId: string | null
+  runnerId: string | null
+  deviceId: string | null
+  state: FleetRunnerJobState
+  spec: FleetRunnerJobSpec | null
+  requires: FleetRunnerRequirements
+  createdAt: string
+  queueDeadline: string
+  assignedAt: string | null
+  startedAt: string | null
+  endedAt: string | null
+  exitCode: number | null
+  errorCode: FleetRunnerErrorCode | null
+  errorMessage: string | null
+  cancelRequested: boolean
+  seq: number
+  notifiedSeq: number
+}
+export type RunnerJobPatch = Partial<
+  Pick<
+    StoredRunnerJob,
+    | 'runnerId'
+    | 'deviceId'
+    | 'state'
+    | 'assignedAt'
+    | 'startedAt'
+    | 'endedAt'
+    | 'exitCode'
+    | 'errorCode'
+    | 'errorMessage'
+    | 'cancelRequested'
+  >
+>
 /** A bot's move between environments as the gateway journals it, with the slot it leaves and the one it holds. */
 export type StoredBotMove = FleetBotMove & { fromSlot: number; toSlot: number }
 export type StoredDictation = { provider: DictationProvider; key: string; updatedAt: string; updatedBy: string }
@@ -322,7 +375,7 @@ export class Store {
     const version = Number(
       (this.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get() as Row | undefined)?.value ?? 0
     )
-    if (version > 22) throw new Error('Gateway database schema is newer than this binary')
+    if (version > 23) throw new Error('Gateway database schema is newer than this binary')
     if (version === 0) {
       this.db.exec(`
         CREATE TABLE devices (id TEXT PRIMARY KEY, name TEXT NOT NULL, token_sha256 TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, last_seen_at TEXT, revoked_at TEXT);
@@ -505,6 +558,20 @@ export class Store {
         )
       }
       this.db.prepare("UPDATE meta SET value='22' WHERE key='schema_version'").run()
+    }
+    if (version <= 22) {
+      // Schema 23: the computers that run jobs for bots (`runners`), what each last reported about itself, and the jobs.
+      // A job keeps its command and environment variables only until it ends, and never a file, a log or a conversation.
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS runner_links (bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE, device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE, runner_id TEXT NOT NULL UNIQUE, name TEXT NOT NULL, linked_at TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (bot_id, device_id));
+        CREATE INDEX IF NOT EXISTS idx_runner_links_device ON runner_links(device_id);
+        CREATE TABLE IF NOT EXISTS runner_devices (device_id TEXT PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE, capabilities_json TEXT NOT NULL, updated_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS runner_jobs (id TEXT PRIMARY KEY, bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE, requested_runner_id TEXT, runner_id TEXT, device_id TEXT, state TEXT NOT NULL CHECK (state IN ('queued','assigned','running','finishing','succeeded','failed','cancelled','expired','lost')), spec_json TEXT, requires_json TEXT NOT NULL, created_at TEXT NOT NULL, queue_deadline TEXT NOT NULL, assigned_at TEXT, started_at TEXT, ended_at TEXT, exit_code INTEGER, error_code TEXT, error_message TEXT, cancel_requested INTEGER NOT NULL DEFAULT 0, seq INTEGER NOT NULL DEFAULT 1, notified_seq INTEGER NOT NULL DEFAULT 0);
+        CREATE INDEX IF NOT EXISTS idx_runner_jobs_bot ON runner_jobs(bot_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_runner_jobs_state ON runner_jobs(state, created_at);
+        CREATE INDEX IF NOT EXISTS idx_runner_jobs_device ON runner_jobs(device_id, state);
+      `)
+      this.db.prepare("UPDATE meta SET value='23' WHERE key='schema_version'").run()
     }
 
     if (this.db.prepare('PRAGMA foreign_key_check').all().length)
@@ -1140,6 +1207,203 @@ export class Store {
       this.db.prepare('DELETE FROM desktop_links WHERE device_id=?').run(deviceId)
       return links
     })
+  }
+  private runnerLink(row: Row): StoredRunnerLink {
+    return {
+      botId: String(row.bot_id),
+      deviceId: String(row.device_id),
+      runnerId: String(row.runner_id),
+      name: String(row.name),
+      linkedAt: String(row.linked_at),
+      updatedAt: String(row.updated_at),
+    }
+  }
+  /** The computers that run jobs for a bot, oldest link first. */
+  runnerLinks(botId: string): StoredRunnerLink[] {
+    return (
+      this.db.prepare('SELECT * FROM runner_links WHERE bot_id=? ORDER BY linked_at, rowid').all(botId) as Row[]
+    ).map((row) => this.runnerLink(row))
+  }
+  runnerLinksOfDevice(deviceId: string): StoredRunnerLink[] {
+    return (
+      this.db.prepare('SELECT * FROM runner_links WHERE device_id=? ORDER BY linked_at, rowid').all(deviceId) as Row[]
+    ).map((row) => this.runnerLink(row))
+  }
+  runnerLinkById(runnerId: string): StoredRunnerLink | null {
+    const row = this.db.prepare('SELECT * FROM runner_links WHERE runner_id=?').get(runnerId) as Row | undefined
+    return row ? this.runnerLink(row) : null
+  }
+  /** Links a computer to a bot as its runner, or renames its link; its `runnerId` stays as it was. */
+  saveRunnerLink(botId: string, deviceId: string, name: string, runnerId: string, at = now()): StoredRunnerLink {
+    this.db
+      .prepare(
+        `INSERT INTO runner_links(bot_id,device_id,runner_id,name,linked_at,updated_at) VALUES(?,?,?,?,?,?)
+         ON CONFLICT(bot_id,device_id) DO UPDATE SET name=excluded.name,updated_at=excluded.updated_at`
+      )
+      .run(botId, deviceId, runnerId, name, at, at)
+    return this.runnerLink(
+      this.db.prepare('SELECT * FROM runner_links WHERE bot_id=? AND device_id=?').get(botId, deviceId) as Row
+    )
+  }
+  deleteRunnerLink(botId: string, deviceId: string): StoredRunnerLink | null {
+    return this.transaction(() => {
+      const row = this.db.prepare('SELECT * FROM runner_links WHERE bot_id=? AND device_id=?').get(botId, deviceId) as
+        | Row
+        | undefined
+      if (!row) return null
+      this.db.prepare('DELETE FROM runner_links WHERE bot_id=? AND device_id=?').run(botId, deviceId)
+      return this.runnerLink(row)
+    })
+  }
+  /** Removes every runner link of a computer; returns them. */
+  deleteRunnerLinksOfDevice(deviceId: string): StoredRunnerLink[] {
+    return this.transaction(() => {
+      const links = this.runnerLinksOfDevice(deviceId)
+      this.db.prepare('DELETE FROM runner_links WHERE device_id=?').run(deviceId)
+      return links
+    })
+  }
+  /** What a runner last reported about itself. */
+  saveRunnerDevice(deviceId: string, capabilities: FleetRunnerCapabilities, at = now()) {
+    this.db
+      .prepare(
+        `INSERT INTO runner_devices(device_id,capabilities_json,updated_at) VALUES(?,?,?)
+         ON CONFLICT(device_id) DO UPDATE SET capabilities_json=excluded.capabilities_json,updated_at=excluded.updated_at`
+      )
+      .run(deviceId, JSON.stringify(capabilities), at)
+  }
+  runnerDevice(deviceId: string): FleetRunnerCapabilities | null {
+    const row = this.db.prepare('SELECT capabilities_json FROM runner_devices WHERE device_id=?').get(deviceId) as
+      | Row
+      | undefined
+    if (!row) return null
+    const parsed = fleetRunnerCapabilitiesSchema.safeParse(JSON.parse(String(row.capabilities_json)))
+    return parsed.success ? parsed.data : null
+  }
+  private runnerJobRow(row: Row): StoredRunnerJob {
+    const text = (value: unknown) => (value === null || value === undefined ? null : String(value))
+    return {
+      id: String(row.id),
+      botId: String(row.bot_id),
+      requestedRunnerId: text(row.requested_runner_id),
+      runnerId: text(row.runner_id),
+      deviceId: text(row.device_id),
+      state: String(row.state) as FleetRunnerJobState,
+      spec: row.spec_json ? (JSON.parse(String(row.spec_json)) as FleetRunnerJobSpec) : null,
+      requires: JSON.parse(String(row.requires_json)) as FleetRunnerRequirements,
+      createdAt: String(row.created_at),
+      queueDeadline: String(row.queue_deadline),
+      assignedAt: text(row.assigned_at),
+      startedAt: text(row.started_at),
+      endedAt: text(row.ended_at),
+      exitCode: row.exit_code === null || row.exit_code === undefined ? null : Number(row.exit_code),
+      errorCode: text(row.error_code) as FleetRunnerErrorCode | null,
+      errorMessage: text(row.error_message),
+      cancelRequested: Number(row.cancel_requested) === 1,
+      seq: Number(row.seq),
+      notifiedSeq: Number(row.notified_seq),
+    }
+  }
+  insertRunnerJob(job: Omit<StoredRunnerJob, 'seq' | 'notifiedSeq'>) {
+    this.db
+      .prepare(
+        `INSERT INTO runner_jobs(id,bot_id,requested_runner_id,runner_id,device_id,state,spec_json,requires_json,created_at,queue_deadline,assigned_at,started_at,ended_at,exit_code,error_code,error_message,cancel_requested)
+         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+      )
+      .run(
+        job.id,
+        job.botId,
+        job.requestedRunnerId,
+        job.runnerId,
+        job.deviceId,
+        job.state,
+        job.spec ? JSON.stringify(job.spec) : null,
+        JSON.stringify(job.requires),
+        job.createdAt,
+        job.queueDeadline,
+        job.assignedAt,
+        job.startedAt,
+        job.endedAt,
+        job.exitCode,
+        job.errorCode,
+        job.errorMessage,
+        Number(job.cancelRequested)
+      )
+  }
+  runnerJob(id: string): StoredRunnerJob | null {
+    const row = this.db.prepare('SELECT * FROM runner_jobs WHERE id=?').get(id) as Row | undefined
+    return row ? this.runnerJobRow(row) : null
+  }
+  /** A bot's jobs, newest first. */
+  runnerJobsOfBot(botId: string): StoredRunnerJob[] {
+    return (
+      this.db.prepare('SELECT * FROM runner_jobs WHERE bot_id=? ORDER BY created_at DESC, id DESC').all(botId) as Row[]
+    ).map((row) => this.runnerJobRow(row))
+  }
+  /** Every job in these states, oldest first: the order the queue is served in. */
+  runnerJobsIn(states: readonly FleetRunnerJobState[]): StoredRunnerJob[] {
+    if (!states.length) return []
+    return (
+      this.db
+        .prepare(
+          `SELECT * FROM runner_jobs WHERE state IN (${states.map(() => '?').join(',')}) ORDER BY created_at, id`
+        )
+        .all(...states) as Row[]
+    ).map((row) => this.runnerJobRow(row))
+  }
+  runnerJobsOfDevice(deviceId: string, states: readonly FleetRunnerJobState[]): StoredRunnerJob[] {
+    if (!states.length) return []
+    return (
+      this.db
+        .prepare(
+          `SELECT * FROM runner_jobs WHERE device_id=? AND state IN (${states.map(() => '?').join(',')}) ORDER BY created_at, id`
+        )
+        .all(deviceId, ...states) as Row[]
+    ).map((row) => this.runnerJobRow(row))
+  }
+  /** Changes a job and counts the change; a job that ends forgets its command and environment variables. */
+  updateRunnerJob(id: string, patch: RunnerJobPatch): StoredRunnerJob {
+    return this.transaction(() => {
+      const current = this.runnerJob(id)
+      if (!current) throw new Error('Runner job not found')
+      const next = { ...current, ...patch }
+      const ended = FLEET_RUNNER_JOB_FINAL_STATES.includes(next.state)
+      this.db
+        .prepare(
+          `UPDATE runner_jobs SET runner_id=?,device_id=?,state=?,spec_json=?,assigned_at=?,started_at=?,ended_at=?,exit_code=?,error_code=?,error_message=?,cancel_requested=?,seq=seq+1 WHERE id=?`
+        )
+        .run(
+          next.runnerId,
+          next.deviceId,
+          next.state,
+          ended || !next.spec ? null : JSON.stringify(next.spec),
+          next.assignedAt,
+          next.startedAt,
+          next.endedAt,
+          next.exitCode,
+          next.errorCode,
+          next.errorMessage,
+          Number(next.cancelRequested),
+          id
+        )
+      return this.runnerJob(id)!
+    })
+  }
+  markRunnerJobNotified(id: string, seq: number) {
+    this.db.prepare('UPDATE runner_jobs SET notified_seq=MAX(notified_seq, ?) WHERE id=?').run(seq, id)
+  }
+  /** Jobs whose latest change their bot's environment has not received, oldest first. */
+  unnotifiedRunnerJobs(botId?: string): StoredRunnerJob[] {
+    const rows = botId
+      ? this.db
+          .prepare('SELECT * FROM runner_jobs WHERE bot_id=? AND seq>notified_seq ORDER BY created_at, id')
+          .all(botId)
+      : this.db.prepare('SELECT * FROM runner_jobs WHERE seq>notified_seq ORDER BY created_at, id').all()
+    return (rows as Row[]).map((row) => this.runnerJobRow(row))
+  }
+  /** Forgets ended jobs older than `at` whose environment received their end. */
+  deleteRunnerJobsEndedBefore(at: string) {
+    this.db.prepare('DELETE FROM runner_jobs WHERE ended_at IS NOT NULL AND ended_at<? AND notified_seq>=seq').run(at)
   }
 
   private environment(row: Row): StoredEnvironment {
@@ -1814,6 +2078,8 @@ export class Store {
       this.db.prepare('DELETE FROM routines WHERE bot_id=?').run(id)
       this.db.prepare('DELETE FROM activity WHERE bot_id=?').run(id)
       this.db.prepare('DELETE FROM desktop_links WHERE bot_id=?').run(id)
+      this.db.prepare('DELETE FROM runner_links WHERE bot_id=?').run(id)
+      this.db.prepare('DELETE FROM runner_jobs WHERE bot_id=?').run(id)
       this.db.prepare('DELETE FROM environment_desktop_links WHERE bot_id=?').run(id)
       this.db.prepare('DELETE FROM owner_messages WHERE bot_id=?').run(id)
       this.db.prepare('DELETE FROM bot_moves WHERE bot_id=?').run(id)

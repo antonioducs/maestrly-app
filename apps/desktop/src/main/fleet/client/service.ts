@@ -64,6 +64,23 @@ export interface FleetClientDeps {
   onGatewayId?(gatewayId: string): void
 }
 
+/**
+ * What this computer's runner does for one paired server: it takes the jobs the server sends on the event stream and
+ * serves the settings that manage it. Set by the main process before the client starts.
+ */
+export interface FleetRunnerPort {
+  /** Whether this computer takes jobs from this server: its runner is on and the server has jobs for runners. */
+  wants(): boolean
+  /** The stream is open and carries jobs: tells the server what this computer is and which jobs it holds. */
+  connected(): Promise<void>
+  /** The stream closed or was replaced. */
+  disconnected(): void
+  /** An event of the runners (`runner.*`, `runner_*.updated`); true when it was one, and no window sees it. */
+  handle(event: FleetGatewayEvent): boolean
+  /** This computer leaves the server: what it keeps for the server's bots goes. */
+  unpaired(): Promise<void>
+}
+
 /** This computer's connection to one paired bot server. */
 export class FleetClientService {
   readonly serverId: FleetServerId
@@ -146,6 +163,13 @@ export class FleetClientService {
     unpaired(deviceId: string): Promise<void>
     stop(): void
   } | null = null
+  /**
+   * Runs the jobs of this server's bots on this computer; set by the main process before the client starts, and not
+   * at all where no runner exists. Without it, or while it does not want jobs, the stream is opened without `runners=1`.
+   */
+  runnerHost: FleetRunnerPort | null = null
+  /** Whether the stream now open (or being opened) asked for runner events. */
+  private runnersOnStream = false
 
   start(): void {
     if (isHeadlessInstance()) return
@@ -180,6 +204,8 @@ export class FleetClientService {
     this.generation++
     this.events?.stop()
     this.events = null
+    this.runnersOnStream = false
+    this.runnerHost?.disconnected()
     this.screens.closeAll()
     this.desktopBridge?.stop()
   }
@@ -306,14 +332,26 @@ export class FleetClientService {
       error: null,
       tokenPersistence,
     })
+    this.openEvents(this.api)
+  }
+
+  /**
+   * Opens the event stream, asking for what this computer takes from it: desktop calls when it has the bridge, and
+   * jobs when its runner wants them from this server.
+   */
+  private openEvents(api: FleetApiClient): void {
     const generation = this.generation
+    this.runnersOnStream = this.runnerHost?.wants() === true
     this.events = new FleetEvents(
-      this.api,
+      api,
       (event) => {
         if (generation === this.generation) this.applyEvent(event)
       },
       (state, error) => {
-        if (generation === this.generation) this.setConnection({ state, error })
+        if (generation !== this.generation) return
+        // A stream that is not open holds no jobs: the runner reports again when it opens.
+        if (state !== 'connected') this.runnerHost?.disconnected()
+        this.setConnection({ state, error })
       },
       async () => {
         if (generation !== this.generation) return
@@ -321,10 +359,13 @@ export class FleetClientService {
         if (generation !== this.generation) return
         if (meta.serverId) this.deps.onGatewayId?.(meta.serverId)
         this.setConnection({ features: fleetMetaFeatures(meta) })
+        // Only now is it known whether the server has jobs: a stream opened before is replaced by one that takes them.
+        if (this.syncRunnerStream()) return
         await this.refresh()
         if (generation !== this.generation) return
         // Links may have changed while this computer was away; checking them needs the stream open, not this answer.
         void this.desktopBridge?.connected().catch(() => undefined)
+        if (this.runnersOnStream) void this.runnerHost?.connected().catch(() => undefined)
         try {
           this.onResynced?.()
         } catch {
@@ -333,9 +374,27 @@ export class FleetClientService {
       },
       undefined,
       undefined,
-      { desktopBridge: this.desktopBridge !== null }
+      { desktopBridge: this.desktopBridge !== null, runners: this.runnersOnStream }
     )
     this.events.start()
+  }
+
+  /**
+   * Opens the event stream again when whether it carries `runners=1` no longer matches whether this computer's runner
+   * wants jobs from this server, as when the owner turns the runner on or off or the server announces its features.
+   * Returns whether it did.
+   */
+  syncRunnerStream(): boolean {
+    const api = this.api
+    if (!api || !this.events || (this.runnerHost?.wants() === true) === this.runnersOnStream) return false
+    // A server that refuses this computer is not asked again until it is paired again.
+    if (this.connection.state === 'unauthorized' || this.connection.state === 'incompatible') return false
+    // What the old stream's callbacks were told no longer matters.
+    this.generation++
+    this.events.stop()
+    this.runnerHost?.disconnected()
+    this.openEvents(api)
+    return true
   }
 
   /**
@@ -349,6 +408,8 @@ export class FleetClientService {
     this.stop()
     // Unpairing ends every access this computer gave its bots; the server forgets the links with the device.
     if (deviceId) await this.desktopBridge?.unpaired(deviceId).catch(() => undefined)
+    // The jobs this computer ran for the server's bots end with the pairing, and what it kept for them goes.
+    await this.runnerHost?.unpaired().catch(() => undefined)
     this.api = null
     try {
       await api?.call('devicesSelfDelete')
@@ -401,6 +462,16 @@ export class FleetClientService {
       return
     }
     if (event.type === 'desktop_link.updated') this.desktopBridge?.handle(event)
+    // The runners' events are between the server and this computer's runner, which tells the settings what changed.
+    if (
+      event.type === 'runner.job' ||
+      event.type === 'runner.cancel' ||
+      event.type === 'runner_link.updated' ||
+      event.type === 'runner_job.updated'
+    ) {
+      this.runnerHost?.handle(event)
+      return
+    }
     switch (event.type) {
       case 'hello':
         this.onArtifactEvent?.({ type: 'changed' })

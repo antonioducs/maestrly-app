@@ -62,6 +62,11 @@ const BOT_INSTANCE_TOOL_NAMES = [
   'desktop_configure_chat',
   'desktop_cancel_turn',
   'desktop_answer_question',
+  'runner_list',
+  'runner_submit',
+  'runner_status',
+  'runner_logs',
+  'runner_cancel',
 ]
 
 const EXPECTED_TOOL_NAMES = [

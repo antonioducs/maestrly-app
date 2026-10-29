@@ -457,6 +457,53 @@ export const FLEET_DESKTOP_BRIDGE_LIMITS = {
 } as const
 
 /**
+ * Gateway feature (`moreFeatures` of `/v1/meta`): a bot sends jobs, a command with an input folder and the outputs it
+ * wants back, to the computers that run jobs for it. The gateway keeps the queue and each job's state, and relays the
+ * job's files between the bot's environment and the runner without storing them.
+ */
+export const FLEET_RUNNERS_FEATURE = 'runners'
+/** Instance capability: the environment's Maestrly names and records its bots' jobs, and serves and takes their files. */
+export const FLEET_RUNNER_JOBS_CAPABILITY = 'runner-jobs'
+/** The query parameter a device's event stream sets to `1` to read runner events, its own jobs to run included. */
+export const FLEET_RUNNERS_QUERY = 'runners'
+/** The job protocol a runner speaks; the gateway sends jobs only to runners that state this version. */
+export const FLEET_RUNNER_PROTOCOL_VERSION = 1
+/** Bounds of runner links and jobs, of their timing, and of what crosses the gateway for them. */
+export const FLEET_RUNNER_LIMITS = {
+  linksPerBotMax: 10,
+  activeJobsPerBotMax: 20,
+  slotsMax: 8,
+  nameMax: 60,
+  pathMax: 1024,
+  listMax: 64,
+  commandBytesMax: 64 * 1024,
+  envEntriesMax: 64,
+  envBytesMax: 32 * 1024,
+  imageMax: 256,
+  inputFilesMax: 200_000,
+  inputBytesMax: 100 * 1024 ** 3,
+  outputBytesMax: 50 * 1024 ** 3,
+  timeoutMinutesDefault: 60,
+  timeoutMinutesMax: 24 * 60,
+  queueMinutesDefault: 60,
+  queueMinutesMax: 24 * 60,
+  acceptTimeoutMs: 30_000,
+  skipAfterUnacceptedMs: 5 * 60_000,
+  lostGraceMs: 10 * 60_000,
+  endedRetentionMs: 7 * 24 * 60 * 60_000,
+  blobRequestBytesMax: 1024 * 1024,
+  logBatchBytesMax: 256 * 1024,
+  outputChunkBytes: 16 * 1024 * 1024,
+  chunkBodySlackBytes: 1024 * 1024,
+  jobsListMax: 50,
+  /** Bytes of a job's log one read returns unless it asks for fewer, and at most. */
+  logPageBytesDefault: 64 * 1024,
+  logPageBytesMax: 256 * 1024,
+  /** How often a runner tells the gateway what a running job uses, at most. */
+  usageIntervalMs: 10_000,
+} as const
+
+/**
  * Gateway feature: what phones need of the gateway. A paired device may create one-use pairing codes for another
  * device, which the desktop shows as a QR code; a bridge ticket may name the Origin its WebSocket will send, which
  * phones always send; and phones register for push notifications (`/v1/devices/self/push`). These ship together, so

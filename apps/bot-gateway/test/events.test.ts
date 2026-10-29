@@ -114,3 +114,72 @@ describe('event hub', () => {
     hub.close()
   })
 })
+
+/** A subscriber that can be closed, as a device closing its stream. */
+function closable() {
+  const base = subscriber()
+  const closers: Array<() => void> = []
+  const response = base.response as unknown as {
+    destroyed: boolean
+    on: (event: string, handler: () => void) => unknown
+  }
+  response.on = (event, handler) => {
+    if (event === 'close') closers.push(handler)
+    return response
+  }
+  return {
+    ...base,
+    close() {
+      response.destroyed = true
+      for (const close of closers) close()
+    },
+  }
+}
+
+describe('runner streams', () => {
+  const at = '2026-10-29T10:00:00.000Z'
+  const cancel: FleetGatewayEvent = { type: 'runner.cancel', at, jobId: 'job_0123456789abcdef' }
+  const links: FleetGatewayEvent = { type: 'runner_link.updated', at, botId: 'alpha', links: [] }
+  const types = (events: FleetGatewayEvent[]) => events.map((event) => event.type)
+
+  it("sends runner events only to streams that read them, and a job's cancel only to its runner's newest stream", () => {
+    const hub = new EventHub(async () => {})
+    const older = subscriber()
+    const first = subscriber()
+    const second = subscriber()
+    const other = subscriber()
+    hub.add(older.response, 0, 'mac')
+    hub.add(first.response, 0, 'mac', { runners: true })
+    hub.add(second.response, 0, 'mac', { runners: true })
+    hub.add(other.response, 0, 'pc', { runners: true })
+    expect(hub.runnerStreamOpen('mac')).toBe(true)
+    expect(hub.runnerStreamOpen('phone')).toBe(false)
+    expect(hub.sendToRunner('mac', cancel)).toBe(true)
+    expect(hub.sendToRunner('phone', cancel)).toBe(false)
+    hub.emitToRunnerReaders(() => links)
+    // Even a broadcast skips the streams that do not read runner events.
+    hub.emit(links)
+    expect(types(older.sent())).toEqual(['hello'])
+    expect(types(first.sent())).toEqual(['hello', 'runner_link.updated', 'runner_link.updated'])
+    expect(types(second.sent())).toEqual(['hello', 'runner.cancel', 'runner_link.updated', 'runner_link.updated'])
+    expect(types(other.sent())).toEqual(['hello', 'runner_link.updated', 'runner_link.updated'])
+    hub.close()
+  })
+
+  it('tells when a device opens or closes a stream that reads runner events', () => {
+    const hub = new EventHub(async () => {})
+    const changes: string[] = []
+    hub.onRunnerChange = (deviceId) => changes.push(deviceId)
+    const plain = closable()
+    const runner = closable()
+    hub.add(plain.response, 0, 'mac')
+    hub.add(runner.response, 0, 'mac', { runners: true })
+    expect(changes).toEqual(['mac'])
+    plain.close()
+    expect(changes).toEqual(['mac'])
+    runner.close()
+    expect(changes).toEqual(['mac', 'mac'])
+    expect(hub.runnerStreamOpen('mac')).toBe(false)
+    hub.close()
+  })
+})

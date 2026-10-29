@@ -10,11 +10,16 @@ import type { z } from 'zod'
 
 export type GatewayConfig = { url: string; token: string }
 const routineHint = ' Check Settings → Routines or ask your owner.'
+const runnerHint = ' Call runner_list for your runners and runner_status for your jobs.'
+/** A UUID shaped from the SHA-256 of `seed`: the same seed always gives the same one. */
+export function uuidFromSeed(seed: string): string {
+  const hex = createHash('sha256').update(seed).digest('hex')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`
+}
 export function keyForToolCall(extra: unknown): string {
   const meta = (extra as { _meta?: { toolCallId?: unknown } })._meta
   if (typeof meta?.toolCallId !== 'string' || !meta.toolCallId) return randomUUID()
-  const hex = createHash('sha256').update(meta.toolCallId).digest('hex')
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`
+  return uuidFromSeed(meta.toolCallId)
 }
 
 export async function gatewayRequest<K extends keyof typeof FLEET_INTERNAL_ROUTES>(
@@ -31,6 +36,7 @@ export async function gatewayRequest<K extends keyof typeof FLEET_INTERNAL_ROUTE
   const artifactRequest = routeKey.startsWith('artifact')
   const desktopRequest = routeKey.startsWith('desktop')
   const hostLinkRequest = routeKey.startsWith('hostDesktop')
+  const runnerRequest = routeKey === 'runners' || routeKey.startsWith('runnerJob')
   const family = hostLinkRequest
     ? 'bot access'
     : routineRequest
@@ -41,7 +47,9 @@ export async function gatewayRequest<K extends keyof typeof FLEET_INTERNAL_ROUTE
           ? 'artifact'
           : desktopRequest
             ? 'desktop'
-            : 'peer'
+            : runnerRequest
+              ? 'runner'
+              : 'peer'
   const peerRequest = family === 'peer'
   let response: Response
   try {
@@ -84,6 +92,13 @@ export async function gatewayRequest<K extends keyof typeof FLEET_INTERNAL_ROUTE
         envelope.success && code !== 'FORBIDDEN' && envelope.data.message !== 'Route not found'
           ? envelope.data.message
           : 'Update the bot server before giving bots access to this environment.'
+      )
+    // A job that is not this bot's, one refused as invalid, or a gateway that predates runners (no such route).
+    if (runnerRequest && ['FORBIDDEN', 'CONFLICT', 'NOT_FOUND', 'INVALID_REQUEST'].includes(code ?? ''))
+      throw new Error(
+        envelope.success && envelope.data.message !== 'Route not found'
+          ? envelope.data.message + runnerHint
+          : 'This gateway does not offer runners. Ask your owner to update the bot server.'
       )
     if (desktopRequest && code === 'INVALID_REQUEST')
       throw new Error('The gateway refused this desktop call as invalid. Check desktopId and the arguments.')

@@ -326,7 +326,7 @@ Desktop apps from before environments can list, restore and delete an archived e
 
 **Start** can also retry a failed bot in an already running shared environment without restarting its neighbours. Starting an environment that already runs does the same for each of its bots that is not running, which is how the current app's **Start** on such a bot reaches it; its container and running bots are left alone. Other start and stop aliases retain the restrictions above; see [Restart one bot](#restart-one-bot) for restart. A stopped or failed environment must be started before the app offers it for a new bot to join.
 
-The gateway migrates schemas 5 to 21 to schema 22 in place and refuses databases with a newer schema. Schema 8 records when an environment update was scheduled; schema 9 whether a bot may publish artifacts; schema 10 which computers linked which bot for the desktop bridge; schema 11 whether an environment runs bots or hosts workspaces; schema 12 the token a workspaces environment publishes artifacts with; schema 13 each environment's CPU limit, idle stop, color, and (for workspaces) which server folder it mounts, keeping the whole folder for workspaces environments created before; schema 14 the push token and notification choices of each phone; schema 15 whether each device is a phone or a computer, and its platform, as it says when it pairs (unknown for devices paired before); schema 16 which workspaces environments linked which bot for the desktop bridge; schema 17 the moves of bots between environments; schema 18 the conversation of each routine run and each bot's run settings; schema 19 the conversations between bots, the conversation each message between bots belongs to (none for messages from before), and each bot's settings for them; schema 20 the server's dictation key; schema 21 how each bot splits its work into tasks; and schema 22 which routine runs and conversations between bots you have seen, counting those from before as seen. Older gateways cannot open a newer schema; back up the gateway volume before upgrading and restore a matching backup to downgrade.
+The gateway migrates schemas 5 to 22 to schema 23 in place and refuses databases with a newer schema. Schema 8 records when an environment update was scheduled; schema 9 whether a bot may publish artifacts; schema 10 which computers linked which bot for the desktop bridge; schema 11 whether an environment runs bots or hosts workspaces; schema 12 the token a workspaces environment publishes artifacts with; schema 13 each environment's CPU limit, idle stop, color, and (for workspaces) which server folder it mounts, keeping the whole folder for workspaces environments created before; schema 14 the push token and notification choices of each phone; schema 15 whether each device is a phone or a computer, and its platform, as it says when it pairs (unknown for devices paired before); schema 16 which workspaces environments linked which bot for the desktop bridge; schema 17 the moves of bots between environments; schema 18 the conversation of each routine run and each bot's run settings; schema 19 the conversations between bots, the conversation each message between bots belongs to (none for messages from before), and each bot's settings for them; schema 20 the server's dictation key; schema 21 how each bot splits its work into tasks; schema 22 which routine runs and conversations between bots you have seen, counting those from before as seen; and schema 23 the computers that run jobs for bots, what each last reported about itself, and the jobs, keeping a job's command and environment variables only until it ends. Older gateways cannot open a newer schema; back up the gateway volume before upgrading and restore a matching backup to downgrade.
 
 Workspaces environments need the gateway's `workspaces-host` feature and a bot image that can host workspaces. The desktop app offers **Set up workspaces on this server** only with that feature. A desktop app from before it shows a workspaces environment as an environment with no bots; the gateway refuses to add a bot to it. On an image from before it, a workspaces environment fails to start with "This bot image cannot host workspaces. Update the server."
 
@@ -342,6 +342,13 @@ older image keeps its separate **Browser** and **Apps** areas until it restarts 
 A bot reaches the projects of your computers when the gateway has the `desktop-bridge` feature, the environment's image has the matching capability, and the computer runs a desktop app that answers desktop calls; until all three are updated, the bot's **Projects** settings say what is missing and the bot has no `desktop_*` tools. A computer on an older desktop app never asks for desktop calls, so it is offline for every bot. This adds schema 10 (`desktop_links`) to the gateway database: back up the gateway volume before upgrading, since an older gateway refuses a newer schema.
 
 A bot reaches the projects of a workspaces environment when the gateway has the `host-desktop-calls` feature (announced in `moreFeatures` of `/v1/meta`), the bot's environment has the `desktop-bridge` capability, and the workspaces environment runs an image that advertises `host-desktop-calls`, which it does only with its host token. Until all three are updated, **Workspaces on the server** in the bot's **Projects** settings says what is missing. A desktop app from before it lists a workspaces environment's link among the computers with access, and can remove it. This adds schema 16 (`environment_desktop_links`) to the gateway database.
+
+A bot sends jobs to [runners](#run-heavy-jobs-on-your-computers) when the gateway announces `runners` in
+`moreFeatures` of `/v1/meta`, the environment's image has the `runner-jobs` capability, and the computer runs a
+desktop app with **Settings → Runner**. Until the gateway and the image are updated, the bot has no `runner_*` tools
+and its **Runners** settings say what is missing. A runner reports the job protocol version it speaks when it
+connects, and the gateway sends jobs only to runners that speak its own. This adds schema 23 (`runner_links`, `runner_jobs`) to
+the gateway database.
 
 Restarting one bot of a shared environment needs the gateway's `bot-restart` feature (announced in `moreFeatures` of `/v1/meta`) and an environment on an image from after environments. With an older gateway the desktop app offers only the environment's **Restart**; with an older image it asks you to restart the environment first.
 
@@ -1141,6 +1148,109 @@ environments with access**, deleting the bot, or deleting the environment ends i
 and one that is stopped does when it next starts. The [mobile app](mobile.md) shows them too, with the same badge and
 the same pause, resume, release and block controls.
 
+## Run heavy jobs on your computers
+
+Video renders, model inference, large builds and test suites, and batch processing take the CPU and memory that every
+bot of an environment shares with its Maestrly and browsers. A **runner** moves that work to one of your computers,
+such as a second computer or a PC with a GPU. The bot sends a **job**: a command, the folder it runs in, and the
+outputs it wants back. The computer runs the command, the outputs land back in the bot's folder, and the conversation
+that sent the job continues with the result. No model runs on the runner.
+
+1. On the computer that will run the jobs, open **Settings → Runner** and turn on **Run jobs for bots**. Choose
+   **How jobs run**, how many jobs run at once, and whether jobs may use the GPU.
+2. On that same computer, open the bot, then **Settings → Runners**, and turn on **Let this bot run jobs on this
+   computer**. Choose the name the bot sees (this computer's pairing name by default), then **Let it run jobs**.
+3. Repeat on every computer that should run jobs for the bot. **Computers that run jobs for this bot** lists them,
+   whether each is online, and what it offers; from any of your computers you can remove another computer's link.
+
+How jobs run is chosen per computer:
+
+| | Native | Container |
+| --- | --- | --- |
+| Where | macOS and Linux | macOS, Linux, and Windows, with Docker |
+| Runs as | The user signed in to that computer, with the tools installed there | A Docker container, by default from the bot environment image of the app's version, or the image the job names |
+| GPU | Metal, VideoToolbox, and CUDA, as installed | NVIDIA, with the NVIDIA Container Toolkit, when **Let jobs use the GPU** is on |
+| Limits | **Simultaneous jobs** | **Simultaneous jobs**, and the processors and memory of each job |
+
+A job's folder is mounted in its container at the same path it has in the bot's environment, so scripts with absolute
+paths keep working. A native job runs `/bin/sh` in its own folder with a clean environment: the `PATH` of the user's
+login shell, `HOME`, `LANG`, a temporary folder of its own, `MAESTRLY_JOB_ID`, `MAESTRLY_JOB_DIR`, and the job's own
+variables; none of Maestrly's. On Docker Desktop, the runner's storage folder (in **Settings → Runner → Storage**) has
+to be in a folder Docker shares.
+
+```mermaid
+sequenceDiagram
+  participant B as Bot conversation
+  participant E as Bot environment
+  participant G as Bot server
+  participant R as Runner computer
+  B->>E: runner_submit(folder, command, outputs)
+  E->>G: the job
+  E-->>B: job id; the turn ends
+  G->>R: the job, when a matching computer has a free slot
+  R->>G: the files it lacks, by digest
+  G->>E: (relayed)
+  E-->>R: the files (relayed)
+  R->>R: runs the command
+  R->>G: log and outputs
+  G->>E: (relayed)
+  G->>E: final state
+  E->>B: a new message with the result
+```
+
+- **Only what changed travels.** The bot's environment lists the folder's files by SHA-256. The runner keeps the
+  files of past jobs per bot and asks only for those it lacks; they arrive as one compressed stream. `.git/`,
+  `node_modules/`, `.venv/`, and `__pycache__/` stay behind unless the job names its own exclusions.
+- **Outputs come back.** After the command ends, whatever its exit code, the files that match the job's output
+  patterns and differ from its inputs come back in checked chunks, and a broken upload resumes where it stopped. They
+  replace the files at the same paths; nothing else in the folder is removed. The job's log is written to
+  `.maestrly/runner-jobs/<job id>.log` in the folder.
+- **Caches stay on the runner.** A job can name folders, such as dependencies or model weights, that the runner keeps
+  for that bot between jobs; they never travel. **Clear caches** in **Settings → Runner** deletes them.
+- **The bot does not wait.** It ends its turn after sending the job; when the job ends, its conversation (the bot's
+  conversation, a routine run, or a conversation with another bot) receives the state, exit code, duration, output
+  files, and the end of the log, and continues.
+- **Jobs wait for a computer.** A job waits until a linked computer that meets its requirements (GPU, how jobs run,
+  operating system) has a free slot, for at most its queue timeout (60 minutes by default). A computer has 30 seconds
+  to take a job it is offered. A computer that disconnects during a job has 10 minutes to come back before the job is
+  lost; one that restarts during a job reports it failed. The computer stays awake while a job runs.
+
+| Tool | Scope |
+| --- | --- |
+| `runner_list` | The computers that run jobs for the bot: name, online, how jobs run, operating system, processors, memory, GPU, slots, and jobs waiting. |
+| `runner_submit` | Send a job: folder, command, output patterns, and optionally a runner, requirements, image, variables, caches, exclusions, and timeouts. |
+| `runner_status`, `runner_logs` | One job, or the jobs of this conversation, with what a running job uses on its runner; the end of a job's log. |
+| `runner_cancel` | Cancel one job. |
+
+Reading never asks. Sending and cancelling follow the bot's approval ceiling: under **Ask for approval** you approve
+each in **Awaiting you**.
+
+### Follow and stop jobs
+
+| Where | What you see and do |
+| --- | --- |
+| The bot's **Settings → Runners**, on any of your computers | **Latest jobs**: state, runner, and when each was sent; for a running job, its CPU, memory now and at its peak, and processes. **Log** shows the job's output as it comes; **Cancel** stops a job that has not ended, wherever it runs. The list refreshes every 5 seconds while a job has not ended. |
+| **Settings → Runner**, on the computer that runs them | **Jobs on this computer**: bot, server, the first line of the command, what the job is doing, how long it has run, and what it uses, with **Log** and **Cancel**. **Recent jobs**: the last 20 jobs that ended there, with how each ended, its exit code or error, how long it took, its peak memory and CPU time, and its log. |
+| The bot's conversation | The command in the `runner_submit` step, and, when the job ends, a message with the result and the end of its log. |
+
+CPU is counted in processors: 3.5 of 12 means three and a half of the computer's 12 processors are busy. The runner
+samples a native job's processes every second and a container's every 5 seconds, and tells the bot server at most
+every 10 seconds; the server keeps only the last sample, in memory, until the job ends. A log is read from the bot's
+environment as you look at it: on the runner computer from its own copy, elsewhere through the bot server, while the
+bot's environment runs.
+
+A job stops when you cancel it, when the bot cancels it, when its run timeout passes (60 minutes by default, at most
+24 hours), when you turn off **Run jobs for bots**, or when its link ends. Cancelling a native job sends SIGTERM to
+every process it started, including those that started a session of their own, and SIGKILL 10 seconds later; when
+its command ends, whatever it left running is stopped too. The runner knows a native job's processes by their parent
+and process group, and on Linux also by the job's `MAESTRLY_JOB_ID`, which they inherit; on macOS, a process that
+leaves the job's session before the runner's first look at it (within a second) can survive. A container job is
+stopped with `docker stop` and removed.
+
+A link ends when either side ends it: turning the switch off on the runner computer, removing it from any of your
+computers, unpairing or revoking that computer, or deleting the bot. The bot's jobs on that computer are cancelled,
+and the computer deletes the files and caches it kept for that bot.
+
 ## What a bot can do
 
 Bot conversations have no Plan review tab and do not expose `review_plan`. When
@@ -1165,6 +1275,7 @@ owner help for logins instead.
 | `bot_peers_report` | In a conversation with another bot that it opened from your conversation, bring the answer back there. |
 | `bot_peers_wait` | Wait, within its turn, for the answer of a conversation with another bot it opened. |
 | `desktop_*` | Start and follow development conversations in the projects your computers and the server's workspaces environments gave it, one per call; see [Work in the projects of your computers](#work-in-the-projects-of-your-computers). Reads run without approval prompts; changes follow its ceiling. |
+| `runner_*` | Send heavy jobs to the computers that run jobs for it and follow them; see [Run heavy jobs on your computers](#run-heavy-jobs-on-your-computers). Reads run without approval prompts; sending and cancelling follow its ceiling. |
 
 A bot cannot directly use your computer's screen, browser, terminal, accounts, or local files. It reaches the projects of your computers only through `desktop_*`, as conversations that run on each computer under the access that computer gave. It can use the credentials and files you explicitly bring to its environment, which the other bots of that environment can use too. Its approval ceiling bounds how far it may run without you:
 
@@ -1201,6 +1312,16 @@ and remove any computer's link to a bot, but only that computer can link itself,
 answers the calls meant for it: an answer from any other device is refused. Revoking a device removes its links and
 fails the calls waiting for it. Each computer also re-checks its links with the server whenever it reconnects, and a
 link without access on its side, or access without a link on the server, is removed.
+
+**A bot runs jobs only on the computers that linked it, and can run any command there.** With **Native**, a job runs
+as the user signed in to that computer and can reach everything that user can; with **Container**, it runs in a
+container without privileges or the Docker socket. Link only bots you trust. Only the computer itself can link a bot,
+and only the computer a job is assigned to can take its files, send its log and outputs, and end it. The gateway
+stores the links (bot, device, the opaque `runnerId`, and the name), what each runner last reported about itself, and
+each job's state; it keeps a job's command, image, and environment variables only until the job ends, and never
+stores files, logs, or conversations, which it relays without keeping. The bot's environment checks output archives
+for paths and links that leave the folder, and the runner checks every file it receives against its SHA-256. One
+bot's files and caches are never used by another bot's jobs.
 
 Environments and their default compaction models move the gateway database to
 schema v7. Older gateways that do not support v7 refuse to open it; back up the gateway volume before upgrading and

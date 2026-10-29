@@ -80,6 +80,13 @@ export const APP_TOOL_POLICY = {
   desktop_configure_chat: policy(false, false, false),
   desktop_cancel_turn: policy(false, false, false),
   desktop_answer_question: policy(false, false, false),
+  // A fleet bot's heavy jobs on the computers that run them: reads stay reads; submitting and cancelling pass the bot's
+  // approval ceiling.
+  runner_list: policy(true, true, false),
+  runner_status: policy(true, true, false),
+  runner_logs: policy(true, true, false),
+  runner_submit: policy(false, false, false),
+  runner_cancel: policy(false, false, false),
   request_owner_help: policy(true, false, false),
   browser_tabs: policy(true, true, false),
   browser_switch_tab: policy(true, false, false),

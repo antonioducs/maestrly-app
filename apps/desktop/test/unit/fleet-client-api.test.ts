@@ -74,7 +74,9 @@ beforeEach(async () => {
         .end(JSON.stringify({ deviceId: 'device', token: 'valid' }))
     } else if (
       req.url === '/v1/events?reasoning=1&routineRuns=1&peerThreads=1' ||
-      req.url === '/v1/events?reasoning=1&routineRuns=1&peerThreads=1&desktopBridge=1'
+      req.url === '/v1/events?reasoning=1&routineRuns=1&peerThreads=1&desktopBridge=1' ||
+      req.url === '/v1/events?reasoning=1&routineRuns=1&peerThreads=1&runners=1' ||
+      req.url === '/v1/events?reasoning=1&routineRuns=1&peerThreads=1&desktopBridge=1&runners=1'
     ) {
       // Only the stream that asks for `reasoning` transcript items and routine runs is served: the app must always ask.
       res.writeHead(200, { 'Content-Type': 'text/event-stream' })
@@ -272,6 +274,34 @@ describe('fleet API and events', () => {
       requests.some((request) => request.url === '/v1/events?reasoning=1&routineRuns=1&peerThreads=1&desktopBridge=1')
     ).toBe(true)
   })
+
+  it('asks for runner events only when this computer runs jobs for bots', async () => {
+    // A stream that ends reconnects, and on a slow machine that request lands in the next stream's slice.
+    holdEvents = true
+    const stream = async (options: { desktopBridge?: boolean; runners?: boolean } | undefined) => {
+      const before = requests.length
+      const seen: string[] = []
+      const events = new FleetEvents(
+        new FleetApiClient(origin, 'valid'),
+        (event) => seen.push(event.type),
+        () => undefined,
+        async () => undefined,
+        async () => undefined,
+        45_000,
+        options
+      )
+      events.start()
+      await vi.waitFor(() => expect(seen).toContain('hello'), { timeout: 8_000 })
+      events.stop()
+      return requests.slice(before).find((request) => request.url.startsWith('/v1/events'))?.url
+    }
+    expect(await stream(undefined)).toBe('/v1/events?reasoning=1&routineRuns=1&peerThreads=1')
+    expect(await stream({ runners: false })).toBe('/v1/events?reasoning=1&routineRuns=1&peerThreads=1')
+    expect(await stream({ runners: true })).toBe('/v1/events?reasoning=1&routineRuns=1&peerThreads=1&runners=1')
+    expect(await stream({ desktopBridge: true, runners: true })).toBe(
+      '/v1/events?reasoning=1&routineRuns=1&peerThreads=1&desktopBridge=1&runners=1'
+    )
+  }, 30_000)
 
   it('parses SSE comments and frames and stops on 401 or 426', async () => {
     const seen: string[] = []

@@ -124,6 +124,7 @@ import {
   BYOK_DEFAULT_RULESET,
   BOT_MEMORY_WRITE_RULES,
   BOT_DESKTOP_READ_RULES,
+  BOT_RUNNER_READ_RULES,
   YOLO_RULESET,
   type PermissionRequest,
   type Ruleset,
@@ -2680,7 +2681,7 @@ function rulesetFor(conversationId: string): Ruleset {
       : permModeFor(conversationId) === 'auto'
         ? AUTO_RULESET
         : BYOK_DEFAULT_RULESET
-  return isBotMode() ? [...base, ...BOT_MEMORY_WRITE_RULES, ...BOT_DESKTOP_READ_RULES] : base
+  return isBotMode() ? [...base, ...BOT_MEMORY_WRITE_RULES, ...BOT_DESKTOP_READ_RULES, ...BOT_RUNNER_READ_RULES] : base
 }
 
 /** Effective conversation behavior mode (default agent). */

@@ -12,8 +12,15 @@ import {
   FLEET_BOT_DELEGATION_FEATURE,
   FLEET_PEER_CONVERSATIONS_FEATURE,
   FLEET_OWNER_SEEN_FEATURE,
+  FLEET_RUNNERS_FEATURE,
+  FLEET_RUNNER_LIMITS,
   FLEET_CANCEL_CONVERSATION_QUERY,
   fleetReaderWantsPeerThreads,
+  fleetReaderWantsRunners,
+  type FleetRunnerJobFinishRequest,
+  type FleetRunnerJobUsageRequest,
+  type FleetRunnerLinkRequest,
+  type FleetRunnerStateRequest,
   type FleetPeerThreadPatchRequest,
   type FleetPeerThreadSettings,
   FLEET_DICTATION_FEATURE,
@@ -263,6 +270,20 @@ function number(value: string | null, max: number, defaultValue: number) {
   if (!Number.isInteger(parsed) || parsed < 0) throw new GatewayError('INVALID_REQUEST', 'Invalid query parameter')
   return Math.min(max, parsed)
 }
+/** The piece of a job's log a read asks for: from `offset` (the end of the log without it), at most `limit` bytes. */
+function logQuery(url: URL): { offset?: number; limit?: number } {
+  const read = (name: string, min: number, max: number): number | undefined => {
+    const value = url.searchParams.get(name)
+    if (value === null) return undefined
+    const parsed = /^\d{1,15}$/.test(value) ? Number(value) : NaN
+    if (!Number.isSafeInteger(parsed) || parsed < min || parsed > max)
+      throw new GatewayError('INVALID_REQUEST', `Invalid ${name}`)
+    return parsed
+  }
+  const offset = read('offset', 0, Number.MAX_SAFE_INTEGER)
+  const limit = read('limit', 1, FLEET_RUNNER_LIMITS.logPageBytesMax)
+  return { ...(offset === undefined ? {} : { offset }), ...(limit === undefined ? {} : { limit }) }
+}
 export async function publicRoute(
   key: string,
   params: Record<string, string>,
@@ -501,6 +522,7 @@ export async function publicRoute(
             FLEET_BOT_RESTART_FEATURE,
             FLEET_PHONE_SCREENS_FEATURE,
             FLEET_OWNER_SEEN_FEATURE,
+            FLEET_RUNNERS_FEATURE,
           ],
           botImage: ctx.config.botImage,
           botImageVersion: await ctx.host.botImageVersion(),
@@ -1036,6 +1058,57 @@ export async function publicRoute(
           lastSeq: ctx.store.lastActivitySeq(),
         },
       }
+    // A computer links only itself as a runner; it may list a bot's runners and jobs, remove another computer's link,
+    // or cancel a job. A runner reports and moves on only the jobs assigned to it: its own token names it.
+    case 'botRunnerLinkPut': {
+      requireBot(ctx, id)
+      const device = ctx.auth.device(res.req?.headers.authorization)
+      return { body: ctx.runners!.linkDevice(id, device, (body as FleetRunnerLinkRequest).name) }
+    }
+    case 'botRunnerLinkDelete':
+      requireBotRecord(ctx, id)
+      ctx.runners!.unlinkDevice(id, ctx.auth.device(res.req?.headers.authorization).id)
+      return { status: 204 }
+    case 'botRunnerLinks':
+      requireBotRecord(ctx, id)
+      return { body: { links: ctx.runners!.views(id, ctx.auth.device(res.req?.headers.authorization).id) } }
+    case 'botRunnerLinkRemove':
+      requireBotRecord(ctx, id)
+      ctx.runners!.remove(id, params.runnerId)
+      return { status: 204 }
+    case 'botRunnerJobs':
+      requireBotRecord(ctx, id)
+      return { body: { jobs: ctx.runners!.jobs(id) } }
+    case 'botRunnerJobCancel':
+      requireBotRecord(ctx, id)
+      return { body: ctx.runners!.cancel(id, params.jobId) }
+    case 'botRunnerJobLogRead':
+      requireBotRecord(ctx, id)
+      return { body: await ctx.runners!.readLog(id, params.jobId, logQuery(url)) }
+    case 'runnerState':
+      return {
+        body: ctx.runners!.report(ctx.auth.device(res.req?.headers.authorization).id, body as FleetRunnerStateRequest),
+      }
+    case 'runnerJobAccept':
+      ctx.runners!.accept(params.jobId, ctx.auth.device(res.req?.headers.authorization).id)
+      return { status: 204 }
+    case 'runnerJobProgress':
+      ctx.runners!.progress(params.jobId, ctx.auth.device(res.req?.headers.authorization).id)
+      return { status: 204 }
+    case 'runnerJobUsage':
+      ctx.runners!.usage(
+        params.jobId,
+        ctx.auth.device(res.req?.headers.authorization).id,
+        body as FleetRunnerJobUsageRequest
+      )
+      return { status: 204 }
+    case 'runnerJobFinish':
+      ctx.runners!.finish(
+        params.jobId,
+        ctx.auth.device(res.req?.headers.authorization).id,
+        body as FleetRunnerJobFinishRequest
+      )
+      return { status: 204 }
     case 'events':
       ctx.events.add(res, ctx.store.lastActivitySeq(), ctx.auth.device(res.req?.headers.authorization).id, {
         reasoning: fleetReaderWantsReasoning(url.searchParams),
@@ -1043,6 +1116,7 @@ export async function publicRoute(
         desktopBridge: url.searchParams.get(FLEET_DESKTOP_BRIDGE_QUERY) === '1',
         routineRuns: fleetReaderWantsRoutineRuns(url.searchParams),
         peerThreads: fleetReaderWantsPeerThreads(url.searchParams),
+        runners: fleetReaderWantsRunners(url.searchParams),
       })
       return { stream: true }
     default:

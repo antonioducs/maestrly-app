@@ -29,6 +29,7 @@ import { fleetApi } from '../../src/preload/api-fleet'
 import { fleetEnvironmentPlugins, fleetEnvironmentSettings } from '../../src/preload/api-fleet-environment-settings'
 import { FLEET_SETTINGS_OPERATIONS } from '@maestrly/bot-fleet-protocol'
 import { fleetInstallerApi } from '../../src/preload/api-fleet-installer'
+import { runnerApi } from '../../src/preload/api-runner'
 import { hostsApi } from '../../src/preload/api-hosts'
 import { peerApi } from '../../src/preload/api-peer'
 import { hostFsApi } from '../../src/preload/api-host-fs'
@@ -83,6 +84,7 @@ const apiSlices: Array<[string, Record<string, unknown>]> = [
   ['fleetEnvironmentSettings', { fleetEnvironmentSettings }],
   ['fleetEnvironmentPlugins', { fleetEnvironmentPlugins }],
   ['fleetInstallerApi', fleetInstallerApi],
+  ['runnerApi', runnerApi],
   ['hostsApi', hostsApi],
   ['peerApi', peerApi],
   ['hostFsApi', hostFsApi],
@@ -357,6 +359,61 @@ describe('preload API — exposure', () => {
     off()
     expect(removeListenerSpy).toHaveBeenCalledWith('fleet:installer:status', onSpy.mock.calls.at(-1)?.[1])
   })
+  it('forwards runner settings and a bot’s runner calls to their channels in argument order', async () => {
+    await api.runnerSettings()
+    await api.runnerSetSettings({ slots: 2, gpu: true })
+    await api.runnerStatus({ recheckDocker: true })
+    await api.runnerClearCaches({ serverId: SERVER, botId: 'scout' })
+    await api.runnerClearCaches()
+    await api.runnerCancelJob(SERVER, 'job_RunnerCoreTest0001')
+    await api.runnerJobLog(SERVER, 'job_RunnerCoreTest0001', null)
+    await api.runnerJobLog(SERVER, 'job_RunnerCoreTest0001', 2_048)
+    await api.runnerChooseStorageDir()
+    await api.fleetRunnerAccess(SERVER, 'scout')
+    await api.fleetRunnerAccessLink(SERVER, 'scout', 'Studio')
+    await api.fleetRunnerAccessUnlink(SERVER, 'scout')
+    await api.fleetRunnerAccessRemoveOther(SERVER, 'scout', 'rnr_BBBBBBBBBBBBBBBB0002')
+    await api.fleetRunnerJobCancel(SERVER, 'scout', 'job_RunnerCoreTest0001')
+    await api.fleetRunnerJobLog(SERVER, 'scout', 'job_RunnerCoreTest0001', null)
+    await api.fleetRunnerJobLog(SERVER, 'scout', 'job_RunnerCoreTest0001', 4_096)
+    expect(invokeSpy.mock.calls).toEqual([
+      ['runner:settings:get'],
+      ['runner:settings:set', { slots: 2, gpu: true }],
+      ['runner:status', { recheckDocker: true }],
+      ['runner:clearCaches', { serverId: SERVER, botId: 'scout' }],
+      ['runner:clearCaches', undefined],
+      ['runner:cancelJob', { serverId: SERVER, jobId: 'job_RunnerCoreTest0001' }],
+      ['runner:jobLog', { serverId: SERVER, jobId: 'job_RunnerCoreTest0001', offset: null }],
+      ['runner:jobLog', { serverId: SERVER, jobId: 'job_RunnerCoreTest0001', offset: 2_048 }],
+      ['runner:chooseStorageDir'],
+      ['fleet:runnerAccess:get', SERVER, 'scout'],
+      ['fleet:runnerAccess:link', SERVER, 'scout', 'Studio'],
+      ['fleet:runnerAccess:unlink', SERVER, 'scout'],
+      ['fleet:runnerAccess:removeOther', SERVER, 'scout', 'rnr_BBBBBBBBBBBBBBBB0002'],
+      ['fleet:runnerAccess:cancelJob', SERVER, 'scout', 'job_RunnerCoreTest0001'],
+      ['fleet:runnerAccess:jobLog', SERVER, 'scout', 'job_RunnerCoreTest0001', null],
+      ['fleet:runnerAccess:jobLog', SERVER, 'scout', 'job_RunnerCoreTest0001', 4_096],
+    ])
+    const changed = vi.fn()
+    const off = api.onRunnerChanged(changed) as () => void
+    const changedListener = onSpy.mock.calls.at(-1)![1] as Fn
+    expect(onSpy).toHaveBeenLastCalledWith('runner:changed', changedListener)
+    changedListener({}, undefined)
+    expect(changed).toHaveBeenCalledTimes(1)
+    off()
+    expect(removeListenerSpy).toHaveBeenLastCalledWith('runner:changed', changedListener)
+    const access = vi.fn()
+    const offAccess = api.onFleetRunnerAccess(access) as () => void
+    const accessListener = onSpy.mock.calls.at(-1)![1] as Fn
+    expect(onSpy).toHaveBeenLastCalledWith('fleet:runner-access', accessListener)
+    accessListener({}, { serverId: SERVER, botId: 'scout' })
+    expect(access).toHaveBeenCalledExactlyOnceWith(SERVER, 'scout')
+    offAccess()
+    expect(removeListenerSpy).toHaveBeenLastCalledWith('fleet:runner-access', accessListener)
+    // Both are announced by main.
+    expect(mainText).toContain("broadcast('runner:changed')")
+    expect(mainText).toContain("broadcast('fleet:runner-access'")
+  })
   it('forwards artifact calls to their channels in argument order', async () => {
     const artifacts = (api as unknown as { artifacts: Record<string, Fn> }).artifacts
     await artifacts.list()
@@ -397,7 +454,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(665)
+    expect(keys).toHaveLength(680)
     expect(keys.sort()).toMatchSnapshot()
   })
 

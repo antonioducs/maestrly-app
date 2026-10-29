@@ -817,6 +817,43 @@ for ten years, whose private key only the OS keyring holds.
   pairs unless the owner types the code. The connection does not hide which
   computers talk to each other, or when, from the network.
 
+## Runners
+
+A computer with **Run jobs for bots** on runs commands that the bots it linked send it: see
+[Run heavy jobs on your computers](bot-fleet.md#run-heavy-jobs-on-your-computers).
+
+- **A linked bot can run any command there.** With **Native**, a job runs `/bin/sh` as the signed-in user, at lower
+  priority, with no CPU or memory limit, and can read and change everything that user can. With **Container**, it
+  runs in a Docker container without `--privileged`, without the Docker socket, with `no-new-privileges`, on Docker's
+  default bridge network, and on Linux as the runner user's uid and gid; it reaches only its own folder, its named
+  cache volumes, and the network. Neither is a boundary against a bot you do not trust; link only bots you trust.
+- **Only the computer links itself.** The gateway accepts `PUT /v1/bots/:id/runner-link` only from the device being
+  linked; the app offers it only while runner mode is on. A linked computer receives jobs only while its app runs
+  with runner mode on. Any paired device can list or remove links. Jobs start only after the bot's approval ceiling
+  lets `runner_submit` through.
+- **One job, one runner.** The gateway sends a job to the stream of the device it assigned it to, and accepts that
+  job's accept, file, log, output, and finish requests only from that device and only in the states that need them.
+  A bot's token reaches only its own jobs. The relay passes bytes through without storing them.
+- **Clean environment.** A native job gets only the user's login `PATH`, `HOME`, `LANG`, its own temporary folder,
+  `MAESTRLY_JOB_ID`, `MAESTRLY_JOB_DIR`, and the job's variables: none of the app's environment. A container job's
+  variables travel in a file readable only by the user, never on a command line. The runner redacts the values of
+  the job's variables from the log it sends and the command line it shows.
+- **A stopped job stops whole.** Cancelling or timing out a native job signals every process the runner knows as the
+  job's: by parent, by process group, and on Linux by the inherited `MAESTRLY_JOB_ID`, each checked by its start time
+  so a reused process id is never signalled. A container job is stopped by Docker.
+- **Checked files.** The runner checks every input file against the SHA-256 in the manifest before caching it, and
+  builds the job folder from copies, so a job never changes the cache. The bot's environment refuses output archives
+  with absolute paths, `..`, special files, or links that leave the folder, and never writes through an existing link
+  that leads outside it.
+- **Per-bot data.** Files and caches are kept per bot and server and are never used by another bot's jobs. When a link
+  ends (turned off, removed, the device revoked, or the bot deleted), the bot's jobs there are cancelled and the
+  runner deletes its files, caches, volumes, and its recent jobs with their logs.
+- **What the gateway keeps.** Links (bot, device, opaque `runnerId`, name, last reported capabilities) and job
+  metadata; a job's command, image, and environment variables only until it ends; the last usage sample of a running
+  job, in memory only. Never file contents, logs, or conversations. Any paired device can read a job's log: the
+  gateway asks the bot's environment for the piece it is asked for and passes it on without keeping it, as paired
+  devices already read bots' conversations.
+
 ## MCP, skills, and memory
 
 A stdio MCP server is an executable chosen by the user. A remote MCP server is a
@@ -1120,6 +1157,8 @@ secrets.
   tenants.
 - Bots of one fleet environment are not isolated from each other, and fleet
   environments share a Docker network without traffic filtering.
+- A bot linked to a runner can run any command on that computer; native jobs
+  have no CPU or memory limit.
 - External MCP servers, skills, provider CLIs, Git helpers, browser pages, and
   downloaded editor/runtime components have independent security behavior.
 - Independently updated Codex releases are trusted through the npm registry's

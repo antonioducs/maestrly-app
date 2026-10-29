@@ -273,6 +273,7 @@ describe('bot settings translations', () => {
         'peers',
         'routines',
         'memory',
+        'runners',
         'environment',
         'where',
         'archive',

@@ -283,6 +283,7 @@ it('advertises provisioning, environments, environment compaction and transcript
     'peer-conversations',
     'bot-delegation',
     'files-manage',
+    'runner-jobs',
   ])
 })
 

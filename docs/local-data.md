@@ -234,6 +234,11 @@ data under its bot id:
 | Chromium profile of its browser, with its cookies and site logins | `~/.config/maestrly-bots/<botId>/chromium`, with `.maestrly-shared-cookies-imported` once the environment's shared logins were copied into it |
 | Tabs its browser reopens, with the conversation each belongs to | `~/.config/maestrly-bots/<botId>/chromium-tabs.json` |
 | Session bus, desktop socket, wallpaper, and the size and place of its browser window | `~/.cache/maestrly-bots/<botId>/` (`bus`, `desktop.sock`, `wallpaper.*`, `presenter.json`) |
+| Jobs it sent to [runners](bot-fleet.md#run-heavy-jobs-on-your-computers): the conversation that sent each, its folder and spec, its last state, its log, and what its outputs put in the folder | `fleet-instance/bots/<botId>/runner-jobs/<jobId>/`, removed 7 days after the job ends; while a job runs, also its manifest and the output archive as it arrives |
+| SHA-256 of the files in the folders it sent jobs from, so unchanged files are not read again | `fleet-instance/bots/<botId>/runner-digests/` |
+
+A job's log is also written into its folder, at `.maestrly/runner-jobs/<jobId>.log`; the outputs are unpacked in
+`.maestrly/runner-jobs/<jobId>.staging` there before they move into place.
 
 Claude Code, Codex and Google Antigravity ACP releases a bot downloads live in the
 profile's `runtime-assets/` folder, with the accepted release metadata in the
@@ -419,6 +424,29 @@ While another computer uploads a file to this one, the partial file is a hidden 
 the destination, and its record is under `host-file-uploads/` in this computer's profile; an upload untouched for 7
 days is removed with its partial file. Folders it downloads are packed under `host-file-archives/` first; an hourly
 sweep removes what an interrupted packing left there.
+
+## Runner
+
+**Settings → Runner** keeps its choices in `app_settings` under `runner.*` (`enabled`, `executor`, `slots`,
+`jobCpus`, `jobMemoryBytes`, `gpu`, `storageDir`, `blobCapBytes`). Which bots a computer runs jobs for is kept on the
+bot server, not on the computer.
+
+The storage folder, `runner/` in the profile unless you choose another, holds:
+
+| Data | Where it is kept |
+| --- | --- |
+| Files of past jobs' inputs, by SHA-256, per bot and server | `blobs/<scope>/`, up to the size in **Files kept for next jobs**, the least recently used removed first |
+| Named caches of Native jobs, per bot and server | `caches/<scope>/<name>/`, until **Clear caches** |
+| A job's folder, log, and output archive | `jobs/<job>/`, removed when the job ends |
+| The jobs this computer holds, to report them after a restart | `state.json` |
+| The last 20 jobs that ended here: bot, server, first line of the command, how it ended, its times, peak memory, and CPU time | `history.json` |
+| The end of each of those jobs' logs, at most 1 MiB | `history/<job>.log`, removed with its entry |
+| Which server and bot each scope belongs to | `scopes/<scope>.json` |
+
+Named caches of Container jobs are Docker volumes named `maestrly-runner-<scope>-<name>`, and each job's container
+carries the label `maestrly.runner.job`; at startup the runner removes the containers of jobs it no longer holds.
+When a bot's link to this computer ends, the runner deletes that bot's files, caches, volumes, and recent jobs with
+their logs.
 
 ## Drawer browser history
 

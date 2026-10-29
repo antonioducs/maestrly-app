@@ -1,5 +1,7 @@
 import type { ArtifactHosting } from './artifact-hosting.js'
 import type { DesktopBridge } from './desktop-bridge.js'
+import type { Runners } from './runners.js'
+import type { RunnerTransfers } from './runner-transfers.js'
 import type { FleetNetwork } from './network.js'
 import type { OwnerMemory } from './owner-memory.js'
 import type { Auth } from './auth.js'
@@ -35,6 +37,8 @@ export type GatewayContext = {
   hostFiles?: HostFilesProxy
   hostEditor?: HostEditorProxy
   desktops?: DesktopBridge
+  runners?: Runners
+  runnerTransfers?: RunnerTransfers
   push?: PushNotifier
   dictation?: DictationService
   revokeDevice?: (deviceId: string) => Promise<void>

@@ -43,6 +43,7 @@ import { ShortcutsSection } from '@/components/settings/ShortcutsSection'
 import { TerminalShellSection, WIN_SHELL_IDS } from '@/components/settings/TerminalShellSection'
 import { DefaultPermissionSection, ProjectsDirectorySection } from '@/components/settings/ExecutionSections'
 import { PrivacySection } from '@/components/settings/PrivacySection'
+import { RunnerSection } from '@/components/settings/RunnerSection'
 import { UpdatesSection } from '@/components/settings/UpdatesSection'
 import { FleetSettings } from '@/components/settings/FleetSettings'
 import { ComputersSection } from '@/components/settings/computers/ComputersSection'
@@ -440,6 +441,7 @@ export function SettingsView({
               />
             )}
             {section === 'computers' && onOpenHost && <ComputersSection request={request} onOpenHost={onOpenHost} />}
+            {section === 'runner' && <RunnerSection t={t} />}
             {section === 'fleet' && fleets && (
               <FleetSettings
                 fleets={fleets}

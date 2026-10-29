@@ -13,6 +13,7 @@ import {
   type FleetBotMemoryPatchRequest,
   type FleetInputSource,
   FLEET_QUEUE_PREVIEW_MAX,
+  FLEET_RUNNER_JOB_FINAL_STATES,
   summarizeText,
   fleetInstanceProfileSchema,
   type FleetInstanceProfile,
@@ -136,6 +137,9 @@ import { InstanceTranscriptExtras, fleetQuestions, toolTarget, permissionTool } 
 import { LiveTranscript } from './live-transcript'
 import { InstanceHelpStore } from './help'
 import { BotRunConversations, isRunId, type RunLane, type ThreadRecord } from './routine-runs'
+import { runnerContinuationText, runnerLogTail } from './runner-jobs/completion'
+import { RunnerJobFiles } from './runner-jobs/files'
+import { RunnerJobRecords, type RunnerJobRecord } from './runner-jobs/records'
 import { ThreadReports } from './thread-reports'
 import { ThreadWaits, type ThreadWaitResult } from './thread-waits'
 import type { MemoryCoreExtraSection } from '../../memory/core'
@@ -143,7 +147,7 @@ import type { BotDisplay } from './displays'
 import type { LaneComputers } from './lane-computers'
 import { keepRunFiles, runMedia } from './run-files'
 import { clearBotIdentity, setBotIdentity, type BotIdentityPeer } from './identity'
-import type { GatewayConfig } from './gateway-client'
+import { gatewayRequest, uuidFromSeed, type GatewayConfig } from './gateway-client'
 import { FleetImageStore } from './images'
 import { FleetFileSettingsError, FleetFileStore } from './files'
 import { findFileOrigins } from './file-origins'
@@ -413,6 +417,10 @@ export class BotRuntime {
   readonly threadReports: ThreadReports
   /** Its conversations waiting, within their turn, for a thread's answer (`bot_peers_wait`). */
   readonly threadWaits = new ThreadWaits()
+  /** The jobs this bot sent to runners, and the files they keep. */
+  private readonly jobRecords: RunnerJobRecords
+  /** The files of the jobs this bot sent to runners; the conversation side attaches through `setOnState`. */
+  private readonly jobFiles: RunnerJobFiles
   /** Names of the peers this bot listed, for the replies of its peer tools. */
   readonly peerNames = new Map<string, string>()
   private stored: StoredProfile | null
@@ -507,6 +515,12 @@ export class BotRuntime {
       changed: () => this.changed(),
     })
     this.threadReports = new ThreadReports(paths.threadReports)
+    this.jobRecords = new RunnerJobRecords(path.join(paths.folder, 'runner-jobs'))
+    this.jobFiles = new RunnerJobFiles({
+      records: this.jobRecords,
+      botFolder: paths.folder,
+      onState: (record) => this.continueRunnerJob(record),
+    })
     this.holdManager = new InstanceHoldManager(
       () => {
         if (this.disposed) return
@@ -528,6 +542,14 @@ export class BotRuntime {
       if (id) ids.add(id)
     }
     return [...ids]
+  }
+  /** The files of the jobs this bot sent to runners (`runner-jobs`). */
+  runnerJobs(): RunnerJobFiles {
+    return this.jobFiles
+  }
+  /** The records of the jobs this bot sent to runners, which its tools write before a job is submitted. */
+  runnerRecords(): RunnerJobRecords {
+    return this.jobRecords
   }
   get primaryConversationId(): string | null {
     return this.stored?.primaryConversationId ?? null
@@ -583,6 +605,10 @@ export class BotRuntime {
   /** Whether the gateway routes this bot's calls to the Macs that link it; an older gateway never does. */
   get desktopBridgeEnabled(): boolean {
     return this.stored?.profile.gateway.desktopBridgeEnabled ?? false
+  }
+  /** Whether the gateway sends this bot's jobs to the computers that run jobs for it; an older gateway never does. */
+  get runnersEnabled(): boolean {
+    return this.stored?.profile.gateway.runnersEnabled === true
   }
   /** Whether the environment has a gateway: its tools are offered even before the bot's token arrives. */
   get gatewayConfigured(): boolean {
@@ -695,6 +721,8 @@ export class BotRuntime {
     this.live.anchor()
     if (this.primaryConversationId) await this.reconcileQueue()
     await this.queue.sweepAttachments()
+    this.jobFiles.sweep().catch((error) => console.warn('[fleet] could not clear old runner jobs', error))
+    void this.reconcileRunnerJobs().catch((error) => console.warn('[fleet] could not reconcile runner jobs', error))
     if (hadConversation) await this.system('restarted', null, null)
     // Persisted membership may be stale: the gateway can archive or pause this bot while the environment is stopped.
     // Loading its data does not authorize queued work; a fresh profile installation below does.
@@ -949,6 +977,7 @@ export class BotRuntime {
       setBotIdentity(conversation.cwd, this.stored.profile, () => this.host.peers(this.botId), {
         unifiedDesktop: () => this.host.capabilities?.().includes(FLEET_UNIFIED_DESKTOP_FEATURE) ?? false,
         ownBrowser: () => this.host.hasOwnBrowser?.(this.botId) ?? false,
+        runners: () => this.runnersEnabled,
       })
     }
     const selection = this.currentSelection()
@@ -2356,6 +2385,83 @@ export class BotRuntime {
     this.changed()
     void this.tick()
     return result
+  }
+  /**
+   * Tells the conversation that submitted a runner job that it ended: the hook of the job files, run for every state
+   * the gateway reports. A job that has not ended, or whose conversation was told, does nothing. The conversation is
+   * continued as a release continues it (a run or a thread as such), under a key made from the job and its state, so a
+   * state sent again never tells it twice. When that run or thread is gone the bot's own conversation hears of it
+   * instead. A failure throws, so the gateway sends the state again.
+   */
+  async continueRunnerJob(stored: RunnerJobRecord): Promise<void> {
+    const record = (await this.jobRecords.get(stored.jobId)) ?? stored
+    const job = record.job
+    if (!job || !FLEET_RUNNER_JOB_FINAL_STATES.includes(job.state) || record.continued) return
+    if (this.disposed) throw new InstanceHttpError(404, 'NOT_FOUND', 'Bot does not exist.')
+    const log = await runnerLogTail(this.jobRecords, record)
+    const idempotencyKey = uuidFromSeed(`${record.jobId}:${job.state}`)
+    const target = record.conversation
+    const lane =
+      target.kind === 'run'
+        ? this.runs.get(target.runId)
+        : target.kind === 'thread'
+          ? this.runs.get(target.threadId)
+          : undefined
+    const send = (where: Pick<FleetInstanceInput, 'run' | 'thread'>, from?: string) =>
+      this.input({
+        source: 'continuation',
+        text: runnerContinuationText({ record, job, log, ...(from ? { from } : {}) }),
+        attachments: [],
+        idempotencyKey,
+        ...where,
+      })
+    // A thread continues as a thread: as a run, its conversation would be refused.
+    const here =
+      target.kind === 'run' && lane?.kind === 'routine'
+        ? { run: { id: target.runId } }
+        : target.kind === 'thread' && lane?.kind === 'thread'
+          ? { thread: { id: target.threadId, title: target.title } }
+          : null
+    const gone =
+      target.kind === 'run'
+        ? `the routine run ${target.runId}`
+        : target.kind === 'thread'
+          ? `the conversation "${target.title}"`
+          : ''
+    try {
+      if (target.kind !== 'primary' && !here) await send({}, gone)
+      else await send(here ?? {})
+    } catch (error) {
+      // The conversation went away since the check: the bot's own hears of it.
+      if (!(here && error instanceof InstanceHttpError && error.code === 'NOT_FOUND')) throw error
+      await send({}, gone)
+    }
+    await this.jobRecords.update(record.jobId, (current) =>
+      current.continued ? current : { ...current, continued: true }
+    )
+  }
+  /**
+   * Asks the gateway where the jobs stand that this environment has not heard end, such as after it was stopped while
+   * they ran, and stores what it answers as the gateway would have sent it. Best effort: the gateway sends states
+   * itself, and a job it cannot answer for stays as it is.
+   */
+  async reconcileRunnerJobs(): Promise<void> {
+    const config = this.gatewayConfig
+    if (!config || !this.runnersEnabled) return
+    for (const record of await this.jobRecords.list()) {
+      if (this.disposed || record.continued) continue
+      try {
+        if (record.job && FLEET_RUNNER_JOB_FINAL_STATES.includes(record.job.state)) {
+          await this.continueRunnerJob(record)
+          continue
+        }
+        const job = await gatewayRequest(config, 'runnerJobGet', undefined, { jobId: record.jobId })
+        await this.jobFiles.state(record.jobId, job)
+      } catch (error) {
+        // A record the gateway never heard of is a submit that did not get through: nothing to reconcile.
+        if (record.job) console.warn(`[fleet] could not reconcile runner job ${record.jobId}`, error)
+      }
+    }
   }
   async resolve(id: string, value: FleetInteractionResolution): Promise<void> {
     const pending = this.pending().find((entry) => entry.id === id)

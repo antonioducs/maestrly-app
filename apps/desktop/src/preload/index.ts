@@ -11,6 +11,7 @@ import { settingsApi } from './api-settings'
 import { soundApi } from './api-sound'
 import { updateApi } from './api-update'
 import { fleetApi } from './api-fleet'
+import { runnerApi } from './api-runner'
 import { fleetInstallerApi } from './api-fleet-installer'
 import { hostsApi } from './api-hosts'
 import { peerApi } from './api-peer'
@@ -126,6 +127,7 @@ export type * from './api-update'
 export type * from './api-workspace'
 export type * from './api-fleet'
 export type * from './api-fleet-installer'
+export type * from './api-runner'
 export type * from './api-hosts'
 export type * from './api-peer'
 export type * from './api-host-fs'
@@ -147,6 +149,7 @@ const localApi = {
   fleetEnvironmentSettings,
   fleetEnvironmentPlugins,
   ...fleetInstallerApi,
+  ...runnerApi,
   ...hostsApi,
   ...peerApi,
   ...artifactsApi,

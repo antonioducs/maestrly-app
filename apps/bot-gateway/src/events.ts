@@ -3,6 +3,7 @@ import {
   fleetTranscriptItemReadable,
   isFleetPeerThreadEvent,
   isFleetRoutineRunEvent,
+  isFleetRunnerEvent,
   type FleetGatewayEvent,
 } from '@maestrly/bot-fleet-protocol'
 
@@ -22,6 +23,10 @@ export class EventHub {
   private readonly bridges = new Map<ServerResponse, string>()
   /** A device opened or closed a stream that takes desktop calls. */
   onBridgeChange: (deviceId: string) => void = () => {}
+  /** Streams that read runner events (`runners=1`), by device, newest last: a computer runs jobs only while one is open. */
+  private readonly runnerReaders = new Map<ServerResponse, string>()
+  /** A device opened or closed a stream that reads runner events. */
+  onRunnerChange: (deviceId: string) => void = () => {}
   private heartbeat: NodeJS.Timeout | null = null
   private statsTimer: NodeJS.Timeout | null = null
   private readonly lastBotSent = new Map<string, number>()
@@ -33,7 +38,13 @@ export class EventHub {
     response: ServerResponse,
     lastActivitySeq: number,
     deviceId?: string,
-    options: { reasoning?: boolean; desktopBridge?: boolean; routineRuns?: boolean; peerThreads?: boolean } = {}
+    options: {
+      reasoning?: boolean
+      desktopBridge?: boolean
+      routineRuns?: boolean
+      peerThreads?: boolean
+      runners?: boolean
+    } = {}
   ) {
     if (options.reasoning) this.reasoningReaders.add(response)
     if (options.routineRuns) this.routineRunReaders.add(response)
@@ -52,13 +63,20 @@ export class EventHub {
       this.devices.delete(response)
       const bridge = this.bridges.get(response)
       this.bridges.delete(response)
+      const runner = this.runnerReaders.get(response)
+      this.runnerReaders.delete(response)
       this.updateTimers()
       if (bridge) this.onBridgeChange(bridge)
+      if (runner) this.onRunnerChange(runner)
     })
     this.updateTimers()
     if (deviceId && options.desktopBridge && !response.destroyed) {
       this.bridges.set(response, deviceId)
       this.onBridgeChange(deviceId)
+    }
+    if (deviceId && options.runners && !response.destroyed) {
+      this.runnerReaders.set(response, deviceId)
+      this.onRunnerChange(deviceId)
     }
   }
   /** Whether a device has a stream open that takes desktop calls. */
@@ -79,7 +97,7 @@ export class EventHub {
   }
   /** A stream too far behind is dropped; one that takes desktop calls may hold one large call while it drains. */
   private behind(response: ServerResponse): boolean {
-    return response.writableLength > (this.bridges.has(response) ? 4 * 1024 * 1024 : 256 * 1024)
+    return response.writableLength > (this.roomy(response) ? 4 * 1024 * 1024 : 256 * 1024)
   }
   /** Sends every stream that takes desktop calls the event built for its device; null skips that stream. */
   emitToBridges(build: (deviceId: string) => FleetGatewayEvent | null) {
@@ -87,6 +105,30 @@ export class EventHub {
       const event = build(deviceId)
       if (event) this.send(response, event)
     }
+  }
+  /** Whether a device has a stream open that reads runner events. */
+  runnerStreamOpen(deviceId: string): boolean {
+    for (const [response, id] of this.runnerReaders) if (id === deviceId && !response.destroyed) return true
+    return false
+  }
+  /** Sends one event to a device's newest stream that reads runner events; false when it has none. */
+  sendToRunner(deviceId: string, event: FleetGatewayEvent): boolean {
+    let target: ServerResponse | null = null
+    for (const [response, id] of this.runnerReaders) if (id === deviceId && !response.destroyed) target = response
+    if (!target) return false
+    this.send(target, event)
+    return !target.destroyed
+  }
+  /** Sends every stream that reads runner events the event built for its device; null skips that stream. */
+  emitToRunnerReaders(build: (deviceId: string) => FleetGatewayEvent | null) {
+    for (const [response, deviceId] of [...this.runnerReaders]) {
+      const event = build(deviceId)
+      if (event) this.send(response, event)
+    }
+  }
+  /** A stream that takes calls or jobs may hold a large one while it drains, instead of being dropped at once. */
+  private roomy(response: ServerResponse): boolean {
+    return this.bridges.has(response) || this.runnerReaders.has(response)
   }
   emit(event: FleetGatewayEvent) {
     for (const observe of this.observers) {
@@ -147,12 +189,13 @@ export class EventHub {
       return
     if (isFleetRoutineRunEvent(event) && !this.routineRunReaders.has(response)) return
     if (isFleetPeerThreadEvent(event) && !this.peerThreadReaders.has(response)) return
+    if (isFleetRunnerEvent(event) && !this.runnerReaders.has(response)) return
     if (response.destroyed || this.behind(response)) {
       response.destroy()
       this.subscribers.delete(response)
       return
     }
-    if (!response.write('event: fleet\ndata: ' + JSON.stringify(event) + '\n\n') && !this.bridges.has(response)) {
+    if (!response.write('event: fleet\ndata: ' + JSON.stringify(event) + '\n\n') && !this.roomy(response)) {
       response.destroy()
       this.subscribers.delete(response)
     }
@@ -161,8 +204,7 @@ export class EventHub {
     if (this.subscribers.size) {
       this.heartbeat ??= setInterval(() => {
         for (const response of this.subscribers)
-          if (this.behind(response) || (!response.write(': ping\n\n') && !this.bridges.has(response)))
-            response.destroy()
+          if (this.behind(response) || (!response.write(': ping\n\n') && !this.roomy(response))) response.destroy()
       }, 15000)
       this.statsTimer ??= setInterval(() => {
         void this.refresh()
@@ -183,6 +225,7 @@ export class EventHub {
     for (const response of this.subscribers) response.end()
     this.subscribers.clear()
     this.bridges.clear()
+    this.runnerReaders.clear()
     this.updateTimers()
   }
 }
