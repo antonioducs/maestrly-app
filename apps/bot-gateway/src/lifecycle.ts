@@ -755,6 +755,8 @@ export class Lifecycle {
         desktopBridgeEnabled: true,
         // This gateway runs routines in conversations of their own whenever the bot's Maestrly can.
         routineConversations: true,
+        // This gateway queues jobs for runners; whether a computer runs them for the bot is answered per submit.
+        runnersEnabled: true,
       },
       tint: bot.tint,
     }

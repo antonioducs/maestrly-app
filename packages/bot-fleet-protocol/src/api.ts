@@ -1049,6 +1049,8 @@ export const fleetInstanceProfileSchema = z.object({
     desktopBridgeEnabled: z.boolean().default(false),
     /** The gateway runs the bot's routines in conversations of their own (`routine-conversations`). */
     routineConversations: z.boolean().optional(),
+    /** The gateway sends the bot's jobs to the computers that run jobs for it (`runners`); older gateways send none. */
+    runnersEnabled: z.boolean().optional(),
   }),
   /** The bot's color, for its desktop. Gateways from before the unified desktop send none. */
   tint: z

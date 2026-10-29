@@ -195,3 +195,18 @@ describe('runner contracts', () => {
     ).toBeTruthy()
   })
 })
+
+describe('runner transfers', () => {
+  it('keeps every manifest entry inside the job folder', async () => {
+    const { fleetRunnerManifestSchema, FLEET_RUNNER_DEFAULT_EXCLUDES } = await import('../src/index.js')
+    const file = { kind: 'file', path: 'src/a.txt', mode: 0o644, size: 3, sha256: 'a'.repeat(64) }
+    const manifest = (entries: unknown[]) =>
+      fleetRunnerManifestSchema.safeParse({ jobId: 'job_0123456789abcdef', entries, bytes: 3, skipped: 0 })
+    expect(manifest([{ kind: 'directory', path: 'src', mode: 0o755 }, file]).success).toBe(true)
+    expect(manifest([{ kind: 'symlink', path: 'link', target: 'src/a.txt' }]).success).toBe(true)
+    for (const path of ['/etc/passwd', '../up', 'a/../../up', 'a//b', './a', 'a\\b'])
+      expect(manifest([{ ...file, path }]).success, path).toBe(false)
+    expect(manifest([{ ...file, sha256: 'xyz' }]).success).toBe(false)
+    expect(FLEET_RUNNER_DEFAULT_EXCLUDES).toEqual(['.git/', 'node_modules/', '.venv/', '__pycache__/'])
+  })
+})
