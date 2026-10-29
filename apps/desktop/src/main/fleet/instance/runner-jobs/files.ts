@@ -5,12 +5,15 @@ import {
   FLEET_RUNNER_JOB_FINAL_STATES,
   FLEET_RUNNER_LIMITS,
   type FleetRunnerJob,
+  type FleetRunnerJobLogPage,
   type FleetRunnerManifest,
   fleetRunnerManifestSchema,
   fleetRunnerJobIdSchema,
 } from '@maestrly/bot-fleet-protocol'
+import { readLogPage } from '../../../runner/log-page'
 import { realFs } from '../../../real-fs'
 import { packRunnerBlobs } from './blobs'
+import { runnerLogFile } from './completion'
 import { writeRunnerLog } from './log'
 import { buildRunnerManifest, loadRunnerManifest, type RunnerBlobs, saveRunnerManifest } from './manifest'
 import { RunnerOutputs } from './outputs'
@@ -173,6 +176,14 @@ export class RunnerJobFiles {
       body,
       FLEET_RUNNER_LIMITS.logBatchBytesMax
     )
+  }
+
+  /**
+   * A piece of the job's log as this environment holds it, while the job runs and after it ended: from `offset` on, or
+   * the end of the log from the start of a line when `offset` is null.
+   */
+  async logPage(jobId: string, offset: number | null, limit?: number): Promise<FleetRunnerJobLogPage> {
+    return await readLogPage(await runnerLogFile(this.records, await this.record(jobId)), offset, limit)
   }
 
   /** How much of the job's output archive is here. */

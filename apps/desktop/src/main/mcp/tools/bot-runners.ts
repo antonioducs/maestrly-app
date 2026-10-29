@@ -5,6 +5,7 @@ import {
   FLEET_RUNNER_JOB_FINAL_STATES,
   FLEET_RUNNER_LIMITS,
   type FleetRunnerJob,
+  type FleetRunnerJobUsage,
   type FleetRunnerLink,
   type FleetRunnerSubmitResult,
   fleetRunnerCacheSchema,
@@ -134,6 +135,23 @@ function runnerView(link: FleetRunnerLink) {
 
 const isFinal = (job: FleetRunnerJob | null): boolean => !!job && FLEET_RUNNER_JOB_FINAL_STATES.includes(job.state)
 
+/** `640 MiB`, `2.1 GiB`: a size the way a model reads it. */
+function bytesText(bytes: number): string {
+  if (bytes < 1024 ** 2) return `${Math.round(bytes / 1024)} KiB`
+  if (bytes < 1024 ** 3) return `${Math.round(bytes / 1024 ** 2)} MiB`
+  return `${(bytes / 1024 ** 3).toFixed(1)} GiB`
+}
+
+/** What a running job uses on its runner, as the runner last sampled it. */
+function usageView(usage: FleetRunnerJobUsage) {
+  return {
+    cpu: `${Math.round(usage.cpuPercent)}% of one CPU`,
+    memory: `${bytesText(usage.memoryBytes)} (peak ${bytesText(usage.peakMemoryBytes)})`,
+    processes: usage.processes,
+    sampledAt: usage.at,
+  }
+}
+
 /** A job as the bot reads it: what the gateway reports, merged with what this environment kept. */
 function jobView(
   record: RunnerJobRecord | null,
@@ -153,6 +171,7 @@ function jobView(
           createdAt: job.createdAt,
           startedAt: job.startedAt,
           endedAt: job.endedAt,
+          ...(job.usage && !isFinal(job) ? { usage: usageView(job.usage) } : {}),
         }
       : {}),
     ...(record
@@ -438,7 +457,8 @@ export function registerBotRunnerTools(ctx: McpToolContext, gateway: Gateway, bo
     {
       description:
         'Where a runner job stands: its state (queued, assigned, running, finishing, succeeded, failed, cancelled, ' +
-        'expired or lost), runner, exit code, error, times, folder and the output files that came back. With jobId, one ' +
+        'expired or lost), runner, exit code, error, times, folder and the output files that came back. While a job ' +
+        'runs, its status shows what it uses on its runner, and runner_logs shows its output so far. With jobId, one ' +
         'job; without it, the jobs submitted from this conversation, newest first. A job that ended continues its ' +
         'conversation by itself, so this is for checking a job on request, not for waiting. If a submit failed on the way, ' +
         'it tells whether the job exists (not_submitted when it does not).',

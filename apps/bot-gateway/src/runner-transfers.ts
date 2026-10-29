@@ -13,6 +13,7 @@ import {
 import { GatewayError } from './errors.js'
 import { endToEnd, upstreamHeaders } from './forward-headers.js'
 import type { Lifecycle } from './lifecycle.js'
+import type { StoredEnvironment } from './store.js'
 
 const INSTANCE_ROUTE: Record<FleetRunnerTransferRouteKey, keyof typeof FLEET_INSTANCE_ROUTES> = {
   runnerJobManifest: 'botRunnerJobManifest',
@@ -46,20 +47,27 @@ export interface RunnerTransfersDeps {
   idleTimeoutMs: number
 }
 
+/** The environment that serves a bot's runner jobs now: running, with a Maestrly that has `runner-jobs`; else null. */
+export function runnerJobsEnvironment(lifecycle: Lifecycle, botId: string): StoredEnvironment | null {
+  const bot = lifecycle.get(botId)
+  if (!bot?.environmentId || bot.lifecycle !== 'running' || bot.move) return null
+  const environment = lifecycle.store.getEnvironment(bot.environmentId)
+  if (
+    environment?.lifecycle !== 'running' ||
+    !lifecycle.environmentCapabilities(environment.id).includes(FLEET_RUNNER_JOBS_CAPABILITY)
+  )
+    return null
+  return environment
+}
+
 /** Where a gateway's relay reaches a bot's environment: its container, while it runs a Maestrly with `runner-jobs`. */
 export function lifecycleRunnerTargets(
   lifecycle: Lifecycle
 ): Pick<RunnerTransfersDeps, 'target' | 'instancePort' | 'idleTimeoutMs'> {
   return {
     target: (botId) => {
-      const bot = lifecycle.get(botId)
-      if (!bot?.environmentId || bot.lifecycle !== 'running' || bot.move) return null
-      const environment = lifecycle.store.getEnvironment(bot.environmentId)
-      if (
-        environment?.lifecycle !== 'running' ||
-        !lifecycle.environmentCapabilities(environment.id).includes(FLEET_RUNNER_JOBS_CAPABILITY)
-      )
-        return null
+      const environment = runnerJobsEnvironment(lifecycle, botId)
+      if (!environment) return null
       const secret = lifecycle.store.environmentSecrets(environment.id)?.controlToken
       return secret ? { host: environment.containerName, secret } : null
     },

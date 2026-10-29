@@ -48,6 +48,7 @@ import {
   type FleetDesktopCallResult,
   type FleetHostDesktopCallRequest,
   type FleetInstanceRunnerJobState,
+  type FleetRunnerJobLogPage,
 } from '@maestrly/bot-fleet-protocol'
 import { createHash } from 'node:crypto'
 import http from 'node:http'
@@ -56,6 +57,8 @@ import { pipeline } from 'node:stream/promises'
 import { GatewayError } from './errors.js'
 
 type Routes = typeof FLEET_INSTANCE_ROUTES
+/** How long reading a piece of a runner job's log may take. */
+const RUNNER_LOG_READ_MS = 10_000
 /** How long freezing a bot, or packing it before its first byte streams, may take. */
 const BOT_MOVE_STEP_MS = 10 * 60_000
 /**
@@ -563,6 +566,12 @@ export class InstanceClient {
     if (!this.scope?.environments)
       throw new GatewayError('BOT_NOT_RUNNING', "This bot's environment cannot take runner jobs")
     return this.call('botRunnerJobState', { botId: this.scope.botId, jobId }, undefined, body)
+  }
+  /** A piece of a bot's runner job log, from the end of the log or from `offset` on (`runner-jobs`). */
+  runnerJobLog(jobId: string, query: { offset?: number; limit?: number }): Promise<FleetRunnerJobLogPage> {
+    if (!this.scope?.environments)
+      throw new GatewayError('BOT_NOT_RUNNING', "This bot's environment cannot take runner jobs")
+    return this.call('botRunnerJobLogRead', { botId: this.scope.botId, jobId }, query, undefined, RUNNER_LOG_READ_MS)
   }
   /** Installs a bot in the environment, or updates it: its profile, display slot and gateway token. */
   botInstall(botId: string, body: FleetInstanceBotInstall): Promise<FleetInstanceStatus> {

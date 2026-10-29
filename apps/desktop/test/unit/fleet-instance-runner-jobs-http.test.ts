@@ -115,6 +115,7 @@ describe('runner job routes', () => {
       ['GET', '/manifest'],
       ['POST', '/blobs', { digests: [digest] }],
       ['POST', '/log?offset=0', Buffer.from('x')],
+      ['GET', '/log'],
       ['GET', '/outputs'],
       ['PUT', '/outputs/0', Buffer.from('x'), chunk],
       ['POST', '/outputs/commit', { bytes: 1, sha256: digest }],
@@ -237,6 +238,55 @@ describe('runner job routes', () => {
     const large = Buffer.alloc(FLEET_RUNNER_LIMITS.logBatchBytesMax + 1)
     expect((await call('POST', '/log?offset=6', large)).status).toBe(400)
     expect(readFileSync(log, 'utf8')).toBe('abcdef')
+  })
+
+  it('reads the log in pieces: its end, from an offset, within a limit, and after the job ended', async () => {
+    const { call, work } = await setup()
+    const read = async (query = '') => {
+      const response = await call('GET', `/log${query}`)
+      expect(response.status).toBe(200)
+      expect(response.headers.get('content-type')).toContain('application/json')
+      return (await response.json()) as { start: number; next: number; size: number; text: string }
+    }
+    // A log that has not started is empty, not missing.
+    expect(await read()).toEqual({ start: 0, next: 0, size: 0, text: '' })
+    await call('POST', '/log?offset=0', Buffer.from('first line\nsecond line\nthird\n'))
+    expect(await read()).toEqual({ start: 0, next: 29, size: 29, text: 'first line\nsecond line\nthird\n' })
+    // Without an offset, the end of the log from the start of a line.
+    expect((await read('?limit=10')).text).toBe('third\n')
+    const first = await read('?offset=0&limit=5')
+    expect(first).toEqual({ start: 0, next: 5, size: 29, text: 'first' })
+    const second = await read(`?offset=${first.next}`)
+    expect(second).toEqual({ start: 5, next: 29, size: 29, text: ' line\nsecond line\nthird\n' })
+    // Reading on from the end finds what the runner sends next.
+    await call('POST', '/log?offset=29', Buffer.from('fourth\n'))
+    expect(await read(`?offset=${second.next}`)).toEqual({ start: 29, next: 36, size: 36, text: 'fourth\n' })
+    // The log stays readable once the job ended, from the runner's whole copy when it is the longer one.
+    await call('POST', '/state', { job: runnerJob(JOB_ID, 'succeeded', { exitCode: 0 }) })
+    expect((await read('?offset=29')).text).toBe('fourth\n')
+    const own = path.join(work, '.maestrly', 'runner-jobs', `${JOB_ID}.log`)
+    writeFileSync(own, 'first line\nsecond line\nthird\nfourth\nfifth\n')
+    expect(await read('?offset=36')).toEqual({ start: 36, next: 42, size: 42, text: 'fifth\n' })
+  })
+
+  it('refuses a log read with a bad offset or limit', async () => {
+    const { call } = await setup()
+    await call('POST', '/log?offset=0', Buffer.from('abc'))
+    const tooMany = FLEET_RUNNER_LIMITS.logPageBytesMax + 1
+    for (const query of [
+      '?offset=',
+      '?offset=-1',
+      '?offset=1.5',
+      '?offset=abc',
+      '?limit=',
+      '?limit=0',
+      '?limit=-5',
+      '?limit=2.5',
+      '?limit=x',
+      `?limit=${tooMany}`,
+    ])
+      expect([query, (await call('GET', `/log${query}`)).status]).toEqual([query, 400])
+    expect((await call('GET', `/log?offset=0&limit=${FLEET_RUNNER_LIMITS.logPageBytesMax}`)).status).toBe(200)
   })
 
   it('serves the manifest of the job folder as JSON', async () => {

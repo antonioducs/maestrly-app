@@ -9,8 +9,11 @@ import {
   type FleetRunnerError,
   type FleetRunnerJob,
   type FleetRunnerJobFinishRequest,
+  type FleetRunnerJobLogPage,
   type FleetRunnerJobSpec,
   type FleetRunnerJobState,
+  type FleetRunnerJobUsage,
+  type FleetRunnerJobUsageRequest,
   type FleetRunnerLink,
   type FleetRunnerLinkView,
   type FleetRunnerStateRequest,
@@ -21,12 +24,18 @@ import {
 import { GatewayError } from './errors.js'
 import type { EventHub } from './events.js'
 import type { Lifecycle } from './lifecycle.js'
+import { runnerJobsEnvironment } from './runner-transfers.js'
 import type { Device, Store, StoredRunnerJob, StoredRunnerLink } from './store.js'
 
-/** What the broker needs of the bots' environments: to tell one where a job of its bot stands. */
+/** Which piece of a job's log is wanted: from `offset` on, or the end of the log without it; at most `limit` bytes. */
+export type RunnerLogQuery = { offset?: number; limit?: number }
+
+/** What the broker needs of the bots' environments: to tell one where a job of its bot stands, and to read its log. */
 export interface RunnerEnvironments {
   /** Posts the job's state to its bot's environment; false when the bot cannot take it now (it is sent again later). */
   notify(job: FleetRunnerJob): Promise<boolean>
+  /** A piece of a job's log as the bot's environment holds it; null when the bot cannot serve it now. */
+  readLog(botId: string, jobId: string, query: RunnerLogQuery): Promise<FleetRunnerJobLogPage | null>
 }
 
 /** What a gateway's broker reaches its bots' environments through. */
@@ -41,6 +50,8 @@ export function lifecycleRunnerEnvironments(lifecycle: Lifecycle): RunnerEnviron
         return false
       }
     },
+    readLog: async (botId, jobId, query) =>
+      runnerJobsEnvironment(lifecycle, botId) ? lifecycle.instanceFor(botId).runnerJobLog(jobId, query) : null,
   }
 }
 
@@ -94,6 +105,8 @@ export class Runners {
   private readonly cancelBy = new Map<string, number>()
   /** The delivery of each job's state to its environment in progress, so a job has one at a time. */
   private readonly delivering = new Map<string, Promise<void>>()
+  /** What each running job last used, as its runner sampled it. In memory only: it goes with the job and a restart. */
+  private readonly usages = new Map<string, FleetRunnerJobUsage>()
   private timer: NodeJS.Timeout | null = null
   constructor(
     readonly store: Store,
@@ -161,12 +174,13 @@ export class Runners {
     const removed = this.store.deleteRunnerLinksOfDevice(deviceId)
     this.presence.delete(deviceId)
     this.lostAt.delete(deviceId)
+    for (const job of this.store.runnerJobsOfDevice(deviceId, ACTIVE)) this.usages.delete(job.id)
     for (const link of removed) this.dropLink(link)
     for (const botId of new Set(removed.map((link) => link.botId))) this.notifyLinks(botId)
   }
   /** A deleted bot: its links and jobs went with its records; what still waits on them goes too. */
   botPurged(botId: string) {
-    for (const timers of [this.acceptBy, this.cancelBy, this.skips])
+    for (const timers of [this.acceptBy, this.cancelBy, this.skips, this.usages])
       for (const jobId of [...timers.keys()]) if (!this.store.runnerJob(jobId)) timers.delete(jobId)
     this.notifyLinks(botId)
   }
@@ -222,6 +236,7 @@ export class Runners {
     }))
   }
   private view(job: StoredRunnerJob): FleetRunnerJob {
+    const usage = isFinal(job.state) ? undefined : this.usages.get(job.id)
     return {
       jobId: job.id,
       botId: job.botId,
@@ -237,6 +252,7 @@ export class Runners {
       endedAt: job.endedAt,
       exitCode: job.exitCode,
       error: job.errorCode ? { code: job.errorCode, message: job.errorMessage ?? '' } : null,
+      ...(usage ? { usage } : {}),
     }
   }
   private ahead(job: StoredRunnerJob): number {
@@ -327,6 +343,24 @@ export class Runners {
     if (job.deviceId !== deviceId) throw new GatewayError('FORBIDDEN', 'This job was assigned to another computer')
     return job
   }
+  /**
+   * What the job uses now, as its runner sampled it, stamped here and kept until the next one or the job's end. Nothing
+   * is stored or sent: whoever reads the job sees it.
+   */
+  usage(jobId: string, deviceId: string, sample: FleetRunnerJobUsageRequest) {
+    const job = this.owned(jobId, deviceId)
+    if (job.state !== 'running' && job.state !== 'finishing')
+      throw new GatewayError('CONFLICT', 'This job is not running')
+    this.usages.set(jobId, { ...sample, at: iso(this.now()) })
+  }
+  /** A piece of a bot's job log, read from the bot's environment now; the gateway keeps none of it. */
+  async readLog(botId: string, jobId: string, query: RunnerLogQuery): Promise<FleetRunnerJobLogPage> {
+    this.job(botId, jobId)
+    const page = await this.environments.readLog(botId, jobId, query)
+    if (!page)
+      throw new GatewayError('CONFLICT', "The bot's environment is not running, so this job's log cannot be read now.")
+    return page
+  }
   /** The runner took the job: it is running, from its input transfer to its command's end. */
   accept(jobId: string, deviceId: string) {
     const job = this.owned(jobId, deviceId)
@@ -402,6 +436,7 @@ export class Runners {
     this.acceptBy.delete(jobId)
     this.cancelBy.delete(jobId)
     this.skips.delete(jobId)
+    this.usages.delete(jobId)
     this.store.updateRunnerJob(jobId, {
       state,
       endedAt: iso(this.now()),
@@ -541,7 +576,9 @@ export class Runners {
     for (;;) {
       const job = this.store.runnerJob(jobId)
       if (!job || job.notifiedSeq >= job.seq) return
-      if (!(await this.environments.notify(this.view(job)))) return
+      // The environment is told where the job stands; what it uses is read from the gateway, never kept there.
+      const { usage: _usage, ...state } = this.view(job)
+      if (!(await this.environments.notify(state))) return
       this.store.markRunnerJobNotified(jobId, job.seq)
     }
   }

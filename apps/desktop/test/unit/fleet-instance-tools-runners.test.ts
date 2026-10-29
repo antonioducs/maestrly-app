@@ -228,6 +228,9 @@ describe('runner tools of a fleet bot', () => {
     expect(submitTool.description).toContain('end your turn')
     expect(submitTool.description).toContain('named `caches`')
     expect(submitTool.description).toContain('self-contained')
+    expect(tools.find((tool) => tool.name === 'runner_status')!.description).toContain(
+      'status shows what it uses on its runner, and runner_logs shows its output so far'
+    )
     expect(submitTool.inputSchema.required).toEqual(expect.arrayContaining(['folder', 'command', 'outputs']))
   })
 
@@ -541,6 +544,38 @@ describe('runner tools of a fleet bot', () => {
         outputFileCount: 1,
         submittedFrom: 'this conversation',
       })
+    })
+
+    it('shows what a running job uses on its runner, in words, and nothing for a job that ended', async () => {
+      const [running, queued, ended] = [1, 2, 3].map((n) => `job_AAAAAAAAAAAAAAAA000${n}`)
+      const usage = {
+        cpuPercent: 349.6,
+        memoryBytes: Math.round(2.14 * 1024 ** 3),
+        peakMemoryBytes: Math.round(3.4 * 1024 ** 3),
+        processes: 4,
+        at: '2026-10-29T10:05:00.000Z',
+      }
+      await seed(running, 'primary', runnerJob(running, 'running'))
+      await seed(queued, 'primary', runnerJob(queued, 'queued'))
+      await seed(ended, 'primary', runnerJob(ended, 'succeeded', { exitCode: 0, usage }))
+      const gateway = await fakeGateway(setup.records, {
+        jobs: [runnerJob(running, 'running', { usage }), runnerJob(queued, 'queued'), runnerJob(ended, 'succeeded')],
+      })
+      const mcp = await client(setup, gateway.url)
+      const expected = {
+        cpu: '350% of one CPU',
+        memory: '2.1 GiB (peak 3.4 GiB)',
+        processes: 4,
+        sampledAt: '2026-10-29T10:05:00.000Z',
+      }
+      expect(json(await mcp.callTool({ name: 'runner_status', arguments: { jobId: running } })).usage).toEqual(expected)
+      const listed = json(await mcp.callTool({ name: 'runner_status', arguments: {} }))
+      const byId = new Map(listed.jobs.map((job: { jobId: string }) => [job.jobId, job]))
+      expect(byId.get(running)).toMatchObject({ state: 'running', usage: expected })
+      // Nothing is made up for a job that has not been sampled, and nothing is left over from before it ended.
+      expect(byId.get(queued)).not.toHaveProperty('usage')
+      expect(byId.get(ended)).toMatchObject({ state: 'succeeded' })
+      expect(byId.get(ended)).not.toHaveProperty('usage')
     })
 
     it('answers from the record when the gateway cannot, and fails for a job nobody knows', async () => {

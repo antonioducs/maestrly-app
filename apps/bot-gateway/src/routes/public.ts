@@ -13,10 +13,12 @@ import {
   FLEET_PEER_CONVERSATIONS_FEATURE,
   FLEET_OWNER_SEEN_FEATURE,
   FLEET_RUNNERS_FEATURE,
+  FLEET_RUNNER_LIMITS,
   FLEET_CANCEL_CONVERSATION_QUERY,
   fleetReaderWantsPeerThreads,
   fleetReaderWantsRunners,
   type FleetRunnerJobFinishRequest,
+  type FleetRunnerJobUsageRequest,
   type FleetRunnerLinkRequest,
   type FleetRunnerStateRequest,
   type FleetPeerThreadPatchRequest,
@@ -267,6 +269,20 @@ function number(value: string | null, max: number, defaultValue: number) {
   const parsed = Number(value)
   if (!Number.isInteger(parsed) || parsed < 0) throw new GatewayError('INVALID_REQUEST', 'Invalid query parameter')
   return Math.min(max, parsed)
+}
+/** The piece of a job's log a read asks for: from `offset` (the end of the log without it), at most `limit` bytes. */
+function logQuery(url: URL): { offset?: number; limit?: number } {
+  const read = (name: string, min: number, max: number): number | undefined => {
+    const value = url.searchParams.get(name)
+    if (value === null) return undefined
+    const parsed = /^\d{1,15}$/.test(value) ? Number(value) : NaN
+    if (!Number.isSafeInteger(parsed) || parsed < min || parsed > max)
+      throw new GatewayError('INVALID_REQUEST', `Invalid ${name}`)
+    return parsed
+  }
+  const offset = read('offset', 0, Number.MAX_SAFE_INTEGER)
+  const limit = read('limit', 1, FLEET_RUNNER_LIMITS.logPageBytesMax)
+  return { ...(offset === undefined ? {} : { offset }), ...(limit === undefined ? {} : { limit }) }
 }
 export async function publicRoute(
   key: string,
@@ -1066,6 +1082,9 @@ export async function publicRoute(
     case 'botRunnerJobCancel':
       requireBotRecord(ctx, id)
       return { body: ctx.runners!.cancel(id, params.jobId) }
+    case 'botRunnerJobLogRead':
+      requireBotRecord(ctx, id)
+      return { body: await ctx.runners!.readLog(id, params.jobId, logQuery(url)) }
     case 'runnerState':
       return {
         body: ctx.runners!.report(ctx.auth.device(res.req?.headers.authorization).id, body as FleetRunnerStateRequest),
@@ -1075,6 +1094,13 @@ export async function publicRoute(
       return { status: 204 }
     case 'runnerJobProgress':
       ctx.runners!.progress(params.jobId, ctx.auth.device(res.req?.headers.authorization).id)
+      return { status: 204 }
+    case 'runnerJobUsage':
+      ctx.runners!.usage(
+        params.jobId,
+        ctx.auth.device(res.req?.headers.authorization).id,
+        body as FleetRunnerJobUsageRequest
+      )
       return { status: 204 }
     case 'runnerJobFinish':
       ctx.runners!.finish(

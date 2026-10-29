@@ -71,6 +71,7 @@ async function setup() {
         notified.push(value)
         return true
       },
+      readLog: async () => null,
     },
     { now: () => now }
   )
@@ -102,6 +103,7 @@ async function setup() {
     notified,
     botId: h.bot.id,
     job,
+    now: () => now,
     advance(ms: number) {
       now += ms
       runners.tick()
@@ -330,6 +332,106 @@ describe('runner jobs', () => {
     expect(t.runners.job(t.botId, named.ok ? named.job.jobId : '')).toMatchObject({
       state: 'failed',
       error: { code: 'runner_unlinked' },
+    })
+  })
+  describe('usage', () => {
+    const sample = { cpuPercent: 350, memoryBytes: 2 * 1024 ** 3, peakMemoryBytes: 3 * 1024 ** 3, processes: 4 }
+    async function running() {
+      const t = await ready()
+      const submitted = t.runners.submit(t.botId, t.job())
+      const jobId = submitted.ok ? submitted.job.jobId : ''
+      return { ...t, jobId }
+    }
+
+    it('keeps the last sample of a running job in memory, stamped here, for whoever reads the job', async () => {
+      const t = await running()
+      // A job its runner has not accepted yet uses nothing.
+      expect(() => t.runners.usage(t.jobId, t.mac.deviceId, sample)).toThrow('not running')
+      t.runners.accept(t.jobId, t.mac.deviceId)
+      expect(t.runners.job(t.botId, t.jobId)).not.toHaveProperty('usage')
+      t.advance(10_000)
+      t.runners.usage(t.jobId, t.mac.deviceId, sample)
+      const at = new Date(t.now()).toISOString()
+      expect(t.runners.job(t.botId, t.jobId).usage).toEqual({ ...sample, at })
+      expect(t.runners.jobs(t.botId)[0].usage).toEqual({ ...sample, at })
+      t.advance(10_000)
+      t.runners.usage(t.jobId, t.mac.deviceId, { ...sample, cpuPercent: 10 })
+      expect(t.runners.job(t.botId, t.jobId).usage).toEqual({
+        ...sample,
+        cpuPercent: 10,
+        at: new Date(t.now()).toISOString(),
+      })
+      // A job that is sending its outputs back still shows what it used last.
+      t.runners.progress(t.jobId, t.mac.deviceId)
+      t.runners.usage(t.jobId, t.mac.deviceId, sample)
+      expect(t.runners.job(t.botId, t.jobId)).toMatchObject({ state: 'finishing', usage: sample })
+    })
+
+    it('takes a sample only from the runner the job went to, and never stores or sends one', async () => {
+      const t = await running()
+      const other = t.computer('Intruder')
+      t.runners.accept(t.jobId, t.mac.deviceId)
+      expect(() => t.runners.usage(t.jobId, other.deviceId, sample)).toThrow('another computer')
+      expect(() => t.runners.usage('job_unknown000000000000', t.mac.deviceId, sample)).toThrow('not found')
+      await t.runners.retry(t.botId)
+      const before = t.mac.events().length
+      const delivered = t.notified.length
+      const stored = JSON.stringify(t.h.store.runnerJob(t.jobId))
+      t.runners.usage(t.jobId, t.mac.deviceId, sample)
+      expect(JSON.stringify(t.h.store.runnerJob(t.jobId))).toBe(stored)
+      expect(t.mac.events()).toHaveLength(before)
+      await t.runners.retry(t.botId)
+      expect(t.notified).toHaveLength(delivered)
+      // The environment is told where the job stands, never what it uses.
+      t.runners.progress(t.jobId, t.mac.deviceId)
+      await t.runners.retry(t.botId)
+      expect(t.notified.at(-1)).toMatchObject({ state: 'finishing' })
+      expect(t.notified.at(-1)).not.toHaveProperty('usage')
+      // The computers that read events do see it with the job.
+      expect(
+        t.mac
+          .events()
+          .filter((event) => event.type === 'runner_job.updated')
+          .at(-1)
+      ).toMatchObject({
+        job: { state: 'finishing', usage: sample },
+      })
+    })
+
+    it('forgets the sample when the job ends, when its runner is revoked, and when its bot is purged', async () => {
+      const t = await running()
+      t.runners.accept(t.jobId, t.mac.deviceId)
+      t.runners.usage(t.jobId, t.mac.deviceId, sample)
+      t.runners.finish(t.jobId, t.mac.deviceId, { exitCode: 0, error: null })
+      expect(t.runners.job(t.botId, t.jobId)).not.toHaveProperty('usage')
+      expect(() => t.runners.usage(t.jobId, t.mac.deviceId, sample)).toThrow('not running')
+      expect(t.runners['usages'].size).toBe(0)
+
+      const second = t.runners.submit(t.botId, t.job())
+      const secondId = second.ok ? second.job.jobId : ''
+      t.runners.accept(secondId, t.mac.deviceId)
+      t.runners.usage(secondId, t.mac.deviceId, sample)
+      expect(t.runners['usages'].size).toBe(1)
+      t.runners.revokeDevice(t.mac.deviceId)
+      expect(t.runners.job(t.botId, secondId).state).toBe('cancelled')
+      expect(t.runners['usages'].size).toBe(0)
+
+      // A sample left behind by a bot whose records went is dropped with the bot.
+      t.runners['usages'].set('job_gone00000000000000', { ...sample, at: new Date(t.now()).toISOString() })
+      t.runners.botPurged(t.botId)
+      expect(t.runners['usages'].size).toBe(0)
+    })
+
+    it('has no usage on a job that ended, whatever was sampled', async () => {
+      const t = await running()
+      t.runners.accept(t.jobId, t.mac.deviceId)
+      t.runners.usage(t.jobId, t.mac.deviceId, sample)
+      t.runners.cancel(t.botId, t.jobId)
+      expect(t.runners.job(t.botId, t.jobId)).toMatchObject({ state: 'running', cancelRequested: true })
+      expect(t.runners.job(t.botId, t.jobId).usage).toEqual(expect.objectContaining(sample))
+      t.advance(10 * 60_000)
+      expect(t.runners.job(t.botId, t.jobId)).toMatchObject({ state: 'cancelled' })
+      expect(t.runners.job(t.botId, t.jobId)).not.toHaveProperty('usage')
     })
   })
 })

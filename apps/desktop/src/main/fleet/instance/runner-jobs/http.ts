@@ -24,6 +24,14 @@ const offsetOf = (value: string | null | undefined): number => {
   return Number(value)
 }
 
+/** The bytes a log read asks for, when it names them: 1 up to the most a read may return. */
+const limitOf = (value: string | null): number | undefined => {
+  if (value === null) return undefined
+  const limit = DIGITS.test(value) ? Number(value) : 0
+  if (limit < 1 || limit > FLEET_RUNNER_LIMITS.logPageBytesMax) throw invalid('Invalid limit.')
+  return limit
+}
+
 /** Aborts when the client goes away before the answer is complete. */
 function abortWhenClosed(response: ServerResponse): AbortSignal {
   const controller = new AbortController()
@@ -45,7 +53,8 @@ function declaredLength(request: IncomingMessage, max: number): number {
 /**
  * Serves one authenticated request about a bot's runner job. State and commit take JSON; the manifest and the output
  * status answer JSON; blobs stream a compressed tar (a refusal comes before its status line, as JSON); the log and an
- * output chunk take their bytes as the body. Work stops when the client disconnects.
+ * output chunk take their bytes as the body, and a read of the log answers a piece of it as JSON. Work stops when the
+ * client disconnects.
  */
 export async function serveRunnerJobsRoute(
   files: RunnerJobFiles,
@@ -89,6 +98,14 @@ export async function serveRunnerJobsRoute(
       if (request.headers['content-length'] !== undefined) declaredLength(request, FLEET_RUNNER_LIMITS.logBatchBytesMax)
       await files.log(jobId, offsetOf(url.searchParams.get(FLEET_RUNNER_LOG_OFFSET_QUERY)), request)
       return done()
+    }
+    case 'botRunnerJobLogRead': {
+      const offset = url.searchParams.get(FLEET_RUNNER_LOG_OFFSET_QUERY)
+      return writeJson(
+        response,
+        200,
+        await files.logPage(jobId, offset === null ? null : offsetOf(offset), limitOf(url.searchParams.get('limit')))
+      )
     }
     case 'botRunnerJobOutputs':
       return writeJson(response, 200, await files.outputs(jobId))
