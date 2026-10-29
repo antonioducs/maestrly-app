@@ -104,7 +104,8 @@ async function setup() {
 
 const json = async (response: Response) => (await response.json()) as { code?: string; message?: string }
 
-describe('runner job routes', () => {
+// The bot environment runs in a Linux container: the folders of its jobs are POSIX paths.
+describe.skipIf(process.platform === 'win32')('runner job routes', () => {
   it('answers 404 for a bot or a job the environment does not hold, and 401 without credentials', async () => {
     const { call, origin } = await setup()
     const other = 'job_BBBBBBBBBBBBBBBB0002'
@@ -478,7 +479,7 @@ describe('runner job routes', () => {
   })
 })
 
-describe('runner job files', () => {
+describe.skipIf(process.platform === 'win32')('runner job files', () => {
   it('knows its jobs by id only', async () => {
     const { files, records } = await setup()
     await expect(files.outputs('../x')).rejects.toMatchObject({ status: 404 })

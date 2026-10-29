@@ -120,7 +120,8 @@ describe('runner job records', () => {
   })
 })
 
-describe('runner manifest', () => {
+// The bot environment runs in a Linux container: the folders of its jobs are POSIX paths.
+describe.skipIf(process.platform === 'win32')('runner manifest', () => {
   const build = async (
     root: string,
     extra: Parameters<typeof jobSpec>[1] = {},
@@ -343,7 +344,7 @@ describe('runner manifest', () => {
   })
 })
 
-describe('runner blobs', () => {
+describe.skipIf(process.platform === 'win32')('runner blobs', () => {
   async function prepared(files: Record<string, string>) {
     const root = tempFolder()
     writeTree(root, files)

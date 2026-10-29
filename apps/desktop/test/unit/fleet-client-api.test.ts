@@ -276,6 +276,8 @@ describe('fleet API and events', () => {
   })
 
   it('asks for runner events only when this computer runs jobs for bots', async () => {
+    // A stream that ends reconnects, and on a slow machine that request lands in the next stream's slice.
+    holdEvents = true
     const stream = async (options: { desktopBridge?: boolean; runners?: boolean } | undefined) => {
       const before = requests.length
       const seen: string[] = []

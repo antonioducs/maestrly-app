@@ -206,7 +206,8 @@ beforeEach(() => {
   setup = world()
 })
 
-describe('runner tools of a fleet bot', () => {
+// The bot environment runs in a Linux container: the folders of its jobs are POSIX paths.
+describe.skipIf(process.platform === 'win32')('runner tools of a fleet bot', () => {
   it('are offered only when the gateway sends jobs, with reads marked as reads and changes asking', async () => {
     const gateway = await fakeGateway(setup.records)
     const without = await client(setup, gateway.url, { runnersEnabled: false })

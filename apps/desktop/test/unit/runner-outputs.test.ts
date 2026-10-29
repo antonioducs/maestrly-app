@@ -188,19 +188,28 @@ describe('packing the outputs of a job', () => {
     expect((await readZstdTar(readFileSync(outFile))).map((entry) => entry.name)).toEqual(['out/stays.txt'])
   })
 
-  it('refuses more output bytes than the limit, with the code outputs_too_large, and writes nothing', async () => {
-    const work = tempDir()
-    mkdirSync(path.join(work, 'out'))
-    // A sparse file: it claims the bytes without taking them.
-    const big = path.join(work, 'out/huge.bin')
-    closeSync(openSync(big, 'w'))
-    truncateSync(big, FLEET_RUNNER_LIMITS.outputBytesMax + 1)
-    if (statSync(big).size <= FLEET_RUNNER_LIMITS.outputBytesMax) return
-    const entries = await collectRunnerOutputs(work, ['out/**'], { jobId: 'job_x', entries: [], bytes: 0, skipped: 0 })
-    const outFile = path.join(tempDir(), 'outputs.tar.zst')
-    const error = await packRunnerOutputs(work, entries, outFile).catch((caught: unknown) => caught)
-    expect(error).toBeInstanceOf(RunnerJobError)
-    expect((error as RunnerJobError).code).toBe('outputs_too_large')
-    expect(() => statSync(outFile)).toThrow()
-  })
+  // NTFS gives a 50 GiB file its space instead of leaving it sparse.
+  it.skipIf(process.platform === 'win32')(
+    'refuses more output bytes than the limit, with the code outputs_too_large, and writes nothing',
+    async () => {
+      const work = tempDir()
+      mkdirSync(path.join(work, 'out'))
+      // A sparse file: it claims the bytes without taking them.
+      const big = path.join(work, 'out/huge.bin')
+      closeSync(openSync(big, 'w'))
+      truncateSync(big, FLEET_RUNNER_LIMITS.outputBytesMax + 1)
+      if (statSync(big).size <= FLEET_RUNNER_LIMITS.outputBytesMax) return
+      const entries = await collectRunnerOutputs(work, ['out/**'], {
+        jobId: 'job_x',
+        entries: [],
+        bytes: 0,
+        skipped: 0,
+      })
+      const outFile = path.join(tempDir(), 'outputs.tar.zst')
+      const error = await packRunnerOutputs(work, entries, outFile).catch((caught: unknown) => caught)
+      expect(error).toBeInstanceOf(RunnerJobError)
+      expect((error as RunnerJobError).code).toBe('outputs_too_large')
+      expect(() => statSync(outFile)).toThrow()
+    }
+  )
 })

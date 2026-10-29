@@ -1574,6 +1574,7 @@ async function runFleetScenario(workspaceOnly: boolean) {
           'Rotinas',
           'Memória',
           'Projetos',
+          'Runners',
           'Onde roda',
           'Arquivar',
         ])

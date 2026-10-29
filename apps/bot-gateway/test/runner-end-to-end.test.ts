@@ -285,10 +285,12 @@ describe.skipIf(process.platform === 'win32')('runners end to end', () => {
     const { worker } = await runner(h)
     const folder = tempDir('runner-e2e-folder-')
     await writeFile(path.join(folder, 'in.txt'), 'input\n')
-    // A process in a session of its own, which killing the command's process group alone would leave running.
+    // A process in a session of its own, which killing the command's process group alone would leave running. Only
+    // Linux finds one that its parent left to init before the first sample, so elsewhere the parent stays for a while.
+    const linger = process.platform === 'linux' ? '' : 'setTimeout(()=>{},3000);'
     const detach =
       "const c=require('child_process').spawn('sleep',['60'],{detached:true,stdio:'ignore'});c.unref();" +
-      "console.log('escaped '+c.pid)"
+      `console.log('escaped '+c.pid);${linger}`
     const spec = {
       folder,
       command: `"${process.execPath}" -e "${detach}"; echo started; sleep 60`,

@@ -63,7 +63,8 @@ const seed = (records: RunnerJobRecords, folder: string, extra: Partial<RunnerJo
   records.create(runnerRecord(folder, extra))
 const parsed = (value: FleetInstanceInput) => fleetInstanceInputSchema.parse(value)
 
-describe('runner job completion', () => {
+// The bot environment runs in a Linux container: the folders of its jobs are POSIX paths.
+describe.skipIf(process.platform === 'win32')('runner job completion', () => {
   it('continues the bot conversation once, with the result, when a job ends', async () => {
     const { folder, records, files, sent } = fixture()
     await seed(records, folder)
@@ -274,7 +275,7 @@ describe('runner job completion', () => {
   })
 })
 
-describe('runner job continuation text', () => {
+describe.skipIf(process.platform === 'win32')('runner job continuation text', () => {
   const job = (extra: Partial<FleetRunnerJob> = {}) => runnerJob(JOB_ID, 'succeeded', { exitCode: 0, ...extra })
 
   it('is bounded for the worst inputs of every part at once', () => {
@@ -329,7 +330,7 @@ describe('runner job continuation text', () => {
   })
 })
 
-describe('runner job reconciliation', () => {
+describe.skipIf(process.platform === 'win32')('runner job reconciliation', () => {
   async function gateway(jobs: FleetRunnerJob[]) {
     const asked: string[] = []
     const server = createServer((request, response) => {

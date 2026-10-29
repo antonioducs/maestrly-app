@@ -188,7 +188,8 @@ describe('committing outputs', () => {
     expect(read('out/video.mp4')).toBe('frames')
     expect(read('out/sub/a.txt')).toBe('deep')
     expect(read(`.maestrly/runner-jobs/${JOB_ID}.log`)).toBe('the log')
-    expect(readlinkSync(path.join(work, 'latest'))).toBe('out/video.mp4')
+    // Windows spells the target of a link with its own separator.
+    expect(readlinkSync(path.join(work, 'latest')).replaceAll('\\', '/')).toBe('out/video.mp4')
     expect(read('real.txt')).toBe('target')
     expect(lstatSync(path.join(work, 'empty')).isDirectory()).toBe(true)
     if (process.platform !== 'win32') expect(statSync(path.join(work, 'out', 'video.mp4')).mode & 0o111).not.toBe(0)
