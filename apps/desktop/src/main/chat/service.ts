@@ -232,7 +232,7 @@ import { AntigravityServiceAuth } from './antigravity-subscription/service-auth'
 import { grokReasoningMeta } from './grok-subscription/models'
 import { finalTurnCompletion } from './turn-status'
 import { QuestionBroker } from './question-broker'
-import { activeChatContext, renderTranscript } from './message'
+import { activeChatContext, renderTranscript, summaryWithApprovedPlan } from './message'
 import { createContextProgressPublisher } from './context-progress'
 import { CODEX_TRANSFER_MAX_CHARACTERS, codexTransferCharacters } from './native-transfer'
 import { redactClaudeCredentials } from './claude-agent-sdk/errors'
@@ -7972,7 +7972,7 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
           ...(opts.summaryRetryDelayMs != null ? { retryDelayMs: opts.summaryRetryDelayMs } : {}),
           ...(opts.summaryMaxRetries != null ? { maxRetries: opts.summaryMaxRetries } : {}),
         })
-    const summary = compacted.summary
+    const summary = summaryWithApprovedPlan(compacted.summary, history)
     const usage = compacted.usage
     completedUsage = usage
     completedCost = compacted.runtimeEstimatedCostUsd
