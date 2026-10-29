@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { mkdir, readdir, readFile, symlink, writeFile } from 'node:fs/promises'
 import type http from 'node:http'
 import os from 'node:os'
@@ -273,4 +273,93 @@ describe.skipIf(process.platform === 'win32')('runners end to end', () => {
       .toBe('cancelled')
     await expect.poll(() => worker.jobs().length, { timeout: 15_000 }).toBe(0)
   }, 60_000)
+
+  it('lets the owner follow a running job from any computer, and stops every process it started', async () => {
+    const env = environment()
+    const h = await harness(Date.now, {
+      environments: true,
+      instanceCapabilities: ['runner-jobs'],
+      instanceRoutes: env.routes,
+      runnerRelay: true,
+    })
+    const { worker } = await runner(h)
+    const folder = tempDir('runner-e2e-folder-')
+    await writeFile(path.join(folder, 'in.txt'), 'input\n')
+    // A process in a session of its own, which killing the command's process group alone would leave running.
+    const detach =
+      "const c=require('child_process').spawn('sleep',['60'],{detached:true,stdio:'ignore'});c.unref();" +
+      "console.log('escaped '+c.pid)"
+    const spec = {
+      folder,
+      command: `"${process.execPath}" -e "${detach}"; echo started; sleep 60`,
+      outputs: ['out/**'],
+    }
+    const jobId = 'job_' + randomBytes(12).toString('base64url')
+    await env.records.create({
+      jobId,
+      conversationId: 'primary-conversation',
+      conversation: { kind: 'primary' },
+      folder,
+      spec,
+      createdAt: new Date().toISOString(),
+      job: null,
+      outputs: null,
+      continued: false,
+    })
+    await h.request('POST', '/internal/v1/runner-jobs', { jobId, spec }, true)
+
+    // The log, read through the gateway from the bot's environment as the runner sends it.
+    let escaped = 0
+    await expect
+      .poll(
+        async () => {
+          const page = await (await h.request('GET', `/v1/bots/${h.bot.id}/runner-jobs/${jobId}/log`)).json()
+          const match = /escaped (\d+)/.exec(page.text ?? '')
+          if (match && page.text.includes('started')) escaped = Number(match[1])
+          return escaped
+        },
+        { timeout: 20_000, interval: 200 }
+      )
+      .toBeGreaterThan(0)
+    expect(alive(escaped)).toBe(true)
+    // What it uses, as its runner samples it, on the owner's devices.
+    await expect
+      .poll(
+        async () => {
+          const { jobs } = await (await h.request('GET', `/v1/bots/${h.bot.id}/runner-jobs`)).json()
+          return jobs.find((job: { jobId: string }) => job.jobId === jobId)?.usage
+        },
+        { timeout: 20_000, interval: 200 }
+      )
+      .toMatchObject({ memoryBytes: expect.any(Number), processes: expect.any(Number) })
+    expect(worker.jobs()[0]?.usage?.memoryBytes).toBeGreaterThan(0)
+
+    // Any of the owner's computers cancels it.
+    expect((await h.request('POST', `/v1/bots/${h.bot.id}/runner-jobs/${jobId}/cancel`)).status).toBe(200)
+    await expect
+      .poll(() => env.continuations.find((item) => item.jobId === jobId)?.state, { timeout: 30_000, interval: 50 })
+      .toBe('cancelled')
+    await expect.poll(() => alive(escaped), { timeout: 15_000, interval: 100 }).toBe(false)
+    // The runner keeps the job and its log among its recent jobs.
+    await expect.poll(() => worker.history()[0]?.jobId, { timeout: 10_000 }).toBe(jobId)
+    expect(worker.history()[0]).toMatchObject({ outcome: 'cancelled' })
+    expect((await worker.log(SERVER, jobId, null))?.text).toContain('started')
+  }, 60_000)
 })
+
+/** Whether a process runs; one that ended and waits to be reaped, as orphans may in a container, does not. */
+function alive(pid: number): boolean {
+  if (process.platform === 'linux') {
+    try {
+      return !/^\d+ \(.*\) Z /.test(readFileSync(`/proc/${pid}/stat`, 'utf8'))
+    } catch {
+      return false
+    }
+  }
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
