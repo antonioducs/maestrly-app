@@ -7,7 +7,7 @@ import { APP_TOOL_GROUPS, appToolGroupOf, sanitizeAppToolGroupPatch } from '../.
 
 /** Tools that only exist in bot instances, where every app tool is always on. */
 const BOT_ONLY =
-  /^(computer_|bot_peers_|bot_routines_|bot_share_file$|owner_memory_|routine_report$|request_owner_help$|desktop_)/
+  /^(computer_|bot_peers_|bot_routines_|bot_share_file$|owner_memory_|routine_report$|request_owner_help$|desktop_|runner_)/
 /** Tools a setting of their own turns on and off: the interface preview follows Interactive answers. */
 const OWN_SETTING = new Set(['preview_interface'])
 
