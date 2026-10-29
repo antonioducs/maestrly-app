@@ -1226,9 +1226,7 @@ export class Store {
   }
   runnerLinksOfDevice(deviceId: string): StoredRunnerLink[] {
     return (
-      this.db
-        .prepare('SELECT * FROM runner_links WHERE device_id=? ORDER BY linked_at, rowid')
-        .all(deviceId) as Row[]
+      this.db.prepare('SELECT * FROM runner_links WHERE device_id=? ORDER BY linked_at, rowid').all(deviceId) as Row[]
     ).map((row) => this.runnerLink(row))
   }
   runnerLinkById(runnerId: string): StoredRunnerLink | null {
