@@ -2,6 +2,13 @@
   "schema": 1,
   "exceptions": [
     {
+      "package": "deepmerge",
+      "path": "node_modules/deepmerge",
+      "advisories": ["GHSA-gcqx-w48m-w2h4"],
+      "reason": "Build-time only: expo 58 -> @expo/config (58.0.9, the latest release, which still depends on deepmerge ^4.3.1) merges the mobile app's own config with the modifications of its config plugins (Config.js, getConfigFilePaths and plugin props), on the developer's machine, from files this repository owns. The prototype poisoning needs a malicious source object in mergeObject(); nothing here passes input from outside the repository to it, and nothing of it ships in the mobile app. deepmerge 4.3.1 is the latest release and the advisory lists no patched version.",
+      "expiresOn": "2026-11-11"
+    },
+    {
       "package": "node-forge",
       "path": "node_modules/node-forge",
       "advisories": ["GHSA-86w9-cpqp-85rv"],
