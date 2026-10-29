@@ -640,11 +640,10 @@ export class ContainerExecutor implements RunnerExecutor {
       const settle = (result: RunnerExecutorResult) => {
         if (settled) return
         settled = true
-        stopWatching()
         clearTimeout(timeout)
         clearTimeout(drainTimer)
         job.signal.removeEventListener('abort', onAbort)
-        resolve(result)
+        void stopWatching().then(() => resolve(result))
       }
       const stop = () => {
         if (stopFlow) return
@@ -698,20 +697,21 @@ export class ContainerExecutor implements RunnerExecutor {
   /**
    * Asks `docker stats` what the container uses every `statsIntervalMs` and passes it on, with the CPU time added up
    * from the percentages (an estimate). A question is asked only when the one before has been answered or has failed;
-   * a failure (the container is not up yet, or already gone) is skipped. Answers the function that stops it.
+   * a failure (the container is not up yet, or already gone) is skipped. Answers the function that stops it: it ends
+   * a question in flight and returns once that `docker` has exited, so nothing outlives the run.
    */
-  private watchUsage(job: RunnerExecutorJob, docker: string, name: string): () => void {
-    if (!job.onUsage) return () => undefined
+  private watchUsage(job: RunnerExecutorJob, docker: string, name: string): () => Promise<void> {
+    if (!job.onUsage) return async () => undefined
     const onUsage = job.onUsage.bind(job)
     let stopped = false
-    let asking = false
+    let asking: Promise<void> | null = null
+    const ending = new AbortController()
     let cpuSeconds = 0
     let counted = Date.now()
     const timer = setInterval(() => {
       if (asking || stopped) return
-      asking = true
-      void this.capture(docker, ['stats', '--no-stream', '--format', '{{json .}}', name], {
-        signal: AbortSignal.timeout(STATS_TIMEOUT_MS),
+      asking = this.capture(docker, ['stats', '--no-stream', '--format', '{{json .}}', name], {
+        signal: AbortSignal.any([ending.signal, AbortSignal.timeout(STATS_TIMEOUT_MS)]),
       })
         .then((answer) => {
           const usage = answer.code === 0 ? parseDockerStats(answer.stdout) : null
@@ -726,13 +726,15 @@ export class ContainerExecutor implements RunnerExecutor {
           }
         })
         .finally(() => {
-          asking = false
+          asking = null
         })
     }, this.statsIntervalMs)
     timer.unref?.()
-    return () => {
+    return async () => {
       stopped = true
       clearInterval(timer)
+      ending.abort()
+      await asking
     }
   }
 
