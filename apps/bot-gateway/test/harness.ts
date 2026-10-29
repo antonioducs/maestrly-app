@@ -75,6 +75,8 @@ async function fake(
   const edits: Array<{ inputId: string; body: import('@maestrly/bot-fleet-protocol').FleetEditMessageRequest }> = []
   const receipts = new Map<string, { inputId: string; itemId: string; queued: boolean }>()
   const conversationCalls: unknown[] = []
+  /** The states of runner jobs the gateway told the environment (`runner-jobs`), oldest first. */
+  const runnerJobStates: import('@maestrly/bot-fleet-protocol').FleetRunnerJob[] = []
   /**
    * What a workspaces host of the harness does with bots' calls: the calls it received and the bots whose links it was
    * told changed. `answer` is what it answers; `hold` keeps a call unanswered until released.
@@ -403,6 +405,11 @@ async function fake(
         if (res.destroyed) return
         return send(200, hostDesktop.answer(call))
       }
+      if (/^\/v1\/runner-jobs\/[^/?]+\/state$/.test(req.url ?? '') && req.method === 'POST') {
+        runnerJobStates.push(FLEET_INSTANCE_ROUTES.botRunnerJobState.body.parse(body).job)
+        res.writeHead(204)
+        return res.end()
+      }
       if (req.url === '/v1/host/desktop-links/changed' && req.method === 'POST') {
         hostDesktop.linksChanged.push(FLEET_INSTANCE_ROUTES.hostDesktopLinksChanged.body.parse(body).botId)
         res.writeHead(204)
@@ -466,6 +473,7 @@ async function fake(
     inputs,
     edits,
     conversationCalls,
+    runnerJobStates,
     hostDesktop,
     receipts,
     memories,

@@ -16,6 +16,7 @@ import {
   FLEET_DICTATION_BODY_MAX,
   parseFleetGatewayEditorPath,
   type FleetInternalDesktopCallRequest,
+  type FleetInternalRunnerJobRequest,
   type FleetDesktopLinkRequest,
   type FleetInternalOwnerMemorySaveRequest,
   type FleetRoutineRunReport,
@@ -38,6 +39,7 @@ import { disabledPushSender, ExpoPushSender, PushNotifier } from './push.js'
 import { DictationService } from './dictation.js'
 import { HostEditorProxy, lifecycleHostEditorDeps } from './host-editor.js'
 import { DesktopBridge, lifecycleDesktopHosts } from './desktop-bridge.js'
+import { Runners, lifecycleRunnerEnvironments } from './runners.js'
 
 type Match = { key: string; params: Record<string, string>; route: FleetRoute }
 function matchRoute(routes: Record<string, FleetRoute>, method: string, path: string): Match | null {
@@ -104,7 +106,12 @@ export function createGatewayServers(ctx: GatewayContext) {
   const desktops =
     ctx.desktops ?? new DesktopBridge(ctx.store, ctx.events, { hosts: lifecycleDesktopHosts(ctx.lifecycle) })
   ctx.events.onBridgeChange = (deviceId) => desktops.deviceChanged(deviceId)
-  ctx.lifecycle.onBotPurged = (id) => desktops.botPurged(id)
+  const runners = ctx.runners ?? new Runners(ctx.store, ctx.events, lifecycleRunnerEnvironments(ctx.lifecycle))
+  ctx.events.onRunnerChange = (deviceId) => runners.deviceChanged(deviceId)
+  ctx.lifecycle.onBotPurged = (id) => {
+    desktops.botPurged(id)
+    runners.botPurged(id)
+  }
   ctx.lifecycle.onEnvironmentChanged = (id, formerlyLinked) => desktops.environmentChanged(id, formerlyLinked)
   const bridge = ctx.bridge ?? new BridgeProxy(lifecycleBridgeDeps(ctx.lifecycle))
   const hostFiles = ctx.hostFiles ?? new HostFilesProxy(lifecycleHostFilesDeps(ctx.lifecycle))
@@ -147,6 +154,7 @@ export function createGatewayServers(ctx: GatewayContext) {
       hostEditor.closeDevice(deviceId)
       ctx.events.closeDevice(deviceId)
       desktops.revokeDevice(deviceId)
+      runners.revokeDevice(deviceId)
       await Promise.allSettled(
         [...ctx.lifecycle.takeovers]
           .filter(([, state]) => state.deviceId === deviceId && state.state === 'human')
@@ -174,6 +182,7 @@ export function createGatewayServers(ctx: GatewayContext) {
     routines,
     screen,
     desktops,
+    runners,
     bridge,
     hostFiles,
     hostEditor,
@@ -198,6 +207,7 @@ export function createGatewayServers(ctx: GatewayContext) {
   ctx.lifecycle.onTurnRunsChanged = (id, runIds) => peerThreads.turnsChanged(id, runIds)
   ctx.lifecycle.onReady = (id) => {
     void peers.retry(id)
+    void runners.retry(id)
   }
   const handler = (internal: boolean) => async (req: IncomingMessage, res: ServerResponse) => {
     try {
@@ -353,6 +363,21 @@ export function createGatewayServers(ctx: GatewayContext) {
           if (match.key === 'desktops') return send(res, 200, { desktops: desktops.links(caller!) })
           const result = await desktops.call(caller!, body as FleetInternalDesktopCallRequest)
           return send(res, 200, match.route.response!.parse(result))
+        } else if (match.key === 'runners' || match.key.startsWith('runnerJob')) {
+          // The calling bot is the one its token names; it reads and changes only its own jobs.
+          const bot = ctx.store.getBot(caller!)
+          if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
+          const result =
+            match.key === 'runners'
+              ? { runners: runners.links(caller!) }
+              : match.key === 'runnerJobCreate'
+                ? runners.submit(caller!, body as FleetInternalRunnerJobRequest)
+                : match.key === 'runnerJobsList'
+                  ? { jobs: runners.jobs(caller!) }
+                  : match.key === 'runnerJobGet'
+                    ? runners.job(caller!, match.params.jobId)
+                    : runners.cancel(caller!, match.params.jobId)
+          return send(res, 200, match.route.response!.parse(result))
         } else if (match.key === 'peerThreadReport') {
           // A bot reports from its own side of a thread, the one its token names.
           const { text } = body as { text: string }
@@ -430,6 +455,7 @@ export function createGatewayServers(ctx: GatewayContext) {
       }, 10000)
       refreshTimer.unref()
       revokeTimer.unref()
+      runners.start()
       await Promise.all([
         new Promise<void>((resolve, reject) =>
           publicServer.once('error', reject).listen(ctx.config.publicPort, ctx.config.publicHost, resolve)
@@ -443,6 +469,7 @@ export function createGatewayServers(ctx: GatewayContext) {
       if (refreshTimer) clearInterval(refreshTimer)
       if (revokeTimer) clearInterval(revokeTimer)
       desktops.close()
+      runners.close()
       await ctx.artifacts?.close()
       routines.stop()
       peerThreads.stop()

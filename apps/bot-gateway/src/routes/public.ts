@@ -12,8 +12,13 @@ import {
   FLEET_BOT_DELEGATION_FEATURE,
   FLEET_PEER_CONVERSATIONS_FEATURE,
   FLEET_OWNER_SEEN_FEATURE,
+  FLEET_RUNNERS_FEATURE,
   FLEET_CANCEL_CONVERSATION_QUERY,
   fleetReaderWantsPeerThreads,
+  fleetReaderWantsRunners,
+  type FleetRunnerJobFinishRequest,
+  type FleetRunnerLinkRequest,
+  type FleetRunnerStateRequest,
   type FleetPeerThreadPatchRequest,
   type FleetPeerThreadSettings,
   FLEET_DICTATION_FEATURE,
@@ -501,6 +506,7 @@ export async function publicRoute(
             FLEET_BOT_RESTART_FEATURE,
             FLEET_PHONE_SCREENS_FEATURE,
             FLEET_OWNER_SEEN_FEATURE,
+            FLEET_RUNNERS_FEATURE,
           ],
           botImage: ctx.config.botImage,
           botImageVersion: await ctx.host.botImageVersion(),
@@ -1036,6 +1042,47 @@ export async function publicRoute(
           lastSeq: ctx.store.lastActivitySeq(),
         },
       }
+    // A computer links only itself as a runner; it may list a bot's runners and jobs, remove another computer's link,
+    // or cancel a job. A runner reports and moves on only the jobs assigned to it: its own token names it.
+    case 'botRunnerLinkPut': {
+      requireBot(ctx, id)
+      const device = ctx.auth.device(res.req?.headers.authorization)
+      return { body: ctx.runners!.linkDevice(id, device, (body as FleetRunnerLinkRequest).name) }
+    }
+    case 'botRunnerLinkDelete':
+      requireBotRecord(ctx, id)
+      ctx.runners!.unlinkDevice(id, ctx.auth.device(res.req?.headers.authorization).id)
+      return { status: 204 }
+    case 'botRunnerLinks':
+      requireBotRecord(ctx, id)
+      return { body: { links: ctx.runners!.views(id, ctx.auth.device(res.req?.headers.authorization).id) } }
+    case 'botRunnerLinkRemove':
+      requireBotRecord(ctx, id)
+      ctx.runners!.remove(id, params.runnerId)
+      return { status: 204 }
+    case 'botRunnerJobs':
+      requireBotRecord(ctx, id)
+      return { body: { jobs: ctx.runners!.jobs(id) } }
+    case 'botRunnerJobCancel':
+      requireBotRecord(ctx, id)
+      return { body: ctx.runners!.cancel(id, params.jobId) }
+    case 'runnerState':
+      return {
+        body: ctx.runners!.report(ctx.auth.device(res.req?.headers.authorization).id, body as FleetRunnerStateRequest),
+      }
+    case 'runnerJobAccept':
+      ctx.runners!.accept(params.jobId, ctx.auth.device(res.req?.headers.authorization).id)
+      return { status: 204 }
+    case 'runnerJobProgress':
+      ctx.runners!.progress(params.jobId, ctx.auth.device(res.req?.headers.authorization).id)
+      return { status: 204 }
+    case 'runnerJobFinish':
+      ctx.runners!.finish(
+        params.jobId,
+        ctx.auth.device(res.req?.headers.authorization).id,
+        body as FleetRunnerJobFinishRequest
+      )
+      return { status: 204 }
     case 'events':
       ctx.events.add(res, ctx.store.lastActivitySeq(), ctx.auth.device(res.req?.headers.authorization).id, {
         reasoning: fleetReaderWantsReasoning(url.searchParams),
@@ -1043,6 +1090,7 @@ export async function publicRoute(
         desktopBridge: url.searchParams.get(FLEET_DESKTOP_BRIDGE_QUERY) === '1',
         routineRuns: fleetReaderWantsRoutineRuns(url.searchParams),
         peerThreads: fleetReaderWantsPeerThreads(url.searchParams),
+        runners: fleetReaderWantsRunners(url.searchParams),
       })
       return { stream: true }
     default:

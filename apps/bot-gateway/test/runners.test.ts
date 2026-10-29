@@ -1,15 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { ServerResponse } from 'node:http'
-import type {
-  FleetGatewayEvent,
-  FleetInternalRunnerJobRequest,
-  FleetRunnerCapabilities,
-  FleetRunnerJob,
-} from '@maestrly/bot-fleet-protocol'
+import type { FleetGatewayEvent, FleetInternalRunnerJobRequest, FleetRunnerJob } from '@maestrly/bot-fleet-protocol'
 import { Auth } from '../src/auth.js'
 import { EventHub } from '../src/events.js'
 import { Runners } from '../src/runners.js'
 import { harness } from './harness.js'
+import { studio } from './runner-fixtures.js'
 
 /** A device's stream as the hub writes to it: it keeps what it was sent and can be closed. */
 function stream() {
@@ -43,24 +39,6 @@ function stream() {
   }
 }
 
-export const studio: FleetRunnerCapabilities = {
-  protocol: 1,
-  os: 'macos',
-  arch: 'arm64',
-  cpus: 12,
-  memoryBytes: 36 * 1024 ** 3,
-  executor: 'native',
-  gpu: { vendor: 'apple', name: 'Apple M3 Pro', memoryBytes: null },
-  slots: 1,
-}
-export const gpuPc: FleetRunnerCapabilities = {
-  ...studio,
-  os: 'linux',
-  arch: 'x64',
-  executor: 'container',
-  gpu: { vendor: 'nvidia', name: 'RTX 4090', memoryBytes: 24 * 1024 ** 3 },
-  slots: 2,
-}
 let serial = 0
 const job = (overrides: Partial<FleetInternalRunnerJobRequest> = {}): FleetInternalRunnerJobRequest => ({
   jobId: 'job_' + String(++serial).padStart(16, '0'),
