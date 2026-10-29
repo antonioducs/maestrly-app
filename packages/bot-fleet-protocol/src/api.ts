@@ -120,6 +120,7 @@ import {
   fleetRunnerJobIdSchema,
   fleetRunnerJobSchema,
   fleetRunnerJobSpecSchema,
+  fleetRunnerJobUsageSchema,
   fleetRunnerLinkSchema,
   fleetRunnerLinkViewSchema,
   fleetRunnerNameSchema,
@@ -985,6 +986,23 @@ export const fleetRunnerJobFinishRequestSchema = z
   .object({ exitCode: z.number().int().nullable(), error: fleetRunnerErrorSchema.nullable() })
   .strict()
 export type FleetRunnerJobFinishRequest = z.infer<typeof fleetRunnerJobFinishRequestSchema>
+/** A runner tells what one of its running jobs uses now; the gateway stamps it and keeps the last one in memory. */
+export const fleetRunnerJobUsageRequestSchema = fleetRunnerJobUsageSchema.omit({ at: true }).strict()
+export type FleetRunnerJobUsageRequest = z.infer<typeof fleetRunnerJobUsageRequestSchema>
+/**
+ * A piece of a job's log as its bot's environment holds it: bytes `start` up to `next` of the `size` it has, as text.
+ * Asked with `?offset=<n>`, it starts there (the `next` of the piece before); without, it is the end of the log, from the
+ * start of a line. `next` never splits a character, so reading on from it loses nothing. `limit` bounds the bytes.
+ */
+export const fleetRunnerJobLogPageSchema = z
+  .object({
+    start: z.number().int().nonnegative(),
+    next: z.number().int().nonnegative(),
+    size: z.number().int().nonnegative(),
+    text: z.string(),
+  })
+  .strict()
+export type FleetRunnerJobLogPage = z.infer<typeof fleetRunnerJobLogPageSchema>
 /** A bot's job: the id its environment minted, what to run, what it needs, and the runner (any linked one if none). */
 export const fleetInternalRunnerJobRequestSchema = z
   .object({
@@ -2251,6 +2269,13 @@ export const FLEET_GATEWAY_ROUTES = {
     body: null,
     response: fleetRunnerJobSchema,
   },
+  // Read from the bot's environment as it is asked for; the gateway keeps none of it.
+  botRunnerJobLogRead: {
+    method: 'GET',
+    path: '/v1/bots/:id/runner-jobs/:jobId/log',
+    body: null,
+    response: fleetRunnerJobLogPageSchema,
+  },
   runnerState: {
     method: 'PUT',
     path: '/v1/runner/state',
@@ -2268,6 +2293,12 @@ export const FLEET_GATEWAY_ROUTES = {
     method: 'POST',
     path: '/v1/runner-jobs/:jobId/finish',
     body: fleetRunnerJobFinishRequestSchema,
+    response: null,
+  },
+  runnerJobUsage: {
+    method: 'POST',
+    path: '/v1/runner-jobs/:jobId/usage',
+    body: fleetRunnerJobUsageRequestSchema,
     response: null,
   },
   // Streamed through to the job's environment as they are: the gateway checks only who sends and how much.
@@ -3068,6 +3099,12 @@ export const FLEET_INSTANCE_ROUTES = {
     response: null,
   },
   botRunnerJobLog: { method: 'POST', path: '/v1/bots/:botId/runner-jobs/:jobId/log', body: null, response: null },
+  botRunnerJobLogRead: {
+    method: 'GET',
+    path: '/v1/bots/:botId/runner-jobs/:jobId/log',
+    body: null,
+    response: fleetRunnerJobLogPageSchema,
+  },
   botRunnerJobOutputs: {
     method: 'GET',
     path: '/v1/bots/:botId/runner-jobs/:jobId/outputs',

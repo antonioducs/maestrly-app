@@ -496,6 +496,11 @@ export const FLEET_RUNNER_LIMITS = {
   outputChunkBytes: 16 * 1024 * 1024,
   chunkBodySlackBytes: 1024 * 1024,
   jobsListMax: 50,
+  /** Bytes of a job's log one read returns unless it asks for fewer, and at most. */
+  logPageBytesDefault: 64 * 1024,
+  logPageBytesMax: 256 * 1024,
+  /** How often a runner tells the gateway what a running job uses, at most. */
+  usageIntervalMs: 10_000,
 } as const
 
 /**

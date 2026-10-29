@@ -16,7 +16,7 @@ import { RUNNER_SETTING_KEYS, type RunnerSettingsStore } from '../../src/main/fl
 import type { FleetRunnerPort } from '../../src/main/fleet/client/service'
 import type { RunnerExecutor, RunnerExecutorJob } from '../../src/main/runner/executor'
 import { RunnerStorage } from '../../src/main/runner/storage'
-import type { RunnerWorkerDeps } from '../../src/main/runner/worker'
+import type { RunnerJobUsage, RunnerWorkerDeps } from '../../src/main/runner/worker'
 import type { FleetServerId } from '../../src/shared/fleet-servers'
 import { GIB } from '../../src/shared/runner'
 import { cleanTempDirs, JOB_ID, tempDir } from '../helpers/runner-core'
@@ -139,6 +139,7 @@ function fakeWorker() {
         command: string
         state: 'preparing' | 'running' | 'uploading' | 'finishing'
         startedAt: number
+        usage: RunnerJobUsage | null
       }> => []
     ),
     cancel: vi.fn(),
@@ -456,6 +457,7 @@ describe('runner host: a bot whose link to this computer is gone', () => {
         command: 'make',
         state: 'running',
         startedAt: 1,
+        usage: null,
       },
     ])
     await port.unpaired()
@@ -473,6 +475,7 @@ describe('runner host: cancelling from the settings', () => {
     command: 'make',
     state: 'running' as const,
     startedAt: 1,
+    usage: null,
   })
 
   it('tells the server first, so that it records the cancel, then stops the job here', async () => {
@@ -706,6 +709,7 @@ describe('runner host: what the settings show', () => {
         command: 'ffmpeg -i in.mov',
         state: 'running',
         startedAt: 5,
+        usage: null,
       },
     ])
     await new RunnerStorage(created.roots[0]).remember(client.serverId, BOT)

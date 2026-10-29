@@ -5,6 +5,7 @@ import {
   type FleetRunnerCapabilities,
   type FleetRunnerError,
   type FleetRunnerJobEvent,
+  type FleetRunnerJobLogPage,
   type FleetRunnerManifest,
 } from '@maestrly/bot-fleet-protocol'
 import { mkdir } from 'node:fs/promises'
@@ -13,6 +14,7 @@ import { assembleJobFolder } from './assemble'
 import { BlobCache } from './blob-cache'
 import { isDiskFull, RunnerJobError } from './errors'
 import type { RunnerExecutor } from './executor'
+import { readLogPage } from './log-page'
 import { RunnerLogPump, type RunnerLogPumpOptions, redactEnvValues } from './log-pump'
 import { collectRunnerOutputs, packRunnerOutputs } from './outputs'
 import { abortableSleep } from './sleep'
@@ -21,6 +23,19 @@ import { type RunnerUploadOptions, uploadRunnerOutputs } from './upload'
 
 /** What a job is doing now, for the settings list: fetching its inputs, running, sending outputs, or ending. */
 export type RunnerJobPhase = 'preparing' | 'running' | 'uploading' | 'finishing'
+
+/**
+ * What a running job uses on this computer, as its executor last sampled it: CPU as a percentage of one logical CPU
+ * (400 is four of them), the memory its processes hold now and the most they held, and how many processes it has.
+ */
+export interface RunnerJobUsage {
+  cpuPercent: number
+  memoryBytes: number
+  peakMemoryBytes: number
+  processes: number
+  /** When it was sampled, in milliseconds since the epoch. */
+  at: number
+}
 
 export interface RunnerJobView {
   serverId: string
@@ -31,6 +46,29 @@ export interface RunnerJobView {
   state: RunnerJobPhase
   /** When this computer took the job, in milliseconds since the epoch. */
   startedAt: number
+  /** While its command runs, once sampled. */
+  usage: RunnerJobUsage | null
+}
+
+/** How a job that ran on this computer ended, as this computer saw it. */
+export type RunnerHistoryOutcome = 'succeeded' | 'failed' | 'cancelled'
+
+/** A job that ended on this computer, kept with the end of its log for the settings list. */
+export interface RunnerHistoryEntry {
+  serverId: string
+  botId: string
+  jobId: string
+  /** The first line of the command, with the job's variable values hidden. */
+  command: string
+  outcome: RunnerHistoryOutcome
+  exitCode: number | null
+  error: FleetRunnerError | null
+  /** In milliseconds since the epoch. */
+  startedAt: number
+  endedAt: number
+  /** The most memory its processes held, and the CPU time they used; null when never sampled. */
+  peakMemoryBytes: number | null
+  cpuSeconds: number | null
 }
 
 export interface RunnerSettings {
@@ -335,7 +373,27 @@ export class RunnerWorker {
       command: this.commandLine(job),
       state: job.phase,
       startedAt: job.startedAt,
+      usage: null,
     }))
+  }
+
+  /** The jobs that ended on this computer, newest first. */
+  history(): RunnerHistoryEntry[] {
+    return []
+  }
+
+  /**
+   * A piece of the log of a job this computer holds or ran lately (see `readLogPage`); null for a job it does not know.
+   */
+  async log(
+    serverId: string,
+    jobId: string,
+    offset: number | null,
+    limit?: number
+  ): Promise<FleetRunnerJobLogPage | null> {
+    const job = this.held.get(idOf(serverId, jobId))
+    if (!job) return null
+    return readLogPage(this.deps.storage.logFile(job.key), offset, limit)
   }
 
   private commandLine(job: HeldJob): string {

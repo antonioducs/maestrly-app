@@ -118,10 +118,12 @@ describe('runner contracts', () => {
         'botRunnerLinkRemove',
         'botRunnerJobs',
         'botRunnerJobCancel',
+        'botRunnerJobLogRead',
         'runnerState',
         'runnerJobAccept',
         'runnerJobProgress',
         'runnerJobFinish',
+        'runnerJobUsage',
         ...FLEET_RUNNER_TRANSFER_ROUTE_KEYS,
       ])
     ).toEqual({
@@ -131,10 +133,12 @@ describe('runner contracts', () => {
       botRunnerLinkRemove: 'DELETE /v1/bots/:id/runner-links/:runnerId',
       botRunnerJobs: 'GET /v1/bots/:id/runner-jobs',
       botRunnerJobCancel: 'POST /v1/bots/:id/runner-jobs/:jobId/cancel',
+      botRunnerJobLogRead: 'GET /v1/bots/:id/runner-jobs/:jobId/log',
       runnerState: 'PUT /v1/runner/state',
       runnerJobAccept: 'POST /v1/runner-jobs/:jobId/accept',
       runnerJobProgress: 'POST /v1/runner-jobs/:jobId/progress',
       runnerJobFinish: 'POST /v1/runner-jobs/:jobId/finish',
+      runnerJobUsage: 'POST /v1/runner-jobs/:jobId/usage',
       runnerJobManifest: 'GET /v1/runner-jobs/:jobId/manifest',
       runnerJobBlobs: 'POST /v1/runner-jobs/:jobId/blobs',
       runnerJobLog: 'POST /v1/runner-jobs/:jobId/log',
@@ -165,6 +169,7 @@ describe('runner contracts', () => {
         'botRunnerJobManifest',
         'botRunnerJobBlobs',
         'botRunnerJobLog',
+        'botRunnerJobLogRead',
         'botRunnerJobOutputs',
         'botRunnerJobOutputChunk',
         'botRunnerJobOutputCommit',
@@ -174,6 +179,7 @@ describe('runner contracts', () => {
       botRunnerJobManifest: 'GET /v1/bots/:botId/runner-jobs/:jobId/manifest',
       botRunnerJobBlobs: 'POST /v1/bots/:botId/runner-jobs/:jobId/blobs',
       botRunnerJobLog: 'POST /v1/bots/:botId/runner-jobs/:jobId/log',
+      botRunnerJobLogRead: 'GET /v1/bots/:botId/runner-jobs/:jobId/log',
       botRunnerJobOutputs: 'GET /v1/bots/:botId/runner-jobs/:jobId/outputs',
       botRunnerJobOutputChunk: 'PUT /v1/bots/:botId/runner-jobs/:jobId/outputs/:offset',
       botRunnerJobOutputCommit: 'POST /v1/bots/:botId/runner-jobs/:jobId/outputs/commit',
@@ -208,5 +214,39 @@ describe('runner transfers', () => {
       expect(manifest([{ ...file, path }]).success, path).toBe(false)
     expect(manifest([{ ...file, sha256: 'xyz' }]).success).toBe(false)
     expect(FLEET_RUNNER_DEFAULT_EXCLUDES).toEqual(['.git/', 'node_modules/', '.venv/', '__pycache__/'])
+  })
+})
+
+describe('runner job usage and logs', () => {
+  it('bounds what a job uses and what a log read answers', async () => {
+    const { fleetRunnerJobUsageRequestSchema, fleetRunnerJobLogPageSchema, fleetRunnerJobSchema } = await import(
+      '../src/index.js'
+    )
+    const usage = { cpuPercent: 350.5, memoryBytes: 2 * 1024 ** 3, peakMemoryBytes: 3 * 1024 ** 3, processes: 4 }
+    expect(fleetRunnerJobUsageRequestSchema.safeParse(usage).success).toBe(true)
+    // The gateway stamps a sample: the runner sends none of its own.
+    expect(fleetRunnerJobUsageRequestSchema.safeParse({ ...usage, at: '2026-10-29T10:00:00.000Z' }).success).toBe(false)
+    expect(fleetRunnerJobUsageRequestSchema.safeParse({ ...usage, cpuPercent: -1 }).success).toBe(false)
+    expect(fleetRunnerJobLogPageSchema.safeParse({ start: 0, next: 5, size: 5, text: 'hello' }).success).toBe(true)
+    const job = {
+      jobId: 'job_0123456789abcdef',
+      botId: 'scout',
+      runnerId: null,
+      runnerName: null,
+      state: 'queued',
+      requires: {},
+      cancelRequested: false,
+      createdAt: '2026-10-29T10:00:00.000Z',
+      queueDeadline: '2026-10-29T11:00:00.000Z',
+      assignedAt: null,
+      startedAt: null,
+      endedAt: null,
+      exitCode: null,
+      error: null,
+    }
+    expect(fleetRunnerJobSchema.safeParse(job).success).toBe(true)
+    expect(
+      fleetRunnerJobSchema.safeParse({ ...job, usage: { ...usage, at: '2026-10-29T10:00:00.000Z' } }).success
+    ).toBe(true)
   })
 })

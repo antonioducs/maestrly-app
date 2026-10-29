@@ -1435,6 +1435,20 @@ export const fleetRunnerErrorSchema = z
   .object({ code: fleetRunnerErrorCodeSchema, message: z.string().max(1_000) })
   .strict()
 export type FleetRunnerError = z.infer<typeof fleetRunnerErrorSchema>
+/**
+ * What a running job uses on its runner, as the runner last sampled it: CPU as a percentage of one logical CPU (400 is
+ * four of them), the memory its processes hold now and the most they held, and how many processes it has.
+ */
+export const fleetRunnerJobUsageSchema = z
+  .object({
+    cpuPercent: z.number().nonnegative().max(409_600),
+    memoryBytes: z.number().int().nonnegative(),
+    peakMemoryBytes: z.number().int().nonnegative(),
+    processes: z.number().int().nonnegative().max(1_000_000),
+    at: fleetTimestampSchema,
+  })
+  .strict()
+export type FleetRunnerJobUsage = z.infer<typeof fleetRunnerJobUsageSchema>
 /** A job as its bot and the owner's devices see it: never its command, environment variables or files. */
 export const fleetRunnerJobSchema = z
   .object({
@@ -1452,6 +1466,8 @@ export const fleetRunnerJobSchema = z
     endedAt: fleetTimestampSchema.nullable(),
     exitCode: z.number().int().nullable(),
     error: fleetRunnerErrorSchema.nullable(),
+    /** While it runs: what it uses, once its runner sampled it. The gateway keeps it in memory only. */
+    usage: fleetRunnerJobUsageSchema.optional(),
   })
   .strict()
 export type FleetRunnerJob = z.infer<typeof fleetRunnerJobSchema>
