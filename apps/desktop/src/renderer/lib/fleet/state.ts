@@ -449,6 +449,11 @@ export function fleetReducer(state: FleetState, action: FleetAction): FleetState
         // Desktop access is read by the bot settings that show it, on its own channel.
         case 'desktop.call':
         case 'desktop_link.updated':
+        // Runner events reach only streams that ask for them (`runners=1`), which this app does not open yet.
+        case 'runner.job':
+        case 'runner.cancel':
+        case 'runner_link.updated':
+        case 'runner_job.updated':
           return state
         case 'owner_memory.updated':
           return { ...state, ownerMemoryRevision: event.revision }
