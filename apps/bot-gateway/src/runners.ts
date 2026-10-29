@@ -3,16 +3,20 @@ import {
   FLEET_RUNNER_JOB_FINAL_STATES,
   FLEET_RUNNER_LIMITS,
   fleetRunnerMeets,
+  type FleetInternalRunnerJobRequest,
   type FleetRunnerAssignedSpec,
   type FleetRunnerCapabilities,
   type FleetRunnerError,
   type FleetRunnerJob,
+  type FleetRunnerJobFinishRequest,
   type FleetRunnerJobSpec,
   type FleetRunnerJobState,
   type FleetRunnerLink,
   type FleetRunnerLinkView,
   type FleetRunnerStateRequest,
   type FleetRunnerStateResponse,
+  type FleetRunnerSubmitResult,
+  type FleetRunnerTransferRouteKey,
 } from '@maestrly/bot-fleet-protocol'
 import { GatewayError } from './errors.js'
 import type { EventHub } from './events.js'
@@ -52,6 +56,22 @@ const assigned = ({
   queueTimeoutMinutes: _queue,
   ...spec
 }: FleetRunnerJobSpec): FleetRunnerAssignedSpec => spec
+const refused = (code: FleetRunnerError['code'], message: string): FleetRunnerSubmitResult => ({
+  ok: false,
+  error: { code, message },
+})
+const summary = (capabilities: FleetRunnerCapabilities) =>
+  `${capabilities.os} ${capabilities.arch}, ${capabilities.executor}, ` +
+  (capabilities.gpu ? capabilities.gpu.name : 'no GPU')
+/** The states in which a runner may move each kind of a job's files. */
+const TRANSFER_STATES: Record<FleetRunnerTransferRouteKey, readonly FleetRunnerJobState[]> = {
+  runnerJobManifest: ['running'],
+  runnerJobBlobs: ['running'],
+  runnerJobLog: ['running', 'finishing'],
+  runnerJobOutputs: ['running', 'finishing'],
+  runnerJobOutputChunk: ['running', 'finishing'],
+  runnerJobOutputCommit: ['running', 'finishing'],
+}
 
 /**
  * Sends bots' jobs to the computers that run jobs for them.
@@ -74,6 +94,7 @@ export class Runners {
   private readonly cancelBy = new Map<string, number>()
   /** The delivery of each job's state to its environment in progress, so a job has one at a time. */
   private readonly delivering = new Map<string, Promise<void>>()
+  private timer: NodeJS.Timeout | null = null
   constructor(
     readonly store: Store,
     readonly events: EventHub,
@@ -218,6 +239,148 @@ export class Runners {
       error: job.errorCode ? { code: job.errorCode, message: job.errorMessage ?? '' } : null,
     }
   }
+  private ahead(job: StoredRunnerJob): number {
+    if (job.state !== 'queued') return 0
+    return this.store
+      .runnerJobsIn(['queued'])
+      .filter((other) => other.createdAt < job.createdAt || (other.createdAt === job.createdAt && other.id < job.id))
+      .length
+  }
+  /** Queues a bot's job, or says at once why no runner can ever take it. A repeated id returns the same job. */
+  submit(botId: string, request: FleetInternalRunnerJobRequest): FleetRunnerSubmitResult {
+    const existing = this.store.runnerJob(request.jobId)
+    if (existing) {
+      if (existing.botId !== botId) throw new GatewayError('CONFLICT', 'This job id is taken')
+      return { ok: true, job: this.view(existing), queuedAhead: this.ahead(existing) }
+    }
+    const links = this.active(botId).filter((link) => !request.runnerId || link.runnerId === request.runnerId)
+    if (!links.length)
+      return refused(
+        'runner_not_linked',
+        request.runnerId
+          ? 'No runner with this runnerId runs jobs for you. Call runner_list for the ones that do.'
+          : 'No computer runs jobs for you yet. Tell your owner to turn on Run jobs for bots on a computer and give ' +
+              'you access there.'
+      )
+    const known = links.map((link) => ({ link, capabilities: this.store.runnerDevice(link.deviceId) }))
+    // A runner that never reported may meet the job: only runners that all reported can refuse it now.
+    if (
+      known.every((item) => item.capabilities !== null) &&
+      !known.some((item) => fleetRunnerMeets(item.capabilities!, request.requires, request.spec.image))
+    )
+      return refused(
+        'runner_unmatched',
+        'None of your runners can run this job: ' +
+          known.map((item) => `"${item.link.name}" is ${summary(item.capabilities!)}`).join('; ') +
+          '.'
+      )
+    if (
+      this.store.runnerJobsOfBot(botId).filter((job) => !isFinal(job.state)).length >=
+      FLEET_RUNNER_LIMITS.activeJobsPerBotMax
+    )
+      return refused(
+        'runner_busy',
+        `You already have ${FLEET_RUNNER_LIMITS.activeJobsPerBotMax} jobs queued or running. Wait for some to end.`
+      )
+    const now = this.now()
+    this.store.insertRunnerJob({
+      id: request.jobId,
+      botId,
+      requestedRunnerId: request.runnerId ?? null,
+      runnerId: null,
+      deviceId: null,
+      state: 'queued',
+      spec: request.spec,
+      requires: request.requires,
+      createdAt: iso(now),
+      queueDeadline: iso(now + request.spec.queueTimeoutMinutes * 60_000),
+      assignedAt: null,
+      startedAt: null,
+      endedAt: null,
+      exitCode: null,
+      errorCode: null,
+      errorMessage: null,
+      cancelRequested: false,
+    })
+    this.changed(request.jobId)
+    this.schedule()
+    const job = this.store.runnerJob(request.jobId)!
+    return { ok: true, job: this.view(job), queuedAhead: this.ahead(job) }
+  }
+  /** One of a bot's jobs; another bot's is not found. */
+  job(botId: string, jobId: string): FleetRunnerJob {
+    const job = this.store.runnerJob(jobId)
+    if (!job || job.botId !== botId) throw new GatewayError('NOT_FOUND', 'Runner job not found')
+    return this.view(job)
+  }
+  /** A bot's latest jobs, newest first. */
+  jobs(botId: string): FleetRunnerJob[] {
+    return this.store
+      .runnerJobsOfBot(botId)
+      .slice(0, FLEET_RUNNER_LIMITS.jobsListMax)
+      .map((job) => this.view(job))
+  }
+  /** The job a runner names, only if it was assigned to that runner. */
+  private owned(jobId: string, deviceId: string): StoredRunnerJob {
+    const job = this.store.runnerJob(jobId)
+    if (!job) throw new GatewayError('NOT_FOUND', 'Runner job not found')
+    if (job.deviceId !== deviceId) throw new GatewayError('FORBIDDEN', 'This job was assigned to another computer')
+    return job
+  }
+  /** The runner took the job: it is running, from its input transfer to its command's end. */
+  accept(jobId: string, deviceId: string) {
+    const job = this.owned(jobId, deviceId)
+    if (job.state !== 'assigned') throw new GatewayError('CONFLICT', 'This job is not waiting to be accepted')
+    this.acceptBy.delete(jobId)
+    this.store.updateRunnerJob(jobId, { state: 'running', startedAt: iso(this.now()) })
+    this.changed(jobId)
+  }
+  /** The job's command ended and its runner is sending its outputs. */
+  progress(jobId: string, deviceId: string) {
+    const job = this.owned(jobId, deviceId)
+    if (job.state !== 'running') throw new GatewayError('CONFLICT', 'This job is not running')
+    this.store.updateRunnerJob(jobId, { state: 'finishing' })
+    this.changed(jobId)
+  }
+  /** The job ended on its runner; one cancelled meanwhile is cancelled whatever its exit code. */
+  finish(jobId: string, deviceId: string, result: FleetRunnerJobFinishRequest) {
+    const job = this.owned(jobId, deviceId)
+    if (job.state !== 'running' && job.state !== 'finishing')
+      throw new GatewayError('CONFLICT', 'This job is not running')
+    const error =
+      result.error ??
+      (result.exitCode === 0
+        ? null
+        : { code: 'exit_code' as const, message: `The command exited with code ${result.exitCode ?? 'unknown'}.` })
+    if (job.cancelRequested) this.end(jobId, 'cancelled', null, result.exitCode)
+    else this.end(jobId, error ? 'failed' : 'succeeded', error, result.exitCode)
+    this.schedule()
+  }
+  /** The bot whose job a runner may move these files of now; the transfer relay asks before streaming. */
+  authorizeTransfer(jobId: string, deviceId: string, key: FleetRunnerTransferRouteKey): string {
+    const job = this.owned(jobId, deviceId)
+    if (!TRANSFER_STATES[key].includes(job.state))
+      throw new GatewayError('CONFLICT', `This job's files cannot move while it is ${job.state}`)
+    return job.botId
+  }
+  /** A queued or assigned job ends at once; a running one once its runner stops it, or after the grace period. */
+  cancel(botId: string, jobId: string): FleetRunnerJob {
+    const job = this.store.runnerJob(jobId)
+    if (!job || job.botId !== botId) throw new GatewayError('NOT_FOUND', 'Runner job not found')
+    if (isFinal(job.state)) return this.view(job)
+    if (job.state === 'queued') this.end(jobId, 'cancelled', null)
+    else if (job.state === 'assigned') {
+      this.events.sendToRunner(job.deviceId!, { type: 'runner.cancel', at: iso(this.now()), jobId })
+      this.end(jobId, 'cancelled', null)
+      this.schedule()
+    } else {
+      this.store.updateRunnerJob(jobId, { cancelRequested: true })
+      this.cancelBy.set(jobId, this.now() + FLEET_RUNNER_LIMITS.lostGraceMs)
+      this.events.sendToRunner(job.deviceId!, { type: 'runner.cancel', at: iso(this.now()), jobId })
+      this.changed(jobId)
+    }
+    return this.view(this.store.runnerJob(jobId)!)
+  }
   /** A link went away: the bot's jobs on that runner end, and those queued for that runner alone fail. */
   private dropLink(link: StoredRunnerLink) {
     for (const job of this.store.runnerJobsOfBot(link.botId)) {
@@ -296,6 +459,61 @@ export class Runners {
     this.store.updateRunnerJob(jobId, { state: 'queued', runnerId: null, deviceId: null, assignedAt: null })
     this.changed(jobId)
   }
+  /** Applies every deadline that passed, forgets old jobs, and serves the queue; runs on a timer and in tests. */
+  tick() {
+    const now = this.now()
+    for (const [jobId, at] of [...this.acceptBy]) {
+      if (at > now) continue
+      const job = this.store.runnerJob(jobId)
+      if (job?.state === 'assigned' && job.deviceId) this.requeue(jobId, job.deviceId)
+      else this.acceptBy.delete(jobId)
+    }
+    for (const [jobId, at] of [...this.cancelBy]) {
+      if (at > now) continue
+      this.cancelBy.delete(jobId)
+      const job = this.store.runnerJob(jobId)
+      if (job && !isFinal(job.state)) this.end(jobId, 'cancelled', null)
+    }
+    for (const [deviceId, at] of [...this.lostAt]) {
+      if (at > now) continue
+      this.lostAt.delete(deviceId)
+      if (this.presence.has(deviceId)) continue
+      for (const job of this.store.runnerJobsOfDevice(deviceId, ACTIVE))
+        if (job.cancelRequested) this.end(job.id, 'cancelled', null)
+        else
+          this.end(job.id, 'lost', {
+            code: 'runner_lost',
+            message: `"${this.runnerName(job)}" went offline and did not come back within ${FLEET_RUNNER_LIMITS.lostGraceMs / 60_000} minutes.`,
+          })
+    }
+    for (const job of this.store.runnerJobsIn(['queued']))
+      if (Date.parse(job.queueDeadline) <= now)
+        this.end(job.id, 'expired', {
+          code: 'queue_timeout',
+          message: 'No runner took this job before its queue timeout.',
+        })
+    this.store.deleteRunnerJobsEndedBefore(iso(now - FLEET_RUNNER_LIMITS.endedRetentionMs))
+    this.schedule()
+    void this.retry()
+  }
+  /**
+   * After a gateway restart no runner is connected yet: assigned jobs go back to the queue, and the jobs runners had
+   * count as lost unless their runner returns in time.
+   */
+  start() {
+    for (const job of this.store.runnerJobsIn(['assigned']))
+      this.store.updateRunnerJob(job.id, { state: 'queued', runnerId: null, deviceId: null, assignedAt: null })
+    for (const job of this.store.runnerJobsIn(['running', 'finishing']))
+      if (job.deviceId && !this.lostAt.has(job.deviceId))
+        this.lostAt.set(job.deviceId, this.now() + FLEET_RUNNER_LIMITS.lostGraceMs)
+    this.timer ??= setInterval(() => this.tick(), this.options.tickMs ?? 5_000)
+    this.timer.unref?.()
+    void this.retry()
+  }
+  close() {
+    if (this.timer) clearInterval(this.timer)
+    this.timer = null
+  }
   /** Every computer that reads runner events sees the job; its bot's environment is told. */
   private changed(jobId: string) {
     const job = this.store.runnerJob(jobId)
@@ -325,6 +543,14 @@ export class Runners {
       if (!job || job.notifiedSeq >= job.seq) return
       if (!(await this.environments.notify(this.view(job)))) return
       this.store.markRunnerJobNotified(jobId, job.seq)
+    }
+  }
+  /** Sends every state a bot's environment missed: when the bot is ready again, and on each tick. */
+  async retry(botId?: string) {
+    for (const job of this.store.unnotifiedRunnerJobs(botId)) {
+      // A delivery in progress may have found the environment unreachable: this one tries again after it.
+      await this.delivering.get(job.id)
+      await this.deliver(job.id)
     }
   }
 }
