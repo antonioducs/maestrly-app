@@ -37,6 +37,7 @@ import {
   type InstanceEnvironment,
   type InstanceScreenSurface,
 } from '../../src/main/fleet/instance/server'
+import type { RunnerJobFiles } from '../../src/main/fleet/instance/runner-jobs/files'
 import type { ScreenPeer, ScreenSession } from '../../src/main/fleet/instance/screen-session'
 import { parseBotInstanceConfig } from '../../src/main/fleet/instance/config'
 
@@ -109,6 +110,8 @@ const profileOf = (botId: string) => ({
 
 function fakeBot(botId: string, slot: number) {
   const state = { hold: NO_HOLD }
+  // Its routes are covered by fleet-instance-runner-jobs-http.test.ts.
+  const runnerJobs = {} as RunnerJobFiles
   const statusOf = (): FleetInstanceStatus => ({
     ...baseStatus,
     profile: { botId, name: `Bot ${botId}` },
@@ -203,6 +206,7 @@ function fakeBot(botId: string, slot: number) {
       return state.hold
     }),
     conversationCall: vi.fn(async (_value: FleetConversationCallRequest) => ({ result: { bot: botId } })),
+    runnerJobs: vi.fn(() => runnerJobs),
   }
 }
 type FakeBot = ReturnType<typeof fakeBot>
@@ -502,6 +506,7 @@ describe('instance control HTTP', () => {
       'peer-conversations',
       'bot-delegation',
       'files-manage',
+      'runner-jobs',
     ])
     const { base, environment } = await setup()
     const response = await send(base, 'GET', '/v1/environment/selections')

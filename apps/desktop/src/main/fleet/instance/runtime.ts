@@ -136,6 +136,8 @@ import { InstanceTranscriptExtras, fleetQuestions, toolTarget, permissionTool } 
 import { LiveTranscript } from './live-transcript'
 import { InstanceHelpStore } from './help'
 import { BotRunConversations, isRunId, type RunLane, type ThreadRecord } from './routine-runs'
+import { RunnerJobFiles } from './runner-jobs/files'
+import { RunnerJobRecords } from './runner-jobs/records'
 import { ThreadReports } from './thread-reports'
 import { ThreadWaits, type ThreadWaitResult } from './thread-waits'
 import type { MemoryCoreExtraSection } from '../../memory/core'
@@ -413,6 +415,8 @@ export class BotRuntime {
   readonly threadReports: ThreadReports
   /** Its conversations waiting, within their turn, for a thread's answer (`bot_peers_wait`). */
   readonly threadWaits = new ThreadWaits()
+  /** The files of the jobs this bot sent to runners; the conversation side attaches through `setOnState`. */
+  private readonly jobFiles: RunnerJobFiles
   /** Names of the peers this bot listed, for the replies of its peer tools. */
   readonly peerNames = new Map<string, string>()
   private stored: StoredProfile | null
@@ -507,6 +511,10 @@ export class BotRuntime {
       changed: () => this.changed(),
     })
     this.threadReports = new ThreadReports(paths.threadReports)
+    this.jobFiles = new RunnerJobFiles({
+      records: new RunnerJobRecords(path.join(paths.folder, 'runner-jobs')),
+      botFolder: paths.folder,
+    })
     this.holdManager = new InstanceHoldManager(
       () => {
         if (this.disposed) return
@@ -528,6 +536,10 @@ export class BotRuntime {
       if (id) ids.add(id)
     }
     return [...ids]
+  }
+  /** The files of the jobs this bot sent to runners (`runner-jobs`). */
+  runnerJobs(): RunnerJobFiles {
+    return this.jobFiles
   }
   get primaryConversationId(): string | null {
     return this.stored?.primaryConversationId ?? null
@@ -695,6 +707,7 @@ export class BotRuntime {
     this.live.anchor()
     if (this.primaryConversationId) await this.reconcileQueue()
     await this.queue.sweepAttachments()
+    this.jobFiles.sweep().catch((error) => console.warn('[fleet] could not clear old runner jobs', error))
     if (hadConversation) await this.system('restarted', null, null)
     // Persisted membership may be stale: the gateway can archive or pause this bot while the environment is stopped.
     // Loading its data does not authorize queued work; a fresh profile installation below does.
