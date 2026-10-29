@@ -40,6 +40,7 @@ import { DictationService } from './dictation.js'
 import { HostEditorProxy, lifecycleHostEditorDeps } from './host-editor.js'
 import { DesktopBridge, lifecycleDesktopHosts } from './desktop-bridge.js'
 import { Runners, lifecycleRunnerEnvironments } from './runners.js'
+import { RunnerTransfers, isRunnerTransferRoute, lifecycleRunnerTargets } from './runner-transfers.js'
 
 type Match = { key: string; params: Record<string, string>; route: FleetRoute }
 function matchRoute(routes: Record<string, FleetRoute>, method: string, path: string): Match | null {
@@ -108,6 +109,12 @@ export function createGatewayServers(ctx: GatewayContext) {
   ctx.events.onBridgeChange = (deviceId) => desktops.deviceChanged(deviceId)
   const runners = ctx.runners ?? new Runners(ctx.store, ctx.events, lifecycleRunnerEnvironments(ctx.lifecycle))
   ctx.events.onRunnerChange = (deviceId) => runners.deviceChanged(deviceId)
+  const runnerTransfers =
+    ctx.runnerTransfers ??
+    new RunnerTransfers({
+      ...lifecycleRunnerTargets(ctx.lifecycle),
+      authorize: (jobId, deviceId, key) => runners.authorizeTransfer(jobId, deviceId, key),
+    })
   ctx.lifecycle.onBotPurged = (id) => {
     desktops.botPurged(id)
     runners.botPurged(id)
@@ -151,6 +158,7 @@ export function createGatewayServers(ctx: GatewayContext) {
       screen.closeDevice(deviceId)
       bridge.closeDevice(deviceId)
       hostFiles.closeDevice(deviceId)
+      runnerTransfers.closeDevice(deviceId)
       hostEditor.closeDevice(deviceId)
       ctx.events.closeDevice(deviceId)
       desktops.revokeDevice(deviceId)
@@ -183,6 +191,7 @@ export function createGatewayServers(ctx: GatewayContext) {
     screen,
     desktops,
     runners,
+    runnerTransfers,
     bridge,
     hostFiles,
     hostEditor,
@@ -254,6 +263,16 @@ export function createGatewayServers(ctx: GatewayContext) {
       // Host-file bodies are streamed to the workspaces host as they arrive; the gateway never buffers or parses them.
       if (!internal && isHostFileRoute(match.key))
         return await hostFiles.forward(
+          match.key,
+          match.params,
+          url,
+          req,
+          res,
+          ctx.auth.device(req.headers.authorization).id
+        )
+      // A job's files stream between its runner and its bot's environment as they arrive; the gateway never keeps them.
+      if (!internal && isRunnerTransferRoute(match.key))
+        return await runnerTransfers.forward(
           match.key,
           match.params,
           url,
@@ -476,6 +495,7 @@ export function createGatewayServers(ctx: GatewayContext) {
       screen.close()
       bridge.close()
       hostFiles.close()
+      runnerTransfers.close()
       hostEditor.close()
       ctx.events.observers.delete(observePush)
       ctx.lifecycle.close()
