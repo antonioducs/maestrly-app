@@ -214,6 +214,8 @@ export class RunnerLogPump {
   /** The last `lines` lines of the log, within its last `bytes` bytes. */
   async tail(lines: number, bytes: number): Promise<string> {
     await this.chain
+    // The file is there once it is open: a log that was never written to is not open yet when nothing waits for it.
+    await this.handle.catch(() => undefined)
     const handle = await open(this.file, 'r')
     try {
       const { size } = await handle.stat()

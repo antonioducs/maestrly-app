@@ -6,6 +6,7 @@ import {
   FLEET_RUNNER_HEADERS,
   FLEET_RUNNER_LOG_OFFSET_QUERY,
   type FleetRunnerJobFinishRequest,
+  type FleetRunnerJobUsageRequest,
   type FleetRunnerManifest,
   type FleetRunnerOutputCommit,
   type FleetRunnerStateRequest,
@@ -45,6 +46,8 @@ export interface RunnerJobApi {
   /** The command ended and the outputs are being sent. */
   progress(jobId: string): Promise<void>
   finish(jobId: string, result: FleetRunnerJobFinishRequest): Promise<void>
+  /** What the running job uses now. The gateway keeps the last sample; a caller sends one now and then and does not retry. */
+  usage(jobId: string, sample: FleetRunnerJobUsageRequest, signal?: AbortSignal): Promise<void>
   manifest(jobId: string, signal?: AbortSignal): Promise<FleetRunnerManifest>
   /** The raw answer: a zstd tar of the blobs asked for, in the order asked. The caller reads it to its end. */
   blobs(jobId: string, digests: readonly string[], signal?: AbortSignal): Promise<Readable>
@@ -154,6 +157,13 @@ export function httpRunnerJobApi(options: {
       const body = FLEET_GATEWAY_ROUTES.runnerJobFinish.body.parse(result)
       return call(
         { key: 'runnerJobFinish', params: { jobId }, ...jsonBody(body), timeoutMs: CALL_TIMEOUT_MS },
+        ignoreBody
+      )
+    },
+    async usage(jobId, sample, signal) {
+      const body = FLEET_GATEWAY_ROUTES.runnerJobUsage.body.parse(sample)
+      return call(
+        { key: 'runnerJobUsage', params: { jobId }, ...jsonBody(body), signal, timeoutMs: CALL_TIMEOUT_MS },
         ignoreBody
       )
     },

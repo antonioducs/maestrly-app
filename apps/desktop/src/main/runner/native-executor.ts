@@ -6,18 +6,24 @@ import { realFs } from '../real-fs'
 import { errnoOf, isDiskFull } from './errors'
 import { RUNNER_SCRATCH_DIR, type RunnerExecutor, type RunnerExecutorJob, type RunnerExecutorResult } from './executor'
 import { loginShellPath } from './login-path'
+import { JobProcesses } from './process-tree'
 
 const NICENESS = 10
 const NICE = '/usr/bin/nice'
 const KILL_GRACE_MS = 10_000
 /** After the shell ends, how long its output may still take to arrive before the run is declared over. */
 const DRAIN_MS = 5_000
+/** How long the run waits, once everything was killed, for the last process of the job to be gone. */
+const GONE_WAIT_MS = 5_000
+/** How often the job's processes are sampled, and how often what they use is reported, at most. */
+const SAMPLE_MS = 1_000
+const REPORT_MS = 1_500
 const MAX_TIMER_MS = 2 ** 31 - 1
 
 export interface NativeExecutorOptions {
   /** The PATH jobs get: the user's login shell's, by default. */
   loginPath?: () => Promise<string>
-  /** How long a stopped command has to end after SIGTERM before its group gets SIGKILL. */
+  /** How long a stopped command has to end after SIGTERM before its processes get SIGKILL. */
   killGraceMs?: number
   platform?: NodeJS.Platform
 }
@@ -56,8 +62,10 @@ const failure = (code: 'executor_unavailable' | 'runner_disk_full', message: str
  * Runs a job's command with `/bin/sh -c` in its folder, as the signed-in user, in its own process group at niceness 10.
  * The command's environment is built here and holds only `PATH` (the login shell's), `HOME`, `LANG`, `TMPDIR` inside the
  * folder, `MAESTRLY_JOB_ID`, `MAESTRLY_JOB_DIR` and the job's own variables: nothing of the app's reaches it. Named
- * caches are links in the folder to the runner's cache folders. A stop (timeout or cancel) sends SIGTERM to the group
- * and SIGKILL after a grace; whatever the command left running is killed when it ends. macOS and Linux only.
+ * caches are links in the folder to the runner's cache folders. A stop (timeout or cancel) sends SIGTERM to every
+ * process of the job, those that started a group or session of their own included (see `JobProcesses`), and SIGKILL
+ * after a grace; whatever the command left running is killed when it ends, and the run ends only once none is alive.
+ * While it runs, what its processes use is sampled every second and reported. macOS and Linux only.
  */
 export class NativeExecutor implements RunnerExecutor {
   readonly kind = 'native' as const
@@ -142,26 +150,55 @@ export class NativeExecutor implements RunnerExecutor {
       } catch (error) {
         return resolve(failure('executor_unavailable', `The command could not start: ${(error as Error).message}`))
       }
+      const tree =
+        child.pid === undefined
+          ? null
+          : new JobProcesses({
+              rootPid: child.pid,
+              jobId: job.jobId,
+              parentPid: process.pid,
+              platform: this.platform,
+            })
       let timedOut = false
       let cancelled = false
       let stopping = false
       let exitCode: number | null = null
+      let ending = false
       let settled = false
+      let samples = 0
+      let reportedAt = 0
+      let sampling = false
       let killTimer: NodeJS.Timeout | undefined
       let drainTimer: NodeJS.Timeout | undefined
-      const group = (signal: NodeJS.Signals) => {
-        if (child.pid === undefined) return
+      let sampler: NodeJS.Timeout | undefined
+      const sample = async (final = false) => {
+        if (!tree || (sampling && !final)) return
+        sampling = true
         try {
-          process.kill(-child.pid, signal)
+          const usage = await tree.sample()
+          samples++
+          const at = Date.now()
+          // The first sample has no CPU interval behind it.
+          if (job.onUsage && !settled && samples > 1 && (final || at - reportedAt >= REPORT_MS)) {
+            reportedAt = at
+            try {
+              job.onUsage(usage)
+            } catch {
+              // A consumer's failure does not stop the command.
+            }
+          }
         } catch {
-          // The group is gone already.
+          // The process table could not be read this time.
+        } finally {
+          sampling = false
         }
       }
       const stop = () => {
         if (stopping) return
         stopping = true
-        group('SIGTERM')
-        killTimer = setTimeout(() => group('SIGKILL'), this.killGraceMs)
+        // One last look before the processes go.
+        void sample(true).then(() => tree?.signal('SIGTERM'))
+        killTimer = setTimeout(() => void tree?.signal('SIGKILL'), this.killGraceMs)
       }
       const timeout = setTimeout(
         () => {
@@ -181,8 +218,20 @@ export class NativeExecutor implements RunnerExecutor {
         clearTimeout(timeout)
         clearTimeout(killTimer)
         clearTimeout(drainTimer)
+        clearInterval(sampler)
         job.signal.removeEventListener('abort', onAbort)
         resolve(result)
+      }
+      /** The run is over once nothing of the job is alive: the job's folder is deleted next. */
+      const end = async (result: RunnerExecutorResult) => {
+        if (ending) return
+        ending = true
+        clearTimeout(timeout)
+        clearTimeout(killTimer)
+        clearTimeout(drainTimer)
+        clearInterval(sampler)
+        if (tree) await tree.killUntilGone(GONE_WAIT_MS)
+        settle(result)
       }
       const forward = (chunk: Buffer) => {
         try {
@@ -193,16 +242,22 @@ export class NativeExecutor implements RunnerExecutor {
       }
       child.stdout?.on('data', forward)
       child.stderr?.on('data', forward)
-      child.once('error', (error) =>
-        settle(failure('executor_unavailable', `The command could not start: ${error.message}`))
+      child.once(
+        'error',
+        (error) => void end(failure('executor_unavailable', `The command could not start: ${error.message}`))
       )
       child.once('exit', (code) => {
         exitCode = code
         // A job ends with its command: what it left running goes too, which also closes the pipes it held open.
-        group('SIGKILL')
-        drainTimer = setTimeout(() => settle({ exitCode, timedOut, cancelled }), DRAIN_MS)
+        void tree?.signal('SIGKILL')
+        drainTimer = setTimeout(() => void end({ exitCode, timedOut, cancelled }), DRAIN_MS)
       })
-      child.once('close', (code) => settle({ exitCode: code ?? exitCode, timedOut, cancelled }))
+      child.once('close', (code) => void end({ exitCode: code ?? exitCode, timedOut, cancelled }))
+      if (tree) {
+        void sample()
+        sampler = setInterval(() => void sample(), SAMPLE_MS)
+        sampler.unref?.()
+      }
       if (child.pid !== undefined && niceIncrement() > 0 && !existsSync(NICE)) {
         // Without nice(1) the shell is slowed down after it started: a command that forks at once escapes it.
         try {

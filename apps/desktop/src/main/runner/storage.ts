@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { chmod, lstat, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdir, open, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { realFs } from '../real-fs'
 import { errnoOf } from './errors'
@@ -13,6 +13,8 @@ import { errnoOf } from './errors'
  *   jobs/<key>/work/                   a job's assembled folder (job.log and outputs.tar.zst sit beside it)
  *   scopes/<scope>.json                which server and bot a scope is, for listing
  *   state.json                         the jobs the worker holds
+ *   history.json                       the jobs that ended here lately
+ *   history/<jobKey>.log               the end of the log of each of them
  */
 
 const CACHE_NAME = /^[a-z0-9][a-z0-9._-]{0,62}$/
@@ -96,6 +98,16 @@ export class RunnerStorage {
   }
   stateFile(): string {
     return path.join(this.root, 'state.json')
+  }
+  historyFile(): string {
+    return path.join(this.root, 'history.json')
+  }
+  historyDir(): string {
+    return path.join(this.root, 'history')
+  }
+  /** Where the end of an ended job's log is kept. */
+  historyLog(key: string): string {
+    return path.join(this.historyDir(), `${this.safe(key)}.log`)
   }
 
   private safe(name: string): string {
@@ -199,16 +211,79 @@ export class RunnerStorage {
       await removeTree(path.join(this.jobsRoot(), name))
   }
 
-  /** Writes `state.json` whole, so a crash leaves the old or the new one. */
-  async writeState(value: unknown): Promise<void> {
-    const file = this.stateFile()
+  /** Writes a file whole, so a crash leaves the old or the new one. Calls for one file must not overlap. */
+  private async writeJson(file: string, value: unknown): Promise<void> {
     await mkdir(path.dirname(file), { recursive: true })
     const partial = `${file}.${process.pid}.tmp`
     await writeFile(partial, JSON.stringify(value), { mode: 0o600 })
     await rename(partial, file)
   }
+  /** Writes `state.json` whole. */
+  async writeState(value: unknown): Promise<void> {
+    await this.writeJson(this.stateFile(), value)
+  }
   async readState(): Promise<unknown> {
     return JSON.parse(await readFile(this.stateFile(), 'utf8').catch(() => 'null'))
+  }
+  /** Writes `history.json` whole. */
+  async writeHistory(value: unknown): Promise<void> {
+    await this.writeJson(this.historyFile(), value)
+  }
+  async readHistory(): Promise<unknown> {
+    return JSON.parse(await readFile(this.historyFile(), 'utf8').catch(() => 'null'))
+  }
+
+  /**
+   * Keeps the last `maxBytes` of a job's log under its key, starting at the start of a line when the log is cut.
+   * Answers false when the job has no log to keep.
+   */
+  async keepLog(source: string, key: string, maxBytes: number): Promise<boolean> {
+    let handle: Awaited<ReturnType<typeof open>>
+    try {
+      handle = await open(source, 'r')
+    } catch (error) {
+      if (errnoOf(error) === 'ENOENT') return false
+      throw error
+    }
+    let bytes: Buffer
+    try {
+      const { size } = await handle.stat()
+      const start = Math.max(0, size - maxBytes)
+      bytes = Buffer.alloc(size - start)
+      let read = 0
+      while (read < bytes.length) {
+        const { bytesRead } = await handle.read(bytes, read, bytes.length - read, start + read)
+        if (!bytesRead) break
+        read += bytesRead
+      }
+      bytes = bytes.subarray(0, read)
+      if (start > 0) {
+        // The cut falls inside a line: the kept log starts at the next one, or at a whole character when there is none.
+        const newline = bytes.indexOf(0x0a)
+        let from = newline >= 0 && newline < bytes.length - 1 ? newline + 1 : 0
+        while (from < bytes.length && (bytes[from] & 0xc0) === 0x80) from++
+        bytes = bytes.subarray(from)
+      }
+    } finally {
+      await handle.close()
+    }
+    const file = this.historyLog(key)
+    await mkdir(path.dirname(file), { recursive: true })
+    const partial = `${file}.${process.pid}.tmp`
+    await writeFile(partial, bytes, { mode: 0o600 })
+    await rename(partial, file)
+    return true
+  }
+
+  async removeHistoryLog(key: string): Promise<void> {
+    await rm(this.historyLog(key), { force: true })
+  }
+
+  /** Deletes what the history folder holds besides the logs of `keep`: logs of entries that were dropped, and leftovers. */
+  async pruneHistoryLogs(keep: ReadonlySet<string>): Promise<void> {
+    const wanted = new Set([...keep].map((key) => `${this.safe(key)}.log`))
+    for (const name of await readdir(this.historyDir()).catch(() => [] as string[]))
+      if (!wanted.has(name)) await rm(path.join(this.historyDir(), name), { recursive: true, force: true })
   }
 }
 

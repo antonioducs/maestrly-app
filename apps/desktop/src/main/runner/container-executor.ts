@@ -4,7 +4,7 @@ import path from 'node:path'
 import { botServerImages } from '../fleet/installer/images'
 import { realFs } from '../real-fs'
 import { isDiskFull } from './errors'
-import type { RunnerExecutor, RunnerExecutorJob, RunnerExecutorResult } from './executor'
+import type { RunnerExecutor, RunnerExecutorJob, RunnerExecutorResult, RunnerExecutorUsage } from './executor'
 
 const STOP_GRACE_SECONDS = 10
 /** How long the run's own output is kept to tell a Docker error from the command's. */
@@ -16,6 +16,9 @@ const STOP_ATTEMPTS = 20
 const STOP_RETRY_MS = 250
 const MAX_TIMER_MS = 2 ** 31 - 1
 const PROBE_TIMEOUT_MS = 10_000
+/** How often the running container is asked what it uses, and how long one answer may take. */
+const STATS_INTERVAL_MS = 5_000
+const STATS_TIMEOUT_MS = 10_000
 
 const HOME_MOUNT = '/maestrly-home'
 const CACHES_MOUNT = '/maestrly-caches'
@@ -43,6 +46,8 @@ export type ContainerExecutorOptions = {
   spawn?: Spawn
   /** How long `docker stop` waits for the command to end before Docker kills it. */
   stopGraceSeconds?: number
+  /** How often `docker stats` asks what the running container uses. */
+  statsIntervalMs?: number
   /**
    * A key of this app's runner, put on its containers: two Maestrly apps of one computer share its Docker, and a
    * restart of one removes only the containers it started.
@@ -290,6 +295,50 @@ function lineSplitter(onLine: (line: string) => void) {
   }
 }
 
+const BYTE_UNITS: Record<string, number> = {
+  b: 1,
+  kb: 1000,
+  kib: 1024,
+  mb: 1000 ** 2,
+  mib: 1024 ** 2,
+  gb: 1000 ** 3,
+  gib: 1024 ** 3,
+  tb: 1000 ** 4,
+  tib: 1024 ** 4,
+}
+
+/** Bytes of a size as Docker prints it ("1.5GiB", "12kB", "0B"); null for anything else. */
+function parseDockerBytes(text: string): number | null {
+  const match = /^\s*(\d+(?:\.\d+)?)\s*([A-Za-z]+)\s*$/.exec(text)
+  const unit = match ? BYTE_UNITS[match[2].toLowerCase()] : undefined
+  return match && unit !== undefined ? Math.round(Number(match[1]) * unit) : null
+}
+
+/**
+ * What `docker stats --no-stream --format '{{json .}}'` says of a container: `CPUPerc` ("123.45%", of one CPU),
+ * `MemUsage` ("1.5GiB / 7.7GiB": the first number is what the container holds) and `PIDs`. Null when the line is not
+ * that or CPU or memory is not a number, as for a container that is not running.
+ */
+export function parseDockerStats(output: string): Omit<RunnerExecutorUsage, 'cpuSeconds'> | null {
+  const line = output
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .at(-1)
+  let stats: Record<string, unknown>
+  try {
+    stats = JSON.parse(line ?? '') as Record<string, unknown>
+  } catch {
+    return null
+  }
+  if (typeof stats !== 'object' || stats === null) return null
+  const cpu = /^\s*(\d+(?:\.\d+)?)\s*%\s*$/.exec(String(stats.CPUPerc ?? ''))
+  const memoryBytes = parseDockerBytes(String(stats.MemUsage ?? '').split('/')[0])
+  if (!cpu || memoryBytes === null) return null
+  const processes = Number.parseInt(String(stats.PIDs ?? ''), 10)
+  return { cpuPercent: Number(cpu[1]), memoryBytes, processes: Number.isFinite(processes) ? processes : 0 }
+}
+
 /**
  * Runs a job's command in a Docker container on this computer: `docker run --rm --init` with `/bin/sh -c <command>` as
  * the entrypoint, from the job's image or else the bot environment image of the app's version, pulled on first use.
@@ -297,18 +346,21 @@ function lineSplitter(onLine: (line: string) => void) {
  * environment travels in a private file, not in arguments. CPU and memory limits and the GPU come from the runner's
  * settings; the container has no privileges, no Docker socket and the default bridge network. On Linux it runs as the
  * runner user. A stop (timeout or cancel) runs `docker stop` and then `docker rm -f`. The containers carry the job id
- * as a label so a restart can remove those of jobs the runner no longer holds.
+ * as a label so a restart can remove those of jobs the runner no longer holds. While the container runs, `docker stats`
+ * is asked every five seconds what it uses, one question at a time; an answer that does not come is skipped.
  */
 export class ContainerExecutor implements RunnerExecutor {
   readonly kind = 'container' as const
   private readonly platform: NodeJS.Platform
   private readonly spawn: Spawn
   private readonly stopGraceSeconds: number
+  private readonly statsIntervalMs: number
 
   constructor(private readonly options: ContainerExecutorOptions) {
     this.platform = options.platform ?? process.platform
     this.spawn = options.spawn ?? spawn
     this.stopGraceSeconds = Math.max(0, Math.trunc(options.stopGraceSeconds ?? STOP_GRACE_SECONDS))
+    this.statsIntervalMs = Math.max(1, options.statsIntervalMs ?? STATS_INTERVAL_MS)
   }
 
   async run(job: RunnerExecutorJob): Promise<RunnerExecutorResult> {
@@ -584,9 +636,11 @@ export class ContainerExecutor implements RunnerExecutor {
       let settled = false
       let stderrTail = ''
       let drainTimer: NodeJS.Timeout | undefined
+      const stopWatching = this.watchUsage(job, docker, name)
       const settle = (result: RunnerExecutorResult) => {
         if (settled) return
         settled = true
+        stopWatching()
         clearTimeout(timeout)
         clearTimeout(drainTimer)
         job.signal.removeEventListener('abort', onAbort)
@@ -639,6 +693,47 @@ export class ContainerExecutor implements RunnerExecutor {
         settle({ exitCode: code, timedOut, cancelled })
       })
     })
+  }
+
+  /**
+   * Asks `docker stats` what the container uses every `statsIntervalMs` and passes it on, with the CPU time added up
+   * from the percentages (an estimate). A question is asked only when the one before has been answered or has failed;
+   * a failure (the container is not up yet, or already gone) is skipped. Answers the function that stops it.
+   */
+  private watchUsage(job: RunnerExecutorJob, docker: string, name: string): () => void {
+    if (!job.onUsage) return () => undefined
+    const onUsage = job.onUsage.bind(job)
+    let stopped = false
+    let asking = false
+    let cpuSeconds = 0
+    let counted = Date.now()
+    const timer = setInterval(() => {
+      if (asking || stopped) return
+      asking = true
+      void this.capture(docker, ['stats', '--no-stream', '--format', '{{json .}}', name], {
+        signal: AbortSignal.timeout(STATS_TIMEOUT_MS),
+      })
+        .then((answer) => {
+          const usage = answer.code === 0 ? parseDockerStats(answer.stdout) : null
+          if (!usage || stopped) return
+          const at = Date.now()
+          cpuSeconds += (usage.cpuPercent / 100) * ((at - counted) / 1000)
+          counted = at
+          try {
+            onUsage({ ...usage, cpuSeconds })
+          } catch {
+            // A consumer's failure does not stop the job.
+          }
+        })
+        .finally(() => {
+          asking = false
+        })
+    }, this.statsIntervalMs)
+    timer.unref?.()
+    return () => {
+      stopped = true
+      clearInterval(timer)
+    }
   }
 
   /** Whether the run's error output is Docker's own (the container never started) and not a command that exited 125. */

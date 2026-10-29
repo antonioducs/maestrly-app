@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -7,6 +7,7 @@ import { pipeline } from 'node:stream/promises'
 import { createZstdCompress, createZstdDecompress } from 'node:zlib'
 import type {
   FleetRunnerJobFinishRequest,
+  FleetRunnerJobUsageRequest,
   FleetRunnerManifest,
   FleetRunnerOutputCommit,
   FleetRunnerStateRequest,
@@ -18,7 +19,13 @@ import { RunnerApiError, type RunnerJobApi } from '../../src/main/runner/api'
 
 /** Shared by the tests of the runner core. */
 
-export const JOB_ID = 'job_RunnerCoreTest0001'
+/**
+ * Each test file gets ids of its own: a native job's processes are found by the id in their environment, and test
+ * files that run at the same time must not find each other's.
+ */
+const UNIQUE = randomBytes(5).toString('hex')
+export const JOB_ID = `job_RunnerCoreTest${UNIQUE}1`
+export const SECOND_JOB_ID = `job_RunnerCoreTest${UNIQUE}2`
 export const sha256Hex = (value: string | Uint8Array): string => createHash('sha256').update(value).digest('hex')
 
 const roots: string[] = []
@@ -113,6 +120,7 @@ export class FakeRunnerApi implements RunnerJobApi {
   readonly accepted: string[] = []
   readonly progressed: string[] = []
   readonly finished: Array<{ jobId: string; result: FleetRunnerJobFinishRequest }> = []
+  readonly usages: Array<{ jobId: string; sample: FleetRunnerJobUsageRequest }> = []
   readonly blobRequests: string[][] = []
   readonly logBatches: Array<{ offset: number; length: number }> = []
   logBytes = Buffer.alloc(0)
@@ -157,6 +165,10 @@ export class FakeRunnerApi implements RunnerJobApi {
   async finish(jobId: string, result: FleetRunnerJobFinishRequest): Promise<void> {
     await this.enter('finish', jobId, [result])
     this.finished.push({ jobId, result })
+  }
+  async usage(jobId: string, sample: FleetRunnerJobUsageRequest): Promise<void> {
+    await this.enter('usage', jobId, [sample])
+    this.usages.push({ jobId, sample: structuredClone(sample) })
   }
   async manifest(jobId: string): Promise<FleetRunnerManifest> {
     await this.enter('manifest', jobId, [])

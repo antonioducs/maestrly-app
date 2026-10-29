@@ -8,9 +8,10 @@ import {
   cacheVolumeName,
   containerArgs,
   defaultRunnerImage,
+  parseDockerStats,
   probeContainerSupport,
 } from '../../src/main/runner/container-executor'
-import type { RunnerExecutorJob } from '../../src/main/runner/executor'
+import type { RunnerExecutorJob, RunnerExecutorUsage } from '../../src/main/runner/executor'
 import { createFakeDocker, type FakeDockerConfig } from '../helpers/fake-docker'
 import { cleanTempDirs, JOB_ID, tempDir } from '../helpers/runner-core'
 
@@ -641,6 +642,123 @@ suite('container executor', () => {
       controller.abort()
       expect(await executor.run(job)).toEqual({ exitCode: null, timedOut: false, cancelled: true })
       expect(fake.calls()).toEqual([])
+    })
+  })
+
+  describe('usage', () => {
+    const GiB = 1024 ** 3
+    const stats = (patch: Partial<NonNullable<FakeDockerConfig['stats']>> = {}) => ({
+      cpu: '123.45%',
+      mem: '1.5GiB / 7.7GiB',
+      pids: '12',
+      ...patch,
+    })
+    const watch = (config: FakeDockerConfig, overrides: Partial<RunnerExecutorJob> = {}) => {
+      const usages: RunnerExecutorUsage[] = []
+      const prepared = setup(config, { onUsage: (usage) => usages.push(usage), ...overrides }, { statsIntervalMs: 40 })
+      return { ...prepared, usages }
+    }
+
+    it('asks docker stats about the container and reports CPU, memory and processes', async () => {
+      const { executor, job, fake, controller, usages } = watch({ run: { hang: true }, stats: stats() })
+      const running = executor.run(job)
+      await until(() => usages.length >= 2, 'two samples')
+      controller.abort()
+      await running
+      expect(fake.argvOf('stats')[0]).toEqual(['stats', '--no-stream', '--format', '{{json .}}', NAME])
+      expect(usages[0]).toMatchObject({ cpuPercent: 123.45, memoryBytes: Math.round(1.5 * GiB), processes: 12 })
+      // CPU time is added up from the percentages and the time between samples.
+      expect(usages[0].cpuSeconds).toBeGreaterThan(0)
+      expect(usages[1].cpuSeconds).toBeGreaterThan(usages[0].cpuSeconds)
+    })
+
+    it('asks one question at a time', async () => {
+      const { executor, job, fake, controller, usages } = watch({ run: { hang: true }, stats: stats({ delayMs: 150 }) })
+      const running = executor.run(job)
+      await until(() => usages.length >= 2, 'two samples')
+      controller.abort()
+      await running
+      expect(fake.statsOverlapped(NAME)).toBe(false)
+      // 40 ms apart would have asked far more often than the 150 ms answers allow.
+      expect(fake.argvOf('stats').length).toBeLessThanOrEqual(usages.length + 1)
+    })
+
+    it('skips an answer that fails or that it cannot read, and the job goes on', async () => {
+      for (const failing of [{ exit: 1 }, { raw: 'not json\n' }, { raw: '{"CPUPerc":"--","MemUsage":"0B / 0B"}\n' }]) {
+        const { executor, job, fake, controller, usages } = watch({ run: { hang: true }, stats: failing })
+        const running = executor.run(job)
+        await until(() => fake.argvOf('stats').length >= 2, 'two questions')
+        controller.abort()
+        expect(await running).toEqual({ exitCode: null, timedOut: false, cancelled: true })
+        expect(usages).toEqual([])
+      }
+    })
+
+    it('does not ask when the job wants no usage, and stops asking when the run ends', async () => {
+      const quiet = setup({ run: { hang: true }, stats: stats() }, {}, { statsIntervalMs: 20 })
+      const running = quiet.executor.run(quiet.job)
+      await until(() => quiet.fake.started(NAME), 'the container')
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      quiet.controller.abort()
+      await running
+      expect(quiet.fake.argvOf('stats')).toEqual([])
+
+      const { executor, job, fake, controller, usages } = watch({ run: { hang: true }, stats: stats() })
+      const watched = executor.run(job)
+      await until(() => usages.length >= 1, 'a sample')
+      controller.abort()
+      await watched
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      const asked = fake.argvOf('stats').length
+      const reported = usages.length
+      await new Promise((resolve) => setTimeout(resolve, 200))
+      expect(fake.argvOf('stats')).toHaveLength(asked)
+      expect(usages).toHaveLength(reported)
+    })
+
+    it('goes on when the consumer of the samples throws', async () => {
+      const { executor, job, controller, fake } = setup(
+        { run: { hang: true }, stats: stats() },
+        {
+          onUsage: () => {
+            throw new Error('consumer failed')
+          },
+        },
+        { statsIntervalMs: 30 }
+      )
+      const running = executor.run(job)
+      await until(() => fake.argvOf('stats').length >= 2, 'two questions')
+      controller.abort()
+      expect((await running).cancelled).toBe(true)
+    })
+
+    it('reads what docker stats prints', () => {
+      const line = (patch: Record<string, string>) =>
+        JSON.stringify({ CPUPerc: '0.50%', MemUsage: '6.164MiB / 7.667GiB', PIDs: '3', Name: 'x', ...patch })
+      expect(parseDockerStats(`${line({})}\n`)).toEqual({
+        cpuPercent: 0.5,
+        memoryBytes: Math.round(6.164 * 1024 ** 2),
+        processes: 3,
+      })
+      const memory = (text: string) => parseDockerStats(line({ MemUsage: `${text} / 8GiB` }))?.memoryBytes
+      expect(memory('0B')).toBe(0)
+      expect(memory('512B')).toBe(512)
+      expect(memory('12.5kB')).toBe(12_500)
+      expect(memory('3KiB')).toBe(3 * 1024)
+      expect(memory('2MB')).toBe(2_000_000)
+      expect(memory('2MiB')).toBe(2 * 1024 ** 2)
+      expect(memory('1.5GB')).toBe(1_500_000_000)
+      expect(memory('1.5GiB')).toBe(Math.round(1.5 * 1024 ** 3))
+      expect(memory('2TB')).toBe(2 * 1000 ** 4)
+      expect(memory('0.5TiB')).toBe(0.5 * 1024 ** 4)
+      expect(memory('12 parsecs')).toBeUndefined()
+      expect(memory('')).toBeUndefined()
+      expect(parseDockerStats(line({ CPUPerc: '1234.5%' }))?.cpuPercent).toBe(1234.5)
+      expect(parseDockerStats(line({ CPUPerc: '--' }))).toBeNull()
+      expect(parseDockerStats(line({ PIDs: '--' }))?.processes).toBe(0)
+      expect(parseDockerStats('')).toBeNull()
+      expect(parseDockerStats('null')).toBeNull()
+      expect(parseDockerStats('[1]')).toBeNull()
     })
   })
 

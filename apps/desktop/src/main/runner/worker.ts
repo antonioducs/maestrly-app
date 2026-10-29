@@ -7,13 +7,14 @@ import {
   type FleetRunnerJobEvent,
   type FleetRunnerJobLogPage,
   type FleetRunnerManifest,
+  fleetRunnerErrorSchema,
 } from '@maestrly/bot-fleet-protocol'
 import { mkdir } from 'node:fs/promises'
 import { isTransientApiError, RunnerApiError, type RunnerJobApi } from './api'
 import { assembleJobFolder } from './assemble'
 import { BlobCache } from './blob-cache'
 import { isDiskFull, RunnerJobError } from './errors'
-import type { RunnerExecutor } from './executor'
+import type { RunnerExecutor, RunnerExecutorUsage } from './executor'
 import { readLogPage } from './log-page'
 import { RunnerLogPump, type RunnerLogPumpOptions, redactEnvValues } from './log-pump'
 import { collectRunnerOutputs, packRunnerOutputs } from './outputs'
@@ -71,6 +72,9 @@ export interface RunnerHistoryEntry {
   cpuSeconds: number | null
 }
 
+/** How many ended jobs a runner keeps, newest first. */
+export const RUNNER_HISTORY_MAX = 20
+
 export interface RunnerSettings {
   accepting: boolean
   /** Jobs at once. */
@@ -91,8 +95,11 @@ export interface RunnerWorkerDeps {
   /** Keeps the computer awake until the returned function is called. */
   holdAwake?: () => () => void
   now?: () => number
-  /** The jobs or the storage changed: the interface refreshes. */
-  onChange?: () => void
+  /**
+   * The interface refreshes: `jobs` when the jobs, the history or the storage changed, `usage` when only what a running
+   * job uses did, which leaves the storage as it was.
+   */
+  onChange?: (what: 'jobs' | 'usage') => void
   /** Timings the tests shorten. */
   tuning?: {
     sleep?: (ms: number, signal?: AbortSignal) => Promise<void>
@@ -117,6 +124,15 @@ interface HeldJob {
   step: Step
   startedAt: number
   abort: AbortController
+  /** What its command used at the last sample; shown while the command runs. */
+  usage: RunnerJobUsage | null
+  peakMemoryBytes: number | null
+  cpuSeconds: number | null
+  /** When usage was last sent to the gateway and last announced to the interface. */
+  usageSentAt: number | null
+  usageNotifiedAt: number | null
+  /** The end of its log is in the history: that copy is read from now on, the job's folder is going away. */
+  logKept: boolean
   /** Stopped on request: by the bot, the owner, or a link that went away. */
   cancelled: boolean
   /** The gateway no longer expects anything of the job: no result is sent for it. */
@@ -134,13 +150,60 @@ interface PersistedJob {
   jobId: string
   key: string
   startedAt: number
+  /** The first line of the command, for the history entry a restart makes of it. */
+  command?: string
 }
 
 const RESTART_MESSAGE = 'The Maestrly app on the runner computer restarted while the job was running.'
 const RESTART_FINISH_WAIT_MS = 10_000
 const MESSAGE_MAX = 900
+/** How much of a job's log its history entry keeps. */
+const HISTORY_LOG_BYTES = 1024 * 1024
+/** How often the interface hears of a job's new usage, at most. */
+const USAGE_CHANGE_MS = 2_000
 const idOf = (serverId: string, jobId: string): string => `${serverId}\n${jobId}`
 const clip = (text: string): string => (text.length > MESSAGE_MAX ? `${text.slice(0, MESSAGE_MAX)}…` : text)
+
+function parseHistory(value: unknown): RunnerHistoryEntry[] {
+  const entries = (value as { entries?: unknown } | null)?.entries
+  if (!Array.isArray(entries)) return []
+  const number = (item: unknown): item is number => typeof item === 'number' && Number.isFinite(item)
+  const optional = (item: unknown): item is number | null => item === null || number(item)
+  return entries
+    .flatMap((item): RunnerHistoryEntry[] => {
+      const error =
+        item?.error === null ? { success: true as const, data: null } : fleetRunnerErrorSchema.safeParse(item?.error)
+      const valid =
+        typeof item?.serverId === 'string' &&
+        typeof item.botId === 'string' &&
+        typeof item.jobId === 'string' &&
+        typeof item.command === 'string' &&
+        (item.outcome === 'succeeded' || item.outcome === 'failed' || item.outcome === 'cancelled') &&
+        (item.exitCode === null || Number.isInteger(item.exitCode)) &&
+        error.success &&
+        number(item.startedAt) &&
+        number(item.endedAt) &&
+        optional(item.peakMemoryBytes) &&
+        optional(item.cpuSeconds)
+      if (!valid) return []
+      return [
+        {
+          serverId: item.serverId,
+          botId: item.botId,
+          jobId: item.jobId,
+          command: item.command,
+          outcome: item.outcome,
+          exitCode: item.exitCode,
+          error: error.data,
+          startedAt: item.startedAt,
+          endedAt: item.endedAt,
+          peakMemoryBytes: item.peakMemoryBytes,
+          cpuSeconds: item.cpuSeconds,
+        },
+      ]
+    })
+    .slice(0, RUNNER_HISTORY_MAX)
+}
 
 function parsePersisted(value: unknown): PersistedJob[] {
   const jobs = (value as { jobs?: unknown } | null)?.jobs
@@ -171,6 +234,9 @@ export class RunnerWorker {
   private readonly retryingReports = new Set<string>()
   private readonly shutdown = new AbortController()
   private stateWrites: Promise<void> = Promise.resolve()
+  /** The jobs that ended here, newest first; changes go through `historyWrites`, one at a time. */
+  private ended: RunnerHistoryEntry[] = []
+  private historyWrites: Promise<void> = Promise.resolve()
   private stopped = false
 
   constructor(private readonly deps: RunnerWorkerDeps) {}
@@ -182,9 +248,9 @@ export class RunnerWorker {
     const wait = this.deps.tuning?.sleep ?? abortableSleep
     return wait(ms, signal ? AbortSignal.any([signal, this.shutdown.signal]) : this.shutdown.signal)
   }
-  private changed(): void {
+  private changed(what: 'jobs' | 'usage' = 'jobs'): void {
     try {
-      this.deps.onChange?.()
+      this.deps.onChange?.(what)
     } catch {
       // A failing interface does not stop the jobs.
     }
@@ -192,11 +258,14 @@ export class RunnerWorker {
 
   /**
    * Loads what the last run left: its jobs ended with the app, so each is finished with `runner_restarted` (a gateway
-   * that cannot be reached finds out when this computer reports) and every job folder is deleted.
+   * that cannot be reached finds out when this computer reports), goes into the history with what is left of its log,
+   * and every job folder is deleted.
    */
   async start(): Promise<void> {
     const { storage } = this.deps
     const left = parsePersisted(await storage.readState().catch(() => null))
+    await this.loadHistory()
+    for (const job of left) await this.addHistory(this.restartEntry(job), this.logOf(job.key))
     await BlobCache.sweepTemporary(storage.blobsRoot())
     await storage.removeAllJobs()
     await storage.writeState({ jobs: [] })
@@ -330,6 +399,12 @@ export class RunnerWorker {
       step: 'transfer',
       startedAt: this.now(),
       abort: new AbortController(),
+      usage: null,
+      peakMemoryBytes: null,
+      cpuSeconds: null,
+      usageSentAt: null,
+      usageNotifiedAt: null,
+      logKept: false,
       cancelled: false,
       forgotten: false,
       ending: false,
@@ -373,17 +448,18 @@ export class RunnerWorker {
       command: this.commandLine(job),
       state: job.phase,
       startedAt: job.startedAt,
-      usage: null,
+      usage: job.phase === 'running' && job.usage ? { ...job.usage } : null,
     }))
   }
 
-  /** The jobs that ended on this computer, newest first. */
+  /** The jobs that ended on this computer, newest first: at most `RUNNER_HISTORY_MAX`. */
   history(): RunnerHistoryEntry[] {
-    return []
+    return this.ended.map((entry) => ({ ...entry, error: entry.error && { ...entry.error } }))
   }
 
   /**
-   * A piece of the log of a job this computer holds or ran lately (see `readLogPage`); null for a job it does not know.
+   * A piece of the log of a job this computer holds (as it grows) or ran lately (the end of it, as kept; see
+   * `readLogPage`); null for a job it does not know.
    */
   async log(
     serverId: string,
@@ -391,9 +467,30 @@ export class RunnerWorker {
     offset: number | null,
     limit?: number
   ): Promise<FleetRunnerJobLogPage | null> {
+    const { storage } = this.deps
     const job = this.held.get(idOf(serverId, jobId))
-    if (!job) return null
-    return readLogPage(this.deps.storage.logFile(job.key), offset, limit)
+    if (job && !job.logKept) return readLogPage(storage.logFile(job.key), offset, limit)
+    const key = this.keyOf(serverId, jobId)
+    if (!key || !this.ended.some((entry) => entry.serverId === serverId && entry.jobId === jobId)) return null
+    return readLogPage(storage.historyLog(key), offset, limit)
+  }
+
+  /** The storage name of a job, or null for an id that is not one. */
+  private keyOf(serverId: string, jobId: string): string | null {
+    try {
+      return this.deps.storage.jobKey(serverId, jobId)
+    } catch {
+      return null
+    }
+  }
+
+  /** A job's live log file; null when its key is not a storage name. */
+  private logOf(key: string): string | null {
+    try {
+      return this.deps.storage.logFile(key)
+    } catch {
+      return null
+    }
   }
 
   private commandLine(job: HeldJob): string {
@@ -409,11 +506,12 @@ export class RunnerWorker {
     this.changed()
   }
 
-  /** A bot's link was removed: its jobs stop, and this computer forgets its blobs and caches. */
+  /** A bot's link was removed: its jobs stop, and this computer forgets its blobs, caches and the history of its jobs. */
   async removeBot(serverId: string, botId: string): Promise<void> {
     const jobs = [...this.held.values()].filter((job) => job.serverId === serverId && job.botId === botId)
     for (const job of jobs) this.stopJob(job, true)
     await Promise.allSettled(jobs.map((job) => job.task))
+    await this.dropHistory(serverId, botId)
     await this.deps.storage.clearScope(this.deps.storage.scope(serverId, botId))
     this.changed()
   }
@@ -429,6 +527,7 @@ export class RunnerWorker {
     for (const job of jobs) job.abort.abort()
     await Promise.allSettled(jobs.map((job) => job.task))
     await this.stateWrites
+    await this.historyWrites
   }
 
   private persist(): Promise<void> {
@@ -439,6 +538,7 @@ export class RunnerWorker {
         jobId: job.jobId,
         key: job.key,
         startedAt: job.startedAt,
+        command: this.commandLine(job),
       }))
       await this.deps.storage.writeState({ jobs })
     }
@@ -469,7 +569,12 @@ export class RunnerWorker {
     }
     // An app that is quitting leaves the job on disk, to be reported by the next start.
     if (!this.stopped) {
-      if (accepted && outcome && !job.forgotten) await this.finish(job, api, outcome)
+      if (accepted && outcome) {
+        const endedAt = this.now()
+        if (!job.forgotten) await this.finish(job, api, outcome)
+        // The log is kept before the folder that holds it goes. A job that was never accepted never ran here.
+        await this.keep(job, outcome, endedAt)
+      }
       await this.deps.storage.removeJob(job.key).catch(() => undefined)
       this.held.delete(idOf(job.serverId, job.jobId))
       await this.persist()
@@ -570,6 +675,7 @@ export class RunnerWorker {
       image: spec.image,
       timeoutMs: spec.timeoutMinutes * 60_000,
       onOutput: (chunk) => pump.write(chunk),
+      onUsage: (usage) => this.recordUsage(job, api, usage),
       signal,
     })
     job.exitCode = result.exitCode
@@ -734,10 +840,7 @@ export class RunnerWorker {
     job.ending = true
     job.phase = 'finishing'
     this.changed()
-    const error = outcome.error && {
-      code: outcome.error.code,
-      message: clip(redactEnvValues(outcome.error.message, job.spec.env)),
-    }
+    const error = this.sentError(job, outcome)
     try {
       await this.retry(
         () => api.finish(job.jobId, { exitCode: outcome.exitCode, error }),
@@ -747,6 +850,148 @@ export class RunnerWorker {
     } catch {
       // The gateway already ended the job, or it will count it lost after its grace period.
     }
+  }
+
+  /** The error as the gateway gets it: clipped, with no value of the job's env in its message. */
+  private sentError(job: HeldJob, outcome: Outcome): FleetRunnerError | null {
+    return (
+      outcome.error && {
+        code: outcome.error.code,
+        message: clip(redactEnvValues(outcome.error.message, job.spec.env)),
+      }
+    )
+  }
+
+  /**
+   * What the executor sampled of the running command: kept for the settings list (which hears of it at most every two
+   * seconds) and sent to the gateway at most every `usageIntervalMs`. Sending is best effort: a sample the gateway does
+   * not take is not repeated, and nothing about it delays or fails the job.
+   */
+  private recordUsage(job: HeldJob, api: RunnerJobApi, sample: RunnerExecutorUsage): void {
+    if (job.step !== 'command') return
+    const at = this.now()
+    const count = (value: number): number => (Number.isFinite(value) ? Math.max(0, value) : 0)
+    const memoryBytes = Math.round(count(sample.memoryBytes))
+    job.peakMemoryBytes = Math.max(job.peakMemoryBytes ?? 0, memoryBytes)
+    job.cpuSeconds = count(sample.cpuSeconds)
+    const usage: RunnerJobUsage = {
+      cpuPercent: Math.min(409_600, Math.round(count(sample.cpuPercent) * 10) / 10),
+      memoryBytes,
+      peakMemoryBytes: job.peakMemoryBytes,
+      processes: Math.round(count(sample.processes)),
+      at,
+    }
+    job.usage = usage
+    // A clock that was set back counts as time passed.
+    const due = (last: number | null, everyMs: number): boolean => last === null || at < last || at - last >= everyMs
+    if (due(job.usageNotifiedAt, USAGE_CHANGE_MS)) {
+      job.usageNotifiedAt = at
+      this.changed('usage')
+    }
+    if (job.forgotten || !due(job.usageSentAt, FLEET_RUNNER_LIMITS.usageIntervalMs)) return
+    job.usageSentAt = at
+    const body = {
+      cpuPercent: usage.cpuPercent,
+      memoryBytes: usage.memoryBytes,
+      peakMemoryBytes: usage.peakMemoryBytes,
+      processes: usage.processes,
+    }
+    void Promise.resolve()
+      .then(() => api.usage(job.jobId, body, job.abort.signal))
+      .catch(() => undefined)
+  }
+
+  /** Adds a job that ended to the history, with the end of its log. */
+  private async keep(job: HeldJob, outcome: Outcome, endedAt: number): Promise<void> {
+    const error = this.sentError(job, outcome)
+    const entry: RunnerHistoryEntry = {
+      serverId: job.serverId,
+      botId: job.botId,
+      jobId: job.jobId,
+      command: this.commandLine(job),
+      outcome: !error && outcome.exitCode === 0 ? 'succeeded' : job.cancelled && !error ? 'cancelled' : 'failed',
+      exitCode: outcome.exitCode,
+      error,
+      startedAt: job.startedAt,
+      endedAt,
+      peakMemoryBytes: job.peakMemoryBytes,
+      cpuSeconds: job.cpuSeconds,
+    }
+    await this.addHistory(entry, this.deps.storage.logFile(job.key))
+    job.logKept = true
+  }
+
+  /** The history entry of a job that a restart ended. */
+  private restartEntry(job: PersistedJob): RunnerHistoryEntry {
+    return {
+      serverId: job.serverId,
+      botId: job.botId,
+      jobId: job.jobId,
+      command: typeof job.command === 'string' ? job.command : '',
+      outcome: 'failed',
+      exitCode: null,
+      error: { code: 'runner_restarted', message: RESTART_MESSAGE },
+      startedAt: Number.isFinite(job.startedAt) ? job.startedAt : this.now(),
+      endedAt: this.now(),
+      peakMemoryBytes: null,
+      cpuSeconds: null,
+    }
+  }
+
+  private async loadHistory(): Promise<void> {
+    const { storage } = this.deps
+    this.ended = parseHistory(await storage.readHistory().catch(() => null))
+    const keys = this.ended.flatMap((entry) => this.keyOf(entry.serverId, entry.jobId) ?? [])
+    await storage.pruneHistoryLogs(new Set(keys)).catch(() => undefined)
+  }
+
+  /** Runs one change of the history after the ones before it: they share a file and the logs beside it. */
+  private changeHistory(change: () => Promise<void>): Promise<void> {
+    this.historyWrites = this.historyWrites.then(change).catch(() => undefined)
+    return this.historyWrites
+  }
+
+  private async writeHistory(): Promise<void> {
+    await this.deps.storage.writeHistory({ entries: this.ended })
+    this.changed()
+  }
+
+  /**
+   * Puts an entry first in the history, keeping the end of the log at `logFile` for it; entries past the limit are
+   * dropped with their logs.
+   */
+  private addHistory(entry: RunnerHistoryEntry, logFile: string | null): Promise<void> {
+    return this.changeHistory(async () => {
+      const key = this.keyOf(entry.serverId, entry.jobId)
+      if (!key) return
+      // A failing copy costs the entry its log, not its place.
+      if (logFile) await this.deps.storage.keepLog(logFile, key, HISTORY_LOG_BYTES).catch(() => false)
+      const entries = [
+        entry,
+        ...this.ended.filter((item) => item.serverId !== entry.serverId || item.jobId !== entry.jobId),
+      ]
+      const dropped = entries.splice(RUNNER_HISTORY_MAX)
+      this.ended = entries
+      await Promise.all(dropped.map((item) => this.dropLog(item)))
+      await this.writeHistory()
+    })
+  }
+
+  /** Forgets the history of one bot's jobs and their logs. */
+  private dropHistory(serverId: string, botId: string): Promise<void> {
+    return this.changeHistory(async () => {
+      const own = (entry: RunnerHistoryEntry) => entry.serverId === serverId && entry.botId === botId
+      const dropped = this.ended.filter(own)
+      if (!dropped.length) return
+      this.ended = this.ended.filter((entry) => !own(entry))
+      await Promise.all(dropped.map((item) => this.dropLog(item)))
+      await this.writeHistory()
+    })
+  }
+
+  private async dropLog(entry: RunnerHistoryEntry): Promise<void> {
+    const key = this.keyOf(entry.serverId, entry.jobId)
+    if (key) await this.deps.storage.removeHistoryLog(key).catch(() => undefined)
   }
 
   /** How a failure ends a job: a stop is not a failure, and nothing in the message may be a value of the job's env. */

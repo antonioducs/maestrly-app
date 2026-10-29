@@ -33,6 +33,11 @@ export type FakeDockerConfig = {
     /** How long after being called the container starts, which is when `docker stop` begins to find it. */
     startDelayMs?: number
   }
+  /**
+   * `docker stats --no-stream --format '{{json .}}' <name>`, answered while the container has started: the three
+   * fields it reads, an `exit` code to fail with, `raw` to print instead of the JSON, and how long an answer takes.
+   */
+  stats?: { cpu?: string; mem?: string; pids?: string; exit?: number; raw?: string; delayMs?: number }
   /** The cache volume preparation (`docker run --entrypoint chown`). */
   prepare?: { exit?: number; stderr?: string }
   /** `docker ps -a` lines: `<id> <job id>`. */
@@ -121,6 +126,29 @@ if (args[0] === 'info') {
       }
     }, 10)
   }, run.startDelayMs || 0)
+} else if (args[0] === 'stats') {
+  const stats = config.stats || {}
+  const running = marker(last, 'stats-running')
+  // A second question while one is being answered is recorded: the executor must ask one at a time.
+  if (fs.existsSync(running)) fs.writeFileSync(marker(last, 'stats-overlap'), '')
+  fs.writeFileSync(running, '')
+  setTimeout(() => {
+    fs.rmSync(running, { force: true })
+    if (stats.exit) finish(stats.exit, '', 'Error response from daemon: stats failed\n')
+    if (!fs.existsSync(marker(last, 'started')) || fs.existsSync(marker(last, 'stopped')))
+      finish(1, '', 'Error response from daemon: No such container: ' + last + '\n')
+    finish(0, stats.raw !== undefined ? stats.raw : JSON.stringify({
+      BlockIO: '0B / 0B',
+      CPUPerc: stats.cpu || '0.00%',
+      Container: last,
+      ID: 'abc',
+      MemPerc: '1.00%',
+      MemUsage: stats.mem || '10MiB / 1GiB',
+      Name: last,
+      NetIO: '0B / 0B',
+      PIDs: stats.pids || '1',
+    }) + '\n')
+  }, stats.delayMs || 0)
 } else if (args[0] === 'stop') {
   if (!fs.existsSync(marker(last, 'started'))) finish(1, '', 'Error response from daemon: No such container: ' + last + '\n')
   fs.writeFileSync(marker(last, 'stopped'), '')
@@ -150,6 +178,8 @@ export interface FakeDocker {
   argvOf(command: string): string[][]
   /** Whether the container of that name has started. */
   started(name: string): boolean
+  /** Whether a `docker stats` for that container began while another was still being answered. */
+  statsOverlapped(name: string): boolean
 }
 
 /** Writes the fake into `directory` (created if needed) and returns its controls. */
@@ -180,5 +210,6 @@ export function createFakeDocker(directory: string, config: FakeDockerConfig = {
         .filter((argv) => argv[0] === command)
     },
     started: (name) => existsSync(path.join(directory, `${name}.started`)),
+    statsOverlapped: (name) => existsSync(path.join(directory, `${name}.stats-overlap`)),
   }
 }

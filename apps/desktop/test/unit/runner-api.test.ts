@@ -71,6 +71,35 @@ describe('runner job api', () => {
     })
   })
 
+  it('sends what a running job uses', async () => {
+    const { api, requests } = setup(() => new Response(null, { status: 204 }))
+    await api.usage(JOB_ID, {
+      cpuPercent: 312.5,
+      memoryBytes: 2_000_000_000,
+      peakMemoryBytes: 3_000_000_000,
+      processes: 7,
+    })
+    expect(requests[0]).toMatchObject({ method: 'POST', url: `https://gateway.test/v1/runner-jobs/${JOB_ID}/usage` })
+    expect(requests[0]?.headers).toMatchObject({ Authorization: 'Bearer device-token' })
+    expect(JSON.parse(requests[0]?.body as string)).toEqual({
+      cpuPercent: 312.5,
+      memoryBytes: 2_000_000_000,
+      peakMemoryBytes: 3_000_000_000,
+      processes: 7,
+    })
+  })
+
+  it('refuses a usage sample the gateway would not take, and reports the gateway’s refusal of one', async () => {
+    const { api, requests } = setup(() => failure(409, 'CONFLICT', 'The job is not running'))
+    await expect(
+      api.usage(JOB_ID, { cpuPercent: -1, memoryBytes: 1, peakMemoryBytes: 1, processes: 1 })
+    ).rejects.toBeInstanceOf(Error)
+    expect(requests).toEqual([])
+    await expect(
+      api.usage(JOB_ID, { cpuPercent: 1, memoryBytes: 1, peakMemoryBytes: 1, processes: 1 })
+    ).rejects.toMatchObject({ status: 409, transient: false })
+  })
+
   it('parses the manifest and refuses one that is not valid', async () => {
     const manifest = { jobId: JOB_ID, entries: [{ kind: 'directory', path: 'out', mode: 0o755 }], bytes: 0, skipped: 0 }
     expect(await setup(() => json(manifest)).api.manifest(JOB_ID)).toEqual(manifest)

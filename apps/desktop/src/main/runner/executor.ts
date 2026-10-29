@@ -1,6 +1,18 @@
 /** The folder inside a job's folder that holds its temporary files (`TMPDIR`); it is the runner's, never an output. */
 export const RUNNER_SCRATCH_DIR = '.tmp'
 
+/** What a running command uses, as its executor samples it. */
+export type RunnerExecutorUsage = {
+  /** Percent of one logical CPU (400 is four of them busy). */
+  cpuPercent: number
+  /** Memory the command's processes hold now. */
+  memoryBytes: number
+  /** How many processes the command has. */
+  processes: number
+  /** CPU time used since the command started; an estimate with Container. */
+  cpuSeconds: number
+}
+
 /** One job as an executor runs it. */
 export type RunnerExecutorJob = {
   jobId: string
@@ -21,6 +33,8 @@ export type RunnerExecutorJob = {
   timeoutMs: number
   /** Receives the command's stdout and stderr as they come. */
   onOutput(chunk: Buffer): void
+  /** Receives what the command uses while it runs: at most every two seconds with Native, every five with Container. */
+  onUsage?(usage: RunnerExecutorUsage): void
   /** Aborted when the job is cancelled. */
   signal: AbortSignal
 }
