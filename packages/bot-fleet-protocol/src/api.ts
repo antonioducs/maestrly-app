@@ -40,6 +40,7 @@ import {
   FLEET_QUEUE_PREVIEW_MAX,
   FLEET_ROUTINE_PROMPT_MAX,
   FLEET_ROUTINE_TITLE_MAX,
+  FLEET_RUNNER_LIMITS,
 } from './constants.js'
 import {
   fleetOwnerMemoryOriginSchema,
@@ -113,6 +114,16 @@ import {
   fleetDesktopNameSchema,
   fleetDesktopOpSchema,
   fleetDesktopCallSchema,
+  fleetRunnerCapabilitiesSchema,
+  fleetRunnerErrorSchema,
+  fleetRunnerIdSchema,
+  fleetRunnerJobIdSchema,
+  fleetRunnerJobSchema,
+  fleetRunnerJobSpecSchema,
+  fleetRunnerLinkSchema,
+  fleetRunnerLinkViewSchema,
+  fleetRunnerNameSchema,
+  fleetRunnerRequirementsSchema,
 } from './domain.js'
 
 export const fleetOwnerMemoryCreateRequestSchema = z.object({
@@ -945,6 +956,80 @@ export type FleetHostDesktopCallRequest = z.infer<typeof fleetHostDesktopCallReq
 /** The gateway changed a bot's link to a workspaces host without it (removed from a computer, or the bot deleted). */
 export const fleetHostDesktopLinksChangedSchema = z.object({ botId: fleetBotIdSchema }).strict()
 export type FleetHostDesktopLinksChanged = z.infer<typeof fleetHostDesktopLinksChangedSchema>
+
+/** A computer links a bot as its runner under the name the bot sees, or renames its link. */
+export const fleetRunnerLinkRequestSchema = z.object({ name: fleetRunnerNameSchema }).strict()
+export type FleetRunnerLinkRequest = z.infer<typeof fleetRunnerLinkRequestSchema>
+export const fleetRunnerLinksResponseSchema = z.object({ links: z.array(fleetRunnerLinkViewSchema) })
+export type FleetRunnerLinksResponse = z.infer<typeof fleetRunnerLinksResponseSchema>
+export const fleetRunnerJobsResponseSchema = z.object({ jobs: z.array(fleetRunnerJobSchema) })
+export type FleetRunnerJobsResponse = z.infer<typeof fleetRunnerJobsResponseSchema>
+/** What a runner reports on connecting and whenever it changes: whether it takes jobs, what it is, the jobs it holds. */
+export const fleetRunnerStateRequestSchema = z
+  .object({
+    accepting: z.boolean(),
+    capabilities: fleetRunnerCapabilitiesSchema.nullable(),
+    jobs: z.array(fleetRunnerJobIdSchema).max(FLEET_RUNNER_LIMITS.slotsMax * 4),
+  })
+  .strict()
+  .refine((state) => !state.accepting || state.capabilities !== null, 'A runner that accepts jobs reports what it is')
+export type FleetRunnerStateRequest = z.infer<typeof fleetRunnerStateRequestSchema>
+/** The jobs the runner holds that ended or are unknown on the gateway: it stops them. */
+export const fleetRunnerStateResponseSchema = z.object({ stop: z.array(fleetRunnerJobIdSchema) })
+export type FleetRunnerStateResponse = z.infer<typeof fleetRunnerStateResponseSchema>
+/** A runner's command ended and it is sending the job's outputs. */
+export const fleetRunnerJobProgressRequestSchema = z.object({ state: z.literal('finishing') }).strict()
+export type FleetRunnerJobProgressRequest = z.infer<typeof fleetRunnerJobProgressRequestSchema>
+/** A job ended on its runner: the command's exit code (null when it never ran or was stopped) and why it failed. */
+export const fleetRunnerJobFinishRequestSchema = z
+  .object({ exitCode: z.number().int().nullable(), error: fleetRunnerErrorSchema.nullable() })
+  .strict()
+export type FleetRunnerJobFinishRequest = z.infer<typeof fleetRunnerJobFinishRequestSchema>
+/** A bot's job: the id its environment minted, what to run, what it needs, and the runner (any linked one if none). */
+export const fleetInternalRunnerJobRequestSchema = z
+  .object({
+    jobId: fleetRunnerJobIdSchema,
+    spec: fleetRunnerJobSpecSchema,
+    requires: fleetRunnerRequirementsSchema.default({}),
+    runnerId: fleetRunnerIdSchema.optional(),
+  })
+  .strict()
+export type FleetInternalRunnerJobRequest = z.infer<typeof fleetInternalRunnerJobRequestSchema>
+/** A job the gateway queued, with how many queued jobs go before it, or why it refused it. */
+export const fleetRunnerSubmitResultSchema = z.discriminatedUnion('ok', [
+  z.object({ ok: z.literal(true), job: fleetRunnerJobSchema, queuedAhead: z.number().int().nonnegative() }).strict(),
+  z.object({ ok: z.literal(false), error: fleetRunnerErrorSchema }).strict(),
+])
+export type FleetRunnerSubmitResult = z.infer<typeof fleetRunnerSubmitResultSchema>
+export const fleetInternalRunnersResponseSchema = z.object({ runners: z.array(fleetRunnerLinkSchema) })
+export type FleetInternalRunnersResponse = z.infer<typeof fleetInternalRunnersResponseSchema>
+/** The gateway tells a bot's environment where one of its jobs stands now. */
+export const fleetInstanceRunnerJobStateSchema = z.object({ job: fleetRunnerJobSchema }).strict()
+export type FleetInstanceRunnerJobState = z.infer<typeof fleetInstanceRunnerJobStateSchema>
+const fleetSha256Schema = z.string().regex(/^[a-f0-9]{64}$/)
+/** The blobs a runner asks a job's environment for, by digest. */
+export const fleetRunnerBlobsRequestSchema = z
+  .object({ digests: z.array(fleetSha256Schema).min(1).max(10_000) })
+  .strict()
+export type FleetRunnerBlobsRequest = z.infer<typeof fleetRunnerBlobsRequestSchema>
+/** A runner commits the output archive it uploaded. */
+export const fleetRunnerOutputCommitSchema = z
+  .object({ bytes: z.number().int().nonnegative().max(FLEET_RUNNER_LIMITS.outputBytesMax), sha256: fleetSha256Schema })
+  .strict()
+export type FleetRunnerOutputCommit = z.infer<typeof fleetRunnerOutputCommitSchema>
+/** How much of a job's output archive its environment holds, so an interrupted upload resumes there. */
+export const fleetRunnerOutputStatusSchema = z.object({ received: z.number().int().nonnegative() }).strict()
+export type FleetRunnerOutputStatus = z.infer<typeof fleetRunnerOutputStatusSchema>
+/** The gateway routes that stream a job's files between its runner and its bot's environment. */
+export const FLEET_RUNNER_TRANSFER_ROUTE_KEYS = [
+  'runnerJobManifest',
+  'runnerJobBlobs',
+  'runnerJobLog',
+  'runnerJobOutputs',
+  'runnerJobOutputChunk',
+  'runnerJobOutputCommit',
+] as const
+export type FleetRunnerTransferRouteKey = (typeof FLEET_RUNNER_TRANSFER_ROUTE_KEYS)[number]
 
 export const fleetInputSourceSchema = z.enum(['owner', 'routine', 'peer', 'continuation'])
 export type FleetInputSource = z.infer<typeof fleetInputSourceSchema>
@@ -2136,6 +2221,65 @@ export const FLEET_GATEWAY_ROUTES = {
     body: fleetDesktopCallResultSchema,
     response: null,
   },
+  // Gateways with `runners`: a computer links or unlinks itself as a bot's runner, lists a bot's runners and jobs,
+  // removes another computer's link or cancels a job; a runner reports its state and moves its own jobs on.
+  botRunnerLinkPut: {
+    method: 'PUT',
+    path: '/v1/bots/:id/runner-link',
+    body: fleetRunnerLinkRequestSchema,
+    response: fleetRunnerLinkViewSchema,
+  },
+  botRunnerLinkDelete: { method: 'DELETE', path: '/v1/bots/:id/runner-link', body: null, response: null },
+  botRunnerLinks: {
+    method: 'GET',
+    path: '/v1/bots/:id/runner-links',
+    body: null,
+    response: fleetRunnerLinksResponseSchema,
+  },
+  botRunnerLinkRemove: { method: 'DELETE', path: '/v1/bots/:id/runner-links/:runnerId', body: null, response: null },
+  botRunnerJobs: {
+    method: 'GET',
+    path: '/v1/bots/:id/runner-jobs',
+    body: null,
+    response: fleetRunnerJobsResponseSchema,
+  },
+  botRunnerJobCancel: {
+    method: 'POST',
+    path: '/v1/bots/:id/runner-jobs/:jobId/cancel',
+    body: null,
+    response: fleetRunnerJobSchema,
+  },
+  runnerState: {
+    method: 'PUT',
+    path: '/v1/runner/state',
+    body: fleetRunnerStateRequestSchema,
+    response: fleetRunnerStateResponseSchema,
+  },
+  runnerJobAccept: { method: 'POST', path: '/v1/runner-jobs/:jobId/accept', body: null, response: null },
+  runnerJobProgress: {
+    method: 'POST',
+    path: '/v1/runner-jobs/:jobId/progress',
+    body: fleetRunnerJobProgressRequestSchema,
+    response: null,
+  },
+  runnerJobFinish: {
+    method: 'POST',
+    path: '/v1/runner-jobs/:jobId/finish',
+    body: fleetRunnerJobFinishRequestSchema,
+    response: null,
+  },
+  // Streamed through to the job's environment as they are: the gateway checks only who sends and how much.
+  runnerJobManifest: { method: 'GET', path: '/v1/runner-jobs/:jobId/manifest', body: null, response: null },
+  runnerJobBlobs: { method: 'POST', path: '/v1/runner-jobs/:jobId/blobs', body: null, response: null },
+  runnerJobLog: { method: 'POST', path: '/v1/runner-jobs/:jobId/log', body: null, response: null },
+  runnerJobOutputs: { method: 'GET', path: '/v1/runner-jobs/:jobId/outputs', body: null, response: null },
+  runnerJobOutputChunk: { method: 'PUT', path: '/v1/runner-jobs/:jobId/outputs/:offset', body: null, response: null },
+  runnerJobOutputCommit: {
+    method: 'POST',
+    path: '/v1/runner-jobs/:jobId/outputs/commit',
+    body: null,
+    response: null,
+  },
   inbox: { method: 'GET', path: '/v1/inbox', body: null, response: fleetInboxResponseSchema },
   peerMessages: { method: 'GET', path: '/v1/peer-messages', body: null, response: fleetPeerMessagesResponseSchema },
   activity: { method: 'GET', path: '/v1/activity', body: null, response: fleetActivityResponseSchema },
@@ -2244,6 +2388,27 @@ export const FLEET_INTERNAL_ROUTES = {
     path: '/internal/v1/host/bots/:id/desktop-link',
     body: null,
     response: null,
+  },
+  // Gateways with `runners`, for a bot's token: the computers that run jobs for it, and its own jobs.
+  runners: { method: 'GET', path: '/internal/v1/runners', body: null, response: fleetInternalRunnersResponseSchema },
+  runnerJobCreate: {
+    method: 'POST',
+    path: '/internal/v1/runner-jobs',
+    body: fleetInternalRunnerJobRequestSchema,
+    response: fleetRunnerSubmitResultSchema,
+  },
+  runnerJobsList: {
+    method: 'GET',
+    path: '/internal/v1/runner-jobs',
+    body: null,
+    response: fleetRunnerJobsResponseSchema,
+  },
+  runnerJobGet: { method: 'GET', path: '/internal/v1/runner-jobs/:jobId', body: null, response: fleetRunnerJobSchema },
+  runnerJobCancelOwn: {
+    method: 'POST',
+    path: '/internal/v1/runner-jobs/:jobId/cancel',
+    body: null,
+    response: fleetRunnerJobSchema,
   },
 } as const satisfies Record<string, FleetRoute>
 
@@ -2878,6 +3043,45 @@ export const FLEET_INSTANCE_ROUTES = {
     method: 'POST',
     path: '/v1/host/desktop-links/changed',
     body: fleetHostDesktopLinksChangedSchema,
+    response: null,
+  },
+  // Environments with `runner-jobs`: the gateway tells a bot's environment where its jobs stand, and passes a runner's
+  // requests for a job's files to it as they are.
+  botRunnerJobState: {
+    method: 'POST',
+    path: '/v1/bots/:botId/runner-jobs/:jobId/state',
+    body: fleetInstanceRunnerJobStateSchema,
+    response: null,
+  },
+  botRunnerJobManifest: {
+    method: 'GET',
+    path: '/v1/bots/:botId/runner-jobs/:jobId/manifest',
+    body: null,
+    response: null,
+  },
+  botRunnerJobBlobs: {
+    method: 'POST',
+    path: '/v1/bots/:botId/runner-jobs/:jobId/blobs',
+    body: fleetRunnerBlobsRequestSchema,
+    response: null,
+  },
+  botRunnerJobLog: { method: 'POST', path: '/v1/bots/:botId/runner-jobs/:jobId/log', body: null, response: null },
+  botRunnerJobOutputs: {
+    method: 'GET',
+    path: '/v1/bots/:botId/runner-jobs/:jobId/outputs',
+    body: null,
+    response: fleetRunnerOutputStatusSchema,
+  },
+  botRunnerJobOutputChunk: {
+    method: 'PUT',
+    path: '/v1/bots/:botId/runner-jobs/:jobId/outputs/:offset',
+    body: null,
+    response: null,
+  },
+  botRunnerJobOutputCommit: {
+    method: 'POST',
+    path: '/v1/bots/:botId/runner-jobs/:jobId/outputs/commit',
+    body: fleetRunnerOutputCommitSchema,
     response: null,
   },
 } as const satisfies Record<string, FleetRoute>

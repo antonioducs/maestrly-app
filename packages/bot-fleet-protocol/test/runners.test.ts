@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
+  FLEET_GATEWAY_ROUTES,
+  FLEET_INSTANCE_ROUTES,
+  FLEET_INTERNAL_ROUTES,
+  FLEET_RUNNER_TRANSFER_ROUTE_KEYS,
+  fleetInternalRunnerJobRequestSchema,
+  fleetRunnerStateRequestSchema,
+  fleetRunnerSubmitResultSchema,
   FLEET_RUNNERS_FEATURE,
   FLEET_RUNNERS_QUERY,
   FLEET_RUNNER_JOBS_CAPABILITY,
@@ -98,5 +105,93 @@ describe('runner contracts', () => {
     expect(isFleetRunnerEvent({ type: 'runner.job' })).toBe(true)
     expect(isFleetRunnerEvent({ type: 'runner_job.updated' })).toBe(true)
     expect(isFleetRunnerEvent({ type: 'routine_run.updated' })).toBe(false)
+  })
+
+  it('declares the runner routes of the gateway, of its internal API and of the environment', () => {
+    const paths = (table: Record<string, { method: string; path: string }>, keys: string[]) =>
+      Object.fromEntries(keys.map((key) => [key, `${table[key].method} ${table[key].path}`]))
+    expect(
+      paths(FLEET_GATEWAY_ROUTES, [
+        'botRunnerLinkPut',
+        'botRunnerLinkDelete',
+        'botRunnerLinks',
+        'botRunnerLinkRemove',
+        'botRunnerJobs',
+        'botRunnerJobCancel',
+        'runnerState',
+        'runnerJobAccept',
+        'runnerJobProgress',
+        'runnerJobFinish',
+        ...FLEET_RUNNER_TRANSFER_ROUTE_KEYS,
+      ])
+    ).toEqual({
+      botRunnerLinkPut: 'PUT /v1/bots/:id/runner-link',
+      botRunnerLinkDelete: 'DELETE /v1/bots/:id/runner-link',
+      botRunnerLinks: 'GET /v1/bots/:id/runner-links',
+      botRunnerLinkRemove: 'DELETE /v1/bots/:id/runner-links/:runnerId',
+      botRunnerJobs: 'GET /v1/bots/:id/runner-jobs',
+      botRunnerJobCancel: 'POST /v1/bots/:id/runner-jobs/:jobId/cancel',
+      runnerState: 'PUT /v1/runner/state',
+      runnerJobAccept: 'POST /v1/runner-jobs/:jobId/accept',
+      runnerJobProgress: 'POST /v1/runner-jobs/:jobId/progress',
+      runnerJobFinish: 'POST /v1/runner-jobs/:jobId/finish',
+      runnerJobManifest: 'GET /v1/runner-jobs/:jobId/manifest',
+      runnerJobBlobs: 'POST /v1/runner-jobs/:jobId/blobs',
+      runnerJobLog: 'POST /v1/runner-jobs/:jobId/log',
+      runnerJobOutputs: 'GET /v1/runner-jobs/:jobId/outputs',
+      runnerJobOutputChunk: 'PUT /v1/runner-jobs/:jobId/outputs/:offset',
+      runnerJobOutputCommit: 'POST /v1/runner-jobs/:jobId/outputs/commit',
+    })
+    // The gateway streams these through as they are: it never parses their bodies.
+    for (const key of FLEET_RUNNER_TRANSFER_ROUTE_KEYS) expect(FLEET_GATEWAY_ROUTES[key].body, key).toBeNull()
+    expect(
+      paths(FLEET_INTERNAL_ROUTES, [
+        'runners',
+        'runnerJobCreate',
+        'runnerJobsList',
+        'runnerJobGet',
+        'runnerJobCancelOwn',
+      ])
+    ).toEqual({
+      runners: 'GET /internal/v1/runners',
+      runnerJobCreate: 'POST /internal/v1/runner-jobs',
+      runnerJobsList: 'GET /internal/v1/runner-jobs',
+      runnerJobGet: 'GET /internal/v1/runner-jobs/:jobId',
+      runnerJobCancelOwn: 'POST /internal/v1/runner-jobs/:jobId/cancel',
+    })
+    expect(
+      paths(FLEET_INSTANCE_ROUTES, [
+        'botRunnerJobState',
+        'botRunnerJobManifest',
+        'botRunnerJobBlobs',
+        'botRunnerJobLog',
+        'botRunnerJobOutputs',
+        'botRunnerJobOutputChunk',
+        'botRunnerJobOutputCommit',
+      ])
+    ).toEqual({
+      botRunnerJobState: 'POST /v1/bots/:botId/runner-jobs/:jobId/state',
+      botRunnerJobManifest: 'GET /v1/bots/:botId/runner-jobs/:jobId/manifest',
+      botRunnerJobBlobs: 'POST /v1/bots/:botId/runner-jobs/:jobId/blobs',
+      botRunnerJobLog: 'POST /v1/bots/:botId/runner-jobs/:jobId/log',
+      botRunnerJobOutputs: 'GET /v1/bots/:botId/runner-jobs/:jobId/outputs',
+      botRunnerJobOutputChunk: 'PUT /v1/bots/:botId/runner-jobs/:jobId/outputs/:offset',
+      botRunnerJobOutputCommit: 'POST /v1/bots/:botId/runner-jobs/:jobId/outputs/commit',
+    })
+  })
+
+  it('requires capabilities from a runner that accepts jobs, and an id of its own for each job', () => {
+    expect(fleetRunnerStateRequestSchema.safeParse({ accepting: true, capabilities: null, jobs: [] }).success).toBe(
+      false
+    )
+    expect(fleetRunnerStateRequestSchema.safeParse({ accepting: false, capabilities: null, jobs: [] }).success).toBe(
+      true
+    )
+    expect(fleetRunnerStateRequestSchema.safeParse({ accepting: true, capabilities: mac, jobs: [] }).success).toBe(true)
+    expect(fleetInternalRunnerJobRequestSchema.safeParse({ jobId: 'abc', spec }).success).toBe(false)
+    expect(fleetInternalRunnerJobRequestSchema.parse({ jobId: 'job_0123456789abcdef', spec }).requires).toEqual({})
+    expect(
+      fleetRunnerSubmitResultSchema.parse({ ok: false, error: { code: 'runner_busy', message: 'Wait.' } })
+    ).toBeTruthy()
   })
 })
