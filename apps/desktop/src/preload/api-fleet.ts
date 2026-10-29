@@ -21,6 +21,7 @@ import type {
 } from '@maestrly/bot-fleet-protocol'
 import type { FleetInstallerStatus } from '../shared/fleet-installer'
 import type { FleetDesktopAccessInput, FleetDesktopAccessView } from '../shared/fleet-desktop-access'
+import type { RunnerAccessView } from '../shared/runner'
 import type { FleetDownloadEvent, FleetDownloadFileKey, FleetDownloadProgress } from '../shared/fleet-downloads'
 import { ipcRenderer } from 'electron'
 import type { FleetConnectionView, FleetServerId, FleetServerView } from '../shared/fleet-servers'
@@ -643,6 +644,20 @@ export const fleetApi = {
     ipcRenderer.invoke('fleet:desktopAccess:removeOther', serverId, botId, desktopId),
   onFleetDesktopAccess: (cb: (serverId: FleetServerId, botId: string) => void): (() => void) =>
     subscribe<{ serverId: FleetServerId; botId: string }>('fleet:desktop-access', (p) => cb(p.serverId, p.botId)),
+  /** The computers that run jobs for a bot, this one's link, and the bot's newest jobs. */
+  fleetRunnerAccess: (serverId: FleetServerId, botId: string): Promise<RunnerAccessView> =>
+    ipcRenderer.invoke('fleet:runnerAccess:get', serverId, botId),
+  /** Lets the bot run jobs on this computer, under the name it will see. */
+  fleetRunnerAccessLink: (serverId: FleetServerId, botId: string, name: string): Promise<RunnerAccessView> =>
+    ipcRenderer.invoke('fleet:runnerAccess:link', serverId, botId, name),
+  /** Takes this computer's link back; the bot's jobs on it stop and what it kept for the bot is deleted. */
+  fleetRunnerAccessUnlink: (serverId: FleetServerId, botId: string): Promise<RunnerAccessView> =>
+    ipcRenderer.invoke('fleet:runnerAccess:unlink', serverId, botId),
+  /** Removes another computer's link; that computer deletes what it kept when it hears of it. */
+  fleetRunnerAccessRemoveOther: (serverId: FleetServerId, botId: string, runnerId: string): Promise<RunnerAccessView> =>
+    ipcRenderer.invoke('fleet:runnerAccess:removeOther', serverId, botId, runnerId),
+  onFleetRunnerAccess: (cb: (serverId: FleetServerId, botId: string) => void): (() => void) =>
+    subscribe<{ serverId: FleetServerId; botId: string }>('fleet:runner-access', (p) => cb(p.serverId, p.botId)),
   onFleetEvent: (cb: (serverId: FleetServerId, event: FleetGatewayEvent) => void): (() => void) =>
     subscribe<{ serverId: FleetServerId; event: FleetGatewayEvent }>('fleet:event', (p) => cb(p.serverId, p.event)),
   onFleetMediaProgress: (cb: (serverId: FleetServerId, progress: FleetMediaProgress) => void): (() => void) =>

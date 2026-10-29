@@ -7,7 +7,8 @@ import { fleetErrorMessage } from '@/lib/fleet/errors'
 import { BotServerHostsChoice } from './BotServerHostsChoice'
 import { PrivateNetworkSwitch } from './PrivateNetworkSwitch'
 
-const dockerUrl = {
+/** Where Docker is downloaded, by system. */
+export const dockerUrl = {
   mac: 'https://docs.docker.com/desktop/setup/install/mac-install/',
   win: 'https://docs.docker.com/desktop/setup/install/windows-install/',
   linux: 'https://docs.docker.com/engine/install/',

@@ -33,6 +33,8 @@ export default defineConfig({
   },
   resolve: {
     alias: {
+      // The renderer's own alias (electron.vite.config.ts), for the tests that render its components.
+      '@': here('./src/renderer'),
       electron: here('./test/stubs/electron.ts'),
       'node-pty': here('./test/stubs/node-pty.ts'),
       '@xenova/transformers': here('./test/stubs/transformers.ts'),

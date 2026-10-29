@@ -2,6 +2,7 @@ import {
   FLEET_DESKTOP_BRIDGE_QUERY,
   FLEET_GATEWAY_ROUTES,
   FLEET_REASONING_QUERY,
+  FLEET_RUNNERS_QUERY,
   FLEET_ROUTINE_RUNS_QUERY,
   FLEET_PEER_THREADS_QUERY,
   buildPath,
@@ -23,8 +24,11 @@ export class FleetEvents {
     private readonly onConnected: () => Promise<void>,
     private readonly pause: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     private readonly heartbeatMs = 45_000,
-    /** `desktopBridge`: this Mac answers bots' desktop calls on this stream, and is online for them while it is open. */
-    private readonly options: { desktopBridge?: boolean } = {}
+    /**
+     * `desktopBridge`: this Mac answers bots' desktop calls on this stream, and is online for them while it is open.
+     * `runners`: this computer runs bots' jobs; it receives them on this stream, and is online for them while it is open.
+     */
+    private readonly options: { desktopBridge?: boolean; runners?: boolean } = {}
   ) {}
 
   start(): void {
@@ -87,6 +91,7 @@ export class FleetEvents {
           [FLEET_ROUTINE_RUNS_QUERY]: 1,
           [FLEET_PEER_THREADS_QUERY]: 1,
           ...(this.options.desktopBridge ? { [FLEET_DESKTOP_BRIDGE_QUERY]: 1 } : {}),
+          ...(this.options.runners ? { [FLEET_RUNNERS_QUERY]: 1 } : {}),
         }
       )
       const response = await fetch(this.api.origin + path, {

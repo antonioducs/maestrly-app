@@ -56,6 +56,7 @@ import { cn } from '@/lib/utils'
 import { BotAutonomyTable } from './BotAutonomyTable'
 import { BotMemorySection } from './BotMemorySection'
 import { BotDesktopAccessSection } from './BotDesktopAccessSection'
+import { BotRunnersSection } from './BotRunnersSection'
 import { BotEnvironmentAccessSection } from './BotEnvironmentAccessSection'
 import { BotPeerPicker } from './BotPeerPicker'
 import { BotRoutinesSection } from './BotRoutinesSection'
@@ -79,6 +80,7 @@ type TabId =
   | 'routines'
   | 'memory'
   | 'desktops'
+  | 'runners'
   | 'environment'
   | 'where'
   | 'archive'
@@ -272,6 +274,7 @@ export function BotSettings({
     'routines',
     'memory',
     'desktops',
+    'runners',
     shared ? 'environment' : 'where',
     'archive',
   ]
@@ -840,6 +843,10 @@ export function BotSettings({
               bot={bot}
               fleet={fleet}
             />
+          </SettingsTabPanel>
+
+          <SettingsTabPanel tab="runners" current={current}>
+            <BotRunnersSection key={`runners-${bot.id}`} id={domId('runners')} bot={bot} />
           </SettingsTabPanel>
 
           <SettingsTabPanel tab={shared ? 'environment' : 'where'} current={current}>

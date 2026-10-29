@@ -128,6 +128,22 @@ export class RunnerStorage {
     return [...names].sort()
   }
 
+  /** Whose scope each record says it is: what the runner keeps for a bot of a server, whichever bots exist now. */
+  async records(): Promise<Array<{ scope: string; serverId: string; botId: string }>> {
+    const directory = path.join(this.root, 'scopes')
+    const found: Array<{ scope: string; serverId: string; botId: string }> = []
+    for (const name of (await readdir(directory).catch(() => [] as string[])).sort()) {
+      const scope = name.endsWith('.json') ? name.slice(0, -'.json'.length) : ''
+      if (!/^[A-Za-z0-9_-]+$/.test(scope)) continue
+      const record = await readFile(path.join(directory, name), 'utf8')
+        .then((text) => JSON.parse(text) as { serverId?: unknown; botId?: unknown })
+        .catch(() => null)
+      if (typeof record?.serverId === 'string' && typeof record.botId === 'string')
+        found.push({ scope, serverId: record.serverId, botId: record.botId })
+    }
+    return found
+  }
+
   /** Bytes of the blobs and the named caches of every scope. */
   async usage(): Promise<RunnerStorageUsage> {
     const scopes: RunnerScopeUsage[] = []

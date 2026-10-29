@@ -12,7 +12,9 @@ const state = vi.hoisted(() => ({
   events: [] as {
     onConnected: () => Promise<void>
     onEvent: (event: unknown) => void
-    options: { desktopBridge?: boolean } | undefined
+    onState: (state: string, error: string | null) => void
+    stop: ReturnType<typeof vi.fn>
+    options: { desktopBridge?: boolean; runners?: boolean } | undefined
   }[],
   broadcasts: [] as { channel: string; payload: unknown }[],
   download: vi.fn(),
@@ -55,16 +57,16 @@ vi.mock('../../src/main/fleet/client/events', () => ({
     constructor(
       _api: unknown,
       onEvent: (event: unknown) => void,
-      _onState: unknown,
+      onState: (state: string, error: string | null) => void,
       onConnected: () => Promise<void>,
       _pause?: unknown,
       _heartbeat?: unknown,
-      options?: { desktopBridge?: boolean }
+      options?: { desktopBridge?: boolean; runners?: boolean }
     ) {
-      state.events.push({ onConnected, onEvent, options })
+      state.events.push({ onConnected, onEvent, onState, stop: this.stop, options })
     }
     start() {}
-    stop() {}
+    stop = vi.fn()
   },
 }))
 
@@ -391,7 +393,7 @@ describe('fleet client service', () => {
     const service = makeClient()
     service.desktopBridge = bridge
     service.start()
-    expect(state.events[0].options).toEqual({ desktopBridge: true })
+    expect(state.events[0].options).toEqual({ desktopBridge: true, runners: false })
     await state.events[0].onConnected()
     expect(bridge.connected).toHaveBeenCalled()
     const call = {
@@ -422,8 +424,107 @@ describe('fleet client service', () => {
     // Without a bridge this Mac never says it takes desktop calls.
     const plain = makeClient()
     plain.start()
-    expect(state.events.at(-1)?.options).toEqual({ desktopBridge: false })
+    expect(state.events.at(-1)?.options).toEqual({ desktopBridge: false, runners: false })
   })
+  it('runs jobs for bots over the stream while the runner wants them, and shows no window the runner’s events', async () => {
+    let enabled = false
+    const runner = {
+      wants: vi.fn(() => enabled && service.hasFeature('runners')),
+      connected: vi.fn(async () => {}),
+      disconnected: vi.fn(),
+      handle: vi.fn(() => true),
+      unpaired: vi.fn(async () => {}),
+    }
+    const service = makeClient()
+    service.runnerHost = runner
+    // The server announces runners only once the stream is open.
+    state.features = ['runners']
+    enabled = true
+    service.start()
+    expect(state.events).toHaveLength(1)
+    expect(state.events[0].options).toEqual({ desktopBridge: false, runners: false })
+
+    // Now it is known: the stream is replaced by one that takes jobs, before anything else is read.
+    await state.events[0].onConnected()
+    expect(state.events).toHaveLength(2)
+    expect(state.events[0].stop).toHaveBeenCalled()
+    expect(state.events[1].options).toEqual({ desktopBridge: false, runners: true })
+    expect(runner.connected).not.toHaveBeenCalled()
+    expect(vi.mocked(fetch).mock.calls.map(([url]) => new URL(String(url)).pathname)).not.toContain('/v1/bots')
+
+    // The new stream is the one that reports. The old one's callbacks no longer count.
+    await state.events[1].onConnected()
+    expect(state.events).toHaveLength(2)
+    expect(runner.connected).toHaveBeenCalledTimes(1)
+    state.events[0].onEvent({ type: 'hello', at: '2026-10-29T10:00:00.000Z', lastActivitySeq: 0 })
+    expect(runner.handle).not.toHaveBeenCalled()
+
+    const at = '2026-10-29T10:00:00.000Z'
+    const events = [
+      { type: 'runner.cancel', at, jobId: 'job_AAAAAAAAAAAAAAAA0001' },
+      { type: 'runner_link.updated', at, botId: 'scout', links: [] },
+    ]
+    state.broadcasts.length = 0
+    for (const event of events) {
+      state.events[1].onEvent(event)
+      expect(runner.handle).toHaveBeenLastCalledWith(event)
+    }
+    expect(state.broadcasts.filter((broadcast) => broadcast.channel === 'fleet:event')).toEqual([])
+
+    // A stream that is not open holds no jobs.
+    runner.disconnected.mockClear()
+    state.events[1].onState('reconnecting', 'down')
+    expect(runner.disconnected).toHaveBeenCalledTimes(1)
+    state.events[1].onState('connected', null)
+    expect(runner.disconnected).toHaveBeenCalledTimes(1)
+
+    // Turning the runner off opens the stream again without asking for jobs.
+    enabled = false
+    expect(service.syncRunnerStream()).toBe(true)
+    expect(state.events).toHaveLength(3)
+    expect(state.events[1].stop).toHaveBeenCalled()
+    expect(state.events[2].options).toEqual({ desktopBridge: false, runners: false })
+    // Nothing to change when the stream already matches.
+    expect(service.syncRunnerStream()).toBe(false)
+    expect(state.events).toHaveLength(3)
+    await state.events[2].onConnected()
+    expect(runner.connected).toHaveBeenCalledTimes(1)
+
+    await service.unpair()
+    expect(runner.unpaired).toHaveBeenCalledTimes(1)
+  })
+
+  it('opens no new stream for the runner while the server was never reached or refuses this computer', async () => {
+    let wants = false
+    const runner = {
+      wants: vi.fn(() => wants),
+      connected: vi.fn(async () => {}),
+      disconnected: vi.fn(),
+      handle: vi.fn(() => true),
+      unpaired: vi.fn(async () => {}),
+    }
+    const unconfigured = makeClient({ credentials: { token: null } })
+    unconfigured.runnerHost = runner
+    unconfigured.start()
+    wants = true
+    expect(unconfigured.syncRunnerStream()).toBe(false)
+    expect(state.events).toHaveLength(0)
+
+    wants = false
+    for (const refusal of ['unauthorized', 'incompatible']) {
+      state.events.length = 0
+      const refused = makeClient()
+      refused.runnerHost = runner
+      refused.start()
+      expect(state.events[0].options?.runners).toBe(false)
+      state.events[0].onState(refusal, 'refused')
+      wants = true
+      expect(refused.syncRunnerStream()).toBe(false)
+      expect(state.events).toHaveLength(1)
+      wants = false
+    }
+  })
+
   it('takes the features the gateway advertised while pairing, then reads them on every reconnect', async () => {
     state.features = ['provisioning']
     const service = makeClient()

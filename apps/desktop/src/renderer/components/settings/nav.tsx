@@ -3,6 +3,7 @@ import {
   AppWindow,
   BarChart3,
   Bot,
+  Cpu,
   Download,
   Laptop,
   MessagesSquare,
@@ -16,6 +17,7 @@ export type SettingsSection =
   | 'chat'
   | 'fleet'
   | 'computers'
+  | 'runner'
   | 'usage'
   | 'appearance'
   | 'tools'
@@ -28,6 +30,7 @@ export const SETTINGS_NAV: { id: SettingsSection; icon: ReactNode; labelKey: str
   { id: 'chat', icon: <MessagesSquare className="size-4" />, labelKey: 'settings.nav.chat' },
   { id: 'fleet', icon: <Bot className="size-4" />, labelKey: 'settings.nav.fleet' },
   { id: 'computers', icon: <Laptop className="size-4" />, labelKey: 'settings.nav.computers' },
+  { id: 'runner', icon: <Cpu className="size-4" />, labelKey: 'settings.nav.runner' },
   { id: 'usage', icon: <BarChart3 className="size-4" />, labelKey: 'settings.nav.usage' },
   { id: 'appearance', icon: <Palette className="size-4" />, labelKey: 'settings.nav.appearance' },
   { id: 'tools', icon: <PanelRight className="size-4" />, labelKey: 'settings.nav.tools' },

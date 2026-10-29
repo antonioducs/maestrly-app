@@ -254,6 +254,8 @@ import { registerBotIpc } from './bot/ipc'
 import { FLEET_OWNER_SEEN_FEATURE } from '@maestrly/bot-fleet-protocol'
 import { fleetScopedRegistrar, registerFleetClientIpc } from './fleet/client/ipc'
 import { registerFleetDesktopBridgeIpc } from './fleet/client/desktop-bridge-ipc'
+import type { RunnerHost } from './fleet/client/runner-host'
+import { registerAppRunner } from './fleet/client/runner-app'
 import { registerFleetInstallerIpc } from './fleet/installer/ipc'
 import { fleetInstallerService } from './fleet/installer/service'
 import { ArtifactServers } from './artifacts/servers'
@@ -1110,9 +1112,14 @@ function registerIpc(): void {
   registerFleetInstallerIpc(reg)
   // Set before the client starts, so that its first stream already answers bots' desktop calls.
   registerFleetDesktopBridgeIpc(fleetScopedRegistrar(reg), fleetServers)
+  // Likewise the runner: a server's first stream already asks for jobs when the owner lets this computer run them.
+  runnerHost = registerAppRunner(reg, fleetScopedRegistrar(reg), fleetServers)
   // On a workspaces host, the owner's computers give the bots of its server access to its projects.
   registerEnvironmentBotAccessIpc(reg, hostBotAccess)
   registerFleetClientIpc(reg)
+  // The servers are open: jobs a previous run left are reported ended, then this computer takes new ones.
+  if (!isHeadlessInstance())
+    void runnerHost?.start().catch((error) => console.warn('[runner] Start failed:', (error as Error).message))
   registerFleetInstanceIpc(reg)
   registerArtifactsIpc(reg, { service: getArtifactsService })
 
@@ -1555,6 +1562,8 @@ let conversationProcessesStopped = false
 let conversationProcessesStopping = false
 let backgroundServicesStopped = false
 let backgroundServicesStopping = false
+/** Runs other bots' jobs on this computer; set while IPC registers. */
+let runnerHost: RunnerHost | undefined
 let botBrowsersClosed = false
 let botBrowsersClosing = false
 
@@ -1688,7 +1697,7 @@ app.on('before-quit', (e) => {
     e.preventDefault()
     if (!backgroundServicesStopping) {
       backgroundServicesStopping = true
-      void Promise.allSettled([botHost.stop(), artifactHost?.stop()]).finally(() => {
+      void Promise.allSettled([botHost.stop(), artifactHost?.stop(), runnerHost?.stop()]).finally(() => {
         backgroundServicesStopped = true
         backgroundServicesStopping = false
         app.quit()

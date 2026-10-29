@@ -18,6 +18,7 @@ describe('settings navigation', () => {
       'chat',
       'fleet',
       'computers',
+      'runner',
       'usage',
       'appearance',
       'tools',
@@ -38,12 +39,20 @@ describe('settings navigation', () => {
     expect(resources['pt-BR'].ui.settings.nav.fleet).toBe('Servidores de bots')
     expect(resources.en.ui.settings.nav.computers).toBe('Computers')
     expect(resources['pt-BR'].ui.settings.nav.computers).toBe('Computadores')
+    expect(resources.en.ui.settings.nav.runner).toBe('Runner')
+    expect(resources['pt-BR'].ui.settings.nav.runner).toBe('Runner')
   })
 
   it('offers Computers only where Settings can leave for a paired computer', () => {
     // A bot's own settings window, for one, has no machine switcher to show a paired computer in.
     expect(settingsViewSource).toContain("(item) => item.id !== 'computers' || onOpenHost")
     expect(settingsViewSource).toContain("{section === 'computers' && onOpenHost && <ComputersSection")
+  })
+
+  it('shows the runner section for this computer, outside the profile of the host chosen in Settings', () => {
+    expect(settingsViewSource).toContain("{section === 'runner' && <RunnerSection t={t} />}")
+    expect(settingsViewSource).not.toContain('inProfile(<RunnerSection')
+    expect(settingsViewSource).not.toMatch(/PROFILE_SECTIONS[^\n]*'runner'/)
   })
 
   it('accepts direct navigation to the Maestrly Chat settings section', () => {

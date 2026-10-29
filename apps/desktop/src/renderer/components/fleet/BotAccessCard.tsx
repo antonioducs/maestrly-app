@@ -16,7 +16,8 @@ import { fleetErrorMessage } from '@/lib/fleet/errors'
 import { SettingsCard } from './SettingsSection'
 import { SettingsSwitch } from './SettingsSwitch'
 
-const fieldInput =
+/** The look of a text field in the settings cards. */
+export const fieldInput =
   'w-full rounded-[9px] border border-input bg-black/25 px-3 py-2 text-sm transition-[border-color,box-shadow] placeholder:text-muted-foreground/70 hover:border-border-strong focus-visible:border-ring focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/20 aria-[invalid=true]:border-destructive'
 
 const same = (a: FleetDesktopAccessInput, b: FleetDesktopAccessInput) =>
