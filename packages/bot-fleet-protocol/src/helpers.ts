@@ -5,12 +5,16 @@ import {
   FLEET_REASONING_QUERY,
   FLEET_ROUTINE_RUNS_QUERY,
   FLEET_PEER_THREADS_QUERY,
+  FLEET_RUNNERS_QUERY,
+  FLEET_RUNNER_PROTOCOL_VERSION,
   FLEET_UPDATE_BUSY_STATUSES,
 } from './constants.js'
 import type {
   FleetBot,
   FleetBotTurn,
   FleetGatewayEvent,
+  FleetRunnerCapabilities,
+  FleetRunnerRequirements,
   FleetSelection,
   FleetSelectionOption,
   FleetTranscriptItem,
@@ -226,6 +230,25 @@ export function fleetReaderWantsPeerThreads(search: URLSearchParams): boolean {
 /** Whether a gateway event is about threads between bots, sent only to readers that asked for them. */
 export function isFleetPeerThreadEvent(event: Pick<FleetGatewayEvent, 'type'>): boolean {
   return event.type.startsWith('peer_thread.')
+}
+export function fleetReaderWantsRunners(search: URLSearchParams): boolean {
+  return search.get(FLEET_RUNNERS_QUERY) === '1'
+}
+export function isFleetRunnerEvent(event: Pick<FleetGatewayEvent, 'type'>): boolean {
+  return event.type.startsWith('runner.') || event.type.startsWith('runner_')
+}
+/** Whether a runner, by its report, can take a job with these requirements; a job with an image needs a container. */
+export function fleetRunnerMeets(
+  capabilities: FleetRunnerCapabilities,
+  requires: FleetRunnerRequirements,
+  image?: string
+): boolean {
+  if (capabilities.protocol !== FLEET_RUNNER_PROTOCOL_VERSION) return false
+  if (requires.os && capabilities.os !== requires.os) return false
+  if (requires.executor && capabilities.executor !== requires.executor) return false
+  if (requires.gpu && !capabilities.gpu) return false
+  if (image !== undefined && capabilities.executor !== 'container') return false
+  return true
 }
 
 /**

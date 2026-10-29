@@ -27,6 +27,7 @@ import {
   FLEET_DESKTOP_BRIDGE_LIMITS,
   FLEET_PEER_THREAD_LIMITS,
   FLEET_DELEGATION_LIMITS,
+  FLEET_RUNNER_LIMITS,
 } from './constants.js'
 
 export const fleetIdSchema = z.string().min(1)
@@ -1278,6 +1279,218 @@ export type FleetDesktopCallEvent = z.infer<typeof fleetDesktopCallEventSchema>
 export const fleetDesktopCallSchema = fleetDesktopCallEventSchema.omit({ type: true, at: true })
 export type FleetDesktopCall = z.infer<typeof fleetDesktopCallSchema>
 
+/** A runner as one bot sees it: an opaque id minted for that bot and that computer, never the computer's device id. */
+export const fleetRunnerIdSchema = z.string().regex(/^rnr_[A-Za-z0-9_-]{16,64}$/)
+export type FleetRunnerId = z.infer<typeof fleetRunnerIdSchema>
+/** A job, named by the bot's environment before it submits it, so the environment's record exists first. */
+export const fleetRunnerJobIdSchema = z.string().regex(/^job_[A-Za-z0-9_-]{16,64}$/)
+export type FleetRunnerJobId = z.infer<typeof fleetRunnerJobIdSchema>
+/** The name a computer shows to the bots it runs jobs for, chosen on that computer. */
+export const fleetRunnerNameSchema = z.string().trim().min(1).max(FLEET_RUNNER_LIMITS.nameMax)
+/** How a runner runs jobs: in a Docker container on that computer, or as its signed-in user. */
+export const fleetRunnerExecutorSchema = z.enum(['container', 'native'])
+export type FleetRunnerExecutor = z.infer<typeof fleetRunnerExecutorSchema>
+export const fleetRunnerOsSchema = z.enum(['macos', 'linux', 'windows'])
+export type FleetRunnerOs = z.infer<typeof fleetRunnerOsSchema>
+export const fleetRunnerGpuSchema = z
+  .object({
+    vendor: z.enum(['nvidia', 'apple', 'amd', 'intel', 'other']),
+    name: z.string().min(1).max(200),
+    memoryBytes: z.number().int().positive().nullable(),
+  })
+  .strict()
+/** What a runner reports about itself; the gateway matches jobs' requirements against its last report. */
+export const fleetRunnerCapabilitiesSchema = z
+  .object({
+    protocol: z.number().int().positive(),
+    os: fleetRunnerOsSchema,
+    arch: z.enum(['arm64', 'x64']),
+    cpus: z.number().int().min(1).max(4096),
+    memoryBytes: z.number().int().positive(),
+    executor: fleetRunnerExecutorSchema,
+    gpu: fleetRunnerGpuSchema.nullable(),
+    slots: z.number().int().min(1).max(FLEET_RUNNER_LIMITS.slotsMax),
+  })
+  .strict()
+export type FleetRunnerCapabilities = z.infer<typeof fleetRunnerCapabilitiesSchema>
+/** What a job needs of the runner that takes it; anything left out goes. */
+export const fleetRunnerRequirementsSchema = z
+  .object({
+    gpu: z.boolean().optional(),
+    executor: fleetRunnerExecutorSchema.optional(),
+    os: fleetRunnerOsSchema.optional(),
+  })
+  .strict()
+export type FleetRunnerRequirements = z.infer<typeof fleetRunnerRequirementsSchema>
+const insideFolder = (value: string) =>
+  !value.startsWith('/') && !value.includes('\\') && !value.includes('\0') && !value.split('/').includes('..')
+/** A path or glob relative to the job folder that never leaves it. */
+const fleetRunnerRelativePathSchema = z
+  .string()
+  .min(1)
+  .max(FLEET_RUNNER_LIMITS.pathMax)
+  .refine(insideFolder, 'Must be a relative path inside the job folder')
+/** A folder a runner keeps for one bot across jobs, at a path inside the job folder; it never travels. */
+export const fleetRunnerCacheSchema = z
+  .object({ name: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,62}$/), path: fleetRunnerRelativePathSchema })
+  .strict()
+export type FleetRunnerCache = z.infer<typeof fleetRunnerCacheSchema>
+const fleetRunnerEnvSchema = z
+  .record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/), z.string())
+  .refine(
+    (env) =>
+      Object.keys(env).length <= FLEET_RUNNER_LIMITS.envEntriesMax &&
+      fleetJsonBytes(env) <= FLEET_RUNNER_LIMITS.envBytesMax,
+    'Too many or too large environment variables'
+  )
+/**
+ * One job as a bot submits it: the folder of its environment the inputs come from and the outputs go back to, the
+ * command, the outputs to bring back, and how long it may wait for a runner and run.
+ */
+export const fleetRunnerJobSpecSchema = z
+  .object({
+    folder: z
+      .string()
+      .min(2)
+      .max(FLEET_RUNNER_LIMITS.pathMax)
+      .refine(
+        (value) => value.startsWith('/') && !value.includes('\0') && !value.split('/').includes('..'),
+        'Must be an absolute folder of the bot environment'
+      ),
+    command: z
+      .string()
+      .min(1)
+      .refine(
+        (value) => new TextEncoder().encode(value).byteLength <= FLEET_RUNNER_LIMITS.commandBytesMax,
+        'The command is too large'
+      ),
+    outputs: z.array(fleetRunnerRelativePathSchema).min(1).max(FLEET_RUNNER_LIMITS.listMax),
+    exclude: z.array(fleetRunnerRelativePathSchema).max(FLEET_RUNNER_LIMITS.listMax).optional(),
+    caches: z.array(fleetRunnerCacheSchema).max(FLEET_RUNNER_LIMITS.listMax).default([]),
+    env: fleetRunnerEnvSchema.default({}),
+    image: z.string().min(1).max(FLEET_RUNNER_LIMITS.imageMax).optional(),
+    timeoutMinutes: z
+      .number()
+      .int()
+      .min(1)
+      .max(FLEET_RUNNER_LIMITS.timeoutMinutesMax)
+      .default(FLEET_RUNNER_LIMITS.timeoutMinutesDefault),
+    queueTimeoutMinutes: z
+      .number()
+      .int()
+      .min(0)
+      .max(FLEET_RUNNER_LIMITS.queueMinutesMax)
+      .default(FLEET_RUNNER_LIMITS.queueMinutesDefault),
+  })
+  .strict()
+export type FleetRunnerJobSpec = z.infer<typeof fleetRunnerJobSpecSchema>
+/** What a runner receives of a job: the spec without what only the bot's environment and the gateway use. */
+export const fleetRunnerAssignedSpecSchema = fleetRunnerJobSpecSchema.omit({ exclude: true, queueTimeoutMinutes: true })
+export type FleetRunnerAssignedSpec = z.infer<typeof fleetRunnerAssignedSpecSchema>
+export const FLEET_RUNNER_JOB_STATES = [
+  'queued',
+  'assigned',
+  'running',
+  'finishing',
+  'succeeded',
+  'failed',
+  'cancelled',
+  'expired',
+  'lost',
+] as const
+export const fleetRunnerJobStateSchema = z.enum(FLEET_RUNNER_JOB_STATES)
+export type FleetRunnerJobState = z.infer<typeof fleetRunnerJobStateSchema>
+/** The states a job never leaves. */
+export const FLEET_RUNNER_JOB_FINAL_STATES: readonly FleetRunnerJobState[] = [
+  'succeeded',
+  'failed',
+  'cancelled',
+  'expired',
+  'lost',
+]
+/**
+ * Why a job was refused or did not succeed. `runner_not_linked`: no computer runs jobs for the bot (or the named one
+ * does not); `runner_unmatched`: none can meet the job's requirements; `runner_busy`: the bot has too many jobs queued
+ * or running; `runner_unlinked`: the runner's link was removed; `runner_lost`: the runner went away and did not come
+ * back; `queue_timeout`: no runner took it in time; `exit_code`: the command failed; the rest are reported by runners.
+ */
+export const fleetRunnerErrorCodeSchema = z.enum([
+  'runner_not_linked',
+  'runner_unmatched',
+  'runner_busy',
+  'runner_unlinked',
+  'runner_lost',
+  'queue_timeout',
+  'exit_code',
+  'timeout',
+  'transfer_failed',
+  'outputs_too_large',
+  'outputs_undelivered',
+  'runner_restarted',
+  'runner_disk_full',
+  'executor_unavailable',
+])
+export type FleetRunnerErrorCode = z.infer<typeof fleetRunnerErrorCodeSchema>
+export const fleetRunnerErrorSchema = z
+  .object({ code: fleetRunnerErrorCodeSchema, message: z.string().max(1_000) })
+  .strict()
+export type FleetRunnerError = z.infer<typeof fleetRunnerErrorSchema>
+/** A job as its bot and the owner's devices see it: never its command, environment variables or files. */
+export const fleetRunnerJobSchema = z
+  .object({
+    jobId: fleetRunnerJobIdSchema,
+    botId: fleetBotIdSchema,
+    runnerId: fleetRunnerIdSchema.nullable(),
+    runnerName: fleetRunnerNameSchema.nullable(),
+    state: fleetRunnerJobStateSchema,
+    requires: fleetRunnerRequirementsSchema,
+    cancelRequested: z.boolean(),
+    createdAt: fleetTimestampSchema,
+    queueDeadline: fleetTimestampSchema,
+    assignedAt: fleetTimestampSchema.nullable(),
+    startedAt: fleetTimestampSchema.nullable(),
+    endedAt: fleetTimestampSchema.nullable(),
+    exitCode: z.number().int().nullable(),
+    error: fleetRunnerErrorSchema.nullable(),
+  })
+  .strict()
+export type FleetRunnerJob = z.infer<typeof fleetRunnerJobSchema>
+/**
+ * A computer that runs jobs for a bot, as the bot sees it. `online`: it is connected and takes jobs now;
+ * `capabilities`: its last report, kept while it is offline.
+ */
+export const fleetRunnerLinkSchema = z.object({
+  runnerId: fleetRunnerIdSchema,
+  name: fleetRunnerNameSchema,
+  online: z.boolean(),
+  capabilities: fleetRunnerCapabilitiesSchema.nullable(),
+  busySlots: z.number().int().nonnegative(),
+  lastSeenAt: fleetTimestampSchema.nullable(),
+  linkedAt: fleetTimestampSchema,
+})
+export type FleetRunnerLink = z.infer<typeof fleetRunnerLinkSchema>
+/** The same link as the owner's computers see it: `self` marks the link of the computer asking. */
+export const fleetRunnerLinkViewSchema = fleetRunnerLinkSchema.extend({ self: z.boolean() })
+export type FleetRunnerLinkView = z.infer<typeof fleetRunnerLinkViewSchema>
+/** A job for one runner, sent only on that runner's newest stream; one it does not accept by `acceptBy` goes back. */
+export const fleetRunnerJobEventSchema = z.object({
+  type: z.literal('runner.job'),
+  at: fleetTimestampSchema,
+  jobId: fleetRunnerJobIdSchema,
+  botId: fleetBotIdSchema,
+  runnerId: fleetRunnerIdSchema,
+  spec: fleetRunnerAssignedSpecSchema,
+  acceptBy: fleetTimestampSchema,
+})
+export type FleetRunnerJobEvent = z.infer<typeof fleetRunnerJobEventSchema>
+/** The runner stops a job it holds: the bot or the owner cancelled it, or its link was removed. */
+export const fleetRunnerCancelEventSchema = z.object({
+  type: z.literal('runner.cancel'),
+  at: fleetTimestampSchema,
+  jobId: fleetRunnerJobIdSchema,
+})
+export type FleetRunnerCancelEvent = z.infer<typeof fleetRunnerCancelEventSchema>
+
 export const fleetGatewayEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('artifact.changed'), at: fleetTimestampSchema, artifactId: fleetArtifactIdSchema }),
   z.object({
@@ -1316,6 +1529,19 @@ export const fleetGatewayEventSchema = z.discriminatedUnion('type', [
     botId: fleetBotIdSchema,
     links: z.array(fleetDesktopLinkViewSchema).max(FLEET_DESKTOP_BRIDGE_LIMITS.linksPerBotMax),
   }),
+  // Runner events (`runners`): sent only to the streams that asked for them (`runners=1`); a job and its cancel only
+  // to the newest stream of the runner the job was assigned to.
+  fleetRunnerJobEventSchema,
+  fleetRunnerCancelEventSchema,
+  /** The computers that run jobs for a bot changed; each computer reads its own link as `self`. */
+  z.object({
+    type: z.literal('runner_link.updated'),
+    at: fleetTimestampSchema,
+    botId: fleetBotIdSchema,
+    links: z.array(fleetRunnerLinkViewSchema).max(FLEET_RUNNER_LIMITS.linksPerBotMax),
+  }),
+  /** A job changed state. */
+  z.object({ type: z.literal('runner_job.updated'), at: fleetTimestampSchema, job: fleetRunnerJobSchema }),
   // Routine runs (`routine-conversations`): sent only to the streams that asked for them (`routineRuns=1`).
   z.object({
     type: z.literal('routine_run.updated'),
