@@ -1221,13 +1221,13 @@ export class Store {
   /** The computers that run jobs for a bot, oldest link first. */
   runnerLinks(botId: string): StoredRunnerLink[] {
     return (
-      this.db.prepare('SELECT * FROM runner_links WHERE bot_id=? ORDER BY linked_at, runner_id').all(botId) as Row[]
+      this.db.prepare('SELECT * FROM runner_links WHERE bot_id=? ORDER BY linked_at, rowid').all(botId) as Row[]
     ).map((row) => this.runnerLink(row))
   }
   runnerLinksOfDevice(deviceId: string): StoredRunnerLink[] {
     return (
       this.db
-        .prepare('SELECT * FROM runner_links WHERE device_id=? ORDER BY linked_at, runner_id')
+        .prepare('SELECT * FROM runner_links WHERE device_id=? ORDER BY linked_at, rowid')
         .all(deviceId) as Row[]
     ).map((row) => this.runnerLink(row))
   }

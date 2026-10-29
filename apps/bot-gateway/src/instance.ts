@@ -47,6 +47,7 @@ import {
   type FleetMcpImportRequest,
   type FleetDesktopCallResult,
   type FleetHostDesktopCallRequest,
+  type FleetInstanceRunnerJobState,
 } from '@maestrly/bot-fleet-protocol'
 import { createHash } from 'node:crypto'
 import http from 'node:http'
@@ -556,6 +557,12 @@ export class InstanceClient {
   /** Tells a workspaces host that the gateway changed one of its bots' links, so it checks its own side. */
   hostDesktopLinksChanged(botId: string): Promise<void> {
     return this.call('hostDesktopLinksChanged', {}, undefined, { botId })
+  }
+  /** Tells a bot's environment where one of its jobs stands (`runner-jobs`). */
+  runnerJobState(jobId: string, body: FleetInstanceRunnerJobState): Promise<void> {
+    if (!this.scope?.environments)
+      throw new GatewayError('BOT_NOT_RUNNING', "This bot's environment cannot take runner jobs")
+    return this.call('botRunnerJobState', { botId: this.scope.botId, jobId }, undefined, body)
   }
   /** Installs a bot in the environment, or updates it: its profile, display slot and gateway token. */
   botInstall(botId: string, body: FleetInstanceBotInstall): Promise<FleetInstanceStatus> {
