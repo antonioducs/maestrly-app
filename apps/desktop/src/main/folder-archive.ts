@@ -182,7 +182,11 @@ export async function scanFolder(
 }
 
 /** Exactly `size` bytes of the file: a file that shrank since is padded with zeros, one that grew is cut. */
-async function* exactly(handle: FileHandle, size: number, read: (bytes: number) => void): AsyncGenerator<Buffer> {
+export async function* exactly(
+  handle: FileHandle,
+  size: number,
+  read: (bytes: number) => void
+): AsyncGenerator<Buffer> {
   let position = 0
   while (position < size) {
     const length = Math.min(READ_BYTES, size - position)
