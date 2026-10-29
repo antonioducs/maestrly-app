@@ -3,6 +3,7 @@ import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   BotChromium,
+  CHROMIUM_ENCRYPTED_SESSIONS_FOLDER,
   CHROMIUM_SESSIONS_FOLDER,
   COOKIES_IMPORTED_MARKER,
   type BotChromiumFs,
@@ -255,11 +256,14 @@ describe('BotChromium', () => {
 
   it('removes Chromium’s own record of its tabs before each start, once a browser left behind is stopped', async () => {
     const sessions = path.join(PROFILE, CHROMIUM_SESSIONS_FOLDER)
+    // Newer builds keep it encrypted, in a folder of its own: restoring the last session would reopen those tabs too.
+    const encrypted = path.join(PROFILE, CHROMIUM_ENCRYPTED_SESSIONS_FOLDER)
     const record = path.join(sessions, 'Session_1')
+    const encryptedRecord = path.join(encrypted, 'Session_1')
     const cookies = path.join(PROFILE, 'Default', 'Cookies')
     let failStaleStop = false
     const { chromium, order, files, log } = setup({
-      files: { [record]: 'tabs', [cookies]: 'db' },
+      files: { [record]: 'tabs', [encryptedRecord]: 'tabs', [cookies]: 'db' },
       beforeStart: async () => {
         order.push('stop stale')
         if (failStaleStop) throw new Error('still running')
@@ -267,8 +271,9 @@ describe('BotChromium', () => {
     })
     await chromium.state('conv-a')
     // `--restore-last-session` then brings back the session cookies without reopening tabs of Chromium's own.
-    expect(order).toEqual(['stop stale', `remove ${sessions}`, 'spawn'])
+    expect(order).toEqual(['stop stale', `remove ${sessions}`, `remove ${encrypted}`, 'spawn'])
     expect(files.has(record)).toBe(false)
+    expect(files.has(encryptedRecord)).toBe(false)
     expect(files.has(cookies)).toBe(true)
 
     // The record goes even when the browser left behind could not be stopped, and the browser starts anyway.
@@ -276,7 +281,7 @@ describe('BotChromium', () => {
     failStaleStop = true
     order.length = 0
     await chromium.state('conv-a')
-    expect(order).toEqual(['stop stale', `remove ${sessions}`, 'spawn'])
+    expect(order).toEqual(['stop stale', `remove ${sessions}`, `remove ${encrypted}`, 'spawn'])
     expect(log).toHaveBeenCalledWith(expect.stringContaining('Could not prepare the Chromium profile of bot bot-1'))
   })
 

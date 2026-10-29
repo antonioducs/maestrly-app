@@ -5,6 +5,13 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Fixed
+
+- A bot's Chromium no longer reopens a page twice after it restarts. Newer
+  Chromium builds keep their record of open tabs in a second, encrypted folder
+  that Maestrly did not clear, so the browser reopened those tabs on its own
+  next to the ones the bot restores.
+
 ## [0.29.1] - 2026-10-27
 
 ### Fixed

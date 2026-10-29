@@ -11,6 +11,8 @@ const SAVE_DELAY_MS = 500
 export const COOKIES_IMPORTED_MARKER = '.maestrly-shared-cookies-imported'
 /** Chromium's own record of its windows and tabs, in the profile, which `--restore-last-session` would reopen. */
 export const CHROMIUM_SESSIONS_FOLDER = path.join('Default', 'Sessions')
+/** Where newer Chromium builds keep that record, encrypted, beside or instead of the plain one. */
+export const CHROMIUM_ENCRYPTED_SESSIONS_FOLDER = path.join('Default', 'Sessions_Encrypted')
 const DEFAULT_TAB_URL = 'https://www.google.com'
 
 export interface BotChromiumTab {
@@ -283,7 +285,8 @@ export class BotChromium {
     try {
       await this.options.beforeStart?.()
     } finally {
-      await this.files.removeFolder(path.join(this.options.profile, CHROMIUM_SESSIONS_FOLDER))
+      for (const folder of [CHROMIUM_SESSIONS_FOLDER, CHROMIUM_ENCRYPTED_SESSIONS_FOLDER])
+        await this.files.removeFolder(path.join(this.options.profile, folder))
     }
   }
 
