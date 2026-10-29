@@ -32,6 +32,8 @@ import { Peers } from '../src/peers.js'
 import { DictationService } from '../src/dictation.js'
 import { Store } from '../src/store.js'
 import { Routines } from '../src/routines.js'
+import { lifecycleRunnerEnvironments, Runners } from '../src/runners.js'
+import { RunnerTransfers } from '../src/runner-transfers.js'
 
 const cleanups: Array<() => Promise<void>> = []
 const dirs: string[] = []
@@ -52,12 +54,16 @@ afterEach(async () => {
  * it edits the owner's last message, recorded in `edits`; it refuses one of input `busy` as a bot that is working.
  * With `videoScreens` it streams its screens as video, so the gateway issues tickets for them.
  */
+/** Routes of the fake instance answered by the test itself; true when it took the request. */
+export type InstanceRoutes = (req: http.IncomingMessage, res: http.ServerResponse) => boolean
+
 async function fake(
   environments: boolean,
   compaction = false,
   runtimes = false,
   messageEdit = false,
-  videoScreens = false
+  videoScreens = false,
+  extra: { capabilities?: string[]; routes?: InstanceRoutes } = {}
 ) {
   let account: { id: string; label: string } | null = null
   const installed = new Map<string, { slot: number; gatewayToken: string }>()
@@ -131,6 +137,7 @@ async function fake(
         : ['provisioning']),
       ...(messageEdit ? ['message-edit'] : []),
       ...(videoScreens ? ['video-screens'] : []),
+      ...(extra.capabilities ?? []),
     ],
     runtimes: runtimes
       ? ([
@@ -216,6 +223,7 @@ async function fake(
     }
     if (req.headers[FLEET_PROTOCOL_HEADER.toLowerCase()] !== '1' || req.headers.authorization !== 'Bearer control')
       return send(401, { code: 'UNAUTHORIZED', message: 'Unauthorized' })
+    if (extra.routes?.(req, res)) return
     // A bot's route of an environment instance is the route a single-bot instance serves, under /v1/bots/:botId.
     const scoped = environments ? /^\/v1\/bots\/([^/?]+)(\/[^?]*)(\?.*)?$/.exec(req.url ?? '') : null
     if (scoped) {
@@ -507,6 +515,12 @@ export async function harness(
     pushOff?: boolean
     /** What the gateway's dictation calls instead of the providers. */
     dictationFetch?: typeof fetch
+    /** More capabilities the instance announces. */
+    instanceCapabilities?: string[]
+    /** Routes of the instance the test answers itself. */
+    instanceRoutes?: InstanceRoutes
+    /** Runners' file transfers reach the fake instance, which has no container to be reached at. */
+    runnerRelay?: boolean
   } = {}
 ) {
   const instance = await fake(
@@ -514,7 +528,8 @@ export async function harness(
       options.compaction === true,
       options.runtimes === true,
       options.messageEdit === true,
-      options.videoScreens === true
+      options.videoScreens === true,
+      { capabilities: options.instanceCapabilities, routes: options.instanceRoutes }
     ),
     dir = mkdtempSync(path.join(os.tmpdir(), 'fleet-routes-'))
   dirs.push(dir)
@@ -554,12 +569,24 @@ export async function harness(
   })
   lifecycle.artifactsEnabled = () => artifacts.settings().enabled
   const peerThreads = new PeerThreads(store, lifecycle, now)
+  const eventHub = new EventHub(async () => {})
+  const runners = new Runners(store, eventHub, lifecycleRunnerEnvironments(lifecycle))
+  const runnerTransfers = options.runnerRelay
+    ? new RunnerTransfers({
+        target: () => ({ host: '127.0.0.1', secret: 'control' }),
+        instancePort: Number(new URL(instance.origin).port),
+        idleTimeoutMs: 30_000,
+        authorize: (jobId, deviceId, key) => runners.authorizeTransfer(jobId, deviceId, key),
+      })
+    : undefined
   const gateway = createGatewayServers({
     network,
     artifacts,
     auth,
     config: { ...cfg, publicPort: 0, internalPort: 0 },
-    events: new EventHub(async () => {}),
+    events: eventHub,
+    runners,
+    ...(runnerTransfers ? { runnerTransfers } : {}),
     host: new HostMonitor(cfg, docker),
     lifecycle,
     routines: new Routines(store, lifecycle, now),
