@@ -1122,6 +1122,7 @@ export default {
         empty: 'Nenhum trabalho está rodando aqui.',
         cancel: 'Cancelar',
         cancelling: 'Cancelando…',
+        log: 'Log',
         phase: {
           preparing: 'Preparando arquivos',
           running: 'Rodando',
@@ -1130,6 +1131,20 @@ export default {
         },
         bot: '{{bot}} em {{server}}',
         unknownBot: 'Um bot',
+      },
+      history: {
+        title: 'Trabalhos recentes',
+        desc: 'Os trabalhos que terminaram neste computador há pouco, com o final dos logs.',
+        empty: 'Nenhum trabalho terminou aqui há pouco.',
+        outcome: {
+          succeeded: 'Concluído',
+          failed: 'Falhou',
+          cancelled: 'Cancelado',
+        },
+        exitCode: 'Código de saída {{code}}',
+        took: 'levou {{time}}',
+        peakMemory: 'pico de memória {{memory}}',
+        cpuTime: 'tempo de CPU {{time}}',
       },
     },
     computers: {

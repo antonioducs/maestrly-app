@@ -1117,6 +1117,7 @@ export default {
         empty: 'No job is running here.',
         cancel: 'Cancel',
         cancelling: 'Cancelling…',
+        log: 'Log',
         phase: {
           preparing: 'Preparing files',
           running: 'Running',
@@ -1125,6 +1126,20 @@ export default {
         },
         bot: '{{bot}} on {{server}}',
         unknownBot: 'A bot',
+      },
+      history: {
+        title: 'Recent jobs',
+        desc: 'The jobs that ended on this computer lately, with the end of their logs.',
+        empty: 'No job has ended here lately.',
+        outcome: {
+          succeeded: 'Done',
+          failed: 'Failed',
+          cancelled: 'Cancelled',
+        },
+        exitCode: 'Exit code {{code}}',
+        took: 'took {{time}}',
+        peakMemory: 'peak memory {{memory}}',
+        cpuTime: 'CPU time {{time}}',
       },
     },
     computers: {

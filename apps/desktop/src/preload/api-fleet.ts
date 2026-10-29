@@ -1,5 +1,6 @@
 import type {
   FleetDevicesResponse,
+  FleetRunnerJobLogPage,
   FleetDictationKeyResponse,
   FleetDictationStatus,
   FleetLoginAttempt,
@@ -656,6 +657,16 @@ export const fleetApi = {
   /** Removes another computer's link; that computer deletes what it kept when it hears of it. */
   fleetRunnerAccessRemoveOther: (serverId: FleetServerId, botId: string, runnerId: string): Promise<RunnerAccessView> =>
     ipcRenderer.invoke('fleet:runnerAccess:removeOther', serverId, botId, runnerId),
+  /** Cancels one of the bot's jobs on whichever computer runs it; resolves with the bot's runners as they are then. */
+  fleetRunnerJobCancel: (serverId: FleetServerId, botId: string, jobId: string): Promise<RunnerAccessView> =>
+    ipcRenderer.invoke('fleet:runnerAccess:cancelJob', serverId, botId, jobId),
+  /** A piece of the log of one of the bot's jobs, from the byte `offset` or, when null, from the end of the log. */
+  fleetRunnerJobLog: (
+    serverId: FleetServerId,
+    botId: string,
+    jobId: string,
+    offset: number | null
+  ): Promise<FleetRunnerJobLogPage> => ipcRenderer.invoke('fleet:runnerAccess:jobLog', serverId, botId, jobId, offset),
   onFleetRunnerAccess: (cb: (serverId: FleetServerId, botId: string) => void): (() => void) =>
     subscribe<{ serverId: FleetServerId; botId: string }>('fleet:runner-access', (p) => cb(p.serverId, p.botId)),
   onFleetEvent: (cb: (serverId: FleetServerId, event: FleetGatewayEvent) => void): (() => void) =>

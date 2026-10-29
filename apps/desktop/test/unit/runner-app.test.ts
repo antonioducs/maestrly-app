@@ -107,7 +107,7 @@ describe('the runner of the app', () => {
       platform: 'linux',
       createWorker: (workerDeps) => {
         deps = workerDeps
-        return { start: async () => undefined, jobs: () => [] } as never
+        return { start: async () => undefined, jobs: () => [], history: () => [] } as never
       },
     })
     await host.status()

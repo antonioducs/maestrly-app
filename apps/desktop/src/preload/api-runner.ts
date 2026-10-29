@@ -1,3 +1,4 @@
+import type { FleetRunnerJobLogPage } from '@maestrly/bot-fleet-protocol'
 import { ipcRenderer } from 'electron'
 import type { RunnerConfig, RunnerConfigPatch, RunnerScopeInput, RunnerStatus } from '../shared/runner'
 
@@ -22,6 +23,12 @@ export const runnerApi = {
   runnerClearCaches: (scope?: RunnerScopeInput): Promise<void> => ipcRenderer.invoke('runner:clearCaches', scope),
   runnerCancelJob: (serverId: string, jobId: string): Promise<void> =>
     ipcRenderer.invoke('runner:cancelJob', { serverId, jobId }),
+  /**
+   * A piece of the log of a job this computer holds or ran lately: from the byte `offset` (the `next` of the piece
+   * before), or from the end of the log when null.
+   */
+  runnerJobLog: (serverId: string, jobId: string, offset: number | null): Promise<FleetRunnerJobLogPage> =>
+    ipcRenderer.invoke('runner:jobLog', { serverId, jobId, offset }),
   /** Asks for the folder the runner keeps its files in; null when none was chosen. */
   runnerChooseStorageDir: (): Promise<string | null> => ipcRenderer.invoke('runner:chooseStorageDir'),
   onRunnerChanged: (cb: () => void): (() => void) => subscribe('runner:changed', cb),

@@ -1,5 +1,10 @@
-import { fleetBotIdSchema } from '@maestrly/bot-fleet-protocol'
-import { runnerCancelInputSchema, runnerScopeSchema } from '../../../shared/runner'
+import { fleetBotIdSchema, fleetRunnerJobIdSchema } from '@maestrly/bot-fleet-protocol'
+import {
+  runnerCancelInputSchema,
+  runnerJobLogInputSchema,
+  runnerLogOffsetSchema,
+  runnerScopeSchema,
+} from '../../../shared/runner'
 import type { IpcRegistrar } from '../../ipc-registrar'
 import type { RunnerHost } from './runner-host'
 import type { FleetIpcRegistrar } from './scoped-ipc'
@@ -37,6 +42,10 @@ export function registerRunnerIpc(
     const { serverId, jobId } = runnerCancelInputSchema.parse(input)
     return host.cancelJob(serverId, jobId)
   })
+  reg.handle('runner:jobLog', (_event, input: unknown) => {
+    const { serverId, jobId, offset } = runnerJobLogInputSchema.parse(input)
+    return host.jobLog(serverId, jobId, offset)
+  })
   reg.mhandle('runner:chooseStorageDir', (event) => deps.chooseFolder(event, host.config().storageDir))
 
   scoped.handle('fleet:runnerAccess:get', (client, _event, botId: unknown) =>
@@ -50,5 +59,16 @@ export function registerRunnerIpc(
   )
   scoped.mhandle('fleet:runnerAccess:removeOther', (client, _event, botId: unknown, runnerId: unknown) =>
     host.removeOther(client, fleetBotIdSchema.parse(botId), runnerId)
+  )
+  scoped.mhandle('fleet:runnerAccess:cancelJob', (client, _event, botId: unknown, jobId: unknown) =>
+    host.cancelBotJob(client, fleetBotIdSchema.parse(botId), fleetRunnerJobIdSchema.parse(jobId))
+  )
+  scoped.handle('fleet:runnerAccess:jobLog', (client, _event, botId: unknown, jobId: unknown, offset: unknown) =>
+    host.botJobLog(
+      client,
+      fleetBotIdSchema.parse(botId),
+      fleetRunnerJobIdSchema.parse(jobId),
+      runnerLogOffsetSchema.parse(offset)
+    )
   )
 }

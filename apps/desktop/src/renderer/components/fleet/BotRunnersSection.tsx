@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { AlertTriangle, Cpu, ShieldAlert } from 'lucide-react'
+import { AlertTriangle, Cpu, Loader2, ShieldAlert } from 'lucide-react'
 import { FLEET_RUNNER_JOB_FINAL_STATES, FLEET_RUNNER_LIMITS, type FleetBot } from '@maestrly/bot-fleet-protocol'
-import type { FleetRunnerJob, FleetRunnerLinkView } from '@maestrly/bot-fleet-protocol'
+import type { FleetRunnerJob, FleetRunnerJobLogPage, FleetRunnerLinkView } from '@maestrly/bot-fleet-protocol'
 import type { RunnerAccessView } from '../../../shared/runner'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
@@ -13,11 +13,22 @@ import { RUNNER_OS_NAMES } from '@/lib/runner'
 import { useSettings } from '@/lib/use-settings'
 import { cn } from '@/lib/utils'
 import { fieldInput } from './BotAccessCard'
+import { RunnerLogDialog } from './RunnerLogDialog'
+import { RunnerUsage } from './RunnerUsage'
 import { SettingsCard, SettingsSection } from './SettingsSection'
 import { SettingsSwitch } from './SettingsSwitch'
 
 /** The newest jobs the tab lists. */
 const JOBS_SHOWN = 10
+/** How often the tab reads the jobs again while one is not over and the window is in view. */
+const JOBS_REFRESH_MS = 5_000
+
+/** Whether a job can still change: it is waiting, or running, or sending its results. */
+const inProgress = (job: FleetRunnerJob): boolean => !FLEET_RUNNER_JOB_FINAL_STATES.includes(job.state)
+
+/** The jobs the tab lists, the newest first. */
+export const newestJobs = (jobs: readonly FleetRunnerJob[]): FleetRunnerJob[] =>
+  [...jobs].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, JOBS_SHOWN)
 
 /**
  * Which computers run this bot's jobs: on a computer that runs jobs for bots, the switch that lets this bot use it under a
@@ -53,6 +64,16 @@ export function BotRunnersSection({ bot, id }: { bot: FleetBot; id: string }) {
     }
   }, [serverId, bot.id, refresh])
 
+  // The server tells this tab of a job's changes only when this computer runs jobs; so while one is not over, it asks.
+  const active = view?.jobs ? newestJobs(view.jobs).some(inProgress) : false
+  useEffect(() => {
+    if (!active) return
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') void refresh()
+    }, JOBS_REFRESH_MS)
+    return () => clearInterval(timer)
+  }, [active, refresh])
+
   /** Runs a change and shows the view it answers with; a failure is said and keeps the dialog it came from open. */
   const perform = useCallback(async (action: () => Promise<RunnerAccessView>): Promise<boolean> => {
     setBusy(true)
@@ -78,6 +99,16 @@ export function BotRunnersSection({ bot, id }: { bot: FleetBot; id: string }) {
       onLink={(name) => perform(() => window.api.fleetRunnerAccessLink(serverId, bot.id, name))}
       onUnlink={() => perform(() => window.api.fleetRunnerAccessUnlink(serverId, bot.id))}
       onRemove={(link) => perform(() => window.api.fleetRunnerAccessRemoveOther(serverId, bot.id, link.runnerId))}
+      onCancelJob={async (job) => {
+        try {
+          setView(await window.api.fleetRunnerJobCancel(serverId, bot.id, job.jobId))
+        } catch (cause) {
+          // The job may have ended just before: the tab shows how it is now.
+          void refresh()
+          throw cause
+        }
+      }}
+      readJobLog={(job, offset) => window.api.fleetRunnerJobLog(serverId, bot.id, job.jobId, offset)}
     />
   )
 }
@@ -93,10 +124,25 @@ export interface BotRunnersViewProps {
   onLink(name: string): Promise<boolean>
   onUnlink(): Promise<boolean>
   onRemove(link: FleetRunnerLinkView): Promise<boolean>
+  /** Stops a job on whichever computer runs it; rejects with why it could not. */
+  onCancelJob(job: FleetRunnerJob): Promise<void>
+  /** One piece of a job's log (see `FleetRunnerJobLogPage`). */
+  readJobLog(job: FleetRunnerJob, offset: number | null): Promise<FleetRunnerJobLogPage>
 }
 
 /** What the Runners tab shows for a view; the section above keeps the state, this only draws it. */
-export function BotRunnersView({ id, view, loadError, busy, error, onLink, onUnlink, onRemove }: BotRunnersViewProps) {
+export function BotRunnersView({
+  id,
+  view,
+  loadError,
+  busy,
+  error,
+  onLink,
+  onUnlink,
+  onRemove,
+  onCancelJob,
+  readJobLog,
+}: BotRunnersViewProps) {
   const { t, i18n } = useTranslation('fleet')
   const { openSettings } = useSettings()
   /** Whether the person is turning this computer on and has not saved yet. */
@@ -104,6 +150,10 @@ export function BotRunnersView({ id, view, loadError, busy, error, onLink, onUnl
   const [name, setName] = useState('')
   const [confirming, setConfirming] = useState(false)
   const [removing, setRemoving] = useState<FleetRunnerLinkView | null>(null)
+  /** The job whose log is open, by id: it is looked up in the view, so that the log follows the job's state. */
+  const [logJobId, setLogJobId] = useState<string | null>(null)
+  const [cancelling, setCancelling] = useState<ReadonlySet<string>>(new Set())
+  const [cancelErrors, setCancelErrors] = useState<Readonly<Record<string, string>>>({})
   const self = view?.self ?? null
   // The name starts as the link's, else this computer's pairing name; the person's edits stay until the link changes.
   const startName = self?.name ?? view?.defaultName ?? ''
@@ -111,6 +161,20 @@ export function BotRunnersView({ id, view, loadError, busy, error, onLink, onUnl
 
   const date = (value: string) =>
     new Date(value).toLocaleString(i18n.language, { dateStyle: 'medium', timeStyle: 'short' })
+  const cancelJob = (job: FleetRunnerJob) => {
+    setCancelling((current) => new Set(current).add(job.jobId))
+    setCancelErrors((current) => Object.fromEntries(Object.entries(current).filter(([key]) => key !== job.jobId)))
+    onCancelJob(job)
+      .catch((cause) => setCancelErrors((current) => ({ ...current, [job.jobId]: fleetErrorMessage(cause) })))
+      .finally(() =>
+        setCancelling((current) => {
+          const rest = new Set(current)
+          rest.delete(job.jobId)
+          return rest
+        })
+      )
+  }
+  const logJob = logJobId ? (view?.jobs?.find((job) => job.jobId === logJobId) ?? null) : null
 
   return (
     <SettingsSection id={id} title={t('botSettings.runners.title')} note={t('botSettings.runners.note')}>
@@ -284,12 +348,18 @@ export function BotRunnersView({ id, view, loadError, busy, error, onLink, onUnl
                 </p>
               ) : view.jobs.length ? (
                 <SettingsCard className="divide-y divide-border">
-                  {[...view.jobs]
-                    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-                    .slice(0, JOBS_SHOWN)
-                    .map((job) => (
-                      <JobRow key={job.jobId} job={job} date={date} />
-                    ))}
+                  {newestJobs(view.jobs).map((job) => (
+                    <JobRow
+                      key={job.jobId}
+                      job={job}
+                      date={date}
+                      cpus={view.links?.find((item) => item.runnerId === job.runnerId)?.capabilities?.cpus ?? null}
+                      cancelling={cancelling.has(job.jobId)}
+                      error={cancelErrors[job.jobId] ?? ''}
+                      onCancel={() => cancelJob(job)}
+                      onLog={() => setLogJobId(job.jobId)}
+                    />
+                  ))}
                 </SettingsCard>
               ) : (
                 <p className="text-xs text-muted-foreground">{t('botSettings.runners.jobs.empty')}</p>
@@ -298,6 +368,18 @@ export function BotRunnersView({ id, view, loadError, busy, error, onLink, onUnl
           </>
         )}
       </div>
+      {logJob && (
+        <RunnerLogDialog
+          title={t('botSettings.runners.log.title')}
+          subtitle={[logJob.runnerName ?? t('botSettings.runners.jobs.unknownRunner'), date(logJob.createdAt)].join(
+            ' · '
+          )}
+          jobId={logJob.jobId}
+          live={inProgress(logJob)}
+          read={(offset) => readJobLog(logJob, offset)}
+          onClose={() => setLogJobId(null)}
+        />
+      )}
       {confirming && (
         <ConfirmDialog
           title={t('botSettings.runners.thisComputer.turnOffTitle')}
@@ -411,21 +493,74 @@ function RunnerRow({
   )
 }
 
-/** One of the bot's jobs: its state, the runner that has it or had it, and when it was sent. */
-function JobRow({ job, date }: { job: FleetRunnerJob; date: (value: string) => string }) {
+/**
+ * One of the bot's jobs: its state, the runner that has it or had it, when it was sent, what it uses while it runs, and
+ * the ways to read its log (once it started) and to stop it (until it is over).
+ */
+function JobRow({
+  job,
+  date,
+  cpus,
+  cancelling,
+  error,
+  onCancel,
+  onLog,
+}: {
+  job: FleetRunnerJob
+  date: (value: string) => string
+  /** How many processors the job's runner has, when known. */
+  cpus: number | null
+  cancelling: boolean
+  error: string
+  onCancel(): void
+  onLog(): void
+}) {
   const { t } = useTranslation('fleet')
-  const ended = FLEET_RUNNER_JOB_FINAL_STATES.includes(job.state)
+  const ended = !inProgress(job)
+  const stopping = cancelling || job.cancelRequested
   return (
     <div data-testid="fleet-runner-job" data-state={job.state} className="flex flex-col gap-0.5 px-[18px] py-3">
-      <span className="flex flex-wrap items-center gap-2 text-sm font-medium">
-        {t(`botSettings.runners.jobs.state.${job.state}`)}
-        <span className="text-xs font-normal text-muted-foreground">
-          {job.runnerName ?? t('botSettings.runners.jobs.unknownRunner')}
-        </span>
-      </span>
-      <span className="text-xs text-muted-foreground">{date(job.createdAt)}</span>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className="flex flex-wrap items-center gap-2 text-sm font-medium">
+            {t(`botSettings.runners.jobs.state.${job.state}`)}
+            <span className="text-xs font-normal text-muted-foreground">
+              {job.runnerName ?? t('botSettings.runners.jobs.unknownRunner')}
+            </span>
+          </span>
+          <span className="text-xs text-muted-foreground">{date(job.createdAt)}</span>
+        </div>
+        {(job.startedAt !== null || !ended) && (
+          <div className="flex shrink-0 items-center gap-1.5">
+            {job.startedAt !== null && (
+              <Button type="button" variant="outline" size="sm" className="h-7 text-[12px]" onClick={onLog}>
+                {t('botSettings.runners.jobs.log')}
+              </Button>
+            )}
+            {!ended && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 text-[12px]"
+                disabled={stopping}
+                onClick={onCancel}
+              >
+                {cancelling && <Loader2 className="mr-1 size-3 animate-spin" aria-hidden="true" />}
+                {t(stopping ? 'botSettings.runners.jobs.cancelling' : 'botSettings.runners.jobs.cancel')}
+              </Button>
+            )}
+          </div>
+        )}
+      </div>
+      {job.state === 'running' && job.usage && <RunnerUsage usage={job.usage} cpus={cpus} />}
       {ended && job.state !== 'succeeded' && job.error && (
         <span className="text-xs text-muted-foreground">{job.error.message}</span>
+      )}
+      {error && (
+        <span role="alert" className="text-xs text-destructive" data-testid="fleet-runner-job-error">
+          {t('botSettings.runners.jobs.cancelFailed', { error })}
+        </span>
       )}
     </div>
   )

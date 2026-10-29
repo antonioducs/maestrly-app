@@ -20,6 +20,11 @@ function fakeHost(available = true) {
     status: vi.fn(async (options: unknown) => ({ options })),
     clearCaches: vi.fn(async () => undefined),
     cancelJob: vi.fn(async () => undefined),
+    jobLog: vi.fn(async (_serverId: string, _jobId: string, offset: number | null) => ({ local: offset })),
+    cancelBotJob: vi.fn(async (_client: unknown, botId: string, jobId: string) => ({ cancelled: jobId, botId })),
+    botJobLog: vi.fn(async (_client: unknown, botId: string, jobId: string, offset: number | null) => ({
+      remote: [botId, jobId, offset],
+    })),
     access: vi.fn(async (_client: unknown, botId: string) => ({ view: botId })),
     link: vi.fn(async (_client: unknown, botId: string, name: unknown) => ({ linked: botId, name })),
     unlink: vi.fn(async (_client: unknown, botId: string) => ({ unlinked: botId })),
@@ -117,6 +122,32 @@ describe('runner IPC', () => {
     expect(() => call('runner:cancelJob', JOB)).toThrow()
   })
 
+  it('reads a log of this computer from the offset or the end, and refuses what is not a job or an offset', async () => {
+    const { call, host, handlers } = setup()
+    await expect(call('runner:jobLog', { serverId: SERVER, jobId: JOB, offset: null })).resolves.toEqual({
+      local: null,
+    })
+    await call('runner:jobLog', { serverId: SERVER, jobId: JOB, offset: 1_024 })
+    expect(host.jobLog.mock.calls).toEqual([
+      [SERVER, JOB, null],
+      [SERVER, JOB, 1_024],
+    ])
+    for (const input of [
+      { serverId: SERVER, jobId: JOB },
+      { serverId: SERVER, jobId: JOB, offset: -1 },
+      { serverId: SERVER, jobId: JOB, offset: 1.5 },
+      { serverId: SERVER, jobId: JOB, offset: Number.MAX_SAFE_INTEGER + 2 },
+      { serverId: SERVER, jobId: JOB, offset: '5' },
+      { serverId: SERVER, jobId: '../../etc/passwd', offset: null },
+      { serverId: SERVER, jobId: JOB, offset: null, extra: 1 },
+      JOB,
+    ])
+      expect(() => call('runner:jobLog', input)).toThrow()
+    expect(host.jobLog).toHaveBeenCalledTimes(2)
+    // Reading changes nothing.
+    expect(handlers.get('runner:jobLog')?.mutation).toBe(false)
+  })
+
   it('asks for the storage folder over the folder now chosen', async () => {
     const { call, chooseFolder } = setup()
     await expect(call('runner:chooseStorageDir')).resolves.toBe('/picked')
@@ -140,10 +171,40 @@ describe('runner IPC', () => {
     expect(() => call('fleet:runnerAccess:unlink', SERVER, { id: 'scout' })).toThrow()
   })
 
+  it('cancels and reads the jobs of a bot on the server a call names, validating the bot, the job and the offset', async () => {
+    const { call, host, client, other } = setup()
+    await expect(call('fleet:runnerAccess:cancelJob', SERVER, 'scout', JOB)).resolves.toEqual({
+      cancelled: JOB,
+      botId: 'scout',
+    })
+    expect(host.cancelBotJob).toHaveBeenCalledExactlyOnceWith(client, 'scout', JOB)
+    await expect(call('fleet:runnerAccess:jobLog', OTHER, 'scout', JOB, null)).resolves.toEqual({
+      remote: ['scout', JOB, null],
+    })
+    await call('fleet:runnerAccess:jobLog', SERVER, 'scout', JOB, 2_048)
+    expect(host.botJobLog.mock.calls).toEqual([
+      [other, 'scout', JOB, null],
+      [client, 'scout', JOB, 2_048],
+    ])
+    expect(() => call('fleet:runnerAccess:cancelJob', SERVER, '', JOB)).toThrow()
+    expect(() => call('fleet:runnerAccess:cancelJob', SERVER, 'scout', 'job_short')).toThrow()
+    expect(() => call('fleet:runnerAccess:cancelJob', SERVER, 'scout', { jobId: JOB })).toThrow()
+    expect(() => call('fleet:runnerAccess:cancelJob', 'cccccccc-0000-4000-8000-000000000003', 'scout', JOB)).toThrow(
+      'FLEET_SERVER_UNKNOWN'
+    )
+    expect(() => call('fleet:runnerAccess:jobLog', SERVER, 'scout', 'nope', null)).toThrow()
+    expect(() => call('fleet:runnerAccess:jobLog', SERVER, 'scout', JOB, -1)).toThrow()
+    expect(() => call('fleet:runnerAccess:jobLog', SERVER, 'scout', JOB, 1.5)).toThrow()
+    expect(() => call('fleet:runnerAccess:jobLog', SERVER, 'scout', JOB)).toThrow()
+    expect(host.cancelBotJob).toHaveBeenCalledTimes(1)
+    expect(host.botJobLog).toHaveBeenCalledTimes(2)
+  })
+
   it('treats the changes of a bot’s runners as mutations', () => {
     const { handlers } = setup()
-    for (const channel of ['link', 'unlink', 'removeOther'])
+    for (const channel of ['link', 'unlink', 'removeOther', 'cancelJob'])
       expect(handlers.get(`fleet:runnerAccess:${channel}`)?.mutation).toBe(true)
     expect(handlers.get('fleet:runnerAccess:get')?.mutation).toBe(false)
+    expect(handlers.get('fleet:runnerAccess:jobLog')?.mutation).toBe(false)
   })
 })

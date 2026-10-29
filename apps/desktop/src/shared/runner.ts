@@ -1,8 +1,10 @@
 import {
   FLEET_RUNNER_LIMITS,
   type FleetRunnerCapabilities,
+  type FleetRunnerError,
   type FleetRunnerJob,
   type FleetRunnerLinkView,
+  fleetRunnerJobIdSchema,
 } from '@maestrly/bot-fleet-protocol'
 import { z } from 'zod'
 import type { FleetServerId } from './fleet-servers'
@@ -57,6 +59,17 @@ export const runnerCancelInputSchema = z
   .strict()
 export type RunnerCancelInput = z.infer<typeof runnerCancelInputSchema>
 
+/**
+ * A piece of a job's log is asked for from the byte `offset` (the `next` of the piece before), or, when null, from the
+ * end of the log.
+ */
+export const runnerLogOffsetSchema = z.number().int().nonnegative().nullable()
+
+export const runnerJobLogInputSchema = z
+  .object({ serverId: z.string().min(1).max(64), jobId: fleetRunnerJobIdSchema, offset: runnerLogOffsetSchema })
+  .strict()
+export type RunnerJobLogInput = z.infer<typeof runnerJobLogInputSchema>
+
 /** What Docker said when asked, for Container: the installer's states, so its guidance reads the same. */
 export interface RunnerDockerView {
   state: 'missing' | 'stopped' | 'no-permission' | 'no-compose' | 'ready'
@@ -65,6 +78,19 @@ export interface RunnerDockerView {
 }
 
 export type RunnerJobPhase = 'preparing' | 'running' | 'uploading' | 'finishing'
+
+/**
+ * What a running job uses on this computer, as last sampled: CPU as a percentage of one logical CPU (400 is four of
+ * them), the memory its processes hold now and the most they held, and how many processes it has.
+ */
+export interface RunnerJobUsageItem {
+  cpuPercent: number
+  memoryBytes: number
+  peakMemoryBytes: number
+  processes: number
+  /** When it was sampled, in milliseconds since the epoch. */
+  at: number
+}
 
 /** A job this computer holds, named for the list in the settings. */
 export interface RunnerJobItem {
@@ -78,6 +104,30 @@ export interface RunnerJobItem {
   phase: RunnerJobPhase
   /** When this computer took the job, in milliseconds since the epoch. */
   startedAt: number
+  /** While its command runs, once sampled. */
+  usage: RunnerJobUsageItem | null
+}
+
+export type RunnerHistoryOutcome = 'succeeded' | 'failed' | 'cancelled'
+
+/** A job that ended on this computer lately, named for the list in the settings. */
+export interface RunnerHistoryItem {
+  serverId: FleetServerId
+  serverName: string
+  botId: string
+  botName: string | null
+  jobId: string
+  /** The first line of the command. */
+  command: string
+  outcome: RunnerHistoryOutcome
+  exitCode: number | null
+  error: FleetRunnerError | null
+  /** In milliseconds since the epoch. */
+  startedAt: number
+  endedAt: number
+  /** The most memory its processes held, and the CPU time they used; null when never sampled. */
+  peakMemoryBytes: number | null
+  cpuSeconds: number | null
 }
 
 /** What this computer keeps for one bot. */
@@ -124,6 +174,8 @@ export interface RunnerStatus {
   storage: RunnerStorageView
   servers: RunnerServerItem[]
   jobs: RunnerJobItem[]
+  /** The jobs that ended here lately, newest first. */
+  history: RunnerHistoryItem[]
 }
 
 /** This computer's part in one bot's runners, and every computer that runs jobs for the bot. */

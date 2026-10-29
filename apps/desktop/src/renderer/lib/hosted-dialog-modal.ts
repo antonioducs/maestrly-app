@@ -12,7 +12,8 @@ function updateInertness(doc: Document) {
   })
   const saved = new Map<HTMLElement, boolean>()
   inertStates.set(doc, saved)
-  const top = stacks.get(doc)?.findLast((content) => modalContents.has(content))
+  // Written without `findLast`, which the ES2022 libraries the tests compile this with do not have.
+  const top = [...(stacks.get(doc) ?? [])].reverse().find((content) => modalContents.has(content))
   if (!top || top.ownerDocument !== doc) return
   for (let branch: HTMLElement | null = top; branch && branch !== doc.body; branch = branch.parentElement) {
     for (const sibling of Array.from(branch.parentElement?.children ?? [])) {

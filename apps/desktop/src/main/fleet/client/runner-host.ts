@@ -4,6 +4,7 @@ import {
   FLEET_RUNNERS_FEATURE,
   type FleetGatewayEvent,
   type FleetRunnerCapabilities,
+  type FleetRunnerJobLogPage,
   type FleetRunnerJobsResponse,
   type FleetRunnerLinksResponse,
   type FleetRunnerLinkView,
@@ -16,6 +17,7 @@ import type {
   RunnerAccessView,
   RunnerConfig,
   RunnerDockerView,
+  RunnerHistoryItem,
   RunnerJobItem,
   RunnerScopeInput,
   RunnerServerItem,
@@ -62,6 +64,8 @@ export type RunnerWorkerPort = Pick<
   | 'handleJob'
   | 'handleCancel'
   | 'jobs'
+  | 'history'
+  | 'log'
   | 'cancel'
   | 'clearCaches'
   | 'removeBot'
@@ -117,6 +121,10 @@ const DOCKER_TTL_MS = 10_000
 // A cancel the server does not hear of in time is not waited for: the job stops here anyway.
 const GATEWAY_CANCEL_WAIT_MS = 4_000
 const RECONCILED_BOTS_MAX = 200
+/** What the owner is told when no log can be read: this computer keeps the logs of the jobs it ran lately only. */
+const LOG_GONE = 'This job’s log is no longer kept on this computer.'
+const LOG_ENVIRONMENT_STOPPED = 'This bot’s environment is not running, so the job’s log cannot be read now.'
+const LOG_NOT_FOUND = 'The bot’s environment no longer has this job’s log.'
 
 interface Core {
   storage: RunnerStorage
@@ -230,8 +238,9 @@ export class RunnerHost {
       api: (serverId) => this.api(serverId),
       holdAwake: () => this.options.holdAwake?.(`runner-job-${++this.awakeSeq}`) ?? noop,
       now: this.options.now,
-      onChange: () => {
-        this.usage = null
+      onChange: (what) => {
+        // A running job's usage changes every few seconds; the storage it would make the settings walk again does not.
+        if (what !== 'usage') this.usage = null
         this.options.notifyChanged()
       },
     }
@@ -471,6 +480,32 @@ export class RunnerHost {
     this.options.notifyChanged()
   }
 
+  /**
+   * A piece of the log of a job this computer holds or ran lately, from the byte `offset` or, when null, from the end
+   * (see `FleetRunnerJobLogPage`).
+   */
+  async jobLog(serverId: string, jobId: string, offset: number | null): Promise<FleetRunnerJobLogPage> {
+    const page = await this.localLog(serverId, jobId, offset)
+    if (!page) throw new Error(LOG_GONE)
+    return page
+  }
+
+  private async localLog(
+    serverId: string,
+    jobId: string,
+    offset: number | null
+  ): Promise<FleetRunnerJobLogPage | null> {
+    const worker = this.core?.worker
+    if (!worker) return null
+    // What the last run left is loaded before the worker knows its jobs.
+    await this.started?.catch(() => undefined)
+    try {
+      return await worker.log(serverId, jobId, offset)
+    } catch {
+      return null
+    }
+  }
+
   // ---- What the settings show ----
 
   async status(options: { recheckDocker?: boolean } = {}): Promise<RunnerStatus> {
@@ -501,6 +536,7 @@ export class RunnerHost {
         storage: { dir: '', bots: [], blobBytes: 0, cacheBytes: 0 },
         servers: [],
         jobs: [],
+        history: [],
       }
     const core = this.ensureCore()
     const [capabilities, detected, docker, storage] = await Promise.all([
@@ -518,6 +554,22 @@ export class RunnerHost {
       command: job.command,
       phase: job.state,
       startedAt: job.startedAt,
+      usage: job.usage,
+    }))
+    const history: RunnerHistoryItem[] = core.worker.history().map((entry) => ({
+      serverId: entry.serverId as FleetServerId,
+      serverName: nameOfServer(entry.serverId),
+      botId: entry.botId,
+      botName: nameOfBot(entry.serverId, entry.botId),
+      jobId: entry.jobId,
+      command: entry.command,
+      outcome: entry.outcome,
+      exitCode: entry.exitCode,
+      error: entry.error,
+      startedAt: entry.startedAt,
+      endedAt: entry.endedAt,
+      peakMemoryBytes: entry.peakMemoryBytes,
+      cpuSeconds: entry.cpuSeconds,
     }))
     return {
       available,
@@ -529,6 +581,7 @@ export class RunnerHost {
       storage,
       servers,
       jobs,
+      history,
     }
   }
 
@@ -641,6 +694,40 @@ export class RunnerHost {
     await client.call('botRunnerLinkRemove', { params: { id: botId, runnerId: id } })
     this.options.notifyAccess(client.serverId, botId)
     return this.access(client, botId)
+  }
+
+  /**
+   * Cancels one of the bot's jobs, on whichever computer has it: the server tells that computer, this one included.
+   * Any paired device may; a job that already ended is refused by the server and said so.
+   */
+  async cancelBotJob(client: RunnerHostClient, botId: string, jobId: string): Promise<RunnerAccessView> {
+    await client.call('botRunnerJobCancel', { params: { id: botId, jobId } })
+    this.options.notifyAccess(client.serverId, botId)
+    return this.access(client, botId)
+  }
+
+  /**
+   * A piece of the log of one of the bot's jobs. This computer's own copy is read when it holds or ran the job, which
+   * is fresher than what the bot's environment has received; else the bot's environment is asked, through the server.
+   */
+  async botJobLog(
+    client: RunnerHostClient,
+    botId: string,
+    jobId: string,
+    offset: number | null
+  ): Promise<FleetRunnerJobLogPage> {
+    const local = await this.localLog(client.serverId, jobId, offset)
+    if (local) return local
+    try {
+      return (await client.call('botRunnerJobLogRead', {
+        params: { id: botId, jobId },
+        query: offset === null ? undefined : { offset },
+      })) as FleetRunnerJobLogPage
+    } catch (error) {
+      if (error instanceof FleetClientError && error.status === 409) throw new Error(LOG_ENVIRONMENT_STOPPED)
+      if (notFound(error)) throw new Error(LOG_NOT_FOUND)
+      throw error
+    }
   }
 }
 

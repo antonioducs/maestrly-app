@@ -366,11 +366,16 @@ describe('preload API — exposure', () => {
     await api.runnerClearCaches({ serverId: SERVER, botId: 'scout' })
     await api.runnerClearCaches()
     await api.runnerCancelJob(SERVER, 'job_RunnerCoreTest0001')
+    await api.runnerJobLog(SERVER, 'job_RunnerCoreTest0001', null)
+    await api.runnerJobLog(SERVER, 'job_RunnerCoreTest0001', 2_048)
     await api.runnerChooseStorageDir()
     await api.fleetRunnerAccess(SERVER, 'scout')
     await api.fleetRunnerAccessLink(SERVER, 'scout', 'Studio')
     await api.fleetRunnerAccessUnlink(SERVER, 'scout')
     await api.fleetRunnerAccessRemoveOther(SERVER, 'scout', 'rnr_BBBBBBBBBBBBBBBB0002')
+    await api.fleetRunnerJobCancel(SERVER, 'scout', 'job_RunnerCoreTest0001')
+    await api.fleetRunnerJobLog(SERVER, 'scout', 'job_RunnerCoreTest0001', null)
+    await api.fleetRunnerJobLog(SERVER, 'scout', 'job_RunnerCoreTest0001', 4_096)
     expect(invokeSpy.mock.calls).toEqual([
       ['runner:settings:get'],
       ['runner:settings:set', { slots: 2, gpu: true }],
@@ -378,11 +383,16 @@ describe('preload API — exposure', () => {
       ['runner:clearCaches', { serverId: SERVER, botId: 'scout' }],
       ['runner:clearCaches', undefined],
       ['runner:cancelJob', { serverId: SERVER, jobId: 'job_RunnerCoreTest0001' }],
+      ['runner:jobLog', { serverId: SERVER, jobId: 'job_RunnerCoreTest0001', offset: null }],
+      ['runner:jobLog', { serverId: SERVER, jobId: 'job_RunnerCoreTest0001', offset: 2_048 }],
       ['runner:chooseStorageDir'],
       ['fleet:runnerAccess:get', SERVER, 'scout'],
       ['fleet:runnerAccess:link', SERVER, 'scout', 'Studio'],
       ['fleet:runnerAccess:unlink', SERVER, 'scout'],
       ['fleet:runnerAccess:removeOther', SERVER, 'scout', 'rnr_BBBBBBBBBBBBBBBB0002'],
+      ['fleet:runnerAccess:cancelJob', SERVER, 'scout', 'job_RunnerCoreTest0001'],
+      ['fleet:runnerAccess:jobLog', SERVER, 'scout', 'job_RunnerCoreTest0001', null],
+      ['fleet:runnerAccess:jobLog', SERVER, 'scout', 'job_RunnerCoreTest0001', 4_096],
     ])
     const changed = vi.fn()
     const off = api.onRunnerChanged(changed) as () => void
@@ -444,7 +454,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(677)
+    expect(keys).toHaveLength(680)
     expect(keys.sort()).toMatchSnapshot()
   })
 

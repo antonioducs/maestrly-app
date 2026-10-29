@@ -6,6 +6,7 @@ import {
   type FleetRunnerCapabilities,
   type FleetRunnerJob,
   type FleetRunnerJobEvent,
+  type FleetRunnerJobLogPage,
   type FleetRunnerLinkView,
   fleetRunnerAssignedSpecSchema,
 } from '@maestrly/bot-fleet-protocol'
@@ -16,7 +17,7 @@ import { RUNNER_SETTING_KEYS, type RunnerSettingsStore } from '../../src/main/fl
 import type { FleetRunnerPort } from '../../src/main/fleet/client/service'
 import type { RunnerExecutor, RunnerExecutorJob } from '../../src/main/runner/executor'
 import { RunnerStorage } from '../../src/main/runner/storage'
-import type { RunnerJobUsage, RunnerWorkerDeps } from '../../src/main/runner/worker'
+import type { RunnerHistoryEntry, RunnerJobUsage, RunnerWorkerDeps } from '../../src/main/runner/worker'
 import type { FleetServerId } from '../../src/shared/fleet-servers'
 import { GIB } from '../../src/shared/runner'
 import { cleanTempDirs, JOB_ID, tempDir } from '../helpers/runner-core'
@@ -78,7 +79,7 @@ function fakeClient(
     bots?: Array<{ id: string; name: string; environmentId?: string; capabilities?: string[] }>
   } = {}
 ) {
-  const calls: Array<{ key: string; params: Record<string, string>; body?: unknown }> = []
+  const calls: Array<{ key: string; params: Record<string, string>; body?: unknown; query?: unknown }> = []
   const access = { origin: 'http://gateway.test', headers: { Authorization: 'Bearer one' } as Record<string, string> }
   const client = {
     serverId: options.serverId ?? SERVER,
@@ -113,12 +114,17 @@ function fakeClient(
     hostFilesAccess: () => access,
     deviceName: () => 'Studio Mac mini',
     syncRunnerStream: vi.fn(() => false),
-    call: vi.fn(async (key: string, callOptions?: { params?: Record<string, string>; body?: unknown }) => {
-      calls.push({ key, params: callOptions?.params ?? {}, body: callOptions?.body })
-      const answer = client.answers[key]
-      if (!answer) return undefined
-      return answer(callOptions?.params ?? {})
-    }),
+    call: vi.fn(
+      async (
+        key: string,
+        callOptions?: { params?: Record<string, string>; body?: unknown; query?: Record<string, unknown> }
+      ) => {
+        calls.push({ key, params: callOptions?.params ?? {}, body: callOptions?.body, query: callOptions?.query })
+        const answer = client.answers[key]
+        if (!answer) return undefined
+        return answer(callOptions?.params ?? {})
+      }
+    ),
   }
   return client
 }
@@ -141,6 +147,10 @@ function fakeWorker() {
         startedAt: number
         usage: RunnerJobUsage | null
       }> => []
+    ),
+    history: vi.fn((): RunnerHistoryEntry[] => []),
+    log: vi.fn(
+      async (_serverId: string, _jobId: string, _offset: number | null): Promise<FleetRunnerJobLogPage | null> => null
     ),
     cancel: vi.fn(),
     clearCaches: vi.fn(async (_scope?: string) => undefined),
@@ -560,8 +570,24 @@ describe('runner host: what the worker runs with', () => {
   it('tells the worker when the jobs or the storage change, and the settings screen follows', async () => {
     const { deps, changed } = await attached()
     changed.mockClear()
-    deps().onChange?.()
+    deps().onChange?.('jobs')
     expect(changed).toHaveBeenCalledTimes(1)
+  })
+
+  it('walks the storage again when the jobs change, not each time a running job’s usage does', async () => {
+    const { deps, host } = await attached()
+    await host.status()
+    const usage = vi.spyOn(RunnerStorage.prototype, 'usage')
+    try {
+      deps().onChange?.('usage')
+      await host.status()
+      expect(usage).not.toHaveBeenCalled()
+      deps().onChange?.('jobs')
+      await host.status()
+      expect(usage).toHaveBeenCalledTimes(1)
+    } finally {
+      usage.mockRestore()
+    }
   })
 
   it('uses the native executor, and the container factory the app gives for Container', async () => {
@@ -712,6 +738,21 @@ describe('runner host: what the settings show', () => {
         usage: null,
       },
     ])
+    worker.history.mockReturnValue([
+      {
+        serverId: client.serverId,
+        botId: BOT,
+        jobId: 'job_RunnerCoreTest0002',
+        command: 'make',
+        outcome: 'failed',
+        exitCode: 2,
+        error: { code: 'exit_code', message: 'The command exited with code 2.' },
+        startedAt: 1_000,
+        endedAt: 4_000,
+        peakMemoryBytes: 2 * GIB,
+        cpuSeconds: 3.5,
+      },
+    ])
     await new RunnerStorage(created.roots[0]).remember(client.serverId, BOT)
     const status = await host.status()
     expect(status).toMatchObject({
@@ -735,6 +776,24 @@ describe('runner host: what the settings show', () => {
           command: 'ffmpeg -i in.mov',
           phase: 'running',
           startedAt: 5,
+          usage: null,
+        },
+      ],
+      history: [
+        {
+          serverId: client.serverId,
+          serverName: 'vps',
+          botId: BOT,
+          botName: 'Scout',
+          jobId: 'job_RunnerCoreTest0002',
+          command: 'make',
+          outcome: 'failed',
+          exitCode: 2,
+          error: { code: 'exit_code', message: 'The command exited with code 2.' },
+          startedAt: 1_000,
+          endedAt: 4_000,
+          peakMemoryBytes: 2 * GIB,
+          cpuSeconds: 3.5,
         },
       ],
       storage: {
@@ -744,6 +803,51 @@ describe('runner host: what the settings show', () => {
     })
     await host.updateConfig({ executor: 'container' })
     expect((await host.status()).docker).toEqual({ state: 'ready', engine: 'Docker Desktop', version: '27.0.0' })
+  })
+
+  it('carries what a running job uses and the computer’s processors, and names what it does not know', async () => {
+    const { host, worker, client } = await attached()
+    const usage: RunnerJobUsage = {
+      cpuPercent: 350,
+      memoryBytes: GIB,
+      peakMemoryBytes: 2 * GIB,
+      processes: 4,
+      at: 9,
+    }
+    worker.jobs.mockReturnValue([
+      { serverId: client.serverId, botId: BOT, jobId: JOB_ID, command: 'make', state: 'running', startedAt: 5, usage },
+    ])
+    const entry = (patch: Partial<RunnerHistoryEntry>): RunnerHistoryEntry => ({
+      serverId: client.serverId,
+      botId: BOT,
+      jobId: 'job_RunnerCoreTest0003',
+      command: 'make',
+      outcome: 'succeeded',
+      exitCode: 0,
+      error: null,
+      startedAt: 1_000,
+      endedAt: 2_000,
+      peakMemoryBytes: null,
+      cpuSeconds: null,
+      ...patch,
+    })
+    worker.history.mockReturnValue([
+      entry({ outcome: 'cancelled', exitCode: null }),
+      entry({ jobId: 'job_RunnerCoreTest0004', botId: 'gone', serverId: OTHER_SERVER }),
+    ])
+    const status = await host.status()
+    expect(status.capabilities?.cpus).toBe(8)
+    expect(status.jobs[0]?.usage).toEqual(usage)
+    expect(status.history.map((item) => [item.jobId, item.outcome, item.botName, item.serverName])).toEqual([
+      ['job_RunnerCoreTest0003', 'cancelled', 'Scout', 'vps'],
+      ['job_RunnerCoreTest0004', 'succeeded', null, ''],
+    ])
+    expect(status.history[0]).toMatchObject({ peakMemoryBytes: null, cpuSeconds: null, exitCode: null })
+  })
+
+  it('has no jobs and no history where there is no runner', async () => {
+    const { host } = setup({ available: false })
+    expect(await host.status()).toMatchObject({ available: false, jobs: [], history: [] })
   })
 
   it('offers Container only on Windows', async () => {
@@ -877,6 +981,120 @@ describe('runner host: a bot’s runners', () => {
     await expect(host.removeOther(client as unknown as RunnerHostClient, BOT, 'not-a-runner')).rejects.toThrow()
     expect(client.calls.filter((call) => call.key === 'botRunnerLinkRemove')).toHaveLength(1)
     expect(worker.removeBot).not.toHaveBeenCalled()
+  })
+})
+
+describe('runner host: reading a job’s log', () => {
+  const page = (patch: Partial<FleetRunnerJobLogPage> = {}): FleetRunnerJobLogPage => ({
+    start: 0,
+    next: 6,
+    size: 6,
+    text: 'hello\n',
+    ...patch,
+  })
+
+  it('reads the log this computer keeps of a job it holds or ran lately, from the offset or the end', async () => {
+    const { host, worker, client } = await attached()
+    worker.log.mockResolvedValue(page())
+    await expect(host.jobLog(client.serverId, JOB_ID, null)).resolves.toEqual(page())
+    await host.jobLog(client.serverId, JOB_ID, 42)
+    expect(worker.log.mock.calls).toEqual([
+      [client.serverId, JOB_ID, null],
+      [client.serverId, JOB_ID, 42],
+    ])
+    expect(client.calls).toEqual([])
+  })
+
+  it('says the log is no longer kept for a job it does not know, or before it has a worker', async () => {
+    const { host, client } = await attached()
+    await expect(host.jobLog(client.serverId, JOB_ID, null)).rejects.toThrow(
+      'This job’s log is no longer kept on this computer.'
+    )
+    const idle = setup()
+    await expect(idle.host.jobLog(SERVER, JOB_ID, null)).rejects.toThrow('no longer kept')
+  })
+
+  it('reads a bot’s job from this computer first, which has the freshest lines', async () => {
+    const { host, worker, client } = await attached()
+    worker.log.mockResolvedValue(page({ text: 'fresh\n' }))
+    const result = await host.botJobLog(client as unknown as RunnerHostClient, BOT, JOB_ID, 7)
+    expect(result.text).toBe('fresh\n')
+    expect(worker.log).toHaveBeenCalledExactlyOnceWith(client.serverId, JOB_ID, 7)
+    expect(client.calls).toEqual([])
+  })
+
+  it('asks the server for the log of a job this computer never ran, with the offset only when there is one', async () => {
+    const { host, client } = await attached()
+    client.answers.botRunnerJobLogRead = () => page({ text: 'remote\n' })
+    await expect(host.botJobLog(client as unknown as RunnerHostClient, BOT, JOB_ID, null)).resolves.toEqual(
+      page({ text: 'remote\n' })
+    )
+    await host.botJobLog(client as unknown as RunnerHostClient, BOT, JOB_ID, 1_024)
+    expect(client.calls).toEqual([
+      { key: 'botRunnerJobLogRead', params: { id: BOT, jobId: JOB_ID }, body: undefined, query: undefined },
+      { key: 'botRunnerJobLogRead', params: { id: BOT, jobId: JOB_ID }, body: undefined, query: { offset: 1_024 } },
+    ])
+  })
+
+  it('asks the server too when this computer’s own log cannot be read', async () => {
+    const { host, worker, client } = await attached()
+    worker.log.mockRejectedValue(new Error('disk'))
+    client.answers.botRunnerJobLogRead = () => page({ text: 'remote\n' })
+    await expect(host.botJobLog(client as unknown as RunnerHostClient, BOT, JOB_ID, null)).resolves.toMatchObject({
+      text: 'remote\n',
+    })
+  })
+
+  it('asks the server on a computer that does not run jobs at all', async () => {
+    const { host, client } = await attached({ config: { [RUNNER_SETTING_KEYS.enabled]: '0' } })
+    client.answers.botRunnerJobLogRead = () => page({ text: 'remote\n' })
+    await expect(host.botJobLog(client as unknown as RunnerHostClient, BOT, JOB_ID, null)).resolves.toMatchObject({
+      text: 'remote\n',
+    })
+  })
+
+  it('says in words that the bot’s environment is not running, or lacks the log, and passes other failures on', async () => {
+    const { host, client } = await attached()
+    const read = () => host.botJobLog(client as unknown as RunnerHostClient, BOT, JOB_ID, null)
+    client.answers.botRunnerJobLogRead = () => {
+      throw new FleetClientError('CONFLICT', 409, 'BOT_NOT_RUNNING')
+    }
+    await expect(read()).rejects.toThrow('This bot’s environment is not running')
+    client.answers.botRunnerJobLogRead = () => {
+      throw new FleetClientError('NOT_FOUND', 404, 'No such job')
+    }
+    await expect(read()).rejects.toThrow('no longer has this job’s log')
+    const unreachable = new FleetClientError('INSTANCE_UNAVAILABLE', 0, 'Gateway unavailable')
+    client.answers.botRunnerJobLogRead = () => {
+      throw unreachable
+    }
+    await expect(read()).rejects.toBe(unreachable)
+  })
+})
+
+describe('runner host: cancelling a bot’s job from its settings', () => {
+  it('asks the server, which tells whichever computer runs the job, then tells the windows', async () => {
+    const { host, worker, client, accessChanged } = await attached()
+    client.answers.botRunnerJobCancel = () => ({ jobId: JOB_ID })
+    client.answers.botRunnerLinks = () => ({ links: [link()] })
+    client.answers.botRunnerJobs = () => ({ jobs: [] })
+    const view = await host.cancelBotJob(client as unknown as RunnerHostClient, BOT, JOB_ID)
+    expect(client.calls[0]).toMatchObject({ key: 'botRunnerJobCancel', params: { id: BOT, jobId: JOB_ID } })
+    expect(accessChanged).toHaveBeenCalledExactlyOnceWith(client.serverId, BOT)
+    expect(view).toMatchObject({ self: { name: 'Studio' }, jobs: [] })
+    // The server's event stops the job on its computer; nothing is stopped from here.
+    expect(worker.cancel).not.toHaveBeenCalled()
+  })
+
+  it('says why the server refused, and does not tell the windows of a change that did not happen', async () => {
+    const { host, client, accessChanged } = await attached()
+    client.answers.botRunnerJobCancel = () => {
+      throw new FleetClientError('CONFLICT', 409, 'The job already ended')
+    }
+    await expect(host.cancelBotJob(client as unknown as RunnerHostClient, BOT, JOB_ID)).rejects.toThrow(
+      'The job already ended'
+    )
+    expect(accessChanged).not.toHaveBeenCalled()
   })
 })
 

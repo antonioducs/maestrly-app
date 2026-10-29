@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AlertTriangle, FolderOpen, Loader2, ShieldAlert, Trash2 } from 'lucide-react'
-import type { RunnerConfigPatch, RunnerJobItem, RunnerStatus } from '../../../shared/runner'
+import type { RunnerConfigPatch, RunnerHistoryItem, RunnerJobItem, RunnerStatus } from '../../../shared/runner'
 import { Button } from '@/components/ui/button'
 import { OptionSelect, SelectOption } from '@/components/ui/option-select'
+import { RunnerLogDialog } from '@/components/fleet/RunnerLogDialog'
+import { RunnerUsage } from '@/components/fleet/RunnerUsage'
 import { SettingsSwitch } from '@/components/fleet/SettingsSwitch'
 import { fleetErrorMessage } from '@/lib/fleet/errors'
 import { fileSizeLabel } from '@/lib/fleet/downloads'
@@ -16,6 +18,8 @@ import type { TFn } from './shared'
 const card = 'flex flex-col gap-3 rounded-lg border border-border bg-white/[0.02] px-3 py-2.5'
 const heading = 'text-sm font-semibold text-foreground'
 const hint = 'text-[11px] leading-snug text-muted-foreground'
+/** How often the jobs and what they use are read again while a job runs, besides when the runner says they changed. */
+const JOBS_REFRESH_MS = 5_000
 
 /** The clock the job list reads durations from, ticking once a second while there is a job to time. */
 function useNow(active: boolean): number {
@@ -63,6 +67,16 @@ export function RunnerSection({ t }: { t: TFn }) {
       offServers()
     }
   }, [refresh])
+
+  // What a job uses changes all the time: while one runs and the window is in view, the screen reads it again.
+  const running = (status?.jobs.length ?? 0) > 0
+  useEffect(() => {
+    if (!running) return
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') void refresh()
+    }, JOBS_REFRESH_MS)
+    return () => clearInterval(timer)
+  }, [running, refresh])
 
   /** Runs one action, then reads everything again; a failure is said, not hidden. */
   const perform = useCallback(
@@ -144,6 +158,14 @@ export function RunnerSettingsView({
   const os = window.api.platformInfo.os
   // The blob cache always has a size: a field the person emptied goes back to it.
   const [blobFieldReset, setBlobFieldReset] = useState(0)
+  /** The job whose log is open. */
+  const [logOf, setLogOf] = useState<{
+    serverId: string
+    jobId: string
+    bot: string
+    server: string
+    command: string
+  } | null>(null)
 
   const header = (
     <div>
@@ -175,6 +197,24 @@ export function RunnerSettingsView({
   const { config, docker, storage } = status
   const container = config.executor === 'container'
   const files = (bytes: number) => fileSizeLabel(bytes, locale)
+  const cpus = status.capabilities?.cpus ?? null
+  const botOnServer = (item: { botName: string | null; serverName: string }) =>
+    t('settings.runner.jobs.bot', {
+      bot: item.botName ?? t('settings.runner.jobs.unknownBot'),
+      server: item.serverName,
+    })
+  const openLog = (item: RunnerJobItem | RunnerHistoryItem) =>
+    setLogOf({
+      serverId: item.serverId,
+      jobId: item.jobId,
+      bot: item.botName ?? t('settings.runner.jobs.unknownBot'),
+      server: item.serverName,
+      command: item.command,
+    })
+  // The log of a job still listed here is followed; that of one that ended is read once more, then left alone.
+  const logLive =
+    logOf !== null && status.jobs.some((job) => job.serverId === logOf.serverId && job.jobId === logOf.jobId)
+  const when = (value: number) => new Date(value).toLocaleString(locale, { dateStyle: 'medium', timeStyle: 'short' })
 
   return (
     <section className="flex flex-col gap-6" data-testid="runner-settings">
@@ -528,15 +568,89 @@ export function RunnerSettingsView({
                     <span>{t(`settings.runner.jobs.phase.${job.phase}`)}</span>
                     <span className="tabular-nums">{jobDuration(now - job.startedAt)}</span>
                   </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-7 text-[12px]"
-                    disabled={cancelling.has(job.jobId)}
-                    onClick={() => onCancelJob(job)}
-                  >
-                    {cancelling.has(job.jobId) && <Loader2 className="mr-1 size-3 animate-spin" />}
-                    {t(cancelling.has(job.jobId) ? 'settings.runner.jobs.cancelling' : 'settings.runner.jobs.cancel')}
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    <Button variant="outline" size="sm" className="h-7 text-[12px]" onClick={() => openLog(job)}>
+                      {t('settings.runner.jobs.log')}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-[12px]"
+                      disabled={cancelling.has(job.jobId)}
+                      onClick={() => onCancelJob(job)}
+                    >
+                      {cancelling.has(job.jobId) && <Loader2 className="mr-1 size-3 animate-spin" />}
+                      {t(cancelling.has(job.jobId) ? 'settings.runner.jobs.cancelling' : 'settings.runner.jobs.cancel')}
+                    </Button>
+                  </div>
+                  {job.usage && <RunnerUsage usage={job.usage} cpus={cpus} className="basis-full" />}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
+
+      {(config.enabled || status.history.length > 0) && (
+        <section className="flex flex-col gap-3" aria-labelledby="runner-history-heading">
+          <div>
+            <h3 id="runner-history-heading" className={heading}>
+              {t('settings.runner.history.title')}
+            </h3>
+            <p className="mt-0.5 text-[12px] text-muted-foreground">{t('settings.runner.history.desc')}</p>
+          </div>
+          {status.history.length === 0 ? (
+            <p className={hint} data-testid="runner-history-empty">
+              {t('settings.runner.history.empty')}
+            </p>
+          ) : (
+            <ul
+              className={cn(card, 'max-h-[28rem] gap-0 divide-y divide-border overflow-y-auto')}
+              data-testid="runner-history"
+            >
+              {status.history.map((entry) => (
+                <li
+                  key={`${entry.serverId}:${entry.jobId}`}
+                  data-testid="runner-history-job"
+                  data-job-id={entry.jobId}
+                  data-outcome={entry.outcome}
+                  className="flex flex-wrap items-center gap-x-3 gap-y-0.5 py-2 first:pt-0 last:pb-0"
+                >
+                  <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <div className="flex min-w-0 items-baseline gap-2">
+                      <span className="truncate text-[12px] font-medium text-foreground">{botOnServer(entry)}</span>
+                      <span
+                        className={cn(
+                          'shrink-0 text-[11px] font-medium',
+                          entry.outcome === 'failed' ? 'text-destructive' : 'text-muted-foreground'
+                        )}
+                      >
+                        {t(`settings.runner.history.outcome.${entry.outcome}`)}
+                      </span>
+                    </div>
+                    <code className="truncate text-[11px] text-muted-foreground" title={entry.command}>
+                      {entry.command}
+                    </code>
+                    {(entry.error || (entry.outcome !== 'succeeded' && entry.exitCode !== null)) && (
+                      <span className="break-words text-[11px] text-muted-foreground">
+                        {entry.error?.message ?? t('settings.runner.history.exitCode', { code: entry.exitCode })}
+                      </span>
+                    )}
+                    <span className="text-[11px] tabular-nums text-muted-foreground">
+                      {[
+                        when(entry.endedAt),
+                        t('settings.runner.history.took', { time: jobDuration(entry.endedAt - entry.startedAt) }),
+                        entry.peakMemoryBytes !== null &&
+                          t('settings.runner.history.peakMemory', { memory: files(entry.peakMemoryBytes) }),
+                        entry.cpuSeconds !== null &&
+                          t('settings.runner.history.cpuTime', { time: jobDuration(entry.cpuSeconds * 1000) }),
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </span>
+                  </div>
+                  <Button variant="ghost" size="sm" className="h-7 text-[12px]" onClick={() => openLog(entry)}>
+                    {t('settings.runner.jobs.log')}
                   </Button>
                 </li>
               ))}
@@ -550,6 +664,17 @@ export function RunnerSettingsView({
           <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
           {error}
         </p>
+      )}
+
+      {logOf && (
+        <RunnerLogDialog
+          title={tf('botSettings.runners.log.title')}
+          subtitle={`${t('settings.runner.jobs.bot', { bot: logOf.bot, server: logOf.server })} · ${logOf.command}`}
+          jobId={logOf.jobId}
+          live={logLive}
+          read={(offset) => window.api.runnerJobLog(logOf.serverId, logOf.jobId, offset)}
+          onClose={() => setLogOf(null)}
+        />
       )}
     </section>
   )
