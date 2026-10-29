@@ -22,6 +22,7 @@ const CACHES_MOUNT = '/maestrly-caches'
 const ENV_FILE = 'container.env'
 const JOB_LABEL = 'maestrly.runner.job'
 const SCOPE_LABEL = 'maestrly.runner.scope'
+const OWNER_LABEL = 'maestrly.runner.owner'
 const VOLUME_PREFIX = 'maestrly-runner-'
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
 /** The same shape the installer accepts for an image: a bot's image must not be read as a `docker run` option. */
@@ -42,6 +43,11 @@ export type ContainerExecutorOptions = {
   spawn?: Spawn
   /** How long `docker stop` waits for the command to end before Docker kills it. */
   stopGraceSeconds?: number
+  /**
+   * A key of this app's runner, put on its containers: two Maestrly apps of one computer share its Docker, and a
+   * restart of one removes only the containers it started.
+   */
+  owner?: () => string | null
 }
 
 export type ContainerArgsOptions = {
@@ -55,6 +61,8 @@ export type ContainerArgsOptions = {
   envFile: string
   /** The job's writable home folder on this computer, mounted at `/maestrly-home`. */
   homeDir: string
+  /** The runner's key, as a label; see `ContainerExecutorOptions.owner`. */
+  owner?: string | null
 }
 
 /** The job asks for something this executor cannot do; the message tells the bot what. */
@@ -147,6 +155,7 @@ export function containerArgs(job: RunnerExecutorJob, options: ContainerArgsOpti
     `${JOB_LABEL}=${job.jobId}`,
     '--label',
     `${SCOPE_LABEL}=${job.scope}`,
+    ...(options.owner ? ['--label', `${OWNER_LABEL}=${options.owner}`] : []),
     '--entrypoint',
     '/bin/sh',
     '--security-opt',
@@ -324,6 +333,7 @@ export class ContainerExecutor implements RunnerExecutor {
         user: this.runUser(),
         envFile,
         homeDir,
+        owner: this.options.owner?.() ?? null,
       })
       envText = envFileText(job)
     } catch (error) {
@@ -353,15 +363,20 @@ export class ContainerExecutor implements RunnerExecutor {
     }
   }
 
-  /** Removes the containers of runner jobs whose id is not in `keep`; they outlived the app that started them. */
+  /**
+   * Removes the containers of this runner's jobs (those with its `owner` label, when it has one) whose id is not in
+   * `keep`; they outlived the app that started them.
+   */
   async removeOrphans(keep: Set<string>): Promise<void> {
     const docker = this.options.docker()
     if (!docker) return
+    const owner = this.options.owner?.()
     const listed = await this.capture(docker, [
       'ps',
       '-a',
       '--filter',
       `label=${JOB_LABEL}`,
+      ...(owner ? ['--filter', `label=${OWNER_LABEL}=${owner}`] : []),
       '--format',
       `{{.ID}} {{.Label "${JOB_LABEL}"}}`,
     ])
@@ -387,6 +402,11 @@ export class ContainerExecutor implements RunnerExecutor {
       .map((line) => line.trim())
       .filter((name) => name.startsWith(prefix))
     if (volumes.length) await this.capture(docker, ['volume', 'rm', '-f', ...volumes])
+  }
+
+  private ownerLabel(): string[] {
+    const owner = this.options.owner?.()
+    return owner ? ['--label', `${OWNER_LABEL}=${owner}`] : []
   }
 
   private runUser(): { uid: number; gid: number } | null {
@@ -497,6 +517,7 @@ export class ContainerExecutor implements RunnerExecutor {
       `${JOB_LABEL}=${job.jobId}`,
       '--label',
       `${SCOPE_LABEL}=${job.scope}`,
+      ...this.ownerLabel(),
       '--network',
       'none',
       '--user',

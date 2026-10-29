@@ -589,6 +589,63 @@ describe('runner host: what the worker runs with', () => {
     })
   })
 
+  it('tells a GPU for Container only when Docker hands containers the NVIDIA GPU found', async () => {
+    const support = vi.fn(async () => ({ gpu: false }))
+    const { deps, host } = await attached({
+      config: { [RUNNER_SETTING_KEYS.gpu]: '1', [RUNNER_SETTING_KEYS.executor]: 'container' },
+      overrides: { containerSupport: support },
+    })
+    expect((await deps().capabilities()).gpu).toBeNull()
+    expect(host.containerLimits()).toEqual({ cpus: null, memoryBytes: null, gpu: false })
+    support.mockResolvedValue({ gpu: true })
+    await host.updateConfig({ jobCpus: 2, jobMemoryBytes: 4 * 1024 ** 3 })
+    expect((await deps().capabilities()).gpu).toMatchObject({ vendor: 'nvidia' })
+    expect(host.containerLimits()).toEqual({ cpus: 2, memoryBytes: 4 * 1024 ** 3, gpu: true })
+    // The owner's choice still decides.
+    await host.updateConfig({ gpu: false })
+    expect(host.containerLimits().gpu).toBe(false)
+    expect((await deps().capabilities()).gpu).toBeNull()
+  })
+
+  it('never offers containers an Apple GPU, which Docker cannot hand over', async () => {
+    const { deps } = await attached({
+      platform: 'darwin',
+      config: { [RUNNER_SETTING_KEYS.gpu]: '1', [RUNNER_SETTING_KEYS.executor]: 'container' },
+      overrides: {
+        containerSupport: async () => ({ gpu: true }),
+        probe: async (probeOptions) =>
+          capabilities({
+            executor: probeOptions.executor,
+            gpu: { vendor: 'apple', name: 'Apple M3 Pro', memoryBytes: null },
+          }),
+      },
+    })
+    expect((await deps().capabilities()).gpu).toBeNull()
+  })
+
+  it('removes the containers a previous run left once the worker started, keeping those of held jobs', async () => {
+    const cleanup = { removeOrphans: vi.fn(async (_keep: Set<string>) => undefined), removeScopeVolumes: vi.fn() }
+    const { worker } = await attached({ overrides: { containerCleanup: cleanup } })
+    expect(worker.start).toHaveBeenCalledTimes(1)
+    expect(cleanup.removeOrphans).toHaveBeenCalledExactlyOnceWith(new Set())
+  })
+
+  it('removes a bot’s cache volumes with its files when its link goes away', async () => {
+    const cleanup = {
+      removeOrphans: vi.fn(async () => undefined),
+      removeScopeVolumes: vi.fn(async (_scope: string) => undefined),
+    }
+    const { host, client, worker } = await attached(
+      { overrides: { containerCleanup: cleanup } },
+      { answers: { botRunnerLinkDelete: () => undefined } }
+    )
+    await host.unlink(client as unknown as RunnerHostClient, BOT)
+    expect(worker.removeBot).toHaveBeenCalledExactlyOnceWith(client.serverId, BOT)
+    expect(cleanup.removeScopeVolumes).toHaveBeenCalledExactlyOnceWith(
+      new RunnerStorage(tempDir('runner-scope-')).scope(client.serverId, BOT)
+    )
+  })
+
   it('probes what the computer is once for each executor, slots and GPU choice, and again after a change', async () => {
     const { deps, host, probe } = await attached()
     const first = await deps().capabilities()

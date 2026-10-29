@@ -406,6 +406,13 @@ suite('container executor', () => {
     })
     const args = (job: RunnerExecutorJob) => containerArgs(job, optionsOf(job))
 
+    it('labels the container with its runner when it has an owner', () => {
+      const { job } = setup()
+      const labelled = containerArgs(job, { ...optionsOf(job), owner: 'abc123' })
+      expect(valuesOf(labelled, '--label')).toContain('maestrly.runner.owner=abc123')
+      expect(valuesOf(args(job), '--label').join(' ')).not.toContain('maestrly.runner.owner')
+    })
+
     it('keeps a path with a comma or a quote in one mount field', () => {
       const { job } = setup({}, { workDir: '/data/a,b/work', folder: '/home/bot/my "dir"' })
       expect(valuesOf(args(job), '--mount')[0]).toBe('type=bind,"source=/data/a,b/work","target=/home/bot/my ""dir"""')
@@ -652,6 +659,23 @@ suite('container executor', () => {
         ['ps', '-a', '--filter', 'label=maestrly.runner.job', '--format', '{{.ID}} {{.Label "maestrly.runner.job"}}'],
       ])
       expect(fake.argvOf('rm')).toEqual([['rm', '-f', 'bbb222', 'ccc333']])
+    })
+
+    it('removes only the containers of its own runner when it has an owner', async () => {
+      const { executor, fake } = setup({ containers: ['bbb222 job_Gone0000000000001'] }, {}, { owner: () => 'abc123' })
+      await executor.removeOrphans(new Set())
+      expect(fake.argvOf('ps')).toEqual([
+        [
+          'ps',
+          '-a',
+          '--filter',
+          'label=maestrly.runner.job',
+          '--filter',
+          'label=maestrly.runner.owner=abc123',
+          '--format',
+          '{{.ID}} {{.Label "maestrly.runner.job"}}',
+        ],
+      ])
     })
 
     it('removes nothing when every container belongs to a held job', async () => {

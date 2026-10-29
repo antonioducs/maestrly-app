@@ -26,6 +26,8 @@ vi.mock('../../src/main/fleet/installer/docker-host', () => ({
 import { createAppRunnerHost } from '../../src/main/fleet/client/runner-app'
 import { RUNNER_SETTING_KEYS } from '../../src/main/fleet/client/runner-settings'
 import type { RunnerHostClient } from '../../src/main/fleet/client/runner-host'
+import { ContainerExecutor } from '../../src/main/runner/container-executor'
+import type { RunnerWorkerDeps } from '../../src/main/runner/worker'
 import { FLEET_RUNNERS_FEATURE } from '@maestrly/bot-fleet-protocol'
 
 beforeEach(() => {
@@ -96,6 +98,20 @@ describe('the runner of the app', () => {
     await host.updateConfig({ executor: 'native' })
     expect((await host.status()).docker).toBeNull()
     expect(state.docker).not.toHaveBeenCalled()
+  })
+
+  it('runs Docker jobs with its own executor', async () => {
+    state.values.set(RUNNER_SETTING_KEYS.executor, 'container')
+    let deps: RunnerWorkerDeps | null = null
+    const host = createAppRunnerHost({
+      platform: 'linux',
+      createWorker: (workerDeps) => {
+        deps = workerDeps
+        return { start: async () => undefined, jobs: () => [] } as never
+      },
+    })
+    await host.status()
+    expect((deps as RunnerWorkerDeps | null)?.executors()).toBeInstanceOf(ContainerExecutor)
   })
 
   it('counts a Docker that does not answer as not running', async () => {

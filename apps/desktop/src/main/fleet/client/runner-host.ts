@@ -80,6 +80,13 @@ export interface RunnerHostOptions {
   notifyAccess(serverId: FleetServerId, botId: string): void
   /** The executor of Container jobs; until the app has one, such jobs fail with `executor_unavailable`. */
   container?: () => RunnerExecutor
+  /** Whether Docker hands containers an NVIDIA GPU on this computer. */
+  containerSupport?: () => Promise<{ gpu: boolean }>
+  /** What Container jobs leave behind: containers of jobs a previous run held, and a bot's cache volumes. */
+  containerCleanup?: {
+    removeOrphans(keep: Set<string>): Promise<void>
+    removeScopeVolumes(scope: string): Promise<void>
+  }
   /** Keeps the computer awake for `key` until the returned function is called. */
   holdAwake?(key: string): () => void
   /** Docker's state on this computer, asked only for Container. */
@@ -146,6 +153,8 @@ export class RunnerHost {
   private probes = new Map<string, Promise<FleetRunnerCapabilities>>()
   private native: RunnerExecutor | null = null
   private containerExecutor: RunnerExecutor | null = null
+  /** Whether the last probe found a GPU that Docker gives containers. */
+  private containerGpu = false
   private awakeSeq = 0
   private usage: { at: number; value: RunnerStorageView } | null = null
   private dockerView: { at: number; value: RunnerDockerView } | null = null
@@ -246,12 +255,27 @@ export class RunnerHost {
     const known = this.probes.get(key)
     if (known) return known
     const probe = (this.options.probe ?? probeRunnerCapabilities)({ executor, slots, platform: this.platform }).then(
-      // The GPU is told to the servers only when the owner lets jobs use it.
-      (found): FleetRunnerCapabilities => (gpu ? found : { ...found, gpu: null })
+      async (found): Promise<FleetRunnerCapabilities> => {
+        let detected = found.gpu
+        // A container reaches only an NVIDIA GPU, and only when Docker hands it over: never Metal on a Mac.
+        if (executor === 'container' && this.options.containerSupport) {
+          const support = await this.options.containerSupport().catch(() => null)
+          this.containerGpu = detected?.vendor === 'nvidia' && support?.gpu === true
+          if (!this.containerGpu) detected = null
+        }
+        // The GPU is told to the servers only when the owner lets jobs use it.
+        return { ...found, gpu: gpu ? detected : null }
+      }
     )
     this.probes.set(key, probe)
     probe.catch(() => this.probes.delete(key))
     return probe
+  }
+
+  /** The limits of one Container job: the GPU only when the owner allows it and Docker gives it. */
+  containerLimits(): { cpus: number | null; memoryBytes: number | null; gpu: boolean } {
+    const config = this.config()
+    return { cpus: config.jobCpus, memoryBytes: config.jobMemoryBytes, gpu: config.gpu && this.containerGpu }
   }
 
   /** The routes of a paired server, with the device token it holds now. */
@@ -271,6 +295,9 @@ export class RunnerHost {
       const { worker } = this.ensureCore()
       this.started = worker.start().then(() => {
         this.startedDone = true
+        // The containers of the jobs a previous run held ended with those jobs.
+        const held = new Set(worker.jobs().map((job) => job.jobId))
+        void this.options.containerCleanup?.removeOrphans(held).catch(() => undefined)
       })
     }
     return this.started
@@ -349,7 +376,7 @@ export class RunnerHost {
         (await core.storage.records()).some((record) => record.serverId === serverId && record.botId === botId)
       if (!holds) return
       if (await this.linkedHere(client, botId)) return
-      await core.worker.removeBot(serverId, botId)
+      await this.removeBot(core, serverId, botId)
       this.usage = null
     } finally {
       this.checking.delete(key)
@@ -381,6 +408,12 @@ export class RunnerHost {
     }
   }
 
+  /** The bot's jobs here stop, and its blobs, caches and cache volumes go. */
+  private async removeBot(core: Core, serverId: string, botId: string): Promise<void> {
+    await core.worker.removeBot(serverId, botId)
+    await this.options.containerCleanup?.removeScopeVolumes(core.storage.scope(serverId, botId)).catch(() => undefined)
+  }
+
   /** This computer leaves a server: its bots' jobs stop and everything kept for them goes. */
   private async unpaired(client: RunnerHostClient): Promise<void> {
     this.clients.delete(client.serverId)
@@ -395,7 +428,7 @@ export class RunnerHost {
         .filter((record) => record.serverId === client.serverId)
         .map((record) => record.botId),
     ])
-    for (const botId of bots) await core.worker.removeBot(client.serverId, botId).catch(() => undefined)
+    for (const botId of bots) await this.removeBot(core, client.serverId, botId).catch(() => undefined)
     this.usage = null
   }
 
@@ -594,7 +627,7 @@ export class RunnerHost {
     } catch (error) {
       if (!notFound(error)) throw error
     }
-    await this.core?.worker.removeBot(client.serverId, botId).catch(() => undefined)
+    if (this.core) await this.removeBot(this.core, client.serverId, botId).catch(() => undefined)
     this.usage = null
     this.options.notifyAccess(client.serverId, botId)
     return this.access(client, botId)

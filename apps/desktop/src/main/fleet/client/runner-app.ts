@@ -1,6 +1,8 @@
+import { createHash } from 'node:crypto'
 import { app, BrowserWindow, dialog } from 'electron'
 import type { RunnerDockerView } from '../../../shared/runner'
 import { holdAwake } from '../../power-manager'
+import { ContainerExecutor, defaultRunnerImage, probeContainerSupport } from '../../runner/container-executor'
 import { getAppFlag, getAppSetting, setAppFlag, setAppSetting } from '../../store'
 import { broadcast } from '../../window-ipc'
 import { DockerHost } from '../installer/docker-host'
@@ -37,13 +39,23 @@ async function dockerState(): Promise<RunnerDockerView> {
   }
 }
 
+/** The Docker CLI as the installer finds it, looked up on each use: Docker may be installed while the app runs. */
+const dockerCli = (): string | null => new LocalRunner().dockerPath
+
 /**
- * The runner host of this app: its settings in the app database and its files in the app's data folder. The Container
- * executor is passed in `overrides.container` once the app has one; until then Docker jobs fail with
- * `executor_unavailable`. Its per-job limits are the host's own settings (`host.config()`).
+ * The runner host of this app: its settings in the app database, its files in the app's data folder, and Docker jobs
+ * through the CLI the bot server installer finds. Each job's container limits are the host's settings, and its
+ * containers carry a key of this app's data folder, so another Maestrly app of the computer never removes them.
  */
 export function createAppRunnerHost(overrides: Partial<RunnerHostOptions> = {}): RunnerHost {
-  return new RunnerHost({
+  const owner = createHash('sha256').update(app.getPath('userData')).digest('hex').slice(0, 16)
+  const container = new ContainerExecutor({
+    docker: dockerCli,
+    limits: () => host.containerLimits(),
+    defaultImage: () => defaultRunnerImage(app.getVersion(), { isPackaged: app.isPackaged }),
+    owner: () => owner,
+  })
+  const host: RunnerHost = new RunnerHost({
     // A bot's container runs the bot, not other bots' jobs.
     available: process.env.MAESTRLY_BOT_MODE !== '1',
     settings: {
@@ -57,8 +69,12 @@ export function createAppRunnerHost(overrides: Partial<RunnerHostOptions> = {}):
     notifyAccess: (serverId, botId) => broadcast('fleet:runner-access', { serverId, botId }),
     holdAwake,
     docker: dockerState,
+    container: () => container,
+    containerSupport: () => probeContainerSupport({ docker: dockerCli() }),
+    containerCleanup: container,
     ...overrides,
   })
+  return host
 }
 
 const appRunnerIpc: RunnerIpcDeps = {
