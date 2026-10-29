@@ -46,6 +46,18 @@ export class ThreadReports {
     return this.fresh(await this.read())
   }
 
+  /**
+   * Drops a thread's answer the bot already received in its turn (`bot_peers_wait`), so its next turn is not told it
+   * again: only that answer when `text` says which, since a newer one may have replaced it meanwhile.
+   */
+  async remove(threadId: string, text?: string): Promise<void> {
+    const reports = await this.read()
+    const kept = reports.filter((item) => item.threadId !== threadId || (text !== undefined && item.text !== text))
+    if (kept.length === reports.length) return
+    this.reports = kept
+    await this.write(kept)
+  }
+
   /** The always-on memory section of the bot's own conversation, or null without recent answers. */
   async section(): Promise<MemoryCoreExtraSection | null> {
     const reports = await this.list()

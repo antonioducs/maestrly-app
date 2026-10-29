@@ -5,6 +5,15 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Added
+
+- A bot that asks another bot something can wait for the answer within the same
+  turn and finish what it was doing, instead of ending its turn and reading the
+  answer only on its next one. The new `bot_peers_wait` tool returns once the
+  conversation it opened with the other bot brings back its answer, or once the
+  other bot answered and that conversation settled, for up to 15 minutes at a
+  time. **Stop** ends the wait.
+
 ### Fixed
 
 - A bot's Chromium no longer reopens a page twice after it restarts. Newer

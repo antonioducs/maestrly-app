@@ -56,6 +56,7 @@ export const APP_TOOL_POLICY = {
   computer_key: policy(false, false, false),
   bot_peers_list: policy(true, true, false),
   bot_peers_send: policy(false, false, false),
+  bot_peers_wait: policy(true, true, false),
   bot_share_file: policy(true, false, false),
   owner_memory_save: policy(false, false, false),
   owner_memory_forget: policy(false, false, false),

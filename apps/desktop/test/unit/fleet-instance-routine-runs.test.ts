@@ -33,6 +33,7 @@ const {
   readRunConversationIds,
 } = await import('../../src/main/fleet/instance/routine-runs')
 const { ThreadReports, THREAD_REPORT_LIMITS } = await import('../../src/main/fleet/instance/thread-reports')
+const { ThreadWaits } = await import('../../src/main/fleet/instance/thread-waits')
 const { conversationScreen } = await import('../../src/main/conversation-screen')
 const { conversationShellEnv } = await import('../../src/main/chat/conversation-env')
 const { laneKeptFolder, runKeptFolder } = await import('../../src/main/fleet/instance/run-files')
@@ -114,6 +115,7 @@ async function bot() {
     extras,
     runs,
     threadReports: new ThreadReports(path.join(dir, 'thread-reports.json')),
+    threadWaits: new ThreadWaits(),
     help: new InstanceHelpStore(extras, () => {}),
     live: new LiveTranscript({
       conversationId: () => primary.id,
@@ -749,6 +751,80 @@ describe('threads with other bots in conversations of their own', () => {
       expect.objectContaining({ threadId, peerName: 'Nina', title: 'Release 4.2', text: 'Nina says it passed.' }),
     ])
     await expect(runtime.reportThread(randomUUID(), 'No')).rejects.toThrow('not here')
+  })
+
+  it("drops only the answer a thread's wait received from the next turn's reports", async () => {
+    const reports = new ThreadReports(path.join(dir, 'reports.json'))
+    await reports.add({ threadId: 't1', peerName: 'Nina', title: 'Release 4.2', text: 'Passed.' })
+    await reports.add({ threadId: 't2', peerName: 'Gamma', title: 'Deploy', text: 'Done.' })
+    // A newer answer replaced the one received: it stays for the next turn.
+    await reports.remove('t1', 'Something older.')
+    expect((await reports.list()).map((report) => report.threadId)).toEqual(['t1', 't2'])
+    await reports.remove('t1', 'Passed.')
+    await reports.remove('missing')
+    expect((await new ThreadReports(path.join(dir, 'reports.json')).list()).map((report) => report.text)).toEqual([
+      'Done.',
+    ])
+    await reports.remove('t2')
+    expect(await reports.list()).toEqual([])
+  })
+
+  it("lets another conversation wait within its turn for a thread's answer", async () => {
+    const { runtime } = await bot()
+    vi.spyOn(chatService, 'acquireChatConversationSlot').mockResolvedValue({
+      release: () => {},
+      operation: {},
+    } as never)
+    await expect(runtime.waitThread(randomUUID(), { timeoutMs: 1000 })).rejects.toThrow(
+      'No conversation with another bot has this id here'
+    )
+    const threadId = randomUUID()
+    await runtime.input(peerInput(threadId, 'Release 4.2 passed: 412 of 415 tests.'))
+    // The thread's turn answering the other bot ends without writing to it again: the exchange settled.
+    const settled = runtime.waitThread(threadId, { timeoutMs: 5000 })
+    answer('Nina confirmed 4.2 passed.')
+    await turn(runtime)
+    await expect(settled).resolves.toEqual({
+      status: 'answered',
+      peerReply: 'Release 4.2 passed: 412 of 415 tests.',
+      finalText: 'Nina confirmed 4.2 passed.',
+    })
+    // One that writes to the other bot again goes on: no answer yet.
+    await runtime.input(peerInput(threadId, 'Which build?'))
+    const { start } = answer('Asked Nina which build.')
+    const reply = start.getMockImplementation()!
+    start.mockImplementation(async (input) => {
+      runtime.noteThreadSent(threadId)
+      return reply(input)
+    })
+    const going = runtime.waitThread(threadId, { timeoutMs: 50 })
+    await turn(runtime)
+    await expect(going).resolves.toEqual({ status: 'waiting' })
+    // The thread reports its answer: the wait gets it, and the bot's next turn is not told it again.
+    const reported = runtime.waitThread(threadId, { timeoutMs: 5000 })
+    await runtime.reportThread(threadId, 'Build 912 passed.')
+    await expect(reported).resolves.toEqual({ status: 'reported', text: 'Build 912 passed.' })
+    expect(await runtime.threadReports.list()).toEqual([])
+    // An answer that came before anyone waited is kept for the next wait, and given once.
+    await runtime.reportThread(threadId, 'Build 913 passed too.')
+    await expect(runtime.waitThread(threadId, { timeoutMs: 5000 })).resolves.toEqual({
+      status: 'reported',
+      text: 'Build 913 passed too.',
+    })
+    await expect(runtime.waitThread(threadId, { timeoutMs: 10 })).resolves.toEqual({ status: 'waiting' })
+    // After a restart, an answer the thread reported since it was opened is still waiting in the reports.
+    Object.assign(runtime, { threadWaits: new ThreadWaits() })
+    await runtime.threadReports.add({ threadId, peerName: 'Nina', title: 'Release 4.2', text: 'Build 914 passed.' })
+    await expect(runtime.waitThread(threadId, { timeoutMs: 5000 })).resolves.toEqual({
+      status: 'reported',
+      text: 'Build 914 passed.',
+    })
+    expect(await runtime.threadReports.list()).toEqual([])
+    // The owner's Stop ends a wait.
+    const stop = new AbortController()
+    const stopped = runtime.waitThread(threadId, { timeoutMs: 5000, signal: stop.signal })
+    stop.abort()
+    await expect(stopped).resolves.toEqual({ status: 'cancelled' })
   })
 
   it("deletes the files a peer thread shared when the thread's conversation is deleted", async () => {

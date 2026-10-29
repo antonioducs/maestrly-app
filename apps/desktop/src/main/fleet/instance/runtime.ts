@@ -137,6 +137,7 @@ import { LiveTranscript } from './live-transcript'
 import { InstanceHelpStore } from './help'
 import { BotRunConversations, isRunId, type RunLane, type ThreadRecord } from './routine-runs'
 import { ThreadReports } from './thread-reports'
+import { ThreadWaits, type ThreadWaitResult } from './thread-waits'
 import type { MemoryCoreExtraSection } from '../../memory/core'
 import type { BotDisplay } from './displays'
 import type { LaneComputers } from './lane-computers'
@@ -410,6 +411,8 @@ export class BotRuntime {
   readonly runs: BotRunConversations
   /** The answers the bot brought back to its own conversation from threads it opened there. */
   readonly threadReports: ThreadReports
+  /** Its conversations waiting, within their turn, for a thread's answer (`bot_peers_wait`). */
+  readonly threadWaits = new ThreadWaits()
   /** Names of the peers this bot listed, for the replies of its peer tools. */
   readonly peerNames = new Map<string, string>()
   private stored: StoredProfile | null
@@ -722,6 +725,7 @@ export class BotRuntime {
     this.pollTimer = this.statusTimer = this.transcriptTimer = null
     const running = [...this.turns.values()]
     for (const turn of running) turn.abort.abort()
+    this.threadWaits.cancelAll()
     // Stopped before the hooks go, so no gap lets its work fall back to the environment's settings.
     const background = options.uninstall ? this.stopBackgroundWork() : Promise.resolve()
     this.unregisterConversation(options.uninstall === true)
@@ -1675,6 +1679,33 @@ export class BotRuntime {
     const record = this.runs.thread(threadId)
     if (!record) throw new Error('This conversation with another bot is not here.')
     await this.threadReports.add({ threadId, peerName: record.peerName, title: record.title, text })
+    this.threadWaits.reported(threadId, text)
+  }
+  /** The bot sent another message in a thread from its conversation of it (`bot_peers_send`). */
+  noteThreadSent(threadId: string): void {
+    this.threadWaits.sent(threadId)
+  }
+  /**
+   * Waits, within the turn of another conversation, for a thread's answer (`bot_peers_wait`): one it reported since
+   * the bot last wrote there comes at once. An answer received this way leaves the reports of the bot's next turn.
+   */
+  async waitThread(threadId: string, options: { timeoutMs: number; signal?: AbortSignal }): Promise<ThreadWaitResult> {
+    const record = this.runs.thread(threadId)
+    if (this.disposed || !record)
+      throw new Error('No conversation with another bot has this id here. Pass the thread bot_peers_send returned.')
+    if (!this.threadWaits.pending(threadId)) {
+      const since = Math.max(Date.parse(record.createdAt), this.threadWaits.lastSentAt(threadId))
+      const stored = (await this.threadReports.list().catch(() => [])).find(
+        (report) => report.threadId === threadId && Date.parse(report.at) >= since
+      )
+      if (stored) {
+        await this.threadReports.remove(threadId, stored.text).catch(() => undefined)
+        return { status: 'reported', text: stored.text }
+      }
+    }
+    const result = await this.threadWaits.wait(threadId, options)
+    if (result.status === 'reported') await this.threadReports.remove(threadId, result.text).catch(() => undefined)
+    return result
   }
   /** The always-on memory of the bot's own conversation: its owner, and the answers its threads brought back. */
   private async primaryCoreSections(signal: AbortSignal): Promise<MemoryCoreExtraSection[] | null> {
@@ -2076,6 +2107,9 @@ export class BotRuntime {
       signal.throwIfAborted()
       await this.queue.markStarted(item.id)
       signal.throwIfAborted()
+      // A thread's turn answering the other bot: once it ends, whoever waits for the thread may have its answer.
+      const answering =
+        lane?.record.kind === 'thread' && item.input.source === 'peer' ? this.threadWaits.mark(lane.runId) : null
       live.turnStarted()
       // Pages show it so until its native message is saved: readers holding it as queued learn it was taken.
       const starting = live.startingItem()
@@ -2118,6 +2152,7 @@ export class BotRuntime {
       }
       const outcome = await handle.done
       const finalText = assistantText(id, outcome.assistantMessageId)
+      if (lane && answering !== null) this.threadWaits.turnEnded(lane.runId, answering, item.input.text, finalText)
       const summary = live.lastAssistantText(outcome.assistantMessageId)?.slice(0, 280) ?? null
       // The turn's last state, even when its final events came before its final save.
       this.scheduleTranscriptRefresh(lane)
