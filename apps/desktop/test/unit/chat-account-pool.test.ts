@@ -19,7 +19,9 @@ const B = `${A}@acc_work`
 const C = `${A}@acc_side`
 const VIRTUAL = `${A}@~active`
 const CODEX = 'builtin_codex_subscription'
-const probe = (over: Partial<import('../../src/main/chat/subscription-failover/account-pool').AccountPoolProbe> = {}) => ({
+const probe = (
+  over: Partial<import('../../src/main/chat/subscription-failover/account-pool').AccountPoolProbe> = {}
+) => ({
   isAdmissible: () => true,
   isSignedIn: () => true,
   nextProbeAt: () => 0,
@@ -35,20 +37,33 @@ beforeEach(() => {
 describe('account pool config', () => {
   it('defaults to every account of the provider, the default slot active, draining', () => {
     expect(pool.getAccountPool('claude-subscription')).toEqual({
-      kind: 'claude-subscription', memberProviderIds: [A, B], activeProviderId: A, policy: 'drain', customMembers: false,
+      kind: 'claude-subscription',
+      memberProviderIds: [A, B],
+      activeProviderId: A,
+      policy: 'drain',
+      customMembers: false,
     })
   })
   it('keeps an implicit pool open to accounts added later', () => {
     pool.setAccountPool({ kind: 'claude-subscription', activeProviderId: B })
     providers = [...providers, { id: C }]
-    expect(pool.getAccountPool('claude-subscription')).toMatchObject({ memberProviderIds: [A, B, C], activeProviderId: B })
+    expect(pool.getAccountPool('claude-subscription')).toMatchObject({
+      memberProviderIds: [A, B, C],
+      activeProviderId: B,
+    })
   })
   it('rejects invalid patches', () => {
     expect(() => pool.setAccountPool({ kind: 'cursor-subscription' } as never)).toThrow('unknown-kind')
     expect(() => pool.setAccountPool({ kind: 'claude-subscription', memberProviderIds: [] })).toThrow('invalid-members')
-    expect(() => pool.setAccountPool({ kind: 'claude-subscription', memberProviderIds: [CODEX] })).toThrow('invalid-members')
-    expect(() => pool.setAccountPool({ kind: 'claude-subscription', memberProviderIds: [B], activeProviderId: A })).toThrow('active-not-member')
-    expect(() => pool.setAccountPool({ kind: 'claude-subscription', policy: 'sometimes' as never })).toThrow('invalid-policy')
+    expect(() => pool.setAccountPool({ kind: 'claude-subscription', memberProviderIds: [CODEX] })).toThrow(
+      'invalid-members'
+    )
+    expect(() =>
+      pool.setAccountPool({ kind: 'claude-subscription', memberProviderIds: [B], activeProviderId: A })
+    ).toThrow('active-not-member')
+    expect(() => pool.setAccountPool({ kind: 'claude-subscription', policy: 'sometimes' as never })).toThrow(
+      'invalid-policy'
+    )
   })
   it('drops removed accounts and falls back to the first member', () => {
     pool.setAccountPool({ kind: 'claude-subscription', memberProviderIds: [B, A], activeProviderId: B })
@@ -58,16 +73,23 @@ describe('account pool config', () => {
   it('sanitizes corrupt saved pools', () => {
     expect(pool.sanitizeSavedAccountPools(null)).toEqual([])
     expect(pool.sanitizeSavedAccountPools({ version: 2, pools: [] })).toEqual([])
-    expect(pool.sanitizeSavedAccountPools({ version: 1, pools: [
-      { kind: 'claude-subscription', policy: 'x', activeProviderId: 3, memberProviderIds: [B, B, '', 4] },
-      { kind: 'claude-subscription', policy: 'drain' }, { kind: 'grok-subscription' },
-    ] })).toEqual([{ kind: 'claude-subscription', memberProviderIds: [B] }])
+    expect(
+      pool.sanitizeSavedAccountPools({
+        version: 1,
+        pools: [
+          { kind: 'claude-subscription', policy: 'x', activeProviderId: 3, memberProviderIds: [B, B, '', 4] },
+          { kind: 'claude-subscription', policy: 'drain' },
+          { kind: 'grok-subscription' },
+        ],
+      })
+    ).toEqual([{ kind: 'claude-subscription', memberProviderIds: [B] }])
   })
   it('removes a deleted account from the saved pool and its pointer', () => {
     pool.setAccountPool({ kind: 'claude-subscription', memberProviderIds: [A, B], activeProviderId: B })
     pool.removeAccountFromAccountPools(B)
     expect(JSON.parse(settings.get(pool.ACCOUNT_POOLS_CONFIG_KEY)!)).toEqual({
-      version: 1, pools: [{ kind: 'claude-subscription', memberProviderIds: [A] }],
+      version: 1,
+      pools: [{ kind: 'claude-subscription', memberProviderIds: [A] }],
     })
   })
 })
@@ -96,8 +118,16 @@ describe('drain pointer', () => {
   it('picks the account that recovers first when none is admissible', () => {
     providers = [{ id: A }, { id: B }, { id: C }]
     const at: Record<string, number> = { [A]: 500, [B]: 300, [C]: 100 }
-    expect(pool.nextActiveAfterExhaustion(resolved(), A, probe({ isAdmissible: () => false, nextProbeAt: (id) => at[id]! }))).toBe(C)
-    expect(pool.nextActiveAfterExhaustion(resolved(), A, probe({ isAdmissible: () => false, nextProbeAt: (id) => (id === A ? 1 : 9) }))).toBeNull()
+    expect(
+      pool.nextActiveAfterExhaustion(resolved(), A, probe({ isAdmissible: () => false, nextProbeAt: (id) => at[id]! }))
+    ).toBe(C)
+    expect(
+      pool.nextActiveAfterExhaustion(
+        resolved(),
+        A,
+        probe({ isAdmissible: () => false, nextProbeAt: (id) => (id === A ? 1 : 9) })
+      )
+    ).toBeNull()
   })
   it('stays put under prefer-active, for another account, or alone', () => {
     expect(pool.nextActiveAfterExhaustion(resolved({ policy: 'prefer-active' }), A, probe())).toBeNull()
@@ -107,7 +137,8 @@ describe('drain pointer', () => {
   it('persists only the pointer, keeping the implicit membership', () => {
     expect(pool.advanceAccountPoolsAfterExhaustion(A, probe())).toEqual({ kind: 'claude-subscription', from: A, to: B })
     expect(JSON.parse(settings.get(pool.ACCOUNT_POOLS_CONFIG_KEY)!)).toEqual({
-      version: 1, pools: [{ kind: 'claude-subscription', activeProviderId: B }],
+      version: 1,
+      pools: [{ kind: 'claude-subscription', activeProviderId: B }],
     })
     expect(pool.advanceAccountPoolsAfterExhaustion(VIRTUAL, probe())).toBeNull()
   })
@@ -115,11 +146,21 @@ describe('drain pointer', () => {
 
 describe('account pool infos', () => {
   it('lists providers with two or more accounts, named after the active account', () => {
-    const infos = pool.accountPoolInfos([
-      { id: A, name: 'Claude', baseURL: '', apiKeyPresent: false, connected: false },
-      { id: B, name: 'Claude — Work', baseURL: '', apiKeyPresent: false, connected: true, accountLabel: 'Work' },
-      { id: CODEX, name: 'Codex', baseURL: '', apiKeyPresent: false, connected: true },
-    ], (kind, active) => `${kind}:${active?.accountLabel ?? 'default'}`)
-    expect(infos).toEqual([expect.objectContaining({ kind: 'claude-subscription', providerId: VIRTUAL, name: 'claude-subscription:default', connected: true })])
+    const infos = pool.accountPoolInfos(
+      [
+        { id: A, name: 'Claude', baseURL: '', apiKeyPresent: false, connected: false },
+        { id: B, name: 'Claude — Work', baseURL: '', apiKeyPresent: false, connected: true, accountLabel: 'Work' },
+        { id: CODEX, name: 'Codex', baseURL: '', apiKeyPresent: false, connected: true },
+      ],
+      (kind, active) => `${kind}:${active?.accountLabel ?? 'default'}`
+    )
+    expect(infos).toEqual([
+      expect.objectContaining({
+        kind: 'claude-subscription',
+        providerId: VIRTUAL,
+        name: 'claude-subscription:default',
+        connected: true,
+      }),
+    ])
   })
 })

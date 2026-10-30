@@ -205,14 +205,10 @@ import {
   compactReserved,
   registerChatIpc,
   resolveFrozenChatSelection,
-  revalidateFrozenChatSelection,
-  startInternalChatTurn,
-  stopChat,
   stopChatAndWait,
   type ChatIpcDeps,
 } from '../../src/main/chat/service'
-import { chatHistoryStats, listChatMessages, upsertChatMessage } from '../../src/main/chat/chat-store'
-import { setCompactionSummarizer, clearCompactionSummarizer } from '../../src/main/chat/compaction-summarizer'
+import { upsertChatMessage } from '../../src/main/chat/chat-store'
 import { getConvUiPrefs, patchConvUiPrefs } from '../../src/main/store'
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
@@ -230,19 +226,9 @@ function register() {
   return { handlers, emitStatus }
 }
 
-import { addProvider } from '../../src/main/chat/catalog'
-import { setApiKey, clearApiKey } from '../../src/main/chat/credentials'
-import { setFailoverRoute, getSubscriptionFailoverRouter } from '../../src/main/chat/subscription-failover'
-import { beginClaudeAttempt, listClaudeAttempts } from '../../src/main/chat/subscription-failover/claude-attempts'
+import { getSubscriptionFailoverRouter } from '../../src/main/chat/subscription-failover'
+import { listClaudeAttempts } from '../../src/main/chat/subscription-failover/claude-attempts'
 import { resolveClaudeRuntimeTarget } from '../../src/main/chat/subscription-failover/claude-adapter'
-
-function deferred<T = void>() {
-  let resolve!: (value: T) => void
-  const promise = new Promise<T>((done) => {
-    resolve = done
-  })
-  return { promise, resolve }
-}
 
 function account() {
   const account = addSubscriptionAccount('claude-subscription', 'Fallback')
@@ -309,46 +295,45 @@ function history(conversationId: string, text = 'Earlier work') {
 const send = (handlers: Map<string, Handler>, conversationId: string) =>
   handlers.get('chat:send')!({ sender: h.webContents }, { conversationId, text: 'Continue.' })
 
-  beforeEach(async () => {
-    freshDb()
-    vi.clearAllMocks()
-    h.slots.clear()
-    h.binding.mockReturnValue(null)
-    h.state.status = {
-      ...h.state.status,
-      state: 'ready',
-      available: true,
-      authenticated: true,
-      accountFingerprint: 'sha256:claude-account',
-      accountEpoch: 2,
-    }
-    h.manager.status.mockImplementation(async () => h.state.status)
-    h.manager.getStatusSnapshot.mockImplementation(() => h.state.status)
-    h.manager.listModels.mockImplementation(async () => h.state.models)
-    h.manager.getObservedModelContextWindow.mockReturnValue(undefined)
-    h.manager.assertAccountIdentity.mockImplementation(() => {})
-    h.runClaude.mockResolvedValue({ planSubmitted: false, sessionId: 'session' })
-    h.summarizePortable.mockResolvedValue({
-      text: 'portable Claude summary',
-      usage: { input: 80, output: 16, cacheRead: 0, cacheCreate: 0, totalInput: 80 },
-    })
-    modelMeta.getClaudeHarnessModelMeta.mockResolvedValue(null)
-    await resolveClaudeRuntimeTarget({
-      logicalProviderId: CLAUDE_SUBSCRIPTION_PROVIDER_ID,
-      modelId: 'sonnet',
-      chain: [CLAUDE_SUBSCRIPTION_PROVIDER_ID],
-      attemptedProviderIds: new Set(),
-      admit: false,
-      signal: new AbortController().signal,
-    })
-    getSubscriptionFailoverRouter().resetProvider(CLAUDE_SUBSCRIPTION_PROVIDER_ID)
+beforeEach(async () => {
+  freshDb()
+  vi.clearAllMocks()
+  h.slots.clear()
+  h.binding.mockReturnValue(null)
+  h.state.status = {
+    ...h.state.status,
+    state: 'ready',
+    available: true,
+    authenticated: true,
+    accountFingerprint: 'sha256:claude-account',
+    accountEpoch: 2,
+  }
+  h.manager.status.mockImplementation(async () => h.state.status)
+  h.manager.getStatusSnapshot.mockImplementation(() => h.state.status)
+  h.manager.listModels.mockImplementation(async () => h.state.models)
+  h.manager.getObservedModelContextWindow.mockReturnValue(undefined)
+  h.manager.assertAccountIdentity.mockImplementation(() => {})
+  h.runClaude.mockResolvedValue({ planSubmitted: false, sessionId: 'session' })
+  h.summarizePortable.mockResolvedValue({
+    text: 'portable Claude summary',
+    usage: { input: 80, output: 16, cacheRead: 0, cacheCreate: 0, totalInput: 80 },
   })
-  afterEach(async () => {
-    vi.useRealTimers()
-    for (const attempt of listClaudeAttempts()) attempt.abort(new Error('test cleanup'))
-    closeDb()
+  modelMeta.getClaudeHarnessModelMeta.mockResolvedValue(null)
+  await resolveClaudeRuntimeTarget({
+    logicalProviderId: CLAUDE_SUBSCRIPTION_PROVIDER_ID,
+    modelId: 'sonnet',
+    chain: [CLAUDE_SUBSCRIPTION_PROVIDER_ID],
+    attemptedProviderIds: new Set(),
+    admit: false,
+    signal: new AbortController().signal,
   })
-
+  getSubscriptionFailoverRouter().resetProvider(CLAUDE_SUBSCRIPTION_PROVIDER_ID)
+})
+afterEach(async () => {
+  vi.useRealTimers()
+  for (const attempt of listClaudeAttempts()) attempt.abort(new Error('test cleanup'))
+  closeDb()
+})
 
 import { getAccountPool, setAccountPool } from '../../src/main/chat/subscription-failover/account-pool'
 import { frozenFailoverChain, describeChatModelForDispatch } from '../../src/main/chat/service'
@@ -363,27 +348,45 @@ describe('active account service', () => {
     expect(((await call(handlers, 'chat:config')) as ChatConfig).subscriptionAccountPools ?? []).toEqual([])
     const work = account()
     const config = (await call(handlers, 'chat:config')) as ChatConfig
-    expect(config.subscriptionAccountPools).toEqual([expect.objectContaining({
-      kind: 'claude-subscription', providerId: VIRTUAL, activeProviderId: CLAUDE_SUBSCRIPTION_PROVIDER_ID,
-      memberProviderIds: [CLAUDE_SUBSCRIPTION_PROVIDER_ID, work.providerId], connected: true,
-    })])
+    expect(config.subscriptionAccountPools).toEqual([
+      expect.objectContaining({
+        kind: 'claude-subscription',
+        providerId: VIRTUAL,
+        activeProviderId: CLAUDE_SUBSCRIPTION_PROVIDER_ID,
+        memberProviderIds: [CLAUDE_SUBSCRIPTION_PROVIDER_ID, work.providerId],
+        connected: true,
+      }),
+    ])
     expect(config.providers.some((provider) => provider.id === VIRTUAL)).toBe(false)
   })
   it('saves the pool through IPC and rejects invalid patches', async () => {
     const work = account()
     const { handlers } = register()
-    await expect(call(handlers, 'chat:subscription-account-pool:set', {
-      kind: 'claude-subscription', activeProviderId: work.providerId, policy: 'prefer-active',
-    })).resolves.toMatchObject({ ok: true, pool: { activeProviderId: work.providerId, policy: 'prefer-active' } })
+    await expect(
+      call(handlers, 'chat:subscription-account-pool:set', {
+        kind: 'claude-subscription',
+        activeProviderId: work.providerId,
+        policy: 'prefer-active',
+      })
+    ).resolves.toMatchObject({ ok: true, pool: { activeProviderId: work.providerId, policy: 'prefer-active' } })
     expect(h.webContents.send).toHaveBeenCalledWith('models:catalog-changed')
-    await expect(call(handlers, 'chat:subscription-account-pool:set', { kind: 'claude-subscription', memberProviderIds: [] })).resolves.toEqual({ ok: false, error: 'invalid-members' })
+    await expect(
+      call(handlers, 'chat:subscription-account-pool:set', { kind: 'claude-subscription', memberProviderIds: [] })
+    ).resolves.toEqual({ ok: false, error: 'invalid-members' })
   })
   it('drops a removed account from the pool', async () => {
     const work = account()
-    setAccountPool({ kind: 'claude-subscription', memberProviderIds: [work.providerId, CLAUDE_SUBSCRIPTION_PROVIDER_ID], activeProviderId: work.providerId })
+    setAccountPool({
+      kind: 'claude-subscription',
+      memberProviderIds: [work.providerId, CLAUDE_SUBSCRIPTION_PROVIDER_ID],
+      activeProviderId: work.providerId,
+    })
     const { handlers } = register()
     await call(handlers, 'chat:subscription-account:remove', work.account.id)
-    expect(getAccountPool('claude-subscription')).toMatchObject({ memberProviderIds: [CLAUDE_SUBSCRIPTION_PROVIDER_ID], activeProviderId: CLAUDE_SUBSCRIPTION_PROVIDER_ID })
+    expect(getAccountPool('claude-subscription')).toMatchObject({
+      memberProviderIds: [CLAUDE_SUBSCRIPTION_PROVIDER_ID],
+      activeProviderId: CLAUDE_SUBSCRIPTION_PROVIDER_ID,
+    })
   })
   it('moves the pointer when the active account runs out and tells the pickers', () => {
     const work = account()
@@ -401,18 +404,114 @@ describe('active account selections', () => {
     setAccountPool({ kind: 'claude-subscription', activeProviderId: work.providerId })
     const conv = conversation(CLAUDE_SUBSCRIPTION_PROVIDER_ID)
     const { handlers } = register()
-    await expect(call(handlers, 'chat:set-selection', conv.id, { providerId: VIRTUAL, modelId: 'sonnet' })).resolves.toEqual({ ok: true })
+    await expect(
+      call(handlers, 'chat:set-selection', conv.id, { providerId: VIRTUAL, modelId: 'sonnet' })
+    ).resolves.toEqual({ ok: true })
     expect(getConvUiPrefs(conv.id).chat?.providerId).toBe(VIRTUAL)
     expect(work.manager.listModels).toHaveBeenCalled()
-    await expect(call(handlers, 'chat:get-selection', conv.id)).resolves.toEqual({ providerId: VIRTUAL, modelId: 'sonnet' })
+    await expect(call(handlers, 'chat:get-selection', conv.id)).resolves.toEqual({
+      providerId: VIRTUAL,
+      modelId: 'sonnet',
+    })
     await expect(call(handlers, 'chat:models', VIRTUAL)).resolves.toEqual(['sonnet'])
   })
   it('keeps a virtual default for new conversations', async () => {
     account()
     const { handlers } = register()
-    await expect(call(handlers, 'chat:set-default', { providerId: VIRTUAL, modelId: 'sonnet' })).resolves.toMatchObject({ ok: true })
+    await expect(call(handlers, 'chat:set-default', { providerId: VIRTUAL, modelId: 'sonnet' })).resolves.toMatchObject(
+      { ok: true }
+    )
     const fresh = makeConversation(makeWorkspace().id, { cwd: '/repo' })
-    await expect(call(handlers, 'chat:get-selection', fresh.id)).resolves.toEqual({ providerId: VIRTUAL, modelId: 'sonnet' })
+    await expect(call(handlers, 'chat:get-selection', fresh.id)).resolves.toEqual({
+      providerId: VIRTUAL,
+      modelId: 'sonnet',
+    })
     await expect(describeChatModelForDispatch(VIRTUAL, 'sonnet')).resolves.toMatchObject({ available: true })
   })
+})
+
+const ranOn = (index: number) => (h.runClaude.mock.calls as any)[index][0].initialTarget.providerId
+
+describe('active account execution', () => {
+  it('runs an active-account chat on the active account and keeps the virtual selection', async () => {
+    const work = account()
+    setAccountPool({ kind: 'claude-subscription', activeProviderId: work.providerId })
+    const conv = conversation(VIRTUAL)
+    const { handlers } = register()
+    await send(handlers, conv.id)
+    await vi.waitFor(() => expect(h.runClaude).toHaveBeenCalledOnce())
+    expect(ranOn(0)).toBe(work.providerId)
+    expect(getConvUiPrefs(conv.id).chat?.providerId).toBe(VIRTUAL)
+    await stopChatAndWait(conv.id)
+  })
+  it('drains: stays on the next account after the first one resets', async () => {
+    const work = account()
+    const conv = conversation(VIRTUAL)
+    const { handlers } = register()
+    exhaust(CLAUDE_SUBSCRIPTION_PROVIDER_ID)
+    await send(handlers, conv.id)
+    await vi.waitFor(() => expect(h.runClaude).toHaveBeenCalledOnce())
+    expect(ranOn(0)).toBe(work.providerId)
+    await stopChatAndWait(conv.id)
+    getSubscriptionFailoverRouter().resetProvider(CLAUDE_SUBSCRIPTION_PROVIDER_ID)
+    await send(handlers, conv.id)
+    await vi.waitFor(() => expect(h.runClaude).toHaveBeenCalledTimes(2))
+    expect(ranOn(1)).toBe(work.providerId)
+    await stopChatAndWait(conv.id)
+  })
+  it('prefer-active returns to the active account once it resets', async () => {
+    const work = account()
+    setAccountPool({ kind: 'claude-subscription', policy: 'prefer-active' })
+    const conv = conversation(VIRTUAL)
+    const { handlers } = register()
+    exhaust(CLAUDE_SUBSCRIPTION_PROVIDER_ID)
+    await send(handlers, conv.id)
+    await vi.waitFor(() => expect(h.runClaude).toHaveBeenCalledOnce())
+    expect(ranOn(0)).toBe(work.providerId)
+    await stopChatAndWait(conv.id)
+    getSubscriptionFailoverRouter().resetProvider(CLAUDE_SUBSCRIPTION_PROVIDER_ID)
+    await send(handlers, conv.id)
+    await vi.waitFor(() => expect(h.runClaude).toHaveBeenCalledTimes(2))
+    expect(ranOn(1)).toBe(CLAUDE_SUBSCRIPTION_PROVIDER_ID)
+    await stopChatAndWait(conv.id)
+  })
+  it('freezes the active account with the pool route and restarts later rounds where the pool points', async () => {
+    const work = account()
+    const conv = conversation(VIRTUAL)
+    register()
+    const frozen = await resolveFrozenChatSelection(conv.id)
+    if (!frozen.ok) throw new Error(frozen.error)
+    expect(frozen.selection).toMatchObject({
+      providerId: CLAUDE_SUBSCRIPTION_PROVIDER_ID,
+      accountPoolProviderId: VIRTUAL,
+    })
+    expect(frozen.selection.failoverRoute?.map((entry) => entry.providerId)).toEqual([
+      CLAUDE_SUBSCRIPTION_PROVIDER_ID,
+      work.providerId,
+    ])
+    setAccountPool({ kind: 'claude-subscription', activeProviderId: work.providerId })
+    expect(frozenFailoverChain(frozen.selection)).toEqual([work.providerId, CLAUDE_SUBSCRIPTION_PROVIDER_ID])
+  })
+  it('compacts an active-account chat on the pool while the active account is exhausted', async () => {
+    const work = account()
+    const conv = conversation(VIRTUAL)
+    register()
+    history(conv.id)
+    exhaust(CLAUDE_SUBSCRIPTION_PROVIDER_ID)
+    await expect(compactReserved(conv.id)).resolves.toMatchObject({ ok: true })
+    expect(h.summarizePortable).toHaveBeenCalled()
+    for (const [args] of h.summarizePortable.mock.calls as any) expect(args.manager).toBe(work.manager)
+  })
+})
+
+it('stores manual context limits on the physical active account', async () => {
+  const { getContextLimit, setContextLimit } = await import('../../src/main/chat/context-limits')
+  const work = account()
+  setContextLimit(VIRTUAL, 'sonnet', 64000)
+  expect(getContextLimit(CLAUDE_SUBSCRIPTION_PROVIDER_ID, 'sonnet')).toBe(64000)
+  setAccountPool({ kind: 'claude-subscription', activeProviderId: work.providerId })
+  expect(getContextLimit(VIRTUAL, 'sonnet')).toBeUndefined()
+  setContextLimit(VIRTUAL, 'sonnet', 32000)
+  expect(getContextLimit(work.providerId, 'sonnet')).toBe(32000)
+  expect(getContextLimit(CLAUDE_SUBSCRIPTION_PROVIDER_ID, 'sonnet')).toBe(64000)
 })

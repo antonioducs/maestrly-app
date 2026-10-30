@@ -100,16 +100,27 @@ export function resolveAccountPool(
   accounts: readonly string[]
 ): ChatSubscriptionAccountPool {
   const explicit = (saved?.memberProviderIds ?? []).filter((id) => accounts.includes(id))
-  const memberProviderIds = explicit.length > 0 ? explicit : accounts.length > 0 ? [...accounts] : [accountPoolBaseProviderId(kind)]
+  const memberProviderIds =
+    explicit.length > 0 ? explicit : accounts.length > 0 ? [...accounts] : [accountPoolBaseProviderId(kind)]
   const activeProviderId =
     saved?.activeProviderId && memberProviderIds.includes(saved.activeProviderId)
       ? saved.activeProviderId
       : memberProviderIds[0]!
-  return { kind, memberProviderIds, activeProviderId, policy: saved?.policy ?? 'drain', customMembers: explicit.length > 0 }
+  return {
+    kind,
+    memberProviderIds,
+    activeProviderId,
+    policy: saved?.policy ?? 'drain',
+    customMembers: explicit.length > 0,
+  }
 }
 
 export function getAccountPool(kind: ChatSubscriptionAccountPoolKind): ChatSubscriptionAccountPool {
-  return resolveAccountPool(kind, readSaved().find((pool) => pool.kind === kind), accountPoolAccounts(kind))
+  return resolveAccountPool(
+    kind,
+    readSaved().find((pool) => pool.kind === kind),
+    accountPoolAccounts(kind)
+  )
 }
 
 export function setAccountPool(patch: ChatSubscriptionAccountPoolPatch): ChatSubscriptionAccountPool {
@@ -127,7 +138,8 @@ export function setAccountPool(patch: ChatSubscriptionAccountPoolPatch): ChatSub
   }
   if (patch.activeProviderId !== undefined) {
     const active = typeof patch.activeProviderId === 'string' ? patch.activeProviderId.trim() : ''
-    if (!resolveAccountPool(kind, next, accounts).memberProviderIds.includes(active)) throw new Error('active-not-member')
+    if (!resolveAccountPool(kind, next, accounts).memberProviderIds.includes(active))
+      throw new Error('active-not-member')
     next.activeProviderId = active
   }
   saveOne(next)
@@ -213,11 +225,13 @@ export function accountPoolInfos(
     if (accountPoolAccounts(kind).length < 2) return []
     const pool = getAccountPool(kind)
     const byId = (id: string) => providers.find((provider) => provider.id === id)
-    return [{
-      ...pool,
-      providerId: activeAccountProviderId(kind),
-      name: nameFor(kind, byId(pool.activeProviderId)),
-      connected: pool.memberProviderIds.some((id) => byId(id)?.connected === true),
-    }]
+    return [
+      {
+        ...pool,
+        providerId: activeAccountProviderId(kind),
+        name: nameFor(kind, byId(pool.activeProviderId)),
+        connected: pool.memberProviderIds.some((id) => byId(id)?.connected === true),
+      },
+    ]
   })
 }

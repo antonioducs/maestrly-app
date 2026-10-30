@@ -87,7 +87,14 @@ import {
   SUPPORTED_FAILOVER_KINDS,
   type CodexRuntimeTarget,
 } from './subscription-failover'
-import { accountPoolInfos, advanceAccountPoolsAfterExhaustion, removeAccountFromAccountPools, resolveAccountPoolProviderId, setAccountPool } from './subscription-failover/account-pool'
+import {
+  accountPoolInfos,
+  advanceAccountPoolsAfterExhaustion,
+  removeAccountFromAccountPools,
+  resolveAccountPoolProviderId,
+  rotateToActive,
+  setAccountPool,
+} from './subscription-failover/account-pool'
 import { onSubscriptionAccountExhausted } from './subscription-failover/router'
 import { resolveClaudeRuntimeTarget, type ClaudeRuntimeTarget } from './subscription-failover/claude-adapter'
 import { listClaudeAttempts, setClaudeAttemptOwner } from './subscription-failover/claude-attempts'
@@ -2213,47 +2220,47 @@ function buildConfig(): ChatConfig {
   const grokStatus = grokAuthSnapshot()
   const backgroundCompaction = backgroundCompactionConfig()
   const providers: ChatProviderInfo[] = listAvailableChatProviders().map((p) => ({
-      id: p.id,
-      name: p.name,
-      baseURL: p.baseURL,
-      apiKeyPresent: isManagedProvider(p.id) ? false : hasApiKey(p.id),
-      ...(isCodexSubscriptionProvider(p.id)
+    id: p.id,
+    name: p.name,
+    baseURL: p.baseURL,
+    apiKeyPresent: isManagedProvider(p.id) ? false : hasApiKey(p.id),
+    ...(isCodexSubscriptionProvider(p.id)
+      ? {
+          builtIn: true,
+          connected: p.accountId ? codexAuthSnapshot(p.accountId).authenticated : codexStatus.authenticated,
+        }
+      : isGitHubCopilotSubscriptionProvider(p.id)
         ? {
             builtIn: true,
-            connected: p.accountId ? codexAuthSnapshot(p.accountId).authenticated : codexStatus.authenticated,
+            connected: p.accountId
+              ? githubCopilotAuthSnapshot(p.accountId).authenticated
+              : githubCopilotStatus.authenticated,
           }
-        : isGitHubCopilotSubscriptionProvider(p.id)
+        : isClaudeSubscriptionProvider(p.id)
           ? {
               builtIn: true,
-              connected: p.accountId
-                ? githubCopilotAuthSnapshot(p.accountId).authenticated
-                : githubCopilotStatus.authenticated,
+              connected: p.accountId ? claudeAuthSnapshot(p.accountId).authenticated : claudeStatus.authenticated,
             }
-          : isClaudeSubscriptionProvider(p.id)
+          : isGrokSubscriptionProvider(p.id)
             ? {
                 builtIn: true,
-                connected: p.accountId ? claudeAuthSnapshot(p.accountId).authenticated : claudeStatus.authenticated,
+                connected: p.accountId ? grokAuthSnapshot(p.accountId).authenticated : grokStatus.authenticated,
               }
-            : isGrokSubscriptionProvider(p.id)
+            : isCursorSubscriptionProvider(p.id)
               ? {
                   builtIn: true,
-                  connected: p.accountId ? grokAuthSnapshot(p.accountId).authenticated : grokStatus.authenticated,
+                  connected: cursorAuthSnapshot(p.accountId ?? null).authenticated,
                 }
-              : isCursorSubscriptionProvider(p.id)
+              : isAntigravitySubscriptionProvider(p.id)
                 ? {
                     builtIn: true,
-                    connected: cursorAuthSnapshot(p.accountId ?? null).authenticated,
+                    connected: antigravityAuth.status(p.accountId ?? null).authenticated,
                   }
-                : isAntigravitySubscriptionProvider(p.id)
-                  ? {
-                      builtIn: true,
-                      connected: antigravityAuth.status(p.accountId ?? null).authenticated,
-                    }
-                  : { connected: hasApiKey(p.id), ...apiKeyCheckField(p.id) }),
-      ...(p.kind ? { kind: getProviderKind(p) } : {}),
-      ...(p.accountId ? { accountId: p.accountId } : {}),
-      ...(p.accountLabel ? { accountLabel: p.accountLabel } : {}),
-    }))
+                : { connected: hasApiKey(p.id), ...apiKeyCheckField(p.id) }),
+    ...(p.kind ? { kind: getProviderKind(p) } : {}),
+    ...(p.accountId ? { accountId: p.accountId } : {}),
+    ...(p.accountLabel ? { accountLabel: p.accountLabel } : {}),
+  }))
   const config: ChatConfig = {
     providers,
     presets: PROVIDER_PRESETS,
@@ -3599,7 +3606,11 @@ async function currentChatHistoryStats(
   physicalClaudeProviderId?: string,
   selectionOverride?: ChatModelRef
 ): Promise<StoredChatHistoryStats> {
-  const selection = selectionOverride ?? selectionFor(conversationId)
+  const storedSelection = selectionOverride ?? selectionFor(conversationId)
+  const selection =
+    storedSelection && isActiveAccountProviderId(storedSelection.providerId)
+      ? { ...storedSelection, providerId: resolveAccountPoolProviderId(storedSelection.providerId) }
+      : storedSelection
   // Binding lastMessageId / portable projection: MAIN context only (isolated rounds do not invalidate resume
   // or inflate the reseed/preflight projection), from the last portable marker on: only estimates read it.
   const history = listActiveConversationContextMessages(conversationId)
@@ -3670,7 +3681,7 @@ async function currentChatHistoryStats(
       binding ? binding.accountId : subscriptionAccountId(selection?.providerId)
     )
     const eligible =
-      freezeFailoverChain(selection!.providerId).includes(physicalProviderId) &&
+      freezeFailoverChain(storedSelection!.providerId).includes(physicalProviderId) &&
       getSubscriptionFailoverRouter().isAdmissible(physicalProviderId)
     runtimeReusable = !!(
       binding &&
@@ -3987,6 +3998,11 @@ async function startSend(
       : selectionFor(conversationId)
   if (!selection?.providerId) return { ok: false, error: 'no-provider' }
   if (internalLoop && !selection.modelId) return { ok: false, error: 'no-model' }
+  // The active-account selection runs on the account its pool points to now; the conversation keeps the virtual id.
+  const storedProviderId = selection.providerId
+  if (isActiveAccountProviderId(storedProviderId)) {
+    selection = { ...selection, providerId: resolveAccountPoolProviderId(storedProviderId) }
+  }
   const operation = reserveConversationOperation(conversationId, selection.providerId, opts?.operation)
   if (!operation) return { ok: false, error: 'busy' }
   // Compound operations may reserve the slot before switching provider/model.
@@ -3994,7 +4010,7 @@ async function startSend(
   operation.providerId = selection.providerId
   // An inherited model follows the last one picked anywhere; once a turn runs on it, the conversation keeps it.
   if (!internalLoop && !opts?.botAdmission && selection.modelId && !getConvUiPrefs(conversationId).chat?.modelId) {
-    patchConvChat(conversationId, { providerId: selection.providerId, modelId: selection.modelId })
+    patchConvChat(conversationId, { providerId: storedProviderId, modelId: selection.modelId })
   }
   if (!opts?.internal && !internalLoop) {
     operation.pendingMessage = {
@@ -4016,7 +4032,7 @@ async function startSend(
   const loopFailoverChain = internalLoop ? frozenFailoverChain(internalLoop.selectionOverride) : null
   const loopRouted = (loopFailoverChain?.length ?? 0) > 1
   const claudeFailoverChain = isClaudeSubscriptionProvider(selection.providerId)
-    ? (loopFailoverChain ?? freezeFailoverChain(selection.providerId))
+    ? (loopFailoverChain ?? freezeFailoverChain(storedProviderId))
     : []
   const claudeRequestedEffort =
     internalLoop?.selectionOverride.reasoning ?? getConvUiPrefs(conversationId).chat?.reasoning
@@ -4101,7 +4117,7 @@ async function startSend(
       )
         return { ok: false, error: 'busy' }
       // With a failover chain, the logical account may be unavailable; resolveCodexRuntimeTarget decides.
-      const earlyChain = loopFailoverChain ?? freezeFailoverChain(selection.providerId)
+      const earlyChain = loopFailoverChain ?? freezeFailoverChain(storedProviderId)
       if (!status.authenticated && earlyChain.length <= 1) return { ok: false, error: 'no-key' }
     } else if (useGitHubCopilot) {
       if (!selectionAccountId && (githubCopilotLoginPending || githubCopilotIdentityTransitionPromise)) {
@@ -4136,7 +4152,7 @@ async function startSend(
         const modelId = models.find((model) => model.policy?.state !== 'disabled')?.id ?? ''
         if (!modelId) return { ok: false, error: 'no-model' }
         selection = { providerId: selection.providerId, modelId }
-        patchConvChat(conversationId, { providerId: selection.providerId, modelId })
+        patchConvChat(conversationId, { providerId: storedProviderId, modelId })
       }
       const selectedGitHubCopilotModelId = selection?.modelId ?? ''
       githubCopilotModelAtAdmission = models.find((model) => model.id === selectedGitHubCopilotModelId)
@@ -4158,7 +4174,7 @@ async function startSend(
             const modelId = (await manager.listModels(operation.controller.signal))[0]?.value
             if (!modelId) continue
             selection = { providerId: selection.providerId, modelId }
-            patchConvChat(conversationId, { providerId: selection.providerId, modelId: selection.modelId })
+            patchConvChat(conversationId, { providerId: storedProviderId, modelId: selection.modelId })
             break
           }
           if (!selection.modelId) return { ok: false, error: 'no-model' }
@@ -4207,7 +4223,7 @@ async function startSend(
           if (!modelId) return { ok: false, error: 'no-model' }
           selection = { providerId: selection.providerId, modelId }
           patchConvChat(conversationId, {
-            providerId: selection.providerId,
+            providerId: storedProviderId,
             modelId,
           })
         }
@@ -4244,7 +4260,7 @@ async function startSend(
         const modelId = models[0]?.id ?? ''
         if (!modelId) return { ok: false, error: 'no-model' }
         selection = { providerId: selection.providerId, modelId }
-        patchConvChat(conversationId, { providerId: selection.providerId, modelId })
+        patchConvChat(conversationId, { providerId: storedProviderId, modelId })
       }
       if (!models.some((model) => model.id === selection?.modelId)) {
         return { ok: false, error: 'no-model' }
@@ -4289,7 +4305,7 @@ async function startSend(
         const modelId = models[0]?.id ?? ''
         if (!modelId) return { ok: false, error: 'no-model' }
         selection = { providerId: selection.providerId, modelId }
-        patchConvChat(conversationId, { providerId: selection.providerId, modelId })
+        patchConvChat(conversationId, { providerId: storedProviderId, modelId })
       }
       if (!models.some((model) => model.id === selection?.modelId)) {
         return { ok: false, error: 'no-model' }
@@ -4313,7 +4329,7 @@ async function startSend(
       }
       if (!modelId) return { ok: false, error: 'no-model' }
       selection = { providerId: selection.providerId, modelId }
-      patchConvChat(conversationId, { providerId: selection.providerId, modelId: selection.modelId })
+      patchConvChat(conversationId, { providerId: storedProviderId, modelId: selection.modelId })
     }
 
     if (
@@ -4401,7 +4417,7 @@ async function startSend(
       ? (internalLoop?.selectionOverride.reasoning ?? getConvUiPrefs(conversationId).chat?.reasoning)
       : undefined
     const frozenCodexChain = useCodexSubscription
-      ? (loopFailoverChain ?? freezeFailoverChain(selection.providerId))
+      ? (loopFailoverChain ?? freezeFailoverChain(storedProviderId))
       : null
     try {
       parts.push(
@@ -4649,7 +4665,7 @@ async function startSend(
       const codexSelection = selection
       if (!codexSelection?.providerId || !codexSelection.modelId) return { ok: false, error: 'no-model' }
 
-      const chain = codexFailoverChain ?? frozenCodexChain ?? freezeFailoverChain(codexSelection.providerId)
+      const chain = codexFailoverChain ?? frozenCodexChain ?? freezeFailoverChain(storedProviderId)
       const resolved = await resolveCodexRuntimeTarget({
         logicalProviderId: codexSelection.providerId,
         modelId: codexSelection.modelId,
@@ -4933,7 +4949,7 @@ async function startSend(
     // Create the internal turn handle HERE (same tick as admission) — never via `active.get` after start.
     if (opts?.botAdmission) {
       assertBotTurnAdmission(conversationId, opts.botAdmission)
-      if (selection.providerId !== opts.botAdmission.providerId || selection.modelId !== opts.botAdmission.modelId)
+      if (storedProviderId !== opts.botAdmission.providerId || selection.modelId !== opts.botAdmission.modelId)
         throw new Error('The requested bot account or model is no longer available.')
     } else if (!opts?.internal && !internalLoop && botBlocksManualSend(conversationId)) {
       // The release was withdrawn while this message was still in preflight; it never starts.
@@ -7658,7 +7674,7 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
       (compactClaudeTarget
         ? (compactClaudeTarget.contextWindow ?? undefined)
         : (await effectiveModelMeta(selection.modelId, selection.providerId, compactSignal)).meta?.contextWindow)
-    const compactAccountId = subscriptionAccountId(selection.providerId)
+    const compactAccountId = subscriptionAccountId(resolveAccountPoolProviderId(selection.providerId))
     // Frozen profile: revalidate identity/availability IMMEDIATELY before any summary
     // call. Account/credential changes during the round ABORT compaction (the turn ends) — never
     // fall back to live credentials. Same semantics as revalidateFrozenChatSelection between rounds.
@@ -8626,11 +8642,14 @@ function routeAccountIdentityChanged(
  * The enabled fallback route of a Claude/Codex account, with each account's identity at freeze. An account signed
  * out right now has no identity to hold it to, so it stays out: a later sign-in must not join a frozen execution.
  */
-async function freezeFailoverRoute(primary: FrozenFailoverAccount): Promise<FrozenFailoverAccount[] | undefined> {
+async function freezeFailoverRoute(
+  primary: FrozenFailoverAccount,
+  logicalProviderId = primary.providerId
+): Promise<FrozenFailoverAccount[] | undefined> {
   if (!isClaudeSubscriptionProvider(primary.providerId) && !isCodexSubscriptionProvider(primary.providerId)) {
     return undefined
   }
-  const chain = freezeFailoverChain(primary.providerId)
+  const chain = freezeFailoverChain(logicalProviderId)
   if (chain.length <= 1 || chain[0] !== primary.providerId) return undefined
   const route: FrozenFailoverAccount[] = [primary]
   for (const providerId of chain.slice(1)) {
@@ -8652,9 +8671,14 @@ async function freezeFailoverRoute(primary: FrozenFailoverAccount): Promise<Froz
 
 /** Physical accounts a frozen selection may run on: its frozen fallback route, or only its own account. */
 export function frozenFailoverChain(frozen: FrozenChatSelection): string[] {
-  return frozen.failoverRoute && frozen.failoverRoute.length > 1
-    ? frozen.failoverRoute.map((account) => account.providerId)
-    : [frozen.providerId]
+  const route =
+    frozen.failoverRoute && frozen.failoverRoute.length > 1
+      ? frozen.failoverRoute.map((account) => account.providerId)
+      : [frozen.providerId]
+  // An active-account profile starts where its pool points now; its accounts and identities stay frozen.
+  return frozen.accountPoolProviderId && route.length > 1
+    ? rotateToActive(route, resolveAccountPoolProviderId(frozen.accountPoolProviderId))
+    : route
 }
 
 /** Resolves the CURRENT profile (provider+model+reasoning+fastMode+identity) to FREEZE for the loop. No silent fallback. */
@@ -8662,10 +8686,15 @@ export async function resolveFrozenChatSelection(
   conversationId: string,
   profileOverride?: BackgroundCompactionConfig['selection']
 ): Promise<{ ok: true; selection: FrozenChatSelection } | { ok: false; error: string }> {
-  const selection = profileOverride
+  const requested = profileOverride
     ? { providerId: profileOverride.providerId, modelId: profileOverride.modelId }
     : selectionFor(conversationId)
-  if (!selection?.providerId) return { ok: false, error: 'no-provider' }
+  if (!requested?.providerId) return { ok: false, error: 'no-provider' }
+  // Freeze physical accounts and identities, remembering the pool so later rounds follow its current pointer.
+  const accountPoolProviderId = isActiveAccountProviderId(requested.providerId) ? requested.providerId : undefined
+  const selection = accountPoolProviderId
+    ? { ...requested, providerId: resolveAccountPoolProviderId(accountPoolProviderId) }
+    : requested
   const accountId = subscriptionAccountId(selection.providerId)
   let modelId = selection.modelId
   if (!modelId) {
@@ -8853,11 +8882,14 @@ export async function resolveFrozenChatSelection(
     resolvedModelId,
     flags: captureHarnessFlags(),
   })
-  const failoverRoute = await freezeFailoverRoute({
-    providerId: selection.providerId,
-    ...(identityFingerprint ? { identityFingerprint } : {}),
-    ...(typeof identityEpoch === 'number' ? { identityEpoch } : {}),
-  })
+  const failoverRoute = await freezeFailoverRoute(
+    {
+      providerId: selection.providerId,
+      ...(identityFingerprint ? { identityFingerprint } : {}),
+      ...(typeof identityEpoch === 'number' ? { identityEpoch } : {}),
+    },
+    accountPoolProviderId ?? selection.providerId
+  )
   return {
     ok: true,
     selection: {
@@ -8875,6 +8907,7 @@ export async function resolveFrozenChatSelection(
       ...(typeof identityEpoch === 'number' ? { identityEpoch } : {}),
       ...(providerFingerprint ? { providerFingerprint } : {}),
       ...(failoverRoute ? { failoverRoute } : {}),
+      ...(accountPoolProviderId && failoverRoute ? { accountPoolProviderId } : {}),
     },
   }
 }
