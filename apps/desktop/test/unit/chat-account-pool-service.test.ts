@@ -394,3 +394,25 @@ describe('active account service', () => {
     expect(h.webContents.send).toHaveBeenCalledWith('models:catalog-changed')
   })
 })
+
+describe('active account selections', () => {
+  it('validates an active-account selection on the active account and stores the virtual id', async () => {
+    const work = account()
+    setAccountPool({ kind: 'claude-subscription', activeProviderId: work.providerId })
+    const conv = conversation(CLAUDE_SUBSCRIPTION_PROVIDER_ID)
+    const { handlers } = register()
+    await expect(call(handlers, 'chat:set-selection', conv.id, { providerId: VIRTUAL, modelId: 'sonnet' })).resolves.toEqual({ ok: true })
+    expect(getConvUiPrefs(conv.id).chat?.providerId).toBe(VIRTUAL)
+    expect(work.manager.listModels).toHaveBeenCalled()
+    await expect(call(handlers, 'chat:get-selection', conv.id)).resolves.toEqual({ providerId: VIRTUAL, modelId: 'sonnet' })
+    await expect(call(handlers, 'chat:models', VIRTUAL)).resolves.toEqual(['sonnet'])
+  })
+  it('keeps a virtual default for new conversations', async () => {
+    account()
+    const { handlers } = register()
+    await expect(call(handlers, 'chat:set-default', { providerId: VIRTUAL, modelId: 'sonnet' })).resolves.toMatchObject({ ok: true })
+    const fresh = makeConversation(makeWorkspace().id, { cwd: '/repo' })
+    await expect(call(handlers, 'chat:get-selection', fresh.id)).resolves.toEqual({ providerId: VIRTUAL, modelId: 'sonnet' })
+    await expect(describeChatModelForDispatch(VIRTUAL, 'sonnet')).resolves.toMatchObject({ available: true })
+  })
+})

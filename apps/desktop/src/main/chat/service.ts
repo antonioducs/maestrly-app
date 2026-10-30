@@ -420,6 +420,7 @@ import {
   DEFAULT_REASONING_EFFORTS,
   hasUsagePricing,
   isChatSubscriptionProviderKind,
+  isActiveAccountProviderId,
   isPortableExecutionProviderId,
   isMaestrlyUltraEffort,
   resolveFrozenSentEffort,
@@ -1026,7 +1027,8 @@ function reserveConversationOperation(
   })
   const operation: PendingConversationOperation = {
     token: Symbol(conversationId),
-    providerId,
+    // Account boundaries (login/logout) wait on the physical account the operation is about to use.
+    providerId: providerId ? resolveAccountPoolProviderId(providerId) : providerId,
     controller: new AbortController(),
     done,
     settleDone,
@@ -2006,11 +2008,16 @@ function defaultSelection(): ChatModelRef | null {
   return { providerId: provider.id, modelId }
 }
 
+/** A saved provider is still selectable: an existing account, or the active account of an existing provider. */
+function selectableProviderExists(providers: readonly { id: string }[], providerId: string): boolean {
+  return providers.some((p) => p.id === providerId) || (isActiveAccountProviderId(providerId) && !!getProvider(providerId))
+}
+
 /** The default model chosen in Settings, while its account still exists. */
 function configuredDefaultSelection(providers: readonly { id: string }[]): ChatModelRef | null {
   const savedP = getAppSetting(CHAT_DEFAULT_PROVIDER_KEY)
   const savedM = getAppSetting(CHAT_DEFAULT_MODEL_KEY)
-  return savedP && savedM && providers.some((p) => p.id === savedP) ? { providerId: savedP, modelId: savedM } : null
+  return savedP && savedM && selectableProviderExists(providers, savedP) ? { providerId: savedP, modelId: savedM } : null
 }
 
 /**
@@ -2022,7 +2029,7 @@ function inheritedSelection(): ChatModelRef | null {
   const configured = configuredDefaultSelection(providers)
   if (configured) return configured
   const last = rememberedChatSelection()
-  if (last && !isChatGptWebProvider(last.providerId) && providers.some((p) => p.id === last.providerId)) return last
+  if (last && !isChatGptWebProvider(last.providerId) && selectableProviderExists(providers, last.providerId)) return last
   return defaultSelection()
 }
 
@@ -2309,7 +2316,7 @@ async function bestEffortWithin<T>(promise: Promise<T>, timeoutMs: number, fallb
 }
 
 async function runnerCapabilityMetaFallback(providerId: string, modelId: string): Promise<ChatModelMeta | null> {
-  const accountId = subscriptionAccountId(providerId)
+  const accountId = subscriptionAccountId(resolveAccountPoolProviderId(providerId))
   if (isCodexSubscriptionProvider(providerId)) {
     const model = (
       await getCodexSubscriptionManager(accountId)
@@ -3062,7 +3069,7 @@ export async function effectiveModelMeta(
 
   const canonical = await getModelMeta(modelId)
   signal?.throwIfAborted()
-  const subscriptionAccount = subscriptionAccountId(providerId)
+  const subscriptionAccount = subscriptionAccountId(resolveAccountPoolProviderId(providerId))
 
   if (isCodexSubscriptionProvider(providerId)) {
     const manager = getCodexSubscriptionManager(subscriptionAccount)
@@ -11468,23 +11475,23 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
   // Selection (provider/model): global and conversation defaults.
   deps.mhandle('chat:set-default', async (_e, sel: ChatModelRef & { reasoning?: string; fastMode?: boolean }) => {
     if (isGitHubCopilotSubscriptionProvider(sel?.providerId) && sel?.modelId) {
-      const validated = await validateGitHubCopilotModelSelection(sel.modelId, subscriptionAccountId(sel.providerId))
+      const validated = await validateGitHubCopilotModelSelection(sel.modelId, subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId)))
       if (!validated.ok) return validated
     }
     if (isClaudeSubscriptionProvider(sel?.providerId) && sel?.modelId) {
-      const validated = await validateClaudeModelSelection(sel.modelId, subscriptionAccountId(sel.providerId))
+      const validated = await validateClaudeModelSelection(sel.modelId, subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId)))
       if (!validated.ok) return validated
     }
     if (isCursorSubscriptionProvider(sel?.providerId)) {
-      const validated = await validateCursorModelSelection(sel.modelId, subscriptionAccountId(sel.providerId))
+      const validated = await validateCursorModelSelection(sel.modelId, subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId)))
       if (!validated.ok) return validated
     }
     if (isAntigravitySubscriptionProvider(sel?.providerId) && sel?.modelId) {
-      const validated = await validateAntigravityModelSelection(sel.modelId, subscriptionAccountId(sel.providerId))
+      const validated = await validateAntigravityModelSelection(sel.modelId, subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId)))
       if (!validated.ok) return validated
     }
     if (isGrokSubscriptionProvider(sel?.providerId) && sel?.modelId) {
-      const validated = await validateGrokModelSelection(sel.modelId, subscriptionAccountId(sel.providerId))
+      const validated = await validateGrokModelSelection(sel.modelId, subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId)))
       if (!validated.ok) return validated
     }
     if (isChatGptWebProvider(sel?.providerId)) return { ok: false, error: 'unknown-provider' }
@@ -11501,23 +11508,23 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
     if (typeof conversationId === 'string' && sel?.providerId && sel?.modelId) {
       if (isChatGptWebProvider(sel.providerId)) return { ok: false, error: 'unknown-provider' }
       if (isGitHubCopilotSubscriptionProvider(sel.providerId)) {
-        const validated = await validateGitHubCopilotModelSelection(sel.modelId, subscriptionAccountId(sel.providerId))
+        const validated = await validateGitHubCopilotModelSelection(sel.modelId, subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId)))
         if (!validated.ok) return validated
       }
       if (isClaudeSubscriptionProvider(sel.providerId)) {
-        const validated = await validateClaudeModelSelection(sel.modelId, subscriptionAccountId(sel.providerId))
+        const validated = await validateClaudeModelSelection(sel.modelId, subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId)))
         if (!validated.ok) return validated
       }
       if (isCursorSubscriptionProvider(sel.providerId)) {
-        const validated = await validateCursorModelSelection(sel.modelId, subscriptionAccountId(sel.providerId))
+        const validated = await validateCursorModelSelection(sel.modelId, subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId)))
         if (!validated.ok) return validated
       }
       if (isAntigravitySubscriptionProvider(sel.providerId)) {
-        const validated = await validateAntigravityModelSelection(sel.modelId, subscriptionAccountId(sel.providerId))
+        const validated = await validateAntigravityModelSelection(sel.modelId, subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId)))
         if (!validated.ok) return validated
       }
       if (isGrokSubscriptionProvider(sel.providerId)) {
-        const validated = await validateGrokModelSelection(sel.modelId, subscriptionAccountId(sel.providerId))
+        const validated = await validateGrokModelSelection(sel.modelId, subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId)))
         if (!validated.ok) return validated
       }
       const previous = getConvUiPrefs(conversationId).chat
@@ -11748,14 +11755,15 @@ export async function listChatProviderModels(
   providerId: string,
   options: { force?: boolean; includeHidden?: boolean } = {}
 ): Promise<string[]> {
+  const accountProviderId = resolveAccountPoolProviderId(providerId)
   const force = options.force === true
   const includeHidden = options.includeHidden === true
   const visible = (models: string[]) => {
     if (includeHidden === true) return models
-    const hidden = new Set(getHiddenChatModels()[providerId] ?? [])
+    const hidden = new Set(getHiddenChatModels()[accountProviderId] ?? [])
     return hidden.size === 0 ? models : models.filter((model) => !hidden.has(model))
   }
-  const accountId = subscriptionAccountId(providerId)
+  const accountId = subscriptionAccountId(accountProviderId)
   if (isCodexSubscriptionProvider(providerId)) {
     const status = await codexAuthStatus(force, undefined, accountId)
     if (!status.authenticated) return []
@@ -11861,7 +11869,7 @@ export async function describeChatModelForDispatch(
   providerId: string,
   modelId: string
 ): Promise<DispatchModelCapability> {
-  if (!listAvailableChatProviders().some((provider) => provider.id === providerId)) {
+  if (!selectableProviderExists(listAvailableChatProviders(), providerId)) {
     return { available: false, reasoning: false, reasoningEfforts: [], nativeUltraMode: false, fastMode: false }
   }
   const models = await bestEffortWithin(

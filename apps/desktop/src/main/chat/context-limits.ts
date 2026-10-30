@@ -6,12 +6,14 @@
  * in the consumer (chat:model-meta), not here — this module stores only user intent.
  */
 import { getAppSetting, setAppSetting } from '../store'
+import { resolveAccountPoolProviderId } from './subscription-failover/account-pool'
 
 const KEY = 'chat.contextLimits'
 
 /** `"<providerId>::<modelId>"` — separator `::` does not occur in IDs, so cannot collide. */
 function pairKey(providerId: string, modelId: string): string {
-  return `${providerId}::${modelId}`
+  // Manual limits belong to a physical account; the active-account selection uses the one it runs on.
+  return `${resolveAccountPoolProviderId(providerId)}::${modelId}`
 }
 
 /** Reads the persisted map. DEFENSIVE parsing: absent/invalid JSON → {}; discard nonpositive values. */
