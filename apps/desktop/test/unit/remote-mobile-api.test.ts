@@ -77,6 +77,8 @@ function setup() {
     defaults: null as Record<string, unknown> | null,
     /** Subscription accounts `chat:config` lists, and what `chat:subscription-usage` answers for each account id. */
     subscriptions: [] as unknown[],
+    /** Active-account selections `chat:config` lists, for the Claude and Codex accounts the user chose to rotate. */
+    accountPools: [] as unknown[],
     usage: {} as Record<string, unknown>,
     /** The pending plan `plan:get` hands out, what `plan:decide` answers, and the review `chat:review:status` reports. */
     plan: null as Record<string, unknown> | null,
@@ -224,6 +226,7 @@ function setup() {
   handle('chat:skills:set-override', () => undefined)
   handle('chat:config', () => ({
     providers: [{ id: 'claude', name: 'Claude', baseURL: '', apiKeyPresent: true }, ...state.subscriptions],
+    subscriptionAccountPools: state.accountPools,
     mcpServers: [
       { id: 'linear', name: 'Linear', transport: 'http', enabled: true },
       { id: 'off', name: 'Off', transport: 'http', enabled: false },
@@ -607,6 +610,36 @@ describe('mobile API of a workspaces host', () => {
         },
       ],
       defaultSelection: { providerId: 'claude', modelId: 'opus' },
+    })
+    h.api.dispose()
+  })
+
+  it('lists the connected active-account selections first among the models of the connected providers', async () => {
+    const h = setup()
+    const pool = (kind: string, connected: boolean) => ({
+      kind: `${kind}-subscription`,
+      providerId: `builtin_${kind}_subscription@~active`,
+      name: `${kind} (active account)`,
+      connected,
+      memberProviderIds: [`builtin_${kind}_subscription`],
+      activeProviderId: `builtin_${kind}_subscription`,
+      policy: 'drain',
+      customMembers: false,
+    })
+    h.state.accountPools = [pool('claude', true), pool('codex', false)]
+    const models = (await h.invoke('mobile:v1:models')) as {
+      options: Array<{ id: string; providerId: string; providerLabel: string; modelId: string }>
+    }
+    expect(models.options.map((option) => option.id)).toEqual([
+      'builtin_claude_subscription@~active::opus',
+      'builtin_claude_subscription@~active::sonnet',
+      'claude::opus',
+      'claude::sonnet',
+    ])
+    expect(models.options[0]).toMatchObject({
+      providerId: 'builtin_claude_subscription@~active',
+      providerLabel: 'claude (active account)',
+      modelId: 'opus',
     })
     h.api.dispose()
   })
