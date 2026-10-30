@@ -1670,6 +1670,22 @@ export default {
     claudeAccountsExhaustedError:
       'Todas as contas Claude da lista de rotação esgotaram o uso. Tente de novo mais tarde.',
     failoverSwitchStatus: 'Trocou de {{from}} para {{to}} por limite de uso',
+    accountPoolTitle: 'Conta ativa',
+    accountPoolDescription:
+      'Modelos escolhidos como conta ativa rodam neste rodízio, onde quer que você os escolha. Trocar a conta ativa aqui muda todos eles.',
+    accountPoolIsActive: 'Esta é a conta ativa',
+    accountPoolMakeActive: 'Tornar esta a conta ativa',
+    accountPoolActiveBadge: 'Ativa',
+    accountPoolPolicyLabel: 'Quando a conta ativa esgotar',
+    accountPoolPolicyDrain: 'Usar cada conta até esgotar',
+    accountPoolPolicyDrainDescription:
+      'Passa para a próxima conta e fica nela até ela esgotar, para as janelas de reset ficarem em sequência.',
+    accountPoolPolicyPreferActive: 'Voltar para a conta ativa',
+    accountPoolPolicyPreferActiveDescription: 'Usa as outras contas só enquanto a ativa estiver esgotada.',
+    accountPoolMembers: 'Contas no rodízio, em ordem',
+    accountPoolAddMember: 'Adicionar conta ao rodízio',
+    accountPoolRemoveMember: 'Remover do rodízio',
+    accountPoolSaveFailed: 'Não foi possível trocar a conta ativa.',
     apiKeyOptionalPlaceholder: 'Chave de API (opcional agora)',
     cancel: 'Cancelar',
     add: 'Adicionar',

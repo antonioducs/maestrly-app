@@ -17,6 +17,20 @@ const KEYS = [
   'accountsExhaustedError',
   'claudeAccountsExhaustedError',
   'failoverSwitchStatus',
+  'accountPoolTitle',
+  'accountPoolDescription',
+  'accountPoolIsActive',
+  'accountPoolMakeActive',
+  'accountPoolActiveBadge',
+  'accountPoolPolicyLabel',
+  'accountPoolPolicyDrain',
+  'accountPoolPolicyDrainDescription',
+  'accountPoolPolicyPreferActive',
+  'accountPoolPolicyPreferActiveDescription',
+  'accountPoolMembers',
+  'accountPoolAddMember',
+  'accountPoolRemoveMember',
+  'accountPoolSaveFailed',
 ] as const
 
 describe('subscription failover i18n', () => {
