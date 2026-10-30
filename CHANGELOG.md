@@ -5,6 +5,18 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Added
+
+- Pick **Claude — Active account** or **Codex — Active account** in any model
+  selector to run on whichever of your accounts is active, and change it in one
+  place: **Settings → Accounts → Active account**. With **Use each account until
+  it runs out**, Maestrly stays on an account until its quota ends, moves to the
+  next one and keeps using it, so each account's reset window starts after the
+  previous one instead of overlapping. **Return to the active account** goes back
+  to it as soon as it resets. Chats, subagents, compaction and image
+  interpretation all follow the active account; picking a specific account keeps
+  working as before.
+
 ## [0.30.0] - 2026-10-30
 
 ### Added
