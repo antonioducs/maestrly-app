@@ -6,6 +6,7 @@ import {
   isChatSubscriptionProviderKind,
   type ChatConfig,
 } from '../../../shared/chat'
+import { chatProviderChoices } from './account-pool'
 
 export interface ModelPickerRow {
   providerId: string
@@ -82,7 +83,7 @@ export async function loadModelPickerRows(
   const generation = (generations.get(hostId) ?? 0) + 1
   generations.set(hostId, generation)
   let config = await api.chatConfig()
-  const connected = config.providers.filter(isChatProviderConnected)
+  let connected = chatProviderChoices(config).filter(isChatProviderConnected)
   const previous = cachedModelPickerRows(hostId) ?? []
   const fresh = new Map<string, ModelPickerRow[]>()
   const keyCheckOf = (providerId: string) => config.providers.find((candidate) => candidate.id === providerId)?.keyCheck
@@ -131,6 +132,7 @@ export async function loadModelPickerRows(
   const refreshed = await api.chatConfig().catch(() => null)
   if (!refreshed) return
   config = refreshed
+  connected = chatProviderChoices(config).filter(isChatProviderConnected)
   publish()
 }
 

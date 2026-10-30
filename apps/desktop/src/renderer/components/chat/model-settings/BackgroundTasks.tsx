@@ -6,6 +6,7 @@ import { useHostApi } from '@/lib/hosts/host-context'
 import type { BackgroundCompactionConfig } from '../../../../shared/background-compaction'
 import type { ChatConfig } from '../../../../shared/chat'
 import type { MemorySettings } from '../../../../shared/memory'
+import { chatProviderChoices } from '../account-pool'
 import { SegmentedChoice, SettingSwitch } from './controls'
 import { memoryExtractionModel, projectMemorySettings, type PersonalMemoryState } from './MemoryCards'
 import { ModelPicker } from './ModelPicker'
@@ -114,7 +115,7 @@ export function ImageInterpreterRow({
       picker={
         <ModelPicker
           value={value}
-          providers={config.providers}
+          providers={chatProviderChoices(config)}
           label={t('modelSettings.imageInterpreter.title')}
           placeholder={t('modelSettings.off')}
           dimmed={!value}
@@ -216,7 +217,7 @@ export function CompactionRow({
         <>
           <ModelPicker
             value={value}
-            providers={config.providers}
+            providers={chatProviderChoices(config)}
             label={t('settings.backgroundCompactionModel')}
             placeholder={t('modelSettings.chooseModel')}
             dimmed={!persisted.enabled}
@@ -402,7 +403,7 @@ export const MemoryExtractionRow = forwardRef<
       picker={
         <ModelPicker
           value={value}
-          providers={config.providers}
+          providers={chatProviderChoices(config)}
           label={t('memorySettings.model')}
           placeholder={t('modelSettings.chooseModel')}
           dimmed={users.length === 0}

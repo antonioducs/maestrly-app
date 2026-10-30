@@ -13,6 +13,7 @@ import {
 } from '../../../../shared/chat'
 import { isRealSubagentProfileEffort } from '../../../../shared/subagent-profile-effort'
 import type { SubagentProfileCandidate } from '../../../../shared/subagent-profiles'
+import { chatProviderChoices } from '../account-pool'
 import { CandidateFields } from '../subagent-profiles/CandidateFields'
 import { PickerField, SaveNote, SegmentedChoice } from './controls'
 import { effortShortLabel, sameModelSelection, type ModelSelection } from './model-selection'
@@ -114,7 +115,7 @@ const candidateOf = (value: ModelSelection | null, config: ChatConfig): Subagent
         effort: value.effort ?? '',
         ...(value.fastMode ? { fastMode: true } : {}),
       }
-    : { providerId: subagentProfileProviders(config.providers)[0]?.id ?? '', modelId: '', effort: '' }
+    : { providerId: subagentProfileProviders(chatProviderChoices(config))[0]?.id ?? '', modelId: '', effort: '' }
 
 /**
  * Model of a background task or a subagent candidate, from the catalogs the subagent runtime resolves. With
@@ -204,10 +205,9 @@ export function ChatSelectionBody({
   const { t } = useTranslation('chat')
   const api = useHostApi()
   const { commit, saving, note, clearNote } = useAutoCommit(value, onCommit)
-  const connected = config.providers.filter(isChatProviderConnected)
-  const providers = config.providers.filter(
-    (provider) => isChatProviderConnected(provider) || provider.id === value?.providerId
-  )
+  const choices = chatProviderChoices(config)
+  const connected = choices.filter(isChatProviderConnected)
+  const providers = choices.filter((provider) => isChatProviderConnected(provider) || provider.id === value?.providerId)
   const [draft, setDraft] = useState<ModelSelection>(
     () => value ?? { providerId: connected[0]?.id ?? '', modelId: '', effort: 'off' }
   )

@@ -17,6 +17,7 @@ import { useHostApi, useHostId } from '@/lib/hosts/host-context'
 import type { HostId } from '../../../shared/host-key'
 import { isChatProviderConnected } from '../../../shared/chat'
 import type { ChatConfig, ChatModelRef } from '../../../shared/chat'
+import { chatProviderChoices } from './account-pool'
 import type { ChatComposerSource } from './chat-composer-source'
 import { modelDisplayName, providerSearchTerms, searchModelRows } from './model-search'
 import {
@@ -225,8 +226,9 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
     return () => ownerDocument.removeEventListener('mousedown', onDoc)
   }, [ownerDocument, open])
 
-  const provider = config?.providers.find((p) => p.id === sel?.providerId)
-  const connectedProviders = config?.providers.filter(isChatProviderConnected) ?? []
+  const providerChoices = config ? chatProviderChoices(config) : []
+  const provider = providerChoices.find((p) => p.id === sel?.providerId)
+  const connectedProviders = providerChoices.filter(isChatProviderConnected)
   const connectedProviderIds = useMemo(() => new Set(connectedProviders.map((candidate) => candidate.id)), [config])
   const botRow = source?.bot && rows.find((row) => row.providerId === sel?.providerId && row.modelId === sel?.modelId)
   const label = sel?.modelId
@@ -240,7 +242,7 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
   )
 
   const providerTerms = useMemo(
-    () => new Map((config?.providers ?? []).map((candidate) => [candidate.id, providerSearchTerms(candidate)])),
+    () => new Map(providerChoices.map((candidate) => [candidate.id, providerSearchTerms(candidate)])),
     [config]
   )
   const filtered = useMemo(() => {

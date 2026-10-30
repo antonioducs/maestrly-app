@@ -5,6 +5,7 @@ import {
   subscriptionDefaultLabelKey,
   subscriptionExhaustionMessageKey,
 } from './subscription-failover-route'
+import { chatProviderChoices } from './account-pool'
 import {
   useCallback,
   useEffect,
@@ -1363,7 +1364,7 @@ export function ChatView({
   useEffect(() => {
     Promise.all([api.chatGetSelection(conversationId), api.chatConfig()]).then(([sel, cfg]) => {
       if (!alive) return
-      const p = sel ? cfg.providers.find((pp) => pp.id === sel.providerId) : undefined
+      const p = sel ? chatProviderChoices(cfg).find((pp) => pp.id === sel.providerId) : undefined
       setKeyMissing(!p || !isChatProviderConnected(p))
       setSelModelId(sel?.modelId ?? null)
       setSelProviderId(sel?.providerId ?? null)
