@@ -826,6 +826,7 @@ export default {
     memoryShared: 'Compartilhada',
     claudeAuthenticationRequired: 'Sua conexão com o Claude expirou. Entre novamente para continuar.',
     manageClaudeConnection: 'Gerenciar conexão Claude',
+    processInterruptedError: 'Esta resposta foi interrompida porque o Maestrly foi encerrado ou reiniciado.',
     accountsExhaustedError: 'Todas as contas Codex da lista de rotação esgotaram o uso. Tente de novo mais tarde.',
     claudeAccountsExhaustedError:
       'Todas as contas Claude da lista de rotação esgotaram o uso. Tente de novo mais tarde.',

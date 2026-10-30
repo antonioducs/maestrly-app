@@ -13,6 +13,7 @@ import {
   listConversationContextMessages,
   listExecutionContextMessages,
   reconcileInterruptedExecutionMessages,
+  reconcileInterruptedTurnMessages,
   runnerContextHistory,
   upsertChatMessage,
   type StoredChatMessage,
@@ -1077,6 +1078,88 @@ describe('review-loop context isolation and billing in the store', () => {
     expect(recovered?.executionScope).not.toHaveProperty('role')
     expect(listConversationContextMessages(conv.id).map((message) => message.id)).not.toContain('paired-reviewer-open')
     expect(reconcileInterruptedExecutionMessages(conv.id)).toBe(0)
+  })
+
+  it('ends ordinary turns the process died in with their open tools aborted, and only those', () => {
+    const conv = chatConv()
+    const sub = { phase: 'model-started' } as never
+    upsertChatMessage({
+      id: 'crashed-turn',
+      conversationId: conv.id,
+      role: 'assistant',
+      parts: [
+        { type: 'text', id: 't-crash', text: 'dispatching producers' },
+        {
+          type: 'tool',
+          id: 'task-1',
+          toolCallId: 'task-1',
+          toolName: 'task',
+          input: { prompt: 'produce' },
+          state: { status: 'running', sub },
+        },
+        { type: 'tool', id: 'bash-1', toolCallId: 'bash-1', toolName: 'bash', input: {}, state: { status: 'pending' } },
+        {
+          type: 'tool',
+          id: 'read-1',
+          toolCallId: 'read-1',
+          toolName: 'read',
+          input: {},
+          state: { status: 'completed', output: 'ok' },
+        },
+      ],
+      usage: { input: 10, output: 5 },
+      createdAt: 1,
+    })
+    // No outcome by design, and nothing waiting: never an interrupted turn.
+    upsertChatMessage({
+      id: 'compaction-only',
+      conversationId: conv.id,
+      role: 'assistant',
+      parts: [{ type: 'compaction', id: 'c', text: 'summary' }],
+      createdAt: 2,
+    })
+    upsertChatMessage({
+      id: 'finished-turn',
+      conversationId: conv.id,
+      role: 'assistant',
+      parts: [{ type: 'tool', id: 'x', toolCallId: 'x', toolName: 'bash', input: {}, state: { status: 'running' } }],
+      finishReason: 'stop',
+      createdAt: 3,
+    })
+
+    expect(reconcileInterruptedTurnMessages(conv.id)).toBe(1)
+    const byId = new Map(listChatMessages(conv.id).map((message) => [message.id, message]))
+    const crashed = byId.get('crashed-turn')!
+    expect(crashed).toMatchObject({ errorCode: 'process-interrupted', usage: { input: 10, output: 5 } })
+    expect(crashed.finishReason).toBeUndefined()
+    expect(crashed.parts.map((part) => (part.type === 'tool' ? part.state : part.type))).toEqual([
+      'text',
+      { status: 'error', error: 'Aborted', sub },
+      { status: 'error', error: 'Aborted' },
+      { status: 'completed', output: 'ok' },
+    ])
+    expect(byId.get('compaction-only')?.error).toBeUndefined()
+    expect(byId.get('finished-turn')?.error).toBeUndefined()
+    expect(reconcileInterruptedTurnMessages(conv.id)).toBe(0)
+  })
+
+  it('leaves review-loop rounds to their own recovery, which also aborts their open tools', () => {
+    const conv = chatConv()
+    upsertChatMessage({
+      id: 'round-open',
+      conversationId: conv.id,
+      role: 'assistant',
+      parts: [{ type: 'tool', id: 'r', toolCallId: 'r', toolName: 'bash', input: {}, state: { status: 'running' } }],
+      source: 'chatgpt-web-review-loop',
+      executionScope: { kind: 'review-loop', executionId: 'exec-r', loopId: 'rl', iteration: 1, maxIterations: 5 },
+      createdAt: 1,
+    })
+
+    expect(reconcileInterruptedTurnMessages(conv.id)).toBe(0)
+    expect(reconcileInterruptedExecutionMessages(conv.id)).toBe(1)
+    const round = getExecutionAssistantMessage(conv.id, 'exec-r')!
+    expect(round.errorCode).toBe('review-loop-process-interrupted')
+    expect(round.parts[0]).toMatchObject({ state: { status: 'error', error: 'Aborted' } })
   })
 
   it('provides only main context to normal turns after review rounds', () => {

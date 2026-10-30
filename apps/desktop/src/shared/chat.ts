@@ -1060,6 +1060,30 @@ export interface ChatMessage {
   steering?: { status: 'queued' | 'failed' }
 }
 
+/** Whether a tool part still waits for its outcome. */
+export function isOpenToolPart(part: MessagePart): part is Extract<MessagePart, { type: 'tool' }> {
+  return (
+    part.type === 'tool' &&
+    (part.state.status === 'running' || part.state.status === 'pending' || part.state.status === 'awaiting-permission')
+  )
+}
+
+/** The parts of a turn that ended early: each tool still waiting for its outcome ends as aborted. */
+export function abortOpenToolParts(parts: MessagePart[]): MessagePart[] {
+  return parts.map((p) =>
+    isOpenToolPart(p)
+      ? {
+          ...p,
+          state: {
+            status: 'error',
+            error: 'Aborted',
+            ...('sub' in p.state && p.state.sub ? { sub: p.state.sub } : {}),
+          },
+        }
+      : p
+  )
+}
+
 export interface PendingChatQuestion {
   messageId: string
   toolCallId: string
@@ -1131,6 +1155,8 @@ export type ChatErrorCode =
   | 'codex-accounts-exhausted'
   | 'claude-accounts-exhausted'
   | 'review-loop-process-interrupted'
+  /** The app stopped (a crash or a killed process) while this turn ran; found at the next start. */
+  | 'process-interrupted'
   /** The build lacks the provider's public OAuth configuration; installing its runtime cannot fix it. */
   | 'subscription-provider-not-configured'
 
@@ -2140,19 +2166,7 @@ export function applyChatEvent(messages: ChatMessage[], ev: ChatStreamEvent): Ch
         usage: ev.usage ?? m.usage,
         responseStartedAt: undefined,
         responseDurationMs: ev.responseDurationMs ?? m.responseDurationMs,
-        parts: m.parts.map((p) =>
-          p.type === 'tool' &&
-          (p.state.status === 'running' || p.state.status === 'pending' || p.state.status === 'awaiting-permission')
-            ? {
-                ...p,
-                state: {
-                  status: 'error',
-                  error: 'Aborted',
-                  ...('sub' in p.state && p.state.sub ? { sub: p.state.sub } : {}),
-                },
-              }
-            : p
-        ),
+        parts: abortOpenToolParts(m.parts),
       }))
     case 'error':
       if (!ev.messageId) return messages
