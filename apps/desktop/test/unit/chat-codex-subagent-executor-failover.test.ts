@@ -3,6 +3,10 @@ import { executeSubagent } from '../../src/main/chat/subagent-executor'
 import { PermissionBroker } from '../../src/main/chat/permission'
 import { QuestionBroker } from '../../src/main/chat/question-broker'
 import { CodexSubagentQuotaError } from '../../src/main/chat/codex-subscription/subagent-runner'
+import { addSubscriptionAccount, subscriptionProviderIdFor } from '../../src/main/chat/catalog'
+import { setAccountPool } from '../../src/main/chat/subscription-failover/account-pool'
+import { activeAccountProviderId } from '../../src/shared/chat'
+import { closeDb, freshDb } from '../helpers/db'
 import {
   getSubscriptionFailoverRouter,
   resetSubscriptionFailoverRouterForTests,
@@ -176,5 +180,56 @@ describe('Codex subagent delegated by a non-Codex parent', () => {
     await expect(executeSubagent(args())).resolves.toMatchObject({ text: 'Direct.' })
     expect(h.resolve).not.toHaveBeenCalled()
     expect(h.runCodex.mock.calls[0][0]).toMatchObject({ client })
+  })
+})
+
+describe('Codex subagent on the active-account selection', () => {
+  const VIRTUAL = activeAccountProviderId('codex-subscription')
+  let work: { accountId: string; providerId: string }
+
+  beforeEach(() => {
+    freshDb()
+    const account = addSubscriptionAccount('codex-subscription', 'Work')
+    work = { accountId: account.id, providerId: subscriptionProviderIdFor('codex-subscription', account.id) }
+    setAccountPool({
+      kind: 'codex-subscription',
+      activeProviderId: work.providerId,
+      memberProviderIds: [work.providerId],
+    })
+  })
+  afterEach(closeDb)
+
+  function virtualArgs(): Parameters<typeof executeSubagent>[0] {
+    const base = args()
+    return { ...base, profile: { ...base.profile, effective: { ...base.profile.effective!, providerId: VIRTUAL } } }
+  }
+
+  it('runs a single-account pool on the physical manager and never looks the virtual id up', async () => {
+    h.chain.mockReturnValue([work.providerId])
+    const client = { id: 'direct' }
+    h.directManager.mockReturnValue({ preferredServiceTier: vi.fn(), getClient: vi.fn(async () => client) })
+    h.runCodex.mockResolvedValueOnce({ text: 'Direct.' })
+
+    await expect(executeSubagent(virtualArgs())).resolves.toMatchObject({ text: 'Direct.' })
+
+    expect(h.chain).toHaveBeenCalledWith(VIRTUAL)
+    expect(h.directManager).toHaveBeenCalledWith(work.accountId)
+    expect(h.directManager).not.toHaveBeenCalledWith('~active')
+    expect(h.directManager.mock.calls.every(([accountId]) => accountId === work.accountId)).toBe(true)
+    expect(h.runCodex.mock.calls[0][0]).toMatchObject({ client, physicalProviderId: work.providerId })
+    expect(h.resolve).not.toHaveBeenCalled()
+  })
+
+  it('keeps the logical selection on the pool chain and hands managers only physical targets', async () => {
+    h.chain.mockReturnValue([work.providerId, FALLBACK])
+    h.runCodex.mockResolvedValueOnce({ text: 'Walked.' })
+
+    await expect(executeSubagent(virtualArgs())).resolves.toMatchObject({ text: 'Walked.' })
+
+    expect(h.resolve).toHaveBeenCalledWith(
+      expect.objectContaining({ logicalProviderId: VIRTUAL, chain: [work.providerId, FALLBACK] })
+    )
+    expect(h.runCodex.mock.calls[0][0]).toMatchObject({ physicalProviderId: PRIMARY })
+    expect(h.directManager).not.toHaveBeenCalled()
   })
 })

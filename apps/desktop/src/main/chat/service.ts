@@ -7742,7 +7742,7 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
               prompt,
               signal: operationSignal,
               conversationId,
-              accountId: target.accountId ?? compactAccountId ?? null,
+              accountId: target.accountId !== undefined ? target.accountId : (compactAccountId ?? null),
               ...(frozen?.reasoningEffort
                 ? { effort: frozen.reasoningEffort }
                 : target.reasoningEffort

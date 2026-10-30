@@ -29,6 +29,7 @@ import { getAntigravitySubscriptionManager } from './antigravity-subscription/ma
 import { type AntigravityModelEntry, antigravityModelMeta } from './antigravity-subscription/models'
 import { catalogProviderForBaseURL, getProviderModelMetaWithStatus } from './model-meta'
 import { fetchModelsWithStatus } from './models'
+import { resolveAccountPoolProviderId } from './subscription-failover/account-pool'
 import { getHiddenChatModelsFor } from '../store'
 
 export type SubagentProviderStatus = 'missing' | 'unsupported' | 'disconnected' | 'no-key' | 'available'
@@ -161,7 +162,12 @@ async function authenticatedAntigravityModels(
   return manager.listModels().catch(() => null)
 }
 
-export async function subagentProviderStatus(providerId: string): Promise<SubagentProviderStatus> {
+/**
+ * The three entry points below take the stored selection. An active-account selection stands for its pool's current
+ * physical account, which then decides authorization, existence, hidden models and the manager.
+ */
+export async function subagentProviderStatus(requestedProviderId: string): Promise<SubagentProviderStatus> {
+  const providerId = resolveAccountPoolProviderId(requestedProviderId)
   if (!autonomousProviderAllowed(providerId)) return 'unsupported'
   if (!getProvider(providerId)) return 'missing'
   const accountId = subscriptionAccountId(providerId)
@@ -202,7 +208,8 @@ export async function subagentProviderStatus(providerId: string): Promise<Subage
   return hasApiKey(providerId) ? 'available' : 'no-key'
 }
 
-export async function subagentModelCatalog(providerId: string): Promise<SubagentProfileModelCatalogResult> {
+export async function subagentModelCatalog(requestedProviderId: string): Promise<SubagentProfileModelCatalogResult> {
+  const providerId = resolveAccountPoolProviderId(requestedProviderId)
   const accountId = subscriptionAccountId(providerId)
   if (isGitHubCopilotSubscriptionProvider(providerId)) {
     const models = await authenticatedCopilotModels(accountId)
@@ -281,7 +288,11 @@ export async function subagentModelCatalog(providerId: string): Promise<Subagent
 }
 
 /** Metadata from the same effective catalog used to start the child Codex thread. */
-export async function subagentModelMeta(providerId: string, modelId: string): Promise<SubagentProfileModelMetaResult> {
+export async function subagentModelMeta(
+  requestedProviderId: string,
+  modelId: string
+): Promise<SubagentProfileModelMetaResult> {
+  const providerId = resolveAccountPoolProviderId(requestedProviderId)
   const accountId = subscriptionAccountId(providerId)
   if (isGitHubCopilotSubscriptionProvider(providerId)) {
     const models = await authenticatedCopilotModels(accountId)

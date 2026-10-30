@@ -100,6 +100,10 @@ const h = vi.hoisted(() => {
     runGeneric: vi.fn(async (_args: any) => ({ planSubmitted: false })),
     runClaude: vi.fn(async () => ({ planSubmitted: false, sessionId: 'claude-session-1' })),
     compactSession: vi.fn(),
+    runCodexEphemeral: vi.fn(async (args: any) =>
+      args.operation({ accountId: null, client: {}, runtimeModelId: 'sonnet' }, args.signal)
+    ),
+    summarizeCodex: vi.fn(async () => ({ text: 'Codex summary' })),
     summarizePortable: vi.fn(
       async (): Promise<import('../../src/main/chat/portable-summarizer').IsolatedSummaryResult> => ({
         text: 'portable Claude summary',
@@ -189,10 +193,14 @@ vi.mock('../../src/main/chat/runner', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/main/chat/runner')>()
   return { ...actual, runChat: (args: unknown) => h.runGeneric(args) }
 })
+vi.mock('../../src/main/chat/subscription-failover', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/chat/subscription-failover')>()),
+  runCodexEphemeralWithFailover: (args: unknown) => h.runCodexEphemeral(args),
+}))
 vi.mock('../../src/main/chat/portable-summarizer', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/main/chat/portable-summarizer')>()),
   summarizeWithClaudeRuntime: h.summarizePortable,
-  summarizeWithCodexRuntime: vi.fn(),
+  summarizeWithCodexRuntime: h.summarizeCodex,
   summarizeWithGitHubCopilotRuntime: vi.fn(),
 }))
 
@@ -514,4 +522,16 @@ it('stores manual context limits on the physical active account', async () => {
   setContextLimit(VIRTUAL, 'sonnet', 32000)
   expect(getContextLimit(work.providerId, 'sonnet')).toBe(32000)
   expect(getContextLimit(CLAUDE_SUBSCRIPTION_PROVIDER_ID, 'sonnet')).toBe(64000)
+})
+
+it('keeps the default Codex account physical when compaction falls back from the active slot', async () => {
+  const slot = addSubscriptionAccount('codex-subscription', 'Work')
+  const providerId = subscriptionProviderIdFor('codex-subscription', slot.id)
+  setAccountPool({ kind: 'codex-subscription', activeProviderId: providerId })
+  const conv = conversation('builtin_codex_subscription@~active')
+  register()
+  history(conv.id)
+  await expect(compactReserved(conv.id)).resolves.toMatchObject({ ok: true })
+  expect(h.summarizeCodex).toHaveBeenCalled()
+  expect(h.summarizeCodex).toHaveBeenCalledWith(expect.objectContaining({ accountId: null }))
 })

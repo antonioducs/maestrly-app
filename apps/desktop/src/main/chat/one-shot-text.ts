@@ -29,6 +29,7 @@ import {
   summarizeWithGitHubCopilotRuntime,
 } from './portable-summarizer'
 import { resolveLanguageModel } from './provider'
+import { resolveAccountPoolProviderId } from './subscription-failover/account-pool'
 import { recordModelCallUsage, type DiagnosticUsage } from './usage-diagnostics'
 
 export type OneShotSelection = {
@@ -60,7 +61,8 @@ export async function runOneShotText(args: {
 }): Promise<{ text: string; usage: OneShotUsage }> {
   const { selection, system, prompt, signal, conversationId, cwd, agent } = args
   const { providerId, modelId, effort, fastMode } = selection
-  const accountId = subscriptionAccountId(providerId)
+  // The stored selection can be an active-account one; only the physical account it stands for names a manager.
+  const accountId = subscriptionAccountId(resolveAccountPoolProviderId(providerId))
   const record = (
     runtime:
       | 'byok-ai-sdk'
@@ -111,7 +113,7 @@ export async function runOneShotText(args: {
           prompt,
           signal: operationSignal,
           conversationId,
-          accountId: target.accountId ?? accountId ?? null,
+          accountId: target.accountId !== undefined ? target.accountId : (accountId ?? null),
           ...(target.reasoningEffort ? { effort: target.reasoningEffort } : effort ? { effort } : {}),
           ...(target.serviceTier !== undefined ? { serviceTier: target.serviceTier } : {}),
         }),

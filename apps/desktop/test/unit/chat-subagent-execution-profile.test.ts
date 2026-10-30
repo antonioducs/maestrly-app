@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ChatAgent } from '../../src/main/chat/agents'
+import { addSubscriptionAccount, subscriptionProviderIdFor } from '../../src/main/chat/catalog'
 import {
   setConversationSubagentProfileRules,
   setConversationSubagentProfilesEnabled,
@@ -10,7 +11,9 @@ import {
   resolveParentSubagentExecutionProfile,
   resolveSubagentExecutionProfile,
 } from '../../src/main/chat/subagent-execution-profile'
-import { insertConversation, insertWorkspace } from '../../src/main/store'
+import { setAccountPool } from '../../src/main/chat/subscription-failover/account-pool'
+import { insertConversation, insertWorkspace, patchConvUiPrefs } from '../../src/main/store'
+import { activeAccountProviderId } from '../../src/shared/chat'
 import { closeDb, freshDb } from '../helpers/db'
 
 vi.mock('../../src/main/chat/subagent-provider-runtime', () => ({
@@ -227,5 +230,92 @@ describe('subagent execution profile conversation switch', () => {
     expect(disabled.definition).toBeNull()
     expect(disabled.profile.effective).toBeNull()
     expect(disabled.profile.attempts).toEqual([])
+  })
+})
+
+describe('subagent execution profile under an active-account selection', () => {
+  const agent: ChatAgent = {
+    name: 'general-purpose',
+    description: 'General worker',
+    prompt: 'Complete the delegated task.',
+    source: 'test',
+  }
+  const VIRTUAL = activeAccountProviderId('codex-subscription')
+
+  function setup(): { workId: string; otherId: string } {
+    const work = addSubscriptionAccount('codex-subscription', 'Work')
+    const other = addSubscriptionAccount('codex-subscription', 'Other')
+    return {
+      workId: subscriptionProviderIdFor('codex-subscription', work.id),
+      otherId: subscriptionProviderIdFor('codex-subscription', other.id),
+    }
+  }
+
+  const resolveFor = (parentProviderId: string) =>
+    resolveSubagentExecutionProfile({
+      agentName: 'general-purpose',
+      agents: [agent],
+      conversationId: 'c',
+      parent: { providerId: parentProviderId, modelId: 'parent-model', effort: 'high' },
+    })
+
+  it('inherits the virtual selection when the saved conversation selection is a pool holding the physical parent', async () => {
+    const { workId } = setup()
+    patchConvUiPrefs('c', { chat: { providerId: VIRTUAL, modelId: 'parent-model' } })
+
+    const { profile } = await resolveFor(workId)
+
+    expect(profile.effective).toMatchObject({ source: 'parent', providerId: VIRTUAL, modelId: 'parent-model' })
+  })
+
+  it('stays physical when the conversation selected an individual account', async () => {
+    const { workId } = setup()
+    patchConvUiPrefs('c', { chat: { providerId: workId, modelId: 'parent-model' } })
+
+    const { profile } = await resolveFor(workId)
+
+    expect(profile.effective).toMatchObject({ source: 'parent', providerId: workId })
+  })
+
+  it('stays physical when the parent runs outside the pool members', async () => {
+    const { workId, otherId } = setup()
+    setAccountPool({ kind: 'codex-subscription', memberProviderIds: [workId] })
+    patchConvUiPrefs('c', { chat: { providerId: VIRTUAL, modelId: 'parent-model' } })
+
+    const { profile } = await resolveFor(otherId)
+
+    expect(profile.effective).toMatchObject({ source: 'parent', providerId: otherId })
+  })
+
+  it('stays physical when the saved selection is the active-account pool of another provider', async () => {
+    const { workId } = setup()
+    patchConvUiPrefs('c', {
+      chat: { providerId: activeAccountProviderId('claude-subscription'), modelId: 'parent-model' },
+    })
+
+    const { profile } = await resolveFor(workId)
+
+    expect(profile.effective).toMatchObject({ source: 'parent', providerId: workId })
+  })
+
+  it('keeps a parent that already is the virtual selection', async () => {
+    setup()
+    patchConvUiPrefs('c', { chat: { providerId: VIRTUAL, modelId: 'parent-model' } })
+
+    const { profile } = await resolveFor(VIRTUAL)
+
+    expect(profile.effective).toMatchObject({ source: 'parent', providerId: VIRTUAL })
+  })
+
+  it('does not apply the saved selection to a workflow parent', async () => {
+    const { workId } = setup()
+    patchConvUiPrefs('c', { chat: { providerId: VIRTUAL, modelId: 'parent-model' } })
+
+    const resolved = await resolveParentSubagentExecutionProfile({
+      agent,
+      parent: { providerId: workId, modelId: 'parent-model', effort: 'high' },
+    })
+
+    expect(resolved.effective).toMatchObject({ source: 'parent', providerId: workId })
   })
 })
