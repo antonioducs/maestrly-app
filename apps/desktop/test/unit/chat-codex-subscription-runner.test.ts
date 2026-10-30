@@ -5095,7 +5095,7 @@ describe('Codex subscription runner', () => {
       const running = runCodexSubscriptionChat(args)
       await vi.waitFor(() => expect(client.startTurnCalls).toHaveLength(1))
       const taskSpec = (await hostMcpTools(client.startThreadCalls[0])).find((spec) => spec.name === 'task')
-      expect((taskSpec?.inputSchema as { required?: string[] }).required).toEqual(['agent', 'prompt', 'complexity'])
+      expect((taskSpec?.inputSchema as { required?: string[] } | undefined)?.required).toEqual(['agent', 'prompt', 'complexity'])
       await client.serverRequest({
         id: 'task_routed',
         method: 'item/tool/call',

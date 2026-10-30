@@ -173,9 +173,9 @@ describe('artifact tools', () => {
     expect(await explained('something_else')).toContain('unavailable')
 
     service.create.mockRejectedValueOnce(new RepositoryScopeError('path_escape', 'Path is outside the files.') as never)
-    const escape = await call('artifact_create', { title: 'X', directory: '../../etc' })
-    expect(escape.isError).toBe(true)
-    expect(escape.text).toContain('Path is outside the files.')
+    const escapedPath = await call('artifact_create', { title: 'X', directory: '../../etc' })
+    expect(escapedPath.isError).toBe(true)
+    expect(escapedPath.text).toContain('Path is outside the files.')
 
     service.create.mockRejectedValueOnce(new Error('secret internals') as never)
     const internal = await call('artifact_create', { title: 'X', directory: 'dist' })
