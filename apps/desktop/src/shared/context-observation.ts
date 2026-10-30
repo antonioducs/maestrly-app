@@ -20,12 +20,20 @@ export function selectContextObservation(
   target: {
     conversationId: string
     model: ChatModelRef | null
+    /** Physical accounts whose observations belong to this active-account selection. */
+    accountProviderIds?: readonly string[]
     streaming: boolean
     compacting?: boolean
     after?: number
   }
 ): { snapshot?: ChatContextSnapshot; progress?: ChatCompactionProgress } {
   if (!target.model) return {}
+  const model = target.model
+  const matches = (candidate: ChatModelRef | null | undefined): boolean =>
+    sameContextModel(candidate, model) ||
+    (!!candidate &&
+      candidate.modelId === model.modelId &&
+      target.accountProviderIds?.includes(candidate.providerId) === true)
   let snapshot: ChatContextSnapshot | undefined
   let progress: ChatCompactionProgress | undefined
   let latestAssistantId: string | undefined
@@ -36,15 +44,18 @@ export function selectContextObservation(
     if (message.role === 'assistant') {
       latestAssistantId ??= message.id
       const currentProgress =
-        message.compactionProgress?.model && !sameContextModel(message.compactionProgress.model, target.model)
+        message.compactionProgress?.model && !matches(message.compactionProgress.model)
           ? undefined
           : message.compactionProgress
-      const conversationProgress =
-        currentProgress?.scope === 'conversation' && sameContextModel(currentProgress.model, target.model)
-      if (message.model && !sameContextModel(message.model, target.model) && !conversationProgress) break
-      const candidate = sameContextModel(message.contextSnapshot?.model, target.model)
-        ? message.contextSnapshot
-        : undefined
+      const conversationProgress = currentProgress?.scope === 'conversation' && matches(currentProgress.model)
+      if (message.model && !matches(message.model) && !conversationProgress) break
+      const sample = message.contextSnapshot
+      const candidate =
+        sample && matches(sample.model)
+          ? sameContextModel(sample.model, model)
+            ? sample
+            : { ...sample, model }
+          : undefined
       if (message.contextSnapshot && !candidate && !conversationProgress) break
       // Legacy markers have no observation timestamp; do not assume their attached sample survived compaction.
       if (boundary && !currentProgress) break

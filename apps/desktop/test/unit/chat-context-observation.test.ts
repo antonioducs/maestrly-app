@@ -427,3 +427,40 @@ describe('localized compaction presentation', () => {
     [1_200_000, '1.2M'],
   ] as const)('formats %i tokens as %s', (tokens, expected) => expect(formatContextTokens(tokens)).toBe(expected))
 })
+
+describe('active-account context observations', () => {
+  const logical = { providerId: 'builtin_claude_subscription@~active', modelId: 'sonnet' }
+  const physical = { providerId: 'builtin_claude_subscription@acc_work', modelId: 'sonnet' }
+  const poolTarget = {
+    ...target,
+    model: logical,
+    accountProviderIds: ['builtin_claude_subscription', physical.providerId],
+  }
+  it('displays a physical pool member sample under the logical selection without changing stored messages', () => {
+    const source = message({ model: physical, contextSnapshot: snapshot({ model: physical }) })
+    const observed = selectContextObservation([source], poolTarget)
+    expect(observed.snapshot).toMatchObject({ model: logical, usedTokens: 80100, quality: 'measured' })
+    expect(contextMeterReading(history, null, observed.snapshot, logical).used).toBe(80100)
+    expect(source.contextSnapshot?.model).toEqual(physical)
+  })
+  it('accepts logical compaction progress on a physical member message', () => {
+    const current = progress({ model: logical, scope: 'conversation' })
+    const observed = selectContextObservation([message({ model: physical, compactionProgress: current })], poolTarget)
+    expect(observed.progress).toEqual(current)
+  })
+  it('keeps account and model boundaries outside the selected pool', () => {
+    for (const other of [
+      { ...physical, providerId: 'builtin_claude_subscription@acc_outside' },
+      { ...physical, modelId: 'opus' },
+    ]) {
+      const source = message({ model: other, contextSnapshot: snapshot({ model: other }) })
+      expect(selectContextObservation([source], poolTarget).snapshot).toBeUndefined()
+    }
+    expect(
+      selectContextObservation([message({ model: physical, contextSnapshot: snapshot({ model: physical }) })], {
+        ...poolTarget,
+        accountProviderIds: undefined,
+      }).snapshot
+    ).toBeUndefined()
+  })
+})

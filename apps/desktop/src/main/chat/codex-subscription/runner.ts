@@ -2276,7 +2276,8 @@ export async function runCodexSubscriptionChat(
 
   let currentClient = args.client
   let releaseCurrentClient = currentClient.retain?.() ?? (() => {})
-  let threadAccountId = args.initialAccountId ?? subscriptionAccountId(args.selection.providerId)
+  let threadAccountId =
+    args.initialAccountId !== undefined ? args.initialAccountId : subscriptionAccountId(args.selection.providerId)
   let currentProviderId = args.effectiveProviderId ?? args.selection.providerId
   let currentServiceTier = args.serviceTier ?? null
   let currentDropImages = args.dropImages === true

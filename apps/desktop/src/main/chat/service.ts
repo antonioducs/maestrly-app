@@ -3393,6 +3393,8 @@ async function preflightContext(
   claudeExecutionAxes?: PreflightClaudeAxes,
   claudeTurn?: PreflightClaudeTurn
 ): Promise<ContextPreflightResult> {
+  const readStats = () =>
+    currentChatHistoryStats(conversationId, physicalClaudeProviderId, selection, claudeFailoverChain)
   const hasPhysicalContextWindow = physicalContextWindow !== undefined
   const { meta } = hasPhysicalContextWindow
     ? { meta: null }
@@ -3467,8 +3469,7 @@ async function preflightContext(
     hasPhysicalContextWindow ? (physicalWindow ?? undefined) : meta?.contextWindow
   )
   if (!window && !isCodexSubscriptionProvider(selection.providerId)) return { ok: true, compacted: false }
-  const projection = (await currentChatHistoryStats(conversationId, physicalClaudeProviderId, selection))
-    .contextProjection
+  const projection = (await readStats()).contextProjection
   if (!window) {
     // A fresh Codex seed must be checked against a known destination budget. Old provider
     // measurements cannot establish that budget, and silently accepting an unbounded transfer
@@ -3507,8 +3508,7 @@ async function preflightContext(
   try {
     const activated = await activateBackgroundCompactionCandidate(conversationId, selection, pendingParts, window)
     if (activated) {
-      const activatedProjection = (await currentChatHistoryStats(conversationId, physicalClaudeProviderId, selection))
-        .contextProjection
+      const activatedProjection = (await readStats()).contextProjection
       const activatedTokens = activatedProjection?.usedTokens ?? 0
       const activatedSource = activatedProjection?.source ?? 'portable-transcript'
       if (
@@ -3551,8 +3551,7 @@ async function preflightContext(
     })
     return { ok: false, compacted: false, error: 'context-compaction-failed' }
   }
-  const afterProjection = (await currentChatHistoryStats(conversationId, physicalClaudeProviderId, selection))
-    .contextProjection
+  const afterProjection = (await readStats()).contextProjection
   const after = afterProjection?.usedTokens ?? 0
   const afterSource = afterProjection?.source ?? 'portable-transcript'
   if (
@@ -3604,7 +3603,8 @@ async function preflightIsolatedContext(
 async function currentChatHistoryStats(
   conversationId: string,
   physicalClaudeProviderId?: string,
-  selectionOverride?: ChatModelRef
+  selectionOverride?: ChatModelRef,
+  failoverChainOverride?: readonly string[]
 ): Promise<StoredChatHistoryStats> {
   const storedSelection = selectionOverride ?? selectionFor(conversationId)
   const selection =
@@ -3681,7 +3681,7 @@ async function currentChatHistoryStats(
       binding ? binding.accountId : subscriptionAccountId(selection?.providerId)
     )
     const eligible =
-      freezeFailoverChain(storedSelection!.providerId).includes(physicalProviderId) &&
+      (failoverChainOverride ?? freezeFailoverChain(storedSelection!.providerId)).includes(physicalProviderId) &&
       getSubscriptionFailoverRouter().isAdmissible(physicalProviderId)
     runtimeReusable = !!(
       binding &&

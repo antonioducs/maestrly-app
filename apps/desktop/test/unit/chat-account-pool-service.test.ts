@@ -535,3 +535,28 @@ it('keeps the default Codex account physical when compaction falls back from the
   expect(h.summarizeCodex).toHaveBeenCalled()
   expect(h.summarizeCodex).toHaveBeenCalledWith(expect.objectContaining({ accountId: null }))
 })
+
+it('uses measured context during preflight on an eligible pool fallback', async () => {
+  const work = account()
+  setAccountPool({ kind: 'claude-subscription', policy: 'prefer-active' })
+  h.manager.getObservedModelContextWindow.mockReturnValue(32000)
+  work.manager.getObservedModelContextWindow.mockReturnValue(32000)
+  const conv = conversation(VIRTUAL)
+  const { handlers } = register()
+  history(conv.id, 'x'.repeat(120000))
+  exhaust(CLAUDE_SUBSCRIPTION_PROVIDER_ID)
+  h.binding.mockReturnValue({
+    accountId: work.account.id,
+    accountFingerprint: 'account-B',
+    accountEpoch: 7,
+    lastMessageId: 'a',
+    modelId: 'claude-sonnet-5',
+    sessionId: 'B-session',
+  })
+  await expect(call(handlers, 'chat:history:stats', conv.id)).resolves.toMatchObject({
+    contextProjection: { source: 'runtime-usage', usedTokens: 120 },
+  })
+  await expect(send(handlers, conv.id)).resolves.toEqual({ ok: true })
+  expect(h.summarizePortable).not.toHaveBeenCalled()
+  await stopChatAndWait(conv.id)
+})
