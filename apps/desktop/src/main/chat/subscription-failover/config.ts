@@ -1,5 +1,6 @@
 import {autonomousProviderAllowed} from '../autonomous'
 import {
+  isActiveAccountProviderId,
   isSubscriptionFailoverProviderId,
   subscriptionAccountId,
   subscriptionBaseProviderId,
@@ -8,6 +9,7 @@ import {
 } from '../../../shared/chat'
 import { getAppSetting, setAppSetting } from '../../store'
 import { listAvailableChatProviders } from '../catalog'
+import { accountPoolChain } from './account-pool'
 
 export const SUPPORTED_FAILOVER_KINDS = ['codex-subscription', 'claude-subscription'] as const
 export const FAILOVER_CONFIG_KEY = 'chat.subscriptionFailover.v1'
@@ -211,6 +213,8 @@ export function removeAccountFromFailoverConfig(providerIdOrAccountId: string): 
 export function freezeFailoverChain(primaryProviderId: string): string[] {
   const primary = typeof primaryProviderId === 'string' ? primaryProviderId.trim() : ''
   if (!primary) return []
+  // The active-account selection runs on its pool: the active account first, then the others in rotation order.
+  if (isActiveAccountProviderId(primary)) return accountPoolChain(primary)
   const route = getFailoverRoute(primary)
   if (route?.enabled && route.fallbackProviderIds.length > 0) {
     return [primary, ...route.fallbackProviderIds].filter(id=>autonomousProviderAllowed(id))

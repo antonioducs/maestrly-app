@@ -253,3 +253,15 @@ it('removes provider-scoped account references only from their own family', () =
   expect(freezeFailoverChain(BASE)).toEqual([BASE, codex])
   expect(freezeFailoverChain(CLAUDE)).toEqual([CLAUDE])
 })
+
+
+it('freezes the active-account pool for the virtual id', () => {
+  knownProviders = [{ id: BASE }, { id: ACC_A }, { id: ACC_B }]
+  settings.set('chat.subscriptionAccountPools.v1', JSON.stringify({ version: 1, pools: [{ kind: 'codex-subscription', activeProviderId: ACC_A }] }))
+  expect(freezeFailoverChain(`${BASE}@~active`)).toEqual([ACC_A, ACC_B, BASE])
+})
+
+it('never accepts the virtual id in a route', () => {
+  expect(() => setFailoverRoute({ primaryProviderId: `${BASE}@~active`, enabled: true, fallbackProviderIds: [ACC_A] })).toThrow()
+  expect(setFailoverRoute({ primaryProviderId: ACC_A, enabled: true, fallbackProviderIds: [`${BASE}@~active`, ACC_B] }).fallbackProviderIds).toEqual([ACC_B])
+})
