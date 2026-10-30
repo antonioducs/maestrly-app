@@ -5,6 +5,8 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-10-30
+
 ### Added
 
 - A bot that asks another bot something can wait for the answer within the same
@@ -13,6 +15,25 @@ User-visible changes by version. Downloads are on
   conversation it opened with the other bot brings back its answer, or once the
   other bot answered and that conversation settled, for up to 15 minutes at a
   time. **Stop** ends the wait.
+- Run a bot's heavy jobs on your other computers. A **runner** is one of your
+  computers that runs the commands a bot sends, such as video renders, model
+  inference, large builds or test suites, so they stop taking the CPU and memory
+  that the bots of an environment share with their browsers. The bot sends a job
+  (a command, the folder it runs in and the outputs it wants back); the computer
+  runs it, the outputs land back in the bot's folder, and the conversation that
+  sent the job continues with the result. On the computer, turn on **Run jobs
+  for bots** in **Settings → Runner**, then **Let this bot run jobs on this
+  computer** in the bot's **Settings → Runners**. Jobs run natively on macOS
+  and Linux or in a Docker container on macOS, Linux and Windows. You see each
+  job's CPU, memory and live log, and can cancel it from any paired computer. A
+  bot linked to a runner can run any command on that computer, as the signed-in
+  user with Native, so link only bots you trust. It needs a bot server and a bot
+  environment image on this version, and the computer must run this version; the
+  mobile app does not show runners yet. The bot gateway database moves to schema
+  23 for this. Older gateways cannot open it, so back up the gateway volume
+  before updating the server. See
+  [Run heavy jobs on your computers](docs/bot-fleet.md#run-heavy-jobs-on-your-computers)
+  and [compatibility](docs/bot-fleet.md#compatibility).
 
 ### Fixed
 
@@ -20,6 +41,16 @@ User-visible changes by version. Downloads are on
   Chromium builds keep their record of open tabs in a second, encrypted folder
   that Maestrly did not clear, so the browser reopened those tabs on its own
   next to the ones the bot restores.
+- After you approve a plan and the conversation's context is compacted, the agent
+  keeps the plan instead of losing it and carrying on without it. The summary
+  now ends with the plan as you approved it, and the agent can find the original
+  with its history search.
+- Claude no longer answers that it cannot see an image you just attached. When
+  a Claude conversation's session is rebuilt, for example after switching
+  accounts in the middle of an answer or compacting the context during a turn,
+  the newest images are sent again instead of being replaced by a note that the
+  model does not accept images. The transcripts the other models read no longer
+  say that either, though they do not get the pixels again.
 
 ## [0.29.1] - 2026-10-27
 
