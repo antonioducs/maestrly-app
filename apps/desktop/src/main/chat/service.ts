@@ -47,6 +47,8 @@ import {
   addProvider,
   addSubscriptionAccount,
   CODEX_SUBSCRIPTION_PROVIDER_ID,
+  CODEX_SUBSCRIPTION_PROVIDER,
+  CLAUDE_SUBSCRIPTION_PROVIDER,
   getProvider,
   getProviderKind,
   getSubscriptionAccount,
@@ -85,6 +87,8 @@ import {
   SUPPORTED_FAILOVER_KINDS,
   type CodexRuntimeTarget,
 } from './subscription-failover'
+import { accountPoolInfos, advanceAccountPoolsAfterExhaustion, removeAccountFromAccountPools, resolveAccountPoolProviderId, setAccountPool } from './subscription-failover/account-pool'
+import { onSubscriptionAccountExhausted } from './subscription-failover/router'
 import { resolveClaudeRuntimeTarget, type ClaudeRuntimeTarget } from './subscription-failover/claude-adapter'
 import { listClaudeAttempts, setClaudeAttemptOwner } from './subscription-failover/claude-attempts'
 import { runClaudeEphemeralWithFailover } from './subscription-failover/claude-ephemeral'
@@ -439,6 +443,8 @@ import type {
   ChatStreamEvent,
   ChatSubscriptionAuthStatus,
   ChatSubscriptionProviderKind,
+  ChatSubscriptionAccountPoolKind,
+  ChatSubscriptionAccountPoolPatch,
   ChatSkillSelection,
   CodexSubscriptionAuthStatus,
   ChatExecutionScope,
@@ -461,7 +467,7 @@ import type { ChatAttachmentPdfFileResult, ChatMode, ChatOpenAttachmentResult } 
 import type { ConvUiPrefs } from '../../shared/conversation'
 import { isChatMode, normalizeChatMode } from '../../shared/chat-mode'
 import type { MaestroOrchestratorProfileV1, MaestroTurnSnapshotV1 } from '../../shared/maestro'
-import { tFor } from '../i18n'
+import { tFor, tMain } from '../i18n'
 import { getMainWebContents, sendToConversation } from '../window-ipc'
 import { hasRemoteMains, sendToRemoteMains } from '../remote-ui-targets'
 import { registerSubagentProfileIpc } from './subagent-profile-ipc'
@@ -2184,14 +2190,22 @@ function apiKeyCheckField(providerId: string): Pick<ChatProviderInfo, 'keyCheck'
   return keyCheck ? { keyCheck } : {}
 }
 
+function accountPoolName(kind: ChatSubscriptionAccountPoolKind, active: ChatProviderInfo | undefined): string {
+  const t = tMain('main')
+  const provider = (kind === 'claude-subscription' ? CLAUDE_SUBSCRIPTION_PROVIDER : CODEX_SUBSCRIPTION_PROVIDER).name
+  return t('accountPool.providerNameWithAccount', {
+    provider,
+    account: active?.accountLabel?.trim() || t('accountPool.defaultAccountLabel'),
+  })
+}
+
 function buildConfig(): ChatConfig {
   const codexStatus = codexAuthSnapshot()
   const githubCopilotStatus = githubCopilotAuthSnapshot()
   const claudeStatus = claudeAuthSnapshot()
   const grokStatus = grokAuthSnapshot()
   const backgroundCompaction = backgroundCompactionConfig()
-  const config: ChatConfig = {
-    providers: listAvailableChatProviders().map((p) => ({
+  const providers: ChatProviderInfo[] = listAvailableChatProviders().map((p) => ({
       id: p.id,
       name: p.name,
       baseURL: p.baseURL,
@@ -2232,7 +2246,9 @@ function buildConfig(): ChatConfig {
       ...(p.kind ? { kind: getProviderKind(p) } : {}),
       ...(p.accountId ? { accountId: p.accountId } : {}),
       ...(p.accountLabel ? { accountLabel: p.accountLabel } : {}),
-    })),
+    }))
+  const config: ChatConfig = {
+    providers,
     presets: PROVIDER_PRESETS,
     mcpServers: listRuntimeMcpServers({ includeInactivePlugins: true }).map((s) => ({
       id: s.id,
@@ -2266,6 +2282,7 @@ function buildConfig(): ChatConfig {
       supportedKinds: [...SUPPORTED_FAILOVER_KINDS],
       routes: listFailoverRoutes(),
     },
+    subscriptionAccountPools: accountPoolInfos(providers, accountPoolName),
   }
   scheduleCodexConfigRefresh(codexStatus)
   scheduleGitHubCopilotConfigRefresh(githubCopilotStatus)
@@ -7082,6 +7099,7 @@ export async function removeSubscriptionAccountSlot(accountId: string): Promise<
     // Remove references only after physical teardown finishes; on failure, the slot and route
     // remain consistent for retry.
     removeAccountFromFailoverConfig(providerId)
+    removeAccountFromAccountPools(providerId)
     removeSubscriptionAccount(accountId)
     // Clear the global default if it points to the removed provider (same policy as BYOK provider-remove).
     if (getAppSetting(CHAT_DEFAULT_PROVIDER_KEY) === providerId) {
@@ -9543,7 +9561,27 @@ function persistReviewSpend(conversationId: string, spend: ReviewSpend, model?: 
 /** Registers all `chat:*` channels. Called from `registerIpc()` in index.ts. */
 let cursorCleanupPromise: Promise<void> | null = null
 
+let accountPoolAdvanceInstalled = false
+/** Drain: when the active account runs out, its pool moves on and stays there; the pickers relabel. */
+function installAccountPoolAdvance(): void {
+  if (accountPoolAdvanceInstalled) return
+  accountPoolAdvanceInstalled = true
+  onSubscriptionAccountExhausted((providerId) => {
+    const router = getSubscriptionFailoverRouter()
+    const moved = advanceAccountPoolsAfterExhaustion(providerId, {
+      isAdmissible: (id) => router.isAdmissible(id),
+      nextProbeAt: (id) => router.getHealth(id).exhaustion?.nextProbeAt ?? 0,
+      isSignedIn: (id) =>
+        isClaudeSubscriptionProvider(id)
+          ? claudeAuthSnapshot(subscriptionAccountId(id)).authenticated
+          : codexAuthSnapshot(subscriptionAccountId(id)).authenticated,
+    })
+    if (moved) sendToMainRenderers('models:catalog-changed')
+  })
+}
+
 export function registerChatIpc(deps: ChatIpcDeps): void {
+  installAccountPoolAdvance()
   if (!cursorCleanupPromise) {
     const cleanup = drainCursorAgentCleanup().catch((error) => {
       console.warn('[cursor-subscription] pending cleanup failed:', cursorSdkErrorMessage(error))
@@ -11293,6 +11331,16 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
       }
     }
   )
+
+  deps.mhandle('chat:subscription-account-pool:set', (_e, patch: ChatSubscriptionAccountPoolPatch) => {
+    try {
+      const pool = setAccountPool(patch)
+      sendToMainRenderers('models:catalog-changed')
+      return { ok: true, pool }
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  })
 
   // MCP servers (their tools enter chat).
   deps.mhandle('chat:mcp-add', (_e, input: Omit<UserMcpServer, 'id' | 'enabled'> & { enabled?: boolean }) => {

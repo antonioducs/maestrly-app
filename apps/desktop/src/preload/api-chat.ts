@@ -50,6 +50,8 @@ import type {
   ChatSubscriptionAuthStatus,
   ChatSubscriptionFailoverEvent,
   ChatSubscriptionFailoverRoute,
+  ChatSubscriptionAccountPoolPatch,
+  ChatSubscriptionAccountPool,
   ChatSubscriptionCodeResult,
   ChatSubscriptionLoginResult,
   ChatSubscriptionLogoutResult,
@@ -416,6 +418,10 @@ export function makeChatApi(ipcRenderer: IpcTransport) {
       fallbackProviderIds: string[]
     }): Promise<{ ok: boolean; route?: ChatSubscriptionFailoverRoute; error?: string }> =>
       ipcRenderer.invoke('chat:subscription-failover:set-route', input),
+    chatSubscriptionAccountPoolSet: (
+      patch: ChatSubscriptionAccountPoolPatch
+    ): Promise<{ ok: boolean; pool?: ChatSubscriptionAccountPool; error?: string }> =>
+      ipcRenderer.invoke('chat:subscription-account-pool:set', patch),
     chatSubagentProfilesGetGlobal: (): Promise<SubagentProfileConfigPayload> =>
       ipcRenderer.invoke('chat:subagent-profiles:get-global'),
     chatSubagentProfilesSetGlobal: (rules: SubagentProfileRulesV1): Promise<SubagentProfileSaveResult> =>

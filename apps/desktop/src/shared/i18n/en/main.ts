@@ -1,4 +1,10 @@
 export default {
+  accountPool: {
+    providerName: '{{provider}} — Active account',
+    providerNameWithAccount: '{{provider}} — Active account ({{account}})',
+    defaultAccountLabel: 'Default account',
+  },
+
   openExternal: {
     pathNotFound: 'path not found',
     vscodeNotFound: 'VS Code (code) not found',

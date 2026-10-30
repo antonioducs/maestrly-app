@@ -9,9 +9,12 @@
  * "bring your provider". PRESETS below only prefill the add form (shortcuts); they are not
  * saved until the user confirms.
  */
+import { tMain } from '../i18n'
 import { randomUUID } from 'node:crypto'
 import { getAppSetting, setAppSetting, getAppFlag, setAppFlag } from '../store'
 import {
+  ACTIVE_ACCOUNT_SLOT,
+  isActiveAccountProviderId,
   CHATGPT_WEB_PROVIDER_ID,
   effectiveProviderKind,
   isChatSubscriptionProviderKind,
@@ -38,6 +41,8 @@ export interface ChatProvider {
   accountId?: string | null
   /** User-defined label for an additional account. */
   accountLabel?: string
+  /** The virtual active-account entry. */
+  accountPool?: true
 }
 
 const PROVIDERS_KEY = 'chat.providers'
@@ -306,6 +311,11 @@ function getSubscriptionProvider(id: string): ChatProvider | undefined {
   if (!base) return undefined
   const accountId = subscriptionAccountId(id)
   if (!accountId) return labeledDefaultProvider(base)
+  if (accountId === ACTIVE_ACCOUNT_SLOT) {
+    return isActiveAccountProviderId(id)
+      ? { ...base, id, name: tMain('main')('accountPool.providerName', { provider: base.name }), accountPool: true }
+      : undefined
+  }
   const account = getSubscriptionAccount(accountId)
   return account && account.kind === base.builtin ? providerForSubscriptionAccount(account) : undefined
 }
