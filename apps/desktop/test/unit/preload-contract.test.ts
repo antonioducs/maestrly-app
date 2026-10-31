@@ -36,6 +36,7 @@ import { hostFsApi } from '../../src/preload/api-host-fs'
 import { artifactsApi } from '../../src/preload/api-artifacts'
 import { transfersApi } from '../../src/preload/api-transfers'
 import { conversationMoveApi } from '../../src/preload/api-conversation-move'
+import { turnSnapshotsApi } from '../../src/preload/api-turn-snapshots'
 import type { FleetServerId } from '../../src/shared/fleet-servers'
 
 /** A paired bot server, as the fleet preload calls name it first. */
@@ -91,6 +92,7 @@ const apiSlices: Array<[string, Record<string, unknown>]> = [
   ['artifactsApi', artifactsApi],
   ['transfersApi', transfersApi],
   ['conversationMoveApi', conversationMoveApi],
+  ['turnSnapshotsApi', turnSnapshotsApi],
 ]
 beforeAll(async () => {
   await import('../../src/preload/index') // Runs contextBridge.exposeInMainWorld('api', api).
@@ -454,7 +456,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(688)
+    expect(keys).toHaveLength(697)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -462,6 +464,27 @@ describe('preload API — exposure', () => {
     const patch = { kind: 'claude-subscription', activeProviderId: 'builtin_claude_subscription@acc_work' }
     await api.chatSubscriptionAccountPoolSet(patch)
     expect(invokeSpy).toHaveBeenCalledWith('chat:subscription-account-pool:set', patch)
+  })
+
+  it('forwards turn snapshot calls as validated objects, without a path or folder', async () => {
+    await api.turnSnapshotsList('c-1')
+    await api.turnSnapshotDetail('c-1', 'r-1')
+    await api.turnSnapshotPatch({ conversationId: 'c-1', recordId: 'r-1', root: 0, path: 'a.txt' })
+    await api.turnRevertPrepare({ conversationId: 'c-1', recordId: 'r-1', action: 'undo' })
+    await api.turnRevertConfirm({ token: 't', files: [{ root: 0, path: 'a.txt' }], overwrite: [] })
+    await api.turnSnapshotsUsage()
+    await api.turnSnapshotsClear()
+    await api.turnSnapshotsSetEnabled(false)
+    expect(invokeSpy.mock.calls).toEqual([
+      ['turnSnapshots:list', { conversationId: 'c-1' }],
+      ['turnSnapshots:list', { conversationId: 'c-1', recordId: 'r-1' }],
+      ['turnSnapshots:diff', { conversationId: 'c-1', recordId: 'r-1', root: 0, path: 'a.txt' }],
+      ['turnSnapshots:prepare', { conversationId: 'c-1', recordId: 'r-1', action: 'undo' }],
+      ['turnSnapshots:confirm', { token: 't', files: [{ root: 0, path: 'a.txt' }], overwrite: [] }],
+      ['turnSnapshots:usage'],
+      ['turnSnapshots:clear'],
+      ['turnSnapshots:set-enabled', { enabled: false }],
+    ])
   })
 
   it('forwards managed bot files calls in exact argument order', async () => {

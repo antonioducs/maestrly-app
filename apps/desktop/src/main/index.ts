@@ -199,6 +199,7 @@ import {
   activeChatRunCount,
   disposeChat,
   getGlobalMaestroOrchestratorProfile,
+  isChatConversationRunning,
   primeChatTurnSelection,
   registerChatIpc,
   resolveFrozenChatSelection,
@@ -231,6 +232,7 @@ import { registerDrawerIpc } from './drawer-ipc'
 import { registerConversationIpc } from './conversation-ipc'
 import { createSiblingConversation, deleteConversation } from './workspace-service'
 import { registerLocalConversationIpc } from './local-conversation/ipc'
+import { registerTurnSnapshotIpc } from './turn-snapshots/ipc'
 import { initTurnSnapshots } from './turn-snapshots/maintenance'
 import { turnSnapshotsChangedChannel } from '../shared/turn-snapshots'
 import { registerConversationMigrationIpc } from './conversation-migration/ipc'
@@ -987,6 +989,7 @@ function registerIpc(): void {
     },
   })
   registerLocalConversationIpc(reg)
+  registerTurnSnapshotIpc(reg, { isRunning: isChatConversationRunning })
   disposeConversationMigrationIpc?.()
   disposeConversationMigrationIpc = registerConversationMigrationIpc(reg, {
     emitChanged: (event) => broadcast('conversation:migration-changed', event),
