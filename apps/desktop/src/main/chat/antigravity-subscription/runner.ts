@@ -31,7 +31,11 @@ import { getConvUiPrefs } from '../../store'
 import { resolveAppToolAccess } from '../app-tool-access'
 import { AcpRpcError } from '../acp/client'
 import { ACP_RESOURCE_NOT_FOUND_CODE, type AcpPromptResult, type AcpSessionSetupResult } from '../acp/protocol'
-import { createBackgroundCompactionPrefixNotifier } from '../background-compaction/runner'
+import {
+  activatePreparedCompaction,
+  createBackgroundCompactionPrefixNotifier,
+  type PreparedBackgroundCompaction,
+} from '../background-compaction/runner'
 import { runnerContextHistory, upsertChatMessage } from '../chat-store'
 import { createContextProgressPublisher } from '../context-progress'
 import { createDeltaCoalescer } from '../delta-coalescer'
@@ -51,6 +55,7 @@ import type { MaestroLiveRunPort } from '../maestro-live'
 import { buildSubagentSupervisionTools } from '../maestro-supervision-tools'
 import { buildAppTools, buildMcpTools, hasPersonalMemoryTools, PERSONAL_MEMORY_TOOLS } from '../mcp'
 import { clipPersistedToolOutput } from '../message'
+import type { PortableSummaryProgress } from '../portable-context'
 import type { PermissionBroker } from '../permission'
 import type { QuestionBroker } from '../question-broker'
 import { findEffectiveSkill } from '../skill-state'
@@ -74,6 +79,11 @@ import {
   type AntigravitySubscriptionManager,
 } from './manager'
 import { resolveAntigravityModelValue } from './models'
+import {
+  ANTIGRAVITY_PROMPT_TEXT_MAX_BYTES,
+  antigravityPromptTextBytes,
+  assertAntigravityPromptFits,
+} from './prompt-limit'
 import { buildAntigravityInstructions, buildAntigravityPromptBlocks, buildAntigravitySeedTranscript } from './session'
 import {
   getAntigravitySessionBinding,
@@ -132,6 +142,14 @@ export interface RunAntigravitySubscriptionChatArgs {
   contextWindow?: number
   canPersistSession?: () => boolean
   onBackgroundCompactionPrefix?: (boundary: { messageId: string; partId: string }) => void
+  /**
+   * Summarizes the durable history when a new session's seed would not fit Antigravity's prompt limit; the runner
+   * records the returned boundary in the live bubble and seeds from the summary.
+   */
+  compactHistory?: (onProgress?: (progress: PortableSummaryProgress) => void) => Promise<{
+    summary: string
+    prepared?: PreparedBackgroundCompaction
+  } | null>
   /** Host-managed subagent executor; built per turn when absent (see task-runtime.ts). */
   runTask?: AntigravityManagedTaskRunner
   ephemeralSession?: boolean
@@ -184,7 +202,7 @@ export async function runAntigravitySubscriptionChat(
   const ephemeral = Boolean(args.ephemeralSession)
   const canPersistSession = args.canPersistSession ?? (() => true)
   const accountId = args.manager.accountId ?? null
-  const history = runnerContextHistory(args.conversationId, {
+  let history = runnerContextHistory(args.conversationId, {
     ephemeralSession: args.ephemeralSession,
     executionScope: args.messageMeta?.executionScope,
   })
@@ -615,6 +633,87 @@ export async function runAntigravitySubscriptionChat(
       session.modelValue = modelValue
     }
 
+    // The runtime keeps only the start of an oversized prompt, which would drop the request at its end. A seed that
+    // does not fit is replaced by a summary; whatever still does not fit fails here instead of being cut silently.
+    let compactedSeed = false
+    const buildPrompt = () =>
+      buildAntigravityPromptBlocks({
+        conversationId: args.conversationId,
+        message: currentUser,
+        newSession,
+        instructions,
+        toolCatalog: renderAntigravityToolCatalog(activeToolset.specs),
+        seedTranscript: newSession
+          ? buildAntigravitySeedTranscript(history, compactedSeed ? messages[0] : undefined)
+          : '',
+        dropImages,
+        environment,
+        turnReminder,
+      })
+    const compactSeed = async (compactHistory: NonNullable<RunAntigravitySubscriptionChatArgs['compactHistory']>) => {
+      const compacted = await contextProgress.compact(
+        async (onProgress) => {
+          const result = await compactHistory(onProgress)
+          // Completion progress persists the live bubble; reload the committed boundary before it does.
+          if (result?.prepared && result.summary.trim()) {
+            const activated = activatePreparedCompaction({
+              conversationId: args.conversationId,
+              assistantMessageId: assistantId,
+              prepared: result.prepared,
+              scope: { ephemeralSession: args.ephemeralSession, executionScope: args.messageMeta?.executionScope },
+            })
+            history = activated.history
+            messages = [activated.assistant]
+            coalescer.push(activated.event)
+          }
+          return result
+        },
+        {
+          signal: args.signal,
+          validate: (result) => Boolean(result?.summary.trim()),
+          failureMessage: 'Google Antigravity could not compact the conversation to fit its prompt limit',
+        }
+      )
+      // The Antigravity summarizer reports no token usage, so the boundary carries none.
+      if (compacted && !compacted.prepared) {
+        apply(
+          {
+            kind: 'compaction',
+            messageId: assistantId,
+            partId: randomUUID(),
+            text: compacted.summary.trim(),
+            strategy: 'summary',
+          },
+          true
+        )
+      }
+      compactedSeed = true
+    }
+    let prompt = buildPrompt()
+    const promptBytes = antigravityPromptTextBytes(prompt)
+    // A prepared background summary can leave a suffix that is still too large; the second pass summarizes it too.
+    for (
+      let pass = 0;
+      pass < 2 &&
+      newSession &&
+      history.length > 1 &&
+      args.compactHistory &&
+      antigravityPromptTextBytes(prompt) > ANTIGRAVITY_PROMPT_TEXT_MAX_BYTES;
+      pass += 1
+    ) {
+      await compactSeed(args.compactHistory)
+      prompt = buildPrompt()
+    }
+    if (compactedSeed) {
+      chatDiag({
+        kind: 'antigravity-seed-compacted',
+        conv: args.conversationId,
+        beforeBytes: promptBytes,
+        afterBytes: antigravityPromptTextBytes(prompt),
+      })
+    }
+    assertAntigravityPromptFits(prompt)
+
     // The turn itself.
     const mapper = createAntigravityStreamMapper(assistantId)
     activeToolset.setActiveTurn({
@@ -650,17 +749,6 @@ export async function runAntigravitySubscriptionChat(
         })
       }
       for (const event of mapper.push(update)) apply(event)
-    })
-    const prompt = buildAntigravityPromptBlocks({
-      conversationId: args.conversationId,
-      message: currentUser,
-      newSession,
-      instructions,
-      toolCatalog: renderAntigravityToolCatalog(activeToolset.specs),
-      seedTranscript: newSession ? buildAntigravitySeedTranscript(history) : '',
-      dropImages,
-      environment,
-      turnReminder,
     })
     const pending = client.request<AcpPromptResult>('session/prompt', { sessionId: session.sessionId, prompt })
     let cancelSent = false

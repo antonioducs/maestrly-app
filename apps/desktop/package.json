@@ -87,7 +87,7 @@
     "i18next": "^26.4.5",
     "lucide-react": "^1.57.0",
     "mermaid": "^12.2.0",
-    "node-forge": "1.4.0",
+    "node-forge": "1.4.2",
     "node-pty": "1.1.0",
     "parse5": "8.0.1",
     "react-i18next": "^17.0.16",

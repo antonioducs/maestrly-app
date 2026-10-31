@@ -9,10 +9,45 @@
       "expiresOn": "2026-11-11"
     },
     {
-      "package": "node-forge",
-      "path": "node_modules/node-forge",
-      "advisories": ["GHSA-86w9-cpqp-85rv"],
-      "reason": "The advisory concerns verifying RSA PKCS#1 v1.5 signatures from others, which nothing here does with node-forge. The desktop app ships it only to create and sign the self-signed certificate of its peer identity (apps/desktop/src/main/peer/identity.ts); certificates are verified by Node's TLS against the certificate pinned at pairing. At build time, expo 58 -> @expo/cli (and @expo/code-signing-certificates) uses it for iOS signing identities and to sign update manifests, neither of which this repository configures. node-forge 1.4.0 is the latest release, so no patched version exists.",
+      "package": "minimatch",
+      "path": "node_modules/@electron/universal/node_modules/@electron/asar/node_modules/minimatch",
+      "advisories": ["GHSA-g3hv-75wg-m249"],
+      "reason": "Build-time only: @electron/universal -> @electron/asar 3.4.1 uses minimatch 3.1.5's callable CommonJS API. The advisory's broad <11.0.1 range includes this copy, but its firstPhasePreProcess/optimizationLevel pipeline does not exist in 3.x; upstream's changelog dates that preprocessing to 7.0. This copy cannot execute the vulnerable globparts amplification. Forcing 11.x removes the callable export and breaks archive unpack matching. Modern minimatch and glob copies are upgraded separately.",
+      "expiresOn": "2026-11-11"
+    },
+    {
+      "package": "minimatch",
+      "path": "node_modules/app-builder-lib/node_modules/@electron/asar/node_modules/minimatch",
+      "advisories": ["GHSA-g3hv-75wg-m249"],
+      "reason": "Build-time only: app-builder-lib -> @electron/asar 3.4.1 uses minimatch 3.1.5's callable CommonJS API. This copy has no firstPhasePreProcess or optimizationLevel pipeline, introduced upstream in 7.0, so the globparts amplification cannot run despite the advisory's broad <11.0.1 range. Replacing it with 11.x breaks archive unpack matching because the callable export was removed. Modern minimatch and glob copies are upgraded separately.",
+      "expiresOn": "2026-11-11"
+    },
+    {
+      "package": "minimatch",
+      "path": "node_modules/dir-compare/node_modules/minimatch",
+      "advisories": ["GHSA-g3hv-75wg-m249"],
+      "reason": "Build-time only: dir-compare 4.2.0 requires minimatch 3.1.5's callable CommonJS API. This copy has no firstPhasePreProcess or optimizationLevel pipeline, introduced upstream in 7.0, so the globparts amplification cannot run despite the advisory's broad <11.0.1 range. Forcing 11.x removes that callable export and breaks directory filters. Modern minimatch and glob copies are upgraded separately.",
+      "expiresOn": "2026-11-11"
+    },
+    {
+      "package": "minimatch",
+      "path": "node_modules/electron-winstaller/node_modules/minimatch",
+      "advisories": ["GHSA-g3hv-75wg-m249"],
+      "reason": "Build-time only: electron-winstaller -> @electron/asar 3.4.1 uses minimatch 3.1.5's callable CommonJS API. This copy has no firstPhasePreProcess or optimizationLevel pipeline, introduced upstream in 7.0, so the globparts amplification cannot run despite the advisory's broad <11.0.1 range. Replacing it with 11.x breaks archive unpack matching because the callable export was removed. Modern minimatch and glob copies are upgraded separately.",
+      "expiresOn": "2026-11-11"
+    },
+    {
+      "package": "minimatch",
+      "path": "node_modules/filelist/node_modules/minimatch",
+      "advisories": ["GHSA-g3hv-75wg-m249"],
+      "reason": "Build-time only: filelist 1.0.6 -> minimatch 5.1.9 uses the callable CommonJS export and Minimatch.makeRe(). This copy has no firstPhasePreProcess or optimizationLevel pipeline, introduced upstream in 7.0, so the globparts amplification cannot run despite the advisory's broad <11.0.1 range. Both legacy APIs are absent from 11.x, which would break build file selection. Modern minimatch and glob copies are upgraded separately.",
+      "expiresOn": "2026-11-11"
+    },
+    {
+      "package": "minimatch",
+      "path": "node_modules/glob/node_modules/minimatch",
+      "advisories": ["GHSA-g3hv-75wg-m249"],
+      "reason": "Build-time only: legacy glob 7.2.3, used by rimraf and the older @electron/asar copies, needs minimatch 3.1.5's Minimatch.matchOne(), makeRe(), and RegExp set entries. This copy has no firstPhasePreProcess or optimizationLevel pipeline, introduced upstream in 7.0, so the globparts amplification cannot run despite the advisory's broad <11.0.1 range. Forcing 11.x removes the APIs glob 7 requires. Modern glob copies use patched minimatch 11 instead.",
       "expiresOn": "2026-11-11"
     },
     {

@@ -8,6 +8,7 @@ import {
   type AntigravitySubscriptionManager,
 } from './manager'
 import { resolveAntigravityModelValue } from './models'
+import { antigravityIsolatedPromptText, assertAntigravityPromptFits } from './prompt-limit'
 
 export interface AntigravityIsolatedPromptArgs {
   manager: AntigravitySubscriptionManager
@@ -30,6 +31,11 @@ function abortError(signal: AbortSignal): unknown {
  */
 export async function runAntigravityIsolatedPrompt(args: AntigravityIsolatedPromptArgs): Promise<{ text: string }> {
   if (args.signal.aborted) throw abortError(args.signal)
+  const prompt: AcpContentBlock[] = [
+    { type: 'text', text: antigravityIsolatedPromptText(args.system, args.prompt) },
+    ...(args.images ?? []).map((image) => ({ type: 'image' as const, mimeType: image.mimeType, data: image.data })),
+  ]
+  assertAntigravityPromptFits(prompt)
   args.manager.assertAccountIdentity(args.accountIdentity)
   const modelValue = resolveAntigravityModelValue(await args.manager.listModels(), args.modelId, args.reasoningEffort)
   if (!modelValue) throw new AntigravityModelUnavailableError(args.modelId)
@@ -58,10 +64,6 @@ export async function runAntigravityIsolatedPrompt(args: AntigravityIsolatedProm
       const content = update.content as { type?: string; text?: unknown }
       if (content.type === 'text' && typeof content.text === 'string') text += content.text
     })
-    const prompt: AcpContentBlock[] = [
-      { type: 'text', text: `<system>\n${args.system}\n</system>\n\n${args.prompt}` },
-      ...(args.images ?? []).map((image) => ({ type: 'image' as const, mimeType: image.mimeType, data: image.data })),
-    ]
     const cancel = () => client.notify('session/cancel', { sessionId: id })
     args.signal.addEventListener('abort', cancel, { once: true })
     let result: AcpPromptResult
