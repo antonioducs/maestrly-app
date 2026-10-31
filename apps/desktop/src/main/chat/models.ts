@@ -132,7 +132,8 @@ function posNum(v: unknown): number | undefined {
 }
 
 /** Discovers the context window of ONE /models entry, tolerating OpenAI-compatible provider field variants:
- * `context_length` (OpenRouter), `context_window`, `max_context_tokens`, and
+ * `context_length` (OpenRouter), `context_window`, `max_context_tokens`, `max_model_len` (vLLM),
+ * `max_input_tokens`, `max_context_length` (LM Studio), `context_size`, `n_ctx` (llama.cpp), and
  * nested `top_provider` (OpenRouter) or `limit.context` (models.dev style). First match wins. */
 function readWindow(m: Record<string, unknown>): number | undefined {
   const top = m.top_provider as Record<string, unknown> | undefined
@@ -141,6 +142,11 @@ function readWindow(m: Record<string, unknown>): number | undefined {
     posNum(m.context_length) ??
     posNum(m.context_window) ??
     posNum(m.max_context_tokens) ??
+    posNum(m.max_model_len) ??
+    posNum(m.max_input_tokens) ??
+    posNum(m.max_context_length) ??
+    posNum(m.context_size) ??
+    posNum(m.n_ctx) ??
     posNum(top?.context_length) ??
     posNum(limit?.context)
   )
