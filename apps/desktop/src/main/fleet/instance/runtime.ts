@@ -125,6 +125,7 @@ import { setConversationScreen, type ScreenArea } from '../../conversation-scree
 import { INSTANCE_CAPABILITIES, InstanceHttpError, type InstanceEvents, type InstanceFile } from './server'
 import {
   InstanceInputQueue,
+  botCompactionFocus,
   conversationQueue,
   inputRunId,
   promptForInput,
@@ -800,6 +801,7 @@ export class BotRuntime {
     this.registeredConversation = null
     const id = registered.id
     clearCompactionSummarizer(id)
+    setCompactionFocus(id, null)
     this.clearTasks(id)
     setConversationContextLimit(id, null)
     clearConversationMemorySpace(id)
@@ -965,6 +967,8 @@ export class BotRuntime {
     })
     publishConvChatSettings(id)
     this.applyTasks(id, this.delegationSettings().mode === 'delegate')
+    if (this.registeredConversation?.id === id)
+      setCompactionFocus(id, botCompactionFocus(this.stored.profile.name, 'primary'))
     // The owner's cap on the conversation's window, whatever its model; the usage the Mac shows follows it at once.
     const limit = this.stored.profile.compaction?.contextLimitTokens ?? null
     if ((getConversationContextLimit(id) ?? null) !== limit) {
@@ -1014,9 +1018,10 @@ export class BotRuntime {
     })
     this.applyRunCompaction(id)
     const record = lane.record
+    const botName = this.stored?.profile.name ?? this.botId
     setCompactionFocus(
       id,
-      record.kind === 'thread' ? threadCompactionFocus(this.stored?.profile.name ?? this.botId, record) : null
+      record.kind === 'thread' ? threadCompactionFocus(botName, record) : botCompactionFocus(botName, 'routine')
     )
     const stopObserving = observeChatHost(id, (event) => {
       if (event.channel === `chat:delta:${id}`) this.onChatEvent(event.payload as ChatStreamEvent, lane)

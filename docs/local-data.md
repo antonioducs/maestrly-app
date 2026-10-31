@@ -93,7 +93,9 @@ no automatic import from project/bot memory and no cross-device synchronization.
 `conversation_memory_state` stores the frozen core, source baseline and recalled
 IDs; `memory_extraction_state` stores the extraction cursor and failure state.
 Both are deleted with their conversation. `memory_consolidation_state` tracks
-new automatic entries and the last consolidation per space. Search indexes and
+new automatic entries and the last consolidation per space, and the
+`memory.consolidation.products.<spaceId>` setting lists the entries that space's
+last consolidation created; both are deleted with the space. Search indexes and
 embeddings remain rebuildable caches; back up the profile for authoritative data.
 
 The [bot gateway](bot-fleet.md#security-and-data) database is at schema v7.

@@ -9,6 +9,36 @@ export interface ExtractionBlock {
 }
 const cut = (text: string, max: number) => (text.length <= max ? text : `${text.slice(0, max - 1)}…`)
 
+/**
+ * How much of each tool call the extractor sees. A message's calls share one budget, so one long run of small calls
+ * keeps the old per-call floor while a few calls show their real commands, parameters and results.
+ */
+export const EXTRACTION_TOOL_LIMITS = {
+  messageChars: 12_000,
+  fieldMax: 1_500,
+  inputFloor: 200,
+  outputFloor: 300,
+  errorMax: 600,
+} as const
+
+/** Skill bodies are kept as skills, never mined into memories: these calls show only which skill and file they used. */
+const bareToolName = (name: string) => name.replace(/^mcp__maestrly__/, '')
+function skillToolInput(name: string, input: unknown): string | null {
+  if (name !== 'use_skill' && !name.startsWith('skill_')) return null
+  const value = typeof input === 'object' && input !== null ? (input as Record<string, unknown>) : {}
+  const kept: Record<string, unknown> = {}
+  for (const key of ['name', 'file_path'])
+    if (typeof value[key] === 'string') kept[key] = (value[key] as string).slice(0, 200)
+  return JSON.stringify(kept)
+}
+/** Keeps line breaks (commands and code read better) while dropping indentation and blank runs. */
+const compactWhitespace = (text: string) =>
+  text
+    .replace(/\r\n?/g, '\n')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/ *\n[ \n]*/g, '\n')
+    .trim()
+
 /** Host-delivered input written by an agent, never by the person. */
 function fromAnotherConversation(message: StoredChatMessage): boolean {
   return message.source === 'conversation-dispatch' || message.source === 'conversation-message'
@@ -25,18 +55,25 @@ function label(message: StoredChatMessage, bot: boolean, text: string): string {
   return 'Owner'
 }
 
-function partLine(part: MessagePart): string | null {
+function partLine(part: MessagePart, toolShare: number): string | null {
   switch (part.type) {
     case 'text':
       return part.checkpoint === 'openai-native' ? null : part.text
     case 'tool': {
+      const name = bareToolName(part.toolName)
+      const skill = skillToolInput(name, part.input)
+      const half = Math.floor(toolShare / 2)
+      const inputMax = Math.min(EXTRACTION_TOOL_LIMITS.fieldMax, Math.max(EXTRACTION_TOOL_LIMITS.inputFloor, half))
+      const outputMax = Math.min(EXTRACTION_TOOL_LIMITS.fieldMax, Math.max(EXTRACTION_TOOL_LIMITS.outputFloor, half))
       const output =
-        part.state.status === 'completed'
-          ? cut(toolOutputText(part.state.output).replace(/\s+/g, ' '), 300)
-          : part.state.status === 'error'
-            ? cut(part.state.error, 300)
-            : ''
-      return `[tool ${part.toolName} ${cut(JSON.stringify(part.input ?? {}), 200)} → ${part.state.status}${output ? `: ${output}` : ''}]`
+        skill !== null && part.state.status === 'completed'
+          ? ''
+          : part.state.status === 'completed'
+            ? cut(compactWhitespace(toolOutputText(part.state.output)), outputMax)
+            : part.state.status === 'error'
+              ? cut(compactWhitespace(part.state.error), EXTRACTION_TOOL_LIMITS.errorMax)
+              : ''
+      return `[tool ${part.toolName} ${skill ?? cut(JSON.stringify(part.input ?? {}), inputMax)} → ${part.state.status}${output ? `: ${output}` : ''}]`
     }
     case 'file':
       return part.name.startsWith(MEMORY_PART_PREFIX)
@@ -60,7 +97,9 @@ export function renderExtractionTranscript(
     if (message.internal && message.role === 'user') continue
     if (opts.personal && (message.role !== 'user' || fromAnotherConversation(message))) continue
     const parts = opts.personal ? message.parts.filter((part) => part.type === 'text') : message.parts
-    const lines = parts.map(partLine).filter((line): line is string => Boolean(line?.trim()))
+    const tools = parts.filter((part) => part.type === 'tool').length
+    const toolShare = tools ? Math.floor(EXTRACTION_TOOL_LIMITS.messageChars / tools) : 0
+    const lines = parts.map((part) => partLine(part, toolShare)).filter((line): line is string => Boolean(line?.trim()))
     if (!lines.length) continue
     const body = lines.join('\n')
     blocks.push({

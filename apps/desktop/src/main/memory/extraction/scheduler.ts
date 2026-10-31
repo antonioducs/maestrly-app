@@ -6,6 +6,7 @@ import { getCompactionSummarizer } from '../../chat/compaction-summarizer'
 import { getConversation } from '../../store'
 import { getExtractionState, saveExtractionState } from '../../store/memory-extraction-state'
 import { listLocalMemories } from '../local-memory-service'
+import type { LocalMemory } from '../../../shared/memory'
 import { memorySettingsForSpace } from '../settings'
 import { onPersonalMemorySettingsChanged } from '../personal-memory-settings'
 import { extractionAllowed, extractionCommitGuard } from './guards'
@@ -34,6 +35,24 @@ export function resolveExtractionSelection(conversationId: string): OneShotSelec
   if (!space || !extractionAllowed(space)) return null
   const settings = memorySettingsForSpace(space).extraction
   return settings.enabled && settings.selection ? settings.selection : null
+}
+
+/**
+ * Existing memories as the extractor sees them, whole entries only: a longer excerpt lets it recognize what is already
+ * saved (and supersede it) instead of saving a near duplicate.
+ */
+export function extractionMemoryCatalog(memories: readonly LocalMemory[]): string {
+  const lines: string[] = []
+  let used = 0
+  for (const memory of memories) {
+    const excerpt = memory.content.replace(/\s+/g, ' ').trim()
+    const line = `${memory.id} · ${memory.type} · ${memory.title} — ${excerpt.length <= EXTRACTION_LIMITS.catalogExcerptChars ? excerpt : `${excerpt.slice(0, EXTRACTION_LIMITS.catalogExcerptChars - 1)}…`}`
+    const size = line.length + (lines.length ? 1 : 0)
+    if (used + size > EXTRACTION_LIMITS.catalogChars) break
+    lines.push(line)
+    used += size
+  }
+  return lines.join('\n')
 }
 
 const pending = new Map<string, { personal: boolean; timer: NodeJS.Timeout; firstAt: number; upToSeq: number }>()
@@ -221,13 +240,7 @@ export async function runMemoryExtraction(
       for (const chunk of chunkExtractionBlocks(blocks, EXTRACTION_LIMITS.chunkChars, EXTRACTION_LIMITS.maxChunks)) {
         const snapshotMemories = listLocalMemories(space.id, { status: 'active', limit: 300 })
         const snapshots = new Map(snapshotMemories.map((memory) => [memory.id, memory]))
-        const catalog = snapshotMemories
-          .map(
-            (memory) =>
-              `${memory.id} · ${memory.type} · ${memory.title} — ${memory.content.replace(/\s+/g, ' ').slice(0, 160)}`
-          )
-          .join('\n')
-          .slice(0, EXTRACTION_LIMITS.catalogChars)
+        const catalog = extractionMemoryCatalog(snapshotMemories)
         const chunkOwner = chunk.some((block) => block.text.startsWith('Owner:')) ? owner : undefined
         const ownerEntries = chunkOwner
           ? (await chunkOwner.list().catch(() => [])).map((entry) => `${entry.id} — ${entry.content}`).join('\n')

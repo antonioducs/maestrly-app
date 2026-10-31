@@ -6,6 +6,7 @@ import type {
   MemoryType,
 } from '../../shared/memory'
 import { getDb, transaction } from './db'
+import { CONSOLIDATION_PRODUCTS_KEY_PREFIX } from './memory-extraction-state'
 
 export interface LocalMemoryRow {
   id: string
@@ -147,6 +148,7 @@ export function deleteLocalMemorySpace(spaceId: string): void {
     // Entries of the space may supersede each other; the foreign key clears those links as rows go.
     db.prepare('DELETE FROM local_memories WHERE workspace_id = ?').run(spaceId)
     db.prepare('DELETE FROM memory_consolidation_state WHERE space_id = ?').run(spaceId)
+    db.prepare('DELETE FROM app_settings WHERE key = ?').run(`${CONSOLIDATION_PRODUCTS_KEY_PREFIX}${spaceId}`)
     db.prepare('DELETE FROM memory_extraction_state WHERE space_id = ?').run(spaceId)
     db.prepare('DELETE FROM conversation_memory_state WHERE space_id = ?').run(spaceId)
   })

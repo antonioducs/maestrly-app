@@ -129,6 +129,89 @@ it('renders roles and bounded tools without recalled content', () => {
   expect(text).not.toContain('RECALL-SHOULD-NOT-LEAK')
   expect(text).not.toContain('x'.repeat(301))
 })
+
+const toolPart = (toolName: string, input: unknown, output: string, status: 'completed' | 'error' = 'completed') => ({
+  type: 'tool' as const,
+  id: randomUUID(),
+  toolCallId: randomUUID(),
+  toolName,
+  input,
+  state: status === 'completed' ? { status, output } : { status, error: output },
+})
+const renderOne = (parts: ReturnType<typeof toolPart>[]) =>
+  renderExtractionTranscript(
+    [{ seq: 1, message: { id: 'm', conversationId, role: 'assistant', createdAt: 1, parts } as never }],
+    { bot: true }
+  )[0].text
+
+it('shares one budget among the calls of a message, never below the former floor', () => {
+  const command = { command: `ffmpeg -i in.mov ${'-vf scale=1080:-2 '.repeat(100)}` }
+  const one = renderOne([toolPart('bash', command, `frame=1\n${'o'.repeat(3_000)}`)])
+  // Line breaks of the output stay; input and output each show up to 1,500 characters.
+  expect(one).toContain('frame=1\no')
+  expect(one).toContain('o'.repeat(1_400))
+  expect(one).not.toContain('o'.repeat(1_500))
+  expect(one).toContain('-vf scale=1080:-2 '.repeat(70))
+  const many = renderOne(Array.from({ length: 60 }, () => toolPart('bash', command, 'p'.repeat(3_000))))
+  // Sixty calls keep at least the former 200 characters of input and 300 of output each.
+  expect(many).toContain(`→ completed: ${'p'.repeat(299)}…`)
+  expect(many).not.toContain('p'.repeat(301))
+  const error = renderOne([toolPart('bash', command, `failed ${'e'.repeat(1_000)}`, 'error')])
+  expect(error).toContain('e'.repeat(590))
+  expect(error).not.toContain('e'.repeat(600))
+})
+
+it('shows only which skill and file a skill call used, never its body', () => {
+  const text = renderOne([
+    toolPart('use_skill', { name: 'animate' }, 'Skill "animate" loaded.\nSECRET-BODY step one'),
+    toolPart(
+      'mcp__maestrly__skill_write_file',
+      { name: 'animate', file_path: 'scripts/run.sh', content: 'SECRET-SCRIPT' },
+      'Saved SECRET-OUTPUT'
+    ),
+    toolPart('skill_patch', { name: 'animate', old_text: 'SECRET-OLD', new_text: 'SECRET-NEW' }, 'Patched'),
+  ])
+  expect(text).toContain('[tool use_skill {"name":"animate"} → completed]')
+  expect(text).toContain('{"name":"animate","file_path":"scripts/run.sh"}')
+  expect(text).not.toContain('SECRET')
+})
+
+it('shows the extractor whole entries of existing memories, with longer excerpts', async () => {
+  const { extractionMemoryCatalog } = await import('../../src/main/memory/extraction/scheduler')
+  const long = createLocalMemory({
+    workspaceId: spaceId,
+    title: 'Render',
+    content: `Step\n${'a'.repeat(400)}TAIL${'b'.repeat(200)}`,
+    type: 'procedure',
+    source: 'agent',
+  }).memory
+  const catalog = extractionMemoryCatalog([long])
+  expect(catalog).toContain(`Step ${'a'.repeat(390)}`)
+  expect(catalog).not.toContain('TAIL')
+  const many = Array.from({ length: 100 }, (_, index) => ({ ...long, id: `memory-${index}` }))
+  const lines = extractionMemoryCatalog(many).split('\n')
+  expect(lines.join('\n').length).toBeLessThanOrEqual(20_000)
+  // Each line is a whole entry: it ends with its excerpt, never mid-id.
+  for (const line of lines) expect(line).toMatch(/^memory-\d+ · procedure · Render — Step a+…$/)
+})
+
+it('lets a procedure keep twice the content of other memories', () => {
+  const item = (type: string, length: number) => ({
+    action: 'create',
+    type,
+    title: 'T',
+    content: 'x'.repeat(length),
+  })
+  const parsed = parseExtractionOutput(
+    JSON.stringify({
+      memories: [item('procedure', 3_000), item('procedure', 3_001), item('decision', 1_500), item('decision', 1_501)],
+    })
+  )!
+  expect(parsed.memories.map((memory) => [memory.type, memory.content.length])).toEqual([
+    ['procedure', 3_000],
+    ['decision', 1_500],
+  ])
+})
 it('parses fences, rejects invalid items and limits operations', () => {
   const good = output.memories[0]
   expect(

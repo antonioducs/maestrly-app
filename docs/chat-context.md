@@ -881,17 +881,35 @@ saved cursor, in bounded pages, and needs at least 1,200 new characters. The fir
 run in a conversation starts from its most recent 96,000 characters of condensed
 history; older history is not mined. Each run processes at most six chunks with a
 48,000-character text budget per chunk and up to eight memory operations per
-chunk; a longer message keeps its beginning and end. Extracted titles are limited
-to 120 characters and content to 1,500. Image contents, skill bodies, compaction
-summaries and hidden memory blocks are excluded. New entries have the **Automatic**
-source and are not pinned. An answer that is not readable JSON is retried once,
-then that chunk is skipped. Failed extraction retries on later triggers, backing
-off for an hour after three failures; it does not block turns or compaction.
+chunk; a longer message keeps its beginning and end. The tool calls of one message
+share a 12,000-character budget: each call shows up to 1,500 characters of its input
+and of its output, and never less than 200 of input and 300 of output; a failed
+call shows up to 600 characters of its error. The extractor sees existing memories
+as whole entries with 400-character excerpts, up to 20,000 characters. Extracted
+titles are limited to 120 characters and content to 1,500, or 3,000 for a
+procedure, which is written as ordered steps with the exact commands and values.
+Image contents, skill bodies (calls that load or edit a skill show only the skill
+and file name), compaction summaries and hidden memory blocks are excluded. New
+entries have the **Automatic** source and are not pinned. An answer that is not
+readable JSON is retried once, then that chunk is skipped. Failed extraction
+retries on later triggers, backing off for an hour after three failures; it does
+not block turns or compaction.
+
+Memories the agent saves with `memory_upsert` start with importance 60, or 70 for a
+procedure, unless it sets one; automatic entries start at 0. The memory catalog
+lists entries by importance first, so what was saved on purpose stays in view.
 
 After at least 15 new automatic memories, consolidation can merge overlapping
-active, unpinned entries. It runs at most once per 24 hours after a recorded run,
+active, unpinned **automatic** entries. Procedures and entries saved by you or by
+the agent are never merged. It runs at most once per 24 hours after a recorded run,
 with only one consolidation running per space and up to ten merges. It sends the
-full content of up to 150 entries within 48,000 characters, merges only entries it
-was shown, and skips a merge when one of them changed during the call. Each merge
-is applied atomically. Merged entries are superseded rather than deleted, so they
-can be restored in the Memory Center.
+full content of up to 150 entries within 48,000 characters, one JSON object per
+entry so line breaks survive, and marks which entries are new since the last run.
+Every merge must include a new entry, so the entries a run merged are merged again
+only with something new; with nothing new, no model call is made. A merge keeps at
+least 80% of the length of its longest original, up to 3,000 characters, and the
+merged entry keeps the highest importance, all tags, the shared scope and the
+origin of its originals. It merges only entries it was shown, and skips a merge
+when one of them changed during the call. Each merge is applied atomically. Merged
+entries are superseded rather than deleted, so they can be restored in the Memory
+Center.

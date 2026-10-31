@@ -10,6 +10,8 @@ export interface ExtractionState {
   lastRunAt: number | null
   updatedAt: number
 }
+/** `app_settings` key prefix of the entries each space's last consolidation created. */
+export const CONSOLIDATION_PRODUCTS_KEY_PREFIX = 'memory.consolidation.products.'
 export interface ConsolidationState {
   spaceId: string
   autoCreatedSince: number

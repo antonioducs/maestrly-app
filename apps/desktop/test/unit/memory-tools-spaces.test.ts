@@ -86,6 +86,27 @@ describe('memory tools on memory spaces', () => {
     expect(result.isError).toBeFalsy()
     expect(listLocalMemories(workspace.id)[0]?.id).toBe('synthetic-project-preference')
   })
+  it('ranks what the agent saves above background extraction, and its procedures higher still', async () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id)
+    const handlers = tools(conversation.id)
+    const save = (title: string, type: string, importance?: number) =>
+      handlers.get('memory_upsert')!({
+        title,
+        content: `${title} content.`,
+        type,
+        ...(importance === undefined ? {} : { importance }),
+      })
+    await save('Decision', 'decision')
+    await save('Render', 'procedure')
+    await save('Explicit', 'procedure', 5)
+    const byTitle = new Map(listLocalMemories(workspace.id).map((memory) => [memory.title, memory.importance]))
+    expect(Object.fromEntries(byTitle)).toEqual({ Decision: 60, Render: 70, Explicit: 5 })
+    // An update keeps the importance it had.
+    const render = listLocalMemories(workspace.id).find((memory) => memory.title === 'Render')!
+    await handlers.get('memory_upsert')!({ id: render.id, title: 'Render', content: 'New steps.', type: 'procedure' })
+    expect(listLocalMemories(workspace.id).find((memory) => memory.id === render.id)?.importance).toBe(70)
+  })
   it('gives a bot conversation its own memory, without repository tools', async () => {
     const workspace = makeWorkspace()
     const conversation = makeConversation(workspace.id)

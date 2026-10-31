@@ -884,6 +884,13 @@ User messages in the bot conversation show **Recalled: …** when memory was
 recalled. Memory tools reach only the bot's own memory; this is not a barrier
 against another bot in the same environment that runs commands.
 
+When the bot compacts its conversation with you or a routine run, the summary keeps
+how it did each task that worked (the steps in order, with the commands, tool
+calls, parameters, paths and values), the settings and accounts it learned, what
+failed next to what worked instead, the skills it used, and its commitments.
+Consolidation of [automatic memories](chat-context.md#automatic-memory-saving)
+never merges procedures or what the bot or you saved yourselves.
+
 ## Memory about you
 
 Open **Bots → Memory about you** in Maestrly to review facts and preferences
