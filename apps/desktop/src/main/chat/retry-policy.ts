@@ -1,4 +1,5 @@
-const TRANSIENT_STATUS = new Set([408, 409, 425, 429])
+import { classifyModelFailure, type ModelFailureClassification } from './model-fallback/error-classifier'
+
 const DEFAULT_RETRY_DELAY_MS = 1_500
 const MAX_RETRY_DELAY_MS = 5 * 60_000
 export const AI_SDK_MAX_RETRIES = 0
@@ -7,100 +8,32 @@ export type StreamRetryDecision =
   | { retryable: true; reason: 'transient'; delayMs: number }
   | { retryable: false; reason: 'quota' | 'fatal'; delayMs: 0 }
 
-type ErrorLike = {
-  name?: unknown
-  code?: unknown
-  type?: unknown
-  status?: unknown
-  statusCode?: unknown
-  message?: unknown
-  responseBody?: unknown
-  data?: unknown
-  cause?: unknown
-  headers?: unknown
-  responseHeaders?: unknown
-  retryAfter?: unknown
-}
-
 /**
- * APICallError carries the whole request: its prompt and tool descriptions mention words like "timeout",
- * as does a `Keep-Alive: timeout=5` header. Matching them made every failure, a fatal 401 or 402 included,
- * look transient and get retried. Headers are read field by field (Retry-After) instead.
+ * In-place retry decision for a stream failure, derived from the shared failure classifier (which reads the
+ * provider's response field by field and never the request that was sent). An empty balance or exhausted quota
+ * answered as a throttle (429, or no status) reports `quota`; every other non-transient failure is `fatal`.
  */
-const NOT_THE_FAILURE = new Set(['requestBodyValues', 'url', 'responseHeaders'])
-const omitRequest = (key: string, value: unknown): unknown => (NOT_THE_FAILURE.has(key) ? undefined : value)
-
-function errorText(error: unknown): string {
-  const any = error as ErrorLike
-  const parts = [any?.name, any?.code, any?.type, any?.message, any?.responseBody, any?.data]
-  if (error instanceof Error) parts.push(error.message)
-  try {
-    parts.push(JSON.stringify(error, omitRequest))
-  } catch {
-    /* best effort */
-  }
-  return parts.filter((value) => value != null).join(' ')
+export function classifyStreamRetry(error: unknown, now = Date.now()): StreamRetryDecision {
+  return streamRetryFromClassification(classifyModelFailure(error, { now }), now)
 }
 
-function statusOf(error: unknown): number | null {
-  const any = error as ErrorLike
-  for (const value of [any?.statusCode, any?.status]) {
-    const parsed = typeof value === 'string' ? Number(value) : value
-    if (typeof parsed === 'number' && Number.isFinite(parsed)) return parsed
+export function streamRetryFromClassification(
+  classification: ModelFailureClassification,
+  now = Date.now()
+): StreamRetryDecision {
+  const throttleStatus = classification.status == null || classification.status === 429
+  if (
+    classification.reason === 'quota' ||
+    (classification.reason === 'billing' && throttleStatus)
+  ) {
+    return { retryable: false, reason: 'quota', delayMs: 0 }
   }
-  return null
-}
-
-function headerValue(headers: unknown, name: string): string | null {
-  if (!headers || typeof headers !== 'object') return null
-  const get = (headers as { get?: unknown }).get
-  if (typeof get === 'function') {
-    const value = get.call(headers, name)
-    return typeof value === 'string' ? value : null
-  }
-  for (const [key, value] of Object.entries(headers as Record<string, unknown>)) {
-    if (key.toLowerCase() !== name.toLowerCase()) continue
-    if (typeof value === 'string' || typeof value === 'number') return String(value)
-  }
-  return null
-}
-
-function retryAfterMs(error: unknown, now = Date.now()): number | null {
-  const any = error as ErrorLike
-  const raw =
-    any?.retryAfter ??
-    headerValue(any?.responseHeaders, 'retry-after') ??
-    headerValue(any?.headers, 'retry-after')
-  if (typeof raw === 'number' && Number.isFinite(raw)) {
-    return Math.min(MAX_RETRY_DELAY_MS, Math.max(0, raw * 1_000))
-  }
-  if (typeof raw !== 'string' || !raw.trim()) return null
-  const seconds = Number(raw)
-  if (Number.isFinite(seconds)) return Math.min(MAX_RETRY_DELAY_MS, Math.max(0, seconds * 1_000))
-  const timestamp = Date.parse(raw)
-  return Number.isFinite(timestamp) ? Math.min(MAX_RETRY_DELAY_MS, Math.max(0, timestamp - now)) : null
-}
-
-export function classifyStreamRetry(error: unknown): StreamRetryDecision {
-  const status = statusOf(error)
-  const hay = errorText(error)
-  const quota =
-    /\b(?:insufficient[_ -]?quota|quota exceeded|credit balance|billing limit|spending limit|usage limit)\b/i.test(
-      hay
-    ) ||
-    /\b(?:account(?:'s)? rate limit|would exceed (?:your )?account(?:'s)? rate limit)\b/i.test(hay)
-  if (quota && (status == null || status === 429)) return { retryable: false, reason: 'quota', delayMs: 0 }
-
-  const transient =
-    (status != null && (TRANSIENT_STATUS.has(status) || status >= 500)) ||
-    /\b(?:overloaded_error|rate[_ -]?limit(?:ed)?|temporarily unavailable|timeout|timed out|etimedout|econnreset|econnaborted|epipe|und_err_socket|socket hang up|premature close|fetch failed|network error|server overloaded)\b/i.test(
-      hay
-    )
-  if (!transient) return { retryable: false, reason: 'fatal', delayMs: 0 }
+  if (!classification.retryInPlace) return { retryable: false, reason: 'fatal', delayMs: 0 }
+  const hinted = classification.retryAt == null ? 0 : Math.max(0, classification.retryAt - now)
   return {
     retryable: true,
     reason: 'transient',
-    delayMs: Math.max(DEFAULT_RETRY_DELAY_MS, retryAfterMs(error) ?? 0),
+    delayMs: Math.max(DEFAULT_RETRY_DELAY_MS, Math.min(MAX_RETRY_DELAY_MS, hinted)),
   }
 }
 
