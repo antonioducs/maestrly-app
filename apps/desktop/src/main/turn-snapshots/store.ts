@@ -390,8 +390,7 @@ export interface SnapshotDir {
   settings: UserGitSettings
 }
 
-/** Resolves (creating it when needed) the store and index of the folder a conversation works in. */
-export async function resolveSnapshotDir(cwd: string): Promise<SnapshotDir> {
+async function realFolder(cwd: string): Promise<string> {
   let workTree: string
   try {
     workTree = await fsp.realpath(cwd)
@@ -402,12 +401,10 @@ export async function resolveSnapshotDir(cwd: string): Promise<SnapshotDir> {
   const root = await fsp.realpath(turnSnapshotsRoot()).catch(() => turnSnapshotsRoot())
   // A folder holding the profile would snapshot the snapshots themselves.
   if (isInsidePath(workTree, root)) throw new SnapshotUnavailableError('contains-profile')
-  const user = await discoverRepository(workTree)
-  const kind: StoreKind = user ? 'git' : 'plain'
-  const source = user ? user.commonDir : workTree
-  const alternate = user ? path.join(user.commonDir, 'objects') : null
-  const store = await openStore(sha256(`${kind}\0${keyPath(source)}`), kind, source, alternate)
-  const dirKey = sha256(`dir\0${keyPath(workTree)}`)
+  return workTree
+}
+
+async function snapshotDir(store: ShadowStore, workTree: string, user: UserRepository | null): Promise<SnapshotDir> {
   const [settings, insensitive] = await Promise.all([readUserGitSettings(workTree), isCaseInsensitive(workTree)])
   const scanConfig = [`core.ignorecase=${insensitive ? 'true' : 'false'}`]
   if (settings.excludesFile && existsSync(settings.excludesFile))
@@ -415,11 +412,34 @@ export async function resolveSnapshotDir(cwd: string): Promise<SnapshotDir> {
   const userExclude = user ? path.join(user.commonDir, 'info', 'exclude') : null
   return {
     store,
-    dirKey,
+    dirKey: sha256(`dir\0${keyPath(workTree)}`),
     workTree,
     user,
     scanConfig,
     excludeFrom: userExclude && existsSync(userExclude) ? userExclude : null,
     settings,
   }
+}
+
+/** Resolves (creating it when needed) the store and index of the folder a conversation works in. */
+export async function resolveSnapshotDir(cwd: string): Promise<SnapshotDir> {
+  const workTree = await realFolder(cwd)
+  const user = await discoverRepository(workTree)
+  const kind: StoreKind = user ? 'git' : 'plain'
+  const source = user ? user.commonDir : workTree
+  const alternate = user ? path.join(user.commonDir, 'objects') : null
+  const store = await openStore(sha256(`${kind}\0${keyPath(source)}`), kind, source, alternate)
+  return snapshotDir(store, workTree, user)
+}
+
+/**
+ * The folder of a recorded turn in the store that recorded it, even if the folder has since become (or stopped
+ * being) a repository: later captures must compare against the same store's trees.
+ */
+export async function reopenSnapshotDir(storeKey: string, folder: string): Promise<SnapshotDir> {
+  const workTree = await realFolder(folder)
+  const store = await openExistingStore(storeKey)
+  if (!store) throw new SnapshotUnavailableError('failed', 'The snapshot store no longer exists')
+  const user = store.meta.kind === 'git' ? await discoverRepository(workTree) : null
+  return snapshotDir(store, workTree, user && keyPath(user.commonDir) === keyPath(store.meta.source) ? user : null)
 }

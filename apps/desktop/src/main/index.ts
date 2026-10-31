@@ -231,6 +231,8 @@ import { registerDrawerIpc } from './drawer-ipc'
 import { registerConversationIpc } from './conversation-ipc'
 import { createSiblingConversation, deleteConversation } from './workspace-service'
 import { registerLocalConversationIpc } from './local-conversation/ipc'
+import { initTurnSnapshots } from './turn-snapshots/maintenance'
+import { turnSnapshotsChangedChannel } from '../shared/turn-snapshots'
 import { registerConversationMigrationIpc } from './conversation-migration/ipc'
 import { registerMemoryIpc } from './memory-ipc'
 import { registerReviewIpc } from './review-ipc'
@@ -1263,6 +1265,14 @@ app.whenReady().then(async () => {
       () => new Set(listAllConversationIds().flatMap((id) => conversationTempEntryName(id) ?? []))
     ).catch((error) => console.warn('[conversation-temp] Sweep failed:', (error as Error).message))
   }
+  // Snapshots of each turn's files, for undo; collected an hour apart and soon after a conversation is deleted.
+  app.once(
+    'will-quit',
+    initTurnSnapshots({
+      userData: app.getPath('userData'),
+      notify: (id) => sendToConversation(id, turnSnapshotsChangedChannel(id)),
+    })
+  )
   initArtifacts()
   await migrateAllLegacyMemories()
   initMemoryIndexService()

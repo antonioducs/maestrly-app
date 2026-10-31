@@ -7,6 +7,7 @@ import { initializeBotCommandSchema } from '../bot/schema'
 import { initializeHostTransferSchema } from '../host-transfers/schema'
 import { initializeConversationMoveSchema } from '../conversation-move/schema'
 import { initializeHistoryIndexQueue } from '../chat/history-index/schema'
+import { initializeTurnSnapshotSchema } from '../turn-snapshots/schema'
 
 // Use built-in node:sqlite available in the Electron runtime, avoiding an additional native module or ABI
 // rebuild.
@@ -1280,6 +1281,7 @@ function initializeSchema(): void {
   }
   sanitizeChatUsageLedger()
   backfillChatUsageLedger()
+  initializeTurnSnapshotSchema(db)
 }
 
 /**

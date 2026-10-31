@@ -170,6 +170,7 @@ export async function resetLocalAppData(deps: LocalDataResetDeps): Promise<void>
     'chat-tool-output',
     'fleet-media-cache',
     'artifacts',
+    'turn-snapshots',
   ]) {
     await attempt(() => fsp.rm(path.join(app.getPath('userData'), directory), { recursive: true, force: true }))
   }

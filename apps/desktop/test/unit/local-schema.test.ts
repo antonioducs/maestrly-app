@@ -43,6 +43,7 @@ const LOCAL_TABLES = [
   'chat_subagent_sessions',
   'chat_subagent_transcript',
   'chat_tool_executions',
+  'chat_turn_snapshots',
   'chat_usage_ledger',
   'conversation_dispatches',
   'conversation_memory_state',

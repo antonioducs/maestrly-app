@@ -14,7 +14,8 @@ const INDEX_REF_PREFIX = 'refs/maestrly/i/'
 const LOOSE_OBJECT_LIMIT = 2_000
 const PACK_LIMIT = 20
 
-export function recordRef(recordId: string, name: 'start' | 'end' | 'pre' | 'post' | 'now'): string {
+/** Ref of one of a record's trees: `start-<root>`, `end-<root>`, `now-<root>`, `op<n>-pre-<root>`... */
+export function recordRef(recordId: string, name: string): string {
   return `${RECORD_REF_PREFIX}${recordId}/${name}`
 }
 
