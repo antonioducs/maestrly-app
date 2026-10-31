@@ -4,8 +4,9 @@ import { toolOutputText, type MessagePart } from '../../../shared/chat'
 import { listChatMessagesAround } from '../../chat/chat-store'
 import { browseHistory, searchHistory, type HistorySearchHit } from '../../chat/history-index/search'
 import { localEmbeddingReranker } from '../../chat/history-index/semantic'
+import { canReadConversationHistory, workspaceHistoryAccess } from '../../chat/history-index/access'
 import type { McpToolContext } from './context'
-import { ok } from './context'
+import { err, ok } from './context'
 
 const HISTORY_READ = {
   maxChars: 12_000,
@@ -72,17 +73,20 @@ export function renderHistoryWindow(
   return [...selected.sort((a, b) => a.seq - b.seq).map((block) => block.text), note].join('\n\n')
 }
 
-const result = (hit: HistorySearchHit) => ({
+const result = (hit: HistorySearchHit, names?: ReadonlyMap<string, string>) => ({
   seq: hit.seq,
   role: hit.role,
   at: new Date(hit.createdAt).toISOString(),
   snippet: hit.snippet,
   ...(hit.score !== undefined ? { score: hit.score } : {}),
   ...(hit.kind ? { kind: hit.kind } : {}),
+  ...(names ? { conversationId: hit.conversationId, conversation: names.get(hit.conversationId) ?? '' } : {}),
 })
 
+const json = (value: unknown) => ok(JSON.stringify(value, null, 2))
+
 export function registerHistoryTools(ctx: McpToolContext): void {
-  const { server, convId, t } = ctx
+  const { server, convId, t, workerScope } = ctx
   server.registerTool(
     'history_search',
     {
@@ -93,33 +97,62 @@ export function registerHistoryTools(ctx: McpToolContext): void {
         limit: z.number().int().min(1).max(30).optional().describe(t('tools.history_search.params.limit')),
         mode: z.enum(['relevance', 'exact']).optional().describe(t('tools.history_search.params.mode')),
         beforeSeq: z.number().int().min(0).optional().describe(t('tools.history_search.params.beforeSeq')),
+        scope: z.enum(['conversation', 'workspace']).optional().describe(t('tools.history_search.params.scope')),
       },
       annotations: { readOnlyHint: true },
     },
-    async ({ query, limit, mode, beforeSeq }) => {
-      if (!query) {
-        const hits = browseHistory(convId, { beforeSeq, limit: limit ?? 8 })
-        return ok(JSON.stringify({ results: hits.map(result), mode: 'browse' }, null, 2))
+    async ({ query, limit, mode, beforeSeq, scope }) => {
+      const bounded = limit ?? 8
+      if (scope === 'workspace') {
+        const access = workspaceHistoryAccess(convId, workerScope)
+        if (!access.ok) return err(t('returns.history.workspaceDenied'))
+        const names = new Map(access.conversations.map((conversation) => [conversation.id, conversation.name]))
+        if (!query) {
+          // The workspace's conversations, most recently active first, each with the last thing the person asked.
+          const results = access.conversations.slice(0, bounded).map((conversation) => {
+            const [latest] = browseHistory(conversation.id, { limit: 1 })
+            return {
+              conversationId: conversation.id,
+              conversation: conversation.name,
+              at: new Date(conversation.lastActivityAt).toISOString(),
+              ...(conversation.archived ? { archived: true } : {}),
+              ...(latest ? { seq: latest.seq, role: latest.role, snippet: latest.snippet } : {}),
+            }
+          })
+          return json({ results, mode: 'browse', scope: 'workspace' })
+        }
+        const found = await searchHistory({
+          conversationIds: access.conversations.map((conversation) => conversation.id),
+          query,
+          mode,
+          limit: bounded,
+          rerank: localEmbeddingReranker(),
+        })
+        return json({
+          results: found.hits.map((hit) => result(hit, names)),
+          mode: found.mode,
+          scope: 'workspace',
+          ...(found.building ? { index: 'building' } : {}),
+        })
       }
+      if (!query)
+        return json({
+          results: browseHistory(convId, { beforeSeq, limit: bounded }).map((hit) => result(hit)),
+          mode: 'browse',
+        })
       const found = await searchHistory({
         conversationIds: [convId],
         query,
         mode,
-        limit: limit ?? 8,
+        limit: bounded,
         beforeSeq,
         rerank: localEmbeddingReranker(),
       })
-      return ok(
-        JSON.stringify(
-          {
-            results: found.hits.map(result),
-            mode: found.mode,
-            ...(found.building ? { index: 'building' } : {}),
-          },
-          null,
-          2
-        )
-      )
+      return json({
+        results: found.hits.map((hit) => result(hit)),
+        mode: found.mode,
+        ...(found.building ? { index: 'building' } : {}),
+      })
     }
   )
   server.registerTool(
@@ -132,10 +165,14 @@ export function registerHistoryTools(ctx: McpToolContext): void {
         before: z.number().int().min(0).max(10).optional(),
         after: z.number().int().min(0).max(10).optional(),
         detail: z.enum(['brief', 'full']).optional().describe(t('tools.history_read.params.detail')),
+        conversationId: z.string().min(1).max(200).optional().describe(t('tools.history_read.params.conversationId')),
       },
       annotations: { readOnlyHint: true },
     },
-    async ({ seq, before, after, detail }) =>
-      ok(renderHistoryWindow(convId, seq, before ?? 3, after ?? 3, t, { detail }))
+    async ({ seq, before, after, detail, conversationId }) => {
+      const target = conversationId ?? convId
+      if (!canReadConversationHistory(convId, target, workerScope)) return err(t('returns.history.conversationDenied'))
+      return ok(renderHistoryWindow(target, seq, before ?? 3, after ?? 3, t, { detail }))
+    }
   )
 }

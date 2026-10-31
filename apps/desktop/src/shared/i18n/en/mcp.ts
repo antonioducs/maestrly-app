@@ -445,13 +445,15 @@ export default {
     history_search: {
       title: 'Search conversation history',
       description:
-        'Searches this conversation’s full saved history, including turns already compacted away and tool calls. Ranks messages by relevance: word stems match regardless of accents, parts of words and CJK text are found too, and recent messages win ties. Use mode "exact" to require every word, newest first. Without a query, browses the conversation instead: what the person asked and the compaction summaries, newest first. Returns message positions (seq), snippets and scores; read around one with history_read. Read-only.',
+        'Searches this conversation’s full saved history, including turns already compacted away and tool calls. Ranks messages by relevance: word stems match regardless of accents, parts of words and CJK text are found too, and recent messages win ties. Use mode "exact" to require every word, newest first. Without a query, browses the conversation instead: what the person asked and the compaction summaries, newest first. scope "workspace" also covers the other project conversations of this workspace, archived ones included (not in standalone chats, bot conversations or delegated work). Returns message positions (seq), snippets and scores; read around one with history_read. Read-only.',
       params: {
         query:
           'Words to look for (2–500 characters). Put "a phrase" in quotes to look for it as written. Omit to browse.',
         limit: 'Maximum results, 1–30 (default 8).',
         mode: '"relevance" (default) ranks by relevance; "exact" requires every word and lists newest first.',
         beforeSeq: 'Only messages before this position; pass the last seq seen to page browse and exact results.',
+        scope:
+          '"conversation" (default) or "workspace": results then name their conversationId; without a query, lists the conversations.',
       },
     },
     history_read: {
@@ -460,6 +462,7 @@ export default {
         'Reads the messages around a history position (seq) found by history_search, with tool outputs shortened. Read-only.',
       params: {
         detail: '"full" shows each tool output up to 8,000 characters instead of 600, within the same 12,000 total.',
+        conversationId: 'Another conversation of this workspace, from a workspace-scope history_search result.',
       },
     },
     memory_search: {
@@ -675,6 +678,9 @@ export default {
       compactionSummary: '[compaction summary] {{text}}',
       compaction: '[compaction]',
       generatedImage: '[generated image {{name}}]',
+      workspaceDenied:
+        'Workspace history is available only in project conversations, not in standalone chats, bot conversations or delegated work. Search this conversation instead.',
+      conversationDenied: 'That conversation’s history is not available from here.',
     },
     memory: {
       nothingRelevant: 'Nothing relevant enough. Try different words, or memory_list to browse.',
