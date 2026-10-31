@@ -48,6 +48,7 @@ export { CLAUDE_CODE_COMPATIBLE_VERSION, isCompatibleClaudeCodeVersion }
 const CLAUDE_PROFILE_DIRECTORY = 'claude-agent-sdk'
 const CLAUDE_SIGNED_OUT_MARKER = '.maestrly-signed-out'
 const CLAUDE_USAGE_CACHE_TTL_MS = 60_000
+const SUBSCRIPTION_API_KEY_SOURCES = new Set(['none', 'oauth'])
 /** `claude auth login` waits for its browser callback with no deadline of its own. */
 const CLAUDE_LOGIN_TIMEOUT_MS = 15 * 60_000
 
@@ -280,14 +281,6 @@ function nullableString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null
 }
 
-function normalizedSubscriptionType(value: unknown): string | null {
-  const normalized = nullableString(value)
-    ?.toLowerCase()
-    .replace(/^claude[\s_-]+/, '')
-    .trim()
-  return normalized || null
-}
-
 function parseVersion(raw: string): string | null {
   return raw.match(/\b(\d+\.\d+\.\d+)\b/)?.[1] ?? null
 }
@@ -314,7 +307,9 @@ export function parseClaudeAuthStatus(raw: string): {
   const subscriptionType = nullableString(parsed.subscriptionType)
   const email = nullableString(parsed.email)
   const organizationId = nullableString(parsed.orgId)
-  if (apiProvider !== 'firstParty' || authMethod !== 'claude.ai' || !subscriptionType || (!email && !organizationId)) {
+  // The plan is display-only: a tier Claude Code does not recognise yet may come back empty, and the backend and
+  // login method above already prove a Claude.ai subscription.
+  if (apiProvider !== 'firstParty' || authMethod !== 'claude.ai' || (!email && !organizationId)) {
     throw new ClaudeSubscriptionError(
       'claude-auth-failed',
       'Claude Code is authenticated with a backend that is not a verifiable Claude.ai subscription.'
@@ -335,11 +330,12 @@ export function parseClaudeAuthStatus(raw: string): {
 
 function accountFingerprint(account: ClaudeSubscriptionAccount | null): string | null {
   if (!account) return null
+  // Only what names the account. A change here aborts the account's turns and drops its native sessions, so the plan
+  // and the organization's display name (both renamed upstream or by the user) stay out; the name stands in only
+  // when there is no organization id.
   const identity = [
     account.email,
-    account.organizationId,
-    account.organizationName,
-    account.subscriptionType,
+    account.organizationId ?? account.organizationName,
     account.authMethod,
     account.apiProvider,
   ].join('\0')
@@ -518,7 +514,9 @@ export class ClaudeSubscriptionManager {
   }
 
   assertSubscriptionRuntimeAccount(account: AccountInfo, expectedIdentity?: ClaudeSubscriptionAccountIdentity): void {
-    if (account.apiProvider !== 'firstParty' || account.apiKeySource) {
+    // `none` and `oauth` are the SDK's own names for "no API key"; any other source would bill the API.
+    const apiKeySource = nullableString(account.apiKeySource)
+    if (account.apiProvider !== 'firstParty' || (apiKeySource && !SUBSCRIPTION_API_KEY_SOURCES.has(apiKeySource))) {
       throw new ClaudeSubscriptionError(
         'claude-auth-failed',
         'Claude runtime selected a non-subscription backend. Sign in with Claude.ai and remove API/cloud credentials.'
@@ -534,25 +532,20 @@ export class ClaudeSubscriptionManager {
         : null
     const runtimeEmail = nullableString(account.email)?.toLowerCase() ?? null
     const expectedEmail = expected?.email?.toLowerCase() ?? null
-    const runtimeSubscription = normalizedSubscriptionType(account.subscriptionType)
-    const expectedSubscription = normalizedSubscriptionType(expected?.subscriptionType)
+    // Only the email proves the account; the backend check above keeps API billing out. The plan and the organization
+    // name are labels Anthropic or the user can change, and `auth status` and the runtime pick a new label up at
+    // different times (seen live: `max` vs `Claude Ultra`), so neither is compared. The organization, which the
+    // runtime reports only by name, stands in solely for accounts without an email.
+    const emailMatches = expectedEmail ? runtimeEmail === expectedEmail : true
     const runtimeOrganization = nullableString(account.organization)?.toLowerCase() ?? null
     const expectedOrganizations = new Set(
       [expected?.organizationId, expected?.organizationName]
         .map((value) => value?.toLowerCase() ?? null)
         .filter((value): value is string => Boolean(value))
     )
-    const emailMatches = expectedEmail ? runtimeEmail === expectedEmail : true
-    const organizationMatches = expectedEmail
-      ? !runtimeOrganization || expectedOrganizations.size === 0 || expectedOrganizations.has(runtimeOrganization)
-      : Boolean(runtimeOrganization && expectedOrganizations.has(runtimeOrganization))
-    if (
-      !expected ||
-      !expectedSubscription ||
-      runtimeSubscription !== expectedSubscription ||
-      !emailMatches ||
-      !organizationMatches
-    ) {
+    const organizationMatches =
+      Boolean(expectedEmail) || Boolean(runtimeOrganization && expectedOrganizations.has(runtimeOrganization))
+    if (!expected || !emailMatches || !organizationMatches) {
       throw new ClaudeSubscriptionError(
         'claude-auth-failed',
         'Claude runtime account does not match the subscription identity admitted by Maestrly.'

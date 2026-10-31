@@ -38,6 +38,14 @@ function fixture(overrides: Partial<ClaudeSubscriptionManagerDependencies> = {})
   ])
   const processCalls: string[][] = []
   let authenticated = true
+  let authAccount: Record<string, unknown> = {
+    email: 'dev@example.com',
+    orgId: 'org-1',
+    orgName: 'Engineering',
+    subscriptionType: 'max',
+    authMethod: 'claude.ai',
+    apiProvider: 'firstParty',
+  }
   const dependencies: ClaudeSubscriptionManagerDependencies = {
     getUserDataPath: () => '/tmp/maestrly',
     getHomeDirectory: () => '/home/test',
@@ -79,15 +87,7 @@ function fixture(overrides: Partial<ClaudeSubscriptionManagerDependencies> = {})
         return {
           exitCode: 0,
           stdout: authenticated
-            ? JSON.stringify({
-                loggedIn: true,
-                email: 'dev@example.com',
-                orgId: 'org-1',
-                orgName: 'Engineering',
-                subscriptionType: 'max',
-                authMethod: 'claude.ai',
-                apiProvider: 'firstParty',
-              })
+            ? JSON.stringify({ loggedIn: true, ...authAccount })
             : JSON.stringify({ loggedIn: false }),
           stderr: '',
         }
@@ -115,6 +115,9 @@ function fixture(overrides: Partial<ClaudeSubscriptionManagerDependencies> = {})
     processCalls,
     setAuthenticated(value: boolean) {
       authenticated = value
+    },
+    setAuthAccount(patch: Record<string, unknown>) {
+      authAccount = { ...authAccount, ...patch }
     },
   }
 }
@@ -278,6 +281,37 @@ describe('Claude subscription manager', () => {
     expect(() => manager.assertSubscriptionRuntimeAccount({ apiProvider: 'gateway' })).toThrow(
       'non-subscription backend'
     )
+    expect(() => manager.assertSubscriptionRuntimeAccount({ apiProvider: 'firstParty', apiKeySource: 'user' })).toThrow(
+      'non-subscription backend'
+    )
+    // The SDK's own names for "no API key" are not a key.
+    for (const apiKeySource of ['none', 'oauth']) {
+      expect(() => manager.assertSubscriptionRuntimeAccount({ apiProvider: 'firstParty', apiKeySource })).not.toThrow()
+    }
+  })
+
+  it('admits a Claude.ai login whose plan Claude Code does not report', () => {
+    expect(
+      parseClaudeAuthStatus(
+        JSON.stringify({ loggedIn: true, email: 'dev@example.com', authMethod: 'claude.ai', apiProvider: 'firstParty' })
+      )
+    ).toMatchObject({ authenticated: true, account: { email: 'dev@example.com', subscriptionType: null } })
+  })
+
+  it('keeps the account identity when only its plan or organization name changes', async () => {
+    const { manager, setAuthAccount } = fixture()
+    const before = await manager.status({ refresh: true })
+
+    setAuthAccount({ subscriptionType: 'ultra', orgName: 'Renamed' })
+    const relabelled = await manager.status({ refresh: true })
+    expect(relabelled.account).toMatchObject({ subscriptionType: 'ultra', organizationName: 'Renamed' })
+    expect(relabelled.accountFingerprint).toBe(before.accountFingerprint)
+    expect(relabelled.accountEpoch).toBe(before.accountEpoch)
+
+    setAuthAccount({ orgId: 'org-2' })
+    const otherOrganization = await manager.status({ refresh: true })
+    expect(otherOrganization.accountFingerprint).not.toBe(before.accountFingerprint)
+    expect(otherOrganization.accountEpoch).toBe(before.accountEpoch + 1)
   })
 
   it('proves the initialized runtime account matches the admitted subscription identity', async () => {
@@ -310,17 +344,54 @@ describe('Claude subscription manager', () => {
         identity
       )
     ).toThrow('does not match')
+  })
+
+  it('proves an account without an email by its organization', async () => {
+    const { manager, setAuthAccount } = fixture()
+    setAuthAccount({ email: undefined })
+    const status = await manager.status({ refresh: true })
+    const identity = { fingerprint: status.accountFingerprint, epoch: status.accountEpoch }
+
+    expect(() =>
+      manager.assertSubscriptionRuntimeAccount({ apiProvider: 'firstParty', organization: 'Engineering' }, identity)
+    ).not.toThrow()
+    expect(() =>
+      manager.assertSubscriptionRuntimeAccount({ apiProvider: 'firstParty', organization: 'Other' }, identity)
+    ).toThrow('does not match')
+    expect(() => manager.assertSubscriptionRuntimeAccount({ apiProvider: 'firstParty' }, identity)).toThrow(
+      'does not match'
+    )
+  })
+
+  it('does not treat the plan or the organization name as identity', async () => {
+    const { manager } = fixture()
+    const status = await manager.status({ refresh: true })
+    const identity = { fingerprint: status.accountFingerprint, epoch: status.accountEpoch }
+
+    // Observed live: `auth status` still said `max` while the runtime initialized as `Claude Ultra`.
     expect(() =>
       manager.assertSubscriptionRuntimeAccount(
         {
           apiProvider: 'firstParty',
           email: 'dev@example.com',
           organization: 'org-1',
-          subscriptionType: 'Claude Pro',
+          subscriptionType: 'Claude Ultra',
         },
         identity
       )
-    ).toThrow('does not match')
+    ).not.toThrow()
+    expect(() =>
+      manager.assertSubscriptionRuntimeAccount(
+        { apiProvider: 'firstParty', email: 'dev@example.com', organization: 'org-1' },
+        identity
+      )
+    ).not.toThrow()
+    expect(() =>
+      manager.assertSubscriptionRuntimeAccount(
+        { apiProvider: 'firstParty', email: 'dev@example.com', organization: 'Engineering (renamed)' },
+        identity
+      )
+    ).not.toThrow()
   })
 
   it('invalidates the previous identity when a refresh can no longer prove subscription auth', async () => {
