@@ -920,6 +920,48 @@ turn, the bot fetches owner memory with a 1,000 ms timeout inside the 1,500 ms
 turn-memory budget, falling back to its last good copy on failure. Changes reach
 the context through memory updates or a rebuilt core.
 
+## Bot skills
+
+A bot keeps skills of its own: procedures it worked out for a kind of task it will
+do again, such as making an animation, with their scripts, templates and
+references. Its conversation with you, its routine runs and its conversations with
+other bots find them in the [skill catalog](chat-context.md#skill-catalog) as
+`name (yours)` and load them with `use_skill`; no other bot sees them, even in the
+same environment. Memory keeps facts and preferences; skills keep how the bot does
+things.
+
+| Tool | What it does |
+| --- | --- |
+| `skill_list` | Lists the bot's skills (status, uses, pending proposals) and the other skills it can load. |
+| `skill_view` | Reads `SKILL.md` or one file of a skill. |
+| `skill_create` | Creates a skill from a name, a one-line description and instructions; Maestrly writes its frontmatter. |
+| `skill_patch` | Replaces an exact span of one file, once or everywhere it appears. |
+| `skill_write_file` | Creates, replaces or removes a file under `scripts/`, `templates/`, `references/` or `assets/`, or rewrites `SKILL.md`. |
+| `skill_archive` | Archives a skill, optionally naming the skill that absorbed it, or restores one. A bot never deletes a skill. |
+| `skill_proposal` | Applies or discards a pending proposal of one of its skills. |
+
+Each change gives a one-line reason, which the skill's history keeps. The bot can
+change only its own skills: the skills of its environment and of plugins are
+readable with `skill_view` and never changed. It cannot create a skill with the
+name of one it can already load; when you later install a skill with the name of
+one of the bot's, yours is the one found, and the bot's shows as hidden in
+`skill_list`. Before changing or removing a file, the bot reads it in that
+conversation (loading a skill counts as reading its `SKILL.md`); when the file
+changed since, it reads it again.
+
+Names are lowercase words joined by hyphens, up to 64 characters. A description is
+one line of up to 1,024 characters; the bot is told to shorten one over 200
+characters and to say when to use the skill. `SKILL.md` holds up to 64 KiB, and
+other files up to 256 KiB of UTF-8 text. A skill keeps up to 40 files and 1 MiB, and
+a bot up to 100 active skills. Text that would hide characters or tell the agent
+to ignore its instructions is refused, as in memory.
+
+Reading skills never asks; changing them follows the bot's approval mode, like its
+other writes. Scripts of a skill run only through the bot's terminal, under its
+command permissions. Every change keeps a version (up to 20 per skill); changes
+that wait for review stay as proposals, and the bot keeps loading the version in
+effect.
+
 ## Conversations at once
 
 With a bot server and environment image from this release, a bot works in several conversations at the same time: its conversation with you, its [routine runs](#routine-runs), and its [conversations with other bots](#conversations-with-other-bots). None waits for another: you can write to the bot while a run works, and a run starts while the bot answers you. Its conversation with you always runs; up to four of its other conversations run beside it, and the rest wait for one of them to end. Each conversation still answers one message at a time.

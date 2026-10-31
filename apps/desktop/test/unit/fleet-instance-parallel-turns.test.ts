@@ -24,6 +24,7 @@ const { deleteConversation } = await import('../../src/main/workspace-service')
 const { InstanceInputQueue, conversationQueue } = await import('../../src/main/fleet/instance/queue')
 const { InstanceTranscriptExtras } = await import('../../src/main/fleet/instance/transcript')
 const { FleetImageStore } = await import('../../src/main/fleet/instance/images')
+const { BotSkillStore } = await import('../../src/main/fleet/instance/bot-skills/store')
 const { LiveTranscript } = await import('../../src/main/fleet/instance/live-transcript')
 const { InstanceEvents } = await import('../../src/main/fleet/instance/server')
 const { InstanceHelpStore } = await import('../../src/main/fleet/instance/help')
@@ -114,6 +115,7 @@ async function bot() {
     events,
     queue,
     images,
+    skills: new BotSkillStore(path.join(dir, 'skills')),
     extras,
     runs,
     help: new InstanceHelpStore(extras, () => {}),

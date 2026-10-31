@@ -1,6 +1,6 @@
 import { jsonSchema, tool, type ToolSet } from 'ai'
 import { effectiveSkills, findEffectiveSkill } from './skill-state'
-import { normalizedSkillName, renderSkillContext, skillCatalogLine, type ChatSkill } from './skills'
+import { normalizedSkillName, renderSkillCatalogEntries, renderSkillContext, type ChatSkill } from './skills'
 import type { ConversationScope } from '../../shared/conversation-scope'
 
 export interface ModelSkillRuntime {
@@ -15,7 +15,7 @@ export function renderModelSkillCatalog(skills: readonly ChatSkill[], project = 
     `# Available ${project ? 'project ' : ''}skills`,
     'These specialized capabilities are available through `use_skill`.',
     'When the task clearly matches a listed skill, call `use_skill` before acting, read the returned instructions completely, and follow them for this task. Use only the minimal relevant set. User instructions take precedence.',
-    ...skills.map(skillCatalogLine),
+    renderSkillCatalogEntries(skills),
   ].join('\n')
 }
 

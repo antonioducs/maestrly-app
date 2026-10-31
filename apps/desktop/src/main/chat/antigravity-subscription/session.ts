@@ -21,7 +21,7 @@ import { pdfFallbackText } from '../pdf-attachments'
 import { buildProjectContext } from '../project-context'
 import { commandShellEnvironment } from '../tools/command-shell'
 import { effectiveSkills } from '../skill-state'
-import { type ChatSkill, skillCatalogLine } from '../skills'
+import { type ChatSkill, renderSkillCatalogEntries } from '../skills'
 import { listEffectiveAgents } from '../virtual-subagents'
 
 export const ANTIGRAVITY_INSTRUCTIONS_VERSION = 2
@@ -53,7 +53,7 @@ export interface AntigravityInstructions {
 
 function skillsCatalog(skills: readonly ChatSkill[], project = true): string {
   if (!skills.length) return ''
-  return `${project ? 'Project skills' : 'Skills'} available through \`use_skill\`:\n${skills.map(skillCatalogLine).join('\n')}`
+  return `${project ? 'Project skills' : 'Skills'} available through \`use_skill\`:\n${renderSkillCatalogEntries(skills)}`
 }
 
 function agentsCatalog(agents: readonly ChatAgent[]): string {

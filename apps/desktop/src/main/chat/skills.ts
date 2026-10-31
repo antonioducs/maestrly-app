@@ -19,7 +19,8 @@ import path from 'node:path'
 import { normalizeSkillName } from '../../shared/chat'
 import { normalizeCommandName } from './commands'
 
-export type ChatSkillScope = 'project' | 'global' | 'plugin'
+/** `bot`: a fleet bot's own skills, which only its conversations see (`conversation-skill-provider.ts`). */
+export type ChatSkillScope = 'project' | 'global' | 'plugin' | 'bot'
 
 /**
  * Canonical skill-name normalization (slash-command rules, plus one `:` for plugin skills). Folders on disk keep
@@ -49,6 +50,8 @@ export interface ChatSkill {
   truncated?: boolean
   /** Set for skills and commands provided by an installed plugin. */
   plugin?: { key: string; displayName: string; kind: 'skill' | 'command' }
+  /** How often the conversation's owner loaded it, when known: the catalog keeps the most used ones in full. */
+  usage?: { count: number; lastUsedAt: number }
 }
 
 /** Body safety cap. Spec recommends <5k words; this only guards against huge files. */
@@ -58,7 +61,7 @@ export const SKILL_BODY_MAX_CHARS = 64_000
 const SKILL_FILE_MAX_BYTES = 256 * 1024
 /** Bundled-file inventory cap (prevents prompt overflow for skills with hundreds of assets). */
 const MAX_RESOURCES = 60
-const RESOURCE_DIRS = ['scripts', 'references', 'assets'] as const
+const RESOURCE_DIRS = ['scripts', 'templates', 'references', 'assets'] as const
 export type SkillResourceKind = (typeof RESOURCE_DIRS)[number]
 
 const SKILL_ROOTS = ['.agents/skills', '.claude/skills', '.codex/skills'] as const
@@ -159,10 +162,14 @@ async function listResources(dir: string): Promise<string[]> {
 }
 
 /** File count per category (UI badge). */
-export function countSkillResources(resources: readonly string[]): Record<SkillResourceKind, number> {
-  const counts: Record<SkillResourceKind, number> = { scripts: 0, references: 0, assets: 0 }
+export function countSkillResources(
+  resources: readonly string[]
+): Record<Exclude<SkillResourceKind, 'templates'>, number> {
+  // Templates count with assets: the badge and the fleet settings contract keep three kinds.
+  const counts = { scripts: 0, references: 0, assets: 0 }
   for (const rel of resources) {
-    const kind = rel.split('/')[0] as SkillResourceKind
+    const first = rel.split('/')[0]
+    const kind = (first === 'templates' ? 'assets' : first) as keyof typeof counts
     if (kind in counts) counts[kind] += 1
   }
   return counts
@@ -325,6 +332,58 @@ export function renderSkillContext(
 /** Catalog line (system prompt): name + description only — body arrives on demand. */
 export function skillCatalogLine(skill: ChatSkill): string {
   return `- ${skill.name}: ${skill.description.replace(/\s+/g, ' ').trim() || '(no description)'}`
+}
+
+/** Budget of the skill catalog in the system prompt: it is sent on every turn. */
+export const SKILL_CATALOG_LIMITS = { chars: 8_000, described: 80, descriptionChars: 240 } as const
+
+function catalogDescription(description: string): string {
+  const text = description.replace(/\s+/g, ' ').trim() || '(no description)'
+  if (text.length <= SKILL_CATALOG_LIMITS.descriptionChars) return text
+  const head = text.slice(0, SKILL_CATALOG_LIMITS.descriptionChars - 1)
+  const space = head.lastIndexOf(' ')
+  return `${(space >= SKILL_CATALOG_LIMITS.descriptionChars / 2 ? head.slice(0, space) : head).trimEnd()}…`
+}
+
+/**
+ * The catalog's lines, in the order given (stable, so the prompt prefix stays cacheable). Within the budget every skill
+ * shows its description, the bot's own marked "(yours)"; over it, the least used skills show their name only, and when
+ * even the names do not fit, the least used are counted in a last line instead of being dropped silently.
+ */
+export function renderSkillCatalogEntries(skills: readonly ChatSkill[]): string {
+  const label = (skill: ChatSkill) => (skill.scope === 'bot' ? `${skill.name} (yours)` : skill.name)
+  const full = skills.map((skill) => `- ${label(skill)}: ${catalogDescription(skill.description)}`)
+  const bare = skills.map((skill) => `- ${label(skill)}`)
+  const size = (lines: readonly string[]) => lines.reduce((sum, line) => sum + line.length + 1, 0)
+  if (skills.length <= SKILL_CATALOG_LIMITS.described && size(full) <= SKILL_CATALOG_LIMITS.chars)
+    return full.join('\n')
+  const ranked = skills
+    .map((skill, index) => ({ index, count: skill.usage?.count ?? 0, last: skill.usage?.lastUsedAt ?? 0 }))
+    .sort((a, b) => b.count - a.count || b.last - a.last || a.index - b.index)
+    .map((entry) => entry.index)
+  const more = (count: number) =>
+    `- …and ${count} more skills not listed here${skills.some((skill) => skill.scope === 'bot') ? ' (skill_list lists them all)' : ''}.`
+  const shown = new Set<number>()
+  let used = more(skills.length).length + 1
+  for (const index of ranked) {
+    if (used + bare[index].length + 1 > SKILL_CATALOG_LIMITS.chars) break
+    shown.add(index)
+    used += bare[index].length + 1
+  }
+  if (shown.size === skills.length) used -= more(skills.length).length + 1
+  const described = new Set<number>()
+  for (const index of ranked) {
+    if (!shown.has(index) || described.size >= SKILL_CATALOG_LIMITS.described) continue
+    const extra = full[index].length - bare[index].length
+    if (used + extra > SKILL_CATALOG_LIMITS.chars) continue
+    described.add(index)
+    used += extra
+  }
+  const lines = skills.flatMap((_, index) =>
+    shown.has(index) ? [described.has(index) ? full[index] : bare[index]] : []
+  )
+  if (shown.size < skills.length) lines.push(more(skills.length - shown.size))
+  return lines.join('\n')
 }
 
 export type SkillOverride = 'on' | 'off'

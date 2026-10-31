@@ -264,6 +264,7 @@ data under its bot id:
 | Session bus, desktop socket, wallpaper, and the size and place of its browser window | `~/.cache/maestrly-bots/<botId>/` (`bus`, `desktop.sock`, `wallpaper.*`, `presenter.json`) |
 | Jobs it sent to [runners](bot-fleet.md#run-heavy-jobs-on-your-computers): the conversation that sent each, its folder and spec, its last state, its log, and what its outputs put in the folder | `fleet-instance/bots/<botId>/runner-jobs/<jobId>/`, removed 7 days after the job ends; while a job runs, also its manifest and the output archive as it arrives |
 | SHA-256 of the files in the folders it sent jobs from, so unchanged files are not read again | `fleet-instance/bots/<botId>/runner-digests/` |
+| Its own [skills](bot-fleet.md#bot-skills): those in effect, archived ones, proposals waiting for review, the content of their versions (stored once by SHA-256), and their provenance, history, review mode and how often it loaded each skill | `fleet-instance/bots/<botId>/skills/` (`library/<name>/`, `archive/<name>/`, `proposals/<name>/`, `blobs/<sha256>`, `state.json`); a damaged `state.json` is set aside as `state.damaged-<time>.json` and rebuilt from the folders |
 
 A job's log is also written into its folder, at `.maestrly/runner-jobs/<jobId>.log`; the outputs are unpacked in
 `.maestrly/runner-jobs/<jobId>.staging` there before they move into place.

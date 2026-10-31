@@ -55,7 +55,7 @@ import type { QuestionBroker } from './question-broker'
 import { buildAppTools, buildMcpTools } from './mcp'
 import { resolveAppToolAccess } from './app-tool-access'
 import { buildOpenAIProjectContext, buildProjectContext } from './project-context'
-import { renderSkillContext, skillCatalogLine } from './skills'
+import { renderSkillCatalogEntries, renderSkillContext } from './skills'
 import { effectiveSkills, findEffectiveSkill } from './skill-state'
 import { listEffectiveAgents } from './virtual-subagents'
 import { catalogProviderForBaseURL, getProviderModelMetaWithStatus } from './model-meta'
@@ -1258,7 +1258,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   const skillsCatalog = skills.length
     ? `\n\n${projectId === null ? 'Available' : 'Project'} skills (specialized capabilities) — when the task matches one, call use_skill("<name>") ` +
       'to load the full instructions BEFORE acting:\n' +
-      skills.map(skillCatalogLine).join('\n')
+      renderSkillCatalogEntries(skills)
     : ''
   const agentsCatalog = agents.length
     ? mode === 'maestro'

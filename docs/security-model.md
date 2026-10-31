@@ -528,8 +528,16 @@ See [environments](bot-fleet.md#environments) for what its bots share.
   credentials, operate their displays and programs, and use their gateway
   tokens to call the gateway as them, for example to message a peer or save the
   environment's owner memory. Approval ceilings, **Conversations with other bots** grants, per-bot
-  memory spaces and per-bot displays limit each bot's own tools; they are not a
+  memory spaces, per-bot skills and per-bot displays limit each bot's own tools; they are not a
   security boundary between bots of one environment.
+- **A bot's own skills are text it wrote for itself.** They reach only its own
+  conversations, and its skill tools change only them, inside its skills folder:
+  plain relative paths, no links, size limits, and the injection checks memory
+  uses. A skill can still carry a mistaken or harmful procedure the bot learned
+  from untrusted content, so a script of a skill runs only through the bot's
+  terminal and its command permissions, every change keeps a version, and the
+  bot never deletes a skill. Another bot of the environment that runs commands can
+  still read or change those files, as above.
 - **Environments are separated** by their own container, home volume, keyring
   and control token, and each bot calls the gateway with its own gateway token.
   The gateway derives a bot's environment from that token, never from the

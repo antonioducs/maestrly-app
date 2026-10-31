@@ -137,6 +137,7 @@ import {
   BOT_MEMORY_WRITE_RULES,
   BOT_DESKTOP_READ_RULES,
   BOT_RUNNER_READ_RULES,
+  BOT_SKILL_READ_RULES,
   YOLO_RULESET,
   type PermissionRequest,
   type Ruleset,
@@ -247,6 +248,7 @@ import { grokReasoningMeta } from './grok-subscription/models'
 import { finalTurnCompletion } from './turn-status'
 import { QuestionBroker } from './question-broker'
 import { activeChatContext, latestApprovedPlan, renderTranscript, summaryWithApprovedPlan } from './message'
+import { summaryWithLoadedSkills } from './compaction-skills'
 import { createContextProgressPublisher } from './context-progress'
 import { CODEX_TRANSFER_MAX_CHARACTERS, codexTransferCharacters } from './native-transfer'
 import { redactClaudeCredentials } from './claude-agent-sdk/errors'
@@ -2748,7 +2750,9 @@ function rulesetFor(conversationId: string): Ruleset {
       : permModeFor(conversationId) === 'auto'
         ? AUTO_RULESET
         : BYOK_DEFAULT_RULESET
-  return isBotMode() ? [...base, ...BOT_MEMORY_WRITE_RULES, ...BOT_DESKTOP_READ_RULES, ...BOT_RUNNER_READ_RULES] : base
+  return isBotMode()
+    ? [...base, ...BOT_MEMORY_WRITE_RULES, ...BOT_DESKTOP_READ_RULES, ...BOT_RUNNER_READ_RULES, ...BOT_SKILL_READ_RULES]
+    : base
 }
 
 /** Effective conversation behavior mode (default agent). */
@@ -8339,8 +8343,14 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
     }
     // A plan or request still in the verbatim tail is not repeated in the summary.
     const planInTail = cut != null && latestApprovedPlan(historyAfterCut(history, cut)) != null
+    // Skills loaded in the verbatim tail are still in context; only those the summary replaced need loading again.
     const summary = summaryWithTurnRequest(
-      planInTail ? summaryWithoutApprovedPlan(compacted.summary) : summaryWithApprovedPlan(compacted.summary, history),
+      summaryWithLoadedSkills(
+        planInTail
+          ? summaryWithoutApprovedPlan(compacted.summary)
+          : summaryWithApprovedPlan(compacted.summary, history),
+        summarizedHistory
+      ),
       cut?.splitTurn ? turnRequestBeforeCut(history, cut) : null
     )
     const usage = compacted.usage

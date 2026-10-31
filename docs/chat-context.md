@@ -682,6 +682,24 @@ recall and automatic extraction have their own settings under **Models & agents*
 turn off personal memory there to also disable context injection and background
 writes.
 
+## Skill catalog
+
+Every turn lists the enabled skills by name and description, and the agent loads
+one with `use_skill` (or you with `/name`). The catalog keeps its order, so the
+prompt prefix stays cacheable, and fits in 8,000 characters: each description is
+cut at a word to 240 characters, and at most 80 skills show one. With more than
+fits, the skills loaded least often show only their name, and when even the names
+do not fit, the last line counts the rest. Loads are counted per profile
+(`chat.skills.usage.v1`), or by each fleet bot for itself; a bot's own skills show
+as `name (yours)`.
+
+When a portable compaction summarizes skills loaded since the previous one, the
+summary ends with a `<loaded_skills>` block that names them (up to ten) and asks
+the agent to load them again with `use_skill` before relying on them, since their
+instructions left the context with the summarized messages. A skill named by the
+previous summary and not loaded again is named once more, then dropped. Native
+compaction of a provider's own session keeps what that provider keeps.
+
 ## Memory core and catalog
 
 Project conversations with memory enabled share their workspace's durable memory;

@@ -26,6 +26,7 @@ import type { BotRuntime } from '../../fleet/instance/runtime'
 import type { McpToolContext } from './context'
 import { err, ok } from './context'
 import { registerBotFileTools } from './bot-files'
+import { registerBotSkillTools } from './bot-skills'
 import { registerBotDesktopTools } from './bot-desktops'
 import { registerBotRunnerTools } from './bot-runners'
 
@@ -104,7 +105,10 @@ export function registerBotInstanceTools(
   options: { desktops?: boolean; runners?: boolean } = {}
 ): void {
   const bot = () => botRuntimeForConversation(ctx.convId)
-  if (bot()) registerBotFileTools(ctx)
+  if (bot()) {
+    registerBotFileTools(ctx)
+    registerBotSkillTools(ctx)
+  }
   const localPeerNames = new Map<string, string>()
   const peerNames = () => bot()?.peerNames ?? localPeerNames
   const gatewayFor = (): GatewayConfig => {

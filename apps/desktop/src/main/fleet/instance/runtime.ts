@@ -184,6 +184,8 @@ import { getSubscriptionFailoverRouter } from '../../chat/subscription-failover/
 import { parallelTasksPolicy, setBotTaskPolicy } from './task-policy'
 import { accountHeadroom, warmAccountHeadroom } from './account-headroom'
 import { createDelegationRouter, delegationPolicyPrompt } from './delegation'
+import { BotSkillStore } from './bot-skills/store'
+import { setConversationSkillProvider } from '../../chat/conversation-skill-provider'
 
 /** Whether the bot may start turns at all; each conversation then starts its own while it runs none. */
 export function canDispatch(
@@ -411,6 +413,8 @@ export class BotRuntime {
   readonly holdManager: InstanceHoldManager
   readonly images: FleetImageStore
   readonly files: FleetFileStore
+  /** The skills the bot keeps for itself, found by all its conversations and by no other bot's. */
+  readonly skills: BotSkillStore
   readonly live: LiveTranscript
   /** The side conversations: routine runs' (`routine-conversations`) and threads' with other bots (`peer-conversations`). */
   readonly runs: BotRunConversations
@@ -493,6 +497,7 @@ export class BotRuntime {
     this.queue = new InstanceInputQueue(paths.inputs, paths.attachments)
     this.images = new FleetImageStore(paths.images)
     this.files = new FleetFileStore(path.join(paths.folder, 'files'))
+    this.skills = new BotSkillStore(paths.skills)
     this.extras = new InstanceTranscriptExtras(paths.transcript, (item) =>
       this.publish({ type: 'transcript.upsert', item })
     )
@@ -805,6 +810,8 @@ export class BotRuntime {
     this.clearTasks(id)
     setConversationContextLimit(id, null)
     clearConversationMemorySpace(id)
+    setConversationSkillProvider(id, null)
+    this.skills.forgetConversation(id)
     clearMemoryCoreExtras(id)
     clearOwnerMemoryWriter(id)
     setConversationScreen(id, null)
@@ -903,6 +910,7 @@ export class BotRuntime {
     this.applyScreen(id)
     this.applyProfile()
     registerConversationMemorySpace(id, { id: this.memorySpaceId, kind: 'bot' })
+    setConversationSkillProvider(id, this.skills.provider(id))
     setMemoryCoreExtras(id, (signal) => this.primaryCoreSections(signal))
     if (this.gatewayConfig) setOwnerMemoryWriter(id, this.ownerMemory.writer())
     await this.syncCompaction()
@@ -1003,6 +1011,7 @@ export class BotRuntime {
     const id = lane.conversationId
     this.applyLaneScreen(id)
     registerConversationMemorySpace(id, { id: this.memorySpaceId, kind: 'bot' })
+    setConversationSkillProvider(id, this.skills.provider(id))
     setMemoryCoreExtras(id, (signal) => this.ownerMemory.coreSections(signal))
     if (this.gatewayConfig) setOwnerMemoryWriter(id, this.ownerMemory.writer())
     setCompactionSummarizer(id, () => {
@@ -1035,6 +1044,8 @@ export class BotRuntime {
       this.clearTasks(id)
       setConversationContextLimit(id, null)
       clearConversationMemorySpace(id)
+      setConversationSkillProvider(id, null)
+      this.skills.forgetConversation(id)
       clearMemoryCoreExtras(id)
       clearOwnerMemoryWriter(id)
       setConversationScreen(id, null)

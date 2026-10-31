@@ -21,9 +21,13 @@ import { getAppSetting, getConversation, getConvUiPrefs, patchConvUiPrefs, setAp
 import { listPluginSkills } from '../plugins/runtime'
 import { countSkillResources, listSkills, normalizedSkillName, type ChatSkill, type SkillOverride } from './skills'
 import { listInstalledSkillSources } from './skills-registry'
+import { conversationSkillProvider, type SkillUsage } from './conversation-skill-provider'
 
 const DISABLED_KEY = 'chat.skills.disabled'
 const GROUPS_KEY = 'chat.skills.groups.v1'
+/** How often each skill was loaded outside fleet bots, which keep their own count. */
+const USAGE_KEY = 'chat.skills.usage.v1'
+const USAGE_MAX = 500
 const MAX_GROUPS = 100
 const MAX_GROUP_SKILLS = 500
 const MAX_GROUP_NAME = 80
@@ -294,9 +298,55 @@ export async function listConversationSkills(
   conversationId: string | null | undefined,
   home: string = os.homedir()
 ): Promise<ChatSkill[]> {
-  const [disk, plugins] = await Promise.all([listSkills(cwd, home), listPluginSkills({ conversationId })])
+  const provider = conversationSkillProvider(conversationId)
+  const [disk, plugins, own] = await Promise.all([
+    listSkills(cwd, home),
+    listPluginSkills({ conversationId }),
+    provider ? provider.list().catch(() => []) : Promise.resolve([]),
+  ])
   const names = new Set(disk.map((skill) => skill.name))
-  return [...disk, ...plugins.filter((skill) => !names.has(skill.name))]
+  const shared = [...disk, ...plugins.filter((skill) => !names.has(skill.name))]
+  // A skill the conversation's owner keeps for itself (a bot's own) comes last: an installed skill of the same name
+  // wins, and the owner's copy shows as shadowed where it is managed.
+  for (const skill of shared) names.add(skill.name)
+  return [...shared, ...own.filter((skill) => !names.has(skill.name))]
+}
+
+function readSkillUsage(): Record<string, SkillUsage> {
+  try {
+    const value: unknown = JSON.parse(getAppSetting(USAGE_KEY) ?? '{}')
+    return typeof value === 'object' && value !== null && !Array.isArray(value)
+      ? (value as Record<string, SkillUsage>)
+      : {}
+  } catch {
+    return {}
+  }
+}
+
+/** One load of a skill (`use_skill` or `/name`), counted for the catalog's order under its budget. */
+async function recordSkillUse(conversationId: string | undefined, skill: ChatSkill): Promise<void> {
+  try {
+    const provider = conversationSkillProvider(conversationId)
+    if (provider?.recordUse) {
+      await provider.recordUse(skill)
+      return
+    }
+    const usage = readSkillUsage()
+    const previous = usage[skill.name]
+    usage[skill.name] = {
+      count: (typeof previous?.count === 'number' ? previous.count : 0) + 1,
+      lastUsedAt: Date.now(),
+    }
+    const names = Object.keys(usage)
+    if (names.length > USAGE_MAX)
+      for (const name of names
+        .sort((a, b) => (usage[a].lastUsedAt ?? 0) - (usage[b].lastUsedAt ?? 0))
+        .slice(0, names.length - USAGE_MAX))
+        delete usage[name]
+    setAppSetting(USAGE_KEY, JSON.stringify(usage))
+  } catch {
+    console.warn('[skills] Could not record a skill use')
+  }
 }
 
 /** Removes uninstalled skill names from the global disable list and from every group. */
@@ -323,7 +373,15 @@ export async function effectiveSkills(
   const groups = listSkillGroups()
   const discoveryCwd = conversationId && getConversation(conversationId)?.scope === 'standalone' ? '' : cwd
   const all = await listConversationSkills(discoveryCwd, conversationId ?? null, home)
-  return all.filter((skill) => skillIsEnabledForSelection(skill.name, disabled, selection, groups, overrides))
+  const usage = conversationSkillProvider(conversationId)?.usage?.() ?? readSkillUsage()
+  return all
+    .filter((skill) => skillIsEnabledForSelection(skill.name, disabled, selection, groups, overrides))
+    .map((skill) => {
+      const used = usage[skill.name]
+      return used && typeof used.count === 'number' && typeof used.lastUsedAt === 'number'
+        ? { ...skill, usage: { count: used.count, lastUsedAt: used.lastUsedAt } }
+        : skill
+    })
 }
 
 /** An ENABLED skill by name — used by `use_skill` and `/name` invocation. */
@@ -335,7 +393,9 @@ export async function findEffectiveSkill(
 ): Promise<ChatSkill | null> {
   const norm = normalizedSkillName(name)
   if (!norm) return null
-  return (await effectiveSkills(cwd, conversationId, home)).find((skill) => skill.name === norm) ?? null
+  const skill = (await effectiveSkills(cwd, conversationId, home)).find((item) => item.name === norm) ?? null
+  if (skill) await recordSkillUse(conversationId, skill)
+  return skill
 }
 
 function toInfo(

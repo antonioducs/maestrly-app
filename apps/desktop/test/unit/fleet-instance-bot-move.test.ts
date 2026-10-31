@@ -178,6 +178,16 @@ async function seededBot(env: Environment) {
     type: 'reference',
     source: 'agent',
   })
+  // A skill of its own, with a script and a version of its history.
+  const skills = env.runtime.bot('alpha').skills
+  await skills.create(
+    { name: 'invoice-portal', description: 'Use when fetching invoices.', body: 'Open Billing.', taken: new Set() },
+    { actor: 'bot', conversationId, reason: 'Learned the portal' }
+  )
+  await skills.writeFile(
+    { name: 'invoice-portal', filePath: 'scripts/fetch.sh', content: 'echo fetch\n' },
+    { actor: 'bot', conversationId, reason: 'Script' }
+  )
   writeBotPaused('alpha', true)
   const cwd = getConversation(conversationId)!.cwd
   const files: Record<string, string | Buffer> = {
@@ -367,6 +377,16 @@ describe('moving a bot between environments', () => {
     // Installed, it runs on its own conversation, paused as it was.
     await home.runtime.installBot({ profile: profile('alpha', 'Alpha'), slot: 1, gatewayToken: 'g'.repeat(24) })
     const alpha = home.runtime.bot('alpha')
+    // Its own skills came along, with their files, provenance and history.
+    expect((await alpha.skills.librarySkills()).map((skill) => [skill.name, skill.resources])).toEqual([
+      ['invoice-portal', ['scripts/fetch.sh']],
+    ])
+    const moved = await alpha.skills.detail('invoice-portal')
+    expect(moved).toMatchObject({ createdBy: 'bot', status: 'active' })
+    expect(moved.versions).toHaveLength(2)
+    expect(await alpha.skills.versionFiles('invoice-portal', moved.versions[1].id)).toEqual([
+      { path: 'SKILL.md', content: expect.stringContaining('Open Billing.') },
+    ])
     expect(alpha.primaryConversationId).toBe(conversationId)
     expect((await alpha.status()).hold).toMatchObject({ state: 'held', reason: 'paused' })
     const texts = (await alpha.transcript(null, 50)).items.flatMap((item) =>

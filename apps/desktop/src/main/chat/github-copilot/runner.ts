@@ -54,7 +54,7 @@ import {
 import type { PermissionBroker } from '../permission'
 import type { QuestionBroker } from '../question-broker'
 import { buildProjectContext } from '../project-context'
-import { renderSkillContext, skillCatalogLine, type ChatSkill } from '../skills'
+import { renderSkillCatalogEntries, renderSkillContext, type ChatSkill } from '../skills'
 import { effectiveSkills, findEffectiveSkill } from '../skill-state'
 import type { ChatAgent } from '../agents'
 import { listEffectiveAgents } from '../virtual-subagents'
@@ -422,8 +422,7 @@ async function retireSession(
 function skillsCatalog(skills: readonly ChatSkill[], project = true): string {
   if (!skills.length) return ''
   return (
-    `${project ? 'Project' : 'Available'} skills available through \`use_skill\`:\n` +
-    skills.map(skillCatalogLine).join('\n')
+    `${project ? 'Project' : 'Available'} skills available through \`use_skill\`:\n` + renderSkillCatalogEntries(skills)
   )
 }
 

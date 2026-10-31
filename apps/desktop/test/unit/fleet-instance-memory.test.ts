@@ -1,8 +1,13 @@
 import { randomUUID } from 'node:crypto'
+import { mkdtempSync, rmSync } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FleetOwnerMemory } from '@maestrly/bot-fleet-protocol'
 import { OwnerMemoryClient } from '../../src/main/fleet/instance/owner-memory'
 import { ThreadWaits } from '../../src/main/fleet/instance/thread-waits'
+import { BotSkillStore } from '../../src/main/fleet/instance/bot-skills/store'
+import { conversationSkillProvider } from '../../src/main/chat/conversation-skill-provider'
 import { BotRuntime } from '../../src/main/fleet/instance/runtime'
 import { LiveTranscript } from '../../src/main/fleet/instance/live-transcript'
 import { InstanceHoldManager } from '../../src/main/fleet/instance/gate'
@@ -221,8 +226,10 @@ describe('runtime turn memory integration', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(memory)))
     const bot = Object.create(BotRuntime.prototype) as BotRuntime
     const idle = { idle: async () => {} }
+    const skillsDir = mkdtempSync(path.join(os.tmpdir(), 'bot-skills-'))
     Object.assign(bot, {
       botId: 'scout',
+      skills: new BotSkillStore(skillsDir),
       host: { gatewayUrl: gateway.url },
       gatewayToken: gateway.token,
       stored: { primaryConversationId: conversation.id },
@@ -252,9 +259,13 @@ describe('runtime turn memory integration', () => {
         { key: 'peer-reports' },
       ])
       expect(getOwnerMemoryWriter(conversation.id)).toBeDefined()
+      // Its own skills are found in its conversation.
+      expect(conversationSkillProvider(conversation.id)).not.toBeNull()
     } finally {
       await bot.dispose()
+      rmSync(skillsDir, { recursive: true, force: true })
     }
+    expect(conversationSkillProvider(conversation.id)).toBeNull()
     expect(memorySpaceForConversation(conversation.id)?.kind).not.toBe('bot')
     expect(await loadMemoryCoreExtras(conversation.id, new AbortController().signal)).toEqual([])
     expect(getOwnerMemoryWriter(conversation.id)).toBeUndefined()

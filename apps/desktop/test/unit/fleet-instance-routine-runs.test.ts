@@ -23,6 +23,7 @@ const { InstanceInputQueue, conversationQueue, inputRunId, promptForInput, PEER_
 const { InstanceTranscriptExtras } = await import('../../src/main/fleet/instance/transcript')
 const { FleetImageStore } = await import('../../src/main/fleet/instance/images')
 const { FleetFileStore } = await import('../../src/main/fleet/instance/files')
+const { BotSkillStore } = await import('../../src/main/fleet/instance/bot-skills/store')
 const { LiveTranscript } = await import('../../src/main/fleet/instance/live-transcript')
 const { InstanceEvents, InstanceHttpError } = await import('../../src/main/fleet/instance/server')
 const { InstanceHelpStore } = await import('../../src/main/fleet/instance/help')
@@ -112,6 +113,7 @@ async function bot() {
     queue,
     images,
     files,
+    skills: new BotSkillStore(path.join(dir, 'skills')),
     extras,
     runs,
     threadReports: new ThreadReports(path.join(dir, 'thread-reports.json')),

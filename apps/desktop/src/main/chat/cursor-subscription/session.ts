@@ -14,7 +14,7 @@ import { getConversation } from '../../store'
 import { gitEnvInfo } from '../../git-service'
 import { nativeSeedContextText, renderNativeSeedTranscript } from '../message'
 import type { ChatSkill } from '../skills'
-import { skillCatalogLine } from '../skills'
+import { renderSkillCatalogEntries } from '../skills'
 import type { ChatAgent } from '../agents'
 import { effectiveSkills } from '../skill-state'
 import { buildProjectContext } from '../project-context'
@@ -74,8 +74,7 @@ export interface CursorHarnessEnvelope {
 function skillsCatalog(skills: readonly ChatSkill[], project = true): string {
   if (!skills.length) return ''
   return (
-    `${project ? 'Project skills' : 'Skills'} available through \`use_skill\`:\n` +
-    skills.map(skillCatalogLine).join('\n')
+    `${project ? 'Project skills' : 'Skills'} available through \`use_skill\`:\n` + renderSkillCatalogEntries(skills)
   )
 }
 
