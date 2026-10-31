@@ -92,6 +92,7 @@ import { AgentRegistry } from './agent-registry'
 
 import { initMemoryService, disposeMemory, migrateAllLegacyMemories } from './memory-service'
 import { disposeMemoryIndexService, initMemoryIndexService } from './memory/index'
+import { startHistoryIndexer, stopHistoryIndexer } from './chat/history-index/indexer'
 import {
   runMlWorkerNativeSmoke,
   stopEmbeddingWorker as stopMlWorker,
@@ -1269,6 +1270,7 @@ app.whenReady().then(async () => {
   const { migrateLegacyConversationsToChat } = await import('./store/legacy-conversation-import')
   const { readTranscript } = await import('./transcript-reader')
   await migrateLegacyConversationsToChat(readTranscript)
+  startHistoryIndexer()
 
   initLocaleOnFirstRun(process.env.AGENTS_LOCALE || app.getLocale())
   setMainLocale(getLocale())
@@ -1514,6 +1516,7 @@ app.on('window-all-closed', () => {
   disposeMemory()
   disposeMemoryExtraction()
   disposeMemoryIndexService()
+  stopHistoryIndexer()
   // Terminals are ended by before-quit, which reads what their shells started before hanging them up.
   disposeDrawer()
   stopVSCodeServer()

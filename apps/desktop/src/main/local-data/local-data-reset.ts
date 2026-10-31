@@ -20,6 +20,7 @@ import { getGrokSubscriptionManager } from '../chat/grok-subscription/manager'
 import { listSubscriptionAccounts, removeSubscriptionAccount } from '../chat/catalog'
 import { clearEphemeralToolImages } from '../chat/tool-output'
 import { forgetChatStoreCaches } from '../chat/chat-store'
+import { resetHistoryIndex } from '../chat/history-index/store'
 import { clearBrowserHistory } from '../drawer/browser-history'
 
 export interface LocalDataResetDeps {
@@ -158,6 +159,7 @@ export async function resetLocalAppData(deps: LocalDataResetDeps): Promise<void>
     databaseCleared = true
   })
   if (!databaseCleared) assertComplete('Local data cleanup was incomplete.')
+  await attempt(() => resetHistoryIndex())
 
   // Fixed app-owned roots include orphaned sidecars. Never follow workspace/repository paths from the DB.
   for (const directory of [
