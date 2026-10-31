@@ -77,6 +77,8 @@ export interface RunClaudeSubagentArgs {
    * (end of the parent turn) and must tombstone the id via `onSessionStarted`.
    */
   persistRuntime?: boolean
+  /** Raw failure that ended the run once account failover gave up (model fallback classifies it). */
+  onTerminalFailure?: (error: unknown) => void
   /** Resume this SDK session. A rejected/replaced resume falls back to a fresh session + fallbackTask. */
   resume?: {
     sessionId: string
@@ -574,6 +576,13 @@ export async function runClaudeSubagent(
             })
       if (!selected.ok) {
         signal.throwIfAborted()
+        args.onTerminalFailure?.(
+          Object.assign(new Error(selected.message), {
+            ...('reason' in selected && selected.reason === 'quota-exhausted'
+              ? { code: 'claude-accounts-exhausted', resetsAt: selected.resetsAt ?? undefined }
+              : {}),
+          })
+        )
         return {
           text: lastText,
           error: selected.message,

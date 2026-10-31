@@ -18,9 +18,12 @@ import {
   requiredTokensAfterOverflow,
   selectNextCandidate,
   settleSticky,
+  transitionEvent,
   type CandidateLease,
   type ModelCandidate,
 } from './chain'
+
+export { transitionEvent }
 import type { ModelFailureClassification, ModelFailureReason } from './error-classifier'
 import { defaultModelFallbackDeps, isModelFallbackPinned, type ModelFallbackDeps } from './run-with-fallback'
 
@@ -273,25 +276,6 @@ export async function continuationAfterFailure(
     ...(state.current.primary && !state.primaryFailureReason ? { primaryFailureReason: classification.reason } : {}),
   })
   return { state: next, classification, event: transitionEvent(state.current, candidate, classification) }
-}
-
-export function transitionEvent(
-  from: ModelCandidate,
-  to: ModelCandidate,
-  classification: Pick<ModelFailureClassification, 'reason' | 'retryAt'>,
-  scope: ChatSubscriptionFailoverEvent['scope'] = 'root'
-): ChatSubscriptionFailoverEvent {
-  return {
-    scope,
-    kind: 'model',
-    fromProviderId: from.providerId,
-    toProviderId: to.providerId,
-    fromModelId: from.modelId,
-    toModelId: to.modelId,
-    reason: classification.reason,
-    reasonKind: classification.reason,
-    ...(classification.retryAt ? { resetsAt: classification.retryAt } : {}),
-  }
 }
 
 /**

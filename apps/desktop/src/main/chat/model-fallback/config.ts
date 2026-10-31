@@ -63,11 +63,11 @@ export function sanitizeModelFallbackConfig(raw: unknown): ChatModelFallbackConf
   return { version: 1, enabled: record.enabled === true, fallbacks }
 }
 
+/** Never throws: an unreadable setting means no fallback, so a model call never fails because of this list. */
 export function getModelFallbackConfig(): ChatModelFallbackConfigV1 {
-  const raw = getAppSetting(MODEL_FALLBACK_CONFIG_KEY)
-  if (!raw) return emptyModelFallbackConfig()
   try {
-    return sanitizeModelFallbackConfig(JSON.parse(raw))
+    const raw = getAppSetting(MODEL_FALLBACK_CONFIG_KEY)
+    return raw ? sanitizeModelFallbackConfig(JSON.parse(raw)) : emptyModelFallbackConfig()
   } catch {
     return emptyModelFallbackConfig()
   }

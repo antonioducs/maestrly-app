@@ -3,15 +3,21 @@
  * then the configured fallbacks, moving on only for failures another model can fix. Account failover inside a
  * Claude/Codex subscription stays in its own layer: a candidate fails here only once that layer gave up.
  */
-import { isSubscriptionFailoverProviderId, type ChatModelFallbackConfigV1 } from '../../../shared/chat'
+import {
+  isSubscriptionFailoverProviderId,
+  type ChatModelFallbackConfigV1,
+  type ChatSubscriptionFailoverEvent,
+} from '../../../shared/chat'
 import { getConvUiPrefs } from '../../store'
 import { autonomousProviderAllowed } from '../autonomous'
-import { getProvider } from '../catalog'
+import { getProvider, isChatGptWebProvider, isSubscriptionProvider } from '../catalog'
+import { hasApiKey } from '../credentials'
 import { freezeFailoverChain } from '../subscription-failover/config'
 import { getSubscriptionFailoverRouter, type SubscriptionFailoverRouter } from '../subscription-failover/router'
 import {
   admitCandidate,
   candidateKey,
+  firstAdmissibleCandidate,
   freezeModelChain,
   MAX_MODEL_SWITCHES,
   recordCandidateFailure,
@@ -20,6 +26,7 @@ import {
   requiredTokensAfterOverflow,
   selectNextCandidate,
   settleSticky,
+  transitionEvent,
   type ModelCandidate,
 } from './chain'
 import { getModelFallbackConfig } from './config'
@@ -39,20 +46,60 @@ export const defaultModelFallbackDeps: ModelFallbackDeps = {
   config: getModelFallbackConfig,
   router: getSubscriptionFailoverRouter,
   accountChainOf: (providerId) => (isSubscriptionFailoverProviderId(providerId) ? freezeFailoverChain(providerId) : []),
+  // A fallback must be able to run unattended: a BYOK provider needs its key, and the ChatGPT web companion never can.
   isProviderUsable: (providerId, conversationId) =>
-    Boolean(getProvider(providerId)) && autonomousProviderAllowed(providerId, conversationId ?? ''),
+    Boolean(getProvider(providerId)) &&
+    !isChatGptWebProvider(providerId) &&
+    (isSubscriptionProvider(providerId) || hasApiKey(providerId)) &&
+    autonomousProviderAllowed(providerId, conversationId ?? ''),
   classify: (error) => classifyModelFailure(error),
   now: () => Date.now(),
 }
 
-/** A conversation the person pinned to its model never falls back. */
+/** Conversations running a frozen or isolated turn (review loops, bot commands): their children keep their model. */
+const strictExecutions = new Map<string, number>()
+
+/** Marks the conversation strict until the returned release runs (idempotent). */
+export function holdStrictModelSelection(conversationId: string): () => void {
+  strictExecutions.set(conversationId, (strictExecutions.get(conversationId) ?? 0) + 1)
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    const count = (strictExecutions.get(conversationId) ?? 1) - 1
+    if (count > 0) strictExecutions.set(conversationId, count)
+    else strictExecutions.delete(conversationId)
+  }
+}
+
+/** A conversation the person pinned to its model, or one running a strict turn, never falls back. */
 export function isModelFallbackPinned(conversationId: string | undefined): boolean {
   if (!conversationId) return false
+  if (strictExecutions.has(conversationId)) return true
   try {
     return getConvUiPrefs(conversationId).chat?.modelFallbackPinned === true
   } catch {
     return false
   }
+}
+
+/**
+ * Thrown by `run` when a fallback candidate cannot serve this kind of call at all (signed out, no vision): the
+ * chain moves on without blaming the candidate's circuits.
+ */
+export class ModelCandidateUnsuitable extends Error {
+  constructor(message = 'This model cannot serve the request.') {
+    super(message)
+    this.name = 'ModelCandidateUnsuitable'
+  }
+}
+
+const UNSUITABLE: ModelFailureClassification = {
+  reason: 'model_not_found',
+  scope: 'model',
+  retryInPlace: false,
+  fallback: true,
+  compact: false,
 }
 
 export interface ModelFallbackSwitch {
@@ -69,11 +116,89 @@ export interface RunWithModelFallbackArgs<T> {
   /** Frozen or isolated execution: the primary only. */
   strict?: boolean
   signal?: AbortSignal
-  run: (candidate: ModelCandidate, attempt: number) => Promise<T>
+  /** `hasNext` tells whether another candidate is ready, so a long provider wait can end the attempt instead. */
+  run: (candidate: ModelCandidate, attempt: number, context: { hasNext: () => boolean }) => Promise<T>
   /** Veto a switch after a failure (e.g. a side effect that cannot be replayed already happened). */
   canFallback?: (error: unknown, classification: ModelFailureClassification) => boolean
   onSwitch?: (info: ModelFallbackSwitch) => void
   deps?: Partial<ModelFallbackDeps>
+}
+
+/** Announces a switch of a subagent or helper to the conversation's window (same channel as account switches). */
+export function emitModelFallbackSwitch(
+  conversationId: string | undefined,
+  event: ChatSubscriptionFailoverEvent
+): void {
+  if (!conversationId) return
+  void import('../subscription-failover/ephemeral')
+    .then(({ emitSubscriptionFailoverEvent }) => emitSubscriptionFailoverEvent(conversationId, event))
+    .catch(() => undefined)
+}
+
+export interface HelperModelSelection {
+  providerId: string
+  modelId: string
+  effort?: string
+  fastMode?: boolean
+}
+
+/**
+ * A helper call (memory extraction, image description, compaction summary) along the model fallback list. The
+ * primary keeps its own effort; a fallback runs with the effort configured for it.
+ */
+export function runHelperWithModelFallback<T>(args: {
+  selection: HelperModelSelection
+  agent: string
+  conversationId?: string
+  strict?: boolean
+  signal?: AbortSignal
+  run: (selection: HelperModelSelection) => Promise<T>
+  deps?: Partial<ModelFallbackDeps>
+}): Promise<T> {
+  return runWithModelFallback({
+    primary: { providerId: args.selection.providerId, modelId: args.selection.modelId },
+    scope: `helper:${args.agent}`,
+    conversationId: args.conversationId,
+    strict: args.strict,
+    signal: args.signal,
+    run: (candidate) =>
+      args.run(
+        candidate.primary
+          ? args.selection
+          : {
+              providerId: candidate.providerId,
+              modelId: candidate.modelId,
+              ...(candidate.reasoning ? { effort: candidate.reasoning } : {}),
+              ...(candidate.fastMode ? { fastMode: true } : {}),
+            }
+      ),
+    onSwitch: ({ from, to, classification }) =>
+      emitModelFallbackSwitch(args.conversationId, transitionEvent(from, to, classification, 'helper')),
+    deps: args.deps,
+  })
+}
+
+/** Whether a fallback of `primary` could run now (for runtimes that hand a failed run over to the executor). */
+export function hasAdmissibleModelFallback(
+  primary: { providerId: string; modelId: string },
+  conversationId: string | undefined,
+  deps?: Partial<ModelFallbackDeps>
+): boolean {
+  const resolved: ModelFallbackDeps = { ...defaultModelFallbackDeps, ...deps }
+  if (isModelFallbackPinned(conversationId)) return false
+  const chain = freezeModelChain({
+    primary,
+    config: resolved.config(),
+    isProviderUsable: (providerId) => resolved.isProviderUsable(providerId, conversationId),
+  })
+  const first = firstAdmissibleCandidate({
+    router: resolved.router(),
+    accountChainOf: resolved.accountChainOf,
+    chain,
+    attempted: new Set(),
+    now: resolved.now(),
+  })
+  return first != null && !first.primary
 }
 
 export async function runWithModelFallback<T>(args: RunWithModelFallbackArgs<T>): Promise<T> {
@@ -88,7 +213,7 @@ export async function runWithModelFallback<T>(args: RunWithModelFallbackArgs<T>)
     stickyScope: args.scope,
     now,
   })
-  if (chain.length === 1) return args.run(chain[0]!, 1)
+  if (chain.length === 1) return args.run(chain[0]!, 1, { hasNext: () => false })
 
   const router = deps.router()
   const admission = { router, accountChainOf: deps.accountChainOf }
@@ -96,16 +221,21 @@ export async function runWithModelFallback<T>(args: RunWithModelFallbackArgs<T>)
   const failed: ModelCandidate[] = []
   let primaryFailureReason: ModelFailureReason | undefined
   let switches = 0
+  // An unsuitable candidate is skipped: the person hears about, and finally gets, the last real failure.
+  let lastReal: { error: unknown; candidate: ModelCandidate; classification: ModelFailureClassification } | undefined
   let candidate: ModelCandidate =
     (await selectNextCandidate({ ...admission, chain, attempted, now })) ??
     // Every candidate is cooling down: try the first anyway rather than fail without a call.
     chain[0]!
+  const hasNext = (): boolean =>
+    switches < MAX_MODEL_SWITCHES &&
+    firstAdmissibleCandidate({ ...admission, chain, attempted, now: deps.now() }) != null
   for (let attempt = 1; ; attempt++) {
     attempted.add(candidateKey(candidate))
     const slot = admitCandidate(router, candidate, deps.now())
     const lease = slot.ok ? slot.lease : undefined
     try {
-      const result = await args.run(candidate, attempt)
+      const result = await args.run(candidate, attempt, { hasNext })
       recordCandidateSuccess(router, candidate, lease, deps.now())
       settleSticky({ scope: args.scope, chain, served: candidate, failed, primaryFailureReason, now: deps.now() })
       return result
@@ -114,10 +244,14 @@ export async function runWithModelFallback<T>(args: RunWithModelFallbackArgs<T>)
         releaseCandidate(router, lease)
         throw error
       }
-      const classification = deps.classify(error)
-      recordCandidateFailure(router, candidate, classification, lease, deps.now())
-      failed.push(candidate)
-      if (candidate.primary && !primaryFailureReason) primaryFailureReason = classification.reason
+      const unsuitable = error instanceof ModelCandidateUnsuitable
+      const classification = unsuitable ? UNSUITABLE : deps.classify(error)
+      if (unsuitable) releaseCandidate(router, lease)
+      else {
+        recordCandidateFailure(router, candidate, classification, lease, deps.now())
+        failed.push(candidate)
+        if (candidate.primary && !primaryFailureReason) primaryFailureReason = classification.reason
+      }
       const vetoed = args.canFallback ? !args.canFallback(error, classification) : false
       const next =
         classification.fallback && !vetoed && switches < MAX_MODEL_SWITCHES
@@ -131,12 +265,20 @@ export async function runWithModelFallback<T>(args: RunWithModelFallbackArgs<T>)
                 : {}),
             })
           : null
+      if (!unsuitable) {
+        lastReal = { error, candidate, classification }
+      }
       if (!next) {
         settleSticky({ scope: args.scope, chain, served: null, failed, now: deps.now() })
-        throw error
+        throw lastReal ? lastReal.error : error
       }
       switches++
-      args.onSwitch?.({ from: candidate, to: next, classification })
+      // After a skipped candidate, the notice names the model that really failed.
+      args.onSwitch?.({
+        from: lastReal?.candidate ?? candidate,
+        to: next,
+        classification: lastReal?.classification ?? classification,
+      })
       candidate = next
     }
   }

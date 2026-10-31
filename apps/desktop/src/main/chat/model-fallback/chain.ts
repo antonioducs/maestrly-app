@@ -4,7 +4,11 @@
  * circuit or, for Claude/Codex subscriptions, their own account chain), reordered by context fit after an
  * overflow, and their outcomes settle those circuits.
  */
-import { isSubscriptionFailoverProviderId, type ChatModelFallbackConfigV1 } from '../../../shared/chat'
+import {
+  isSubscriptionFailoverProviderId,
+  type ChatModelFallbackConfigV1,
+  type ChatSubscriptionFailoverEvent,
+} from '../../../shared/chat'
 import type { SubscriptionFailoverRouter } from '../subscription-failover/router'
 import { modelCircuitKey } from '../subscription-failover/router'
 import type { AvailabilityLease } from '../subscription-failover/types'
@@ -242,4 +246,24 @@ export function settleSticky(input: {
   }
   if (input.primaryFailureReason)
     recordStickyWinner(input.scope, primary, input.served, input.primaryFailureReason, now)
+}
+
+/** The notice of a model switch (same channel and shape as an account switch, with `kind: 'model'`). */
+export function transitionEvent(
+  from: ModelCandidate,
+  to: ModelCandidate,
+  classification: Pick<ModelFailureClassification, 'reason' | 'retryAt'>,
+  scope: ChatSubscriptionFailoverEvent['scope'] = 'root'
+): ChatSubscriptionFailoverEvent {
+  return {
+    scope,
+    kind: 'model',
+    fromProviderId: from.providerId,
+    toProviderId: to.providerId,
+    fromModelId: from.modelId,
+    toModelId: to.modelId,
+    reason: classification.reason,
+    reasonKind: classification.reason,
+    ...(classification.retryAt ? { resetsAt: classification.retryAt } : {}),
+  }
 }

@@ -11,7 +11,11 @@ import {
 } from '../../src/main/chat/model-fallback/chain'
 import { sanitizeModelFallbackConfig } from '../../src/main/chat/model-fallback/config'
 import { classifyModelFailure } from '../../src/main/chat/model-fallback/error-classifier'
-import { runWithModelFallback } from '../../src/main/chat/model-fallback/run-with-fallback'
+import {
+  ModelCandidateUnsuitable,
+  runHelperWithModelFallback,
+  runWithModelFallback,
+} from '../../src/main/chat/model-fallback/run-with-fallback'
 import { resetStickyWinnersForTests, stickyWinner } from '../../src/main/chat/model-fallback/sticky'
 import { modelCircuitKey, SubscriptionFailoverRouter } from '../../src/main/chat/subscription-failover/router'
 
@@ -279,6 +283,45 @@ describe('runWithModelFallback', () => {
       })
     ).rejects.toThrow('overloaded qwen')
     expect(calls).toEqual(['opus', 'gpt-5', 'qwen'])
+  })
+
+  it('skips an unsuitable candidate without blaming it, and names the model that really failed', async () => {
+    const calls: string[] = []
+    const notices: string[] = []
+    const result = await runWithModelFallback({
+      primary: { providerId: 'anthropic', modelId: 'opus' },
+      scope: 'helper:test',
+      deps,
+      run: async (candidate) => {
+        calls.push(candidate.modelId)
+        if (candidate.primary) throw quota429()
+        if (candidate.modelId === 'gpt-5') throw new ModelCandidateUnsuitable()
+        return candidate.modelId
+      },
+      onSwitch: ({ from, to }) => notices.push(`${from.modelId}->${to.modelId}`),
+    })
+    expect(result).toBe('qwen')
+    expect(calls).toEqual(['opus', 'gpt-5', 'qwen'])
+    expect(notices).toEqual(['opus->gpt-5', 'opus->qwen'])
+    expect(router.isAdmissible(modelCircuitKey('openai', 'gpt-5'), NOW)).toBe(true)
+  })
+
+  it('runs a helper fallback with the effort configured for it', async () => {
+    const seen: unknown[] = []
+    await runHelperWithModelFallback({
+      selection: { providerId: 'anthropic', modelId: 'opus', effort: 'max' },
+      agent: 'memory-extraction',
+      deps,
+      run: async (selection) => {
+        seen.push(selection)
+        if (selection.providerId === 'anthropic') throw quota429()
+        return 'ok'
+      },
+    })
+    expect(seen).toEqual([
+      { providerId: 'anthropic', modelId: 'opus', effort: 'max' },
+      { providerId: 'openai', modelId: 'gpt-5', effort: 'high' },
+    ])
   })
 
   it('runs only the primary when strict', async () => {

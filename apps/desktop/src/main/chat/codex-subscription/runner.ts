@@ -218,6 +218,8 @@ import {
   type CodexThreadBinding,
   type CodexUsageTotals,
 } from './thread-store'
+import { hasAdmissibleModelFallback } from '../model-fallback/run-with-fallback'
+import { buildModelFallbackSubagentTask } from '../model-fallback/subagent-fallback'
 import {
   buildSubagentContinuationPrompt,
   CodexSubagentQuotaError,
@@ -3724,7 +3726,9 @@ export async function runCodexSubscriptionChat(
               if (outcome.resumed) recordResume('resumed')
               else recordResume('recreated', outcome.resumeReason ?? 'resume-rejected')
             }
-            const result = nativeCodex
+            // Set when every Codex account of the child's chain is exhausted: another model may continue the task.
+            let codexChildAccountsExhausted = false
+            const firstResult = nativeCodex
               ? await (async () => {
                   const logicalProviderId = profile.effective!.providerId
                   const chain = freezeFailoverChain(logicalProviderId)
@@ -3785,6 +3789,8 @@ export async function runCodexSubscriptionChat(
                     if (!resolvedTarget.ok) {
                       const usage =
                         accumulatedUsage.totalInput || accumulatedUsage.output ? accumulatedUsage : undefined
+                      codexChildAccountsExhausted =
+                        resolvedTarget.error !== 'aborted' && resolvedTarget.reason === 'quota-exhausted'
                       return {
                         text: lastPartialText,
                         error:
@@ -4245,6 +4251,42 @@ export async function runCodexSubscriptionChat(
                           if (resume.replay) settleResume({ resumed: true })
                           return outcome
                         })()
+            const result =
+              codexChildAccountsExhausted &&
+              firstResult.error &&
+              args.mode !== 'maestro' &&
+              !signal.aborted &&
+              hasAdmissibleModelFallback(profile.effective, args.conversationId)
+                ? await (async () => {
+                    // The model fallback list continues the task in the shared executor, on another model.
+                    progress(`Codex accounts exhausted for ${agentName}; continuing on a fallback model`)
+                    const { executeSubagent } = await import('../subagent-executor')
+                    const next = await executeSubagent({
+                      conversationId: args.conversationId,
+                      projectId: args.projectId,
+                      permissionScope: args.permissionScope,
+                      cwd: args.cwd,
+                      parentMessageId: assistantId,
+                      toolCallId,
+                      mode: args.mode,
+                      permMode: args.permMode,
+                      profile,
+                      definition,
+                      agentName,
+                      task: buildModelFallbackSubagentTask(task, { text: firstResult.text }),
+                      readOnly: codexReadOnly,
+                      tools: childTools,
+                      broker: args.broker,
+                      questionBroker: args.questionBroker,
+                      signal,
+                      progress,
+                      onTextUpdate,
+                      sessionRecorder,
+                    })
+                    // The latest outcome, with the fallback's usage.
+                    return next
+                  })()
+                : firstResult
             const runtimeEstimatedCostUsd = (result as { runtimeEstimatedCostUsd?: number }).runtimeEstimatedCostUsd
             if (
               result.model &&

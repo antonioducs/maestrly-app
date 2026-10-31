@@ -106,6 +106,7 @@ import {
   setModelFallbackConfig,
 } from './model-fallback/config'
 import type { ModelFailureReason } from './model-fallback/error-classifier'
+import { holdStrictModelSelection } from './model-fallback/run-with-fallback'
 import {
   admitRootCandidate,
   beginRootModelFallback,
@@ -4393,6 +4394,8 @@ async function startSendAttempt(
   let grokIdentityAtAdmission: GrokAccountIdentity | undefined
   let releaseCwdActivity: (() => void) | null = null
   let admittedRun: ActiveRun | null = null
+  // A frozen or isolated turn keeps its children on their model too (released when the turn or its admission ends).
+  let releaseStrictSelection: (() => void) | null = null
   let codexRuntimeTarget: CodexRuntimeTarget | null = null
   let codexRuntimeLeaseTransferred = false
   let codexFailoverChain: string[] | null = null
@@ -5424,6 +5427,7 @@ async function startSendAttempt(
     // only lets a cut finish reach here after exhausting transparent retries.
     let wasInterrupted = false
     let maestroTerminalStatus: 'completed' | 'error' | 'aborted' | 'interrupted' = 'error'
+    if (modelFallbackIsStrict(opts)) releaseStrictSelection = holdStrictModelSelection(conversationId)
     // Model fallback: the raw failure that ended this attempt, else the error the runner showed for it.
     const modelFallbackTurn = opts?.modelFallback
     const fallbackTurnAxes = fallbackAxes(modelFallbackTurn)
@@ -6583,6 +6587,7 @@ async function startSendAttempt(
           ...(opts?.remoteAdmission ? { remoteAdmission: true } : {}),
           ...(opts?.runnerSignal ? { runnerSignal: opts.runnerSignal } : {}),
         }
+        releaseStrictSelection?.()
         // Model fallback: a continuation carries the frozen chain on; otherwise this attempt settles its circuits.
         const fallbackNext = modelFallbackContinuation
         clearActiveModelFallback(conversationId, modelFallbackTurn)
@@ -6682,6 +6687,7 @@ async function startSendAttempt(
 
     return { ok: true }
   } catch (error) {
+    releaseStrictSelection?.()
     if (admittedRun && active.get(conversationId) === admittedRun) active.delete(conversationId)
     if (admittedRun) clearHumanTurnOrigin(conversationId, admittedRun)
     if (admittedRun) clearLinkedTurnOrigin(conversationId, admittedRun)

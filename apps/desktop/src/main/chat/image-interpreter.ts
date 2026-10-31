@@ -53,6 +53,7 @@ import { patchOpenAIToolExecutionOutputs } from './openai/execution'
 import { activeChatContext } from './message'
 import { decodeLegacyAttachmentData, resolveFileImageBytesSync } from './attachment-artifacts'
 import { recordModelCallUsage, type DiagnosticUsage } from './usage-diagnostics'
+import { ModelCandidateUnsuitable, runHelperWithModelFallback } from './model-fallback/run-with-fallback'
 import {
   summarizeWithClaudeRuntime,
   summarizeWithCodexRuntime,
@@ -567,8 +568,45 @@ export function hasImagesToDescribe(conversationId: string, pendingParts: readon
   )
 }
 
-/** One isolated description. Throws on auth/network failure — caller treats as "no description" (fallback). */
-async function describeImage(
+/**
+ * One isolated description, on the configured interpreter and then on the model fallback list (only models known
+ * to see images). Throws on auth/network failure — caller treats as "no description" (fallback).
+ */
+function describeImage(
+  interpreter: ChatImageInterpreter,
+  image: IsolatedImageInput,
+  conversationId: string,
+  cwd: string,
+  signal: AbortSignal
+): Promise<string> {
+  return runHelperWithModelFallback({
+    selection: interpreter,
+    agent: 'image-interpreter',
+    conversationId,
+    signal,
+    run: async (selection) => {
+      if (selection !== interpreter) {
+        const provider = getProvider(selection.providerId)
+        const catalogProviderId = provider ? catalogProviderForBaseURL(provider.baseURL) : null
+        const meta = await getProviderModelMeta(selection.modelId, catalogProviderId).catch(() => null)
+        if (meta?.vision !== true) throw new ModelCandidateUnsuitable('This fallback model cannot see images.')
+      }
+      return describeImageOn(
+        {
+          providerId: selection.providerId,
+          modelId: selection.modelId,
+          ...(selection.effort ? { effort: selection.effort } : {}),
+        },
+        image,
+        conversationId,
+        cwd,
+        signal
+      )
+    },
+  })
+}
+
+async function describeImageOn(
   interpreter: ChatImageInterpreter,
   image: IsolatedImageInput,
   conversationId: string,

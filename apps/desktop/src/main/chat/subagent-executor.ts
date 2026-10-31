@@ -4,7 +4,19 @@ import type { ToolSet } from 'ai'
 import type { ChatPermMode, SubagentResumeStatus, SubagentRuntimeHandle } from '../../shared/chat'
 import type { ChatBehavior } from '../../shared/conversation-experience'
 import type { MaestroDelegationSnapshotV1 } from '../../shared/maestro'
-import type { SubagentExecutionSnapshotV1 } from '../../shared/subagent-profiles'
+import type { SubagentEffectiveProfile, SubagentExecutionSnapshotV1 } from '../../shared/subagent-profiles'
+import { classifyModelFailure, type ModelFailureClassification } from './model-fallback/error-classifier'
+import {
+  emitModelFallbackSwitch,
+  ModelCandidateUnsuitable,
+  runWithModelFallback,
+} from './model-fallback/run-with-fallback'
+import {
+  buildModelFallbackSubagentTask,
+  subagentFallbackScope,
+  subagentProfileForCandidate,
+} from './model-fallback/subagent-fallback'
+import { retryInPlaceAllowed, transitionEvent as modelFallbackTransitionEvent } from './model-fallback/turn-fallback'
 import type { GeneratedImageEmission, GeneratedImageUsage } from './tools/util'
 import type { ChatAgent } from './agents'
 import {
@@ -86,6 +98,33 @@ export type SubagentExecutionResult = Awaited<ReturnType<typeof runSubagent>> & 
 }
 
 export type { SubagentTextUpdate, SubagentTextUpdateHandler } from './subagent-text-stream'
+
+/** A subagent attempt that returned an error: the model fallback decides whether another model continues it. */
+class SubagentAttemptFailed extends Error {
+  constructor(
+    readonly result: SubagentExecutionResult,
+    readonly failure: unknown
+  ) {
+    super(result.error ?? 'Subagent failed')
+  }
+}
+
+function classifySubagentFailure(error: unknown): ModelFailureClassification {
+  if (error instanceof SubagentAttemptFailed) {
+    return classifyModelFailure(error.failure ?? { message: error.result.error })
+  }
+  return classifyModelFailure(error)
+}
+
+function sumSubagentUsage(a: NormalizedAiUsage, b: NormalizedAiUsage): NormalizedAiUsage {
+  return {
+    input: a.input + b.input,
+    output: a.output + b.output,
+    cacheRead: a.cacheRead + b.cacheRead,
+    cacheCreate: a.cacheCreate + b.cacheCreate,
+    totalInput: a.totalInput + b.totalInput,
+  }
+}
 
 export interface SubagentExecutorAccountContext {
   parentProviderId?: string
@@ -302,8 +341,8 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
     fallbackTask: string
     replay?: SubagentReplayMessage[]
   } => {
-    if (!resumeSource) return { task: args.task, handle: null, fallbackTask: args.task }
-    const fallback = (reason: SubagentResumeRecreateReason) => recreatedTask(args.task, resumeSource, reason)
+    if (!resumeSource) return { task: attemptTask, handle: null, fallbackTask: attemptTask }
+    const fallback = (reason: SubagentResumeRecreateReason) => recreatedTask(attemptTask, resumeSource, reason)
     const plan = planSubagentResume({
       providerId,
       accountId,
@@ -315,9 +354,14 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
       recordResume('recreated', plan.reason)
       return { task: fallback(plan.reason), handle: null, fallbackTask: fallback(plan.reason) }
     }
-    if (plan.mode === 'replay') return { task: args.task, handle: null, fallbackTask: args.task, replay: plan.history }
-    return { task: args.task, handle: plan.handle, fallbackTask: fallback('resume-rejected') }
+    if (plan.mode === 'replay')
+      return { task: attemptTask, handle: null, fallbackTask: attemptTask, replay: plan.history }
+    return { task: attemptTask, handle: plan.handle, fallbackTask: fallback('resume-rejected') }
   }
+  /** Task of the current model attempt: the original one, or its continuation on a fallback model. */
+  let attemptTask = args.task
+  /** Raw failure of the current attempt, reported by a runtime before it became the result's error text. */
+  let attemptFailure: unknown
   const settleResume = (result: { resumed?: boolean; resumeReason?: string }): void => {
     if (!resumeSource) return
     if (result.resumed) recordResume('resumed')
@@ -330,7 +374,9 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
    */
   const runCodexOnFailoverChain = async (
     chain: readonly string[],
-    childMode: 'plan' | 'agent'
+    childMode: 'plan' | 'agent',
+    effective: SubagentEffectiveProfile,
+    profile: SubagentExecutionSnapshotV1
   ): Promise<SubagentExecutionResult> => {
     const logicalProviderId = effective.providerId
     const router = getSubscriptionFailoverRouter()
@@ -375,6 +421,7 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
           throw Object.assign(new Error('Subagent aborted'), { subagentUsage: accumulatedUsage() })
         }
         const partialUsage = accumulatedUsage()
+        if (resolved.reason === 'quota-exhausted') attemptFailure = { code: 'codex-accounts-exhausted' }
         return {
           text: lastText,
           error:
@@ -419,7 +466,7 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
           conversationScope: args.projectId === null ? 'standalone' : 'project',
           client: target.client,
           cwd: args.cwd,
-          profile: args.profile,
+          profile: profile,
           definition: effectiveDefinition,
           signal: args.signal,
           agentName: args.agentName,
@@ -491,7 +538,11 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
       }
     }
   }
-  const runProvider = async (): Promise<SubagentExecutionResult> => {
+  const runProvider = async (
+    effective: SubagentEffectiveProfile,
+    profile: SubagentExecutionSnapshotV1,
+    retryGate?: (error: unknown) => boolean
+  ): Promise<SubagentExecutionResult> => {
     if (!autonomousProviderAllowed(resolveAccountPoolProviderId(effective.providerId), args.conversationId))
       throw new Error('This provider account is not authorized for the desktop executor.')
     if (isClaudeSubscriptionProvider(effective.providerId)) {
@@ -500,6 +551,7 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
       const result = await runClaudeSubagent({
         conversationScope: args.projectId === null ? 'standalone' : 'project',
         ...args,
+        profile,
         definition: effectiveDefinition,
         readOnly: effectiveReadOnly,
         prepareTarget: (target) => {
@@ -543,6 +595,7 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
         progress,
         onTextUpdate,
         persistRuntime,
+        onTerminalFailure: (error) => void (attemptFailure = error),
         onSessionStarted: ({ sessionId, target }) => {
           if (!persistRuntime) return
           recorder?.runtimeHandle({
@@ -575,6 +628,7 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
       manager.assertAccountIdentity(identity)
       const result = await runCursorSubagent({
         ...args,
+        profile,
         task: resumeFor(effective.providerId, null).task,
         definition: effectiveDefinition,
         readOnly: effectiveReadOnly,
@@ -604,6 +658,7 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
       manager.assertAccountIdentity(identity)
       const result = await runAntigravitySubagent({
         ...args,
+        profile,
         task: resumeFor(effective.providerId, null).task,
         definition: effectiveDefinition,
         readOnly: effectiveReadOnly,
@@ -629,6 +684,7 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
       return runGitHubCopilotSubagent({
         conversationScope: args.projectId === null ? 'standalone' : 'project',
         ...args,
+        profile,
         task: resumeFor(effective.providerId, null).task,
         definition: effectiveDefinition,
         readOnly: effectiveReadOnly,
@@ -649,7 +705,7 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
       // Parent Maestro is read-only, but a Pool worker owns its own capability boundary.
       const childMode = effectiveReadOnly ? ('plan' as const) : ('agent' as const)
       const failoverChain = freezeFailoverChain(effective.providerId)
-      if (failoverChain.length > 1) return runCodexOnFailoverChain(failoverChain, childMode)
+      if (failoverChain.length > 1) return runCodexOnFailoverChain(failoverChain, childMode, effective, profile)
       // Only a physical account can name a manager: an active-account selection runs on its pool's current one.
       const accountProviderId = resolveAccountPoolProviderId(effective.providerId)
       const manager = getCodexSubscriptionManager(subscriptionAccountId(accountProviderId))
@@ -687,7 +743,7 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
           conversationScope: args.projectId === null ? 'standalone' : 'project',
           client,
           cwd: args.cwd,
-          profile: args.profile,
+          profile: profile,
           definition: effectiveDefinition,
           signal: args.signal,
           agentName: args.agentName,
@@ -730,7 +786,7 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
       conversationId: args.conversationId,
       parentMessageId: args.parentMessageId,
       toolCallId: args.toolCallId,
-      profile: args.profile,
+      profile: profile,
       definition: effectiveDefinition,
       broker: args.broker,
       signal: args.signal,
@@ -743,9 +799,76 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
       readOnly: effectiveReadOnly,
       tools,
       allowSkillLoader: args.mode === 'maestro',
+      onTerminalFailure: (error) => void (attemptFailure = error),
+      ...(retryGate ? { shouldRetryInPlace: retryGate } : {}),
     })
     if (resume.replay) settleResume({ resumed: true })
     return result
+  }
+
+  /**
+   * The child's profile first, then the model fallback list for failures another model can fix. Each fallback
+   * gets its own frozen profile and continues the task from what the failed attempt reported having done.
+   */
+  const runOnModelChain = async (): Promise<SubagentExecutionResult> => {
+    let spent: NormalizedAiUsage | undefined
+    const spend = (usage: NormalizedAiUsage | undefined): void => {
+      if (usage) spent = spent ? sumSubagentUsage(spent, usage) : usage
+    }
+    let previous: SubagentExecutionResult | null = null
+    try {
+      const result = await runWithModelFallback({
+        primary: { providerId: effective.providerId, modelId: effective.modelId },
+        scope: subagentFallbackScope(args.profile),
+        conversationId: args.conversationId,
+        // A bot's routed delegation runs exactly the model its host chose.
+        strict: effective.source === 'bot-delegation',
+        signal: args.signal,
+        run: async (candidate, attempt, chain) => {
+          const profile = await subagentProfileForCandidate(args.profile, candidate)
+          if (!profile?.effective) {
+            throw new ModelCandidateUnsuitable(`Fallback provider “${candidate.providerId}” cannot run subagents now.`)
+          }
+          if (attempt > 1) {
+            const summary = recorder?.summary()
+            attemptTask = buildModelFallbackSubagentTask(args.task, {
+              text: previous?.text,
+              files: summary?.files,
+              tools: summary?.toolNames,
+            })
+          }
+          attemptFailure = undefined
+          let result: SubagentExecutionResult
+          try {
+            result = await runProvider(profile.effective, profile, (error) =>
+              retryInPlaceAllowed(classifyModelFailure(error), chain.hasNext())
+            )
+          } catch (error) {
+            if (!args.signal.aborted) spend((error as { subagentUsage?: NormalizedAiUsage })?.subagentUsage)
+            throw error
+          }
+          if (!result.error) {
+            spend(result.usage)
+            return spent ? { ...result, usage: spent } : result
+          }
+          spend(result.usage)
+          previous = result
+          throw new SubagentAttemptFailed(result, attemptFailure)
+        },
+        deps: { classify: classifySubagentFailure },
+        onSwitch: ({ from, to, classification }) => {
+          progress(`${from.modelId} stopped (${classification.reason.replace(/_/g, ' ')}); continuing on ${to.modelId}`)
+          emitModelFallbackSwitch(
+            args.conversationId,
+            modelFallbackTransitionEvent(from, to, classification, 'subagent')
+          )
+        },
+      })
+      return result
+    } catch (error) {
+      if (error instanceof SubagentAttemptFailed) return spent ? { ...error.result, usage: spent } : error.result
+      throw error
+    }
   }
 
   try {
@@ -754,7 +877,7 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
       messageId: args.parentMessageId,
       model: { providerId: effective.providerId, modelId: effective.modelId },
       ownership: args.parentMessageOwnership,
-      execute: runProvider,
+      execute: runOnModelChain,
     })
     recorder?.complete({
       status: result.error ? 'failed' : 'completed',
