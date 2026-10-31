@@ -956,6 +956,13 @@ other files up to 256 KiB of UTF-8 text. A skill keeps up to 40 files and 1 MiB,
 a bot up to 100 active skills. Text that would hide characters or tell the agent
 to ignore its instructions is refused, as in memory.
 
+Memory review, which saves the bot's [automatic memories](chat-context.md#automatic-memory-saving),
+also suggests up to two skills per run for procedures the bot worked out: a new
+skill, or a note added to one of its own. A suggestion is always a proposal: the bot
+sees it in `skill_list`, can refine it with `skill_patch`, and applies or discards it
+with `skill_proposal` (applying needs its changes to take effect without your review);
+you can approve it in its settings.
+
 Reading skills never asks; changing them follows the bot's approval mode, like its
 other writes. Scripts of a skill run only through the bot's terminal, under its
 command permissions. Every change keeps a version (up to 20 per skill); changes

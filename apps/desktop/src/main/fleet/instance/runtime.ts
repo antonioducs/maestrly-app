@@ -425,10 +425,12 @@ export class BotRuntime {
   readonly skills: BotSkillStore
   /** The owner's view and changes of those skills (`bot-own-skills`). */
   private get ownSkillsApi(): BotSkillOwnerApi {
-    return new BotSkillOwnerApi(this.skills, async () => {
-      const others = await listConversationSkills('', this.primaryConversationId)
-      return new Set(others.filter((skill) => skill.scope !== 'bot').map((skill) => skill.name))
-    })
+    return new BotSkillOwnerApi(this.skills, () => this.installedSkillNames(this.primaryConversationId))
+  }
+  /** The skills a conversation of the bot finds from other sources than its own, which hide a skill of the bot's. */
+  private async installedSkillNames(conversationId: string | null): Promise<ReadonlySet<string>> {
+    const others = await listConversationSkills('', conversationId)
+    return new Set(others.filter((skill) => skill.scope !== 'bot').map((skill) => skill.name))
   }
   readonly live: LiveTranscript
   /** The side conversations: routine runs' (`routine-conversations`) and threads' with other bots (`peer-conversations`). */
@@ -925,7 +927,10 @@ export class BotRuntime {
     this.applyScreen(id)
     this.applyProfile()
     registerConversationMemorySpace(id, { id: this.memorySpaceId, kind: 'bot' })
-    setConversationSkillProvider(id, this.skills.provider(id))
+    setConversationSkillProvider(
+      id,
+      this.skills.provider(id, () => this.installedSkillNames(id))
+    )
     setMemoryCoreExtras(id, (signal) => this.primaryCoreSections(signal))
     if (this.gatewayConfig) setOwnerMemoryWriter(id, this.ownerMemory.writer())
     await this.syncCompaction()
@@ -1026,7 +1031,10 @@ export class BotRuntime {
     const id = lane.conversationId
     this.applyLaneScreen(id)
     registerConversationMemorySpace(id, { id: this.memorySpaceId, kind: 'bot' })
-    setConversationSkillProvider(id, this.skills.provider(id))
+    setConversationSkillProvider(
+      id,
+      this.skills.provider(id, () => this.installedSkillNames(id))
+    )
     setMemoryCoreExtras(id, (signal) => this.ownerMemory.coreSections(signal))
     if (this.gatewayConfig) setOwnerMemoryWriter(id, this.ownerMemory.writer())
     setCompactionSummarizer(id, () => {

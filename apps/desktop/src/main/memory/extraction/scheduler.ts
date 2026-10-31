@@ -14,6 +14,7 @@ import { memorySpaceForConversation } from '../spaces'
 import { applyExtraction } from './apply'
 import { maybeConsolidate } from './consolidation'
 import { getOwnerMemoryWriter } from './owner-writer'
+import { conversationSkillProvider } from '../../chat/conversation-skill-provider'
 import { EXTRACTION_LIMITS, extractionSystemPrompt, extractionUserPrompt, parseExtractionOutput } from './prompt'
 import { chunkExtractionBlocks, renderExtractionTranscript, type ExtractionBlock } from './transcript'
 
@@ -234,6 +235,10 @@ export async function runMemoryExtraction(
     }
     if (blocks.reduce((sum, block) => sum + block.text.length, 0) < EXTRACTION_LIMITS.minChars) return 'too-little'
     const owner = space.kind === 'bot' ? getOwnerMemoryWriter(conversationId) : undefined
+    // A bot that keeps skills of its own gets procedures worth one as proposals, from this same call.
+    const skillProvider = space.kind === 'bot' ? conversationSkillProvider(conversationId) : null
+    const skillSink = skillProvider?.suggest && skillProvider.ownCatalog ? skillProvider : null
+    let suggested = 0
     let lastSeq = state.lastSeq
     let attempts = state.attempts
     try {
@@ -245,16 +250,20 @@ export async function runMemoryExtraction(
         const ownerEntries = chunkOwner
           ? (await chunkOwner.list().catch(() => [])).map((entry) => `${entry.id} — ${entry.content}`).join('\n')
           : null
+        const ownSkills = skillSink
+          ? await skillSink.ownCatalog!(EXTRACTION_LIMITS.skillCatalogChars).catch(() => '')
+          : null
         if (signal.aborted || !authorized()) return 'cancelled'
         const last = chunk[chunk.length - 1]
         let output = null
         for (let retry = 0; retry < 2; retry++) {
           const result = await deps.oneShot({
             selection,
-            system: extractionSystemPrompt(space.kind),
+            system: extractionSystemPrompt(space.kind, { skills: skillSink !== null }),
             prompt: extractionUserPrompt({
               memories: catalog,
               owner: ownerEntries,
+              skills: ownSkills,
               transcript: chunk.map((block) => block.text).join('\n\n'),
             }),
             signal: AbortSignal.any([AbortSignal.timeout(600_000), signal]),
@@ -286,6 +295,15 @@ export async function runMemoryExtraction(
             signal,
             authorized,
           })
+        if (output && skillSink)
+          for (const suggestion of output.skills ?? []) {
+            if (suggested >= EXTRACTION_LIMITS.skillsPerRun || signal.aborted || !authorized()) break
+            const result = await skillSink.suggest!(suggestion).catch((error: unknown) => {
+              console.warn('[memory-extraction] Skill suggestion failed', error instanceof Error ? error.message : '')
+              return 'skipped' as const
+            })
+            if (result === 'proposed') suggested += 1
+          }
         if (signal.aborted || !authorized()) return 'cancelled'
         attempts = 0
         lastSeq = last.seq

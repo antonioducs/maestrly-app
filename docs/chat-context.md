@@ -908,7 +908,11 @@ titles are limited to 120 characters and content to 1,500, or 3,000 for a
 procedure, which is written as ordered steps with the exact commands and values.
 Image contents, skill bodies (calls that load or edit a skill show only the skill
 and file name), compaction summaries and hidden memory blocks are excluded. New
-entries have the **Automatic** source and are not pinned. An answer that is not
+entries have the **Automatic** source and are not pinned. In a fleet bot's space, the
+same call also sees the bot's own skills (up to 3,000 characters) and may suggest up
+to two [skills](bot-fleet.md#bot-skills) per run for procedures the bot worked out:
+a new skill, or a note for one of its own. Each suggestion waits as a proposal from
+memory review and never takes effect by itself. An answer that is not
 readable JSON is retried once, then that chunk is skipped. Failed extraction
 retries on later triggers, backing off for an hour after three failures; it does
 not block turns or compaction.

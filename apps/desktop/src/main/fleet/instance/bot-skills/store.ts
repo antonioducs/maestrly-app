@@ -3,7 +3,7 @@ import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
 import { parseSkillFrontmatter, readSkillDirectory, type ChatSkill } from '../../../chat/skills'
-import type { ConversationSkillProvider } from '../../../chat/conversation-skill-provider'
+import type { ConversationSkillProvider, SkillSuggestion } from '../../../chat/conversation-skill-provider'
 import {
   BOT_SKILL_LIMITS,
   BOT_SKILL_NAME,
@@ -174,12 +174,67 @@ export class BotSkillStore {
     return skills
   }
 
-  /** What `setConversationSkillProvider` gets for one of the bot's conversations. */
-  provider(conversationId: string): ConversationSkillProvider {
+  /**
+   * What `setConversationSkillProvider` gets for one of the bot's conversations. `installed` names the skills the
+   * conversation finds from other sources, which memory review never suggests a skill of the bot's for.
+   */
+  provider(
+    conversationId: string,
+    installed: () => Promise<ReadonlySet<string>> = async () => new Set()
+  ): ConversationSkillProvider {
     return {
       list: () => this.librarySkills(),
       usage: () => this.state?.usage ?? {},
       recordUse: (skill) => this.recordUse(conversationId, skill),
+      ownCatalog: (maxChars) => this.ownCatalog(maxChars),
+      suggest: async (suggestion) => this.suggest(suggestion, conversationId, await installed()),
+    }
+  }
+
+  /** The bot's active skills and proposals as memory review sees them: whole lines only, within `maxChars`. */
+  async ownCatalog(maxChars: number): Promise<string> {
+    const lines: string[] = []
+    let used = 0
+    for (const skill of await this.list()) {
+      if (skill.status === 'archived') continue
+      const note = skill.status === 'proposed' ? ' (proposed)' : skill.proposal ? ' (change proposed)' : ''
+      const line = `${skill.name}${note} — ${skill.description.replace(/\s+/g, ' ').slice(0, 200)}`
+      if (used + line.length + 1 > maxChars) break
+      lines.push(line)
+      used += line.length + 1
+    }
+    return lines.join('\n')
+  }
+
+  /**
+   * A procedure memory review found: a new skill, or a note added to one of the bot's own skills, always as a proposal.
+   * A suggestion that does not fit (a name in use elsewhere, an archived skill, a full queue, unsafe text) is skipped.
+   */
+  async suggest(
+    suggestion: SkillSuggestion,
+    conversationId: string,
+    installed: ReadonlySet<string>
+  ): Promise<'proposed' | 'skipped'> {
+    const writer = { actor: 'memory-review' as const, conversationId, reason: suggestion.reason }
+    try {
+      if (installed.has(suggestion.name)) return 'skipped'
+      if (!(await this.has(suggestion.name))) {
+        if (!suggestion.description) return 'skipped'
+        await this.create(
+          { name: suggestion.name, description: suggestion.description, body: suggestion.note, taken: installed },
+          writer
+        )
+        return 'proposed'
+      }
+      await this.change(suggestion.name, writer, SKILL_MD, (files) => {
+        const current = files.get(SKILL_MD) ?? ''
+        files.set(SKILL_MD, `${current.trimEnd()}\n\n## Suggested by memory review\n\n${suggestion.note.trim()}\n`)
+        return 'patch'
+      })
+      return 'proposed'
+    } catch (error) {
+      if (error instanceof BotSkillError) return 'skipped'
+      throw error
     }
   }
 

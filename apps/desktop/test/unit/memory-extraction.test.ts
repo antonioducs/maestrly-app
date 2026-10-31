@@ -17,7 +17,13 @@ import {
   disposeMemoryExtraction,
 } from '../../src/main/memory/extraction/scheduler'
 import { chunkExtractionBlocks, renderExtractionTranscript } from '../../src/main/memory/extraction/transcript'
-import { parseExtractionOutput } from '../../src/main/memory/extraction/prompt'
+import {
+  EXTRACTION_LIMITS,
+  extractionSystemPrompt,
+  extractionUserPrompt,
+  parseExtractionOutput,
+} from '../../src/main/memory/extraction/prompt'
+import { setConversationSkillProvider } from '../../src/main/chat/conversation-skill-provider'
 import { applyExtraction } from '../../src/main/memory/extraction/apply'
 import { clearOwnerMemoryWriter, setOwnerMemoryWriter } from '../../src/main/memory/extraction/owner-writer'
 import { clearConversationMemorySpace, registerConversationMemorySpace } from '../../src/main/memory/spaces'
@@ -608,4 +614,88 @@ it('applies the immediate retry when it returns readable output', async () => {
   await runMemoryExtraction(conversationId, undefined, { oneShot: call, selection })
   expect(call).toHaveBeenCalledTimes(2)
   expect(listLocalMemories(spaceId)[0]?.title).toBe('Blue-green deploy')
+})
+
+it("suggests skills of a bot's own from the same call, at most two, and asks for none elsewhere", async () => {
+  registerConversationMemorySpace(conversationId, { id: 'bot-self', kind: 'bot' })
+  const suggest = vi.fn(async (_suggestion: { name: string }) => 'proposed' as const)
+  setConversationSkillProvider(conversationId, {
+    list: async () => [],
+    ownCatalog: async (max) => 'make-animation — Use when animating.'.slice(0, max),
+    suggest,
+  })
+  const skills = [
+    { name: 'make-animation', note: '3. Check the length with ffprobe.', reason: 'Missing check' },
+    { name: 'render-gif', description: 'Use when a GIF is asked for.', note: '1. Render at 24 fps.', reason: 'New' },
+    { name: 'third-one', description: 'Use when.', note: 'x', reason: 'Over the limit' },
+  ]
+  const call = vi.fn(async () => ({
+    text: JSON.stringify({ memories: [], owner: [], skills }),
+    usage: { input: 10, output: 2, cacheRead: 0, cacheCreate: 0 },
+  }))
+  try {
+    expect(await runMemoryExtraction(conversationId, undefined, { oneShot: call, selection })).toBe('done')
+    expect(call).toHaveBeenCalledTimes(1)
+    expect(call).toHaveBeenCalledWith(
+      expect.objectContaining({
+        system: expect.stringContaining('"skills" entries suggest a skill'),
+        prompt: expect.stringContaining(
+          "The bot's own skills (name — description):\nmake-animation — Use when animating."
+        ),
+      })
+    )
+    expect(suggest.mock.calls.map(([suggestion]) => suggestion)).toEqual([skills[0], skills[1]])
+  } finally {
+    setConversationSkillProvider(conversationId, null)
+  }
+  // A project conversation, even with a provider, is never asked for skills.
+  clearConversationMemorySpace(conversationId)
+  const other = makeConversation(spaceId).id
+  for (const [index, text] of ['Long enough. '.repeat(200), 'Done.'].entries())
+    upsertChatMessage({
+      id: randomUUID(),
+      conversationId: other,
+      role: index ? 'assistant' : 'user',
+      createdAt: 10 + index,
+      parts: [{ type: 'text', id: randomUUID(), text }],
+    })
+  setConversationSkillProvider(other, { list: async () => [], ownCatalog: async () => 'x', suggest })
+  suggest.mockClear()
+  try {
+    await runMemoryExtraction(other, undefined, { oneShot: call, selection })
+    expect(call).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        system: expect.stringContaining('Leave "skills" empty.'),
+        prompt: expect.not.stringContaining("The bot's own skills"),
+      })
+    )
+    expect(suggest).not.toHaveBeenCalled()
+  } finally {
+    setConversationSkillProvider(other, null)
+  }
+})
+
+it('reads skill suggestions strictly', () => {
+  const parsed = parseExtractionOutput(
+    JSON.stringify({
+      memories: [],
+      owner: [],
+      skills: [
+        { name: 'Bad Name', note: 'x', reason: 'x' },
+        { name: 'two-lines', description: 'Use when\nthis.', note: 'x', reason: 'x' },
+        { name: 'empty-note', note: '  ', reason: 'x' },
+        { name: 'too-long', note: 'x'.repeat(EXTRACTION_LIMITS.skillNoteMax + 1), reason: 'x' },
+        { name: 'kept', note: 'Steps.', reason: `A ${'long '.repeat(100)}reason` },
+      ],
+    })
+  )
+  expect(parsed?.skills?.map((skill) => skill.name)).toEqual(['kept'])
+  expect(parsed?.skills?.[0].reason.length).toBe(EXTRACTION_LIMITS.skillReasonMax)
+  // Older answers without skills still read.
+  expect(parseExtractionOutput('{"memories":[],"owner":[]}')?.skills).toEqual([])
+  expect(extractionSystemPrompt('bot')).toContain('Leave "skills" empty.')
+  expect(extractionSystemPrompt('personal', { skills: true })).toContain('Leave "skills" empty.')
+  expect(extractionUserPrompt({ memories: '', owner: null, skills: '', transcript: 'T' })).toContain(
+    "The bot's own skills (name — description):\n(none)"
+  )
 })
