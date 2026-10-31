@@ -46,7 +46,7 @@ export interface HistorySearchOptions {
   query: string
   mode?: HistorySearchMode
   limit?: number
-  /** Exact mode: only messages before this position of the (single) conversation. */
+  /** Only messages before this position of the (single) conversation; pages exact results. */
   beforeSeq?: number
   rerank?: HistoryReranker
 }

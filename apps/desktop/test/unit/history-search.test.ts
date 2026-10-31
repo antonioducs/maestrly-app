@@ -6,7 +6,7 @@ import { makeConversation, makeWorkspace } from '../helpers/factories'
 import { getDb } from '../../src/main/store'
 import { upsertChatMessage } from '../../src/main/chat/chat-store'
 import { forgetHistoryIndexState } from '../../src/main/chat/history-index/store'
-import { searchHistory, type HistorySearchOptions } from '../../src/main/chat/history-index/search'
+import { searchHistory, trigramQuery, type HistorySearchOptions } from '../../src/main/chat/history-index/search'
 import type { MessagePart } from '../../src/shared/chat'
 
 beforeEach(() => {
@@ -213,6 +213,18 @@ describe('exact history search', () => {
       'ran it once',
     ])
     expect(snippets(await search(conversation.id, 'it', { mode: 'exact' }))).toEqual(['ran it twice', 'ran it once'])
+  })
+})
+
+describe('substring prefilter', () => {
+  it('drops messages that hold every trigram of a term but not the term itself', async () => {
+    const conversation = makeConversation(makeWorkspace().id)
+    say(conversation.id, 'table partition done')
+    say(conversation.id, 'filler')
+    say(conversation.id, 'par art rti tit iti tio ion')
+    expect(trigramQuery('partition')).toBe('"par" AND "art" AND "rti" AND "tit" AND "iti" AND "tio" AND "ion"')
+    expect(snippets(await search(conversation.id, 'partition', { mode: 'exact' }))).toEqual(['table partition done'])
+    expect(snippets(await search(conversation.id, 'artitio'))).toEqual(['table partition done'])
   })
 })
 
