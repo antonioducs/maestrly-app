@@ -7,7 +7,7 @@ import { runHistoryIndexStep } from './store'
  */
 export const HISTORY_INDEXER = {
   startDelayMs: 20_000,
-  sliceMs: 12,
+  sliceMs: 8,
   busyPauseMs: 25,
   idlePollMs: 4_000,
 } as const

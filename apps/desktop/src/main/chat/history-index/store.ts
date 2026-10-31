@@ -84,9 +84,11 @@ function createSchema(db: DatabaseSync): void {
       content = '', contentless_delete = 1,
       tokenize = 'unicode61 remove_diacritics 2'
     );
+    -- Without positions the trigram index is about a quarter of the size; a substring is then queried as the AND of
+    -- its trigrams, a superset that callers check against the message text.
     CREATE VIRTUAL TABLE IF NOT EXISTS ${SCHEMA}.history_trigram USING fts5(
       body,
-      content = '', contentless_delete = 1,
+      content = '', contentless_delete = 1, detail = none,
       tokenize = 'trigram'
     );
   `)

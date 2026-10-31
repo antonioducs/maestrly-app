@@ -57,7 +57,7 @@ export const HISTORY_SEARCH = {
   snippetChars: 240,
   prepareBudgetMs: 250,
   wordCandidates: 80,
-  trigramCandidates: 40,
+  trigramCandidates: 100,
   maxTerms: 12,
   perConversation: 3,
   relativeFloor: 0.35,
@@ -145,6 +145,19 @@ function wordsMatch(tokens: readonly string[], terms: readonly Term[]): string |
 }
 
 const marks = (values: readonly unknown[]) => values.map(() => '?').join(',')
+const codePoints = (value: string) => [...value].length
+
+/**
+ * A substring as the trigram index can match it: the AND of its distinct trigrams. The index keeps no positions, so
+ * this is a superset (the trigrams may be apart); every caller checks candidates against the text.
+ */
+export function trigramQuery(value: string): string {
+  const chars = [...value]
+  if (chars.length <= 3) return quote(value)
+  const grams = new Set<string>()
+  for (let index = 0; index + 3 <= chars.length; index++) grams.add(chars.slice(index, index + 3).join(''))
+  return [...grams].map(quote).join(' AND ')
+}
 
 function trigramCount(db: DatabaseSync, value: string, conversationIds: readonly string[]): number {
   return Number(
@@ -154,7 +167,7 @@ function trigramCount(db: DatabaseSync, value: string, conversationIds: readonly
           `SELECT COUNT(*) AS n FROM ${S}.history_trigram JOIN ${S}.history_docs d ON d.doc_id = history_trigram.rowid
            WHERE history_trigram MATCH ? AND d.conversation_id IN (${marks(conversationIds)})`
         )
-        .get(quote(value), ...conversationIds) as { n: number }
+        .get(trigramQuery(value), ...conversationIds) as { n: number }
     ).n
   )
 }
@@ -167,7 +180,7 @@ function countTerms(db: DatabaseSync, terms: Term[], conversationIds: readonly s
     term.df = match ? Number((count.get(match) as { n: number }).n) : 0
     if (term.df > 0) continue
     const substring = term.kind === 'stem' ? term.word : term.kind === 'literal' ? term.value : undefined
-    if (!substring || substring.length < 3) continue
+    if (!substring || codePoints(substring) < 3) continue
     const df = trigramCount(db, substring, conversationIds)
     if (df > 0) Object.assign(term, { kind: 'infix' as const, value: substring, df })
   }
@@ -356,7 +369,7 @@ function relevanceCandidates(db: DatabaseSync, options: HistorySearchOptions): S
     for (const row of rows) bm25.set(Number(row.rowid), Math.max(0, Math.min(1, row.score / best)))
   }
   const substrings = terms.filter(
-    (term) => term.kind === 'infix' || (term.kind === 'literal' && term.value.length >= 3)
+    (term) => term.kind === 'infix' || (term.kind === 'literal' && codePoints(term.value) >= 3)
   )
   const docIds = new Set(bm25.keys())
   if (substrings.length) {
@@ -367,7 +380,9 @@ function relevanceCandidates(db: DatabaseSync, options: HistorySearchOptions): S
          WHERE history_trigram MATCH ? AND d.conversation_id IN (${marks(conversationIds)})
          ORDER BY history_trigram.rowid DESC LIMIT ${HISTORY_SEARCH.trigramCandidates}`
       )
-      .all(substrings.map((term) => quote(term.value)).join(' OR '), ...conversationIds) as Array<{ rowid: number }>
+      .all(substrings.map((term) => `(${trigramQuery(term.value)})`).join(' OR '), ...conversationIds) as Array<{
+      rowid: number
+    }>
     for (const row of rows) docIds.add(Number(row.rowid))
   }
 
@@ -467,7 +482,7 @@ function exactTerms(query: string): string[] {
 function exactSearch(db: DatabaseSync, options: HistorySearchOptions, limit: number): HistorySearchHit[] | null {
   const terms = exactTerms(options.query)
   if (!terms.length) return []
-  const long = terms.filter((term) => term.length >= 3)
+  const long = terms.filter((term) => codePoints(term) >= 3)
   // Trigrams cannot prefilter two-character words: the scan does it.
   if (!long.length) return null
   const ids = options.conversationIds
@@ -485,7 +500,7 @@ function exactSearch(db: DatabaseSync, options: HistorySearchOptions, limit: num
          WHERE d.partial = 1 AND d.indexed = 1 AND d.conversation_id IN (${marks(ids)}) AND m.seq < ?
        ) ORDER BY ${order}`
     )
-    .iterate(long.map(quote).join(' AND '), ...ids, before, ...ids, before) as Iterable<{ id: string }>
+    .iterate(long.map(trigramQuery).join(' AND '), ...ids, before, ...ids, before) as Iterable<{ id: string }>
   const read = db.prepare(
     'SELECT conversation_id, role, seq, created_at, parts_json, meta_json FROM main.chat_messages WHERE id = ?'
   )
