@@ -5,6 +5,7 @@
  * overflow, and their outcomes settle those circuits.
  */
 import {
+  isActiveAccountProviderId,
   isSubscriptionFailoverProviderId,
   type ChatModelFallbackConfigV1,
   type ChatSubscriptionFailoverEvent,
@@ -15,6 +16,14 @@ import type { AvailabilityLease } from '../subscription-failover/types'
 import { cooldownKindFor } from './cooldown-policy'
 import type { ModelFailureClassification, ModelFailureReason } from './error-classifier'
 import { clearStickyWinner, recordStickyWinner, stickyWinner, touchStickyWinner, type StickyModelRef } from './sticky'
+
+/**
+ * Claude/Codex accounts, and the active-account selection that runs on their pool: their account layer marks the
+ * physical accounts, so this layer never opens a circuit on the provider id itself.
+ */
+export function hasAccountFailoverLayer(providerId: string): boolean {
+  return isSubscriptionFailoverProviderId(providerId) || isActiveAccountProviderId(providerId)
+}
 
 /** Most model switches one execution makes before giving up. */
 export const MAX_MODEL_SWITCHES = 4
@@ -85,7 +94,7 @@ export interface CandidateAdmissionDeps {
 export function isCandidateAdmissible(candidate: ModelCandidate, deps: CandidateAdmissionDeps): boolean {
   const now = deps.now ?? Date.now()
   if (!deps.router.isAdmissible(candidateKey(candidate), now)) return false
-  if (isSubscriptionFailoverProviderId(candidate.providerId)) {
+  if (hasAccountFailoverLayer(candidate.providerId)) {
     // The account layer owns these circuits; it also waits for a half-open probe instead of failing.
     const accounts = deps.accountChainOf(candidate.providerId)
     const chain = accounts.length ? accounts : [candidate.providerId]
@@ -189,7 +198,7 @@ export function recordCandidateFailure(
   if (!kind) return
   const info = { kind, reason: classification.reason, retryAt: classification.retryAt, now }
   if (classification.scope === 'account') {
-    if (!isSubscriptionFailoverProviderId(candidate.providerId)) router.recordFailure(candidate.providerId, info)
+    if (!hasAccountFailoverLayer(candidate.providerId)) router.recordFailure(candidate.providerId, info)
     return
   }
   router.recordFailure(candidateKey(candidate), info)
@@ -213,7 +222,7 @@ export function recordCandidateSuccess(
 ): void {
   if (lease) router.confirmAttemptSuccess(lease.key, lease.lease)
   else closeDueCircuit(router, candidateKey(candidate), now)
-  if (!isSubscriptionFailoverProviderId(candidate.providerId)) closeDueCircuit(router, candidate.providerId, now)
+  if (!hasAccountFailoverLayer(candidate.providerId)) closeDueCircuit(router, candidate.providerId, now)
 }
 
 /** Releases an attempt slot without blaming anyone (abort, cancelled admission). */

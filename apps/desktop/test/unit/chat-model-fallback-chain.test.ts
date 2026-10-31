@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
+import { activeAccountProviderId } from '../../src/shared/chat'
 import {
   freezeModelChain,
   isCandidateAdmissible,
@@ -159,6 +160,24 @@ describe('candidate admission and ordering', () => {
       NOW
     )
     expect(router.getHealth(CLAUDE).state).toBe('unknown')
+  })
+
+  it('admits the active-account selection by its pool and never cools down its virtual id', () => {
+    const active = activeAccountProviderId('claude-subscription')
+    const pool = (id: string) => (id === active ? [`${CLAUDE}@acc_2`, CLAUDE] : [])
+    const candidate: ModelCandidate = { providerId: active, modelId: 'opus', primary: true }
+    recordCandidateFailure(
+      router,
+      candidate,
+      classifyModelFailure(Object.assign(new Error('You exceeded your current quota'), { statusCode: 429 })),
+      undefined,
+      NOW
+    )
+    expect(router.getHealth(active).state).toBe('unknown')
+    router.markExhausted(`${CLAUDE}@acc_2`, { reason: 'quota', source: 'structured-error', now: NOW })
+    expect(isCandidateAdmissible(candidate, { router, accountChainOf: pool, now: NOW })).toBe(true)
+    router.markExhausted(CLAUDE, { reason: 'quota', source: 'structured-error', now: NOW })
+    expect(isCandidateAdmissible(candidate, { router, accountChainOf: pool, now: NOW })).toBe(false)
   })
 
   it('orders by context fit after an overflow', async () => {

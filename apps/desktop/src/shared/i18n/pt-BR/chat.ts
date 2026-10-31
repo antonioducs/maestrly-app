@@ -141,7 +141,7 @@ export default {
       toggle: 'Usar modelos de fallback',
       addFirst: 'Adicione um modelo primeiro.',
       add: 'Adicionar modelo',
-      then: 'depois',
+      next: 'depois',
       candidateLabel: 'Modelo de fallback {{position}}',
       tryEarlier: 'Tentar antes',
       tryLater: 'Tentar depois',

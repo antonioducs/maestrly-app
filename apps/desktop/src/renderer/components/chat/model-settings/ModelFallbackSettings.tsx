@@ -100,7 +100,7 @@ export function ModelFallbackSettings({
             <Fragment key={candidate ? `${candidate.providerId}::${candidate.modelId}` : 'pending'}>
               {index > 0 && (
                 <ArrowRight
-                  aria-label={t('modelSettings.fallback.then')}
+                  aria-label={t('modelSettings.fallback.next')}
                   className="size-3 shrink-0 text-muted-foreground/70"
                 />
               )}

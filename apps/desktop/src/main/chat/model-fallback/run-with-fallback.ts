@@ -3,11 +3,7 @@
  * then the configured fallbacks, moving on only for failures another model can fix. Account failover inside a
  * Claude/Codex subscription stays in its own layer: a candidate fails here only once that layer gave up.
  */
-import {
-  isSubscriptionFailoverProviderId,
-  type ChatModelFallbackConfigV1,
-  type ChatSubscriptionFailoverEvent,
-} from '../../../shared/chat'
+import type { ChatModelFallbackConfigV1, ChatSubscriptionFailoverEvent } from '../../../shared/chat'
 import { getConvUiPrefs } from '../../store'
 import { autonomousProviderAllowed } from '../autonomous'
 import { getProvider, isChatGptWebProvider, isSubscriptionProvider } from '../catalog'
@@ -19,6 +15,7 @@ import {
   candidateKey,
   firstAdmissibleCandidate,
   freezeModelChain,
+  hasAccountFailoverLayer,
   MAX_MODEL_SWITCHES,
   recordCandidateFailure,
   recordCandidateSuccess,
@@ -45,7 +42,7 @@ export interface ModelFallbackDeps {
 export const defaultModelFallbackDeps: ModelFallbackDeps = {
   config: getModelFallbackConfig,
   router: getSubscriptionFailoverRouter,
-  accountChainOf: (providerId) => (isSubscriptionFailoverProviderId(providerId) ? freezeFailoverChain(providerId) : []),
+  accountChainOf: (providerId) => (hasAccountFailoverLayer(providerId) ? freezeFailoverChain(providerId) : []),
   // A fallback must be able to run unattended: a BYOK provider needs its key, and the ChatGPT web companion never can.
   isProviderUsable: (providerId, conversationId) =>
     Boolean(getProvider(providerId)) &&

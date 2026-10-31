@@ -135,7 +135,7 @@ export default {
       toggle: 'Use fallback models',
       addFirst: 'Add a model first.',
       add: 'Add model',
-      then: 'then',
+      next: 'then',
       candidateLabel: 'Fallback model {{position}}',
       tryEarlier: 'Try earlier',
       tryLater: 'Try later',
