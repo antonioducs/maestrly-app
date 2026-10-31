@@ -286,10 +286,12 @@ export function startedOffPrimaryEvent(
   state: RootModelFallbackState,
   deps?: Partial<RootFallbackDeps>
 ): ChatSubscriptionFailoverEvent | null {
+  // With a sticky winner in front, chain[0] is that winner: the person chose nothing new to hear about.
   const primary = state.chain[0]
   if (!primary?.primary || state.current.primary) return null
-  const router = withDefaults(deps).router()
-  const health = [candidateKey(primary), primary.providerId]
+  const resolved = withDefaults(deps)
+  const router = resolved.router()
+  const health = [candidateKey(primary), primary.providerId, ...resolved.accountChainOf(primary.providerId)]
     .map((key) => router.getHealth(key))
     .find((entry) => entry.state === 'exhausted' || entry.state === 'half-open')
   const kind = health?.exhaustion?.kind ?? 'quota'

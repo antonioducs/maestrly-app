@@ -22,9 +22,14 @@ const h = vi.hoisted(() => ({
   hasApiKey: vi.fn((_id: string) => true),
   runChat: vi.fn(),
   providerWindow: vi.fn((_providerId: string, _modelId: string) => Promise.resolve(undefined as number | undefined)),
+  isClaude: vi.fn((_id: string) => false),
+  freezeFailoverChain: vi.fn((id: string) => [id]),
+  resolveClaudeRuntimeTarget: vi.fn(),
 }))
 
+const CLAUDE = 'builtin_claude_subscription'
 const providers = [
+  { id: CLAUDE, name: 'Claude', baseURL: '' },
   { id: 'provider-1', name: 'Primary', baseURL: 'https://primary.example.test/v1' },
   { id: 'provider-2', name: 'Fallback', baseURL: 'https://fallback.example.test/v1' },
 ]
@@ -51,13 +56,13 @@ vi.mock('../../src/main/chat/catalog', () => ({
   CODEX_SUBSCRIPTION_PROVIDER_ID: 'builtin_codex_subscription',
   getProvider: vi.fn((id: string) => providers.find((provider) => provider.id === id)),
   getProviderKind: vi.fn(() => 'openai'),
-  isClaudeSubscriptionProvider: vi.fn(() => false),
+  isClaudeSubscriptionProvider: h.isClaude,
   isCursorSubscriptionProvider: vi.fn(() => false),
   isAntigravitySubscriptionProvider: vi.fn(() => false),
   isGrokSubscriptionProvider: vi.fn(() => false),
   isCodexSubscriptionProvider: vi.fn(() => false),
   isGitHubCopilotSubscriptionProvider: vi.fn(() => false),
-  isSubscriptionProvider: vi.fn(() => false),
+  isSubscriptionProvider: h.isClaude,
   isChatGptWebProvider: vi.fn(() => false),
   subscriptionAccountId: vi.fn(() => null),
   subscriptionProviderIdFor: vi.fn(() => 'builtin'),
@@ -67,6 +72,16 @@ vi.mock('../../src/main/chat/catalog', () => ({
   removeSubscriptionAccount: vi.fn(),
   listAvailableChatProviders: vi.fn(() => providers),
   listProviders: vi.fn(() => providers),
+}))
+
+vi.mock('../../src/main/chat/subscription-failover', async (original) => ({
+  ...(await original<typeof import('../../src/main/chat/subscription-failover')>()),
+  freezeFailoverChain: h.freezeFailoverChain,
+}))
+
+vi.mock('../../src/main/chat/subscription-failover/claude-adapter', async (original) => ({
+  ...(await original<typeof import('../../src/main/chat/subscription-failover/claude-adapter')>()),
+  resolveClaudeRuntimeTarget: h.resolveClaudeRuntimeTarget,
 }))
 
 vi.mock('../../src/main/chat/credentials', () => ({
@@ -213,6 +228,8 @@ describe('model fallback in a Maestrly turn', () => {
       key === 'chat.modelFallback.v1' && fallbackConfig ? JSON.stringify(fallbackConfig) : null
     )
     h.hasApiKey.mockReturnValue(true)
+    h.isClaude.mockImplementation(() => false)
+    h.freezeFailoverChain.mockImplementation((id: string) => [id])
     h.providerWindow.mockImplementation(async (providerId: string) =>
       providerId === 'provider-1' ? 1_000_000 : 32_000
     )
@@ -312,6 +329,32 @@ describe('model fallback in a Maestrly turn', () => {
     expect(switches()).toEqual([expect.objectContaining({ kind: 'model', reasonKind: 'auth' })])
   })
 
+  it('moves a Claude turn whose accounts are all exhausted to an API-key model', async () => {
+    h.isClaude.mockImplementation((id: string) => id === CLAUDE)
+    h.freezeFailoverChain.mockImplementation((id: string) => (id === CLAUDE ? [CLAUDE, `${CLAUDE}@acc_2`] : [id]))
+    h.resolveClaudeRuntimeTarget.mockResolvedValue({
+      ok: false,
+      error: 'no-eligible-account',
+      reason: 'quota-exhausted',
+      message: 'Every Claude account in the rotation list reached its usage limit.',
+    })
+    chatPrefs = { providerId: CLAUDE, modelId: 'claude-opus', mode: 'agent', reasoning: 'max' }
+
+    expect(await send('fix the tests')).toEqual({ ok: true })
+
+    expect(h.resolveClaudeRuntimeTarget).toHaveBeenCalled()
+    expect(ranOn()).toEqual(['provider-2/model-2'])
+    expect(runCalls()[0]).toMatchObject({ reasoningOverride: 'high' })
+    expect(switches()).toEqual([
+      expect.objectContaining({
+        kind: 'model',
+        fromProviderId: CLAUDE,
+        toProviderId: 'provider-2',
+        reasonKind: 'quota',
+      }),
+    ])
+  })
+
   it('tells the runner to stop waiting in place while a fallback is ready', async () => {
     h.runChat.mockImplementationOnce(async (args: RunArgs) => {
       expect(args.shouldRetryInPlace?.(quota())).toBe(false)
@@ -352,6 +395,17 @@ describe('model fallback in a Maestrly turn', () => {
     expect(ranOn()).toEqual(['provider-1/model-1'])
     expect(switches()).toEqual([])
     expect(h.updateConversationStatus).toHaveBeenCalledWith(CONV, 'error')
+  })
+
+  it('keeps a later host continuation of the same turn on the fallback model', async () => {
+    chatPrefs = { ...chatPrefs, mode: 'plan' }
+    h.runChat.mockImplementationOnce(async (args: RunArgs) => failWith(quota(), args))
+
+    await send('plan the fix')
+
+    // The fallback answered without submitting the plan: the Plan guard asks again, on the same fallback.
+    expect(ranOn()).toEqual(['provider-1/model-1', 'provider-2/model-2', 'provider-2/model-2'])
+    expect(doneCount()).toBe(1)
   })
 
   it('does not fall back once the turn submitted its plan', async () => {

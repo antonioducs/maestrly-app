@@ -46,6 +46,9 @@ retried as before and does not switch.
   until it is idle for 10 minutes (30 minutes at most), so a model that is out of quota is not retried on every
   message.
 - A turn switches at most four times. If every model fails, the turn shows the last error.
+- Moving to another runtime (for example from a Claude subscription to an API key) ends the previous runtime's
+  session for the conversation, as changing the model does. Its next turn rebuilds that session from the
+  conversation, so its first request does not reuse the provider's cache.
 
 ## Subagents and background tasks
 

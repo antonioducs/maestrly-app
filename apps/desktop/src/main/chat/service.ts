@@ -6645,8 +6645,11 @@ async function startSendAttempt(
                     },
                   }
                 : null
+        // Every host continuation of this turn stays on the model chain (and the model) it ran on.
+        const keptModelFallback = modelFallbackTurn ? { modelFallback: modelFallbackTurn } : {}
         if (guard) {
           const continuation = await startSend(deps, wc, conversationId, guard.prompt, undefined, {
+            ...keptModelFallback,
             ...guard.opts,
             internal: true,
             onComplete: (result) => {
