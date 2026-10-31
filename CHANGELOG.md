@@ -5,6 +5,8 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-10-31
+
 ### Added
 
 - Pick **Claude — Active account** or **Codex — Active account** in any model
@@ -17,6 +19,12 @@ User-visible changes by version. Downloads are on
   interpretation all follow the active account; picking a specific account keeps
   working as before.
 
+### Changed
+
+- Update node-forge to 1.4.2, which fixes an advisory about verifying
+  signatures. The app uses it only to create the certificate of its peer
+  identity and does not verify signatures with it.
+
 ### Fixed
 
 - Claude conversations and usage limits keep working when Anthropic renames a
@@ -24,6 +32,18 @@ User-visible changes by version. Downloads are on
   display names no longer invalidate the same account's sessions. After this
   update, existing Claude sessions are rebuilt once from the conversation history
   when next used; the conversation history is preserved.
+- Switching a long conversation to Google AI no longer loses the end of the
+  prompt, your latest request included, which the runtime used to cut off
+  without saying so. Maestrly now summarizes an oversized history before sending
+  it and sends your message in full; the first response after the switch can
+  take longer. When a prompt still cannot fit, Maestrly stops with an error
+  before sending it: shorten the message or compact the conversation, and try
+  again. See [Google AI subscription](docs/antigravity.md).
+- When Maestrly closes or restarts in the middle of a response, for example when
+  a bot's container dies, the tools that response was still running no longer
+  spin forever, subagent cards included. The response ends with "This response
+  was interrupted because Maestrly closed or restarted." A response left stuck
+  this way is fixed the next time Maestrly starts.
 
 ## [0.30.0] - 2026-10-30
 
