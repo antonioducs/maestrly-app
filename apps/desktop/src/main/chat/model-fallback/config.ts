@@ -22,7 +22,9 @@ function cleanId(value: unknown): string | null {
   return id && id.length <= MAX_ID_LENGTH ? id : null
 }
 
-export function modelFallbackCandidateKey(candidate: Pick<ChatModelFallbackCandidate, 'providerId' | 'modelId'>): string {
+export function modelFallbackCandidateKey(
+  candidate: Pick<ChatModelFallbackCandidate, 'providerId' | 'modelId'>
+): string {
   return `${candidate.providerId}::${candidate.modelId}`
 }
 
@@ -32,7 +34,8 @@ export function sanitizeModelFallbackCandidate(raw: unknown): ChatModelFallbackC
   const providerId = cleanId(record.providerId)
   const modelId = cleanId(record.modelId)
   if (!providerId || !modelId) return null
-  const reasoning = typeof record.reasoning === 'string' && EFFORT.test(record.reasoning.trim()) ? record.reasoning.trim() : undefined
+  const reasoning =
+    typeof record.reasoning === 'string' && EFFORT.test(record.reasoning.trim()) ? record.reasoning.trim() : undefined
   return {
     providerId,
     modelId,

@@ -412,6 +412,8 @@ export interface RunCodexSubscriptionChatArgs {
     reason: string
     resetsAt?: number | null
   }) => void
+  /** Raw failure that ended the turn once account failover gave up (model fallback classifies it). */
+  onTerminalFailure?: (error: unknown) => void
   /** Active-turn controls are valid only until the runner publishes null or replaces the port. */
   onTurnControl?: (control: CodexActiveTurnControlPort | null) => void
 }
@@ -5972,6 +5974,7 @@ export async function runCodexSubscriptionChat(
       } else {
         settleCurrentAttempt('other')
         const message = redactTokens(result.turn.error?.message || 'Codex turn failed')
+        args.onTerminalFailure?.({ turn: { status: 'failed', error: { message } } })
         apply(
           {
             kind: 'error',
@@ -6022,6 +6025,7 @@ export async function runCodexSubscriptionChat(
         args.selection.providerId,
         externalSubagentUsage
       )
+      if (!args.signal.aborted) args.onTerminalFailure?.(error)
       if (args.signal.aborted)
         apply(
           {

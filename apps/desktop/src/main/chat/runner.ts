@@ -432,6 +432,10 @@ export interface RunChatArgs {
     reviewLoop?: import('../../shared/chat').ChatReviewLoopMeta
   }
   executionScope?: import('../../shared/chat').ChatExecutionScope
+  /** Raw provider failure that ended the turn (before it became the bubble's error text). */
+  onTerminalFailure?: (error: unknown) => void
+  /** Gate for the transparent in-place retry of a transient failure; false makes it terminal (a fallback waits). */
+  shouldRetryInPlace?: (error: unknown) => boolean
 }
 
 export interface RunChatResult {
@@ -1634,6 +1638,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   const describeFailure = (error: unknown) => describeProviderError(error, providerErrorContext(selection.providerId))
   /** Final failure of the turn; recorded here because streamText no longer logs it (see `onError`). */
   const terminalFailure = (error: unknown) => {
+    args.onTerminalFailure?.(error)
     const failure = describeFailure(error)
     chatDiag({
       kind: 'stream-error',
@@ -1744,6 +1749,17 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
             attempt,
           })
         }
+        return false
+      }
+      if (args.shouldRetryInPlace && !args.shouldRetryInPlace(error)) {
+        chatDiag({
+          kind: 'retry-yielded-to-fallback',
+          runtime: 'byok-ai-sdk',
+          provider: selection.providerId,
+          model: selection.modelId,
+          conv: conversationId,
+          attempt,
+        })
         return false
       }
       if (shouldBlockHighUsageRetry({ steps, totalInput: invocationUsage.totalInput, contextWindow })) {

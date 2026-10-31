@@ -103,7 +103,9 @@ export class SubscriptionFailoverRouter {
     const now = info.now ?? Date.now()
     const previous = this.failureStats.get(key)
     const stats: FailureStats =
-      previous && now - previous.lastFailureAt <= FAILURE_COUNT_WINDOW_MS ? previous : { counts: {}, lastFailureAt: now }
+      previous && now - previous.lastFailureAt <= FAILURE_COUNT_WINDOW_MS
+        ? previous
+        : { counts: {}, lastFailureAt: now }
     const count = (stats.counts[info.kind] ?? 0) + 1
     stats.counts[info.kind] = count
     stats.lastFailureAt = now

@@ -3,7 +3,14 @@
  * RetryInfo, "try again in 6s") win; the reset of an exhausted rate-limit bucket applies only without one. The
  * result is never capped here: a cooldown follows the provider exactly, and only an in-place wait is bounded.
  */
-import { errorText, headerValue, responseBodyJson, responseHeadersOf, unwrapProviderError, type ErrorLike } from './error-signals'
+import {
+  errorText,
+  headerValue,
+  responseBodyJson,
+  responseHeadersOf,
+  unwrapProviderError,
+  type ErrorLike,
+} from './error-signals'
 
 const UNIT_MS: Record<string, number> = {
   ms: 1,
@@ -159,7 +166,10 @@ function explicitBodyRetry(body: unknown, now: number): number | null {
 }
 
 const TEXT_HINTS = [
-  new RegExp(`\\b(?:try|retry)(?:\\s+again)?\\s+(?:in|after)\\s+((?:\\d+(?:\\.\\d+)?\\s*${UNIT}\\s*,?\\s*(?:and\\s+)?)+)`, 'i'),
+  new RegExp(
+    `\\b(?:try|retry)(?:\\s+again)?\\s+(?:in|after)\\s+((?:\\d+(?:\\.\\d+)?\\s*${UNIT}\\s*,?\\s*(?:and\\s+)?)+)`,
+    'i'
+  ),
   new RegExp(`\\bresets?\\s+in\\s+((?:\\d+(?:\\.\\d+)?\\s*${UNIT}\\s*,?\\s*(?:and\\s+)?)+)`, 'i'),
   new RegExp(`\\bquotaResetDelay\\W+((?:\\d+(?:\\.\\d+)?\\s*${UNIT})+)`, 'i'),
 ]
@@ -172,7 +182,8 @@ function textRetry(text: string, now: number): number | null {
     const duration = parseDurationText(match[1]!)
     if (duration != null) found.push(now + duration)
   }
-  const atDate = /\b(?:try again|retry|resets?)\s+(?:at|after)\s+(\d{4}-\d{2}-\d{2}T[\d:.]+(?:Z|[+-]\d{2}:?\d{2}))/i.exec(text)
+  const atDate =
+    /\b(?:try again|retry|resets?)\s+(?:at|after)\s+(\d{4}-\d{2}-\d{2}T[\d:.]+(?:Z|[+-]\d{2}:?\d{2}))/i.exec(text)
   if (atDate) found.push(parseResetInstant(atDate[1], now))
   return maxOf(found)
 }

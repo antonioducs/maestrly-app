@@ -103,16 +103,22 @@ describe('classifyModelFailure', () => {
       retryInPlace: false,
     })
     expect(
-      classifyModelFailure({ code: 'claude-accounts-exhausted', message: 'All Claude accounts are exhausted' }, { now: NOW })
-        .reason
+      classifyModelFailure(
+        { code: 'claude-accounts-exhausted', message: 'All Claude accounts are exhausted' },
+        { now: NOW }
+      ).reason
     ).toBe('quota')
   })
 
   it('recognizes Claude and Codex usage-limit envelopes', () => {
-    expect(classifyModelFailure(new Error("You've hit your usage limit · resets 5pm"), { now: NOW }).reason).toBe('quota')
+    expect(classifyModelFailure(new Error("You've hit your usage limit · resets 5pm"), { now: NOW }).reason).toBe(
+      'quota'
+    )
     expect(
-      classifyModelFailure({ turn: { status: 'failed', error: { message: 'UsageLimitExceeded: try later' } } }, { now: NOW })
-        .reason
+      classifyModelFailure(
+        { turn: { status: 'failed', error: { message: 'UsageLimitExceeded: try later' } } },
+        { now: NOW }
+      ).reason
     ).toBe('quota')
   })
 
@@ -159,7 +165,7 @@ describe('context overflow detection', () => {
     'Error code: context_length_exceeded',
     'The input token count (1200000) exceeds the maximum number of tokens allowed (1048576).',
     'the request exceeds the available context size, try increasing it',
-    'This model\'s maximum context length is 4096 tokens. (max_model_len)',
+    "This model's maximum context length is 4096 tokens. (max_model_len)",
     '`inputs` tokens + `max_new_tokens` must be <= 4096',
     'litellm.ContextWindowExceededError: context window exceeded',
     'Input is too long for requested model.',

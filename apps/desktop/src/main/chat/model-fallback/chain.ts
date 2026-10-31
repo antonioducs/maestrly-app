@@ -36,7 +36,8 @@ export interface FreezeModelChainInput {
   now?: number
 }
 
-export const candidateKey = (candidate: StickyModelRef): string => modelCircuitKey(candidate.providerId, candidate.modelId)
+export const candidateKey = (candidate: StickyModelRef): string =>
+  modelCircuitKey(candidate.providerId, candidate.modelId)
 
 function sameModel(a: StickyModelRef, b: StickyModelRef): boolean {
   return a.providerId === b.providerId && a.modelId === b.modelId
@@ -44,7 +45,11 @@ function sameModel(a: StickyModelRef, b: StickyModelRef): boolean {
 
 /** [primary, ...fallbacks] for one execution; a single entry when fallback does not apply. */
 export function freezeModelChain(input: FreezeModelChainInput): ModelCandidate[] {
-  const primary: ModelCandidate = { providerId: input.primary.providerId, modelId: input.primary.modelId, primary: true }
+  const primary: ModelCandidate = {
+    providerId: input.primary.providerId,
+    modelId: input.primary.modelId,
+    primary: true,
+  }
   if (input.strict || !input.config.enabled || input.config.fallbacks.length === 0) return [primary]
   const usable = input.isProviderUsable ?? (() => true)
   const chain: ModelCandidate[] = [primary]
@@ -81,7 +86,8 @@ export function isCandidateAdmissible(candidate: ModelCandidate, deps: Candidate
     const accounts = deps.accountChainOf(candidate.providerId)
     const chain = accounts.length ? accounts : [candidate.providerId]
     return chain.some(
-      (providerId) => deps.router.isAdmissible(providerId, now) || deps.router.getHealth(providerId).state === 'half-open'
+      (providerId) =>
+        deps.router.isAdmissible(providerId, now) || deps.router.getHealth(providerId).state === 'half-open'
     )
   }
   return deps.router.isAdmissible(candidate.providerId, now)
@@ -126,13 +132,22 @@ export interface SelectNextCandidateInput extends CandidateAdmissionDeps {
   windowOf?: (candidate: ModelCandidate) => Promise<number | undefined>
 }
 
+/** First admissible, not yet attempted candidate in chain order; null when none. */
+export function firstAdmissibleCandidate(
+  input: Omit<SelectNextCandidateInput, 'requiredTokens' | 'windowOf'>
+): ModelCandidate | null {
+  return (
+    input.chain.find(
+      (candidate) => !input.attempted.has(candidateKey(candidate)) && isCandidateAdmissible(candidate, input)
+    ) ?? null
+  )
+}
+
 /** First admissible, not yet attempted candidate (context-fit ordered after an overflow); null when none. */
 export async function selectNextCandidate(input: SelectNextCandidateInput): Promise<ModelCandidate | null> {
+  if (!input.requiredTokens || !input.windowOf) return firstAdmissibleCandidate(input)
   const remaining = input.chain.filter((candidate) => !input.attempted.has(candidateKey(candidate)))
-  const ordered =
-    input.requiredTokens && input.windowOf
-      ? await orderByContextFit(remaining, input.requiredTokens, input.windowOf)
-      : remaining
+  const ordered = await orderByContextFit(remaining, input.requiredTokens, input.windowOf)
   return ordered.find((candidate) => isCandidateAdmissible(candidate, input)) ?? null
 }
 
@@ -225,5 +240,6 @@ export function settleSticky(input: {
     touchStickyWinner(input.scope, input.served, now)
     return
   }
-  if (input.primaryFailureReason) recordStickyWinner(input.scope, primary, input.served, input.primaryFailureReason, now)
+  if (input.primaryFailureReason)
+    recordStickyWinner(input.scope, primary, input.served, input.primaryFailureReason, now)
 }

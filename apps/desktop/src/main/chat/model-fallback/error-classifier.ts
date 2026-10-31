@@ -134,7 +134,10 @@ export interface ClassifyModelFailureOptions {
 }
 
 /** Classifies a failed model call (thrown error, stream error part or runtime envelope). */
-export function classifyModelFailure(error: unknown, options: ClassifyModelFailureOptions = {}): ModelFailureClassification {
+export function classifyModelFailure(
+  error: unknown,
+  options: ClassifyModelFailureOptions = {}
+): ModelFailureClassification {
   const now = options.now ?? Date.now()
   if (isAbortError(error)) return shaped('aborted')
 
@@ -143,6 +146,10 @@ export function classifyModelFailure(error: unknown, options: ClassifyModelFailu
   if (typeof code === 'string' && SUBSCRIPTION_EXHAUSTED_CODES.has(code)) {
     const resetsAt = resetsAtOf(error)
     return shaped('quota', { retryInPlace: false, ...(resetsAt && resetsAt > now ? { retryAt: resetsAt } : {}) })
+  }
+  if (code === 'claude-authentication-required') {
+    // A lost OAuth refresh race also ends with "sign in again": the credential is still valid.
+    return isClaudeOAuthRefreshContention(error) ? shaped('auth_transient') : shaped('auth', { retryInPlace: false })
   }
   if (typeof code === 'string' && SUBSCRIPTION_UNAVAILABLE_CODES.has(code)) {
     const reason = (error as { reason?: unknown }).reason
@@ -197,7 +204,11 @@ export function classifyModelFailure(error: unknown, options: ClassifyModelFailu
   }
   if (billingText && (status === 400 || status === 403)) return withStatus('billing')
 
-  if (isClaudeAuthenticationRequired(failure) || status === 401 || (status === 403 && !MODEL_NOT_FOUND_TEXT.test(text))) {
+  if (
+    isClaudeAuthenticationRequired(failure) ||
+    status === 401 ||
+    (status === 403 && !MODEL_NOT_FOUND_TEXT.test(text))
+  ) {
     return withStatus('auth', PERMANENT_AUTH.test(text) ? { permanent: true } : {})
   }
   if (status === 404 || MODEL_NOT_FOUND_TEXT.test(text) || isClaudeModelUnavailable(failure)) {

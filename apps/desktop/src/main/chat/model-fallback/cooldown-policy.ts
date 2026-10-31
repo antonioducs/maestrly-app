@@ -48,7 +48,12 @@ export function cooldownKindFor(classification: Pick<ModelFailureClassification,
  * provider timing: the turn moves on, and stickiness keeps it from coming straight back).
  * `count` is the 1-based number of same-kind failures inside the counting window, this one included.
  */
-export function computeCooldownUntil(kind: CooldownKind, count: number, now: number, retryAt?: number | null): number | null {
+export function computeCooldownUntil(
+  kind: CooldownKind,
+  count: number,
+  now: number,
+  retryAt?: number | null
+): number | null {
   const announced = typeof retryAt === 'number' && Number.isFinite(retryAt) && retryAt > now ? retryAt : null
   if (kind === 'rate_limit') return announced
   if (kind === 'quota') return announced ?? now + QUOTA_DEFAULT_COOLDOWN_MS

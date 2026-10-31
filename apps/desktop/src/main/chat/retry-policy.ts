@@ -22,10 +22,7 @@ export function streamRetryFromClassification(
   now = Date.now()
 ): StreamRetryDecision {
   const throttleStatus = classification.status == null || classification.status === 429
-  if (
-    classification.reason === 'quota' ||
-    (classification.reason === 'billing' && throttleStatus)
-  ) {
+  if (classification.reason === 'quota' || (classification.reason === 'billing' && throttleStatus)) {
     return { retryable: false, reason: 'quota', delayMs: 0 }
   }
   if (!classification.retryInPlace) return { retryable: false, reason: 'fatal', delayMs: 0 }

@@ -122,12 +122,18 @@ describe('candidate admission and ordering', () => {
 
   it('blocks a BYOK candidate on its model or its account circuit', () => {
     const candidate: ModelCandidate = { providerId: 'openai', modelId: 'gpt-5' }
-    recordCandidateFailure(router, candidate, classifyModelFailure(Object.assign(new Error('x'), { statusCode: 529 })), undefined, NOW)
+    recordCandidateFailure(
+      router,
+      candidate,
+      classifyModelFailure(Object.assign(new Error('x'), { statusCode: 529 })),
+      undefined,
+      NOW
+    )
     expect(router.isAdmissible(modelCircuitKey('openai', 'gpt-5'), NOW)).toBe(false)
     expect(router.isAdmissible('openai', NOW)).toBe(true)
-    expect(isCandidateAdmissible({ providerId: 'openai', modelId: 'gpt-4' }, { router, accountChainOf, now: NOW })).toBe(
-      true
-    )
+    expect(
+      isCandidateAdmissible({ providerId: 'openai', modelId: 'gpt-4' }, { router, accountChainOf, now: NOW })
+    ).toBe(true)
     recordCandidateFailure(
       router,
       { providerId: 'openai', modelId: 'gpt-4' },
@@ -135,9 +141,9 @@ describe('candidate admission and ordering', () => {
       undefined,
       NOW
     )
-    expect(isCandidateAdmissible({ providerId: 'openai', modelId: 'gpt-4' }, { router, accountChainOf, now: NOW })).toBe(
-      false
-    )
+    expect(
+      isCandidateAdmissible({ providerId: 'openai', modelId: 'gpt-4' }, { router, accountChainOf, now: NOW })
+    ).toBe(false)
   })
 
   it('leaves Claude and Codex accounts to their own account layer', () => {
@@ -204,7 +210,8 @@ describe('runWithModelFallback', () => {
         if (candidate.primary) throw quota429()
         return `ok:${candidate.modelId}:${candidate.reasoning ?? ''}`
       },
-      onSwitch: ({ from, to, classification }) => switches.push(`${from.modelId}->${to.modelId}:${classification.reason}`),
+      onSwitch: ({ from, to, classification }) =>
+        switches.push(`${from.modelId}->${to.modelId}:${classification.reason}`),
     })
     expect(result).toBe('ok:gpt-5:high')
     expect(calls).toEqual(['opus', 'gpt-5'])

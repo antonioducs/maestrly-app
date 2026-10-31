@@ -193,6 +193,8 @@ export interface RunClaudeChatArgs {
   }) => Promise<ResolveClaudeTargetResult>
   onEffectiveTargetChanged?: (target: ClaudeRuntimeTarget) => void
   onFailoverTransition?: (event: ChatSubscriptionFailoverEvent) => void
+  /** Raw failure that ended the turn once account failover gave up (model fallback classifies it). */
+  onTerminalFailure?: (error: unknown) => void
   onSessionReady?: (sessionId: string, target: ClaudeRuntimeTarget) => boolean
   canPersistSession?: (target: ClaudeRuntimeTarget) => boolean
   onModelContextWindow?: (contextWindow: number, target: ClaudeRuntimeTarget) => void
@@ -2300,6 +2302,7 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
         sessionId,
       }
     } else if (fatal && authenticationRequired) {
+      args.onTerminalFailure?.(Object.assign(new Error(fatal), { code: 'claude-authentication-required' }))
       applyAuthenticationRequired(fatal, chatUsage)
       args.manager.requireAuthentication(result ?? fatal)
       coalescer.flush()
@@ -2310,6 +2313,8 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
     }
     args.manager.assertAccountIdentity(args.accountIdentity)
     if (fatal) {
+      // Never the success result: its text is model output, not a diagnostic.
+      args.onTerminalFailure?.(assistantFailure ?? new Error(fatal))
       applyWithUsage(
         {
           kind: 'error' as const,
@@ -2476,6 +2481,15 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
     }
     const caughtFailure = fatal ?? error
     const authenticationRequired = isClaudeAuthenticationRequired(caughtFailure)
+    if (!args.signal.aborted) {
+      args.onTerminalFailure?.(
+        authenticationRequired
+          ? Object.assign(new Error(claudeSubscriptionErrorMessage(caughtFailure)), {
+              code: 'claude-authentication-required',
+            })
+          : error
+      )
+    }
     if (args.signal.aborted) {
       applyWithUsage(
         {
