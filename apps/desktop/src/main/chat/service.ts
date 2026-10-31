@@ -4213,15 +4213,23 @@ async function startSend(
   for (;;) {
     admitRootCandidate(state, modelFallbackDeps)
     activeModelFallback.set(conversationId, state)
-    const result = await startSendAttempt(
-      deps,
-      wc,
-      conversationId,
-      text,
-      attachments,
-      { ...attemptOpts, modelFallback: state },
-      agentMentions
-    )
+    let result: { ok: boolean; error?: string }
+    try {
+      result = await startSendAttempt(
+        deps,
+        wc,
+        conversationId,
+        text,
+        attachments,
+        { ...attemptOpts, modelFallback: state },
+        agentMentions
+      )
+    } catch (error) {
+      // A thrown admission must not leave this candidate's effort for the next turn to read.
+      clearActiveModelFallback(conversationId, state)
+      settleRootModelFallback(state, 'cancelled', modelFallbackDeps)
+      throw error
+    }
     if (result.ok) return result
     clearActiveModelFallback(conversationId, state)
     const next = await nextAfterAdmissionFailure(state, result.error, modelFallbackDeps)
