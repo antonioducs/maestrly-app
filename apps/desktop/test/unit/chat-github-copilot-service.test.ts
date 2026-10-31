@@ -81,7 +81,7 @@ const h = vi.hoisted(() => {
       contextWindow: { tokenLimit: 272_000, currentTokens: 42_000, messagesLength: 3 },
     })),
     summarizePortable: vi.fn(async () => ({
-      text: 'portable summary',
+      text: PORTABLE_SUMMARY,
       usage: { input: 100, output: 20, cacheRead: 0, cacheCreate: 0, totalInput: 100 },
     })),
     getBinding: vi.fn(() => state.binding),
@@ -165,6 +165,9 @@ import { MAESTRLY_ULTRA_EFFORT } from '../../src/shared/chat'
 import { openAINativeCompactionMarkerPart } from '../../src/main/chat/message'
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
+import { structuredSummary } from '../helpers/compaction'
+
+const PORTABLE_SUMMARY = structuredSummary('portable summary')
 
 type Handler = (event: any, ...args: any[]) => unknown
 
@@ -826,7 +829,7 @@ describe('GitHub Copilot chat service integration', () => {
 
     await expect(handlers.get('chat:compact')?.({}, conversation.id)).resolves.toEqual({
       ok: true,
-      summary: 'portable summary',
+      summary: PORTABLE_SUMMARY,
       usage: { input: 100, output: 20, cacheRead: 0, cacheCreate: 0, totalInput: 100 },
     })
 
@@ -839,7 +842,7 @@ describe('GitHub Copilot chat service integration', () => {
     )
     const marker = listChatMessages(conversation.id).at(-1)
     expect(marker?.parts).toEqual([
-      expect.objectContaining({ type: 'compaction', text: 'portable summary', strategy: 'summary' }),
+      expect.objectContaining({ type: 'compaction', text: PORTABLE_SUMMARY, strategy: 'summary' }),
     ])
     expect(h.deleteOne).toHaveBeenCalledWith(conversation.id)
     expect(h.state.binding).toBeNull()

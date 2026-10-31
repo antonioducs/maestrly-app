@@ -495,12 +495,27 @@ its lifecycle. After completion, the reduction is shown when a new context sampl
 or estimate is available. A failure shows its diagnostic and preserves the last
 available context observation; it does not mean the context was reduced.
 
-Portable summaries use a three-minute deadline per stage, with one retry for a
-stage timeout, empty summary, or transient provider error. Completed stages are
-reused within that operation. The total time budget scales with the number of
-chunks, up to one hour. Cancellation and authentication/configuration failures
-do not trigger retries. The new summary becomes a context boundary only after
-all stages finish successfully; original messages remain in visible history.
+Portable summaries use a ten-minute deadline per stage, which only catches stalled
+calls, with up to three retries for a stage timeout, empty summary, or transient
+provider error. Completed stages are reused within that operation. The total time
+budget scales with the number of chunks, up to one hour. Cancellation and
+authentication/configuration failures do not trigger retries. The new summary
+becomes a context boundary only after all stages finish successfully; original
+messages remain in visible history.
+
+Summaries follow a fixed structure: objective, requirements and constraints,
+decisions, work state, pending user requests, next steps, relevant files, exact
+identifiers, and errors and fixes. Headings stay in English, and the content uses
+the conversation's language. Identifiers, paths, commands and error messages are
+kept literally. Each compaction updates the previous summary instead of rewriting
+it. Large histories are still summarized in chunks and then consolidated section
+by section. The summary aims for about 20% of the summarized content, between
+2,000 and 10,000 tokens (or 5% of the context window, whichever is smaller).
+Maestrly checks the final summary for the required headings without another
+model call. A summary that fails this check is requested once more with the
+missing headings listed. If the second attempt also fails, the better attempt is
+kept and the compaction still completes. Background preparation applies the same
+check, and its extra attempt is billed like any other.
 
 These observations and progress states are saved with messages. Existing
 conversations remain readable; older messages without observations use the

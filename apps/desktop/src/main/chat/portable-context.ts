@@ -204,6 +204,8 @@ export interface PortableSummaryResult {
   runtimeEstimatedCostUsd?: number
   /** All dispatched attempts, including failed attempts that were retried. */
   calls: number
+  /** The final summary still failed `auditFinal` after its corrective retry and was accepted as the best attempt. */
+  qualityDegraded?: boolean
 }
 
 export interface PortableSummaryProgress {
@@ -281,6 +283,11 @@ export interface PortableSummaryOptions {
   /** Durable completed-stage snapshot. Invalid/mismatched snapshots fail closed instead of repeating billed calls. */
   resume?: PortableSummaryCheckpoint
   onCheckpoint?: (checkpoint: PortableSummaryCheckpoint) => void
+  /**
+   * Deterministic check of the FINAL summary (issues; empty passes). A failing summary gets one corrective retry,
+   * then the attempt with fewer issues is accepted: format never blocks compaction.
+   */
+  auditFinal?: (summary: string) => string[]
 }
 
 /**
@@ -377,6 +384,7 @@ export async function summarizePortableTranscript(
   let calls = 0
   let pendingCalls = 0
   let finished = false
+  let qualityDegraded = false
   const maxChunkBytes = Math.max(1_000, Math.floor(maxChunkChars))
   const transcriptHash = createHash('sha256').update(transcript).digest('hex')
   const initialChunks = splitPortableTranscript(transcript, maxChunkBytes)
@@ -497,6 +505,37 @@ export async function summarizePortableTranscript(
     }
   }
 
+  const auditedFinal = async (
+    prompt: string,
+    phase: 'chunk' | 'consolidate',
+    text: string,
+    index: number,
+    attempt: number
+  ): Promise<string> => {
+    const issues = options.auditFinal!(text)
+    if (issues.length === 0) return text
+    let best = { text, issues: issues.length }
+    try {
+      report({ status: 'retrying', phase, completed: index, total: 1, attempt: attempt + 1 })
+      const retried = await runAttempt(
+        `${prompt}\n\nA previous answer to this request was rejected: ${issues.join('; ')}. ` +
+          'Return the complete summary again from the same input, fixing every issue.',
+        phase
+      )
+      checkActive()
+      const candidate = retried.text.trim()
+      if (candidate && !(maxSummaryTokens && estimateTextTokens(candidate) > maxSummaryTokens)) {
+        const remaining = options.auditFinal!(candidate).length
+        if (remaining < best.issues) best = { text: candidate, issues: remaining }
+      }
+    } catch {
+      // The corrective attempt is best-effort: keep the first valid summary unless the operation itself ended.
+      checkActive()
+    }
+    if (best.issues > 0) qualityDegraded = true
+    return best.text
+  }
+
   const sourceHash = (source: readonly string[]) => createHash('sha256').update(JSON.stringify(source)).digest('hex')
 
   const runLevel = async (
@@ -519,11 +558,12 @@ export async function summarizePortableTranscript(
           attempt,
         })
         let text: string
+        const limitInstruction = maxSummaryTokens
+          ? `\nReturn no more than ${maxSummaryTokens} portable tokens (conservative UTF-8 estimate).`
+          : ''
+        const prompt = `${label}:${limitInstruction}\n\n${source[index]}`
         try {
-          const limitInstruction = maxSummaryTokens
-            ? `\nReturn no more than ${maxSummaryTokens} portable tokens (conservative UTF-8 estimate).`
-            : ''
-          const result = await runAttempt(`${label}:${limitInstruction}\n\n${source[index]}`, phase)
+          const result = await runAttempt(prompt, phase)
           checkActive()
           text = result.text.trim()
           if (!text) throw new PortableSummaryEmptyError('The context compactor returned an empty summary')
@@ -544,6 +584,7 @@ export async function summarizePortableTranscript(
           await waitForRetry()
           continue
         }
+        if (source.length === 1 && options.auditFinal) text = await auditedFinal(prompt, phase, text, index, attempt)
         output.push(text)
         report({ status: 'running', phase, completed: index + 1, total: source.length, attempt })
         options.onCheckpoint?.({
@@ -609,6 +650,7 @@ export async function summarizePortableTranscript(
           ...(hasUsage() ? { usage } : {}),
           ...(hasCompleteCost() ? { runtimeEstimatedCostUsd } : {}),
           calls,
+          ...(qualityDegraded ? { qualityDegraded } : {}),
         }
       }
       if (level >= 12) throw new Error('The context compactor did not converge')

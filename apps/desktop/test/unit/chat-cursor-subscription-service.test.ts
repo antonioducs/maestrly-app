@@ -106,6 +106,7 @@ import {
 } from '../../src/main/chat/cursor-subscription/session-store'
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
+import { setCompactionFocus } from '../../src/main/chat/compaction-summarizer'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -380,6 +381,35 @@ describe('Cursor service integration', () => {
     expect(listChatMessages(conv.id).at(-1)?.parts).toContainEqual(
       expect.objectContaining({ type: 'compaction', text: 'Cursor summary' })
     )
+  })
+  it('gives the Cursor summarizer the same compaction contract as other runtimes', async () => {
+    const conv = conversation()
+    upsertChatMessage({
+      id: 'cursor-user',
+      conversationId: conv.id,
+      role: 'user',
+      parts: [{ type: 'text', id: 'u', text: 'Implement the feature.' }],
+      createdAt: 1,
+    })
+    upsertChatMessage({
+      id: 'cursor-answer',
+      conversationId: conv.id,
+      role: 'assistant',
+      parts: [{ type: 'text', id: 'a', text: 'Work completed.' }],
+      model: { providerId: 'builtin_cursor_subscription', modelId: 'composer-2.5' },
+      createdAt: 2,
+    })
+    setCompactionFocus(conv.id, 'Keep each question and the answer it got.')
+    try {
+      const handlers = register()
+      await expect(handlers.get('chat:compact')!({}, conv.id)).resolves.toMatchObject({ ok: true })
+    } finally {
+      setCompactionFocus(conv.id, null)
+    }
+    const system = (h.summarize.mock.calls.at(-1) as unknown as [{ system: string }])[0].system
+    expect(system).toContain('## Pending user requests')
+    expect(system).toContain('Keep each question and the answer it got.')
+    expect(system).toMatch(/Aim for about \d+ tokens/)
   })
   it('requires an explicit model for a frozen Cursor execution', async () => {
     await expect(resolveFrozenChatSelection(conversation('').id)).resolves.toEqual({ ok: false, error: 'no-model' })

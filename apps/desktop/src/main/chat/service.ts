@@ -508,6 +508,12 @@ import {
 } from './portable-context'
 import { chatDiag } from './diag-log'
 import { getCompactionFocus, getCompactionSummarizer } from './compaction-summarizer'
+import {
+  auditCompactionSummary,
+  COMPACTION_SYSTEM_PROMPT,
+  compactionSummaryTargetTokens,
+  compactionTargetInstruction,
+} from './compaction/summary-prompt'
 import { isBotMode } from '../fleet/instance/config'
 import { isAppToolGroup, sanitizeAppToolGroupPatch } from '../../shared/app-tool-groups'
 import {
@@ -7218,12 +7224,7 @@ async function retireIncompatibleSubscriptionState(
   await deleteSubscriptionStateForConversation(conversationId, signal)
 }
 
-const COMPACT_SYSTEM =
-  'You summarize programming conversations to preserve context when the history gets long. Produce a CONCISE ' +
-  "summary (Markdown) in the same language as the conversation, preserving: the user's goal, decided approaches " +
-  'and decisions, the current state of the work, relevant files/symbols/commands and the pending next steps. Do ' +
-  'NOT invent anything outside the conversation and do NOT answer the last message — just summarize. When the ' +
-  'input is already a set of summaries, consolidate all of them without dropping unique facts.'
+const COMPACT_SYSTEM = COMPACTION_SYSTEM_PROMPT
 
 /**
  * Summarizes active context. Manual/pre-send persists a milestone message; mid-turn returns a summary for the
@@ -7633,7 +7634,7 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
     compactHarness = resolution.harness
   }
   const compactFocus = opts.executionId ? null : getCompactionFocus(conversationId)
-  const compactSystem =
+  const compactBaseSystem =
     (conv.scope === 'standalone'
       ? `${COMPACT_SYSTEM}\nThis is a standalone general conversation. Preserve its goals and facts without assuming a project or repository.`
       : harnessCompactionSystem(COMPACT_SYSTEM, compactHarness)) + (compactFocus ? `\n\n${compactFocus}` : '')
@@ -7699,6 +7700,11 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
       includeSkillBodies: true,
     })
     if (!transcript) return { ok: false, error: 'too-short' }
+    const summaryTargetTokens = Math.min(
+      compactionSummaryTargetTokens(estimateTextTokens(transcript), contextWindow),
+      opts.summaryMaxTokens ?? Number.POSITIVE_INFINITY
+    )
+    const compactSystem = `${compactBaseSystem}\n\n${compactionTargetInstruction(summaryTargetTokens)}`
     if (opts.summaryMaxTokens && !contextWindow) throw new Error('summarizer-context-window-unknown')
     const backgroundInputBudget = contextWindow
       ? contextWindow -
@@ -7908,7 +7914,7 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
             : identity,
           cwd: conv.cwd,
           modelId: selection.modelId,
-          system: COMPACT_SYSTEM,
+          system: compactSystem,
           prompt,
           signal: stageSignal,
           fastMode: compactFastMode,
@@ -8028,7 +8034,16 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
           ...(opts.summaryStepTimeoutMs != null ? { stepTimeoutMs: opts.summaryStepTimeoutMs } : {}),
           ...(opts.summaryRetryDelayMs != null ? { retryDelayMs: opts.summaryRetryDelayMs } : {}),
           ...(opts.summaryMaxRetries != null ? { maxRetries: opts.summaryMaxRetries } : {}),
+          auditFinal: auditCompactionSummary,
         })
+    if (compacted.qualityDegraded) {
+      chatDiag({
+        kind: 'compaction-quality-degraded',
+        conv: conversationId,
+        issues: auditCompactionSummary(compacted.summary),
+        background: Boolean(opts.historyOverride),
+      })
+    }
     const summary = summaryWithApprovedPlan(compacted.summary, history)
     const usage = compacted.usage
     completedUsage = usage
