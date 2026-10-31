@@ -25,7 +25,11 @@ import type {
   ChatUsageStats,
   MessagePart,
 } from "../../shared/chat";
-import { totalTokensOf, toolOutputImages } from "../../shared/chat";
+import {
+  abortOpenToolParts,
+  totalTokensOf,
+  toolOutputImages,
+} from "../../shared/chat";
 import { parseChatReviewReport } from "../../shared/review";
 import {
   deleteConversationGeneratedImages,
@@ -1481,6 +1485,65 @@ export function reconcileInterruptedExecutionMessages(
       finishReason: message.finishReason || "interrupted",
       error: message.error || "process-interrupted",
       errorCode: message.errorCode || "review-loop-process-interrupted",
+      parts: abortOpenToolParts(message.parts),
+    });
+  }
+  return pending.length;
+}
+
+/**
+ * Turns the app stopped in the middle of (a crash, a killed process): assistant messages outside review loops with no
+ * outcome and a tool still waiting for its result. A tool's outcome lives only in the process that ran it, so at
+ * start none of them can finish; left alone, their cards (subagents included) would spin forever. Messages with no
+ * open tool are left as they are: a compaction-only message has no outcome by design.
+ */
+export function listInterruptedTurnAssistantMessages(
+  conversationId?: string,
+): StoredChatMessage[] {
+  const params: string[] = [];
+  const convFilter = conversationId ? "AND conversation_id = ?" : "";
+  if (conversationId) params.push(conversationId);
+  const rows = getDb()
+    .prepare(
+      `SELECT * FROM chat_messages
+       WHERE role = 'assistant'
+         AND (
+           meta_json IS NULL
+           OR trim(meta_json) = ''
+           OR (
+             json_valid(meta_json) = 1
+             AND COALESCE(json_extract(meta_json, '$.executionScope.kind'), '') <> 'review-loop'
+             AND COALESCE(json_extract(meta_json, '$.finishReason'), '') = ''
+             AND COALESCE(json_extract(meta_json, '$.error'), '') = ''
+           )
+         )
+         AND json_valid(parts_json) = 1
+         AND EXISTS (
+           SELECT 1 FROM json_each(chat_messages.parts_json) AS part
+           WHERE json_extract(part.value, '$.type') = 'tool'
+             AND json_extract(part.value, '$.state.status') IN ('pending', 'running', 'awaiting-permission')
+         )
+         ${convFilter}
+       ORDER BY seq ASC`,
+    )
+    .all(...params) as any[];
+  return rows.map(rowToMessage);
+}
+
+/**
+ * Boot/crash recovery for ordinary turns: ends each interrupted turn with a public `process-interrupted` error and its
+ * open tools aborted. Run only at start, before any turn: a turn running in this process is never matched.
+ */
+export function reconcileInterruptedTurnMessages(
+  conversationId?: string,
+): number {
+  const pending = listInterruptedTurnAssistantMessages(conversationId);
+  for (const message of pending) {
+    upsertChatMessage({
+      ...message,
+      error: "The app stopped before this response finished.",
+      errorCode: "process-interrupted",
+      parts: abortOpenToolParts(message.parts),
     });
   }
   return pending.length;

@@ -819,6 +819,7 @@ export default {
     memoryShared: 'Shared',
     claudeAuthenticationRequired: 'Your Claude connection expired. Sign in again to continue.',
     manageClaudeConnection: 'Manage Claude connection',
+    processInterruptedError: 'This response was interrupted because Maestrly closed or restarted.',
     accountsExhaustedError: 'All Codex accounts in the rotation list are out of usage. Try again later.',
     claudeAccountsExhaustedError: 'All Claude accounts in the rotation list are out of usage. Try again later.',
     skillFolder: 'Skill loaded from {{dir}}',

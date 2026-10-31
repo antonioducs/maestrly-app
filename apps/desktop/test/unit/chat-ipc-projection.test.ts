@@ -401,6 +401,8 @@ describe('chat:tool-image ownership', () => {
       content: [{ type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' }],
     })
     const imageId = toolOutputImages(output)[0]!.id
+    // A live turn starts after the chat service did: its start ends the turns a previous process left running.
+    const handler = register().get('chat:tool-image')!
     upsertChatMessage({
       id: 'live-message',
       conversationId: conversation.id,
@@ -409,7 +411,6 @@ describe('chat:tool-image ownership', () => {
       createdAt: 1,
     })
 
-    const handler = register().get('chat:tool-image')!
     await expect(
       handler({}, toolImagePayload(conversation.id, 'live-message', 'live-part', imageId))
     ).resolves.toMatchObject({ ok: true, mediaType: 'image/png' })

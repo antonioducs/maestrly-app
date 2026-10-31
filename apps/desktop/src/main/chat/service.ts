@@ -279,6 +279,7 @@ import {
   listUndeliveredReviewReports,
   recordChatUsageAttempt,
   reconcileInterruptedExecutionMessages,
+  reconcileInterruptedTurnMessages,
   searchChatMessages,
   toPublicChatHistoryStats,
   upsertChatMessage,
@@ -9610,6 +9611,12 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
     reconcileInterruptedExecutionMessages()
   } catch {
     // Best-effort: an old DB / partial schema must not prevent chat startup.
+  }
+  // Boot: ordinary turns the process died in the middle of → their open tools (subagent cards included) end aborted.
+  try {
+    reconcileInterruptedTurnMessages()
+  } catch {
+    // Best-effort, as above.
   }
   try {
     reconcileInterruptedMaestroLiveRuns()
