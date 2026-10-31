@@ -445,7 +445,12 @@ export default {
     history_search: {
       title: 'Search conversation history',
       description:
-        'Searches this conversation’s full saved history, including turns already compacted away. Every word must appear; newest matches first. Returns message positions (seq) and snippets; read around one with history_read. Read-only.',
+        'Searches this conversation’s full saved history, including turns already compacted away and tool calls. Ranks messages by relevance: word stems match regardless of accents, parts of words and CJK text are found too, and recent messages win ties. Use mode "exact" to require every word, newest first. Returns message positions (seq), snippets and scores; read around one with history_read. Read-only.',
+      params: {
+        query: 'Words to look for (2–500 characters). Put "a phrase" in quotes to look for it as written.',
+        limit: 'Maximum results, 1–30 (default 8).',
+        mode: '"relevance" (default) ranks by relevance; "exact" requires every word and lists newest first.',
+      },
     },
     history_read: {
       title: 'Read conversation history',

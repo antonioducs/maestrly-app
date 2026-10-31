@@ -443,7 +443,12 @@ export default {
     history_search: {
       title: 'Buscar no histórico da conversa',
       description:
-        'Busca no histórico completo salvo desta conversa, inclusive trechos já compactados. Todas as palavras precisam aparecer; os resultados mais recentes vêm primeiro. Retorna posições (seq) e trechos; leia ao redor de um com history_read. Somente leitura.',
+        'Busca no histórico completo salvo desta conversa, inclusive trechos já compactados e chamadas de ferramentas. Ordena as mensagens por relevância: radicais das palavras casam sem depender de acentos, partes de palavras e texto CJK também são encontrados, e mensagens recentes desempatam. Use o modo "exact" para exigir todas as palavras, mais recentes primeiro. Retorna posições (seq), trechos e pontuações; leia ao redor de um com history_read. Somente leitura.',
+      params: {
+        query: 'Palavras a procurar (2 a 500 caracteres). Coloque "uma frase" entre aspas para buscá-la como escrita.',
+        limit: 'Máximo de resultados, de 1 a 30 (padrão 8).',
+        mode: '"relevance" (padrão) ordena por relevância; "exact" exige todas as palavras e lista as mais recentes primeiro.',
+      },
     },
     history_read: {
       title: 'Ler histórico da conversa',

@@ -214,7 +214,7 @@ const EXPECTED_SHAPES: ToolShape[] = [
   shape('project_notes_append_page', ['pageId', 'text'], ['pageId', 'text']),
   shape('project_notes_delete_page', ['pageId'], ['pageId']),
   shape('project_notes_quick_append', ['text'], ['text']),
-  shape('history_search', ['limit', 'query'], ['query']),
+  shape('history_search', ['limit', 'mode', 'query'], ['query']),
   shape('history_read', ['after', 'before', 'seq'], ['seq']),
   shape('memory_search', ['limit', 'query'], ['query']),
   shape('memory_list', ['limit', 'pinned', 'scope', 'source', 'status', 'tag', 'type']),

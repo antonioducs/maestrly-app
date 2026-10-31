@@ -1,7 +1,8 @@
 import { tFor } from '../../i18n'
 import { z } from 'zod'
 import { toolOutputText, type MessagePart } from '../../../shared/chat'
-import { listChatMessagesAround, searchConversationHistory } from '../../chat/chat-store'
+import { listChatMessagesAround } from '../../chat/chat-store'
+import { searchHistory } from '../../chat/history-index/search'
 import type { McpToolContext } from './context'
 import { ok } from './context'
 
@@ -71,26 +72,33 @@ export function registerHistoryTools(ctx: McpToolContext): void {
       title: t('tools.history_search.title'),
       description: t('tools.history_search.description'),
       inputSchema: {
-        query: z.string().trim().min(2).max(500),
-        limit: z.number().int().min(1).max(30).optional(),
+        query: z.string().trim().min(2).max(500).describe(t('tools.history_search.params.query')),
+        limit: z.number().int().min(1).max(30).optional().describe(t('tools.history_search.params.limit')),
+        mode: z.enum(['relevance', 'exact']).optional().describe(t('tools.history_search.params.mode')),
       },
       annotations: { readOnlyHint: true },
     },
-    async ({ query, limit }) =>
-      ok(
+    async ({ query, limit, mode }) => {
+      const result = await searchHistory({ conversationIds: [convId], query, mode, limit: limit ?? 8 })
+      return ok(
         JSON.stringify(
           {
-            results: searchConversationHistory(convId, query, limit ?? 8).map((hit) => ({
+            results: result.hits.map((hit) => ({
               seq: hit.seq,
               role: hit.role,
               at: new Date(hit.createdAt).toISOString(),
               snippet: hit.snippet,
+              ...(hit.score !== undefined ? { score: hit.score } : {}),
+              ...(hit.kind ? { kind: hit.kind } : {}),
             })),
+            mode: result.mode,
+            ...(result.building ? { index: 'building' } : {}),
           },
           null,
           2
         )
       )
+    }
   )
   server.registerTool(
     'history_read',

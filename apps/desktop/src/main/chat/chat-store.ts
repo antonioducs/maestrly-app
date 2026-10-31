@@ -2754,6 +2754,7 @@ export function searchConversationHistory(
   conversationId: string,
   query: string,
   limit = 8,
+  options: { beforeSeq?: number } = {},
 ): ConversationHistoryHit[] {
   const terms = [
     ...new Set(
@@ -2769,7 +2770,7 @@ export function searchConversationHistory(
      WHERE conversation_id = ? AND seq < ? AND ${CONVERSATION_CONTEXT_SQL} ORDER BY seq DESC LIMIT ?`,
   );
   const hits: ConversationHistoryHit[] = [];
-  let cursor = Number.MAX_SAFE_INTEGER;
+  let cursor = options.beforeSeq ?? Number.MAX_SAFE_INTEGER;
   let scanned = 0;
   while (hits.length < bounded && scanned < HISTORY_SCAN.maxMessages) {
     const rows = page.all(
