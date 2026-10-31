@@ -632,6 +632,11 @@ export function toModelMessages(
   opts: {
     dropImages?: boolean;
     cacheControl?: boolean;
+    /**
+     * Anthropic breakpoints before the newest message live for an hour instead of five minutes: a person often takes
+     * longer than that between turns. Only for a conversation with a person; unattended work stays on five minutes.
+     */
+    longCacheTtl?: boolean;
     reasoningReplay?: InterleavedReplayPolicy;
     /** Aggregated persisted-replay provenance counters (no content) — active policy only. */
     replayStats?: PersistedReplayStats;
@@ -843,15 +848,20 @@ export function toModelMessages(
   // (history). Their cache-policy.ts explains the last two: the last user message remains
   // FIXED while a turn expands into assistant/tool steps, so caching there lets every
   // intra-turn call hit the prefix. ≤3 breakpoints (Anthropic limit = 4). Only @ai-sdk/anthropic.
-  return opts.cacheControl ? withAnthropicCacheControl(out) : out;
+  return opts.cacheControl
+    ? withAnthropicCacheControl(out, { longTtl: opts.longCacheTtl })
+    : out;
 }
 
 /**
  * Returns a copy with at most three Anthropic breakpoints. Removes old breakpoints before recalculating
- * positions so growing continuation arrays do not accumulate `cache_control` beyond the limit.
+ * positions so growing continuation arrays do not accumulate `cache_control` beyond the limit. With `longTtl`, every
+ * breakpoint but the newest lasts an hour; Anthropic requires longer entries to come before shorter ones, which this
+ * order keeps.
  */
 export function withAnthropicCacheControl(
   messages: readonly ModelMessage[],
+  opts: { longTtl?: boolean } = {},
 ): ModelMessage[] {
   if (messages.length === 0) return [];
   const breakpoints = new Set(
@@ -865,7 +875,10 @@ export function withAnthropicCacheControl(
     const anthropic = { ...(providerOptions.anthropic ?? {}) };
     delete anthropic.cacheControl;
     if (breakpoints.has(index))
-      anthropic.cacheControl = { type: "ephemeral" as const };
+      anthropic.cacheControl =
+        opts.longTtl && index < messages.length - 1
+          ? { type: "ephemeral" as const, ttl: "1h" as const }
+          : { type: "ephemeral" as const };
     if (Object.keys(anthropic).length > 0)
       providerOptions.anthropic = anthropic;
     else delete providerOptions.anthropic;

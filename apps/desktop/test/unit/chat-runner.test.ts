@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { jsonSchema, simulateReadableStream, tool } from 'ai'
 import { MockLanguageModelV4 } from 'ai/test'
+import { registerAutonomousConversation } from '../../src/main/chat/autonomous'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { toPublicChatUsage, listChatMessages, upsertChatMessage } from '../../src/main/chat/chat-store'
@@ -1425,7 +1426,7 @@ describe('API-key provider failures', () => {
   })
 })
 
-describe('mid-turn compaction from the cached request', () => {
+describe('prompt cache in API-key turns', () => {
   const usage = (input: number, output = 20) => ({
     inputTokens: { total: input, noCache: input, cacheRead: 0, cacheWrite: 0 },
     outputTokens: { total: output, text: output, reasoning: 0 },
@@ -1602,6 +1603,81 @@ describe('mid-turn compaction from the cached request', () => {
       return { summary: 'Map-reduce summary.' }
     })
     expect(results).toEqual([expect.objectContaining({ text: '', usage: expect.objectContaining({ output: 30 }) })])
+  })
+
+  it('caches an interactive Anthropic conversation for an hour and unattended work for five minutes', async () => {
+    const anthropic = addProvider({ name: 'Anthropic', baseURL: 'https://api.anthropic.com/v1', kind: 'anthropic' })
+    upsertChatMessage({
+      id: 'a0',
+      conversationId: 'c',
+      role: 'assistant',
+      createdAt: 2,
+      finishReason: 'stop',
+      parts: [{ type: 'text', id: 'a0-t', text: 'Probed.' }],
+    })
+    upsertChatMessage({
+      id: 'u2',
+      conversationId: 'c',
+      role: 'user',
+      createdAt: 3,
+      parts: [{ type: 'text', id: 'u2-t', text: 'Again.' }],
+    })
+    mocks.streamText.mockReset().mockImplementation(() => ({ fullStream: (async function* () {})() }) as never)
+    mocks.resolveChatModel.mockReturnValue({
+      model: { specificationVersion: 'v4', provider: 'anthropic.messages', modelId: 'claude-test' },
+      transport: 'anthropic',
+      harnessProfile: 'legacy-v1',
+      promptProfile: 'maestrly-legacy',
+      capabilities: {
+        encryptedReasoning: false,
+        nativeApplyPatch: false,
+        nativeCompaction: false,
+        nativeShell: false,
+        promptCacheKey: false,
+        toolSearch: false,
+      },
+      providerFingerprint: 'test-fp',
+    })
+    const run = (assistantMessageId: string) =>
+      runChat({
+        conversationId: 'c',
+        projectId: 'w',
+        cwd: '/tmp/w',
+        selection: { providerId: anthropic.id, modelId: 'claude-test' },
+        broker: { assert: async () => {} } as unknown as PermissionBroker,
+        questionBroker: {} as unknown as QuestionBroker,
+        emit: () => {},
+        signal: new AbortController().signal,
+        assistantMessageId,
+        assistantCreatedAt: 1000,
+        responseStartedAt: 1000,
+      })
+    const breakpoints = (call: number) =>
+      (mocks.streamText.mock.calls[call][0] as { messages: ModelMessageLike[] }).messages.map(
+        (message) =>
+          (message as { providerOptions?: { anthropic?: { cacheControl?: unknown } } }).providerOptions?.anthropic
+            ?.cacheControl
+      )
+
+    await run('interactive')
+    expect(breakpoints(0)[0]).toEqual({ type: 'ephemeral', ttl: '1h' })
+    expect(breakpoints(0).at(-1)).toEqual({ type: 'ephemeral' })
+
+    const unregister = registerAutonomousConversation('c', {
+      cwd: '/tmp/w',
+      allowCommands: false,
+      allowWeb: false,
+      allowAppTools: false,
+      allowMcp: false,
+      allowPush: false,
+    })
+    try {
+      await run('unattended')
+    } finally {
+      unregister()
+    }
+    expect(breakpoints(1)[0]).toEqual({ type: 'ephemeral' })
+    expect(JSON.stringify(breakpoints(1))).not.toContain('ttl')
   })
 })
 

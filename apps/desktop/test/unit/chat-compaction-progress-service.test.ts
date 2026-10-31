@@ -279,6 +279,18 @@ describe('service-owned compaction progress', () => {
     for (const system of systems) expect(system).toContain('Keep each question and the answer it got.')
   })
 
+  it('summarizes on Anthropic without prompt-cache breakpoints', async () => {
+    // Each summary request is sent once, so a cache write would only cost more.
+    const anthropic = addProvider({ name: 'Anthropic', baseURL: 'https://api.anthropic.com/v1', kind: 'anthropic' })
+    patchConvUiPrefs(conversationId, { chat: { providerId: anthropic.id, modelId: 'synthetic-model' } })
+    expect(await compact()).toMatchObject({ ok: true })
+    expect(h.generateText).toHaveBeenCalled()
+    for (const [request] of h.generateText.mock.calls as unknown as [Record<string, unknown>][]) {
+      expect(request).not.toHaveProperty('messages')
+      expect(JSON.stringify(request)).not.toMatch(/cacheControl|cache_control/)
+    }
+  })
+
   it('fails closed when the registered summarizer is unavailable', async () => {
     setCompactionSummarizer(conversationId, () => null)
     expect(await compact()).toEqual({ ok: false, error: 'compaction-model-unavailable' })

@@ -13,8 +13,13 @@ const h = vi.hoisted(() => ({
 vi.mock('ai', () => ({ generateText: h.generateText }))
 vi.mock('../../src/main/store', () => ({ getConversation: () => ({ scope: 'project' }) }))
 vi.mock('../../src/main/chat/catalog', () => ({
-  getProvider: (id: string) => (id === 'api' ? { baseURL: 'https://example.test' } : undefined),
-  getProviderKind: () => 'openai',
+  getProvider: (id: string) =>
+    id === 'api'
+      ? { baseURL: 'https://example.test' }
+      : id === 'anthropic-api'
+        ? { baseURL: 'https://api.anthropic.com/v1', kind: 'anthropic' }
+        : undefined,
+  getProviderKind: (provider?: { kind?: string }) => provider?.kind ?? 'openai',
   subscriptionAccountId: () => null,
   isCodexSubscriptionProvider: (id: string) => id === 'codex-subscription',
   isClaudeSubscriptionProvider: () => false,
@@ -98,6 +103,13 @@ describe('runOneShotText', () => {
     expect(h.generateText.mock.calls[0][0]).not.toHaveProperty('messages')
     expect(result).toEqual({ text: 'api', usage: { input: 6, output: 2, cacheRead: 4, cacheCreate: 0 } })
     expect(h.recordModelCallUsage).toHaveBeenCalledWith(expect.objectContaining({ agent: args.agent }))
+  })
+  it('sends Anthropic one-shot prompts without prompt-cache breakpoints', async () => {
+    // A one-shot request is never repeated, so a cache write would only cost more.
+    await runOneShotText({ ...args, selection: { providerId: 'anthropic-api', modelId: 'claude-test' } })
+    const request = h.generateText.mock.calls[0][0]
+    expect(request).not.toHaveProperty('messages')
+    expect(JSON.stringify(request)).not.toMatch(/cacheControl|cache_control/)
   })
   it('routes Google AI through an isolated Antigravity prompt', async () => {
     h.runAntigravityIsolatedPrompt.mockResolvedValue({ text: 'gemini' })

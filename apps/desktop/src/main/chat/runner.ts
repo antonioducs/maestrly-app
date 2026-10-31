@@ -1515,6 +1515,9 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     dropImages,
     nativePdf,
     cacheControl: isAnthropicProvider(selection.providerId),
+    // Unattended runs (isolated rounds, executors, routines) come back within minutes or never: five minutes is cheaper.
+    longCacheTtl:
+      isAnthropicProvider(selection.providerId) && !args.ephemeralSession && !autonomousPolicy(conversationId),
     ...(replayPolicy ? { reasoningReplay: replayPolicy, replayStats: persistedReplayStats } : {}),
   }
 

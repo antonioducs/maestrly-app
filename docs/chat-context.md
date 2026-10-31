@@ -546,6 +546,13 @@ calls a tool, runs out of tokens, or returns a summary that fails the structure
 check, or the request fails, the summary is made in chunks as usual. Every
 attempt is billed to the turn.
 
+With an Anthropic API key, a conversation with a person keeps its prompt cache
+for an hour between turns: the breakpoints on the first and the second-to-last
+message last an hour, and the one on the newest message lasts five minutes.
+Isolated review rounds, unattended executor runs and routines keep five
+minutes, and so do subagents. One-shot requests, such as summaries and titles,
+set no breakpoint, since they are never repeated.
+
 Automatic compaction, before a message is sent or during a turn, does not stop
 the conversation when the summary fails. When the summarizer reports that its
 input is too large, the chunks are retried at 70%, 50% and 35% of their size.
