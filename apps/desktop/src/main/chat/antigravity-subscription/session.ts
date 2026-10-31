@@ -169,8 +169,10 @@ export async function buildAntigravityInstructions(
   }
 }
 
-export function buildAntigravitySeedTranscript(history: readonly ChatMessage[]): string {
-  return renderNativeSeedTranscript(history.slice(0, -1))
+/** `liveAssistant` carries a compaction made during this turn, so the seed starts from its summary. */
+export function buildAntigravitySeedTranscript(history: readonly ChatMessage[], liveAssistant?: ChatMessage): string {
+  const prior = history.slice(0, -1)
+  return renderNativeSeedTranscript(liveAssistant ? [...prior, liveAssistant] : prior)
 }
 
 function dataUrlImage(data: string | undefined): { data: string; mimeType: string } | null {

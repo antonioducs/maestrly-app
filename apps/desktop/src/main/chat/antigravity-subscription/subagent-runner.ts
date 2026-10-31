@@ -21,6 +21,7 @@ import {
   type AntigravitySubscriptionManager,
 } from './manager'
 import { resolveAntigravityModelValue } from './models'
+import { assertAntigravityPromptFits } from './prompt-limit'
 import { renderAntigravityToolCatalog } from './tool-catalog'
 
 const FORBIDDEN_CHILD_TOOLS = new Set<string>([
@@ -115,6 +116,8 @@ export async function runAntigravitySubagent(args: RunAntigravitySubagentArgs): 
     if (!modelValue) throw new AntigravityModelUnavailableError(effective.modelId)
     const childToolset = await registerAntigravityHostToolset(tools)
     toolset = childToolset
+    const prompt = `<maestrly_instructions>\n${instructions}\n</maestrly_instructions>\n\n${renderAntigravityToolCatalog(childToolset.specs)}\n\n# Task\n${args.task}`
+    assertAntigravityPromptFits([{ type: 'text', text: prompt }])
     const connection = await args.manager.connection(args.signal)
     const { client } = connection
     const created = await client.request<AcpSessionSetupResult>('session/new', {
@@ -143,7 +146,6 @@ export async function runAntigravitySubagent(args: RunAntigravitySubagentArgs): 
       onToolResult: () => undefined,
     })
     args.progress?.(`Starting subagent ${args.agentName}`)
-    const prompt = `<maestrly_instructions>\n${instructions}\n</maestrly_instructions>\n\n${renderAntigravityToolCatalog(childToolset.specs)}\n\n# Task\n${args.task}`
     const cancel = () => client.notify('session/cancel', { sessionId: id })
     args.signal.addEventListener('abort', cancel, { once: true })
     let result: AcpPromptResult

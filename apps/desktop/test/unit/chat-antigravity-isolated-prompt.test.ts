@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { AntigravityAccountChangedError } from '../../src/main/chat/antigravity-subscription/errors'
+import {
+  AntigravityAccountChangedError,
+  AntigravityPromptTooLargeError,
+} from '../../src/main/chat/antigravity-subscription/errors'
 import {
   runAntigravityIsolatedPrompt,
   summarizeWithAntigravityRuntime,
@@ -68,6 +71,13 @@ describe('Antigravity isolated prompts', () => {
       await rejected
     }
     await expect.poll(() => fake.requests('session/cancel').length).toBe(1)
+  })
+
+  it('refuses a prompt the runtime would cut, before opening a session', async () => {
+    await expect(runAntigravityIsolatedPrompt(args(`${'x'.repeat(200_000)}\nECHO late`))).rejects.toBeInstanceOf(
+      AntigravityPromptTooLargeError
+    )
+    expect(fake.requests('session/new')).toHaveLength(0)
   })
 
   it('refuses to run for another account identity', async () => {

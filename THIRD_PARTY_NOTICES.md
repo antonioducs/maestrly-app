@@ -99,7 +99,7 @@ The complete licenses are distributed with the packages in
 ## node-forge
 
 The desktop app includes [node-forge](https://github.com/digitalbazaar/forge)
-1.4.0 to sign the self-signed certificate a computer presents to the owner's
+1.4.2 to sign the self-signed certificate a computer presents to the owner's
 other computers. It is dual-licensed under the BSD-3-Clause License and the GNU
 GPL 2.0; Maestrly uses it under the BSD-3-Clause License, Copyright (c) 2010,
 Digital Bazaar, Inc. The complete license is distributed with the package in

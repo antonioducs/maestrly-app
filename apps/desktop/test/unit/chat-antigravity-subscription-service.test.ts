@@ -125,6 +125,10 @@ import {
   getAntigravitySessionBinding,
   putAntigravitySessionBinding,
 } from '../../src/main/chat/antigravity-subscription/session-store'
+import {
+  ANTIGRAVITY_PROMPT_TEXT_MAX_BYTES,
+  antigravityIsolatedPromptText,
+} from '../../src/main/chat/antigravity-subscription/prompt-limit'
 import { addSubscriptionAccount, subscriptionProviderIdFor } from '../../src/main/chat/catalog'
 import { type ChatIpcDeps, registerChatIpc } from '../../src/main/chat/service'
 import { listChatMessages, listConversationContextMessages, upsertChatMessage } from '../../src/main/chat/chat-store'
@@ -257,6 +261,7 @@ describe('Google AI subscription service', () => {
     expect(args.harness).toBeDefined()
     expect(args.permMode).toBe('ask')
     expect(args.canPersistSession()).toBe(true)
+    expect(args.compactHistory).toEqual(expect.any(Function))
     expect(h.genericRun).not.toHaveBeenCalled()
     const manager = h.managerFor(account.id)
     manager.logout.mockImplementationOnce(async () => {
@@ -373,6 +378,37 @@ describe('Google AI subscription service', () => {
     expect(listChatMessages(conv.id).at(-1)?.parts).toContainEqual(
       expect.objectContaining({ type: 'compaction', text: 'Gemini summary' })
     )
+  })
+
+  it('summarizes a long history in stages that each fit the Antigravity prompt limit', async () => {
+    const conv = makeConversation(makeWorkspace().id)
+    patchConvUiPrefs(conv.id, {
+      chat: { providerId: 'builtin_antigravity_subscription', modelId: 'gemini-3.1-pro', reasoning: 'low' },
+    })
+    upsertChatMessage({
+      id: 'agy-user',
+      conversationId: conv.id,
+      role: 'user',
+      parts: [{ type: 'text', id: 'u', text: 'Investigate the failure.' }],
+      createdAt: 1,
+    })
+    upsertChatMessage({
+      id: 'agy-answer',
+      conversationId: conv.id,
+      role: 'assistant',
+      parts: [{ type: 'text', id: 'a', text: 'tool output line\n'.repeat(30_000) }],
+      model: { providerId: 'builtin_antigravity_subscription', modelId: 'gemini-3.1-pro' },
+      createdAt: 2,
+    })
+    const handlers = register()
+    await expect(handlers.get('chat:compact')!({}, conv.id)).resolves.toMatchObject({ ok: true })
+    const stages = h.summarize.mock.calls.map((call) => (call as unknown[])[0] as { system: string; prompt: string })
+    expect(stages.length).toBeGreaterThan(2)
+    for (const stage of stages) {
+      expect(Buffer.byteLength(antigravityIsolatedPromptText(stage.system, stage.prompt), 'utf8')).toBeLessThanOrEqual(
+        ANTIGRAVITY_PROMPT_TEXT_MAX_BYTES
+      )
+    }
   })
 })
 

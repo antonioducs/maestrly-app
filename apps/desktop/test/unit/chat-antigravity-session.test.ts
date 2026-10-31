@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatMessage } from '../../src/shared/chat'
+import { AntigravityPromptTooLargeError } from '../../src/main/chat/antigravity-subscription/errors'
+import {
+  ANTIGRAVITY_PROMPT_TEXT_MAX_BYTES,
+  ANTIGRAVITY_RUNTIME_PROMPT_MAX_BYTES,
+  antigravityIsolatedPromptText,
+  antigravityPromptTextBytes,
+  antigravitySummaryChunkBytes,
+  assertAntigravityPromptFits,
+} from '../../src/main/chat/antigravity-subscription/prompt-limit'
 import {
   ANTIGRAVITY_MESSAGE_ANCHOR,
   buildAntigravityPromptBlocks,
@@ -162,5 +171,54 @@ describe('Antigravity prompt blocks', () => {
   it('hashes instructions deterministically', () => {
     expect(hashAntigravityInstructions('a')).toBe(hashAntigravityInstructions('a'))
     expect(hashAntigravityInstructions('a')).not.toBe(hashAntigravityInstructions('b'))
+  })
+
+  it('seeds from a summary made during the turn instead of the history it replaced', () => {
+    const history = [
+      user([text('first question')], 'u0'),
+      { id: 'a0', conversationId: 'c1', role: 'assistant', parts: [text('first answer')], createdAt: 2 } as ChatMessage,
+      user([text('follow-up')]),
+    ]
+    const live = {
+      id: 'a1',
+      conversationId: 'c1',
+      role: 'assistant',
+      parts: [{ type: 'compaction', id: 'k1', text: 'Earlier work summary.', strategy: 'summary' }],
+      createdAt: 3,
+    } as unknown as ChatMessage
+    expect(buildAntigravitySeedTranscript(history, live)).toBe('Previous summary:\nEarlier work summary.')
+  })
+})
+
+describe('Antigravity prompt limit', () => {
+  it('counts the UTF-8 bytes of text blocks and ignores image data', () => {
+    expect(
+      antigravityPromptTextBytes([
+        { type: 'text', text: 'ação' },
+        { type: 'image', mimeType: 'image/png', data: PNG },
+        { type: 'text', text: 'ok' },
+      ])
+    ).toBe(8)
+  })
+
+  it('accepts a prompt at the limit and rejects one byte more before the runtime would cut it', () => {
+    expect(ANTIGRAVITY_PROMPT_TEXT_MAX_BYTES).toBeLessThan(ANTIGRAVITY_RUNTIME_PROMPT_MAX_BYTES)
+    expect(() =>
+      assertAntigravityPromptFits([{ type: 'text', text: 'x'.repeat(ANTIGRAVITY_PROMPT_TEXT_MAX_BYTES) }])
+    ).not.toThrow()
+    const oversized = () =>
+      assertAntigravityPromptFits([{ type: 'text', text: 'x'.repeat(ANTIGRAVITY_PROMPT_TEXT_MAX_BYTES + 1) }])
+    expect(oversized).toThrow(AntigravityPromptTooLargeError)
+    expect(oversized).toThrow(/Nothing was sent/)
+  })
+
+  it('sizes summary chunks so the wrapped stage prompt stays within the limit', () => {
+    const system = 'Summarize the conversation. ✓'.repeat(200)
+    const label =
+      'Source chunk 120/120:\nReturn no more than 1000000 portable tokens (conservative UTF-8 estimate).\n\n'
+    const chunk = 'é'.repeat(Math.floor(antigravitySummaryChunkBytes(system) / 2))
+    const prompt = antigravityIsolatedPromptText(system, `${label}${chunk}`)
+    expect(Buffer.byteLength(prompt, 'utf8')).toBeLessThanOrEqual(ANTIGRAVITY_PROMPT_TEXT_MAX_BYTES)
+    expect(antigravitySummaryChunkBytes(system)).toBeGreaterThan(150_000)
   })
 })
