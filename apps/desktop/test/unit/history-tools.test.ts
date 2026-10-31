@@ -30,6 +30,10 @@ function say(
   });
 }
 
+/** Realistic tool output: a run of one repeated character is stored as omitted binary content. */
+const logLines = (count: number) =>
+  Array.from({ length: count }, (_, index) => `log line ${index} ok`).join("\n");
+
 describe("history tools", () => {
   it("finds every term across accents, newest first, only in this conversation", () => {
     const workspace = makeWorkspace();
@@ -81,7 +85,7 @@ describe("history tools", () => {
         toolCallId: "t1",
         toolName: "terminal_run",
         input: {},
-        state: { status: "completed", output: "x".repeat(2_000) },
+        state: { status: "completed", output: logLines(200) },
       },
     ]);
     say(conversation.id, "user", "third", [
@@ -99,7 +103,8 @@ describe("history tools", () => {
     const text = renderHistoryWindow(conversation.id, middle.seq, 1, 1);
     expect(text).toContain("first");
     expect(text).toContain("[tool terminal_run · completed: ");
-    expect(text).not.toContain("x".repeat(700));
+    expect(text).toContain("log line 1 ok");
+    expect(text).not.toContain("log line 199 ok");
     expect(text).toContain("third");
     expect(text).not.toContain("SECRET-RECALL");
     const handlers = new Map<
@@ -122,6 +127,106 @@ describe("history tools", () => {
         .text,
     );
     expect(out.results[0]).toMatchObject({ role: "user", snippet: "first" });
+  });
+});
+
+function tools(conversationId: string) {
+  const handlers = new Map<
+    string,
+    (
+      args: Record<string, unknown>,
+    ) => Promise<{ content: Array<{ text: string }>; isError?: boolean }>
+  >();
+  registerHistoryTools({
+    convId: conversationId,
+    locale: "en",
+    t: (key: string) => key,
+    server: {
+      registerTool: (name: string, _s: unknown, handler: never) =>
+        handlers.set(name, handler),
+    },
+  } as unknown as McpToolContext);
+  return {
+    search: async (args: Record<string, unknown>) =>
+      JSON.parse((await handlers.get("history_search")!(args)).content[0].text),
+    read: async (args: Record<string, unknown>) =>
+      (await handlers.get("history_read")!(args)).content[0].text,
+  };
+}
+
+describe("history tool contract", () => {
+  it("answers the original search and read calls in the original shape", async () => {
+    const conversation = makeConversation(makeWorkspace().id);
+    say(conversation.id, "user", "deploy the staging server");
+    say(conversation.id, "assistant", "done");
+    const tool = tools(conversation.id);
+    const out = await tool.search({ query: "staging", limit: 5 });
+    expect(out.results).toHaveLength(1);
+    expect(Object.keys(out.results[0]).slice(0, 4)).toEqual([
+      "seq",
+      "role",
+      "at",
+      "snippet",
+    ]);
+    expect(out.results[0]).toMatchObject({
+      role: "user",
+      snippet: "deploy the staging server",
+    });
+    expect(new Date(out.results[0].at).toISOString()).toBe(out.results[0].at);
+    expect(out.mode).toBe("relevance");
+    const text = await tool.read({ seq: out.results[0].seq, after: 1 });
+    expect(text).toContain("deploy the staging server");
+    expect(text).toContain("done");
+  });
+
+  it("browses user messages and compactions newest first, paging with beforeSeq", async () => {
+    const conversation = makeConversation(makeWorkspace().id);
+    say(conversation.id, "user", "first request");
+    say(conversation.id, "assistant", "an answer");
+    say(conversation.id, "assistant", "", [
+      { type: "compaction", id: randomUUID(), text: "Summary of the first request" },
+    ]);
+    say(conversation.id, "user", "second request");
+    upsertChatMessage({
+      id: randomUUID(),
+      conversationId: conversation.id,
+      role: "user",
+      createdAt: Date.now(),
+      internal: true,
+      parts: [{ type: "text", id: randomUUID(), text: "hidden nudge" }],
+    });
+    const tool = tools(conversation.id);
+    const page = await tool.search({ limit: 2 });
+    expect(page.mode).toBe("browse");
+    expect(page.results.map((hit: { snippet: string }) => hit.snippet)).toEqual([
+      "second request",
+      "Summary of the first request",
+    ]);
+    expect(page.results[1].kind).toBe("compaction");
+    const next = await tool.search({ beforeSeq: page.results[1].seq });
+    expect(next.results.map((hit: { snippet: string }) => hit.snippet)).toEqual([
+      "first request",
+    ]);
+  });
+
+  it("shows long tool outputs in full detail within the same budget", async () => {
+    const conversation = makeConversation(makeWorkspace().id);
+    say(conversation.id, "assistant", "ran it", [
+      {
+        type: "tool",
+        id: "t1",
+        toolCallId: "t1",
+        toolName: "terminal_run",
+        input: {},
+        state: { status: "completed", output: logLines(400) },
+      },
+    ]);
+    const tool = tools(conversation.id);
+    const [hit] = (await tool.search({ query: "ran it", mode: "exact" })).results;
+    expect(await tool.read({ seq: hit.seq, before: 0, after: 0 })).not.toContain("log line 399 ok");
+    const full = await tool.read({ seq: hit.seq, before: 0, after: 0, detail: "full" });
+    expect(full).toContain("log line 399 ok");
+    expect(full.length).toBeLessThanOrEqual(12_000);
   });
 });
 

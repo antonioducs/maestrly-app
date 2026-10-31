@@ -445,17 +445,22 @@ export default {
     history_search: {
       title: 'Search conversation history',
       description:
-        'Searches this conversation’s full saved history, including turns already compacted away and tool calls. Ranks messages by relevance: word stems match regardless of accents, parts of words and CJK text are found too, and recent messages win ties. Use mode "exact" to require every word, newest first. Returns message positions (seq), snippets and scores; read around one with history_read. Read-only.',
+        'Searches this conversation’s full saved history, including turns already compacted away and tool calls. Ranks messages by relevance: word stems match regardless of accents, parts of words and CJK text are found too, and recent messages win ties. Use mode "exact" to require every word, newest first. Without a query, browses the conversation instead: what the person asked and the compaction summaries, newest first. Returns message positions (seq), snippets and scores; read around one with history_read. Read-only.',
       params: {
-        query: 'Words to look for (2–500 characters). Put "a phrase" in quotes to look for it as written.',
+        query:
+          'Words to look for (2–500 characters). Put "a phrase" in quotes to look for it as written. Omit to browse.',
         limit: 'Maximum results, 1–30 (default 8).',
         mode: '"relevance" (default) ranks by relevance; "exact" requires every word and lists newest first.',
+        beforeSeq: 'Only messages before this position; pass the last seq seen to page browse and exact results.',
       },
     },
     history_read: {
       title: 'Read conversation history',
       description:
         'Reads the messages around a history position (seq) found by history_search, with tool outputs shortened. Read-only.',
+      params: {
+        detail: '"full" shows each tool output up to 8,000 characters instead of 600, within the same 12,000 total.',
+      },
     },
     memory_search: {
       title: 'Search memory',

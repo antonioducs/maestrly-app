@@ -443,17 +443,23 @@ export default {
     history_search: {
       title: 'Buscar no histórico da conversa',
       description:
-        'Busca no histórico completo salvo desta conversa, inclusive trechos já compactados e chamadas de ferramentas. Ordena as mensagens por relevância: radicais das palavras casam sem depender de acentos, partes de palavras e texto CJK também são encontrados, e mensagens recentes desempatam. Use o modo "exact" para exigir todas as palavras, mais recentes primeiro. Retorna posições (seq), trechos e pontuações; leia ao redor de um com history_read. Somente leitura.',
+        'Busca no histórico completo salvo desta conversa, inclusive trechos já compactados e chamadas de ferramentas. Ordena as mensagens por relevância: radicais das palavras casam sem depender de acentos, partes de palavras e texto CJK também são encontrados, e mensagens recentes desempatam. Use o modo "exact" para exigir todas as palavras, mais recentes primeiro. Sem query, percorre a conversa: o que a pessoa pediu e os resumos de compactação, mais recentes primeiro. Retorna posições (seq), trechos e pontuações; leia ao redor de um com history_read. Somente leitura.',
       params: {
-        query: 'Palavras a procurar (2 a 500 caracteres). Coloque "uma frase" entre aspas para buscá-la como escrita.',
+        query:
+          'Palavras a procurar (2 a 500 caracteres). Coloque "uma frase" entre aspas para buscá-la como escrita. Omita para percorrer a conversa.',
         limit: 'Máximo de resultados, de 1 a 30 (padrão 8).',
         mode: '"relevance" (padrão) ordena por relevância; "exact" exige todas as palavras e lista as mais recentes primeiro.',
+        beforeSeq:
+          'Só mensagens antes desta posição; passe o último seq visto para paginar os resultados do modo exato e da navegação.',
       },
     },
     history_read: {
       title: 'Ler histórico da conversa',
       description:
         'Lê as mensagens ao redor de uma posição do histórico (seq) encontrada com history_search, com saídas de ferramentas encurtadas. Somente leitura.',
+      params: {
+        detail: '"full" mostra cada saída de ferramenta com até 8.000 caracteres em vez de 600, dentro do mesmo total de 12.000.',
+      },
     },
     memory_search: {
       title: 'Buscar na memória',

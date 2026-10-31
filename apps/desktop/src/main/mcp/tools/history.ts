@@ -2,23 +2,28 @@ import { tFor } from '../../i18n'
 import { z } from 'zod'
 import { toolOutputText, type MessagePart } from '../../../shared/chat'
 import { listChatMessagesAround } from '../../chat/chat-store'
-import { searchHistory } from '../../chat/history-index/search'
+import { browseHistory, searchHistory, type HistorySearchHit } from '../../chat/history-index/search'
 import { localEmbeddingReranker } from '../../chat/history-index/semantic'
 import type { McpToolContext } from './context'
 import { ok } from './context'
 
-const HISTORY_READ = { maxChars: 12_000, toolOutputChars: 600, compactionChars: 2_000 } as const
+const HISTORY_READ = {
+  maxChars: 12_000,
+  toolOutputChars: 600,
+  fullToolOutputChars: 8_000,
+  compactionChars: 2_000,
+} as const
 const cut = (text: string, max: number): string => (text.length <= max ? text : `${text.slice(0, max - 1)}…`)
 
-function renderPart(part: MessagePart, t: McpToolContext['t']): string | null {
+function renderPart(part: MessagePart, t: McpToolContext['t'], toolOutputChars: number): string | null {
   if (part.type === 'text') return part.checkpoint === 'openai-native' || !part.text ? null : part.text
   if (part.type === 'tool') {
     const state = part.state
     const detail =
       state.status === 'completed'
-        ? `: ${cut(toolOutputText(state.output).trim(), HISTORY_READ.toolOutputChars)}`
+        ? `: ${cut(toolOutputText(state.output).trim(), toolOutputChars)}`
         : state.status === 'error'
-          ? `: ${cut(state.error, HISTORY_READ.toolOutputChars)}`
+          ? `: ${cut(state.error, toolOutputChars)}`
           : ''
     return `[tool ${part.toolName} · ${state.status}${detail}]`
   }
@@ -37,11 +42,13 @@ export function renderHistoryWindow(
   seq: number,
   before: number,
   after: number,
-  t: McpToolContext['t'] = tFor('en', 'mcp')
+  t: McpToolContext['t'] = tFor('en', 'mcp'),
+  options: { detail?: 'brief' | 'full' } = {}
 ): string {
+  const toolOutputChars = options.detail === 'full' ? HISTORY_READ.fullToolOutputChars : HISTORY_READ.toolOutputChars
   const blocks = listChatMessagesAround(conversationId, seq, before, after).map(({ seq: at, message }) => {
     const body = message.parts
-      .map((part) => renderPart(part, t))
+      .map((part) => renderPart(part, t, toolOutputChars))
       .filter((line): line is string => Boolean(line))
       .join('\n')
     return { seq: at, text: `#${at} · ${new Date(message.createdAt).toISOString()} · ${message.role}\n${body}` }
@@ -65,6 +72,15 @@ export function renderHistoryWindow(
   return [...selected.sort((a, b) => a.seq - b.seq).map((block) => block.text), note].join('\n\n')
 }
 
+const result = (hit: HistorySearchHit) => ({
+  seq: hit.seq,
+  role: hit.role,
+  at: new Date(hit.createdAt).toISOString(),
+  snippet: hit.snippet,
+  ...(hit.score !== undefined ? { score: hit.score } : {}),
+  ...(hit.kind ? { kind: hit.kind } : {}),
+})
+
 export function registerHistoryTools(ctx: McpToolContext): void {
   const { server, convId, t } = ctx
   server.registerTool(
@@ -73,33 +89,32 @@ export function registerHistoryTools(ctx: McpToolContext): void {
       title: t('tools.history_search.title'),
       description: t('tools.history_search.description'),
       inputSchema: {
-        query: z.string().trim().min(2).max(500).describe(t('tools.history_search.params.query')),
+        query: z.string().trim().min(2).max(500).optional().describe(t('tools.history_search.params.query')),
         limit: z.number().int().min(1).max(30).optional().describe(t('tools.history_search.params.limit')),
         mode: z.enum(['relevance', 'exact']).optional().describe(t('tools.history_search.params.mode')),
+        beforeSeq: z.number().int().min(0).optional().describe(t('tools.history_search.params.beforeSeq')),
       },
       annotations: { readOnlyHint: true },
     },
-    async ({ query, limit, mode }) => {
-      const result = await searchHistory({
+    async ({ query, limit, mode, beforeSeq }) => {
+      if (!query) {
+        const hits = browseHistory(convId, { beforeSeq, limit: limit ?? 8 })
+        return ok(JSON.stringify({ results: hits.map(result), mode: 'browse' }, null, 2))
+      }
+      const found = await searchHistory({
         conversationIds: [convId],
         query,
         mode,
         limit: limit ?? 8,
+        beforeSeq,
         rerank: localEmbeddingReranker(),
       })
       return ok(
         JSON.stringify(
           {
-            results: result.hits.map((hit) => ({
-              seq: hit.seq,
-              role: hit.role,
-              at: new Date(hit.createdAt).toISOString(),
-              snippet: hit.snippet,
-              ...(hit.score !== undefined ? { score: hit.score } : {}),
-              ...(hit.kind ? { kind: hit.kind } : {}),
-            })),
-            mode: result.mode,
-            ...(result.building ? { index: 'building' } : {}),
+            results: found.hits.map(result),
+            mode: found.mode,
+            ...(found.building ? { index: 'building' } : {}),
           },
           null,
           2
@@ -116,9 +131,11 @@ export function registerHistoryTools(ctx: McpToolContext): void {
         seq: z.number().int().min(0),
         before: z.number().int().min(0).max(10).optional(),
         after: z.number().int().min(0).max(10).optional(),
+        detail: z.enum(['brief', 'full']).optional().describe(t('tools.history_read.params.detail')),
       },
       annotations: { readOnlyHint: true },
     },
-    async ({ seq, before, after }) => ok(renderHistoryWindow(convId, seq, before ?? 3, after ?? 3, t))
+    async ({ seq, before, after, detail }) =>
+      ok(renderHistoryWindow(convId, seq, before ?? 3, after ?? 3, t, { detail }))
   )
 }

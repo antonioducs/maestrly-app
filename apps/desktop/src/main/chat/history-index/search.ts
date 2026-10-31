@@ -7,6 +7,7 @@ import {
   searchTokens,
   stemToken,
 } from '../../memory/relevance'
+import { getDb } from '../../store'
 import { searchConversationHistory } from '../chat-store'
 import { parseParts } from '../message'
 import { conversationToken, extractHistoryDocument, historyEligible, historyVisibleText } from './extract'
@@ -386,9 +387,10 @@ function relevanceCandidates(db: DatabaseSync, options: HistorySearchOptions): S
   for (const docId of summaries) docIds.add(docId)
 
   const scope = new Set(conversationIds)
+  const before = conversationIds.length === 1 ? (options.beforeSeq ?? Number.MAX_SAFE_INTEGER) : Number.MAX_SAFE_INTEGER
   const scored: Scored[] = []
   for (const row of loadCandidates(db, [...docIds])) {
-    if (!scope.has(row.conversation_id)) continue
+    if (!scope.has(row.conversation_id) || Number(row.seq) >= before) continue
     const document = extractHistoryDocument(row.parts_json, row.meta_json)
     if (!document.eligible) continue
     const cover = coverage(terms, total, document.body, document.tools)
@@ -504,6 +506,49 @@ function exactSearch(db: DatabaseSync, options: HistorySearchOptions, limit: num
       snippet: snippetAround(text, rawPosition(text, normalized, normalized.indexOf(terms[0]))),
     })
     if (hits.length >= limit) break
+  }
+  return hits
+}
+
+export const HISTORY_BROWSE = { snippetChars: 160, pageSize: 200, maxScanned: 5_000 } as const
+
+/**
+ * The conversation's outline, newest first: what the person asked and where compactions summarized earlier turns.
+ * Needs no index; pages with `beforeSeq`.
+ */
+export function browseHistory(
+  conversationId: string,
+  options: { beforeSeq?: number; limit?: number } = {}
+): HistorySearchHit[] {
+  const limit = Math.max(1, Math.min(options.limit ?? HISTORY_SEARCH.defaultLimit, HISTORY_SEARCH.maxLimit))
+  const page = getDb().prepare(
+    `SELECT id, role, parts_json, meta_json, seq, created_at FROM chat_messages
+     WHERE conversation_id = ? AND seq < ? ORDER BY seq DESC LIMIT ${HISTORY_BROWSE.pageSize}`
+  )
+  const hits: HistorySearchHit[] = []
+  let cursor = options.beforeSeq ?? Number.MAX_SAFE_INTEGER
+  let scanned = 0
+  while (hits.length < limit && scanned < HISTORY_BROWSE.maxScanned) {
+    const rows = page.all(conversationId, cursor) as unknown as Array<Omit<CandidateRow, 'doc_id'>>
+    if (!rows.length) break
+    for (const row of rows) {
+      scanned += 1
+      cursor = Number(row.seq)
+      const parts = parseParts(row.parts_json ?? '[]')
+      const compaction = parts.find((part) => part.type === 'compaction')
+      const text = compaction ? compaction.text : row.role === 'user' ? historyVisibleText(parts) : ''
+      if (!text.trim() || !historyEligible(row.meta_json, historyVisibleText(parts))) continue
+      hits.push({
+        messageId: row.id,
+        conversationId,
+        seq: Number(row.seq),
+        role: role(row.role),
+        createdAt: Number(row.created_at),
+        snippet: snippetAround(text, 0, HISTORY_BROWSE.snippetChars),
+        ...(compaction ? { kind: 'compaction' as const } : {}),
+      })
+      if (hits.length >= limit) break
+    }
   }
   return hits
 }
