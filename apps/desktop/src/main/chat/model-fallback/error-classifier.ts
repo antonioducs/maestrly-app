@@ -82,6 +82,9 @@ const SHAPES: Record<ModelFailureReason, Shape> = {
   unknown: { scope: 'model', retryInPlace: false, fallback: false, compact: false },
 }
 
+/** Reasons another model may fix: the only ones a fallback notice ever names. */
+export const FALLBACK_REASONS = MODEL_FAILURE_REASONS.filter((reason) => SHAPES[reason].fallback)
+
 const SUBSCRIPTION_EXHAUSTED_CODES = new Set(['claude-accounts-exhausted', 'codex-accounts-exhausted'])
 const SUBSCRIPTION_UNAVAILABLE_CODES = new Set(['claude-runtime-unavailable', 'codex-runtime-unavailable'])
 

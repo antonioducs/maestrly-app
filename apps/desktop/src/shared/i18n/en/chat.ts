@@ -125,6 +125,22 @@ export default {
       memoryHint: 'What agents recall and save',
       subagents: 'Subagents',
       subagentsHint: 'The most specific rule wins: agent › category › default',
+      fallback: 'Fallback models',
+      fallbackHint: 'Used when a model fails, in this order',
+    },
+    fallback: {
+      title: 'Fall back to other models',
+      description:
+        'When a model reaches its limit, loses its login or is unavailable, the turn continues on the next model in this list. Accounts of the same subscription rotate first. The next turn starts again on the conversation’s own model.',
+      toggle: 'Use fallback models',
+      addFirst: 'Add a model first.',
+      add: 'Add model',
+      then: 'then',
+      candidateLabel: 'Fallback model {{position}}',
+      tryEarlier: 'Try earlier',
+      tryLater: 'Try later',
+      remove: 'Remove',
+      hint: 'Each model uses the effort chosen here, never the conversation’s. A pinned conversation, a review loop and a bot command keep their model.',
     },
     defaultModel: {
       title: 'Default model',
@@ -595,6 +611,10 @@ export default {
   fastMode: {
     label: 'Fast',
     tooltip: '1.5× faster responses with higher usage.',
+  },
+  modelFallbackPin: {
+    label: 'Pin this model (no fallback)',
+    hint: 'When this model fails, the turn stops instead of continuing on a fallback model.',
   },
   modelChip: {
     buttonTitle: 'Change model ({{shortcut}})',
@@ -1715,6 +1735,20 @@ export default {
     accountPoolFixedHint:
       '{{active}} follows the rotation. Chosen directly, an account is fixed: when it runs out, the turn stops and tells you instead of switching.',
     accountPoolSaveFailed: 'Could not change the rotation.',
+    modelFallbackSwitchStatus: 'Continuing on {{to}}: {{from}} {{reason}}',
+    modelFallbackReason: {
+      quota: 'reached its usage limit',
+      rate_limit: 'is rate limited',
+      billing: 'has a billing problem',
+      auth: 'needs you to sign in again',
+      context_overflow: 'ran out of context',
+      payload_too_large: 'got a request that is too large',
+      overloaded: 'is overloaded',
+      server_error: 'is unavailable',
+      timeout: 'did not respond',
+      model_not_found: 'is not available',
+      unknown: 'failed',
+    },
     apiKeyOptionalPlaceholder: 'API key (optional for now)',
     cancel: 'Cancel',
     add: 'Add',

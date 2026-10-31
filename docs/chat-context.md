@@ -630,6 +630,15 @@ so the limit compacts their conversations only between turns, and a long turn
 can go past it; the limit popover says so. ChatGPT Web keeps its context inside
 ChatGPT and has no limit.
 
+### Model fallback
+
+When a model reaches its usage limit, loses its login, is unavailable or runs
+out of context, a conversation can continue the same turn on another model of
+an ordered list, including API-key providers. The failed response keeps its
+partial output and the next turn starts on the conversation's own model again.
+A destination with a smaller window compacts the conversation first. See
+[Model fallback](model-failover.md).
+
 ## Background preparation
 
 Background compaction is optional and starts disabled. In Settings → Maestrly

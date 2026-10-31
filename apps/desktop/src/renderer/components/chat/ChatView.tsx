@@ -109,6 +109,7 @@ import { ChatModePicker } from './ChatModePicker'
 import { ChatSkillsMenu } from './ChatSkillsMenu'
 import { ChatReasoningPicker } from './ChatReasoningPicker'
 import { ChatFastModeToggle } from './ChatFastModeToggle'
+import { modelDisplayName } from './model-search'
 import { ChatPlusMenu } from './ChatPlusMenu'
 import { ChatContextMeter } from './ChatContextMeter'
 import { ContextCompactionStatus } from './ContextCompactionStatus'
@@ -1383,6 +1384,21 @@ export function ChatView({
     const labelFor = (providerId: string): string =>
       labelForSubscriptionProvider(providerId, chatProviders, t(subscriptionDefaultLabelKey(providerId)))
     return api.onChatSubscriptionFailover(conversationId, (ev: ChatSubscriptionFailoverEvent) => {
+      if (ev.kind === 'model') {
+        const modelLabel = (modelId: string | undefined, providerId: string) =>
+          modelId ? modelDisplayName(modelId) : labelFor(providerId)
+        const reason = ev.reasonKind ?? ev.reason
+        setFailoverNotice(
+          t('settings.modelFallbackSwitchStatus', {
+            from: modelLabel(ev.fromModelId, ev.fromProviderId),
+            to: modelLabel(ev.toModelId, ev.toProviderId),
+            reason: t(`settings.modelFallbackReason.${reason}`, {
+              defaultValue: t('settings.modelFallbackReason.unknown'),
+            }),
+          })
+        )
+        return
+      }
       setFailoverNotice(
         t('settings.failoverSwitchStatus', {
           from: labelFor(ev.fromProviderId),

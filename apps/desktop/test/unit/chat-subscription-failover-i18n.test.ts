@@ -3,6 +3,7 @@ import {
   subscriptionDefaultLabelKey,
 } from '../../src/renderer/components/chat/subscription-failover-route'
 import { describe, expect, it } from 'vitest'
+import { FALLBACK_REASONS } from '../../src/main/chat/model-fallback/error-classifier'
 import en from '../../src/shared/i18n/en/chat'
 import pt from '../../src/shared/i18n/pt-BR/chat'
 import enEnvironment from '../../src/shared/i18n/en/environment-settings'
@@ -59,5 +60,14 @@ describe('subscription failover i18n', () => {
       ).toContain(family === 'codex' ? 'Codex' : 'Claude')
     }
     expect(subscriptionExhaustionMessageKey('unknown')).toBeUndefined()
+  })
+
+  it.each([en, pt])('names every reason that can move a turn to another model', (locale) => {
+    expect(locale.settings.modelFallbackSwitchStatus).toContain('{{to}}')
+    for (const reason of [...FALLBACK_REASONS, 'unknown'] as const) {
+      const text = (locale.settings.modelFallbackReason as Record<string, string>)[reason]
+      expect(typeof text).toBe('string')
+      expect(text.length).toBeGreaterThan(0)
+    }
   })
 })
