@@ -17,6 +17,14 @@ User-visible changes by version. Downloads are on
   interpretation all follow the active account; picking a specific account keeps
   working as before.
 
+### Fixed
+
+- Claude conversations and usage limits keep working when Anthropic renames a
+  plan, including the transition from Max to Ultra. Plan labels and organization
+  display names no longer invalidate the same account's sessions. After this
+  update, existing Claude sessions are rebuilt once from the conversation history
+  when next used; the conversation history is preserved.
+
 ## [0.30.0] - 2026-10-30
 
 ### Added

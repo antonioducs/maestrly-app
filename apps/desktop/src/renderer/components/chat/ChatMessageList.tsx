@@ -898,11 +898,13 @@ const Bubble = memo(function Bubble({
           <span>
             {message.errorCode === 'review-loop-process-interrupted'
               ? t('chatgptWeb.reviewLoopProcessInterruptedError')
-              : message.errorCode === 'claude-authentication-required'
-                ? t('messages.claudeAuthenticationRequired')
-                : subscriptionExhaustionMessageKey(message.errorCode)
-                  ? t(subscriptionExhaustionMessageKey(message.errorCode)!)
-                  : message.error}
+              : message.errorCode === 'process-interrupted'
+                ? t('messages.processInterruptedError')
+                : message.errorCode === 'claude-authentication-required'
+                  ? t('messages.claudeAuthenticationRequired')
+                  : subscriptionExhaustionMessageKey(message.errorCode)
+                    ? t(subscriptionExhaustionMessageKey(message.errorCode)!)
+                    : message.error}
           </span>
           {message.errorCode === 'claude-authentication-required' && (
             <button
