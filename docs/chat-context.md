@@ -205,6 +205,50 @@ viewer receives a read-only copy named after the attachment, kept in the
 application profile until its message or conversation is deleted or Maestrly
 restarts; changes saved from the viewer never alter the attachment.
 
+## Undoing a turn's file changes
+
+When a turn changes files, its answer ends with a chip such as **3 files +42
+−7**. Open it to see each file the turn added (A), modified (M) or deleted (D),
+with its diff. **Undo changes of this turn** puts every file back the way it was
+when the turn started; the arrow on a row undoes only that file. Changes made by
+commands count too, not only by the file tools: Maestrly snapshots the whole
+folder when the turn starts and when it ends, whatever the model or runtime.
+
+Nothing is written before you review it. The dialog lists what happens to each
+file (restore, delete or recreate) and shows the diff from the file as it is now
+to what it becomes. A file that changed after the turn, by you, by a later turn
+or by another conversation working in the same folder, is a conflict: it stays
+unselected, and selecting it turns the button into **Undo N files (overwrites N
+changes)**. When another conversation worked in the folder during the turn, the
+dialog says so and names it next to the files it may have changed. If a selected
+file changes while the dialog is open, confirming checks the files again
+instead of writing. Undo is unavailable while the conversation is running.
+
+After an undo the chip reads **Changes undone** and the panel offers **Redo**,
+which puts back what the undo replaced, including edits you had made after the
+turn and chose to overwrite.
+
+Snapshots need the `git` executable on the computer that runs the conversation,
+but the folder does not have to be a Git repository, and the project's own Git
+data is never written. What a snapshot leaves out:
+
+- Files Git ignores (`.gitignore`, `.git/info/exclude` and your global excludes)
+  and, in folders without Git, `node_modules`, `.venv`, `venv`, `__pycache__`
+  and `.DS_Store`.
+- The content of files larger than 10 MB. They are listed, but cannot be
+  restored.
+- Submodules and other repositories inside the folder, and empty folders.
+- Changes you make yourself while the turn runs: they cannot be told apart from
+  the agent's.
+
+A turn whose start snapshot takes longer than 4 seconds, or whose folder has
+more than 100,000 new files, runs without one; its chip reads **Undo
+unavailable**, with the reason on hover. Bot conversations are not snapshotted.
+Snapshots last 7 days; see [Local data](local-data.md#turn-snapshots) for where
+they are kept and how to remove them. Turn them off, see their size and clear
+them in **Settings → Chat**. Editing and resending a message removes the undo of
+the turns it replaces.
+
 ## Stopping and queueing
 
 While the agent works, the composer's main button stops it. Once you type or

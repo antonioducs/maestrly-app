@@ -21,6 +21,14 @@ User-visible changes by version. Downloads are on
 - Local and custom OpenAI-compatible servers (Ollama, LM Studio, llama.cpp,
   vLLM) report the context window they actually run with, so conversations
   compact before they overflow it.
+- Undo a turn's file changes. When a turn changes files, its answer shows how
+  many, with their diffs, and **Undo changes of this turn** puts them back the
+  way they were when it started, whether the agent changed them with its file
+  tools or with commands. You review each file first; one changed again after
+  the turn is left alone unless you select it, and you can undo a single file
+  or redo what you undid. It works in folders with or without Git, never writes
+  in the project's Git data, and keeps snapshots for 7 days in the profile. See
+  [Undoing a turn's file changes](docs/chat-context.md#undoing-a-turns-file-changes).
 
 ## [0.31.0] - 2026-10-31
 

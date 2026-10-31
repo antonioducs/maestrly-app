@@ -550,6 +550,23 @@ exist. Programs that write to `/tmp` directly, ignoring `TMPDIR`, are not
 covered, and the folder is not used when it is not a private directory of the
 current user.
 
+## Turn snapshots
+
+To [undo a turn's file changes](chat-context.md#undoing-a-turns-file-changes),
+Maestrly snapshots a conversation's folder when each turn starts and ends. The
+snapshots are Git objects in `turn-snapshots/` in the application profile, one
+store per repository (shared by its worktrees) or per folder without Git, with
+folders readable only by the current user. Nothing is written in the project's
+`.git`: the snapshots read its index and its objects, so unchanged tracked files
+take no extra space. Files above 10 MB are listed without their content.
+
+Snapshots are kept for 7 days and 2 GB in total, removing the oldest first. An
+expired turn keeps its list of changed files but can no longer be undone.
+Cleanup runs a minute after startup, every hour, and soon after a conversation
+is deleted; it removes the snapshots no turn uses and the stores no conversation
+uses. **Settings → Chat** shows the space they take, clears them, and turns
+snapshots off. Reset removes the folder, and exports do not include it.
+
 ## Upgrades and reset
 
 SQLite upgrades are forward-only and transactional. If an upgrade fails, close

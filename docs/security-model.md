@@ -250,6 +250,23 @@ rejected. Authentication belongs to a configured credential helper or SSH agent.
 Tests replace global/system Git configuration so host filters, signing, and line
 ending rules cannot change fixtures.
 
+### Turn snapshots
+
+[Turn snapshots](local-data.md#turn-snapshots) copy whatever the folder holds
+that Git does not ignore, including untracked files such as an `.env` file that
+is not ignored; they stay in the profile for at most 7 days. They run the `git`
+executable with an environment built from scratch: no global or system
+configuration, hooks, credential helpers, filters, fsmonitor or attributes from
+the project, and line endings kept byte for byte. The project's `.git` is only
+read: its index is copied and its objects are reached as alternates.
+
+Undo and redo run in the main process, which validates every request, captures
+the folder again, and writes only files the person selected in a review that a
+single-use token of five minutes identifies. A file that changed since that
+review stops the write. Files are written through a temporary file and renamed;
+paths that leave the folder, or whose parent folder is a symbolic link out of
+it, are refused, and submodules are never restored.
+
 ## Browser, web, and loopback services
 
 The embedded browser is a real network client. Its shared partition denies site
