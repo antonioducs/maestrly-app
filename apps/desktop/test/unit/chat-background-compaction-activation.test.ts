@@ -16,7 +16,9 @@ import {
 import {
   previewPreparedActivation,
   commitPreparedActivation,
+  commitToolPruning,
 } from '../../src/main/chat/background-compaction/activation'
+import { applyToolPruning } from '../../src/main/chat/compaction/tool-pruning'
 import { activeChatContext, renderNativeSeedTranscript } from '../../src/main/chat/message'
 import { getOpenAIInferenceState, putOpenAIInferenceState } from '../../src/main/chat/openai/inference-store'
 import { captureOpenAIResponsesStream } from '../../src/main/chat/openai/ledger'
@@ -157,4 +159,63 @@ it('invalidates the conversation native binding atomically even when the compact
   expect(listCodexThreadCleanup()).toEqual([
     expect.objectContaining({ threadId: 'native-before', accountId: 'original-account' }),
   ])
+})
+
+it('commits pruned tool outputs, retiring the touched ledger, later samples and the native binding', () => {
+  const output = `BUILD_LOG\n${'compiled module\n'.repeat(200)}`
+  const history: StoredChatMessage[] = [
+    {
+      id: 'tool-message',
+      conversationId,
+      role: 'assistant',
+      createdAt: 1,
+      parts: [
+        {
+          type: 'tool',
+          id: 'bash',
+          toolCallId: 'bash',
+          toolName: 'bash',
+          input: { command: 'npm run build' },
+          state: { status: 'completed', output },
+        },
+      ],
+    },
+    fixture()[1],
+  ]
+  history.forEach(upsertChatMessage)
+  ledger('tool-message', output)
+  ledger('later', 'LATER_MESSAGE')
+  putCodexThreadBinding({
+    conversationId,
+    threadId: 'native-before',
+    modelId: 'codex-model',
+    toolSignature: 'tools',
+    lastMessageId: 'later',
+    accountId: 'original-account',
+    usage: { inputTokens: 180000, outputTokens: 500, cachedInputTokens: 0, reasoningOutputTokens: 0 },
+  })
+  const targets = [{ messageId: 'tool-message', partId: 'bash', stub: '[tool bash pruned]', savedChars: 1 }]
+  const cost = aggregateChatUsage()
+
+  transaction(() =>
+    commitToolPruning({
+      conversationId,
+      history: applyToolPruning(history, targets),
+      touchedIds: ['tool-message'],
+      destination: model,
+      contextWindow: 200000,
+    })
+  )
+
+  const durable = listConversationContextMessages(conversationId)
+  expect(durable[0].parts[0]).toMatchObject({ contextStub: '[tool bash pruned]', state: { output } })
+  expect(getOpenAIInferenceState('tool-message')).toBeNull()
+  expect(getOpenAIInferenceState('later')).not.toBeNull()
+  expect(durable[1].usage?.contextIdentity).toBeUndefined()
+  expect(durable[1].contextSnapshot).toMatchObject({ quality: 'estimated', sequence: 5 })
+  expect(getCodexThreadBinding(conversationId)).toBeNull()
+  expect(aggregateChatUsage()).toEqual(cost)
+  expect(JSON.stringify(buildOpenAIModelMessages(durable, getOpenAIInferenceState).messages)).not.toContain(
+    'compiled module'
+  )
 })

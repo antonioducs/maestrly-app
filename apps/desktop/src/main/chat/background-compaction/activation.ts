@@ -79,6 +79,37 @@ export function commitPositionalCompaction(args: {
 }): { messageId: string; snapshot: ChatContextSnapshot } | null {
   const anchorIndex = args.history.findIndex((message) => message.id === args.marker.messageId)
   if (anchorIndex < 0) throw new Error('Prepared compaction boundary disappeared')
+  return commitContextRewrite({ ...args, fromIndex: anchorIndex, rewrittenIds: [args.marker.messageId] })
+}
+
+/**
+ * Persists older tool outputs pruned to their `contextStub` (see `compaction/tool-pruning`). Call it INSIDE a
+ * transaction: like a summary, it changes what the model receives, so measured samples, OpenAI ledgers of the touched
+ * messages and native bindings stop being reusable.
+ */
+export function commitToolPruning(args: {
+  conversationId: string
+  history: readonly StoredChatMessage[]
+  touchedIds: readonly string[]
+  destination: ChatModelRef
+  contextWindow?: number
+}): { messageId: string; snapshot: ChatContextSnapshot } | null {
+  const touched = new Set(args.touchedIds)
+  const fromIndex = args.history.findIndex((message) => touched.has(message.id))
+  if (fromIndex < 0) return null
+  return commitContextRewrite({ ...args, fromIndex, rewrittenIds: args.touchedIds })
+}
+
+function commitContextRewrite(args: {
+  conversationId: string
+  history: readonly StoredChatMessage[]
+  /** First message whose context changed: it and every later one are saved again without stale samples. */
+  fromIndex: number
+  /** Messages whose own content changed: their OpenAI ledgers would replay what the model no longer receives. */
+  rewrittenIds: readonly string[]
+  destination: ChatModelRef
+  contextWindow?: number
+}): { messageId: string; snapshot: ChatContextSnapshot } | null {
   const newestAssistant = [...args.history].reverse().find((message) => message.role === 'assistant')
   const snapshot: ChatContextSnapshot = {
     model: args.destination,
@@ -88,7 +119,7 @@ export function commitPositionalCompaction(args: {
     sequence: (newestAssistant?.contextSnapshot?.sequence ?? 0) + 1,
     observedAt: Date.now(),
   }
-  for (let index = anchorIndex; index < args.history.length; index += 1) {
+  for (let index = args.fromIndex; index < args.history.length; index += 1) {
     const message = args.history[index]
     // Billing remains intact; samples measured against the superseded prompt are no longer reusable.
     const usage = message.usage ? { ...message.usage } : undefined
@@ -103,7 +134,7 @@ export function commitPositionalCompaction(args: {
       contextSnapshot: message.id === newestAssistant?.id ? snapshot : undefined,
     })
   }
-  deleteOpenAIInferenceState(args.marker.messageId)
+  for (const id of args.rewrittenIds) deleteOpenAIInferenceState(id)
   const codex = getCodexThreadBinding(args.conversationId)
   if (codex) retireCodexThreadBinding(args.conversationId, codex.threadId)
   const claude = getClaudeSessionBinding(args.conversationId)

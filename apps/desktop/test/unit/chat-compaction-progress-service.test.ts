@@ -1,7 +1,7 @@
 import type { WebContents } from 'electron'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BackgroundCompactionStore } from '../../src/main/chat/background-compaction/store'
-import type { ChatCompactionProgress, ChatStreamEvent } from '../../src/shared/chat'
+import type { ChatCompactionProgress, ChatStreamEvent, MessagePart } from '../../src/shared/chat'
 
 const h = vi.hoisted(() => ({
   generateText: vi.fn(),
@@ -127,7 +127,7 @@ import { setConversationContextLimit } from '../../src/main/chat/conversation-co
 import { makeConversation, makeWorkspace } from '../helpers/factories'
 import { structuredSummary } from '../helpers/compaction'
 import { activatePreparedCompaction } from '../../src/main/chat/background-compaction/runner'
-import { renderNativeSeedTranscript } from '../../src/main/chat/message'
+import { renderNativeSeedTranscript, toModelMessages } from '../../src/main/chat/message'
 import { listConversationContextMessages } from '../../src/main/chat/chat-store'
 import { FALLBACK_SUMMARY_NOTICE } from '../../src/main/chat/compaction/fallback-summary'
 import {
@@ -1358,6 +1358,127 @@ describe('service-owned compaction progress', () => {
       expect(h.generateText).not.toHaveBeenCalled()
       expect(compactionParts()).toEqual([])
       resetCompactionBreaker(conversationId)
+    })
+  })
+
+  describe('older tool outputs', () => {
+    const log = (title: string) =>
+      `${title}\n${Array.from({ length: 1_100 }, (_, line) => `${title} line ${line}: compiled module`).join('\n')}`
+    const toolPart = (id: string, output: string) => ({
+      type: 'tool' as const,
+      id,
+      toolCallId: id,
+      toolName: 'bash',
+      input: { command: `run ${id}` },
+      state: { status: 'completed' as const, output },
+    })
+    function seedHistory(): void {
+      upsertChatMessage({
+        ...getChatMessage(conversationId, 'user')!,
+        parts: [{ type: 'text', id: 'user-text', text: 'Start the migration.' }],
+      })
+      upsertChatMessage({
+        ...getChatMessage(conversationId, 'assistant')!,
+        finishReason: 'stop',
+        parts: [
+          { type: 'text', id: 'assistant-text', text: 'Building.' },
+          toolPart('old-1', log('OLD_BUILD_ONE')),
+          toolPart('old-2', log('OLD_BUILD_TWO')),
+          toolPart('old-3', log('OLD_BUILD_THREE')),
+        ],
+      })
+      for (let index = 1; index <= 3; index += 1) {
+        upsertChatMessage({
+          id: `recent-user-${index}`,
+          conversationId,
+          role: 'user',
+          createdAt: 2 + index * 2,
+          parts: [{ type: 'text', id: `recent-user-${index}-text`, text: `RECENT_REQUEST_${index}` }],
+        })
+        upsertChatMessage({
+          id: `recent-assistant-${index}`,
+          conversationId,
+          role: 'assistant',
+          model,
+          createdAt: 3 + index * 2,
+          finishReason: 'stop',
+          parts: [{ type: 'text', id: `recent-assistant-${index}-text`, text: `RECENT_ANSWER_${index}` }],
+        })
+      }
+    }
+    const storedTool = (id: string) =>
+      getChatMessage(conversationId, 'assistant')!.parts.find((part) => part.id === id) as Extract<
+        MessagePart,
+        { type: 'tool' }
+      >
+
+    it('frees the context by pruning alone when that reaches half the window, without a summary', async () => {
+      seedHistory()
+      patchConvUiPrefs(conversationId, {
+        chat: { ...model, modelId: 'small-model', reasoning: 'high', fastMode: true },
+      })
+      setConversationContextLimit(conversationId, 60_000)
+
+      expect(await sendHandler()({ sender: wc } as never, { conversationId, text: 'Pending task' })).toMatchObject({
+        ok: true,
+      })
+
+      await vi.waitFor(() => expect(h.runChat).toHaveBeenCalledOnce())
+      expect(h.generateText).not.toHaveBeenCalled()
+      expect(
+        listChatMessages(conversationId)
+          .flatMap((message) => message.parts)
+          .some((part) => part.type === 'compaction')
+      ).toBe(false)
+      for (const id of ['old-1', 'old-2', 'old-3']) {
+        expect(storedTool(id).contextStub).toContain('output removed')
+        // The person and history_read keep the original.
+        expect(storedTool(id).state).toMatchObject({ output: expect.stringContaining('line 1099') })
+      }
+      const sent = JSON.stringify(toModelMessages(listConversationContextMessages(conversationId)))
+      expect(sent).not.toContain('OLD_BUILD_ONE line 1099')
+      expect(sent).toContain('RECENT_ANSWER_1')
+      expect(getChatMessage(conversationId, 'recent-assistant-3')?.contextSnapshot).toMatchObject({
+        quality: 'estimated',
+        modelContextWindow: 60_000,
+      })
+    })
+
+    it('summarizes instead, without persisting the pruning, when pruning alone is not enough', async () => {
+      seedHistory()
+      upsertChatMessage({
+        ...getChatMessage(conversationId, 'user')!,
+        parts: [{ type: 'text', id: 'user-text', text: 'Source context. '.repeat(4_000) }],
+      })
+      patchConvUiPrefs(conversationId, {
+        chat: { ...model, modelId: 'small-model', reasoning: 'high', fastMode: true },
+      })
+      setConversationContextLimit(conversationId, 60_000)
+      h.generateText.mockResolvedValue(success(structuredSummary('SUMMARY_AFTER_PRUNING')))
+
+      expect(await sendHandler()({ sender: wc } as never, { conversationId, text: 'Pending task' })).toMatchObject({
+        ok: true,
+      })
+
+      await vi.waitFor(() => expect(h.runChat).toHaveBeenCalledOnce())
+      expect(h.generateText).toHaveBeenCalled()
+      expect(storedTool('old-1').contextStub).toBeUndefined()
+    })
+
+    it('gives the summarizer only the head and tail of older outputs', async () => {
+      seedHistory()
+      h.generateText.mockResolvedValue(success(structuredSummary('CLIPPED_INPUT_SUMMARY')))
+
+      expect(await compact({ contextWindow: 200_000 })).toMatchObject({ ok: true })
+
+      const prompts = h.generateText.mock.calls
+        .map((call: unknown[]) => (call[0] as { prompt: string }).prompt)
+        .join('\n')
+      expect(prompts).toContain('OLD_BUILD_ONE line 0')
+      expect(prompts).toContain('OLD_BUILD_ONE line 1099')
+      expect(prompts).toContain('older output clipped for the summary')
+      expect(prompts).not.toContain('OLD_BUILD_ONE line 500')
+      expect(storedTool('old-1').contextStub).toBeUndefined()
     })
   })
 })

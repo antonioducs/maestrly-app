@@ -547,6 +547,18 @@ overflows, the tail is summarized as well, and only then is the request
 refused. Manual compaction, cancellation, and a history that changed during the
 compaction are never degraded: they fail as before, and nothing is committed.
 
+Before summarizing ahead of a send, Maestrly first tries pruning older tool
+outputs. Outputs of at least 1,000 characters are replaced by a one-line note
+with the tool, its arguments, the status (with the first line of an error), and
+the output's size. An output repeated later is reduced to a note, even when
+shorter. The latest three user turns, unfinished tools, plans, to-do lists and
+questions are never pruned. If this alone brings the next request to half the
+context window, nothing is summarized. Only the model receives the note: the
+history and `history_read` keep the full output. Native sessions start again
+from the pruned history. When pruning is not enough, it is not kept, and the
+summary goes ahead. The summarizer itself receives the start and end of older
+outputs (about 1,200 characters), and an output repeated later only once.
+
 Two automatic compactions in a row that free less than 10% of the context, or
 leave it above the compaction threshold, suspend automatic compaction before
 sending. It resumes once the context grows by 10% of the window, when it would

@@ -59,7 +59,10 @@ export function estimatePortablePartsTokens(parts: readonly MessagePart[]): numb
         input = String(part.input ?? '')
       }
       tokens +=
-        estimateTextTokens(part.toolName) + estimateTextTokens(input) + estimateTextTokens(toolOutput(part)) + 24
+        estimateTextTokens(part.toolName) +
+        estimateTextTokens(input) +
+        estimateTextTokens(part.contextStub ?? toolOutput(part)) +
+        24
     }
   }
   return tokens

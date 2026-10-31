@@ -499,6 +499,7 @@ import {
   estimatePortableContextTokens,
   estimatePortablePartsTokens,
   estimateTextTokens,
+  portableContextLoad,
   portableContextReserveTokens,
   preflightContextLoad,
   summarizePortableTranscript,
@@ -543,8 +544,10 @@ import {
   commitPreparedActivation,
   previewPositionalCompaction,
   commitPositionalCompaction,
+  commitToolPruning,
   type PreparedMarker,
 } from './background-compaction/activation'
+import { applyToolPruning, planToolPruning, protectedRecentMessageIds } from './compaction/tool-pruning'
 import { COMPACTION_OVERFLOW_LADDER, isContextOverflowError } from './compaction/overflow'
 import { fallbackCompactionSummary } from './compaction/fallback-summary'
 import {
@@ -3548,6 +3551,13 @@ async function preflightContext(
     return { ok: true, compacted: false }
   }
 
+  // Step 0: when older tool outputs alone free enough, the model reads one-line stubs instead and nothing is summarized.
+  const pruned = pruneToolOutputsBeforeCompaction(conversationId, selection, window, pendingParts, pending, operation)
+  if (pruned) {
+    chatDiag({ kind: 'preflight-tool-pruning', conv: conversationId, beforeTokens: load.requiredTokens, ...pruned })
+    return { ok: true, compacted: true }
+  }
+
   // Preparation is speculative and never delays ordinary turns. Only consume a ready candidate when this
   // destination actually needs compaction and its summary plus the complete append-only suffix fits.
   try {
@@ -3646,6 +3656,64 @@ async function preflightContext(
     })
   }
   return { ok: true, compacted: true }
+}
+
+/** Load, relative to the window, that pruning alone must reach to replace a summary. */
+const PRUNE_ONLY_MAX_LOAD = 0.5
+
+/**
+ * Commits only the pruning of older tool outputs when that brings the next request to half the window. All in one
+ * synchronous transaction, so the history it planned on cannot change before the commit.
+ */
+function pruneToolOutputsBeforeCompaction(
+  conversationId: string,
+  selection: ChatModelRef,
+  window: number,
+  pendingParts: readonly MessagePart[],
+  pendingTokens: number,
+  operation: PendingConversationOperation
+): { afterTokens: number; prunedOutputs: number; savedChars: number } | null {
+  let outcome: { afterTokens: number; prunedOutputs: number; savedChars: number } | null = null
+  let observation: ReturnType<typeof commitToolPruning> = null
+  transaction(() => {
+    if (operation.controller.signal.aborted || !conversationOperationIsCurrent(conversationId, operation)) return
+    const history = listConversationContextMessages(conversationId)
+    const activeMessages = activeChatContext(history).messages
+    const targets = planToolPruning(activeMessages, {
+      protectedIds: protectedRecentMessageIds(activeMessages),
+      mode: 'stub',
+    })
+    if (targets.length === 0) return
+    const prunedHistory = applyToolPruning(history, targets)
+    const prunedLoad = portableContextLoad(window, estimatePortableContextTokens(prunedHistory), pendingTokens)
+    if (prunedLoad.requiredTokens > window * PRUNE_ONLY_MAX_LOAD) return
+    if (
+      isCodexSubscriptionProvider(selection.providerId) &&
+      codexTransferCharacters(prunedHistory, pendingParts) > CODEX_TRANSFER_MAX_CHARACTERS
+    )
+      return
+    observation = commitToolPruning({
+      conversationId,
+      history: prunedHistory,
+      touchedIds: [...new Set(targets.map((target) => target.messageId))],
+      destination: selection,
+      contextWindow: window,
+    })
+    outcome = {
+      afterTokens: prunedLoad.requiredTokens,
+      prunedOutputs: targets.length,
+      savedChars: targets.reduce((total, target) => total + target.savedChars, 0),
+    }
+  })
+  const committed = observation as ReturnType<typeof commitToolPruning>
+  if (committed && !active.has(conversationId)) {
+    const channel = `chat:delta:${conversationId}`
+    const event: ChatStreamEvent = { kind: 'context-usage', ...committed }
+    const wc = getMainWebContents()
+    if (wc) sendChatEvent(wc, channel, event)
+    else emitChatHost(conversationId, channel, event)
+  }
+  return outcome
 }
 
 /** ISOLATED internal-turn preflight: frozen model window + pending + harness reserve
@@ -7815,8 +7883,14 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
           })
         : null
     const summarizedHistory = (cut && historyThroughCut(sourceHistory, cut)) || sourceHistory
+    // Older tool outputs reach the summarizer as head and tail, repeated ones once; recent turns stay whole.
+    const sourceActive = activeChatContext(sourceHistory).messages
+    const summaryInput = applyToolPruning(
+      summarizedHistory,
+      planToolPruning(sourceActive, { protectedIds: protectedRecentMessageIds(sourceActive), mode: 'clip' })
+    )
     // The chunker below alone splits the payload; no transcript range is omitted.
-    const transcript = renderTranscript(summarizedHistory, {
+    const transcript = renderTranscript(summaryInput, {
       maxToolOutputChars: Number.POSITIVE_INFINITY,
       includeSkillBodies: true,
     })

@@ -134,7 +134,12 @@ function sourceIdentityValue(messages: readonly ChatMessage[], through: Cursor):
   const source = sourceMessages(messages, start, through).map((message) => ({
     id: message.id,
     role: message.role,
-    parts: message.parts,
+    // Pruning only changes what the model receives; the candidate summarized the same source.
+    parts: message.parts.map((part) => {
+      if (part.type !== 'tool' || part.contextStub == null) return part
+      const { contextStub: _stub, ...source } = part
+      return source
+    }),
   }))
   return { marker: active.marker, summary: active.summary, source }
 }

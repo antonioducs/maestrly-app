@@ -506,6 +506,11 @@ export type MessagePart =
       toolName: string
       input: unknown
       state: ToolState
+      /**
+       * What the model receives instead of an older output that compaction pruned from its context. The output itself
+       * stays for the person and for history_read.
+       */
+      contextStub?: string
     }
   | {
       type: 'file'
