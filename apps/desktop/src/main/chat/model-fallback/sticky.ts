@@ -49,7 +49,12 @@ export function recordStickyWinner(
       ? existing.firstAt
       : now
   entries.delete(scope)
-  entries.set(scope, { primaryKey: refKey(primary), winner: { ...winner }, firstAt, lastUsedAt: now })
+  entries.set(scope, {
+    primaryKey: refKey(primary),
+    winner: { providerId: winner.providerId, modelId: winner.modelId },
+    firstAt,
+    lastUsedAt: now,
+  })
   while (entries.size > MAX_ENTRIES) entries.delete(entries.keys().next().value!)
 }
 

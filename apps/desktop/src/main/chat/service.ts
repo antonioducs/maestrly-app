@@ -100,6 +100,11 @@ import { onSubscriptionAccountExhausted } from './subscription-failover/router'
 import { resolveClaudeRuntimeTarget, type ClaudeRuntimeTarget } from './subscription-failover/claude-adapter'
 import { listClaudeAttempts, setClaudeAttemptOwner } from './subscription-failover/claude-attempts'
 import { runClaudeEphemeralWithFailover } from './subscription-failover/claude-ephemeral'
+import {
+  getModelFallbackConfig,
+  removeProviderFromModelFallback,
+  setModelFallbackConfig,
+} from './model-fallback/config'
 import { recordModelCallUsage } from './usage-diagnostics'
 import { apiKeyStorageMode, clearApiKey, hasApiKey, setApiKey } from './credentials'
 import { currentApiKeyCheck, fetchModels, fetchModelWindow, invalidateModels } from './models'
@@ -2350,6 +2355,7 @@ function buildConfig(): ChatConfig {
       routes: [],
     },
     subscriptionAccountPools: accountPoolInfos(providers, accountPoolName, routerAccountPoolHealth()),
+    modelFallback: getModelFallbackConfig(),
   }
   scheduleCodexConfigRefresh(codexStatus)
   scheduleGitHubCopilotConfigRefresh(githubCopilotStatus)
@@ -7307,6 +7313,7 @@ export async function removeSubscriptionAccountSlot(accountId: string): Promise<
     // Remove references only after physical teardown finishes; on failure, the slot and its pool
     // membership remain consistent for retry.
     removeAccountFromAccountPools(providerId)
+    removeProviderFromModelFallback(providerId)
     removeSubscriptionAccount(accountId)
     // Clear the global default if it points to the removed provider (same policy as BYOK provider-remove).
     if (getAppSetting(CHAT_DEFAULT_PROVIDER_KEY) === providerId) {
@@ -11454,6 +11461,7 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
     if (isManagedProvider(id)) return { ok: false }
     if (typeof id === 'string') {
       removeProvider(id)
+      removeProviderFromModelFallback(id)
       clearApiKey(id)
       invalidateProvider(id)
       invalidateModels(id)
@@ -11846,6 +11854,25 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
     if (typeof accountId !== 'string' || !accountId) return { ok: false, error: 'invalid-input' }
     return removeSubscriptionAccountSlot(accountId)
   })
+  deps.mhandle('chat:model-fallback:set', (_e, input: unknown) => {
+    try {
+      return { ok: true, config: setModelFallbackConfig(input) }
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  })
+  deps.mhandle(
+    'chat:get-model-fallback-pinned',
+    (_e, conversationId: string) =>
+      typeof conversationId === 'string' && getConvUiPrefs(conversationId).chat?.modelFallbackPinned === true
+  )
+  deps.mhandle('chat:set-model-fallback-pinned', (_e, conversationId: string, pinned: boolean) => {
+    if (typeof conversationId === 'string' && conversationId && typeof pinned === 'boolean') {
+      patchConvChat(conversationId, { modelFallbackPinned: pinned || undefined })
+    }
+    return { ok: true }
+  })
+
   deps.mhandle('chat:subscription-account-pool:set', (_e, patch: ChatSubscriptionAccountPoolPatch) => {
     try {
       const pool = setAccountPool(patch)
