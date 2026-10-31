@@ -717,14 +717,62 @@ relevance floor of 0.34. Memory is presented as evidence to check before use.
 ## Conversation history tools
 
 The agent can use `history_search` and `history_read` in any conversation,
-including standalone chats, to revisit persisted messages before compaction.
-They read only the calling conversation and omit hidden memory blocks.
-Search returns newest matches first, eight by default and at most 30, with
-240-character snippets. It scans at most 20,000 recent messages.
-Read returns a window of three messages on either side by default, at most ten
-on either side, with tool output shortened to 600 characters and total output
-capped at 12,000 characters. The requested message is always included (shortened
-if needed), followed by the nearest neighbours that fit.
+including standalone chats, to revisit persisted messages, including turns
+already compacted away. Both omit hidden memory blocks, internal prompts other
+than the approved plan, and messages of isolated executions such as review
+loops.
+
+**Search** returns eight results by default and at most 30, each with its
+position (`seq`), role, time and a 240-character snippet. It has three modes:
+
+- **Relevance (the default).** It ranks messages by how much of the query they
+  cover, weighting rare words more, with full-text rank and a small recency
+  bonus (30-day half-life) breaking ties. Words match by stem regardless of
+  case and accents. `"Quoted phrases"` stay together. Parts of words and
+  Chinese, Japanese or Korean text are found through trigram and two-character
+  indexes. Tool names, inputs (up to 500 characters) and outputs (up to 2,000
+  characters, 8,000 per message) are searchable too, except those of the
+  history and memory tools. A message repeated word for word appears once, the
+  newest copy; of two neighbouring hits only the better one is kept, since
+  reading one shows the other. Each result carries a score from 0 to 1.
+- **Exact (`mode: "exact"`).** Every word of two or more characters must appear
+  in the visible text; newest matches first, as search worked before relevance
+  ranking.
+- **Browse (no query).** It lists what the person asked and the compaction
+  summaries, newest first, with 160-character snippets.
+
+`beforeSeq` pages browse and exact results.
+
+When the optional local ML component is already installed, relevance search
+also compares meanings: it embeds the query and short passages of up to 40
+candidates with the local embedding model within 800 ms. Recent compaction
+summaries can then match on meaning alone, above a 0.34 relevance floor.
+Messages are never embedded ahead of time; without the component, or past the
+budget, text relevance applies. Search never installs the component.
+
+In a project conversation, `scope: "workspace"` searches the other project
+conversations of the same workspace as well: the 200 most recently active,
+archived ones included and bot conversations excluded. Results then name their
+conversation, at most three per conversation. Without a query it lists those
+conversations with the last thing the person asked in each. Standalone chats,
+bot conversations, delegated workers and bots running on a bot server can only
+search their own history.
+
+**Read** returns a window of three messages on either side by default, at most
+ten on either side, with tool output shortened to 600 characters (8,000 with
+`detail: "full"`) and total output capped at 12,000 characters. The requested
+message is always included (shortened if needed), followed by the nearest
+neighbours that fit. `conversationId` reads a conversation that a workspace
+search could reach. Read always shows the messages as saved, whatever
+compaction removed from the model's context.
+
+Search uses a local index, kept up to date in the background and before each
+search (see [Local data](local-data.md#conversation-history-index)). If a
+conversation cannot be indexed within 250 ms, as can happen on the first search
+of a long conversation after an upgrade, search falls back to scanning up to
+20,000 recent messages for every word and reports `"index": "building"`; a
+workspace search then covers what is already indexed. A SQLite build without FTS5 trigram
+support always uses that scan.
 
 ## Automatic memory saving
 

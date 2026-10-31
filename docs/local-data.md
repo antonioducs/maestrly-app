@@ -115,6 +115,32 @@ gateway binary refuses a database newer than its supported schema; an older
 gateway cannot open v7 unless it supports v7. Downgrade by restoring a matching
 backup.
 
+## Conversation history index
+
+[History search](chat-context.md#conversation-history-tools) uses an index in
+`maestrly-history-index.sqlite`, next to the app database (`maestrly-agents.db`),
+with its own `-wal` and `-shm` sidecars. It is a rebuildable cache. It holds
+word and trigram full-text tables of each message's visible text and shortened
+tool calls, without storing that text, plus a per-message hash and each
+conversation's indexing progress. On 50,000 synthetic messages it took about a
+third of the size of the app database. Deleting the file is safe: the app
+indexes the conversations again.
+
+In the app database, triggers on `chat_messages` record each new, changed or
+deleted message in `chat_history_index_queue` (message id, conversation id and
+time). The index applies these changes about three seconds after the last
+write, or at once before a search. Messages that existed before the index are
+indexed in the background in short slices, conversations most recently active
+first. A deleted message leaves the index with the next pass, and search never
+returns a message that is no longer in `chat_messages`; deleted terms are
+removed from the file, not just unlinked. Older app versions keep adding to the
+queue, and a version with the index applies the queue when it starts.
+
+A damaged index, or one written by an incompatible version, is removed and
+rebuilt. On a SQLite build without FTS5 trigram support, the app removes the
+file, clears the queue and searches by scanning messages. Exports skip the
+index and the queue; **Reset local data** removes both.
+
 ## Model picker
 
 `chat.lastSelection` in `app_settings` holds the account and model last picked
