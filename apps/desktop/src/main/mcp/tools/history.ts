@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { toolOutputText, type MessagePart } from '../../../shared/chat'
 import { listChatMessagesAround } from '../../chat/chat-store'
 import { searchHistory } from '../../chat/history-index/search'
+import { localEmbeddingReranker } from '../../chat/history-index/semantic'
 import type { McpToolContext } from './context'
 import { ok } from './context'
 
@@ -79,7 +80,13 @@ export function registerHistoryTools(ctx: McpToolContext): void {
       annotations: { readOnlyHint: true },
     },
     async ({ query, limit, mode }) => {
-      const result = await searchHistory({ conversationIds: [convId], query, mode, limit: limit ?? 8 })
+      const result = await searchHistory({
+        conversationIds: [convId],
+        query,
+        mode,
+        limit: limit ?? 8,
+        rerank: localEmbeddingReranker(),
+      })
       return ok(
         JSON.stringify(
           {

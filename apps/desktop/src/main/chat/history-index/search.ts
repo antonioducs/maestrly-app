@@ -426,9 +426,13 @@ async function rankCandidates(
 ): Promise<HistorySearchHit[]> {
   const now = Date.now()
   if (options.rerank && scored.length) {
+    // The reranker may look at only the first few: summaries without a shared word, then the best lexical matches.
+    const ordered = [...scored].sort(
+      (a, b) => Number(b.semanticOnly) - Number(a.semanticOnly) || b.lexical + 0.3 * b.bm25 - (a.lexical + 0.3 * a.bm25)
+    )
     const semantic = await options.rerank(
       options.query,
-      scored.map((item) => ({ key: item.row.doc_id, text: item.window }))
+      ordered.map((item) => ({ key: item.row.doc_id, text: item.window }))
     )
     for (const item of scored) item.relevance = Math.max(item.lexical, semantic.get(item.row.doc_id) ?? 0)
   }
