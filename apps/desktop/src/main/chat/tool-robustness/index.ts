@@ -5,10 +5,27 @@
 import type { Tool, ToolSet } from 'ai'
 import { chatDiag } from '../diag-log'
 import { isLenientInputSchema, lenientInputSchema } from './lenient-input'
+import { hasToolHistoryChanges, sanitizeToolHistory, type ToolHistoryMessage } from './tool-history'
 
 export { coerceToolInput, parseToolArguments } from './arg-repair'
 export { createToolCallRepair, type ToolCallRepairEvent } from './repair-tool-call'
 export { lenientInputSchema, ToolInputValidationError } from './lenient-input'
+export { sanitizeToolHistory } from './tool-history'
+
+/**
+ * Repairs the tool-call history of AI SDK messages before `streamText`, which refuses a call without a result
+ * before any middleware runs. A valid history is returned as the same array.
+ */
+export function sanitizeHistoryMessages<M extends ToolHistoryMessage>(
+  messages: readonly M[],
+  diag: Record<string, unknown> = {}
+): M[] {
+  const sanitized = sanitizeToolHistory(messages)
+  if (hasToolHistoryChanges(sanitized.stats)) {
+    chatDiag({ kind: 'tool-history-sanitized', stage: 'messages', ...diag, ...sanitized.stats })
+  }
+  return sanitized.prompt
+}
 
 /** Copies a tool with some fields replaced, keeping the symbol markers other wrappers set on it. */
 export function withToolOverrides<T extends object>(source: T, overrides: Partial<T>): T {

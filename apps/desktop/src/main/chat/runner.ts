@@ -174,7 +174,7 @@ import {
   openAINativeOutputText,
 } from './openai/native-tools'
 import { runnerHookContext, wrapToolSetWithHooks } from './plugin-hooks'
-import { createToolCallRepair } from './tool-robustness'
+import { createToolCallRepair, sanitizeHistoryMessages } from './tool-robustness'
 
 const MAX_STEPS = 48
 // ULTRA PARENT agent cap. Workers stay at 48 and share an aggregate per-turn coordinator budget.
@@ -1666,13 +1666,17 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     const stopWhen = guard
       ? [stepCountIs(turnMaxSteps), guard.condition as never, planStop]
       : [stepCountIs(turnMaxSteps), planStop]
+    // The Responses ledger reconciles its own tool calls; every other transport gets a repaired tool history.
+    const historyMessages = useOpenAIHarness
+      ? messages
+      : sanitizeHistoryMessages(messages, { model: selection.modelId, conv: conversationId })
     const result = streamText({
       model: streamModel,
       system: requestSystem,
       messages:
         harness.prompts.environment.placement === 'last-user-message'
-          ? withEnvironmentOnLastUserMessage(messages, envDetails)
-          : messages,
+          ? withEnvironmentOnLastUserMessage(historyMessages, envDetails)
+          : historyMessages,
       tools: allTools,
       repairToolCall: createToolCallRepair({
         onEvent: (event) =>
