@@ -217,6 +217,7 @@ import {
   antigravityModelEfforts,
   antigravityModelMeta,
   antigravityRuntimeOverrideDir,
+  antigravitySummaryChunkBytes,
   clearAntigravitySessionBindings,
   closeAntigravityHostMcpServer,
   deleteAntigravitySessionForConversation,
@@ -5872,6 +5873,7 @@ async function startSend(
           responseStartedAt,
           contextWindow: turnContextWindow,
           ...(runnerMessageMeta ? { messageMeta: runnerMessageMeta } : {}),
+          compactHistory: (onProgress) => compactActiveHistory(undefined, onProgress),
           canPersistSession: () => {
             if (!run.allowAntigravityPersistence || antigravityAuth.busy(selectionAccountId)) return false
             try {
@@ -7661,7 +7663,7 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
     }
     // The chunker enforces UTF-8 bytes, matching the portable bytes/3 estimator.
     // The budget above also reserves the system prompt, labels and the maximum output.
-    const maxChunkChars = opts.summaryMaxTokens
+    const windowChunkChars = opts.summaryMaxTokens
       ? Math.min(400_000, Math.floor(backgroundInputBudget * 3))
       : contextWindow
         ? Math.max(
@@ -7669,6 +7671,10 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
             Math.min(400_000, Math.floor((contextWindow - portableContextReserveTokens(contextWindow)) * 2))
           )
         : 240_000
+    // Antigravity drops prompt text past a fixed byte limit regardless of the model window.
+    const maxChunkChars = isAntigravitySubscriptionProvider(selection.providerId)
+      ? Math.min(windowChunkChars, antigravitySummaryChunkBytes(compactSystem))
+      : windowChunkChars
 
     let summarize: Parameters<typeof summarizePortableTranscript>[2]
     if (isCodexSubscriptionProvider(selection.providerId)) {

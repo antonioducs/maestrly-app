@@ -39,6 +39,15 @@ export class AntigravityRuntimeStoppedError extends Error {
   }
 }
 
+export class AntigravityPromptTooLargeError extends Error {
+  constructor(bytes: number) {
+    super(
+      `This request is too large for Google Antigravity (${bytes.toLocaleString('en-US')} bytes of text; the runtime drops everything after 192,000). Nothing was sent. Compact the conversation or shorten the message, then try again.`
+    )
+    this.name = 'AntigravityPromptTooLargeError'
+  }
+}
+
 const QUOTA_PATTERN = /RESOURCE_EXHAUSTED|quota|rate.?limit|usage limit/i
 const QUOTA_MESSAGE =
   'Google AI usage limit reached for this model. Wait for the limit to reset or choose another model.'

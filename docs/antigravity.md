@@ -119,6 +119,13 @@ first message of each Antigravity session carries the project's instructions
 (`AGENTS.md` or `CLAUDE.md`), the conversation's pinned memory, and the skill and
 subagent catalogs; the date and git branch come with every message.
 
+When a new session imports a long conversation, Maestrly summarizes the history
+before sending it if the prompt exceeds Antigravity's text limit. This can delay
+the first response after switching providers. Your current message is sent in
+full. If the prompt still cannot fit, Maestrly stops with an error before sending
+it; shorten the message or compact the conversation and retry. Summarization
+uses stages that fit the same limit.
+
 ## Credentials and local data
 
 Each Google account gets its own app-owned home directory in the profile, created

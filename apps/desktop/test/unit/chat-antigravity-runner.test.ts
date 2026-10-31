@@ -24,6 +24,8 @@ import {
   type RunAntigravitySubscriptionChatArgs,
   runAntigravitySubscriptionChat,
 } from '../../src/main/chat/antigravity-subscription/runner'
+import { ANTIGRAVITY_PROMPT_TEXT_MAX_BYTES } from '../../src/main/chat/antigravity-subscription/prompt-limit'
+import { ANTIGRAVITY_MESSAGE_ANCHOR } from '../../src/main/chat/antigravity-subscription/session'
 import { getAntigravitySessionBinding } from '../../src/main/chat/antigravity-subscription/session-store'
 import { PRELOAD_APP_TOOLS_TIMEOUT_MS, preloadAppToolsRegistry } from '../helpers/app-tools'
 import { createFakeAntigravity, type FakeAntigravity } from '../helpers/antigravity-fake'
@@ -111,6 +113,25 @@ const expectResumedPrompt = (prompt: string, message: string) => {
 const firstMcpUrl = (entry: Record<string, unknown> | undefined) => {
   const params = entry?.params as { mcpServers?: Array<{ url: string }> } | undefined
   return params?.mcpServers?.[0]?.url
+}
+
+/** Earlier turns from another runtime, large enough that seeding them would exceed Antigravity's prompt limit. */
+function seedOversizedHistory() {
+  const createdAt = Date.now() - 10
+  upsertChatMessage({
+    id: 'earlier-user',
+    conversationId,
+    role: 'user',
+    parts: [{ type: 'text', id: 'earlier-user-text', text: 'earlier question' }],
+    createdAt,
+  } as never)
+  upsertChatMessage({
+    id: 'earlier-assistant',
+    conversationId,
+    role: 'assistant',
+    parts: [{ type: 'text', id: 'earlier-assistant-text', text: 'earlier tool output\n'.repeat(12_000) }],
+    createdAt: createdAt + 1,
+  } as never)
 }
 
 async function cancelSlowTurn() {
@@ -276,6 +297,58 @@ describe('Antigravity chat runner', () => {
           .some((entry) => (entry.params as { sessionId: string }).sessionId === firstSession)
       )
       .toBe(true)
+  })
+
+  it('replaces a seed that would not fit the prompt limit with a summary and keeps the request last', async () => {
+    seedOversizedHistory()
+    const compactHistory = vi.fn(async () => ({ summary: 'Summary of the earlier work.' }))
+    const { events } = await turn('ECHO hi', { compactHistory })
+    expect(compactHistory).toHaveBeenCalledTimes(1)
+    expect(events.find((event) => event.kind === 'compaction')).toMatchObject({
+      text: 'Summary of the earlier work.',
+      strategy: 'summary',
+    })
+    const prompt = promptText(fake.requests('session/prompt').at(-1))
+    expect(prompt).toContain('Previous summary:\nSummary of the earlier work.')
+    expect(prompt).not.toContain('earlier tool output')
+    expect(prompt.endsWith(`${ANTIGRAVITY_MESSAGE_ANCHOR}\n\nECHO hi`)).toBe(true)
+    expect(Buffer.byteLength(prompt, 'utf8')).toBeLessThanOrEqual(ANTIGRAVITY_PROMPT_TEXT_MAX_BYTES)
+    expect(events.at(-1)).toMatchObject({ kind: 'finish' })
+    expect(textOf(events)).toBe('hi')
+    const assistant = listChatMessages(conversationId).at(-1)
+    expect(assistant?.parts.some((part) => part.type === 'compaction')).toBe(true)
+  })
+
+  it('keeps the full seed when it fits', async () => {
+    await turn('ECHO first answer')
+    h.mcpTools = {
+      echo,
+      extra: tool({ description: 'Extra.', inputSchema: z.object({}), execute: async () => 'extra' }),
+    }
+    const compactHistory = vi.fn(async () => ({ summary: 'unused' }))
+    await turn('ECHO second', { compactHistory })
+    expect(compactHistory).not.toHaveBeenCalled()
+    expect(promptText(fake.requests('session/prompt').at(-1))).toContain('first answer')
+  })
+
+  it('fails before prompting when an oversized seed cannot be compacted', async () => {
+    seedOversizedHistory()
+    const { events } = await turn('ECHO hi')
+    expect(events.at(-1)).toMatchObject({
+      kind: 'error',
+      message: expect.stringMatching(/too large for Google Antigravity.*Nothing was sent/),
+    })
+    expect(fake.requests('session/prompt')).toHaveLength(0)
+    expect(getAntigravitySessionBinding(conversationId)).toBeUndefined()
+  })
+
+  it('fails before prompting when the summary still does not fit', async () => {
+    seedOversizedHistory()
+    const compactHistory = vi.fn(async () => ({ summary: 'still too long\n'.repeat(15_000) }))
+    const { events } = await turn('ECHO hi', { compactHistory })
+    expect(compactHistory).toHaveBeenCalledTimes(2)
+    expect(events.at(-1)).toMatchObject({ kind: 'error', message: expect.stringMatching(/too large/) })
+    expect(fake.requests('session/prompt')).toHaveLength(0)
   })
 
   it('denies native Antigravity tool permission requests', async () => {
