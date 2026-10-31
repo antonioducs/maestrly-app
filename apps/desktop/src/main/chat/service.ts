@@ -106,7 +106,8 @@ import {
   setModelFallbackConfig,
 } from './model-fallback/config'
 import type { ModelFailureReason } from './model-fallback/error-classifier'
-import { holdStrictModelSelection } from './model-fallback/run-with-fallback'
+import { holdStrictModelSelection, runHelperWithModelFallback } from './model-fallback/run-with-fallback'
+import { runOneShotTextOn } from './one-shot-text'
 import {
   admitRootCandidate,
   beginRootModelFallback,
@@ -8023,6 +8024,40 @@ async function compactReservedWithProgress(conversationId: string, opts: Compact
   return result
 }
 
+type PortableSummarize = Parameters<typeof summarizePortableTranscript>[2]
+
+/** Wraps a compaction summarizer with the model fallback list; fallbacks summarize through the one-shot runtimes. */
+function withSummaryModelFallback(
+  summarize: PortableSummarize,
+  context: { selection: ChatModelRef; conversationId: string; cwd: string; system: string }
+): PortableSummarize {
+  const primary = { providerId: context.selection.providerId, modelId: context.selection.modelId }
+  return (prompt, phase, stageSignal) =>
+    runHelperWithModelFallback({
+      selection: primary,
+      agent: 'portable-compaction',
+      conversationId: context.conversationId,
+      signal: stageSignal,
+      run: async (chosen) => {
+        if (chosen === primary) return summarize(prompt, phase, stageSignal)
+        const result = await runOneShotTextOn({
+          selection: chosen,
+          system: context.system,
+          prompt,
+          signal: stageSignal ?? new AbortController().signal,
+          conversationId: context.conversationId,
+          cwd: context.cwd,
+          agent: 'portable-compaction',
+        })
+        const { input, output, cacheRead, cacheCreate } = result.usage
+        return {
+          text: result.text,
+          usage: { input, output, cacheRead, cacheCreate, totalInput: input + cacheRead + cacheCreate },
+        }
+      },
+    })
+}
+
 async function compactReservedWork(conversationId: string, opts: CompactOpts): Promise<CompactResult> {
   const conv = getConversation(conversationId)
   if (!conv) return { ok: false, error: 'invalid-conversation' }
@@ -8473,6 +8508,16 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
         return { text: result.text ?? '', usage: normalizeAiUsage(result.totalUsage) }
       }
     }
+
+    // Extension point: a summary call that fails for capacity or auth moves to the model fallback list. A frozen
+    // profile keeps its summarizer (fail-closed); every attempt below still reports through onSummaryAttempt.
+    if (!frozen)
+      summarize = withSummaryModelFallback(summarize, {
+        selection,
+        conversationId,
+        cwd: conv.cwd,
+        system: compactSystem,
+      })
 
     if (opts.onSummaryAttempt) {
       const rawSummarize = summarize
