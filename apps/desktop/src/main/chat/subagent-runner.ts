@@ -64,6 +64,7 @@ import { getAppFlag } from '../store'
 import { applyFastModeServiceTier } from './fast-mode'
 import { createSubagentTextEmitter, type SubagentTextUpdateHandler } from './subagent-text-stream'
 import type { SubagentMessageOwnership } from './subagent-ownership'
+import { createToolCallRepair, hardenToolSetForModel } from './tool-robustness'
 
 const SUB_MAX_CONTINUE = 2
 const SUB_MAX_TOTAL_CONTINUES = 3
@@ -449,6 +450,8 @@ export async function runSubagent(args: {
         subagentTaskCallId
       ),
     }
+    // The host tools arrive hardened by the parent; this covers the subagent's own built-ins.
+    tools = hardenToolSetForModel(tools)
     const standalone = args.messageOwnership?.kind === 'standalone' || args.projectId === null
     // Read once the tools are final: local_shell replaces `bash` for some OpenAI models and takes argv instead.
     const delegatedEnvironment = (): string =>
@@ -657,6 +660,10 @@ export async function runSubagent(args: {
           system: subSystem,
           messages: requestMessages,
           tools,
+          repairToolCall: createToolCallRepair({
+            onEvent: (event) =>
+              chatDiag({ kind: 'tool-call-repaired', ...event, model: usedModel.modelId, agent: args.agentName }),
+          }),
           // No step cap (July 2026 decision): stop only when the model
           // finishes without tool calls; turn abort (Stop) cuts the stream.
           stopWhen: () => false,

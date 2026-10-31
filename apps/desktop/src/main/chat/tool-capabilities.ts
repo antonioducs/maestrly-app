@@ -7,6 +7,7 @@ import {
   modelOutputToChatToolOutput,
 } from './tool-output'
 import { toolOutputImages, type ChatToolImage } from '../../shared/chat'
+import { hardenToolSetForModel } from './tool-robustness'
 
 /**
  * Capability decision shared by BYOK and the subscription runners.
@@ -33,15 +34,19 @@ export function canExposeGeneratedImageTool(args: { mode: ChatBehavior; enabled:
   return capabilityBehaviorFor(args.mode) === 'agent' && args.enabled
 }
 
-/** Wraps a host ToolSet at the model boundary so a child model can have different vision capability than its parent. */
+/**
+ * Wraps a host ToolSet at the model boundary so a child model can have different vision capability than its parent.
+ * Every runtime passes its tools through here, so it also applies the tool-call robustness layer.
+ */
 export function adaptToolSetForModel(args: {
   tools: ToolSet
   supportsImages: boolean
   describeImage?: (image: ChatToolImage) => Promise<{ text: string; model?: string } | null>
 }): ToolSet {
-  if (args.supportsImages) return args.tools
-  const adapted: ToolSet = { ...args.tools }
-  for (const [name, rawTool] of Object.entries(args.tools)) {
+  const tools = hardenToolSetForModel(args.tools)
+  if (args.supportsImages) return tools
+  const adapted: ToolSet = { ...tools }
+  for (const [name, rawTool] of Object.entries(tools)) {
     const execute = (rawTool as { execute?: unknown }).execute
     if (typeof execute !== 'function') continue
     adapted[name] = {

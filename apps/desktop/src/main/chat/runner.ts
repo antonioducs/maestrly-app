@@ -174,6 +174,7 @@ import {
   openAINativeOutputText,
 } from './openai/native-tools'
 import { runnerHookContext, wrapToolSetWithHooks } from './plugin-hooks'
+import { createToolCallRepair } from './tool-robustness'
 
 const MAX_STEPS = 48
 // ULTRA PARENT agent cap. Workers stay at 48 and share an aggregate per-turn coordinator budget.
@@ -1673,6 +1674,10 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
           ? withEnvironmentOnLastUserMessage(messages, envDetails)
           : messages,
       tools: allTools,
+      repairToolCall: createToolCallRepair({
+        onEvent: (event) =>
+          chatDiag({ kind: 'tool-call-repaired', ...event, model: selection.modelId, conv: conversationId }),
+      }),
       stopWhen,
       // Observes only: returning nothing leaves every step's request unchanged.
       prepareStep: ({ messages: stepMessages }) => {
