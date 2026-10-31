@@ -14,6 +14,10 @@ import {
   FLEET_OWNER_SEEN_FEATURE,
   FLEET_RUNNERS_FEATURE,
   FLEET_RUNNER_LIMITS,
+  FLEET_BOT_OWN_SKILLS_FEATURE,
+  fleetBotOwnSkillNameSchema,
+  type FleetBotOwnSkillAction,
+  type FleetBotOwnSkillsSettings,
   FLEET_CANCEL_CONVERSATION_QUERY,
   fleetReaderWantsPeerThreads,
   fleetReaderWantsRunners,
@@ -523,6 +527,7 @@ export async function publicRoute(
             FLEET_PHONE_SCREENS_FEATURE,
             FLEET_OWNER_SEEN_FEATURE,
             FLEET_RUNNERS_FEATURE,
+            FLEET_BOT_OWN_SKILLS_FEATURE,
           ],
           botImage: ctx.config.botImage,
           botImageVersion: await ctx.host.botImageVersion(),
@@ -839,6 +844,29 @@ export async function publicRoute(
       }
       if (key === 'botFilesDelete') return { body: await client.filesDelete(body as FleetFilesDeleteRequest) }
       return { body: await client.fileSettings(body as FleetFileSettings) }
+    }
+    case 'botOwnSkillsList':
+    case 'botOwnSkillsSettings':
+    case 'botOwnSkillGet':
+    case 'botOwnSkillVersion':
+    case 'botOwnSkillAction': {
+      requireBot(ctx, id)
+      if (params.name !== undefined && !fleetBotOwnSkillNameSchema.safeParse(params.name).success)
+        throw new GatewayError('NOT_FOUND', 'Skill not found')
+      if (params.versionId !== undefined && !/^[A-Za-z0-9-]{1,64}$/.test(params.versionId))
+        throw new GatewayError('NOT_FOUND', 'Version not found')
+      // A bot that is not running has no status: its instance says so below.
+      const status = ctx.lifecycle.statuses.get(id)
+      if (status && !status.capabilities.includes(FLEET_BOT_OWN_SKILLS_FEATURE))
+        throw new GatewayError('PROTOCOL_INCOMPATIBLE', 'Update this bot to manage its skills')
+      const client = ctx.lifecycle.instanceFor(id)
+      res.setHeader('Cache-Control', 'private, no-store')
+      if (key === 'botOwnSkillsList') return { body: await client.ownSkillsList() }
+      if (key === 'botOwnSkillsSettings')
+        return { body: await client.ownSkillsSettings(body as FleetBotOwnSkillsSettings) }
+      if (key === 'botOwnSkillGet') return { body: await client.ownSkillGet(params.name) }
+      if (key === 'botOwnSkillVersion') return { body: await client.ownSkillVersion(params.name, params.versionId) }
+      return { body: await client.ownSkillAction(params.name, body as FleetBotOwnSkillAction) }
     }
     case 'botFileMeta':
     case 'botFile': {

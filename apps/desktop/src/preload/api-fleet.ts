@@ -40,6 +40,12 @@ import type {
   FleetPeerThreadSettings,
   FleetBotMemory,
   FleetBotMemoryPatchRequest,
+  FleetBotOwnSkillAction,
+  FleetBotOwnSkillActionResult,
+  FleetBotOwnSkillDetail,
+  FleetBotOwnSkillReview,
+  FleetBotOwnSkillsList,
+  FleetBotOwnSkillVersionFiles,
   FleetArchivedBot,
   FleetArchivedEnvironment,
   FleetBot,
@@ -175,6 +181,15 @@ export type {
   FleetPeerThreadSettings,
   FleetBotMemory,
   FleetBotMemoryPatchRequest,
+  FleetBotOwnSkillAction,
+  FleetBotOwnSkillActionResult,
+  FleetBotOwnSkillDetail,
+  FleetBotOwnSkillFile,
+  FleetBotOwnSkillReview,
+  FleetBotOwnSkillSummary,
+  FleetBotOwnSkillsList,
+  FleetBotOwnSkillVersion,
+  FleetBotOwnSkillVersionFiles,
   FleetBot,
   FleetGatewayEvent,
   FleetHostInfo,
@@ -509,6 +524,29 @@ export const fleetApi = {
     botId: string,
     settings: FleetFileSettings
   ): Promise<FleetFilesUsage> => ipcRenderer.invoke('fleet:setBotFileSettings', serverId, botId, settings),
+  fleetListBotOwnSkills: (serverId: FleetServerId, botId: string): Promise<FleetBotOwnSkillsList> =>
+    ipcRenderer.invoke('fleet:listBotOwnSkills', serverId, botId),
+  fleetSetBotOwnSkillsSettings: (
+    serverId: FleetServerId,
+    botId: string,
+    settings: { review: FleetBotOwnSkillReview }
+  ): Promise<FleetBotOwnSkillsList> => ipcRenderer.invoke('fleet:setBotOwnSkillsSettings', serverId, botId, settings),
+  fleetGetBotOwnSkill: (serverId: FleetServerId, botId: string, name: string): Promise<FleetBotOwnSkillDetail> =>
+    ipcRenderer.invoke('fleet:getBotOwnSkill', serverId, botId, name),
+  fleetGetBotOwnSkillVersion: (
+    serverId: FleetServerId,
+    botId: string,
+    name: string,
+    versionId: string
+  ): Promise<FleetBotOwnSkillVersionFiles> =>
+    ipcRenderer.invoke('fleet:getBotOwnSkillVersion', serverId, botId, name, versionId),
+  fleetActOnBotOwnSkill: (
+    serverId: FleetServerId,
+    botId: string,
+    name: string,
+    action: FleetBotOwnSkillAction
+  ): Promise<FleetBotOwnSkillActionResult> =>
+    ipcRenderer.invoke('fleet:actOnBotOwnSkill', serverId, botId, name, action),
   fleetCancelDownload: (serverId: FleetServerId, botId: string, fileId: string): Promise<void> =>
     ipcRenderer.invoke('fleet:cancelDownload', serverId, botId, fileId),
   fleetGetActiveDownload: (

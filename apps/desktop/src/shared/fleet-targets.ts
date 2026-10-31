@@ -71,3 +71,7 @@ export const FLEET_PEER_THREAD_CONFLICT = 'FLEET_PEER_THREAD_CONFLICT'
 export const FLEET_OWNER_SEEN_UNSUPPORTED = 'FLEET_OWNER_SEEN_UNSUPPORTED'
 /** Raised when the gateway or the bot cannot list, delete or size the files the bot shared yet (`files-manage`). */
 export const FLEET_FILES_MANAGE_UNSUPPORTED = 'FLEET_FILES_MANAGE_UNSUPPORTED'
+/** Raised when the gateway or the bot cannot show the skills the bot keeps for itself yet (`bot-own-skills`). */
+export const FLEET_OWN_SKILLS_UNSUPPORTED = 'FLEET_OWN_SKILLS_UNSUPPORTED'
+/** Raised when a skill changed since the owner opened it, or cannot take that change now. */
+export const FLEET_OWN_SKILL_CONFLICT = 'FLEET_OWN_SKILL_CONFLICT'

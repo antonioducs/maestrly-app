@@ -55,6 +55,7 @@ import type { FleetController } from '@/lib/fleet/use-fleet'
 import { cn } from '@/lib/utils'
 import { BotAutonomyTable } from './BotAutonomyTable'
 import { BotMemorySection } from './BotMemorySection'
+import { BotOwnSkillsSection } from './BotOwnSkillsSection'
 import { BotDesktopAccessSection } from './BotDesktopAccessSection'
 import { BotRunnersSection } from './BotRunnersSection'
 import { BotEnvironmentAccessSection } from './BotEnvironmentAccessSection'
@@ -79,6 +80,7 @@ type TabId =
   | 'peers'
   | 'routines'
   | 'memory'
+  | 'ownSkills'
   | 'desktops'
   | 'runners'
   | 'environment'
@@ -273,6 +275,7 @@ export function BotSettings({
     'peers',
     'routines',
     'memory',
+    'ownSkills',
     'desktops',
     'runners',
     shared ? 'environment' : 'where',
@@ -834,6 +837,9 @@ export function BotSettings({
           </SettingsTabPanel>
           <SettingsTabPanel tab="memory" current={current}>
             <BotMemorySection key={`memory-${bot.id}`} id={domId('memory')} bot={bot} />
+          </SettingsTabPanel>
+          <SettingsTabPanel tab="ownSkills" current={current}>
+            <BotOwnSkillsSection key={`own-skills-${bot.id}`} id={domId('ownSkills')} bot={bot} fleet={fleet} />
           </SettingsTabPanel>
           <SettingsTabPanel tab="desktops" current={current}>
             <BotDesktopAccessSection key={`desktops-${bot.id}`} id={domId('desktops')} bot={bot} />

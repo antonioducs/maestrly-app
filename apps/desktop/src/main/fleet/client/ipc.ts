@@ -5,6 +5,7 @@ import { registerFleetProvisioningIpc } from './provisioning/ipc'
 import { z } from 'zod'
 import {
   FLEET_BOT_MOVE_FEATURE,
+  FLEET_BOT_OWN_SKILLS_FEATURE,
   FLEET_CANCEL_CONVERSATION_QUERY,
   FLEET_PARALLEL_TURNS_FEATURE,
   FLEET_DICTATION_FEATURE,
@@ -26,6 +27,9 @@ import {
   fleetOwnerMemoryCreateRequestSchema,
   fleetOwnerMemoryPatchRequestSchema,
   fleetBotMemoryPatchRequestSchema,
+  fleetBotOwnSkillActionSchema,
+  fleetBotOwnSkillNameSchema,
+  fleetBotOwnSkillsSettingsSchema,
   fleetConversationOpSchema,
   fleetConversationCallRequestSchema,
   fleetBotMoveRequestSchema,
@@ -71,6 +75,8 @@ import {
   FLEET_EDIT_CONFLICT,
   FLEET_EDIT_UNSUPPORTED,
   FLEET_FILES_MANAGE_UNSUPPORTED,
+  FLEET_OWN_SKILL_CONFLICT,
+  FLEET_OWN_SKILLS_UNSUPPORTED,
   FLEET_OWNER_SEEN_UNSUPPORTED,
   FLEET_RUN_CONFLICT,
   FLEET_RUNS_UNSUPPORTED,
@@ -426,6 +432,18 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
     const bot = await fleet.call('botGet', { params: { id: botId } })
     if (!bot.capabilities.includes(FLEET_FILES_MANAGE_FEATURE)) throw new Error(FLEET_FILES_MANAGE_UNSUPPORTED)
   }
+  /** Checks the gateway and the bot let the owner manage the skills the bot keeps (`bot-own-skills`). */
+  const requireOwnSkills = async (fleet: FleetClientService, botId: string): Promise<void> => {
+    if (!fleet.hasFeature(FLEET_BOT_OWN_SKILLS_FEATURE)) throw new Error(FLEET_OWN_SKILLS_UNSUPPORTED)
+    const bot = await fleet.call('botGet', { params: { id: botId } })
+    if (!bot.capabilities.includes(FLEET_BOT_OWN_SKILLS_FEATURE)) throw new Error(FLEET_OWN_SKILLS_UNSUPPORTED)
+  }
+  /** A skill that changed since the owner opened it answers 409: the renderer asks to reload it. */
+  const ownSkillConflict = (error: unknown): never => {
+    if (error instanceof FleetClientError && error.status === 409) throw new Error(FLEET_OWN_SKILL_CONFLICT)
+    if (error instanceof FleetClientError && error.status === 426) throw new Error(FLEET_OWN_SKILLS_UNSUPPORTED)
+    throw error
+  }
   /** The bot after checking it and its gateway keep routine runs in conversations of their own. */
   const requireRuns = async (fleet: FleetClientService, botId: string) => {
     if (!fleet.hasFeature(FLEET_ROUTINE_CONVERSATIONS_FEATURE)) throw new Error(FLEET_RUNS_UNSUPPORTED)
@@ -614,6 +632,48 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
     const bot = id.parse(botId)
     const body = fleetFileSettingsSchema.parse(settings)
     return requireFilesManage(fleet, bot).then(() => fleet.call('botFileSettings', { params: { id: bot }, body }))
+  })
+  scoped.handle('fleet:listBotOwnSkills', (fleet, _event, botId: unknown) => {
+    const bot = id.parse(botId)
+    return requireOwnSkills(fleet, bot)
+      .then(() => fleet.call('botOwnSkillsList', { params: { id: bot } }))
+      .catch(ownSkillConflict)
+  })
+  scoped.mhandle('fleet:setBotOwnSkillsSettings', (fleet, _event, botId: unknown, settings: unknown) => {
+    const bot = id.parse(botId)
+    const body = fleetBotOwnSkillsSettingsSchema.parse(settings)
+    return requireOwnSkills(fleet, bot)
+      .then(() => fleet.call('botOwnSkillsSettings', { params: { id: bot }, body }))
+      .catch(ownSkillConflict)
+  })
+  scoped.handle('fleet:getBotOwnSkill', (fleet, _event, botId: unknown, skillName: unknown) => {
+    const bot = id.parse(botId)
+    const name = fleetBotOwnSkillNameSchema.parse(skillName)
+    return requireOwnSkills(fleet, bot)
+      .then(() => fleet.call('botOwnSkillGet', { params: { id: bot, name } }))
+      .catch(ownSkillConflict)
+  })
+  scoped.handle(
+    'fleet:getBotOwnSkillVersion',
+    (fleet, _event, botId: unknown, skillName: unknown, version: unknown) => {
+      const bot = id.parse(botId)
+      const name = fleetBotOwnSkillNameSchema.parse(skillName)
+      const versionId = z
+        .string()
+        .regex(/^[A-Za-z0-9-]{1,64}$/)
+        .parse(version)
+      return requireOwnSkills(fleet, bot)
+        .then(() => fleet.call('botOwnSkillVersion', { params: { id: bot, name, versionId } }))
+        .catch(ownSkillConflict)
+    }
+  )
+  scoped.mhandle('fleet:actOnBotOwnSkill', (fleet, _event, botId: unknown, skillName: unknown, action: unknown) => {
+    const bot = id.parse(botId)
+    const name = fleetBotOwnSkillNameSchema.parse(skillName)
+    const body = fleetBotOwnSkillActionSchema.parse(action)
+    return requireOwnSkills(fleet, bot)
+      .then(() => fleet.call('botOwnSkillAction', { params: { id: bot, name }, body }))
+      .catch(ownSkillConflict)
   })
   scoped.handle('fleet:getImage', (fleet, _event, botId: unknown, rawImageId: unknown, runId: unknown = null) =>
     fleet

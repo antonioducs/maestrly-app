@@ -20,6 +20,7 @@ import { pipeline } from 'node:stream/promises'
 import {
   FLEET_BOT_MOVE_FEATURE,
   FLEET_BOT_MOVE_LIMITS,
+  FLEET_BOT_OWN_SKILLS_FEATURE,
   FLEET_BOT_MOVE_SHA256_HEADER,
   FLEET_CONTEXT_LIMIT_FEATURE,
   FLEET_DESKTOP_BRIDGE_FEATURE,
@@ -47,6 +48,7 @@ import {
   FLEET_VIDEO_SCREENS_FEATURE,
   fleetAccountSlotIdSchema,
   fleetBotIdSchema,
+  fleetBotOwnSkillNameSchema,
   fleetFileIdSchema,
   fleetFileRefSchema,
   fleetInstanceEventSchema,
@@ -65,6 +67,12 @@ import {
   type FleetBotMcpServers,
   type FleetBotMemory,
   type FleetBotMemoryPatchRequest,
+  type FleetBotOwnSkillAction,
+  type FleetBotOwnSkillActionResult,
+  type FleetBotOwnSkillDetail,
+  type FleetBotOwnSkillsList,
+  type FleetBotOwnSkillsSettings,
+  type FleetBotOwnSkillVersionFiles,
   type FleetBotSkills,
   type FleetConversationCallRequest,
   type FleetEditMessageRequest,
@@ -131,8 +139,9 @@ export type { HostFilesRoutes } from './host-files-http'
  * last message, streams its screens as video, moves its bots to other environments with everything that is theirs,
  * says why an MCP connection test failed, runs routines in conversations of their own when the gateway asks,
  * routes the tasks of a bot that delegates to the models its owner allows, and lets the owner list, delete and size
- * the files its bots shared, and keeps the files of the jobs its bots send to runners (their manifests, blobs, logs and
- * outputs). Its health and every status advertise them.
+ * the files its bots shared, keeps the files of the jobs its bots send to runners (their manifests, blobs, logs and
+ * outputs), and lets the owner review, edit and revert the skills each bot keeps for itself. Its health and every status
+ * advertise them.
  */
 export const INSTANCE_CAPABILITIES: readonly string[] = [
   FLEET_FILES_FEATURE,
@@ -156,6 +165,7 @@ export const INSTANCE_CAPABILITIES: readonly string[] = [
   FLEET_BOT_DELEGATION_FEATURE,
   FLEET_FILES_MANAGE_FEATURE,
   FLEET_RUNNER_JOBS_CAPABILITY,
+  FLEET_BOT_OWN_SKILLS_FEATURE,
 ]
 
 type MemoryStatus = 'active' | 'archived' | 'superseded' | 'all'
@@ -188,6 +198,12 @@ export interface InstanceBot {
   listFiles(): Promise<FleetFilesList>
   deleteFiles(ids: string[]): Promise<FleetFilesDeleted>
   setFileSettings(settings: FleetFileSettings): Promise<FleetFilesUsage>
+  /** The skills the bot keeps for itself (`bot-own-skills`). */
+  ownSkills(): Promise<FleetBotOwnSkillsList>
+  setOwnSkillsSettings(settings: FleetBotOwnSkillsSettings): Promise<FleetBotOwnSkillsList>
+  ownSkill(name: string): Promise<FleetBotOwnSkillDetail>
+  ownSkillVersion(name: string, versionId: string): Promise<FleetBotOwnSkillVersionFiles>
+  ownSkillAction(name: string, action: FleetBotOwnSkillAction): Promise<FleetBotOwnSkillActionResult>
   input(value: FleetInstanceInput): Promise<FleetInputReceipt>
   deleteInput(id: string): Promise<void>
   /** Edits the owner's last message: the conversation is cut from it and the new text queued (`message-edit`). */
@@ -339,6 +355,16 @@ const fileIdOf = (value: string): string => {
   const parsed = fleetFileIdSchema.safeParse(value)
   if (!parsed.success) throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Invalid file id.')
   return parsed.data
+}
+/** No skill of the bot has a name that is not one: it is not found, like a skill that does not exist. */
+const ownSkillName = (value: string): string => {
+  const parsed = fleetBotOwnSkillNameSchema.safeParse(value)
+  if (!parsed.success) throw new InstanceHttpError(404, 'NOT_FOUND', 'Skill not found.')
+  return parsed.data
+}
+const ownSkillVersionId = (value: string): string => {
+  if (!/^[A-Za-z0-9-]{1,64}$/.test(value)) throw new InstanceHttpError(404, 'NOT_FOUND', 'Version not found.')
+  return value
 }
 const underTakeover = (bot: InstanceBot): boolean => {
   const hold = bot.holdManager.state
@@ -739,6 +765,13 @@ export function createInstanceControlServer(
     botFilesList: ({ params }) => bot(params).listFiles(),
     botFilesDelete: ({ params, input }) => bot(params).deleteFiles((input as FleetFilesDeleteRequest).ids),
     botFileSettings: ({ params, input }) => bot(params).setFileSettings(input as FleetFileSettings),
+    botOwnSkillsList: ({ params }) => bot(params).ownSkills(),
+    botOwnSkillsSettings: ({ params, input }) => bot(params).setOwnSkillsSettings(input as FleetBotOwnSkillsSettings),
+    botOwnSkillGet: ({ params }) => bot(params).ownSkill(ownSkillName(params.name)),
+    botOwnSkillVersion: ({ params }) =>
+      bot(params).ownSkillVersion(ownSkillName(params.name), ownSkillVersionId(params.versionId)),
+    botOwnSkillAction: ({ params, input }) =>
+      bot(params).ownSkillAction(ownSkillName(params.name), input as FleetBotOwnSkillAction),
     botInputSend: ({ params, input }) => bot(params).input(input as FleetInstanceInput),
     botInputDelete: ({ params }) => bot(params).deleteInput(params.inputId),
     botInputEdit: ({ params, input }) => bot(params).editInput(params.inputId, input as FleetEditMessageRequest),

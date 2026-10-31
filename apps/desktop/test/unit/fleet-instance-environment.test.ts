@@ -511,6 +511,7 @@ describe('bot environment registry', () => {
       'bot-delegation',
       'files-manage',
       'runner-jobs',
+      'bot-own-skills',
     ])
     expect(runtime.health()).toMatchObject({
       ok: true,
@@ -537,6 +538,7 @@ describe('bot environment registry', () => {
         'bot-delegation',
         'files-manage',
         'runner-jobs',
+        'bot-own-skills',
       ],
     })
   })
@@ -1437,6 +1439,7 @@ describe('bot environment registry', () => {
           'bot-delegation',
           'files-manage',
           'runner-jobs',
+          'bot-own-skills',
         ],
       })
       expect(await (await request('GET', '/v1/environment/status')).json()).toMatchObject({
@@ -1463,6 +1466,7 @@ describe('bot environment registry', () => {
           'bot-delegation',
           'files-manage',
           'runner-jobs',
+          'bot-own-skills',
         ],
         bots: [
           { botId: 'alpha', slot: 1 },
@@ -1493,6 +1497,7 @@ describe('bot environment registry', () => {
           'bot-delegation',
           'files-manage',
           'runner-jobs',
+          'bot-own-skills',
         ],
       })
       const selections = await request('GET', '/v1/environment/selections')

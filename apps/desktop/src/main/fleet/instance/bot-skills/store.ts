@@ -412,11 +412,13 @@ export class BotSkillStore {
   /** Archives an active skill or restores an archived one. Nothing is ever deleted by the bot. */
   async archive(
     input: { name: string; restore?: boolean; absorbedInto?: string },
-    writer: BotSkillWriter
+    writer: BotSkillWriter,
+    expectRevision?: number
   ): Promise<{ name: string; status: BotSkillStatus; revision: number }> {
     return this.exclusive(async () => {
       const state = await this.load()
       const record = this.own(state, input.name)
+      if (expectRevision !== undefined) this.expect(record, expectRevision)
       if (writer.actor !== 'owner' && record.locked)
         throw new BotSkillError(
           `Your owner locked the skill "${input.name}"; ask them to archive or restore it.`,
@@ -471,11 +473,13 @@ export class BotSkillStore {
    */
   async resolveProposal(
     input: { name: string; action: 'apply' | 'discard' },
-    writer: BotSkillWriter
+    writer: BotSkillWriter,
+    expectRevision?: number
   ): Promise<{ name: string; status: BotSkillStatus | 'discarded'; revision: number }> {
     return this.exclusive(async () => {
       const state = await this.load()
       const record = this.own(state, input.name)
+      if (expectRevision !== undefined) this.expect(record, expectRevision)
       if (!record.proposal) throw new BotSkillError(`Skill "${input.name}" has no pending proposal.`, 'not-found')
       const at = this.now()
       if (input.action === 'discard') {

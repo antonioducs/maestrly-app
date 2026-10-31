@@ -6,6 +6,8 @@ import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
 import { getAppSetting } from '../../src/main/store'
 import { BotSkillStore } from '../../src/main/fleet/instance/bot-skills/store'
+import { BotSkillOwnerApi } from '../../src/main/fleet/instance/bot-skills/owner'
+import { InstanceHttpError } from '../../src/main/fleet/instance/http'
 import { BOT_SKILL_LIMITS } from '../../src/main/fleet/instance/bot-skills/validation'
 import { setConversationSkillProvider } from '../../src/main/chat/conversation-skill-provider'
 import { effectiveSkills, findEffectiveSkill, listConversationSkills } from '../../src/main/chat/skill-state'
@@ -387,6 +389,114 @@ describe("a bot's own skills", () => {
     expect(await readFile(path.join(atlas.store.root, 'library', 'make-animation', 'SKILL.md'), 'utf8')).toContain(
       'Draw the frames'
     )
+  })
+})
+
+describe("the owner's side of a bot's skills", () => {
+  const refusal = async (promise: Promise<unknown>) => {
+    const error = await promise.then(
+      () => null,
+      (cause: unknown) => cause
+    )
+    expect(error).toBeInstanceOf(InstanceHttpError)
+    return { status: (error as InstanceHttpError).status, code: (error as InstanceHttpError).code }
+  }
+
+  it('lists, shows and changes skills against the revision the owner saw', async () => {
+    const atlas = bot('atlas')
+    const conversation = atlas.open()
+    const { call } = tools(conversation, atlas.store)
+    await call('skill_create', animation)
+    await call('skill_write_file', {
+      name: 'make-animation',
+      file_path: 'scripts/render.sh',
+      content: 'ffmpeg\n',
+      reason: 'Render',
+    })
+    // A stray file put there from a shell is not one a skill uses, so the owner's view leaves it out.
+    await writeFile(path.join(atlas.store.root, 'library', 'make-animation', 'notes.txt'), 'stray')
+    const api = new BotSkillOwnerApi(atlas.store, async () => new Set(['make-animation']))
+    const listed = await api.list()
+    expect(listed).toMatchObject({
+      review: 'auto',
+      skills: [{ name: 'make-animation', shadowed: true, hasScripts: true, createdBy: 'bot', proposal: null }],
+    })
+    const detail = await api.detail('make-animation')
+    expect(detail.currentFiles.map((file) => file.path)).toEqual(['SKILL.md', 'scripts/render.sh'])
+    expect(detail.versions.map((version) => [version.action, version.paths])).toEqual([
+      ['write-file', ['SKILL.md', 'scripts/render.sh']],
+      ['create', ['SKILL.md']],
+    ])
+
+    const edited = await api.act('make-animation', {
+      action: 'write-file',
+      revision: detail.revision,
+      path: 'scripts/render.sh',
+      content: 'ffmpeg -y\n',
+    })
+    expect(edited.skill).toMatchObject({ lastEditedBy: 'owner', revision: detail.revision + 1 })
+    // The owner's change is in effect for the bot's next load.
+    expect((await atlas.store.view('make-animation', 'scripts/render.sh', conversation)).content).toBe('ffmpeg -y\n')
+    // What the owner saw is out of date now.
+    expect(await refusal(api.act('make-animation', { action: 'lock', revision: detail.revision }))).toEqual({
+      status: 409,
+      code: 'CONFLICT',
+    })
+    const created = edited.skill!.versions.at(-1)!
+    const reverted = await api.act('make-animation', {
+      action: 'revert',
+      revision: edited.skill!.revision,
+      versionId: created.id,
+    })
+    expect(reverted.skill!.currentFiles.map((file) => file.path)).toEqual(['SKILL.md'])
+    expect((await api.version('make-animation', created.id)).files).toEqual([
+      { path: 'SKILL.md', content: expect.stringContaining('Draw the frames') },
+    ])
+    const locked = await api.act('make-animation', { action: 'lock', revision: reverted.skill!.revision })
+    expect(locked.skill).toMatchObject({ locked: true })
+    const archived = await api.act('make-animation', { action: 'archive', revision: locked.skill!.revision })
+    expect(archived.skill).toMatchObject({ status: 'archived' })
+    expect(await atlas.store.librarySkills()).toEqual([])
+    const restored = await api.act('make-animation', { action: 'restore', revision: archived.skill!.revision })
+    expect(restored.skill).toMatchObject({ status: 'active' })
+    expect(await api.act('make-animation', { action: 'delete', revision: restored.skill!.revision })).toEqual({
+      skill: null,
+    })
+    expect(await refusal(api.detail('make-animation'))).toEqual({ status: 404, code: 'NOT_FOUND' })
+    expect((await readdir(path.join(atlas.store.root, 'blobs'))).length).toBe(0)
+  })
+
+  it('approves and discards proposals, and turns invalid content into a refusal', async () => {
+    const atlas = bot('atlas')
+    const { call } = tools(atlas.open(), atlas.store)
+    const api = new BotSkillOwnerApi(atlas.store, async () => new Set())
+    expect(await api.setReview('approve')).toMatchObject({ review: 'approve' })
+    await call('skill_create', animation)
+    let detail = await api.detail('make-animation')
+    expect(detail).toMatchObject({ status: 'proposed', currentFiles: [], proposal: { actor: 'bot' } })
+    expect(detail.proposalFiles?.map((file) => file.path)).toEqual(['SKILL.md'])
+    const approved = await api.act('make-animation', { action: 'approve', revision: detail.revision })
+    expect(approved.skill).toMatchObject({ status: 'active', proposal: null, proposalFiles: null })
+
+    await call('skill_view', { name: 'make-animation' })
+    await call('skill_patch', { name: 'make-animation', old_text: '30 fps', new_text: '12 fps', reason: 'Slower' })
+    detail = await api.detail('make-animation')
+    expect(detail.proposal).toMatchObject({ actor: 'bot', reason: 'Slower' })
+    expect(detail.currentFiles[0].content).toContain('30 fps')
+    expect(detail.proposalFiles![0].content).toContain('12 fps')
+    const discarded = await api.act('make-animation', { action: 'discard', revision: detail.revision })
+    expect(discarded.skill).toMatchObject({ proposal: null })
+
+    await call('skill_create', { ...animation, name: 'video-tools', description: 'Use when editing video.' })
+    const proposed = await api.detail('video-tools')
+    expect(await api.act('video-tools', { action: 'discard', revision: proposed.revision })).toEqual({ skill: null })
+
+    const current = (await api.detail('make-animation')).revision
+    for (const content of ['no frontmatter', '---\nname: other\ndescription: Use when.\n---\nBody\n'])
+      expect(
+        await refusal(api.act('make-animation', { action: 'write-file', revision: current, path: 'SKILL.md', content }))
+      ).toEqual({ status: 400, code: 'INVALID_REQUEST' })
+    expect(await refusal(api.version('make-animation', 'missing'))).toEqual({ status: 404, code: 'NOT_FOUND' })
   })
 })
 

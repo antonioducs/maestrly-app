@@ -627,6 +627,86 @@ describe('fleet IPC validation', () => {
     mocks.hasFeature.mockReturnValue(false)
     mocks.call.mockReset()
   })
+
+  it("reads and changes a bot's own skills only where both ends serve them, and marks conflicts", async () => {
+    const reads = new Map<string, (...args: unknown[]) => unknown>()
+    const mutations = new Map<string, (...args: unknown[]) => unknown>()
+    registerFleetClientIpc({
+      handle: (channel: string, fn: (...args: unknown[]) => unknown) => reads.set(channel, fn),
+      mhandle: (channel: string, fn: (...args: unknown[]) => unknown) => mutations.set(channel, fn),
+      on: () => {},
+      mon: () => {},
+    } as unknown as IpcRegistrar)
+    for (const channel of ['fleet:listBotOwnSkills', 'fleet:getBotOwnSkill', 'fleet:getBotOwnSkillVersion'])
+      expect([reads.has(channel), mutations.has(channel)], channel).toEqual([true, false])
+    for (const channel of ['fleet:setBotOwnSkillsSettings', 'fleet:actOnBotOwnSkill'])
+      expect([reads.has(channel), mutations.has(channel)], channel).toEqual([false, true])
+
+    mocks.call.mockReset()
+    mocks.hasFeature.mockReturnValue(true)
+    mocks.call.mockImplementation(async (route?: string) =>
+      route === 'botGet' ? { capabilities: ['bot-own-skills'] } : { ok: true }
+    )
+    await reads.get('fleet:listBotOwnSkills')!({}, SERVER, 'bot')
+    await mutations.get('fleet:setBotOwnSkillsSettings')!({}, SERVER, 'bot', { review: 'approve' })
+    await reads.get('fleet:getBotOwnSkill')!({}, SERVER, 'bot', 'make-animation')
+    await reads.get('fleet:getBotOwnSkillVersion')!({}, SERVER, 'bot', 'make-animation', 'v-1')
+    await mutations.get('fleet:actOnBotOwnSkill')!({}, SERVER, 'bot', 'make-animation', {
+      action: 'write-file',
+      revision: 2,
+      path: 'scripts/render.sh',
+      content: 'echo',
+    })
+    expect(mocks.call.mock.calls.filter(([route]) => route !== 'botGet')).toEqual([
+      ['botOwnSkillsList', { params: { id: 'bot' } }],
+      ['botOwnSkillsSettings', { params: { id: 'bot' }, body: { review: 'approve' } }],
+      ['botOwnSkillGet', { params: { id: 'bot', name: 'make-animation' } }],
+      ['botOwnSkillVersion', { params: { id: 'bot', name: 'make-animation', versionId: 'v-1' } }],
+      [
+        'botOwnSkillAction',
+        {
+          params: { id: 'bot', name: 'make-animation' },
+          body: { action: 'write-file', revision: 2, path: 'scripts/render.sh', content: 'echo' },
+        },
+      ],
+    ])
+
+    // A skill that changed meanwhile, and an environment that predates it, are told apart from other failures.
+    mocks.call.mockImplementation(async (route?: string) => {
+      if (route === 'botGet') return { capabilities: ['bot-own-skills'] }
+      throw new FleetClientError('CONFLICT', 409, 'The skill changed since you opened it.')
+    })
+    await expect(
+      mutations.get('fleet:actOnBotOwnSkill')!({}, SERVER, 'bot', 'make-animation', { action: 'lock', revision: 1 })
+    ).rejects.toThrow('FLEET_OWN_SKILL_CONFLICT')
+    mocks.call.mockImplementation(async (route?: string) => {
+      if (route === 'botGet') return { capabilities: ['bot-own-skills'] }
+      throw new FleetClientError('PROTOCOL_INCOMPATIBLE', 426, 'Update this bot to manage its skills')
+    })
+    await expect(reads.get('fleet:listBotOwnSkills')!({}, SERVER, 'bot')).rejects.toThrow(
+      'FLEET_OWN_SKILLS_UNSUPPORTED'
+    )
+
+    mocks.call.mockImplementation(async (route?: string) => (route === 'botGet' ? { capabilities: [] } : { ok: true }))
+    await expect(reads.get('fleet:listBotOwnSkills')!({}, SERVER, 'bot')).rejects.toThrow(
+      'FLEET_OWN_SKILLS_UNSUPPORTED'
+    )
+    mocks.hasFeature.mockReturnValue(false)
+    await expect(reads.get('fleet:getBotOwnSkill')!({}, SERVER, 'bot', 'make-animation')).rejects.toThrow(
+      'FLEET_OWN_SKILLS_UNSUPPORTED'
+    )
+
+    // What the renderer sends is checked before anything reaches the gateway.
+    mocks.call.mockClear()
+    expect(() => reads.get('fleet:getBotOwnSkill')!({}, SERVER, 'bot', '../x')).toThrow()
+    expect(() => reads.get('fleet:getBotOwnSkillVersion')!({}, SERVER, 'bot', 'make-animation', '../v')).toThrow()
+    expect(() =>
+      mutations.get('fleet:actOnBotOwnSkill')!({}, SERVER, 'bot', 'make-animation', { action: 'lock' })
+    ).toThrow()
+    expect(() => mutations.get('fleet:setBotOwnSkillsSettings')!({}, SERVER, 'bot', { review: 'sometimes' })).toThrow()
+    expect(mocks.call).not.toHaveBeenCalled()
+    mocks.call.mockReset()
+  })
 })
 
 describe('fleet dictation IPC', () => {

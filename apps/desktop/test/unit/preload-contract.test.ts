@@ -454,7 +454,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(681)
+    expect(keys).toHaveLength(686)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -472,6 +472,21 @@ describe('preload API — exposure', () => {
       ['fleet:listBotFiles', SERVER, 'bot'],
       ['fleet:deleteBotFiles', SERVER, 'bot', ['f-1']],
       ['fleet:setBotFileSettings', SERVER, 'bot', { quotaGb: 5, deleteWithConversations: false }],
+    ])
+  })
+
+  it("forwards a bot's own skills calls in exact argument order", async () => {
+    await api.fleetListBotOwnSkills(SERVER, 'bot')
+    await api.fleetSetBotOwnSkillsSettings(SERVER, 'bot', { review: 'approve' })
+    await api.fleetGetBotOwnSkill(SERVER, 'bot', 'make-animation')
+    await api.fleetGetBotOwnSkillVersion(SERVER, 'bot', 'make-animation', 'v-1')
+    await api.fleetActOnBotOwnSkill(SERVER, 'bot', 'make-animation', { action: 'lock', revision: 2 })
+    expect(invokeSpy.mock.calls).toEqual([
+      ['fleet:listBotOwnSkills', SERVER, 'bot'],
+      ['fleet:setBotOwnSkillsSettings', SERVER, 'bot', { review: 'approve' }],
+      ['fleet:getBotOwnSkill', SERVER, 'bot', 'make-animation'],
+      ['fleet:getBotOwnSkillVersion', SERVER, 'bot', 'make-animation', 'v-1'],
+      ['fleet:actOnBotOwnSkill', SERVER, 'bot', 'make-animation', { action: 'lock', revision: 2 }],
     ])
   })
 

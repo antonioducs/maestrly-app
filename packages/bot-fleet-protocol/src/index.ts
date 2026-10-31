@@ -10,6 +10,7 @@ export * from './screen-stream-core.js'
 
 export * from './environment-settings.js'
 export * from './plugins.js'
+export * from './bot-own-skills.js'
 export * from './mobile-bridge.js'
 export * from './mobile-bridge-client.js'
 export * from './push.js'

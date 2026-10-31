@@ -962,6 +962,30 @@ command permissions. Every change keeps a version (up to 20 per skill); changes
 that wait for review stay as proposals, and the bot keeps loading the version in
 effect.
 
+### Review a bot's skills
+
+Open the bot's **Settings → Skills** to see its skills: who created and last changed
+each one, a proposal waiting for you, whether it has scripts, whether an installed
+skill hides it, and how often the bot used it. **Show archived** adds the skills it
+archived.
+
+- **Review changes before they take effect** makes new skills and edits by the bot
+  wait for you as proposals (off by default: they take effect at once, and you can
+  see and revert them). **Lock** does the same for one skill and keeps the bot from
+  archiving it.
+- Open a skill to approve or discard its proposal, with a diff of each file, and to
+  edit its files or add one under `scripts/`, `templates/`, `references/` or
+  `assets/`; a script shows a warning, since the bot runs it.
+- **History** lists each version with who made it and why. **Compare** shows what
+  changed from a version to the current one, and **Restore this version** puts it
+  back as a new version, which can itself be undone.
+- **Archive**, **Restore** and **Delete forever** (which asks first) act on the whole
+  skill. Only you can delete one.
+
+Each change names the revision you saw; when the bot changed the skill meanwhile,
+Maestrly asks you to reload it. A bot server or environment from before this release
+shows a notice to update it instead (feature and capability `bot-own-skills`).
+
 ## Conversations at once
 
 With a bot server and environment image from this release, a bot works in several conversations at the same time: its conversation with you, its [routine runs](#routine-runs), and its [conversations with other bots](#conversations-with-other-bots). None waits for another: you can write to the bot while a run works, and a run starts while the bot answers you. Its conversation with you always runs; up to four of its other conversations run beside it, and the rest wait for one of them to end. Each conversation still answers one message at a time.

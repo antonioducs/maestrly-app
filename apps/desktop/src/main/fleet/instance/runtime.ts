@@ -35,6 +35,12 @@ import {
   type FleetFileOrigin,
   type FleetFileRef,
   type FleetFileSettings,
+  type FleetBotOwnSkillAction,
+  type FleetBotOwnSkillActionResult,
+  type FleetBotOwnSkillDetail,
+  type FleetBotOwnSkillsList,
+  type FleetBotOwnSkillsSettings,
+  type FleetBotOwnSkillVersionFiles,
   type FleetFilesDeleted,
   type FleetFilesList,
   type FleetFilesUsage,
@@ -185,6 +191,8 @@ import { parallelTasksPolicy, setBotTaskPolicy } from './task-policy'
 import { accountHeadroom, warmAccountHeadroom } from './account-headroom'
 import { createDelegationRouter, delegationPolicyPrompt } from './delegation'
 import { BotSkillStore } from './bot-skills/store'
+import { BotSkillOwnerApi } from './bot-skills/owner'
+import { listConversationSkills } from '../../chat/skill-state'
 import { setConversationSkillProvider } from '../../chat/conversation-skill-provider'
 
 /** Whether the bot may start turns at all; each conversation then starts its own while it runs none. */
@@ -415,6 +423,13 @@ export class BotRuntime {
   readonly files: FleetFileStore
   /** The skills the bot keeps for itself, found by all its conversations and by no other bot's. */
   readonly skills: BotSkillStore
+  /** The owner's view and changes of those skills (`bot-own-skills`). */
+  private get ownSkillsApi(): BotSkillOwnerApi {
+    return new BotSkillOwnerApi(this.skills, async () => {
+      const others = await listConversationSkills('', this.primaryConversationId)
+      return new Set(others.filter((skill) => skill.scope !== 'bot').map((skill) => skill.name))
+    })
+  }
   readonly live: LiveTranscript
   /** The side conversations: routine runs' (`routine-conversations`) and threads' with other bots (`peer-conversations`). */
   readonly runs: BotRunConversations
@@ -1951,6 +1966,22 @@ export class BotRuntime {
       if (error instanceof FleetFileSettingsError) throw new InstanceHttpError(409, 'CONFLICT', error.message)
       throw error
     }
+  }
+
+  ownSkills(): Promise<FleetBotOwnSkillsList> {
+    return this.ownSkillsApi.list()
+  }
+  setOwnSkillsSettings(settings: FleetBotOwnSkillsSettings): Promise<FleetBotOwnSkillsList> {
+    return this.ownSkillsApi.setReview(settings.review)
+  }
+  ownSkill(name: string): Promise<FleetBotOwnSkillDetail> {
+    return this.ownSkillsApi.detail(name)
+  }
+  ownSkillVersion(name: string, versionId: string): Promise<FleetBotOwnSkillVersionFiles> {
+    return this.ownSkillsApi.version(name, versionId)
+  }
+  ownSkillAction(name: string, action: FleetBotOwnSkillAction): Promise<FleetBotOwnSkillActionResult> {
+    return this.ownSkillsApi.act(name, action)
   }
 
   private async attachmentFile(fileId: string) {

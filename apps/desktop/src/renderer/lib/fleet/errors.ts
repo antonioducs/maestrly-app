@@ -12,6 +12,8 @@ import {
   FLEET_EDIT_UNSUPPORTED,
   FLEET_BOT_MOVE_UNSUPPORTED,
   FLEET_FILES_MANAGE_UNSUPPORTED,
+  FLEET_OWN_SKILL_CONFLICT,
+  FLEET_OWN_SKILLS_UNSUPPORTED,
 } from '../../../shared/fleet-targets'
 import { FLEET_SERVER_ALREADY_PAIRED, FLEET_SERVER_UNKNOWN } from '../../../shared/fleet-servers'
 
@@ -175,6 +177,8 @@ const KNOWN_REFUSALS: KnownRefusal[] = [
   },
   { matches: exactly('The bot is already there.'), key: 'move.error.alreadyThere' },
   { matches: marked(FLEET_FILES_MANAGE_UNSUPPORTED), key: 'files.drawer.updateRequired' },
+  { matches: marked(FLEET_OWN_SKILLS_UNSUPPORTED), key: 'ownSkills.updateRequired' },
+  { matches: marked(FLEET_OWN_SKILL_CONFLICT), key: 'ownSkills.conflict' },
 ]
 
 /** The text the Bots UI shows for a failure: a localized hint for a known refusal, else the failure's own message. */
