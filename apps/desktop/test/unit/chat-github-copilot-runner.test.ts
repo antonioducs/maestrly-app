@@ -972,6 +972,71 @@ describe('GitHub Copilot official runner', () => {
     expect(listGitHubCopilotSessionCleanup()).toEqual([])
   })
 
+  it('accounts the bill of a positional compaction that keeps the recent steps verbatim', async () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, { cwd })
+    persistUser(conversation.id, 'user-1', 'execute a long task', 1)
+    const manager = new FakeManager()
+    const emitted: ChatStreamEvent[] = []
+    manager.queue((onEvent) => {
+      onEvent(
+        event('tool.execution_start', { toolCallId: 'tool-1', toolName: 'read_file', arguments: { path: 'a.ts' } })
+      )
+      onEvent(
+        event('tool.execution_complete', {
+          toolCallId: 'tool-1',
+          success: true,
+          result: { detailedContent: 'summarized state' },
+        })
+      )
+      onEvent(event('assistant.message', { messageId: 'partial-1', content: 'Recent step kept verbatim.' }))
+      onEvent(event('assistant.usage', { inputTokens: 100, outputTokens: 20, finishReason: 'max_tokens' }))
+      onEvent(event('session.usage_info', { currentTokens: 900, tokenLimit: 1_000, messagesLength: 8 }))
+      onEvent(event('session.error', { message: 'provider attempt aborted' }))
+    })
+    manager.queue((onEvent) => {
+      onEvent(event('assistant.message', { messageId: 'answer-2', content: ' Continuation complete.' }))
+      onEvent(event('assistant.usage', { inputTokens: 50, outputTokens: 10, finishReason: 'stop' }))
+      onEvent(event('session.usage_info', { currentTokens: 200, tokenLimit: 1_000, messagesLength: 3 }))
+    })
+    const compactHistory = vi.fn(async () => {
+      // The service commits the boundary after the summarized step before returning it.
+      const partial = assistantMessages(conversation.id)[0]
+      const afterPartId = partial.parts[0].id
+      upsertChatMessage({
+        ...partial,
+        parts: [
+          partial.parts[0],
+          { type: 'compaction', id: 'positional-marker', text: 'Summary of the first step.', strategy: 'summary' },
+          ...partial.parts.slice(1),
+        ],
+      })
+      return {
+        summary: 'Summary of the first step.',
+        usage: { input: 7, output: 3, cacheRead: 2, cacheCreate: 1, totalInput: 10 },
+        prepared: { messageId: partial.id, afterPartId, partId: 'positional-marker' },
+      }
+    })
+
+    await runGitHubCopilotChat({
+      ...args(conversation.id, workspace.id, cwd, manager, (streamEvent) => emitted.push(streamEvent)),
+      contextWindow: 1_000,
+      compactHistory,
+    })
+
+    expect(emitted.find((streamEvent) => streamEvent.kind === 'finish')).toMatchObject({
+      usage: { input: 157, output: 33, cachedInput: 2, cacheCreate: 1 },
+    })
+    const continuationPrompt = (manager.sessions[1].sendCalls[0].input as { prompt: string }).prompt
+    expect(continuationPrompt).toContain('Summary of the first step.')
+    expect(continuationPrompt).toContain('Recent step kept verbatim.')
+    expect(continuationPrompt).not.toContain('summarized state')
+    const markers = assistantMessages(conversation.id).flatMap((message) =>
+      message.parts.filter((part) => part.type === 'compaction')
+    )
+    expect(markers).toEqual([expect.objectContaining({ id: 'positional-marker' })])
+  })
+
   it('limits portable compaction to twice per turn', async () => {
     const workspace = makeWorkspace()
     const conversation = makeConversation(workspace.id, { cwd })

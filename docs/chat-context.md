@@ -517,6 +517,23 @@ missing headings listed. If the second attempt also fails, the better attempt is
 kept and the compaction still completes. Background preparation applies the same
 check, and its extra attempt is billed like any other.
 
+Compaction keeps the most recent messages verbatim after the summary. The tail
+holds up to 20,000 estimated tokens, at most 12% of the context window, and is
+reduced further so that the summary, the tail, the pending message and the
+reserve fit in 70% of the window. The tail starts at a user message when the
+latest turns fit; otherwise it starts at a step of the current turn. A step is
+assistant text followed by its tool calls and their results, so a call is never
+separated from its result. When the tail starts inside a turn, that turn's
+request is copied verbatim (up to 4,000 characters) after the summary. The last
+step always stays verbatim. When the last step alone is larger than twice the
+budget, or the window leaves no room, the whole history is summarized as
+before. The summary marker is placed where the tail begins, so the divider
+appears there in the history. Native runtimes start a fresh session from the
+summary and the tail. Compaction during a turn keeps its latest steps the same
+way. Isolated review rounds and background preparation summarize their whole
+source as before. An approved plan that is still in the tail is not repeated in
+the summary.
+
 These observations and progress states are saved with messages. Existing
 conversations remain readable; older messages without observations use the
 existing context estimate until the runtime reports a new sample.

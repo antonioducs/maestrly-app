@@ -2116,7 +2116,8 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
           }
           break // No room and no way to free it → end with marker (preferable to repeated 502s).
         }
-        if (compacted.usage && !compacted.prepared) {
+        // A background candidate carries no usage; a positional compaction made for this turn carries its bill.
+        if (compacted.usage) {
           turnUsage.input += compacted.usage.input
           turnUsage.output += compacted.usage.output
           turnUsage.cacheRead += compacted.usage.cacheRead

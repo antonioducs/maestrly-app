@@ -1482,7 +1482,8 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
         args.signal.throwIfAborted()
         if (!compacted?.summary.trim())
           throw new Error('Claude continuation requires portable compaction, which failed.')
-        const usage = compacted.prepared ? undefined : normalizedPortableUsage(compacted.usage)
+        // A background candidate carries no usage; a positional compaction made for this turn carries its bill.
+        const usage = normalizedPortableUsage(compacted.usage)
         if (usage) portableCompactorUsage.push(usage)
         if (compacted.runtimeEstimatedCostUsd != null) {
           portableCompactorRuntimeCostUsd += Math.max(0, compacted.runtimeEstimatedCostUsd)
@@ -2068,7 +2069,7 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
             quality: 'estimated',
           })
         }
-        const compactorUsage = compacted.prepared ? undefined : normalizedPortableUsage(compacted.usage)
+        const compactorUsage = normalizedPortableUsage(compacted.usage)
         const markerUsage = aggregateClaudeUsage([
           ...completedAttemptUsage,
           ...portableCompactorUsage,
@@ -2655,7 +2656,7 @@ export async function compactClaudeSession(args: CompactClaudeSessionArgs): Prom
     const summary = await args.compactHistory?.()
     const combinedUsage = aggregateClaudeUsage([
       ...(nativeUsage ? [nativeUsage] : []),
-      ...(summary?.usage && !summary.prepared ? [normalizedPortableUsage(summary.usage)!] : []),
+      ...(summary?.usage ? [normalizedPortableUsage(summary.usage)!] : []),
     ])
     const nativeCost = result?.total_cost_usd
     const summaryCost = summary?.runtimeEstimatedCostUsd

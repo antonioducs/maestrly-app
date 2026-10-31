@@ -407,8 +407,10 @@ export function activeChatContext(messages: ChatMessage[]): {
   const todos = active.some((m) => m.parts.some(isTodoWritePart))
     ? ""
     : compactedTodoListText(messages, messageIndex, partIndex);
+  // State the summary drops but the model still needs, appended after it. Extension point: add entries here.
+  const reinjected = [todos].filter(Boolean);
   return {
-    summary: todos ? `${summary}\n\n${todos}` : summary,
+    summary: [summary, ...reinjected].join("\n\n"),
     messages: active,
   };
 }

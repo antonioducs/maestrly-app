@@ -1,4 +1,4 @@
-import type { ChatModelRef, ChatContextSnapshot } from '../../../shared/chat'
+import type { ChatModelRef, ChatContextSnapshot, MessagePart } from '../../../shared/chat'
 import { type StoredChatMessage, upsertChatMessage } from '../chat-store'
 import { deleteOpenAIInferenceState, getOpenAIInferenceState } from '../openai/inference-store'
 import { getCodexThreadBinding, retireCodexThreadBinding } from '../codex-subscription/thread-store'
@@ -24,21 +24,32 @@ export function previewPreparedActivation(
   marker: PreparedMarker,
   summary: string
 ): StoredChatMessage[] | null {
+  return previewPositionalCompaction(history, marker, {
+    type: 'compaction',
+    id: marker.partId,
+    text: summary,
+    strategy: 'summary',
+    origin: 'prepared',
+  })
+}
+
+/** Pure: `history` with the portable `part` (whose id is `marker.partId`) inserted right after `marker.afterPartId`. */
+export function previewPositionalCompaction(
+  history: readonly StoredChatMessage[],
+  marker: PreparedMarker,
+  part: Extract<MessagePart, { type: 'compaction' }>
+): StoredChatMessage[] | null {
   const index = history.findIndex((message) => message.id === marker.messageId)
-  if (index < 0) return null
+  if (index < 0 || part.id !== marker.partId) return null
   const anchor = history[index]
-  const partIndex = anchor.parts.findIndex((part) => part.id === marker.afterPartId)
-  if (partIndex < 0 || anchor.parts.some((part) => part.id === marker.partId)) return null
+  const partIndex = anchor.parts.findIndex((candidate) => candidate.id === marker.afterPartId)
+  if (partIndex < 0 || anchor.parts.some((candidate) => candidate.id === marker.partId)) return null
   return history.map((message, position) =>
     position !== index
       ? message
       : {
           ...message,
-          parts: [
-            ...message.parts.slice(0, partIndex + 1),
-            { type: 'compaction', id: marker.partId, text: summary, strategy: 'summary', origin: 'prepared' },
-            ...message.parts.slice(partIndex + 1),
-          ],
+          parts: [...message.parts.slice(0, partIndex + 1), part, ...message.parts.slice(partIndex + 1)],
         }
   )
 }
@@ -51,6 +62,21 @@ export function commitPreparedActivation(args: {
   destination: ChatModelRef
   contextWindow: number
 }): { messageId: string; snapshot: ChatContextSnapshot } | null {
+  return commitPositionalCompaction(args)
+}
+
+/**
+ * Commits a portable marker inserted mid-history (see `previewPositionalCompaction`), from a background candidate or a
+ * compaction that keeps recent messages verbatim. Call it INSIDE a transaction with no network work: measurements of
+ * the superseded prompt and native bindings stop being reusable, so the next request uses summary plus suffix.
+ */
+export function commitPositionalCompaction(args: {
+  conversationId: string
+  history: readonly StoredChatMessage[]
+  marker: PreparedMarker
+  destination: ChatModelRef
+  contextWindow?: number
+}): { messageId: string; snapshot: ChatContextSnapshot } | null {
   const anchorIndex = args.history.findIndex((message) => message.id === args.marker.messageId)
   if (anchorIndex < 0) throw new Error('Prepared compaction boundary disappeared')
   const newestAssistant = [...args.history].reverse().find((message) => message.role === 'assistant')
@@ -58,7 +84,7 @@ export function commitPreparedActivation(args: {
     model: args.destination,
     quality: 'estimated',
     usedTokens: estimatePortableContextTokens(args.history),
-    modelContextWindow: args.contextWindow,
+    ...(args.contextWindow && args.contextWindow > 0 ? { modelContextWindow: args.contextWindow } : {}),
     sequence: (newestAssistant?.contextSnapshot?.sequence ?? 0) + 1,
     observedAt: Date.now(),
   }

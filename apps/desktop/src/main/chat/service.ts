@@ -246,7 +246,7 @@ import { AntigravityServiceAuth } from './antigravity-subscription/service-auth'
 import { grokReasoningMeta } from './grok-subscription/models'
 import { finalTurnCompletion } from './turn-status'
 import { QuestionBroker } from './question-broker'
-import { activeChatContext, renderTranscript, summaryWithApprovedPlan } from './message'
+import { activeChatContext, latestApprovedPlan, renderTranscript, summaryWithApprovedPlan } from './message'
 import { createContextProgressPublisher } from './context-progress'
 import { CODEX_TRANSFER_MAX_CHARACTERS, codexTransferCharacters } from './native-transfer'
 import { redactClaudeCredentials } from './claude-agent-sdk/errors'
@@ -541,8 +541,19 @@ import {
 import {
   previewPreparedActivation,
   commitPreparedActivation,
+  previewPositionalCompaction,
+  commitPositionalCompaction,
   type PreparedMarker,
 } from './background-compaction/activation'
+import {
+  compactionTailBudget,
+  historyAfterCut,
+  historyThroughCut,
+  selectCompactionCut,
+  summaryWithoutApprovedPlan,
+  summaryWithTurnRequest,
+  turnRequestBeforeCut,
+} from './compaction/cut-point'
 import { validateSubagentProfileEffort, validateSubagentProfileFastMode } from '../../shared/subagent-profile-effort'
 import type { BackgroundCompactionConfig, BackgroundCompactionStatus } from '../../shared/background-compaction'
 import {
@@ -3538,6 +3549,7 @@ async function preflightContext(
     allowActive: true,
     signal,
     contextWindow: window,
+    pendingTokens: pending,
     operation,
     claudeFailoverChain,
     claudeExecutionAxes,
@@ -5205,6 +5217,8 @@ async function startSend(
         allowActive: true,
         signal: controller.signal,
         persist: false,
+        // The runners reload a committed boundary like a prepared one, keeping recent steps verbatim.
+        positional: !isolated,
         onProgress,
         contextWindow: claudeTarget?.contextWindow
           ? turnContextWindow
@@ -5246,6 +5260,7 @@ async function startSend(
               ...(!result.billedModel && result.runtimeEstimatedCostUsd != null
                 ? { runtimeEstimatedCostUsd: result.runtimeEstimatedCostUsd }
                 : {}),
+              ...(result.marker ? { prepared: result.marker } : {}),
             }
           : null
       })
@@ -7255,6 +7270,15 @@ interface CompactOpts {
   assertCurrent?: () => void
   /** Immutable completed prefix selected by background preparation. */
   historyOverride?: readonly StoredChatMessage[]
+  /**
+   * A live turn (persist: false) that reloads its history accepts a positional marker: recent messages then stay
+   * verbatim and the result carries `marker` instead of leaving the runner to append the boundary.
+   */
+  positional?: boolean
+  /** `false` summarizes everything, without a verbatim tail. */
+  tail?: boolean
+  /** Pending input the destination must still admit after compaction; it bounds the verbatim tail. */
+  pendingTokens?: number
   summaryMaxTokens?: number
   summaryStepTimeoutMs?: number
   summaryRetryDelayMs?: number
@@ -7278,6 +7302,8 @@ interface CompactResult {
   usage?: NormalizedAiUsage
   runtimeEstimatedCostUsd?: number
   billedModel?: ChatModelRef
+  /** Committed positional boundary: the summary covers history through it and later messages stay verbatim. */
+  marker?: PreparedMarker
 }
 
 function compactionDiagnostic(error: unknown): string {
@@ -7499,7 +7525,8 @@ async function compactReservedWithProgress(conversationId: string, opts: Compact
   if (result.error) result.error = compactionDiagnostic(result.error)
   // The successful boundary is the newest visible message on reload; carry the finished
   // operation there so the renderer does not need to cross an older context boundary.
-  if (result.ok && anchor && progressId && stillOwnsOperation()) {
+  // A positional boundary lies before the anchor (or inside it), which therefore keeps the operation.
+  if (result.ok && !result.marker && anchor && progressId && stillOwnsOperation()) {
     const observed = getChatMessage(conversationId, anchor.id)
     const marker = lastConversationContextMessage(conversationId)
     if (
@@ -7694,12 +7721,32 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
       const revalidated = await revalidateFrozenChatSelection(frozen)
       if (!revalidated.ok) return { ok: false, error: revalidated.error }
     }
+    // Recent messages stay verbatim after the summary when a positional marker can be committed: the main
+    // conversation's manual/pre-send compaction, or a live turn that reloads its history (`positional`).
+    const sourceHistory = preparedBase?.history ?? history
+    const cut =
+      opts.tail !== false && !opts.executionId && !opts.historyOverride && (opts.persist !== false || opts.positional)
+        ? selectCompactionCut(activeChatContext(sourceHistory).messages, {
+            tailTokens: compactionTailBudget(
+              opts.contextWindow ?? (opts.summarizerOverride ? undefined : contextWindow),
+              opts.pendingTokens
+            ),
+          })
+        : null
+    const summarizedHistory = (cut && historyThroughCut(sourceHistory, cut)) || sourceHistory
     // The chunker below alone splits the payload; no transcript range is omitted.
-    const transcript = renderTranscript(preparedBase?.history ?? history, {
+    const transcript = renderTranscript(summarizedHistory, {
       maxToolOutputChars: Number.POSITIVE_INFINITY,
       includeSkillBodies: true,
     })
     if (!transcript) return { ok: false, error: 'too-short' }
+    // A prepared base that already covers everything summarized needs no model call.
+    const baseOnly =
+      preparedBase != null &&
+      !renderTranscript(activeChatContext(summarizedHistory).messages, {
+        maxToolOutputChars: Number.POSITIVE_INFINITY,
+        includeSkillBodies: true,
+      })
     const summaryTargetTokens = Math.min(
       compactionSummaryTargetTokens(estimateTextTokens(transcript), contextWindow),
       opts.summaryMaxTokens ?? Number.POSITIVE_INFINITY
@@ -8023,7 +8070,7 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
         }
       }
     }
-    const compacted: PortableSummaryResult = preparedBase?.deltaEmpty
+    const compacted: PortableSummaryResult = baseOnly
       ? { summary: preparedBase.candidate.summary, calls: 0 }
       : await summarizePortableTranscript(transcript, maxChunkChars, summarize, {
           signal: compactSignal,
@@ -8044,10 +8091,90 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
         background: Boolean(opts.historyOverride),
       })
     }
-    const summary = summaryWithApprovedPlan(compacted.summary, history)
+    // A plan or request still in the verbatim tail is not repeated in the summary.
+    const planInTail = cut != null && latestApprovedPlan(historyAfterCut(history, cut)) != null
+    const summary = summaryWithTurnRequest(
+      planInTail ? summaryWithoutApprovedPlan(compacted.summary) : summaryWithApprovedPlan(compacted.summary, history),
+      cut?.splitTurn ? turnRequestBeforeCut(history, cut) : null
+    )
     const usage = compacted.usage
     completedUsage = usage
     completedCost = compacted.runtimeEstimatedCostUsd
+    if (cut) {
+      const part: Extract<MessagePart, { type: 'compaction' }> = {
+        type: 'compaction',
+        id: randomUUID(),
+        text: summary,
+        strategy: 'summary',
+        ...(opts.origin ? { origin: opts.origin } : {}),
+      }
+      const marker: PreparedMarker = { messageId: cut.messageId, afterPartId: cut.afterPartId, partId: part.id }
+      const destinationWindow = opts.contextWindow ?? (opts.summarizerOverride ? undefined : contextWindow)
+      let observation: ReturnType<typeof commitPositionalCompaction> = null
+      transaction(() => {
+        compactSignal.throwIfAborted()
+        opts.assertCurrent?.()
+        if (opts.operation && !conversationOperationIsCurrent(conversationId, opts.operation)) {
+          throw new Error('Conversation operation changed while context was being compacted.')
+        }
+        assertHistoryUnchanged()
+        const projected = previewPositionalCompaction(listConversationContextMessages(conversationId), marker, part)
+        if (!projected) throw new Error('The compaction boundary disappeared; compact again on the latest history.')
+        observation = commitPositionalCompaction({
+          conversationId,
+          history: projected,
+          marker,
+          destination: selectionFor(conversationId) ?? selection,
+          contextWindow: destinationWindow,
+        })
+        // No marker message carries the bill: a live turn accounts the returned usage, the others record it here.
+        if (opts.persist !== false && (usage || compacted.runtimeEstimatedCostUsd != null)) {
+          recordChatUsageAttempt({
+            id: randomUUID(),
+            conversationId,
+            model: opts.summarizerOverride
+              ? {
+                  providerId: opts.summarizerOverride.providerId,
+                  modelId: opts.summarizerOverride.resolvedModelId ?? opts.summarizerOverride.modelId,
+                }
+              : selection,
+            usage: usage ?? { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 },
+            runtimeEstimatedCostUsd: compacted.runtimeEstimatedCostUsd,
+          })
+        }
+      })
+      chatDiag({
+        kind: 'compaction-verbatim-tail',
+        conv: conversationId,
+        tailTokens: cut.tailTokens,
+        prefixTokens: cut.prefixTokens,
+        splitTurn: cut.splitTurn,
+        live: opts.persist === false,
+      })
+      if (opts.persist !== false) {
+        backgroundCoordinator?.manualCompaction(conversationId)
+        const channel = `chat:delta:${conversationId}`
+        const wc = getMainWebContents()
+        const events: ChatStreamEvent[] = [
+          { kind: 'compaction', ...marker, text: summary, strategy: 'summary', ...(opts.origin ? { origin: opts.origin } : {}) },
+        ]
+        const committed = observation as ReturnType<typeof commitPositionalCompaction>
+        if (committed && !active.has(conversationId)) events.push({ kind: 'context-usage', ...committed })
+        for (const event of events) {
+          if (wc) sendChatEvent(wc, channel, event)
+          else emitChatHost(conversationId, channel, event)
+        }
+      }
+      return {
+        ok: true,
+        summary,
+        usage,
+        marker,
+        ...(compacted.runtimeEstimatedCostUsd != null
+          ? { runtimeEstimatedCostUsd: compacted.runtimeEstimatedCostUsd }
+          : {}),
+      }
+    }
     if (opts.persist !== false) {
       const marker: ChatMessage = {
         id: randomUUID(),

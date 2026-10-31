@@ -5340,10 +5340,11 @@ export async function runCodexSubscriptionChat(
           }
           const summary = compacted?.summary.trim()
           if (summary) {
+            // A background candidate carries no usage; a positional compaction made for this turn carries its bill.
+            carryCompactorUsage(compacted?.usage)
             if (compacted?.prepared) {
               activatePrepared(compacted.prepared)
             } else {
-              carryCompactorUsage(compacted?.usage)
               apply(
                 {
                   kind: 'compaction',
@@ -5751,7 +5752,7 @@ export async function runCodexSubscriptionChat(
         }
 
         if (compacted.prepared) activatePrepared(compacted.prepared)
-        else carryCompactorUsage(compacted.usage)
+        carryCompactorUsage(compacted.usage)
         inTurnCompactions += 1
         if (!compacted.prepared) {
           apply(

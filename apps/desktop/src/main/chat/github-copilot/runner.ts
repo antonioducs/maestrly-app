@@ -1749,7 +1749,8 @@ export async function runGitHubCopilotChat(args: RunGitHubCopilotChatArgs): Prom
       const summary = compacted?.summary.trim()
       if (!compacted || !summary) throw new Error('GitHub Copilot portable intra-turn compaction failed')
 
-      if (!compacted.prepared) addPortableCompactionUsage(usage, compacted.usage)
+      // A background candidate carries no usage; a positional compaction made for this turn carries its bill.
+      addPortableCompactionUsage(usage, compacted.usage)
       inTurnCompactions += 1
       let preparedContextTokens: number | null = null
       if (compacted.prepared) {
