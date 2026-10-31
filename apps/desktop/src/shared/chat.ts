@@ -1166,6 +1166,10 @@ export type ChatErrorCode =
   | 'process-interrupted'
   /** The build lacks the provider's public OAuth configuration; installing its runtime cannot fix it. */
   | 'subscription-provider-not-configured'
+  /** Automatic stops of a BYOK turn (docs/chat-context.md, "Stopping and queueing"). */
+  | 'tool-loop-stopped'
+  | 'invalid-tool-calls-stopped'
+  | 'repetitive-output-stopped'
 
 export type ChatStreamEvent =
   | {

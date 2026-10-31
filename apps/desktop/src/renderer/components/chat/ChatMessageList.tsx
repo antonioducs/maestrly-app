@@ -87,7 +87,8 @@ function PeerMessageOrigin({ peer }: { peer: NonNullable<ChatMessage['peer']> })
   const { t } = useTranslation('chat')
   const focusSource = useChatSourceFocus()
   const hostId = useHostId()
-  const key = peer.kind === 'report' ? 'link.reportFrom' : peer.kind === 'result' ? 'link.resultFrom' : 'link.messageFrom'
+  const key =
+    peer.kind === 'report' ? 'link.reportFrom' : peer.kind === 'result' ? 'link.resultFrom' : 'link.messageFrom'
   const label = t(key, { name: peer.fromConversationName })
   return (
     <button
@@ -131,6 +132,14 @@ function ResponseDuration({ message }: { message: ChatMessage }) {
 
 const fmtReviewLoopCost = (c: number): string =>
   c >= 1 ? `$${c.toFixed(2)}` : c >= 0.01 ? `$${c.toFixed(3)}` : `$${c.toFixed(4)}`
+
+/** Turns the host stopped on its own (tool loop, invalid calls, repetitive output); the stored text is English. */
+function automaticStopMessageKey(errorCode?: string) {
+  if (errorCode === 'tool-loop-stopped') return 'messages.toolLoopStopped' as const
+  if (errorCode === 'invalid-tool-calls-stopped') return 'messages.invalidToolCallsStopped' as const
+  if (errorCode === 'repetitive-output-stopped') return 'messages.repetitiveOutputStopped' as const
+  return undefined
+}
 
 type ReviewLoopRoundStatus = 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
 
@@ -727,9 +736,7 @@ const Bubble = memo(function Bubble({
             {t('dispatch.startedFrom')}
           </span>
         )}
-        {message.source === 'conversation-message' && message.peer && (
-          <PeerMessageOrigin peer={message.peer} />
-        )}
+        {message.source === 'conversation-message' && message.peer && <PeerMessageOrigin peer={message.peer} />}
         {message.botName && (
           <span
             data-testid="bot-message-author"
@@ -914,7 +921,9 @@ const Bubble = memo(function Bubble({
                   ? t('messages.claudeAuthenticationRequired')
                   : subscriptionExhaustionMessageKey(message.errorCode)
                     ? t(subscriptionExhaustionMessageKey(message.errorCode)!)
-                    : message.error}
+                    : automaticStopMessageKey(message.errorCode)
+                      ? t(automaticStopMessageKey(message.errorCode)!)
+                      : message.error}
           </span>
           {message.errorCode === 'claude-authentication-required' && (
             <button

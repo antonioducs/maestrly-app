@@ -832,6 +832,12 @@ export default {
     accountsExhaustedError: 'Todas as contas Codex da lista de rotação esgotaram o uso. Tente de novo mais tarde.',
     claudeAccountsExhaustedError:
       'Todas as contas Claude da lista de rotação esgotaram o uso. Tente de novo mais tarde.',
+    toolLoopStopped:
+      'A Maestrly interrompeu esta resposta porque o modelo repetia a mesma chamada de ferramenta sem progredir. Envie uma mensagem para continuar ou sugira outra abordagem.',
+    invalidToolCallsStopped:
+      'A Maestrly interrompeu esta resposta porque o modelo fez só chamadas de ferramenta inválidas por vários passos seguidos. Envie uma mensagem para continuar ou tente outro modelo.',
+    repetitiveOutputStopped:
+      'A Maestrly interrompeu esta resposta porque o modelo começou a repetir o mesmo texto. Envie uma mensagem para continuar.',
     skillFolder: 'Skill carregada de {{dir}}',
   },
   link: {

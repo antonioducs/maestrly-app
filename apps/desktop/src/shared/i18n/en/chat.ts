@@ -824,6 +824,12 @@ export default {
     processInterruptedError: 'This response was interrupted because Maestrly closed or restarted.',
     accountsExhaustedError: 'All Codex accounts in the rotation list are out of usage. Try again later.',
     claudeAccountsExhaustedError: 'All Claude accounts in the rotation list are out of usage. Try again later.',
+    toolLoopStopped:
+      'Maestrly stopped this response because the model kept repeating the same tool call without making progress. Send a message to continue, or suggest another approach.',
+    invalidToolCallsStopped:
+      'Maestrly stopped this response because the model made only invalid tool calls for several steps in a row. Send a message to continue, or try another model.',
+    repetitiveOutputStopped:
+      'Maestrly stopped this response because the model started repeating the same text. Send a message to continue.',
     skillFolder: 'Skill loaded from {{dir}}',
   },
   link: {
