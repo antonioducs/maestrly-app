@@ -119,6 +119,20 @@ const h = vi.hoisted(() => {
   }
 })
 
+const turnPools = vi.hoisted(() => ({
+  lookup: null as null | ((conversationId: string) => { accountPoolProviderId?: string } | undefined),
+}))
+vi.mock('../../src/main/chat/subagent-execution-profile', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/chat/subagent-execution-profile')>()
+  return {
+    ...actual,
+    setTurnAccountPoolLookup: (lookup: NonNullable<typeof turnPools.lookup>) => {
+      turnPools.lookup = lookup
+      actual.setTurnAccountPoolLookup(lookup)
+    },
+  }
+})
+
 vi.mock('../../src/main/window-ipc', () => ({
   getMainWebContents: h.getMainWebContents,
 }))
@@ -404,6 +418,34 @@ describe('active account service', () => {
     expect(getAccountPool('claude-subscription').activeProviderId).toBe(work.providerId)
     expect(h.webContents.send).toHaveBeenCalledWith('models:catalog-changed')
   })
+  it('reads the status of a next account this session has not seen before moving to it', async () => {
+    const work = account()
+    let read = false
+    work.manager.getStatusSnapshot.mockImplementation(() => (read ? work.status : null))
+    work.manager.status.mockImplementation(async () => {
+      read = true
+      return work.status
+    })
+    register()
+    exhaust(CLAUDE_SUBSCRIPTION_PROVIDER_ID)
+    await vi.waitFor(() => expect(getAccountPool('claude-subscription').activeProviderId).toBe(work.providerId))
+    expect(work.manager.status).toHaveBeenCalledOnce()
+  })
+  it('stays put when the unread next account turns out to be signed out', async () => {
+    const work = account()
+    work.status.authenticated = false
+    let read = false
+    work.manager.getStatusSnapshot.mockImplementation(() => (read ? work.status : null))
+    work.manager.status.mockImplementation(async () => {
+      read = true
+      return work.status
+    })
+    register()
+    exhaust(CLAUDE_SUBSCRIPTION_PROVIDER_ID)
+    await vi.waitFor(() => expect(work.manager.status).toHaveBeenCalledOnce())
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(getAccountPool('claude-subscription').activeProviderId).toBe(CLAUDE_SUBSCRIPTION_PROVIDER_ID)
+  })
 })
 
 describe('active account selections', () => {
@@ -422,6 +464,19 @@ describe('active account selections', () => {
       modelId: 'sonnet',
     })
     await expect(call(handlers, 'chat:models', VIRTUAL)).resolves.toEqual(['sonnet'])
+  })
+  it('keeps the Claude session when switching between the active account and the account it points to', async () => {
+    const work = account()
+    const conv = conversation(VIRTUAL)
+    const { handlers } = register()
+    await call(handlers, 'chat:set-selection', conv.id, {
+      providerId: CLAUDE_SUBSCRIPTION_PROVIDER_ID,
+      modelId: 'sonnet',
+    })
+    await call(handlers, 'chat:set-selection', conv.id, { providerId: VIRTUAL, modelId: 'sonnet' })
+    expect(h.deleteOne).not.toHaveBeenCalled()
+    await call(handlers, 'chat:set-selection', conv.id, { providerId: work.providerId, modelId: 'sonnet' })
+    expect(h.deleteOne).toHaveBeenCalledOnce()
   })
   it('keeps a virtual default for new conversations', async () => {
     account()
@@ -450,6 +505,24 @@ describe('active account execution', () => {
     await vi.waitFor(() => expect(h.runClaude).toHaveBeenCalledOnce())
     expect(ranOn(0)).toBe(work.providerId)
     expect(getConvUiPrefs(conv.id).chat?.providerId).toBe(VIRTUAL)
+    await stopChatAndWait(conv.id)
+  })
+  it.each([
+    ['the active account', VIRTUAL, VIRTUAL],
+    ['an individual account', CLAUDE_SUBSCRIPTION_PROVIDER_ID, undefined],
+  ])('tells subagents of a turn on %s which pool the turn runs for', async (_label, selected, expected) => {
+    account()
+    const conv = conversation(selected)
+    const { handlers } = register()
+    let seen: { accountPoolProviderId?: string } | undefined
+    h.runClaude.mockImplementationOnce(async () => {
+      seen = turnPools.lookup?.(conv.id)
+      return { planSubmitted: false, sessionId: 'session' }
+    })
+    await send(handlers, conv.id)
+    await vi.waitFor(() => expect(h.runClaude).toHaveBeenCalledOnce())
+    expect(seen).toBeDefined()
+    expect(seen?.accountPoolProviderId).toBe(expected)
     await stopChatAndWait(conv.id)
   })
   it('drains: stays on the next account after the first one resets', async () => {

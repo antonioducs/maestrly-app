@@ -9,8 +9,8 @@
  * "bring your provider". PRESETS below only prefill the add form (shortcuts); they are not
  * saved until the user confirms.
  */
-import { tMain } from '../i18n'
 import { randomUUID } from 'node:crypto'
+import { tMain } from '../i18n'
 import { getAppSetting, setAppSetting, getAppFlag, setAppFlag } from '../store'
 import {
   ACTIVE_ACCOUNT_SLOT,

@@ -89,6 +89,7 @@ import {
 } from './subscription-failover'
 import {
   accountPoolInfos,
+  accountPoolSuccessors,
   advanceAccountPoolsAfterExhaustion,
   removeAccountFromAccountPools,
   resolveAccountPoolProviderId,
@@ -267,7 +268,7 @@ import {
   type ReviewReviewerOptions,
 } from '../../shared/review'
 import { executeSubagent } from './subagent-executor'
-import { resolveParentSubagentExecutionProfile } from './subagent-execution-profile'
+import { resolveParentSubagentExecutionProfile, setTurnAccountPoolLookup } from './subagent-execution-profile'
 import { createReviewService, REVIEWER_AGENT, type ReviewService, type ReviewSpend } from './review/service'
 import { reviewReportMarkdown, reviewReportPart } from './review/report'
 import { listEffectiveAgents } from './virtual-subagents'
@@ -677,6 +678,8 @@ interface ActiveRun {
   messageId: string
   /** LOGICAL conversation selection (compat / patchConv / messages). */
   providerId: string
+  /** Active-account selection this turn runs for; absent when it runs on an individual account. */
+  accountPoolProviderId?: string
   /** Physical account in use (failover); absent = unresolved / same as logical. */
   effectiveProviderId?: string
   /** Reference count of physical accounts with active work in this run (root + children). */
@@ -863,6 +866,7 @@ export interface ChatIpcDeps {
 }
 
 const active = new Map<string, ActiveRun>()
+setTurnAccountPoolLookup((conversationId) => active.get(conversationId))
 
 /** Chat turns running now: a host reports itself busy while there are any, and its scheduled update waits. */
 export const activeChatRunCount = (): number => active.size
@@ -4003,6 +4007,9 @@ async function startSend(
   if (isActiveAccountProviderId(storedProviderId)) {
     selection = { ...selection, providerId: resolveAccountPoolProviderId(storedProviderId) }
   }
+  const turnAccountPoolProviderId = isActiveAccountProviderId(storedProviderId)
+    ? storedProviderId
+    : internalLoop?.selectionOverride.accountPoolProviderId
   const operation = reserveConversationOperation(conversationId, selection.providerId, opts?.operation)
   if (!operation) return { ok: false, error: 'busy' }
   // Compound operations may reserve the slot before switching provider/model.
@@ -4904,6 +4911,7 @@ async function startSend(
       ...(opts?.botAdmission ? { botTurn: true } : {}),
       messageId: assistantMessageId,
       providerId: selection.providerId,
+      ...(turnAccountPoolProviderId ? { accountPoolProviderId: turnAccountPoolProviderId } : {}),
       ...(admittedCodexTarget ? { effectiveProviderId: admittedCodexTarget.providerId } : {}),
       ...(useClaudeSubscription
         ? {
@@ -9601,22 +9609,46 @@ function persistReviewSpend(conversationId: string, spend: ReviewSpend, model?: 
 /** Registers all `chat:*` channels. Called from `registerIpc()` in index.ts. */
 let cursorCleanupPromise: Promise<void> | null = null
 
+/** Whether a pool account is signed in by its cached status; null when this session has not read it yet. */
+function cachedPoolAccountSignIn(providerId: string): boolean | null {
+  const accountId = subscriptionAccountId(providerId)
+  if (isClaudeSubscriptionProvider(providerId)) {
+    const status = getClaudeSubscriptionManager(accountId).getStatusSnapshot()
+    return status ? toClaudeAuthStatus(status, accountId).authenticated : null
+  }
+  const status = getCodexSubscriptionManager(accountId).getStatusSnapshot()
+  return status ? toCodexAuthStatus(status, accountId).authenticated : null
+}
+
+async function readPoolAccountSignIn(providerId: string): Promise<boolean> {
+  const accountId = subscriptionAccountId(providerId)
+  return isClaudeSubscriptionProvider(providerId)
+    ? toClaudeAuthStatus(await getClaudeSubscriptionManager(accountId).status(), accountId).authenticated
+    : toCodexAuthStatus(await getCodexSubscriptionManager(accountId).getStatus(), accountId).authenticated
+}
+
+function advanceAccountPool(providerId: string, read: ReadonlyMap<string, boolean>): void {
+  const router = getSubscriptionFailoverRouter()
+  const moved = advanceAccountPoolsAfterExhaustion(providerId, {
+    isAdmissible: (id) => router.isAdmissible(id),
+    nextProbeAt: (id) => router.getHealth(id).exhaustion?.nextProbeAt ?? 0,
+    isSignedIn: (id) => read.get(id) ?? cachedPoolAccountSignIn(id) ?? false,
+  })
+  if (moved) sendToMainRenderers('models:catalog-changed')
+}
+
 let accountPoolAdvanceInstalled = false
 /** Drain: when the active account runs out, its pool moves on and stays there; the pickers relabel. */
 function installAccountPoolAdvance(): void {
   if (accountPoolAdvanceInstalled) return
   accountPoolAdvanceInstalled = true
   onSubscriptionAccountExhausted((providerId) => {
-    const router = getSubscriptionFailoverRouter()
-    const moved = advanceAccountPoolsAfterExhaustion(providerId, {
-      isAdmissible: (id) => router.isAdmissible(id),
-      nextProbeAt: (id) => router.getHealth(id).exhaustion?.nextProbeAt ?? 0,
-      isSignedIn: (id) =>
-        isClaudeSubscriptionProvider(id)
-          ? claudeAuthSnapshot(subscriptionAccountId(id)).authenticated
-          : codexAuthSnapshot(subscriptionAccountId(id)).authenticated,
-    })
-    if (moved) sendToMainRenderers('models:catalog-changed')
+    // An account not read yet this session would count as signed out and be passed over: read it first.
+    const unread = accountPoolSuccessors(providerId).filter((id) => cachedPoolAccountSignIn(id) === null)
+    if (unread.length === 0) return advanceAccountPool(providerId, new Map())
+    void Promise.all(unread.map(async (id) => [id, await readPoolAccountSignIn(id).catch(() => false)] as const)).then(
+      (entries) => advanceAccountPool(providerId, new Map(entries))
+    )
   })
 }
 
@@ -11562,11 +11594,16 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
       }
       const previous = getConvUiPrefs(conversationId).chat
       const changed = previous?.providerId !== sel.providerId || previous?.modelId !== sel.modelId
+      // The active account and the account it points to share one session: switching between them keeps it.
+      const sameAccount =
+        !!previous?.providerId &&
+        resolveAccountPoolProviderId(previous.providerId) === resolveAccountPoolProviderId(sel.providerId)
+      const sessionChanged = !sameAccount || previous?.modelId !== sel.modelId
       const operation = reserveConversationOperation(conversationId, previous?.providerId ?? sel.providerId)
       if (!operation) return { ok: false, error: 'busy' }
       try {
         if (!conversationOperationIsCurrent(conversationId, operation)) return { ok: false, error: 'busy' }
-        if (changed && isClaudeSubscriptionProvider(previous?.providerId)) {
+        if (sessionChanged && isClaudeSubscriptionProvider(previous?.providerId)) {
           await deleteClaudeSessionForConversation(conversationId)
         }
         // Model changes retest image capability → clear the learned flag (imagesUnsupported).

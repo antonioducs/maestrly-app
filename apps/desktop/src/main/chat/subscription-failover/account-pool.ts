@@ -203,6 +203,15 @@ export function nextActiveAfterExhaustion(
   return soonest === exhaustedProviderId ? null : soonest
 }
 
+/** Accounts a drain pool may hand over to once `providerId` runs out; [] when the pool would not move. */
+export function accountPoolSuccessors(providerId: string): string[] {
+  const kind = accountPoolKindOf(providerId)
+  if (!kind || isActiveAccountProviderId(providerId)) return []
+  const pool = getAccountPool(kind)
+  if (pool.policy !== 'drain' || pool.activeProviderId !== providerId) return []
+  return rotateToActive(pool.memberProviderIds, providerId).slice(1)
+}
+
 export function advanceAccountPoolsAfterExhaustion(
   providerId: string,
   probe: AccountPoolProbe

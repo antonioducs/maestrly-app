@@ -39,16 +39,28 @@ const subagentProfileResolverDeps = {
   modelMeta: getSubagentProfileModelMeta,
 }
 
+/** The turn in flight in a conversation and the active-account selection it runs for, if any. */
+export type TurnAccountPoolLookup = (conversationId: string) => { accountPoolProviderId?: string } | undefined
+
+let turnAccountPool: TurnAccountPoolLookup = () => undefined
+
+/** The chat service reports its turns here; this module cannot import it without a cycle. */
+export function setTurnAccountPoolLookup(lookup: TurnAccountPoolLookup): void {
+  turnAccountPool = lookup
+}
+
 /**
- * A child follows the account pool its conversation selected, so it keeps rotating with the pool instead of staying
- * on the account the parent turn happened to start on. An individual account selection, or a parent running outside
- * the pool's members, stays physical.
+ * A child follows the account pool its parent turn runs for, so it keeps rotating with the pool instead of staying
+ * on the account the parent turn happened to start on. A turn on an individual account, such as a loop frozen on
+ * one, or a parent running outside the pool's members, stays physical. Without a turn in flight, the
+ * conversation's selection decides.
  */
 function inheritedParentProviderId(conversationId: string, providerId: string): string {
-  const stored = getConvUiPrefs(conversationId).chat?.providerId
-  const kind = stored && isActiveAccountProviderId(stored) ? accountPoolKindOf(stored) : null
-  if (!stored || !kind) return providerId
-  return getAccountPool(kind).memberProviderIds.includes(providerId) ? stored : providerId
+  const turn = turnAccountPool(conversationId)
+  const logical = turn ? turn.accountPoolProviderId : getConvUiPrefs(conversationId).chat?.providerId
+  const kind = logical && isActiveAccountProviderId(logical) ? accountPoolKindOf(logical) : null
+  if (!logical || !kind) return providerId
+  return getAccountPool(kind).memberProviderIds.includes(providerId) ? logical : providerId
 }
 
 /** Resolves a workflow's parent selection without applying configured agent overrides. */

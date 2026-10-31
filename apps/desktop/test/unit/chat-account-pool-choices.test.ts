@@ -16,6 +16,7 @@ import {
   removeAccountPoolMember,
   withAccountPoolPolicy,
 } from '../../src/renderer/components/chat/account-pool'
+import { subagentProfileProviders } from '../../src/renderer/lib/subagent-profile-editor'
 
 const provider = (
   id: string,
@@ -98,6 +99,14 @@ describe('chat provider choices', () => {
       ids(choices).indexOf('builtin_codex_subscription') - 1
     )
     expect(providers).toEqual(snapshot)
+  })
+
+  it('offers a new subagent candidate the active account ahead of the accounts it rotates over', () => {
+    const claude = providers.filter((entry) => entry.kind === 'claude-subscription')
+    const eligible = subagentProfileProviders(
+      chatProviderChoices({ providers: claude, subscriptionAccountPools: [pool('claude-subscription')] })
+    )
+    expect(eligible[0]?.id).toBe('builtin_claude_subscription@~active')
   })
 
   it('skips a pool whose provider has no physical account', () => {

@@ -10,6 +10,7 @@ import {
 import {
   resolveParentSubagentExecutionProfile,
   resolveSubagentExecutionProfile,
+  setTurnAccountPoolLookup,
 } from '../../src/main/chat/subagent-execution-profile'
 import { setAccountPool } from '../../src/main/chat/subscription-failover/account-pool'
 import { insertConversation, insertWorkspace, patchConvUiPrefs } from '../../src/main/store'
@@ -317,5 +318,31 @@ describe('subagent execution profile under an active-account selection', () => {
     })
 
     expect(resolved.effective).toMatchObject({ source: 'parent', providerId: workId })
+  })
+
+  describe('with a turn in flight', () => {
+    afterEach(() => setTurnAccountPoolLookup(() => undefined))
+
+    it('stays physical for a turn on an individual account even when the conversation selected the pool', async () => {
+      const { workId } = setup()
+      patchConvUiPrefs('c', { chat: { providerId: VIRTUAL, modelId: 'parent-model' } })
+      setTurnAccountPoolLookup((conversationId) => (conversationId === 'c' ? {} : undefined))
+
+      const { profile } = await resolveFor(workId)
+
+      expect(profile.effective).toMatchObject({ source: 'parent', providerId: workId })
+    })
+
+    it('follows the pool of a turn frozen on it after the conversation switched to an individual account', async () => {
+      const { workId } = setup()
+      patchConvUiPrefs('c', { chat: { providerId: workId, modelId: 'parent-model' } })
+      setTurnAccountPoolLookup((conversationId) =>
+        conversationId === 'c' ? { accountPoolProviderId: VIRTUAL } : undefined
+      )
+
+      const { profile } = await resolveFor(workId)
+
+      expect(profile.effective).toMatchObject({ source: 'parent', providerId: VIRTUAL })
+    })
   })
 })

@@ -107,6 +107,7 @@ export function InheritOption({
   )
 }
 
+// A new candidate starts on a provider's active account when it has one, so the subagent rotates like the chat does.
 const candidateOf = (value: ModelSelection | null, config: ChatConfig): SubagentProfileCandidate =>
   value
     ? {
