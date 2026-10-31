@@ -1,5 +1,6 @@
 import { WebSearchSettings } from './WebSearchSettings'
 import { DictationSettings } from './DictationSettings'
+import { TurnSnapshotSettings } from './TurnSnapshotSettings'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Trash2, Plus, X, Pencil, Sparkles } from 'lucide-react'
@@ -185,6 +186,7 @@ export function ApiKeySettings({
             setEnabled={api.chatSetBashFilters}
             onChanged={refresh}
           />
+          <TurnSnapshotSettings />
           <McpSettings
             servers={config.mcpServers}
             onChanged={refresh}
