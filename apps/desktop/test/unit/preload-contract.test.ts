@@ -454,8 +454,14 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(680)
+    expect(keys).toHaveLength(681)
     expect(keys.sort()).toMatchSnapshot()
+  })
+
+  it('forwards an active-account pool patch unchanged', async () => {
+    const patch = { kind: 'claude-subscription', activeProviderId: 'builtin_claude_subscription@acc_work' }
+    await api.chatSubscriptionAccountPoolSet(patch)
+    expect(invokeSpy).toHaveBeenCalledWith('chat:subscription-account-pool:set', patch)
   })
 
   it('forwards managed bot files calls in exact argument order', async () => {

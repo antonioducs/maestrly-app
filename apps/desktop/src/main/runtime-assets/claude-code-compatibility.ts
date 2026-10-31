@@ -101,6 +101,7 @@ export async function validateClaudeCodeRuntime(
     // An open prompt keeps the session alive for the control requests; it never sends a user message.
     async function* prompt(): AsyncGenerator<SDKUserMessage> {
       await held
+      yield* []
     }
     session = queryFactory({
       prompt: prompt(),

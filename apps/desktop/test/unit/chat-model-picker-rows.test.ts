@@ -37,6 +37,39 @@ const config = {
   ],
 } as unknown as ChatConfig
 
+const claudeAccount = (accountId: string, name: string) => ({
+  id: 'builtin_claude_subscription@' + accountId,
+  name,
+  baseURL: '',
+  apiKeyPresent: false,
+  builtIn: true,
+  connected: true,
+  kind: 'claude-subscription',
+  accountId,
+})
+
+/** A config whose Claude accounts form a pool, plus an API-key account that lists no models. */
+const pooledConfig = (poolConnected = true) =>
+  ({
+    providers: [
+      { id: 'keyed', name: 'Keyed account', baseURL: '', apiKeyPresent: true, connected: true, kind: 'openai' },
+      claudeAccount('work', 'Work'),
+      claudeAccount('home', 'Home'),
+    ],
+    subscriptionAccountPools: [
+      {
+        kind: 'claude-subscription',
+        providerId: 'builtin_claude_subscription@~active',
+        name: 'Claude (active account)',
+        connected: poolConnected,
+        memberProviderIds: ['builtin_claude_subscription@work', 'builtin_claude_subscription@home'],
+        activeProviderId: 'builtin_claude_subscription@work',
+        policy: 'drain',
+        customMembers: false,
+      },
+    ],
+  }) as unknown as ChatConfig
+
 const summary = (update: ModelPickerRowsUpdate) => ({
   pending: update.pending,
   rows: update.rows.map((row) => `${row.providerName}:${row.modelId}`),
@@ -169,5 +202,55 @@ describe('model picker rows', () => {
     }
     await loadModelPickerRows(api as never, 'local', () => {})
     expect(reads).toBe(1)
+  })
+
+  it('lists the active-account entry before the physical accounts, also once the config is read again', async () => {
+    const asked: string[] = []
+    let reads = 0
+    const api = {
+      chatConfig: async () => {
+        reads += 1
+        const current = pooledConfig()
+        if (reads > 1) current.subscriptionAccountPools![0].name = 'Claude — Active account (Home)'
+        return current
+      },
+      // The API-key account lists nothing, which makes the picker read the config again.
+      chatModels: async (providerId: string) => {
+        asked.push(providerId)
+        return providerId === 'keyed' ? [] : ['sonnet']
+      },
+    }
+    const updates: ModelPickerRowsUpdate[] = []
+
+    await loadModelPickerRows(api as never, 'local', (update) => updates.push(update))
+
+    expect(reads).toBe(2)
+    expect(asked).toContain('builtin_claude_subscription@~active')
+    const last = updates.at(-1)!
+    expect(last.pending).toBe(0)
+    expect(last.rows.map((row) => [row.providerId, row.modelId])).toEqual([
+      ['builtin_claude_subscription@~active', 'sonnet'],
+      ['builtin_claude_subscription@work', 'sonnet'],
+      ['builtin_claude_subscription@home', 'sonnet'],
+    ])
+    expect(last.rows[0].providerName).toBe('Claude — Active account (Home)')
+    expect(cachedModelPickerRows('local')?.map((row) => row.providerId)).toEqual(last.rows.map((row) => row.providerId))
+  })
+
+  it('does not ask for the models of a pool entry that is not connected', async () => {
+    const asked: string[] = []
+    const api = {
+      chatConfig: async () => pooledConfig(false),
+      chatModels: async (providerId: string) => {
+        asked.push(providerId)
+        return ['sonnet']
+      },
+    }
+    const updates: ModelPickerRowsUpdate[] = []
+
+    await loadModelPickerRows(api as never, 'local', (update) => updates.push(update))
+
+    expect(asked).not.toContain('builtin_claude_subscription@~active')
+    expect(updates.at(-1)!.rows.map((row) => row.providerId)).not.toContain('builtin_claude_subscription@~active')
   })
 })

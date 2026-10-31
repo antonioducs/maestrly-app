@@ -38,4 +38,38 @@ describe('multi-account selection surfaces', () => {
     expect(usage).toContain('providerId: provider.id')
     expect(usage).toContain('accountId: provider.accountId ?? null')
   })
+
+  it('offers the active-account entry in every model selection surface', () => {
+    const selectionSurfaces = [
+      'src/renderer/components/chat/ChatModelChip.tsx',
+      'src/renderer/components/chat/ChatView.tsx',
+      'src/renderer/components/chat/model-picker-rows.ts',
+      'src/renderer/components/chat/model-settings/BackgroundTasks.tsx',
+      'src/renderer/components/chat/model-settings/ModelsAgentsSettings.tsx',
+      'src/renderer/components/chat/model-settings/SelectionBodies.tsx',
+      'src/renderer/components/chat/subagent-profiles/CandidateFields.tsx',
+      'src/renderer/components/chat/subagent-profiles/SubagentProfileRulesEditor.tsx',
+    ]
+    for (const file of selectionSurfaces) expect(source(file), file).toContain('chatProviderChoices(')
+
+    // Names shown for a stored selection must resolve the entry too.
+    for (const file of [
+      'src/renderer/components/UsagePanel.tsx',
+      'src/renderer/components/chat/SubagentSessionPanel.tsx',
+    ]) {
+      expect(source(file), file).toContain('chatProviderChoices(')
+    }
+    // Failover labels read the physical accounts the chat view keeps.
+    expect(source('src/renderer/components/chat/ChatView.tsx')).toContain('setChatProviders(cfg.providers)')
+  })
+
+  it('keeps account management and usage on the physical accounts', () => {
+    const accountSurfaces = [
+      'src/renderer/components/chat/accounts/account-entries.ts',
+      'src/renderer/components/chat/accounts/AddAccountDialog.tsx',
+      'src/renderer/components/chat/accounts/FailoverRouteEditor.tsx',
+      'src/renderer/components/chat/quick-subscription-usage.ts',
+    ]
+    for (const file of accountSurfaces) expect(source(file), file).not.toContain('chatProviderChoices')
+  })
 })

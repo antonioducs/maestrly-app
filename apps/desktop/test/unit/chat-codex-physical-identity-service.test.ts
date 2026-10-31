@@ -141,7 +141,10 @@ import {
 } from '../../src/main/chat/subscription-failover'
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
-import { patchConvUiPrefs } from '../../src/main/store'
+import { getConvUiPrefs, patchConvUiPrefs } from '../../src/main/store'
+import { getAccountPool, setAccountPool } from '../../src/main/chat/subscription-failover/account-pool'
+
+const CODEX_ACTIVE_ACCOUNT = 'builtin_codex_subscription@~active'
 import { clearApiKey, setApiKey } from '../../src/main/chat/credentials'
 import { addProvider } from '../../src/main/chat/catalog'
 import { upsertChatMessage } from '../../src/main/chat/chat-store'
@@ -245,6 +248,43 @@ describe('Codex logical vs physical provider identity', () => {
     })
     expect(args.effectiveProviderId).toBe(slotProviderId)
     expect(args.initialAccountId).toBe(slot.id)
+  })
+
+  it.each([
+    ['the account the pool points to', false],
+    ['the next account once the active one runs out', true],
+  ] as const)('runs an active-account turn on %s and keeps the virtual selection', async (_case, drained) => {
+    const handlers = register()
+    const conversation = makeConversation(makeWorkspace().id, {})
+    const slot = addSubscriptionAccount('codex-subscription', 'Work')
+    const slotProviderId = subscriptionProviderIdFor('codex-subscription', slot.id)
+    if (drained) {
+      getSubscriptionFailoverRouter().markExhausted(CODEX_SUBSCRIPTION_PROVIDER_ID, {
+        reason: 'quota',
+        source: 'structured-error',
+        resetsAt: Date.now() + 60_000,
+      })
+    } else {
+      setAccountPool({ kind: 'codex-subscription', activeProviderId: slotProviderId })
+    }
+    await vi.waitFor(() => expect(getAccountPool('codex-subscription').activeProviderId).toBe(slotProviderId))
+    patchConvUiPrefs(conversation.id, { chat: { providerId: CODEX_ACTIVE_ACCOUNT, modelId: 'gpt-test' } })
+    h.resolveCodexRuntimeTarget.mockResolvedValue(defaultTarget({ providerId: slotProviderId, accountId: slot.id }))
+
+    const sender = { isDestroyed: () => false, send: vi.fn() }
+    await expect(
+      handlers.get('chat:send')?.({ sender }, { conversationId: conversation.id, text: 'hello' })
+    ).resolves.toEqual({ ok: true })
+    await vi.waitFor(() => expect(h.runCodex).toHaveBeenCalledTimes(1))
+
+    expect(h.resolveCodexRuntimeTarget).toHaveBeenCalledWith(
+      expect.objectContaining({ chain: [slotProviderId, CODEX_SUBSCRIPTION_PROVIDER_ID] })
+    )
+    const args = h.runCodex.mock.calls[0][0]
+    expect(args.effectiveProviderId).toBe(slotProviderId)
+    expect(args.initialAccountId).toBe(slot.id)
+    expect(args.failoverChain).toEqual([slotProviderId, CODEX_SUBSCRIPTION_PROVIDER_ID])
+    expect(getConvUiPrefs(conversation.id).chat?.providerId).toBe(CODEX_ACTIVE_ACCOUNT)
   })
 
   it.each([

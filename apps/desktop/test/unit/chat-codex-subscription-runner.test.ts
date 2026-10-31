@@ -745,6 +745,23 @@ describe('Codex subscription runner', () => {
   })
   afterEach(closeDb)
 
+  it('keeps an explicit default account as the binding owner after admission from an additional slot', async () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, {})
+    persistUser(conversation.id, 'user_default_account', 'Continue on the admitted account', 1)
+    const client = new FakeCodexClient()
+    client.queueTurn({
+      turnId: 'turn_default_account',
+      notifications: [completedNotification('thread_1', 'turn_default_account')],
+    })
+    const args = runArgs(conversation.id, workspace.id, conversation.cwd, client)
+    args.selection = { ...args.selection, providerId: 'builtin_codex_subscription@acc_work' }
+    args.initialAccountId = null
+    args.effectiveProviderId = 'builtin_codex_subscription'
+    await runCodexSubscriptionChat(args)
+    expect(getCodexThreadBinding(conversation.id)?.accountId).toBeNull()
+  })
+
   it('routes screenshot through the host MCP server and the permission broker', async () => {
     const { setAppFlag } = await import('../../src/main/store')
     const workspace = makeWorkspace()
@@ -5095,7 +5112,7 @@ describe('Codex subscription runner', () => {
       const running = runCodexSubscriptionChat(args)
       await vi.waitFor(() => expect(client.startTurnCalls).toHaveLength(1))
       const taskSpec = (await hostMcpTools(client.startThreadCalls[0])).find((spec) => spec.name === 'task')
-      expect((taskSpec?.inputSchema as { required?: string[] }).required).toEqual(['agent', 'prompt', 'complexity'])
+      expect((taskSpec?.inputSchema as { required?: string[] } | undefined)?.required).toEqual(['agent', 'prompt', 'complexity'])
       await client.serverRequest({
         id: 'task_routed',
         method: 'item/tool/call',

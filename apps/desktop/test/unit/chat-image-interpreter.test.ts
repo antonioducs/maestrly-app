@@ -124,7 +124,8 @@ import {
   mcpResultToChatToolOutput,
   modelOutputToChatToolOutput,
 } from '../../src/main/chat/tool-output'
-import { toolOutputImages } from '../../src/shared/chat'
+import { activeAccountProviderId, toolOutputImages } from '../../src/shared/chat'
+import { setAccountPool } from '../../src/main/chat/subscription-failover/account-pool'
 import { insertConversation, insertWorkspace } from '../../src/main/store'
 import { closeDb, freshDb } from '../helpers/db'
 
@@ -1878,5 +1879,45 @@ describe('Cursor image interpreter', () => {
     h.cursorSummary.mockResolvedValue({ text: 'Recovered' })
     expect(await describeEphemeralToolImage(args)).toMatchObject({ text: 'Recovered' })
     expect(h.cursorSummary).toHaveBeenCalledTimes(5)
+  })
+})
+
+describe('active-account image interpreter', () => {
+  const VIRTUAL = activeAccountProviderId('codex-subscription')
+  const usage = { input: 5, output: 2, cacheRead: 0, cacheCreate: 0, totalInput: 5 }
+  let work: { accountId: string; providerId: string }
+
+  beforeEach(() => {
+    const account = addSubscriptionAccount('codex-subscription', 'Work')
+    work = { accountId: account.id, providerId: subscriptionProviderIdFor('codex-subscription', account.id) }
+    setAccountPool({ kind: 'codex-subscription', activeProviderId: work.providerId })
+    setImageInterpreter({ providerId: VIRTUAL, modelId: 'vision-model' })
+    h.summarizeWithCodexRuntime.mockResolvedValue({ text: 'Codex pixels.', usage })
+  })
+
+  const describeOnce = (target: Record<string, unknown>) => {
+    h.runCodexEphemeralWithFailover.mockImplementationOnce(async (args: any) => args.operation(target, args.signal))
+    return describeConversationImages({
+      conversationId: 'c',
+      cwd: '/tmp/w',
+      pendingParts: [imagePart('active-f1')],
+      signal: new AbortController().signal,
+    })
+  }
+
+  it('keeps the logical selection for the failover chain and uses the physical active account as fallback', async () => {
+    await expect(describeOnce({ providerId: work.providerId, runtimeModelId: 'vision-a', client: {} })).resolves.toEqual({
+      described: 1,
+      historyChanged: false,
+    })
+
+    expect(h.runCodexEphemeralWithFailover).toHaveBeenCalledWith(expect.objectContaining({ logicalProviderId: VIRTUAL }))
+    expect(h.summarizeWithCodexRuntime).toHaveBeenCalledWith(expect.objectContaining({ accountId: work.accountId }))
+  })
+
+  it('attributes the work to the account that ran it, including the default one', async () => {
+    await describeOnce({ providerId: 'builtin_codex_subscription', accountId: null, runtimeModelId: 'vision-a', client: {} })
+
+    expect(h.summarizeWithCodexRuntime).toHaveBeenCalledWith(expect.objectContaining({ accountId: null }))
   })
 })

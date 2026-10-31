@@ -27,6 +27,7 @@ import type {
   ChatSubscriptionUsage,
 } from '../../../../shared/chat'
 import type { RuntimeAssetId, RuntimeAssetInfo } from '../../../../shared/runtime-assets'
+import { accountPoolFor } from '../account-pool'
 import { SubscriptionUsagePanel } from '../SubscriptionUsagePanel'
 import { supportsSubscriptionUsage } from '../subscription-usage-presentation'
 import {
@@ -49,6 +50,7 @@ import {
   ProviderMark,
   secondaryButtonCls,
 } from './account-ui'
+import { AccountPoolEditor } from './AccountPoolEditor'
 import { FailoverRouteEditor } from './FailoverRouteEditor'
 import { ProviderModelFilter } from './ProviderModelFilter'
 import { ClaudeCodeSetupNotice, ClaudeManualSignIn } from './ClaudeSubscriptionHelp'
@@ -444,6 +446,7 @@ export function SubscriptionAccount({
 
   const defaultEntry = config.providers.find((entry) => entry.kind === providerKind && !entry.accountId)
   const defaultLabel = titleFor({ accountId: null, accountLabel: defaultEntry?.accountLabel })
+  const accountPool = accountPoolFor(config, providerKind)
   const showUsage = signedIn && usageSupported && usage?.state !== 'unsupported' && (usage !== null || usageBusy)
 
   return (
@@ -694,6 +697,16 @@ export function SubscriptionAccount({
         <DetailSection title={t('settings.subscriptionUsageHeading')}>
           <SubscriptionUsagePanel usage={usage} loading={usageBusy} showHeading={false} />
         </DetailSection>
+      )}
+      {accountPool && (
+        <AccountPoolEditor
+          pool={accountPool}
+          providerId={entry.key}
+          config={config}
+          defaultLabel={defaultLabel}
+          disconnectedLabel={t(copyKey('Disconnected'))}
+          onChanged={onChanged}
+        />
       )}
       {showSubscriptionFailover && (
         <FailoverRouteEditor

@@ -5,6 +5,7 @@ import {
   subscriptionDefaultLabelKey,
   subscriptionExhaustionMessageKey,
 } from './subscription-failover-route'
+import { chatProviderChoices } from './account-pool'
 import {
   useCallback,
   useEffect,
@@ -288,6 +289,7 @@ export function ChatView({
   const [dismissedReviewId, setDismissedReviewId] = useState<string | null>(null)
   const [reviewNotice, setReviewNotice] = useState<string | null>(null)
   const [chatProviders, setChatProviders] = useState<ChatConfig['providers']>([])
+  const [chatAccountPools, setChatAccountPools] = useState<ChatConfig['subscriptionAccountPools']>([])
   // A conversation opened for a purpose (such as a suggested request) starts with that text in the composer.
   const [draft, setDraft] = useState(() => peekComposerPrefill(conversationId) ?? '')
   useEffect(() => clearComposerPrefill(conversationId), [conversationId])
@@ -1363,11 +1365,12 @@ export function ChatView({
   useEffect(() => {
     Promise.all([api.chatGetSelection(conversationId), api.chatConfig()]).then(([sel, cfg]) => {
       if (!alive) return
-      const p = sel ? cfg.providers.find((pp) => pp.id === sel.providerId) : undefined
+      const p = sel ? chatProviderChoices(cfg).find((pp) => pp.id === sel.providerId) : undefined
       setKeyMissing(!p || !isChatProviderConnected(p))
       setSelModelId(sel?.modelId ?? null)
       setSelProviderId(sel?.providerId ?? null)
       setChatProviders(cfg.providers)
+      setChatAccountPools(cfg.subscriptionAccountPools)
     })
     let alive = true
     return () => {
@@ -1413,6 +1416,7 @@ export function ChatView({
     const unsubscribes = CHAT_SUBSCRIPTION_PROVIDER_KINDS.map((provider) =>
       api.onChatSubscriptionStatus(provider, () => setModelRefresh((n) => n + 1))
     )
+    unsubscribes.push(api.onChatModelsCatalogChanged(() => setModelRefresh((n) => n + 1)))
     return () => unsubscribes.forEach((unsubscribe) => unsubscribe())
   }, [api])
 
@@ -2040,16 +2044,28 @@ export function ChatView({
     [api, conversationId, pushAssistantError, subagents]
   )
 
+  const contextAccountProviderIds = chatAccountPools?.find(
+    (pool) => pool.providerId === selectedContextModel?.providerId
+  )?.memberProviderIds
   const contextObservation = useMemo(
     () =>
       selectContextObservation(messages, {
         conversationId,
         model: selectedContextModel,
+        accountProviderIds: contextAccountProviderIds,
         streaming,
         compacting,
         after: contextObservationAfter,
       }),
-    [messages, conversationId, selectedContextModel, streaming, compacting, contextObservationAfter]
+    [
+      messages,
+      conversationId,
+      selectedContextModel,
+      contextAccountProviderIds,
+      streaming,
+      compacting,
+      contextObservationAfter,
+    ]
   )
   const contextRatio = useMemo(() => {
     const reading = contextMeterReading(historyStats, modelMeta, contextObservation.snapshot, selectedContextModel)

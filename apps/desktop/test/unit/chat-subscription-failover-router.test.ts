@@ -1185,3 +1185,24 @@ describe('resolveCodexRuntimeTarget while another caller probes a recovered acco
     ).resolves.toMatchObject({ ok: true, target: { providerId: FALLBACK } })
   })
 })
+
+
+it('notifies exhaustion listeners, also for a half-open quota, and survives listener errors', async () => {
+  const { onSubscriptionAccountExhausted, SubscriptionFailoverRouter } = await import('../../src/main/chat/subscription-failover/router')
+  const router = new SubscriptionFailoverRouter()
+  const seen: string[] = []
+  const stopThrowing = onSubscriptionAccountExhausted(() => { throw new Error('listener failure') })
+  const stop = onSubscriptionAccountExhausted((id) => seen.push(id))
+  try {
+    router.markExhausted('p1', { reason: 'q', source: 'structured-error', resetsAt: 1_000, now: 0 })
+    expect(router.getHealth('p1').state).toBe('exhausted')
+    const admitted = router.tryAdmit('p1', 2_000)
+    if (!admitted.ok || !admitted.lease) throw new Error('expected a half-open lease')
+    router.confirmAttemptQuota('p1', admitted.lease, { reason: 'q', source: 'probe', now: 2_000 })
+  } finally {
+    stop()
+    stopThrowing()
+  }
+  router.markExhausted('p2', { reason: 'q', source: 'structured-error' })
+  expect(seen).toEqual(['p1', 'p1'])
+})

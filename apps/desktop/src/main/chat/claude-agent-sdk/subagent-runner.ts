@@ -1,6 +1,7 @@
 import { asSchema } from '@ai-sdk/provider-utils'
 import { randomUUID } from 'node:crypto'
 import { subscriptionAccountId } from '../../../shared/chat'
+import { resolveAccountPoolProviderId } from '../subscription-failover/account-pool'
 import { freezeFailoverChain } from '../subscription-failover/config'
 import {
   resolveClaudeRuntimeTarget,
@@ -501,6 +502,8 @@ export async function runClaudeSubagent(
   const effective = args.profile.effective
   if (!effective) return { text: '', error: `Subagent "${args.agentName}" has no runnable execution profile.` }
   const chain = freezeFailoverChain(effective.providerId)
+  // Only a physical account can name a manager: an active-account selection runs on its pool's current one.
+  const accountProviderId = resolveAccountPoolProviderId(effective.providerId)
   const toolContext = await Promise.all(
     Object.entries(args.tools).map(async ([name, tool]) => ({
       name,
@@ -535,7 +538,7 @@ export async function runClaudeSubagent(
       if (
         args.manager &&
         args.manager.accountId !== undefined &&
-        args.manager.accountId !== subscriptionAccountId(effective.providerId)
+        args.manager.accountId !== subscriptionAccountId(accountProviderId)
       )
         throw new Error('Injected Claude manager account does not match the requested account.')
       // Explicit manager injection remains supported for isolated integrations and tests.
@@ -544,10 +547,10 @@ export async function runClaudeSubagent(
           ? {
               ok: true as const,
               target: {
-                providerId: effective.providerId,
+                providerId: accountProviderId,
                 accountId:
                   args.manager.accountId === undefined
-                    ? subscriptionAccountId(effective.providerId)
+                    ? subscriptionAccountId(accountProviderId)
                     : args.manager.accountId,
                 manager: args.manager,
                 accountIdentity: args.accountIdentity,

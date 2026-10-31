@@ -4,6 +4,7 @@ import { ArrowLeft, ArrowRight, Plus, Trash2, X } from 'lucide-react'
 import { useHostApi } from '@/lib/hosts/host-context'
 import { cn } from '@/lib/utils'
 import { SearchSelect } from '@/components/ui/search-select'
+import { chatProviderChoices } from '../account-pool'
 import { ModelPicker } from '../model-settings/ModelPicker'
 import { ProfileSelectionBody } from '../model-settings/SelectionBodies'
 import type { ModelSelection } from '../model-settings/model-selection'
@@ -330,7 +331,7 @@ function RuleRow({
               )}
               <ModelPicker
                 value={value}
-                providers={config.providers}
+                providers={chatProviderChoices(config)}
                 label={t('modelSettings.subagents.candidateLabel', { rule: name, position: index + 1 })}
                 placeholder={
                   scope === 'default' && chain.length === 0

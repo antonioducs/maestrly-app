@@ -184,6 +184,7 @@ exports[`preload API — exposure > preserves the public preload API inventory 1
   "chatSubagentTranscript",
   "chatSubagentsSetConversationEnabled",
   "chatSubscriptionAccountAdd",
+  "chatSubscriptionAccountPoolSet",
   "chatSubscriptionAccountRemove",
   "chatSubscriptionAccountRename",
   "chatSubscriptionFailoverSetRoute",

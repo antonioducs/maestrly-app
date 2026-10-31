@@ -7,6 +7,7 @@ import type { OpenFileReference } from '@/components/MarkdownViewer'
 import { cn } from '@/lib/utils'
 import { useHostApi } from '@/lib/hosts/host-context'
 import { subagentEffortLabel, subagentRunCost, subagentRunDisplay } from '@/lib/subagent-profile-display'
+import { chatProviderChoices } from './account-pool'
 import { ChatMessageList } from './ChatMessageList'
 
 function elapsed(ms: number): string {
@@ -107,7 +108,7 @@ export function SubagentSessionPanel({
     void Promise.all([
       api
         .chatConfig()
-        .then((config) => config.providers.find((provider) => provider.id === providerId)?.name ?? null)
+        .then((config) => chatProviderChoices(config).find((provider) => provider.id === providerId)?.name ?? null)
         .catch(() => null),
       api.chatModelMeta(modelId, providerId).catch(() => null),
     ]).then(([providerName, metadata]) => {

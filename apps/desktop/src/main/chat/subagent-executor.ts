@@ -35,6 +35,7 @@ import {
 } from './codex-subscription/subagent-runner'
 import { classifyCodexQuotaFailureWithRateLimits } from './codex-subscription/quota-error'
 import { queueCodexThreadCleanup } from './codex-subscription/thread-store'
+import { resolveAccountPoolProviderId } from './subscription-failover/account-pool'
 import { freezeFailoverChain } from './subscription-failover/config'
 import { getSubscriptionFailoverRouter, type MarkExhaustedInfo } from './subscription-failover/router'
 import type { NormalizedAiUsage } from './runner'
@@ -491,7 +492,7 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
     }
   }
   const runProvider = async (): Promise<SubagentExecutionResult> => {
-    if (!autonomousProviderAllowed(effective.providerId, args.conversationId))
+    if (!autonomousProviderAllowed(resolveAccountPoolProviderId(effective.providerId), args.conversationId))
       throw new Error('This provider account is not authorized for the desktop executor.')
     if (isClaudeSubscriptionProvider(effective.providerId)) {
       let runtimeSignature = ''
@@ -649,7 +650,9 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
       const childMode = effectiveReadOnly ? ('plan' as const) : ('agent' as const)
       const failoverChain = freezeFailoverChain(effective.providerId)
       if (failoverChain.length > 1) return runCodexOnFailoverChain(failoverChain, childMode)
-      const manager = getCodexSubscriptionManager(subscriptionAccountId(effective.providerId))
+      // Only a physical account can name a manager: an active-account selection runs on its pool's current one.
+      const accountProviderId = resolveAccountPoolProviderId(effective.providerId)
+      const manager = getCodexSubscriptionManager(subscriptionAccountId(accountProviderId))
       let serviceTier: string
       try {
         serviceTier = await resolveCodexSubagentServiceTier(manager, effective.modelId, effective.fastMode === true)
@@ -676,7 +679,7 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
         toolCallIdPrefix: args.toolCallId,
       })
       const approval = approvalConfig(childMode, args.permMode)
-      const accountId = subscriptionAccountId(effective.providerId)
+      const accountId = subscriptionAccountId(accountProviderId)
       const toolSignature = subagentToolSignature(runtimes.map((entry) => entry.spec))
       const resume = resumeFor(effective.providerId, accountId, toolSignature)
       try {
@@ -696,6 +699,7 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
           dynamicTools: runtimes.map((entry) => entry.spec),
           // A bot's child opens programs on the bot's own screen, like its parent conversation.
           shellEnvironment: conversationShellEnv(args.conversationId),
+          physicalProviderId: accountProviderId,
           registerThread: (threadId) => registration.addThread(threadId),
           removeThread: (threadId) => registration.removeThread(threadId),
           progress,

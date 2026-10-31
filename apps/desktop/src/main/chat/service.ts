@@ -47,6 +47,8 @@ import {
   addProvider,
   addSubscriptionAccount,
   CODEX_SUBSCRIPTION_PROVIDER_ID,
+  CODEX_SUBSCRIPTION_PROVIDER,
+  CLAUDE_SUBSCRIPTION_PROVIDER,
   getProvider,
   getProviderKind,
   getSubscriptionAccount,
@@ -85,6 +87,16 @@ import {
   SUPPORTED_FAILOVER_KINDS,
   type CodexRuntimeTarget,
 } from './subscription-failover'
+import {
+  accountPoolInfos,
+  accountPoolSuccessors,
+  advanceAccountPoolsAfterExhaustion,
+  removeAccountFromAccountPools,
+  resolveAccountPoolProviderId,
+  rotateToActive,
+  setAccountPool,
+} from './subscription-failover/account-pool'
+import { onSubscriptionAccountExhausted } from './subscription-failover/router'
 import { resolveClaudeRuntimeTarget, type ClaudeRuntimeTarget } from './subscription-failover/claude-adapter'
 import { listClaudeAttempts, setClaudeAttemptOwner } from './subscription-failover/claude-attempts'
 import { runClaudeEphemeralWithFailover } from './subscription-failover/claude-ephemeral'
@@ -257,7 +269,7 @@ import {
   type ReviewReviewerOptions,
 } from '../../shared/review'
 import { executeSubagent } from './subagent-executor'
-import { resolveParentSubagentExecutionProfile } from './subagent-execution-profile'
+import { resolveParentSubagentExecutionProfile, setTurnAccountPoolLookup } from './subagent-execution-profile'
 import { createReviewService, REVIEWER_AGENT, type ReviewService, type ReviewSpend } from './review/service'
 import { reviewReportMarkdown, reviewReportPart } from './review/report'
 import { listEffectiveAgents } from './virtual-subagents'
@@ -418,6 +430,7 @@ import {
   DEFAULT_REASONING_EFFORTS,
   hasUsagePricing,
   isChatSubscriptionProviderKind,
+  isActiveAccountProviderId,
   isPortableExecutionProviderId,
   isMaestrlyUltraEffort,
   resolveFrozenSentEffort,
@@ -441,6 +454,8 @@ import type {
   ChatStreamEvent,
   ChatSubscriptionAuthStatus,
   ChatSubscriptionProviderKind,
+  ChatSubscriptionAccountPoolKind,
+  ChatSubscriptionAccountPoolPatch,
   ChatSkillSelection,
   CodexSubscriptionAuthStatus,
   ChatExecutionScope,
@@ -463,7 +478,7 @@ import type { ChatAttachmentPdfFileResult, ChatMode, ChatOpenAttachmentResult } 
 import type { ConvUiPrefs } from '../../shared/conversation'
 import { isChatMode, normalizeChatMode } from '../../shared/chat-mode'
 import type { MaestroOrchestratorProfileV1, MaestroTurnSnapshotV1 } from '../../shared/maestro'
-import { tFor } from '../i18n'
+import { tFor, tMain } from '../i18n'
 import { getMainWebContents, sendToConversation } from '../window-ipc'
 import { hasRemoteMains, sendToRemoteMains } from '../remote-ui-targets'
 import { registerSubagentProfileIpc } from './subagent-profile-ipc'
@@ -665,6 +680,8 @@ interface ActiveRun {
   messageId: string
   /** LOGICAL conversation selection (compat / patchConv / messages). */
   providerId: string
+  /** Active-account selection this turn runs for; absent when it runs on an individual account. */
+  accountPoolProviderId?: string
   /** Physical account in use (failover); absent = unresolved / same as logical. */
   effectiveProviderId?: string
   /** Reference count of physical accounts with active work in this run (root + children). */
@@ -851,6 +868,7 @@ export interface ChatIpcDeps {
 }
 
 const active = new Map<string, ActiveRun>()
+setTurnAccountPoolLookup((conversationId) => active.get(conversationId))
 
 /** Chat turns running now: a host reports itself busy while there are any, and its scheduled update waits. */
 export const activeChatRunCount = (): number => active.size
@@ -1022,7 +1040,8 @@ function reserveConversationOperation(
   })
   const operation: PendingConversationOperation = {
     token: Symbol(conversationId),
-    providerId,
+    // Account boundaries (login/logout) wait on the physical account the operation is about to use.
+    providerId: providerId ? resolveAccountPoolProviderId(providerId) : providerId,
     controller: new AbortController(),
     done,
     settleDone,
@@ -2002,11 +2021,16 @@ function defaultSelection(): ChatModelRef | null {
   return { providerId: provider.id, modelId }
 }
 
+/** A saved provider is still selectable: an existing account, or the active account of an existing provider. */
+function selectableProviderExists(providers: readonly { id: string }[], providerId: string): boolean {
+  return providers.some((p) => p.id === providerId) || (isActiveAccountProviderId(providerId) && !!getProvider(providerId))
+}
+
 /** The default model chosen in Settings, while its account still exists. */
 function configuredDefaultSelection(providers: readonly { id: string }[]): ChatModelRef | null {
   const savedP = getAppSetting(CHAT_DEFAULT_PROVIDER_KEY)
   const savedM = getAppSetting(CHAT_DEFAULT_MODEL_KEY)
-  return savedP && savedM && providers.some((p) => p.id === savedP) ? { providerId: savedP, modelId: savedM } : null
+  return savedP && savedM && selectableProviderExists(providers, savedP) ? { providerId: savedP, modelId: savedM } : null
 }
 
 /**
@@ -2018,7 +2042,7 @@ function inheritedSelection(): ChatModelRef | null {
   const configured = configuredDefaultSelection(providers)
   if (configured) return configured
   const last = rememberedChatSelection()
-  if (last && !isChatGptWebProvider(last.providerId) && providers.some((p) => p.id === last.providerId)) return last
+  if (last && !isChatGptWebProvider(last.providerId) && selectableProviderExists(providers, last.providerId)) return last
   return defaultSelection()
 }
 
@@ -2186,55 +2210,65 @@ function apiKeyCheckField(providerId: string): Pick<ChatProviderInfo, 'keyCheck'
   return keyCheck ? { keyCheck } : {}
 }
 
+function accountPoolName(kind: ChatSubscriptionAccountPoolKind, active: ChatProviderInfo | undefined): string {
+  const t = tMain('main')
+  const provider = (kind === 'claude-subscription' ? CLAUDE_SUBSCRIPTION_PROVIDER : CODEX_SUBSCRIPTION_PROVIDER).name
+  return t('accountPool.providerNameWithAccount', {
+    provider,
+    account: active?.accountLabel?.trim() || t('accountPool.defaultAccountLabel'),
+  })
+}
+
 function buildConfig(): ChatConfig {
   const codexStatus = codexAuthSnapshot()
   const githubCopilotStatus = githubCopilotAuthSnapshot()
   const claudeStatus = claudeAuthSnapshot()
   const grokStatus = grokAuthSnapshot()
   const backgroundCompaction = backgroundCompactionConfig()
-  const config: ChatConfig = {
-    providers: listAvailableChatProviders().map((p) => ({
-      id: p.id,
-      name: p.name,
-      baseURL: p.baseURL,
-      apiKeyPresent: isManagedProvider(p.id) ? false : hasApiKey(p.id),
-      ...(isCodexSubscriptionProvider(p.id)
+  const providers: ChatProviderInfo[] = listAvailableChatProviders().map((p) => ({
+    id: p.id,
+    name: p.name,
+    baseURL: p.baseURL,
+    apiKeyPresent: isManagedProvider(p.id) ? false : hasApiKey(p.id),
+    ...(isCodexSubscriptionProvider(p.id)
+      ? {
+          builtIn: true,
+          connected: p.accountId ? codexAuthSnapshot(p.accountId).authenticated : codexStatus.authenticated,
+        }
+      : isGitHubCopilotSubscriptionProvider(p.id)
         ? {
             builtIn: true,
-            connected: p.accountId ? codexAuthSnapshot(p.accountId).authenticated : codexStatus.authenticated,
+            connected: p.accountId
+              ? githubCopilotAuthSnapshot(p.accountId).authenticated
+              : githubCopilotStatus.authenticated,
           }
-        : isGitHubCopilotSubscriptionProvider(p.id)
+        : isClaudeSubscriptionProvider(p.id)
           ? {
               builtIn: true,
-              connected: p.accountId
-                ? githubCopilotAuthSnapshot(p.accountId).authenticated
-                : githubCopilotStatus.authenticated,
+              connected: p.accountId ? claudeAuthSnapshot(p.accountId).authenticated : claudeStatus.authenticated,
             }
-          : isClaudeSubscriptionProvider(p.id)
+          : isGrokSubscriptionProvider(p.id)
             ? {
                 builtIn: true,
-                connected: p.accountId ? claudeAuthSnapshot(p.accountId).authenticated : claudeStatus.authenticated,
+                connected: p.accountId ? grokAuthSnapshot(p.accountId).authenticated : grokStatus.authenticated,
               }
-            : isGrokSubscriptionProvider(p.id)
+            : isCursorSubscriptionProvider(p.id)
               ? {
                   builtIn: true,
-                  connected: p.accountId ? grokAuthSnapshot(p.accountId).authenticated : grokStatus.authenticated,
+                  connected: cursorAuthSnapshot(p.accountId ?? null).authenticated,
                 }
-              : isCursorSubscriptionProvider(p.id)
+              : isAntigravitySubscriptionProvider(p.id)
                 ? {
                     builtIn: true,
-                    connected: cursorAuthSnapshot(p.accountId ?? null).authenticated,
+                    connected: antigravityAuth.status(p.accountId ?? null).authenticated,
                   }
-                : isAntigravitySubscriptionProvider(p.id)
-                  ? {
-                      builtIn: true,
-                      connected: antigravityAuth.status(p.accountId ?? null).authenticated,
-                    }
-                  : { connected: hasApiKey(p.id), ...apiKeyCheckField(p.id) }),
-      ...(p.kind ? { kind: getProviderKind(p) } : {}),
-      ...(p.accountId ? { accountId: p.accountId } : {}),
-      ...(p.accountLabel ? { accountLabel: p.accountLabel } : {}),
-    })),
+                : { connected: hasApiKey(p.id), ...apiKeyCheckField(p.id) }),
+    ...(p.kind ? { kind: getProviderKind(p) } : {}),
+    ...(p.accountId ? { accountId: p.accountId } : {}),
+    ...(p.accountLabel ? { accountLabel: p.accountLabel } : {}),
+  }))
+  const config: ChatConfig = {
+    providers,
     presets: PROVIDER_PRESETS,
     mcpServers: listRuntimeMcpServers({ includeInactivePlugins: true }).map((s) => ({
       id: s.id,
@@ -2268,6 +2302,7 @@ function buildConfig(): ChatConfig {
       supportedKinds: [...SUPPORTED_FAILOVER_KINDS],
       routes: listFailoverRoutes(),
     },
+    subscriptionAccountPools: accountPoolInfos(providers, accountPoolName),
   }
   scheduleCodexConfigRefresh(codexStatus)
   scheduleGitHubCopilotConfigRefresh(githubCopilotStatus)
@@ -2294,7 +2329,7 @@ async function bestEffortWithin<T>(promise: Promise<T>, timeoutMs: number, fallb
 }
 
 async function runnerCapabilityMetaFallback(providerId: string, modelId: string): Promise<ChatModelMeta | null> {
-  const accountId = subscriptionAccountId(providerId)
+  const accountId = subscriptionAccountId(resolveAccountPoolProviderId(providerId))
   if (isCodexSubscriptionProvider(providerId)) {
     const model = (
       await getCodexSubscriptionManager(accountId)
@@ -3047,7 +3082,7 @@ export async function effectiveModelMeta(
 
   const canonical = await getModelMeta(modelId)
   signal?.throwIfAborted()
-  const subscriptionAccount = subscriptionAccountId(providerId)
+  const subscriptionAccount = subscriptionAccountId(resolveAccountPoolProviderId(providerId))
 
   if (isCodexSubscriptionProvider(providerId)) {
     const manager = getCodexSubscriptionManager(subscriptionAccount)
@@ -3364,6 +3399,8 @@ async function preflightContext(
   claudeExecutionAxes?: PreflightClaudeAxes,
   claudeTurn?: PreflightClaudeTurn
 ): Promise<ContextPreflightResult> {
+  const readStats = () =>
+    currentChatHistoryStats(conversationId, physicalClaudeProviderId, selection, claudeFailoverChain)
   const hasPhysicalContextWindow = physicalContextWindow !== undefined
   const { meta } = hasPhysicalContextWindow
     ? { meta: null }
@@ -3438,8 +3475,7 @@ async function preflightContext(
     hasPhysicalContextWindow ? (physicalWindow ?? undefined) : meta?.contextWindow
   )
   if (!window && !isCodexSubscriptionProvider(selection.providerId)) return { ok: true, compacted: false }
-  const projection = (await currentChatHistoryStats(conversationId, physicalClaudeProviderId, selection))
-    .contextProjection
+  const projection = (await readStats()).contextProjection
   if (!window) {
     // A fresh Codex seed must be checked against a known destination budget. Old provider
     // measurements cannot establish that budget, and silently accepting an unbounded transfer
@@ -3478,8 +3514,7 @@ async function preflightContext(
   try {
     const activated = await activateBackgroundCompactionCandidate(conversationId, selection, pendingParts, window)
     if (activated) {
-      const activatedProjection = (await currentChatHistoryStats(conversationId, physicalClaudeProviderId, selection))
-        .contextProjection
+      const activatedProjection = (await readStats()).contextProjection
       const activatedTokens = activatedProjection?.usedTokens ?? 0
       const activatedSource = activatedProjection?.source ?? 'portable-transcript'
       if (
@@ -3522,8 +3557,7 @@ async function preflightContext(
     })
     return { ok: false, compacted: false, error: 'context-compaction-failed' }
   }
-  const afterProjection = (await currentChatHistoryStats(conversationId, physicalClaudeProviderId, selection))
-    .contextProjection
+  const afterProjection = (await readStats()).contextProjection
   const after = afterProjection?.usedTokens ?? 0
   const afterSource = afterProjection?.source ?? 'portable-transcript'
   if (
@@ -3575,9 +3609,14 @@ async function preflightIsolatedContext(
 async function currentChatHistoryStats(
   conversationId: string,
   physicalClaudeProviderId?: string,
-  selectionOverride?: ChatModelRef
+  selectionOverride?: ChatModelRef,
+  failoverChainOverride?: readonly string[]
 ): Promise<StoredChatHistoryStats> {
-  const selection = selectionOverride ?? selectionFor(conversationId)
+  const storedSelection = selectionOverride ?? selectionFor(conversationId)
+  const selection =
+    storedSelection && isActiveAccountProviderId(storedSelection.providerId)
+      ? { ...storedSelection, providerId: resolveAccountPoolProviderId(storedSelection.providerId) }
+      : storedSelection
   // Binding lastMessageId / portable projection: MAIN context only (isolated rounds do not invalidate resume
   // or inflate the reseed/preflight projection), from the last portable marker on: only estimates read it.
   const history = listActiveConversationContextMessages(conversationId)
@@ -3648,7 +3687,7 @@ async function currentChatHistoryStats(
       binding ? binding.accountId : subscriptionAccountId(selection?.providerId)
     )
     const eligible =
-      freezeFailoverChain(selection!.providerId).includes(physicalProviderId) &&
+      (failoverChainOverride ?? freezeFailoverChain(storedSelection!.providerId)).includes(physicalProviderId) &&
       getSubscriptionFailoverRouter().isAdmissible(physicalProviderId)
     runtimeReusable = !!(
       binding &&
@@ -3965,6 +4004,14 @@ async function startSend(
       : selectionFor(conversationId)
   if (!selection?.providerId) return { ok: false, error: 'no-provider' }
   if (internalLoop && !selection.modelId) return { ok: false, error: 'no-model' }
+  // The active-account selection runs on the account its pool points to now; the conversation keeps the virtual id.
+  const storedProviderId = selection.providerId
+  if (isActiveAccountProviderId(storedProviderId)) {
+    selection = { ...selection, providerId: resolveAccountPoolProviderId(storedProviderId) }
+  }
+  const turnAccountPoolProviderId = isActiveAccountProviderId(storedProviderId)
+    ? storedProviderId
+    : internalLoop?.selectionOverride.accountPoolProviderId
   const operation = reserveConversationOperation(conversationId, selection.providerId, opts?.operation)
   if (!operation) return { ok: false, error: 'busy' }
   // Compound operations may reserve the slot before switching provider/model.
@@ -3972,7 +4019,7 @@ async function startSend(
   operation.providerId = selection.providerId
   // An inherited model follows the last one picked anywhere; once a turn runs on it, the conversation keeps it.
   if (!internalLoop && !opts?.botAdmission && selection.modelId && !getConvUiPrefs(conversationId).chat?.modelId) {
-    patchConvChat(conversationId, { providerId: selection.providerId, modelId: selection.modelId })
+    patchConvChat(conversationId, { providerId: storedProviderId, modelId: selection.modelId })
   }
   if (!opts?.internal && !internalLoop) {
     operation.pendingMessage = {
@@ -3994,7 +4041,7 @@ async function startSend(
   const loopFailoverChain = internalLoop ? frozenFailoverChain(internalLoop.selectionOverride) : null
   const loopRouted = (loopFailoverChain?.length ?? 0) > 1
   const claudeFailoverChain = isClaudeSubscriptionProvider(selection.providerId)
-    ? (loopFailoverChain ?? freezeFailoverChain(selection.providerId))
+    ? (loopFailoverChain ?? freezeFailoverChain(storedProviderId))
     : []
   const claudeRequestedEffort =
     internalLoop?.selectionOverride.reasoning ?? getConvUiPrefs(conversationId).chat?.reasoning
@@ -4079,7 +4126,7 @@ async function startSend(
       )
         return { ok: false, error: 'busy' }
       // With a failover chain, the logical account may be unavailable; resolveCodexRuntimeTarget decides.
-      const earlyChain = loopFailoverChain ?? freezeFailoverChain(selection.providerId)
+      const earlyChain = loopFailoverChain ?? freezeFailoverChain(storedProviderId)
       if (!status.authenticated && earlyChain.length <= 1) return { ok: false, error: 'no-key' }
     } else if (useGitHubCopilot) {
       if (!selectionAccountId && (githubCopilotLoginPending || githubCopilotIdentityTransitionPromise)) {
@@ -4114,7 +4161,7 @@ async function startSend(
         const modelId = models.find((model) => model.policy?.state !== 'disabled')?.id ?? ''
         if (!modelId) return { ok: false, error: 'no-model' }
         selection = { providerId: selection.providerId, modelId }
-        patchConvChat(conversationId, { providerId: selection.providerId, modelId })
+        patchConvChat(conversationId, { providerId: storedProviderId, modelId })
       }
       const selectedGitHubCopilotModelId = selection?.modelId ?? ''
       githubCopilotModelAtAdmission = models.find((model) => model.id === selectedGitHubCopilotModelId)
@@ -4136,7 +4183,7 @@ async function startSend(
             const modelId = (await manager.listModels(operation.controller.signal))[0]?.value
             if (!modelId) continue
             selection = { providerId: selection.providerId, modelId }
-            patchConvChat(conversationId, { providerId: selection.providerId, modelId: selection.modelId })
+            patchConvChat(conversationId, { providerId: storedProviderId, modelId: selection.modelId })
             break
           }
           if (!selection.modelId) return { ok: false, error: 'no-model' }
@@ -4185,7 +4232,7 @@ async function startSend(
           if (!modelId) return { ok: false, error: 'no-model' }
           selection = { providerId: selection.providerId, modelId }
           patchConvChat(conversationId, {
-            providerId: selection.providerId,
+            providerId: storedProviderId,
             modelId,
           })
         }
@@ -4222,7 +4269,7 @@ async function startSend(
         const modelId = models[0]?.id ?? ''
         if (!modelId) return { ok: false, error: 'no-model' }
         selection = { providerId: selection.providerId, modelId }
-        patchConvChat(conversationId, { providerId: selection.providerId, modelId })
+        patchConvChat(conversationId, { providerId: storedProviderId, modelId })
       }
       if (!models.some((model) => model.id === selection?.modelId)) {
         return { ok: false, error: 'no-model' }
@@ -4267,7 +4314,7 @@ async function startSend(
         const modelId = models[0]?.id ?? ''
         if (!modelId) return { ok: false, error: 'no-model' }
         selection = { providerId: selection.providerId, modelId }
-        patchConvChat(conversationId, { providerId: selection.providerId, modelId })
+        patchConvChat(conversationId, { providerId: storedProviderId, modelId })
       }
       if (!models.some((model) => model.id === selection?.modelId)) {
         return { ok: false, error: 'no-model' }
@@ -4291,7 +4338,7 @@ async function startSend(
       }
       if (!modelId) return { ok: false, error: 'no-model' }
       selection = { providerId: selection.providerId, modelId }
-      patchConvChat(conversationId, { providerId: selection.providerId, modelId: selection.modelId })
+      patchConvChat(conversationId, { providerId: storedProviderId, modelId: selection.modelId })
     }
 
     if (
@@ -4379,7 +4426,7 @@ async function startSend(
       ? (internalLoop?.selectionOverride.reasoning ?? getConvUiPrefs(conversationId).chat?.reasoning)
       : undefined
     const frozenCodexChain = useCodexSubscription
-      ? (loopFailoverChain ?? freezeFailoverChain(selection.providerId))
+      ? (loopFailoverChain ?? freezeFailoverChain(storedProviderId))
       : null
     try {
       parts.push(
@@ -4627,7 +4674,7 @@ async function startSend(
       const codexSelection = selection
       if (!codexSelection?.providerId || !codexSelection.modelId) return { ok: false, error: 'no-model' }
 
-      const chain = codexFailoverChain ?? frozenCodexChain ?? freezeFailoverChain(codexSelection.providerId)
+      const chain = codexFailoverChain ?? frozenCodexChain ?? freezeFailoverChain(storedProviderId)
       const resolved = await resolveCodexRuntimeTarget({
         logicalProviderId: codexSelection.providerId,
         modelId: codexSelection.modelId,
@@ -4866,6 +4913,7 @@ async function startSend(
       ...(opts?.botAdmission ? { botTurn: true } : {}),
       messageId: assistantMessageId,
       providerId: selection.providerId,
+      ...(turnAccountPoolProviderId ? { accountPoolProviderId: turnAccountPoolProviderId } : {}),
       ...(admittedCodexTarget ? { effectiveProviderId: admittedCodexTarget.providerId } : {}),
       ...(useClaudeSubscription
         ? {
@@ -4911,7 +4959,7 @@ async function startSend(
     // Create the internal turn handle HERE (same tick as admission) — never via `active.get` after start.
     if (opts?.botAdmission) {
       assertBotTurnAdmission(conversationId, opts.botAdmission)
-      if (selection.providerId !== opts.botAdmission.providerId || selection.modelId !== opts.botAdmission.modelId)
+      if (storedProviderId !== opts.botAdmission.providerId || selection.modelId !== opts.botAdmission.modelId)
         throw new Error('The requested bot account or model is no longer available.')
     } else if (!opts?.internal && !internalLoop && botBlocksManualSend(conversationId)) {
       // The release was withdrawn while this message was still in preflight; it never starts.
@@ -7085,6 +7133,7 @@ export async function removeSubscriptionAccountSlot(accountId: string): Promise<
     // Remove references only after physical teardown finishes; on failure, the slot and route
     // remain consistent for retry.
     removeAccountFromFailoverConfig(providerId)
+    removeAccountFromAccountPools(providerId)
     removeSubscriptionAccount(accountId)
     // Clear the global default if it points to the removed provider (same policy as BYOK provider-remove).
     if (getAppSetting(CHAT_DEFAULT_PROVIDER_KEY) === providerId) {
@@ -7636,7 +7685,7 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
       (compactClaudeTarget
         ? (compactClaudeTarget.contextWindow ?? undefined)
         : (await effectiveModelMeta(selection.modelId, selection.providerId, compactSignal)).meta?.contextWindow)
-    const compactAccountId = subscriptionAccountId(selection.providerId)
+    const compactAccountId = subscriptionAccountId(resolveAccountPoolProviderId(selection.providerId))
     // Frozen profile: revalidate identity/availability IMMEDIATELY before any summary
     // call. Account/credential changes during the round ABORT compaction (the turn ends) — never
     // fall back to live credentials. Same semantics as revalidateFrozenChatSelection between rounds.
@@ -7708,7 +7757,7 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
               prompt,
               signal: operationSignal,
               conversationId,
-              accountId: target.accountId ?? compactAccountId ?? null,
+              accountId: target.accountId !== undefined ? target.accountId : (compactAccountId ?? null),
               ...(frozen?.reasoningEffort
                 ? { effort: frozen.reasoningEffort }
                 : target.reasoningEffort
@@ -8608,11 +8657,14 @@ function routeAccountIdentityChanged(
  * The enabled fallback route of a Claude/Codex account, with each account's identity at freeze. An account signed
  * out right now has no identity to hold it to, so it stays out: a later sign-in must not join a frozen execution.
  */
-async function freezeFailoverRoute(primary: FrozenFailoverAccount): Promise<FrozenFailoverAccount[] | undefined> {
+async function freezeFailoverRoute(
+  primary: FrozenFailoverAccount,
+  logicalProviderId = primary.providerId
+): Promise<FrozenFailoverAccount[] | undefined> {
   if (!isClaudeSubscriptionProvider(primary.providerId) && !isCodexSubscriptionProvider(primary.providerId)) {
     return undefined
   }
-  const chain = freezeFailoverChain(primary.providerId)
+  const chain = freezeFailoverChain(logicalProviderId)
   if (chain.length <= 1 || chain[0] !== primary.providerId) return undefined
   const route: FrozenFailoverAccount[] = [primary]
   for (const providerId of chain.slice(1)) {
@@ -8634,9 +8686,14 @@ async function freezeFailoverRoute(primary: FrozenFailoverAccount): Promise<Froz
 
 /** Physical accounts a frozen selection may run on: its frozen fallback route, or only its own account. */
 export function frozenFailoverChain(frozen: FrozenChatSelection): string[] {
-  return frozen.failoverRoute && frozen.failoverRoute.length > 1
-    ? frozen.failoverRoute.map((account) => account.providerId)
-    : [frozen.providerId]
+  const route =
+    frozen.failoverRoute && frozen.failoverRoute.length > 1
+      ? frozen.failoverRoute.map((account) => account.providerId)
+      : [frozen.providerId]
+  // An active-account profile starts where its pool points now; its accounts and identities stay frozen.
+  return frozen.accountPoolProviderId && route.length > 1
+    ? rotateToActive(route, resolveAccountPoolProviderId(frozen.accountPoolProviderId))
+    : route
 }
 
 /** Resolves the CURRENT profile (provider+model+reasoning+fastMode+identity) to FREEZE for the loop. No silent fallback. */
@@ -8644,10 +8701,15 @@ export async function resolveFrozenChatSelection(
   conversationId: string,
   profileOverride?: BackgroundCompactionConfig['selection']
 ): Promise<{ ok: true; selection: FrozenChatSelection } | { ok: false; error: string }> {
-  const selection = profileOverride
+  const requested = profileOverride
     ? { providerId: profileOverride.providerId, modelId: profileOverride.modelId }
     : selectionFor(conversationId)
-  if (!selection?.providerId) return { ok: false, error: 'no-provider' }
+  if (!requested?.providerId) return { ok: false, error: 'no-provider' }
+  // Freeze physical accounts and identities, remembering the pool so later rounds follow its current pointer.
+  const accountPoolProviderId = isActiveAccountProviderId(requested.providerId) ? requested.providerId : undefined
+  const selection = accountPoolProviderId
+    ? { ...requested, providerId: resolveAccountPoolProviderId(accountPoolProviderId) }
+    : requested
   const accountId = subscriptionAccountId(selection.providerId)
   let modelId = selection.modelId
   if (!modelId) {
@@ -8835,11 +8897,14 @@ export async function resolveFrozenChatSelection(
     resolvedModelId,
     flags: captureHarnessFlags(),
   })
-  const failoverRoute = await freezeFailoverRoute({
-    providerId: selection.providerId,
-    ...(identityFingerprint ? { identityFingerprint } : {}),
-    ...(typeof identityEpoch === 'number' ? { identityEpoch } : {}),
-  })
+  const failoverRoute = await freezeFailoverRoute(
+    {
+      providerId: selection.providerId,
+      ...(identityFingerprint ? { identityFingerprint } : {}),
+      ...(typeof identityEpoch === 'number' ? { identityEpoch } : {}),
+    },
+    accountPoolProviderId ?? selection.providerId
+  )
   return {
     ok: true,
     selection: {
@@ -8857,6 +8922,7 @@ export async function resolveFrozenChatSelection(
       ...(typeof identityEpoch === 'number' ? { identityEpoch } : {}),
       ...(providerFingerprint ? { providerFingerprint } : {}),
       ...(failoverRoute ? { failoverRoute } : {}),
+      ...(accountPoolProviderId && failoverRoute ? { accountPoolProviderId } : {}),
     },
   }
 }
@@ -9550,7 +9616,51 @@ function persistReviewSpend(conversationId: string, spend: ReviewSpend, model?: 
 /** Registers all `chat:*` channels. Called from `registerIpc()` in index.ts. */
 let cursorCleanupPromise: Promise<void> | null = null
 
+/** Whether a pool account is signed in by its cached status; null when this session has not read it yet. */
+function cachedPoolAccountSignIn(providerId: string): boolean | null {
+  const accountId = subscriptionAccountId(providerId)
+  if (isClaudeSubscriptionProvider(providerId)) {
+    const status = getClaudeSubscriptionManager(accountId).getStatusSnapshot()
+    return status ? toClaudeAuthStatus(status, accountId).authenticated : null
+  }
+  const status = getCodexSubscriptionManager(accountId).getStatusSnapshot()
+  return status ? toCodexAuthStatus(status, accountId).authenticated : null
+}
+
+async function readPoolAccountSignIn(providerId: string): Promise<boolean> {
+  const accountId = subscriptionAccountId(providerId)
+  return isClaudeSubscriptionProvider(providerId)
+    ? toClaudeAuthStatus(await getClaudeSubscriptionManager(accountId).status(), accountId).authenticated
+    : toCodexAuthStatus(await getCodexSubscriptionManager(accountId).getStatus(), accountId).authenticated
+}
+
+function advanceAccountPool(providerId: string, read: ReadonlyMap<string, boolean>): void {
+  const router = getSubscriptionFailoverRouter()
+  const moved = advanceAccountPoolsAfterExhaustion(providerId, {
+    isAdmissible: (id) => router.isAdmissible(id),
+    nextProbeAt: (id) => router.getHealth(id).exhaustion?.nextProbeAt ?? 0,
+    isSignedIn: (id) => read.get(id) ?? cachedPoolAccountSignIn(id) ?? false,
+  })
+  if (moved) sendToMainRenderers('models:catalog-changed')
+}
+
+let accountPoolAdvanceInstalled = false
+/** Drain: when the active account runs out, its pool moves on and stays there; the pickers relabel. */
+function installAccountPoolAdvance(): void {
+  if (accountPoolAdvanceInstalled) return
+  accountPoolAdvanceInstalled = true
+  onSubscriptionAccountExhausted((providerId) => {
+    // An account not read yet this session would count as signed out and be passed over: read it first.
+    const unread = accountPoolSuccessors(providerId).filter((id) => cachedPoolAccountSignIn(id) === null)
+    if (unread.length === 0) return advanceAccountPool(providerId, new Map())
+    void Promise.all(unread.map(async (id) => [id, await readPoolAccountSignIn(id).catch(() => false)] as const)).then(
+      (entries) => advanceAccountPool(providerId, new Map(entries))
+    )
+  })
+}
+
 export function registerChatIpc(deps: ChatIpcDeps): void {
+  installAccountPoolAdvance()
   if (!cursorCleanupPromise) {
     const cleanup = drainCursorAgentCleanup().catch((error) => {
       console.warn('[cursor-subscription] pending cleanup failed:', cursorSdkErrorMessage(error))
@@ -11307,6 +11417,16 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
     }
   )
 
+  deps.mhandle('chat:subscription-account-pool:set', (_e, patch: ChatSubscriptionAccountPoolPatch) => {
+    try {
+      const pool = setAccountPool(patch)
+      sendToMainRenderers('models:catalog-changed')
+      return { ok: true, pool }
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  })
+
   // MCP servers (their tools enter chat).
   deps.mhandle('chat:mcp-add', (_e, input: Omit<UserMcpServer, 'id' | 'enabled'> & { enabled?: boolean }) => {
     try {
@@ -11433,23 +11553,23 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
   // Selection (provider/model): global and conversation defaults.
   deps.mhandle('chat:set-default', async (_e, sel: ChatModelRef & { reasoning?: string; fastMode?: boolean }) => {
     if (isGitHubCopilotSubscriptionProvider(sel?.providerId) && sel?.modelId) {
-      const validated = await validateGitHubCopilotModelSelection(sel.modelId, subscriptionAccountId(sel.providerId))
+      const validated = await validateGitHubCopilotModelSelection(sel.modelId, subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId)))
       if (!validated.ok) return validated
     }
     if (isClaudeSubscriptionProvider(sel?.providerId) && sel?.modelId) {
-      const validated = await validateClaudeModelSelection(sel.modelId, subscriptionAccountId(sel.providerId))
+      const validated = await validateClaudeModelSelection(sel.modelId, subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId)))
       if (!validated.ok) return validated
     }
     if (isCursorSubscriptionProvider(sel?.providerId)) {
-      const validated = await validateCursorModelSelection(sel.modelId, subscriptionAccountId(sel.providerId))
+      const validated = await validateCursorModelSelection(sel.modelId, subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId)))
       if (!validated.ok) return validated
     }
     if (isAntigravitySubscriptionProvider(sel?.providerId) && sel?.modelId) {
-      const validated = await validateAntigravityModelSelection(sel.modelId, subscriptionAccountId(sel.providerId))
+      const validated = await validateAntigravityModelSelection(sel.modelId, subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId)))
       if (!validated.ok) return validated
     }
     if (isGrokSubscriptionProvider(sel?.providerId) && sel?.modelId) {
-      const validated = await validateGrokModelSelection(sel.modelId, subscriptionAccountId(sel.providerId))
+      const validated = await validateGrokModelSelection(sel.modelId, subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId)))
       if (!validated.ok) return validated
     }
     if (isChatGptWebProvider(sel?.providerId)) return { ok: false, error: 'unknown-provider' }
@@ -11466,32 +11586,37 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
     if (typeof conversationId === 'string' && sel?.providerId && sel?.modelId) {
       if (isChatGptWebProvider(sel.providerId)) return { ok: false, error: 'unknown-provider' }
       if (isGitHubCopilotSubscriptionProvider(sel.providerId)) {
-        const validated = await validateGitHubCopilotModelSelection(sel.modelId, subscriptionAccountId(sel.providerId))
+        const validated = await validateGitHubCopilotModelSelection(sel.modelId, subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId)))
         if (!validated.ok) return validated
       }
       if (isClaudeSubscriptionProvider(sel.providerId)) {
-        const validated = await validateClaudeModelSelection(sel.modelId, subscriptionAccountId(sel.providerId))
+        const validated = await validateClaudeModelSelection(sel.modelId, subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId)))
         if (!validated.ok) return validated
       }
       if (isCursorSubscriptionProvider(sel.providerId)) {
-        const validated = await validateCursorModelSelection(sel.modelId, subscriptionAccountId(sel.providerId))
+        const validated = await validateCursorModelSelection(sel.modelId, subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId)))
         if (!validated.ok) return validated
       }
       if (isAntigravitySubscriptionProvider(sel.providerId)) {
-        const validated = await validateAntigravityModelSelection(sel.modelId, subscriptionAccountId(sel.providerId))
+        const validated = await validateAntigravityModelSelection(sel.modelId, subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId)))
         if (!validated.ok) return validated
       }
       if (isGrokSubscriptionProvider(sel.providerId)) {
-        const validated = await validateGrokModelSelection(sel.modelId, subscriptionAccountId(sel.providerId))
+        const validated = await validateGrokModelSelection(sel.modelId, subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId)))
         if (!validated.ok) return validated
       }
       const previous = getConvUiPrefs(conversationId).chat
       const changed = previous?.providerId !== sel.providerId || previous?.modelId !== sel.modelId
+      // The active account and the account it points to share one session: switching between them keeps it.
+      const sameAccount =
+        !!previous?.providerId &&
+        resolveAccountPoolProviderId(previous.providerId) === resolveAccountPoolProviderId(sel.providerId)
+      const sessionChanged = !sameAccount || previous?.modelId !== sel.modelId
       const operation = reserveConversationOperation(conversationId, previous?.providerId ?? sel.providerId)
       if (!operation) return { ok: false, error: 'busy' }
       try {
         if (!conversationOperationIsCurrent(conversationId, operation)) return { ok: false, error: 'busy' }
-        if (changed && isClaudeSubscriptionProvider(previous?.providerId)) {
+        if (sessionChanged && isClaudeSubscriptionProvider(previous?.providerId)) {
           await deleteClaudeSessionForConversation(conversationId)
         }
         // Model changes retest image capability → clear the learned flag (imagesUnsupported).
@@ -11713,14 +11838,15 @@ export async function listChatProviderModels(
   providerId: string,
   options: { force?: boolean; includeHidden?: boolean } = {}
 ): Promise<string[]> {
+  const accountProviderId = resolveAccountPoolProviderId(providerId)
   const force = options.force === true
   const includeHidden = options.includeHidden === true
   const visible = (models: string[]) => {
     if (includeHidden === true) return models
-    const hidden = new Set(getHiddenChatModels()[providerId] ?? [])
+    const hidden = new Set(getHiddenChatModels()[accountProviderId] ?? [])
     return hidden.size === 0 ? models : models.filter((model) => !hidden.has(model))
   }
-  const accountId = subscriptionAccountId(providerId)
+  const accountId = subscriptionAccountId(accountProviderId)
   if (isCodexSubscriptionProvider(providerId)) {
     const status = await codexAuthStatus(force, undefined, accountId)
     if (!status.authenticated) return []
@@ -11826,7 +11952,7 @@ export async function describeChatModelForDispatch(
   providerId: string,
   modelId: string
 ): Promise<DispatchModelCapability> {
-  if (!listAvailableChatProviders().some((provider) => provider.id === providerId)) {
+  if (!selectableProviderExists(listAvailableChatProviders(), providerId)) {
     return { available: false, reasoning: false, reasoningEfforts: [], nativeUltraMode: false, fastMode: false }
   }
   const models = await bestEffortWithin(

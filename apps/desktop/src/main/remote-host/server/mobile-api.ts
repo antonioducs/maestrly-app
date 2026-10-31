@@ -839,9 +839,17 @@ export class MobileApi {
     const selections = this.deps.selections === undefined ? hostModelOptions : this.deps.selections
     if (selections) return { options: await selections(), defaultSelection }
     // Outside server mode (tests, development): the connected providers' models, without effort levels.
-    const providers = (config?.providers ?? []).filter((provider) => provider.connected ?? provider.apiKeyPresent)
+    // The active-account selections come first, as the desktop picker lists them.
+    const accounts = [
+      ...(config?.subscriptionAccountPools ?? [])
+        .filter((pool) => pool.connected)
+        .map((pool) => ({ id: pool.providerId, name: pool.name })),
+      ...(config?.providers ?? [])
+        .filter((provider) => provider.connected ?? provider.apiKeyPresent)
+        .map((provider) => ({ id: provider.id, name: provider.name })),
+    ]
     const lists = await Promise.all(
-      providers.map(async (provider) => {
+      accounts.map(async (provider) => {
         const models = ((await this.call('chat:models', provider.id).catch(() => [])) as string[] | null) ?? []
         return models.map((modelId) => ({
           id: `${provider.id}::${modelId}`,

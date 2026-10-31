@@ -15,6 +15,7 @@ import {
   subagentProfileProviders,
 } from '@/lib/subagent-profile-editor'
 import { subagentEffortLabel } from '@/lib/subagent-profile-display'
+import { chatProviderChoices } from '../account-pool'
 import { PickerField, SegmentedChoice } from '../model-settings/controls'
 import { effortShortLabel } from '../model-settings/model-selection'
 import type { ChatConfig } from '../../../../shared/chat'
@@ -130,7 +131,7 @@ export function CandidateFields({
       contentClassName={selectContentClassName}
       value={candidate.providerId || undefined}
       avoidOverflow
-      options={subagentProfileProviders(config.providers).map((provider) => ({
+      options={subagentProfileProviders(chatProviderChoices(config)).map((provider) => ({
         id: provider.id,
         label: `${provider.name}${provider.apiKeyPresent ? '' : ` (${t('subagentProfiles.noKey')})`}`,
       }))}

@@ -51,6 +51,16 @@ interface ProbeWaiter {
   resolve: (settled: boolean) => void
 }
 
+const exhaustedListeners = new Set<(providerId: string) => void>()
+
+/** Called whenever an account's circuit opens; module-level so it survives router resets. */
+export function onSubscriptionAccountExhausted(listener: (providerId: string) => void): () => void {
+  exhaustedListeners.add(listener)
+  return () => {
+    exhaustedListeners.delete(listener)
+  }
+}
+
 export class SubscriptionFailoverRouter {
   private readonly healthByProvider = new Map<string, SubscriptionAccountHealth>()
   private readonly probeWaiters = new Set<ProbeWaiter>()
@@ -154,6 +164,13 @@ export class SubscriptionFailoverRouter {
       source: info.source,
       reason: info.reason,
     })
+    for (const listener of [...exhaustedListeners]) {
+      try {
+        listener(providerId)
+      } catch {
+        // A policy listener must not break circuit bookkeeping.
+      }
+    }
     return health
   }
 

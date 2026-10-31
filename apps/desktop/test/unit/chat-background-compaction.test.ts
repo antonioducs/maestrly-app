@@ -88,6 +88,50 @@ describe('background configuration and durable accounting', () => {
     expect(store.get(conversationId)?.work).toBeNull()
   })
 
+  it('persists the active-account selection of an in-flight summary and drops a malformed one', () => {
+    const store = new BackgroundCompactionStore()
+    const failoverRoute = [
+      { providerId: 'builtin_claude_subscription', identityFingerprint: 'account-A', identityEpoch: 2 },
+      { providerId: 'builtin_claude_subscription@acc_b', identityFingerprint: 'account-B', identityEpoch: 7 },
+    ]
+    const work = (poolProviderId: unknown) => ({
+      version: BACKGROUND_COMPACTION_PERSISTENCE_VERSION,
+      id: 'work-1',
+      generation: 1,
+      configIdentity: 'identity',
+      boundary: { messageId: 'm', partId: 'p', partIndex: 0 },
+      sourceHash: 'hash',
+      selection: {
+        providerId: 'builtin_claude_subscription',
+        modelId: 'sonnet',
+        fastMode: false,
+        failoverRoute,
+        accountPoolProviderId: poolProviderId,
+      } as never,
+      coveredTokens: 0,
+      newTokens: 10,
+      intervalTokens: 100000,
+      conversationWindow: 200000,
+      contextWindow: 200000,
+      maxSummaryTokens: 4000,
+      attemptSequence: 0,
+      createdAt: 1,
+      updatedAt: 1,
+    })
+    store.write(conversationId, { generation: 1, status: 'running', ready: null, work: work('builtin_claude_subscription@~active') })
+    restartDb()
+    expect(store.get(conversationId)?.work?.selection.accountPoolProviderId).toBe('builtin_claude_subscription@~active')
+
+    store.write(conversationId, {
+      generation: 1,
+      status: 'running',
+      ready: null,
+      work: work(42),
+    })
+    restartDb()
+    expect(store.get(conversationId)?.work).toBeNull()
+  })
+
   it('keeps billed attempts after preparation cleanup and never counts them as chat turns', async () => {
     const attempt = {
       id: 'background-compaction:work:1',

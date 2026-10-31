@@ -35,6 +35,7 @@ import {
   subscriptionAccountId,
 } from './catalog'
 import { getClaudeSubscriptionManager } from './claude-agent-sdk/manager'
+import { resolveAccountPoolProviderId } from './subscription-failover/account-pool'
 import { freezeFailoverChain } from './subscription-failover/config'
 import { getCodexSubscriptionManager } from './codex-subscription/manager'
 import { getCursorSubscriptionManager } from './cursor-subscription/manager'
@@ -402,7 +403,7 @@ export function hasConfiguredImageInterpreter(): boolean {
   try {
     const provider = getProvider(interpreter.providerId)
     if (!provider) return false
-    const accountId = subscriptionAccountId(interpreter.providerId)
+    const accountId = subscriptionAccountId(resolveAccountPoolProviderId(interpreter.providerId))
 
     if (isCodexSubscriptionProvider(interpreter.providerId)) {
       const status = getCodexSubscriptionManager(accountId).getStatusSnapshot()
@@ -462,7 +463,7 @@ function interpreterIdentityFingerprint(interpreter: ChatImageInterpreter): stri
   try {
     const provider = getProvider(providerId)
     if (!provider) return ''
-    const accountId = subscriptionAccountId(providerId)
+    const accountId = subscriptionAccountId(resolveAccountPoolProviderId(providerId))
 
     if (isCodexSubscriptionProvider(providerId)) {
       // Codex snapshot exposes no fingerprint/epoch; identity is the runtime account. `account/updated`
@@ -575,7 +576,8 @@ async function describeImage(
   signal: AbortSignal
 ): Promise<string> {
   const { providerId, modelId, effort } = interpreter
-  const accountId = subscriptionAccountId(providerId)
+  // The stored selection can be an active-account one; only the physical account it stands for names a manager.
+  const accountId = subscriptionAccountId(resolveAccountPoolProviderId(providerId))
   const prompt = userPrompt(image.name)
   // Interpreter calls are billable: enter the diagnostic ledger (model-call-usage) like other
   // model calls. (Conversation meter excludes them — persistence would require extra history messages,
@@ -631,7 +633,7 @@ async function describeImage(
           signal: operationSignal,
           images: [image],
           conversationId,
-          accountId: target.accountId ?? accountId ?? null,
+          accountId: target.accountId !== undefined ? target.accountId : (accountId ?? null),
           ...(target.reasoningEffort ? { effort: target.reasoningEffort } : effort ? { effort } : {}),
           ...(target.serviceTier !== undefined ? { serviceTier: target.serviceTier } : {}),
         }),

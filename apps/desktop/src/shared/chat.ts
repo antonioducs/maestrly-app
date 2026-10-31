@@ -1450,6 +1450,8 @@ export interface FrozenChatSelection {
    * Accounts switch only on quota or unavailability; one re-logged as another identity ends the execution.
    */
   failoverRoute?: ReadonlyArray<FrozenFailoverAccount>
+  /** Active-account selection this profile was frozen from; later rounds start where its pool points then. */
+  accountPoolProviderId?: string
 }
 
 export interface FrozenFailoverAccount {
@@ -1509,6 +1511,62 @@ export interface ChatSubscriptionFailoverEvent {
 
 export const SUBSCRIPTION_ACCOUNT_ID_SEPARATOR = '@'
 
+/**
+ * Account slot of the virtual active-account selection. `~` is outside real account ids, which managers reject,
+ * so a selection that was not resolved to a physical account fails instead of reaching a wrong one.
+ */
+export const ACTIVE_ACCOUNT_SLOT = '~active'
+
+export const SUBSCRIPTION_ACCOUNT_POOL_KINDS = ['claude-subscription', 'codex-subscription'] as const
+export type ChatSubscriptionAccountPoolKind = (typeof SUBSCRIPTION_ACCOUNT_POOL_KINDS)[number]
+/** drain: stay on an account until it runs out; prefer-active: return to the active account once it resets. */
+export type ChatSubscriptionAccountPoolPolicy = 'drain' | 'prefer-active'
+
+export interface ChatSubscriptionAccountPool {
+  kind: ChatSubscriptionAccountPoolKind
+  /** Physical accounts the active-account selection may run on, in rotation order. */
+  memberProviderIds: string[]
+  activeProviderId: string
+  policy: ChatSubscriptionAccountPoolPolicy
+  /** False while the pool follows every account of the provider. */
+  customMembers: boolean
+}
+
+export interface ChatSubscriptionAccountPoolInfo extends ChatSubscriptionAccountPool {
+  /** Virtual provider id the selections store (`builtin_*@~active`). */
+  providerId: string
+  /** Localized picker name, with the active account's label. */
+  name: string
+  connected: boolean
+}
+
+export interface ChatSubscriptionAccountPoolPatch {
+  kind: ChatSubscriptionAccountPoolKind
+  activeProviderId?: string
+  policy?: ChatSubscriptionAccountPoolPolicy
+  memberProviderIds?: string[]
+}
+
+export function accountPoolBaseProviderId(kind: ChatSubscriptionAccountPoolKind): string {
+  return kind === 'claude-subscription' ? 'builtin_claude_subscription' : 'builtin_codex_subscription'
+}
+
+export function accountPoolKindOf(providerId: string | null | undefined): ChatSubscriptionAccountPoolKind | null {
+  if (!providerId) return null
+  const base = subscriptionBaseProviderId(providerId)
+  if (base === 'builtin_claude_subscription') return 'claude-subscription'
+  if (base === 'builtin_codex_subscription') return 'codex-subscription'
+  return null
+}
+
+export function isActiveAccountProviderId(providerId: string | null | undefined): boolean {
+  return accountPoolKindOf(providerId) !== null && subscriptionAccountId(providerId) === ACTIVE_ACCOUNT_SLOT
+}
+
+export function activeAccountProviderId(kind: ChatSubscriptionAccountPoolKind): string {
+  return withSubscriptionAccount(accountPoolBaseProviderId(kind), ACTIVE_ACCOUNT_SLOT)
+}
+
 export function subscriptionAccountId(providerId: string | null | undefined): string | null {
   if (!providerId) return null
   const idx = providerId.indexOf(SUBSCRIPTION_ACCOUNT_ID_SEPARATOR)
@@ -1524,6 +1582,7 @@ export function subscriptionBaseProviderId(providerId: string): string {
 /** Provider families supported by ordered subscription account failover. */
 export function isSubscriptionFailoverProviderId(providerId: string | null | undefined): boolean {
   if (!providerId) return false
+  if (subscriptionAccountId(providerId) === ACTIVE_ACCOUNT_SLOT) return false
   const base = subscriptionBaseProviderId(providerId)
   return base === 'builtin_codex_subscription' || base === 'builtin_claude_subscription'
 }
@@ -1713,6 +1772,9 @@ export interface ChatProviderInfo {
 
   accountLabel?: string
 
+  /** Renderer-side entry for the active-account selection; never present in `ChatConfig.providers`. */
+  accountPool?: true
+
   /** Last check of the saved API key against the provider; absent until one ran for this key. */
   keyCheck?: ChatProviderKeyCheck
 }
@@ -1874,6 +1936,8 @@ export interface ChatConfig {
     supportedKinds: ChatSubscriptionProviderKind[]
     routes: ChatSubscriptionFailoverRoute[]
   }
+  /** One entry per provider with two or more accounts; absent on older hosts. */
+  subscriptionAccountPools?: ChatSubscriptionAccountPoolInfo[]
 }
 
 export interface ChatHistoryPage {

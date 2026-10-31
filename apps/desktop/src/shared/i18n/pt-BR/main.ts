@@ -2,6 +2,12 @@
  * Catálogo `main` (pt-BR — tradução) — espelha `en/main.ts`. Chave ausente cai no en (fallbackLng). `{{var}}`.
  */
 export default {
+  accountPool: {
+    providerName: '{{provider}} — Conta ativa',
+    providerNameWithAccount: '{{provider}} — Conta ativa ({{account}})',
+    defaultAccountLabel: 'Conta padrão',
+  },
+
   openExternal: {
     pathNotFound: 'caminho não encontrado',
     vscodeNotFound: 'VS Code (code) não encontrado',

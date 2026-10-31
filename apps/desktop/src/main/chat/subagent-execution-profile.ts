@@ -1,4 +1,4 @@
-import type { ChatModelRef } from '../../shared/chat'
+import { accountPoolKindOf, isActiveAccountProviderId, type ChatModelRef } from '../../shared/chat'
 import {
   SUBAGENT_PROFILE_RULES_VERSION,
   normalizeSubagentProfileKey,
@@ -11,6 +11,8 @@ import { getSubagentProfileModelMeta } from './subagent-profile-model-meta'
 import { subagentModelCatalog, subagentProviderStatus } from './subagent-provider-runtime'
 import { resolveParentSubagentProfile, resolveSubagentProfile } from './subagent-profile-resolver'
 import { getSubagentRouter } from './subagent-route'
+import { getAccountPool } from './subscription-failover/account-pool'
+import { getConvUiPrefs } from '../store'
 
 interface ResolveSubagentExecutionProfileInput {
   agentName: string
@@ -35,6 +37,30 @@ const subagentProfileResolverDeps = {
   providerStatus: subagentProviderStatus,
   modelCatalog: subagentModelCatalog,
   modelMeta: getSubagentProfileModelMeta,
+}
+
+/** The turn in flight in a conversation and the active-account selection it runs for, if any. */
+export type TurnAccountPoolLookup = (conversationId: string) => { accountPoolProviderId?: string } | undefined
+
+let turnAccountPool: TurnAccountPoolLookup = () => undefined
+
+/** The chat service reports its turns here; this module cannot import it without a cycle. */
+export function setTurnAccountPoolLookup(lookup: TurnAccountPoolLookup): void {
+  turnAccountPool = lookup
+}
+
+/**
+ * A child follows the account pool its parent turn runs for, so it keeps rotating with the pool instead of staying
+ * on the account the parent turn happened to start on. A turn on an individual account, such as a loop frozen on
+ * one, or a parent running outside the pool's members, stays physical. Without a turn in flight, the
+ * conversation's selection decides.
+ */
+function inheritedParentProviderId(conversationId: string, providerId: string): string {
+  const turn = turnAccountPool(conversationId)
+  const logical = turn ? turn.accountPoolProviderId : getConvUiPrefs(conversationId).chat?.providerId
+  const kind = logical && isActiveAccountProviderId(logical) ? accountPoolKindOf(logical) : null
+  if (!logical || !kind) return providerId
+  return getAccountPool(kind).memberProviderIds.includes(providerId) ? logical : providerId
 }
 
 /** Resolves a workflow's parent selection without applying configured agent overrides. */
@@ -120,7 +146,7 @@ export async function resolveSubagentExecutionProfile({
       conversationRules: conversationConfig.rules,
       globalRules: globalConfig.rules,
       parent: {
-        providerId: parent.providerId,
+        providerId: inheritedParentProviderId(conversationId, parent.providerId),
         modelId: parent.modelId,
         effort: parent.effort,
       },

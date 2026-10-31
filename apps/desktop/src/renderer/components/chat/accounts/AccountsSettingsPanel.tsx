@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { Plus, Repeat, Search } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { ChatConfig, ChatSubscriptionProviderKind } from '../../../../shared/chat'
+import { accountPoolFor } from '../account-pool'
 import { subscriptionUsageResetDisplay } from '../subscription-usage-presentation'
 import { ChatGptWebSettings, useChatGptWebPhaseLabel } from '../ChatGptWebSettings'
 import {
@@ -377,6 +378,9 @@ export function AccountsSettingsPanel({
                         row.summary.health === 'ok' && row.summary.limitReached
                           ? ('limit' as const)
                           : row.summary.health
+                      const poolActive =
+                        row.entry.type === 'subscription' &&
+                        accountPoolFor(config, row.entry.providerKind)?.activeProviderId === row.entry.key
                       return (
                         <button
                           key={row.entry.key}
@@ -403,6 +407,11 @@ export function AccountsSettingsPanel({
                                   className="shrink-0 text-muted-foreground"
                                 >
                                   <Repeat className="size-3" aria-hidden="true" />
+                                </span>
+                              )}
+                              {poolActive && (
+                                <span className="shrink-0 rounded-full border border-indigo-400/40 px-1.5 text-[10px] text-indigo-200">
+                                  {t('settings.accountPoolActiveBadge')}
                                 </span>
                               )}
                             </span>

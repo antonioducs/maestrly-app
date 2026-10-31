@@ -95,6 +95,7 @@ export function persistedBackgroundCompactionSelection(selection: FrozenChatSele
     ...(selection.behaviorProfileId !== undefined ? { behaviorProfileId: selection.behaviorProfileId } : {}),
     ...(selection.identityFingerprint != null ? { identityFingerprint: selection.identityFingerprint } : {}),
     ...(selection.identityEpoch != null ? { identityEpoch: selection.identityEpoch } : {}),
+    ...(selection.accountPoolProviderId != null ? { accountPoolProviderId: selection.accountPoolProviderId } : {}),
     ...(selection.providerFingerprint != null ? { providerFingerprint: selection.providerFingerprint } : {}),
     ...(selection.cursorModelSelection
       ? {
@@ -152,6 +153,7 @@ function parseSelection(value: unknown): FrozenChatSelection | null {
     return null
   }
   if (
+    (raw.accountPoolProviderId != null && typeof raw.accountPoolProviderId !== 'string') ||
     (raw.reasoning != null && typeof raw.reasoning !== 'string') ||
     (raw.reasoningEffort != null && typeof raw.reasoningEffort !== 'string') ||
     (raw.serviceTier != null && typeof raw.serviceTier !== 'string') ||

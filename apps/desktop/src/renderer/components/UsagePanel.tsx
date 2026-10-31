@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { BarChart3, RefreshCw, Coins } from 'lucide-react'
 import { useHostApi } from '@/lib/hosts/host-context'
 import { cn } from '@/lib/utils'
+import { chatProviderChoices } from './chat/account-pool'
 import { estimatedCostOfUsage, totalTokensOf } from '../../shared/chat'
 import type { ChatModelMeta } from '../../shared/chat'
 import { USAGE_MAX_WINDOW_DAYS } from '../../shared/usage'
@@ -75,7 +76,9 @@ export function UsagePanel() {
   }, [period, customFrom, customTo])
 
   useEffect(() => {
-    void api.chatConfig().then((c) => setProviderNames(Object.fromEntries(c.providers.map((p) => [p.id, p.name]))))
+    void api
+      .chatConfig()
+      .then((c) => setProviderNames(Object.fromEntries(chatProviderChoices(c).map((p) => [p.id, p.name]))))
   }, [api])
 
   useEffect(() => {

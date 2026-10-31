@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils'
 import { useHostApi } from '@/lib/hosts/host-context'
 import { isChatProviderConnected, type ChatConfig } from '../../../../shared/chat'
 import type { SubagentProfileRulesV1 } from '../../../../shared/subagent-profiles'
+import { chatProviderChoices } from '../account-pool'
 import { SubagentProfilesSettings } from '../subagent-profiles/SubagentProfilesSettings'
 import { backgroundCompactionConfig, CompactionRow, ImageInterpreterRow, MemoryExtractionRow } from './BackgroundTasks'
 import {
@@ -98,7 +99,7 @@ function ModelsInUse({
       <span className="mr-1 text-[11px] text-muted-foreground">{t('modelSettings.inUse')}</span>
       {models.map(({ selection, uses }) => {
         const key = modelSelectionKey(selection)
-        const provider = config.providers.find((item) => item.id === selection.providerId)
+        const provider = chatProviderChoices(config).find((item) => item.id === selection.providerId)
         const active = highlighted === key
         return (
           <button
@@ -156,7 +157,7 @@ function DefaultModel({
       {connected ? (
         <ModelPicker
           value={value}
-          providers={config.providers}
+          providers={chatProviderChoices(config)}
           label={t('modelSettings.defaultModel.title')}
           placeholder={t('modelSettings.chooseModel')}
           size="lg"
