@@ -234,6 +234,7 @@ const zPart = z.discriminatedUnion("type", [
       .enum(["summary", "openai-native", "claude-native", "codex-native"])
       .optional(),
     origin: z.enum(["prepared", "manual"]).optional(),
+    degraded: z.boolean().optional(),
   }),
   z.object({
     type: z.literal("context"),

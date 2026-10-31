@@ -54,3 +54,10 @@ describe('interrupted review-round error rendering', () => {
     expect(messageListSource).toContain("'interrupted'")
   })
 })
+
+describe('degraded compaction divider', () => {
+  it('passes the part flag to the divider, which shows the localized notice', () => {
+    expect(messageListSource).toContain('degraded={part.degraded === true}')
+    expect(messageListSource).toContain("{t('messages.compactionDegraded')}")
+  })
+})

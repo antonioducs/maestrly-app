@@ -143,7 +143,9 @@ export function activatePreparedCompaction(args: {
       afterPartId: args.prepared.afterPartId,
       text: marker.text,
       strategy: 'summary',
-      origin: 'prepared',
+      // The stored part decides: a background candidate is `prepared`, a positional live compaction has no origin.
+      ...(marker.origin ? { origin: marker.origin } : {}),
+      ...(marker.degraded ? { degraded: true } : {}),
     },
     contextTokens: estimatePortableContextTokens(loaded),
   }

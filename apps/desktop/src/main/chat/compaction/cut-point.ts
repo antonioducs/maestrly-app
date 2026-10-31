@@ -114,6 +114,17 @@ export function selectCompactionCut(
   return suffix[newest] <= budget * 2 ? cutAt(newest, !userStart(newest)) : null
 }
 
+/**
+ * A boundary after everything, in the newest assistant message, for a live turn that must commit its marker itself
+ * (a degraded summary carries a flag the runner cannot add). Null when that message is not a closed assistant step.
+ */
+export function historyEndCut(messages: readonly ChatMessage[]): CompactionCut | null {
+  const last = messages.at(-1)
+  const part = last?.parts.at(-1)
+  if (last?.role !== 'assistant' || !part || isOpenTool(part)) return null
+  return { messageId: last.id, afterPartId: part.id, splitTurn: false, tailTokens: 0, prefixTokens: 0 }
+}
+
 function cutIndex(history: readonly ChatMessage[], cut: Pick<CompactionCut, 'messageId' | 'afterPartId'>) {
   const message = history.findIndex((candidate) => candidate.id === cut.messageId)
   const part = message < 0 ? -1 : history[message].parts.findIndex((candidate) => candidate.id === cut.afterPartId)

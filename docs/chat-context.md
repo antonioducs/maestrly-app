@@ -534,6 +534,26 @@ way. Isolated review rounds and background preparation summarize their whole
 source as before. An approved plan that is still in the tail is not repeated in
 the summary.
 
+Automatic compaction, before a message is sent or during a turn, does not stop
+the conversation when the summary fails. When the summarizer reports that its
+input is too large, the chunks are retried at 70%, 50% and 35% of their size.
+For any other failure, the older messages are condensed without a model: the
+latest requests verbatim, the previous summary, the files, tools and errors
+involved, the approved plan and the to-do list, up to 12,000 characters. The
+divider then warns that the summary is degraded. The originals remain in the
+history and can be read with `history_search` and `history_read`. The next
+compaction summarizes them again. If the result plus the pending message still
+overflows, the tail is summarized as well, and only then is the request
+refused. Manual compaction, cancellation, and a history that changed during the
+compaction are never degraded: they fail as before, and nothing is committed.
+
+Two automatic compactions in a row that free less than 10% of the context, or
+leave it above the compaction threshold, suspend automatic compaction before
+sending. It resumes once the context grows by 10% of the window, when it would
+overflow, after a manual compaction, or with another model or window.
+Compaction during a turn still guards against an overflow while it is
+suspended.
+
 These observations and progress states are saved with messages. Existing
 conversations remain readable; older messages without observations use the
 existing context estimate until the runtime reports a new sample.
@@ -549,8 +569,8 @@ The next-request estimate covers this complete transfer. If it exceeds the
 destination's admission budget, Maestrly first summarizes the history and checks
 the result again. Codex also has a 1,048,576-character text-input limit, which
 includes the imported history and pending message; exceeding that limit also
-triggers compaction. A failed compaction blocks the request and preserves the
-original history. A fresh Codex transfer is blocked if its context window is
+triggers compaction. A compaction that still does not fit blocks the request and
+preserves the original history. A fresh Codex transfer is blocked if its context window is
 unknown. Token estimates can differ from the provider's actual count.
 
 ### Context limit

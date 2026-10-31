@@ -795,6 +795,8 @@ export default {
     responseTime: 'Tempo de resposta: {{duration}}',
     compacted: 'compactado',
     previousContextSummary: 'Resumo do contexto anterior',
+    compactionDegraded:
+      'O resumo automático falhou, então as mensagens mais antigas foram condensadas sem ele. Elas continuam neste histórico, e a próxima compactação vai resumi-las de novo.',
     nativeContextCheckpoint: 'Contexto anterior preservado em um checkpoint nativo do provedor.',
     contextImported: 'contexto importado',
     historyFrom: 'Histórico vindo de {{source}}',

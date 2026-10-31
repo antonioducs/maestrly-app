@@ -303,10 +303,11 @@ interface SearchableTextProps {
 function Compaction({
   text,
   native = false,
+  degraded = false,
   onOpenMention,
   searchQuery,
   currentSearchMatch,
-}: SearchableTextProps & { native?: boolean }) {
+}: SearchableTextProps & { native?: boolean; degraded?: boolean }) {
   const { t } = useTranslation('chat')
   return (
     <div className="my-1 flex min-w-0 max-w-full flex-col gap-2">
@@ -315,6 +316,14 @@ function Compaction({
         {t('messages.compacted')}
         <span className="h-px flex-1 bg-white/[0.1]" />
       </div>
+      {degraded && (
+        <div
+          role="status"
+          className="min-w-0 max-w-full rounded-lg border border-amber-400/20 bg-amber-400/[0.06] px-3 py-2 text-[12px] text-amber-200/90"
+        >
+          {t('messages.compactionDegraded')}
+        </div>
+      )}
       {native ? (
         <div className="min-w-0 max-w-full rounded-lg border border-white/[0.06] bg-white/[0.015] px-3 py-2 text-[12px] text-muted-foreground/80">
           {t('messages.nativeContextCheckpoint')}
@@ -444,6 +453,7 @@ function Part({
         native={
           part.strategy === 'openai-native' || part.strategy === 'codex-native' || part.strategy === 'claude-native'
         }
+        degraded={part.degraded === true}
         onOpenMention={onOpenMention}
         searchQuery={searchQuery}
         currentSearchMatch={currentSearchMatch}

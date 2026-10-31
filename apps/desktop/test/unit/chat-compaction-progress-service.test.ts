@@ -129,6 +129,12 @@ import { structuredSummary } from '../helpers/compaction'
 import { activatePreparedCompaction } from '../../src/main/chat/background-compaction/runner'
 import { renderNativeSeedTranscript } from '../../src/main/chat/message'
 import { listConversationContextMessages } from '../../src/main/chat/chat-store'
+import { FALLBACK_SUMMARY_NOTICE } from '../../src/main/chat/compaction/fallback-summary'
+import {
+  compactionBreakerKey,
+  recordAutomaticCompaction,
+  resetCompactionBreaker,
+} from '../../src/main/chat/compaction/breaker'
 
 const usage = { input: 80, output: 16, cacheRead: 0, cacheCreate: 0, totalInput: 80 }
 const success = (text = 'Complete portable summary') => ({
@@ -733,7 +739,8 @@ describe('service-owned compaction progress', () => {
     await vi.waitFor(() => expect(h.runChat).toHaveBeenCalledWith(expect.objectContaining({ contextWindow: 200_000 })))
   })
 
-  it.each(['failed', 'cancelled'] as const)(
+  // A failed summary no longer blocks the turn (see the mechanical fallback below); cancelling still does.
+  it.each(['cancelled'] as const)(
     'removes %s preflight input from the projection without persisting or running it',
     async (status) => {
       const handlers = new Map<string, Parameters<ChatIpcDeps['mhandle']>[1]>()
@@ -788,11 +795,26 @@ describe('service-owned compaction progress', () => {
       mon: vi.fn(),
       emitStatus: vi.fn(),
     })
-    h.generateText.mockRejectedValue(Object.assign(new Error('Preflight summary rejected'), { status: 400 }))
+    // A conversation that changed under the summary is never committed, not even as a mechanical digest.
+    h.generateText.mockImplementation(async () => {
+      const latest = getChatMessage(conversationId, 'assistant')!
+      upsertChatMessage({ ...latest, error: 'Edited during the preflight' })
+      return success()
+    })
     const result = await handlers.get('chat:send')!({ sender: wc } as never, { conversationId, text: 'Pending task' })
     expect(result).toMatchObject({ ok: false, error: 'context-compaction-failed' })
-    expect(progressEvents().at(-1)).toMatchObject({ status: 'failed', error: 'Preflight summary rejected' })
-    expect(listChatMessages(conversationId)).toHaveLength(2)
+    expect(progressEvents().at(-1)).toMatchObject({
+      status: 'failed',
+      error: expect.stringContaining('Conversation changed'),
+    })
+    // Only the bill of the attempted summary is recorded; the pending input is not persisted.
+    expect(listChatMessages(conversationId).filter((message) => !message.usage?.billingOnly)).toHaveLength(2)
+    expect(
+      listChatMessages(conversationId).some((message) =>
+        message.parts.some((part) => part.type === 'text' && part.text === 'Pending task')
+      )
+    ).toBe(false)
+    expect(h.runChat).not.toHaveBeenCalled()
   })
 
   it.each(['builtin_codex_subscription', 'builtin_claude_subscription'])(
@@ -1192,7 +1214,9 @@ describe('service-owned compaction progress', () => {
 
     it('compacts before a turn keeping the latest turn verbatim and admits it', async () => {
       addRecentTurn()
-      patchConvUiPrefs(conversationId, { chat: { ...model, modelId: 'small-model', reasoning: 'high', fastMode: true } })
+      patchConvUiPrefs(conversationId, {
+        chat: { ...model, modelId: 'small-model', reasoning: 'high', fastMode: true },
+      })
       setConversationContextLimit(conversationId, 30_000)
       h.generateText.mockResolvedValue(success(structuredSummary('PREFLIGHT_SUMMARY')))
 
@@ -1207,6 +1231,133 @@ describe('service-owned compaction progress', () => {
       expect(prompts()).not.toContain('RECENT_USER_MARKER')
       const ids = listChatMessages(conversationId).map((message) => message.id)
       expect(ids.indexOf('recent-assistant')).toBeGreaterThan(ids.indexOf('assistant'))
+    })
+  })
+
+  describe('degrading instead of blocking', () => {
+    const compactionParts = () =>
+      listChatMessages(conversationId)
+        .flatMap((message) => message.parts)
+        .filter((part) => part.type === 'compaction')
+    const rejected = (message = 'Summary rejected') => Object.assign(new Error(message), { status: 400 })
+
+    it('admits the turn on a mechanical summary when the preflight summary fails', async () => {
+      h.generateText.mockRejectedValue(rejected())
+      const handlers = new Map<string, Parameters<ChatIpcDeps['mhandle']>[1]>()
+      registerChatIpc({
+        mhandle: (channel, handler) => void handlers.set(channel, handler),
+        mon: vi.fn(),
+        emitStatus: vi.fn(),
+      })
+
+      const result = await handlers.get('chat:send')!({ sender: wc } as never, { conversationId, text: 'Pending task' })
+
+      expect(result).toMatchObject({ ok: true })
+      await vi.waitFor(() => expect(h.runChat).toHaveBeenCalledOnce())
+      expect(compactionParts()).toEqual([
+        expect.objectContaining({ degraded: true, text: expect.stringContaining(FALLBACK_SUMMARY_NOTICE) }),
+      ])
+      expect(
+        listChatMessages(conversationId).filter((message) =>
+          message.parts.some((part) => part.type === 'text' && part.text === 'Pending task')
+        )
+      ).toHaveLength(1) // The renderer reloads the history, where the divider learns the summary is degraded.
+      const page = (await handlers.get('chat:history:page')!({ sender: wc } as never, conversationId)) as {
+        messages: { parts: { type: string; degraded?: boolean }[] }[]
+      }
+      expect(page.messages.flatMap((message) => message.parts).filter((part) => part.type === 'compaction')).toEqual([
+        expect.objectContaining({ degraded: true }),
+      ])
+    })
+
+    it('never degrades a manual compaction: the person sees the failure', async () => {
+      h.generateText.mockRejectedValue(rejected('Manual summary rejected'))
+      const result = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+        expect(startManualCompaction(conversationId, resolve)).toEqual({ ok: true })
+      })
+      expect(result).toMatchObject({ ok: false, error: 'Manual summary rejected' })
+      expect(compactionParts()).toEqual([])
+    })
+
+    it('shrinks the chunks when the summarizer reports a context overflow, and bills every attempt', async () => {
+      h.generateText
+        .mockRejectedValueOnce(
+          Object.assign(new Error("This model's maximum context length is 20000 tokens"), {
+            status: 400,
+            usage: { inputTokens: 5, outputTokens: 0 },
+          })
+        )
+        .mockResolvedValue(success(structuredSummary('LADDER_SUMMARY')))
+
+      const result = await compact({ contextWindow: 20_000, fallback: true })
+
+      expect(result).toMatchObject({ ok: true })
+      expect(result.degraded).toBeUndefined()
+      expect(result.summary).toContain('LADDER_SUMMARY')
+      expect(h.generateText.mock.calls.length).toBeGreaterThan(2)
+      const prompt = (index: number) => (h.generateText.mock.calls[index][0] as { prompt: string }).prompt
+      expect(prompt(1).length).toBeLessThan(prompt(0).length)
+      expect(compactionParts()).toEqual([expect.not.objectContaining({ degraded: true })])
+    })
+
+    it('commits a degraded marker mid-turn for the runner to reload, leaving the bill to it', async () => {
+      h.generateText.mockRejectedValue(rejected())
+
+      const result = await compact({
+        contextWindow: 200_000,
+        allowActive: true,
+        persist: false,
+        positional: true,
+        fallback: true,
+      })
+
+      expect(result).toMatchObject({
+        ok: true,
+        degraded: true,
+        marker: { messageId: 'assistant', afterPartId: 'assistant-text' },
+      })
+      expect(getChatMessage(conversationId, 'assistant')?.parts).toEqual([
+        expect.objectContaining({ id: 'assistant-text' }),
+        expect.objectContaining({ type: 'compaction', id: result.marker!.partId, degraded: true }),
+      ])
+      const activated = activatePreparedCompaction({
+        conversationId,
+        assistantMessageId: 'assistant',
+        prepared: result.marker!,
+      })
+      expect(activated.event).toMatchObject({ kind: 'compaction', degraded: true })
+      expect(activated.event.origin).toBeUndefined()
+    })
+
+    it('never degrades a cancelled compaction', async () => {
+      const controller = new AbortController()
+      h.generateText.mockImplementation(async () => {
+        controller.abort(new Error('Cancelled by the person'))
+        throw rejected()
+      })
+      const result = await compact({ signal: controller.signal, fallback: true })
+      expect(result).toMatchObject({ ok: false })
+      expect(compactionParts()).toEqual([])
+    })
+
+    it('skips automatic compaction while the breaker is open and the context has not grown', async () => {
+      patchConvUiPrefs(conversationId, {
+        chat: { ...model, modelId: 'small-model', reasoning: 'high', fastMode: true },
+      })
+      setConversationContextLimit(conversationId, 40_000)
+      const key = compactionBreakerKey(model.providerId, 'small-model', 40_000)
+      resetCompactionBreaker(conversationId)
+      for (let round = 0; round < 2; round += 1)
+        recordAutomaticCompaction(conversationId, key, { before: 39_000, after: 38_500, threshold: 36_000 })
+
+      expect(await sendHandler()({ sender: wc } as never, { conversationId, text: 'Pending task' })).toMatchObject({
+        ok: true,
+      })
+
+      await vi.waitFor(() => expect(h.runChat).toHaveBeenCalledOnce())
+      expect(h.generateText).not.toHaveBeenCalled()
+      expect(compactionParts()).toEqual([])
+      resetCompactionBreaker(conversationId)
     })
   })
 })
