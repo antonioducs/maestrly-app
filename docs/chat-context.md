@@ -534,6 +534,18 @@ way. Isolated review rounds and background preparation summarize their whole
 source as before. An approved plan that is still in the tail is not repeated in
 the summary.
 
+During a turn with an API key, outside the OpenAI harness, which compacts
+natively, the summary is first requested by repeating the turn's last request
+with the summary instructions appended. The system prompt, tools, provider
+options, effort and cache breakpoints are the same, so the provider's prompt
+cache covers the conversation. Tools are declared but cannot run, and no tool
+choice is forced, because that would invalidate Anthropic's cache. That request
+ends before the last step, which stays verbatim in the tail. It is used only
+when the window still has room for at least 8,000 output tokens. If the model
+calls a tool, runs out of tokens, or returns a summary that fails the structure
+check, or the request fails, the summary is made in chunks as usual. Every
+attempt is billed to the turn.
+
 Automatic compaction, before a message is sent or during a turn, does not stop
 the conversation when the summary fails. When the summarizer reports that its
 input is too large, the chunks are retried at 70%, 50% and 35% of their size.

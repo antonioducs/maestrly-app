@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { jsonSchema, tool } from 'ai'
+import { jsonSchema, simulateReadableStream, tool } from 'ai'
+import { MockLanguageModelV4 } from 'ai/test'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { toPublicChatUsage, listChatMessages, upsertChatMessage } from '../../src/main/chat/chat-store'
@@ -45,7 +46,7 @@ import { clearEphemeralToolImages } from '../../src/main/chat/tool-output'
 import { freshDb, closeDb } from '../helpers/db'
 import type { PermissionBroker } from '../../src/main/chat/permission'
 import type { QuestionBroker } from '../../src/main/chat/question-broker'
-import { APICallError } from '@ai-sdk/provider'
+import { APICallError, type LanguageModelV4StreamPart } from '@ai-sdk/provider'
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import type { ChatStreamEvent } from '../../src/shared/chat'
 import { startFakeProvider, type FakeProviderServer } from '../helpers/fake-provider'
@@ -1423,3 +1424,185 @@ describe('API-key provider failures', () => {
     expect(consoleError.mock.calls.flat().some((arg) => APICallError.isInstance(arg))).toBe(false)
   })
 })
+
+describe('mid-turn compaction from the cached request', () => {
+  const usage = (input: number, output = 20) => ({
+    inputTokens: { total: input, noCache: input, cacheRead: 0, cacheWrite: 0 },
+    outputTokens: { total: output, text: output, reasoning: 0 },
+  })
+  const step = (text: string, input: number, toolCallId?: string) => ({
+    stream: simulateReadableStream<LanguageModelV4StreamPart>({
+      chunks: [
+        { type: 'stream-start', warnings: [] },
+        { type: 'text-start', id: `${text}-t` },
+        { type: 'text-delta', id: `${text}-t`, delta: text },
+        { type: 'text-end', id: `${text}-t` },
+        ...(toolCallId ? [{ type: 'tool-call' as const, toolCallId, toolName: 'probe', input: '{}' }] : []),
+        {
+          type: 'finish' as const,
+          usage: usage(input),
+          finishReason: { unified: toolCallId ? ('tool-calls' as const) : ('stop' as const), raw: undefined },
+        },
+      ],
+    }),
+  })
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    freshDb()
+    insertWorkspace({ id: 'w', path: '/tmp/w', name: 'W', defaultBranch: 'main', addedAt: 1 })
+    insertConversation({
+      scope: 'project',
+      id: 'c',
+      workspaceId: 'w',
+      name: 'C',
+      branch: 'main',
+      mode: 'local',
+      experience: 'standard',
+      cwd: '/tmp/w',
+      status: 'idle',
+      createdAt: 1,
+      archived: 0,
+      pinnedAt: null,
+      lastActivityAt: 1,
+      isMulti: 0,
+    })
+    upsertChatMessage({
+      id: 'u1',
+      conversationId: 'c',
+      role: 'user',
+      createdAt: 1,
+      parts: [{ type: 'text', id: 'u1-t', text: 'Probe twice.' }],
+    })
+    const { streamText } = await vi.importActual<typeof import('ai')>('ai')
+    mocks.streamText.mockImplementation(streamText as never)
+    mocks.getProviderModelMetaWithStatus.mockResolvedValue({ status: 'unavailable', meta: null })
+    mocks.buildMcpTools.mockResolvedValue({ tools: {}, close: async () => {} })
+    mocks.buildAppTools.mockResolvedValue({ tools: {}, close: async () => {} })
+    mocks.buildTools.mockReturnValue({
+      probe: tool({
+        description: 'Probe the workspace.',
+        inputSchema: jsonSchema({ type: 'object', properties: {} }),
+        execute: async () => 'probe output',
+      }),
+    } as never)
+    mocks.hasApiKey.mockReturnValue(true)
+    mocks.getApiKey.mockReturnValue('test-key')
+  })
+  afterEach(() => {
+    mocks.streamText.mockReset()
+    mocks.buildTools.mockReset().mockReturnValue({})
+    closeDb()
+  })
+
+  async function runGuardedTurn(compactHistory: NonNullable<Parameters<typeof runChat>[0]['compactHistory']>) {
+    const model = new MockLanguageModelV4({
+      provider: 'openai',
+      modelId: 'gpt-test',
+      // Step 2 crosses the 90% guard of a 200k window; the continuation after compaction finishes.
+      doStream: [step('First probe.', 1_000, 'call-1'), step('Second probe.', 185_000, 'call-2'), step('Done.', 2_000)],
+    })
+    mocks.resolveChatModel.mockReturnValue({
+      model,
+      transport: 'openai',
+      harnessProfile: 'legacy-v1',
+      promptProfile: 'maestrly-legacy',
+      capabilities: {
+        encryptedReasoning: false,
+        nativeApplyPatch: false,
+        nativeCompaction: false,
+        nativeShell: false,
+        promptCacheKey: false,
+        toolSearch: false,
+      },
+      providerFingerprint: 'test-fp',
+    })
+    await runChat({
+      conversationId: 'c',
+      projectId: 'w',
+      cwd: '/tmp/w',
+      selection: { providerId: 'openai', modelId: 'gpt-test' },
+      broker: { assert: async () => {} } as unknown as PermissionBroker,
+      questionBroker: {} as unknown as QuestionBroker,
+      emit: () => {},
+      signal: new AbortController().signal,
+      assistantMessageId: 'a1',
+      assistantCreatedAt: 1000,
+      responseStartedAt: 1000,
+      contextWindow: 200_000,
+      compactHistory,
+    })
+    return model
+  }
+
+  it('repeats the last request with the summary instruction, tools that cannot run and no tool choice', async () => {
+    mocks.generateText.mockResolvedValue({
+      text: 'LIVE_SUMMARY',
+      totalUsage: { inputTokens: 185_500, outputTokens: 700, cachedInputTokens: 184_000 },
+      toolCalls: [],
+      finishReason: 'stop',
+    })
+    let live: Awaited<
+      ReturnType<NonNullable<Parameters<NonNullable<Parameters<typeof runChat>[0]['compactHistory']>>[0]>>
+    > = null
+    const compactHistory = vi.fn(
+      async (liveSummary?: Parameters<NonNullable<Parameters<typeof runChat>[0]['compactHistory']>>[0]) => {
+        live = (await liveSummary?.('SUMMARY_INSTRUCTION')) ?? null
+        return { summary: live?.text ?? '', ...(live?.usage ? { usage: live.usage } : {}) }
+      }
+    )
+
+    await runGuardedTurn(compactHistory)
+
+    expect(compactHistory).toHaveBeenCalledOnce()
+    expect(mocks.generateText).toHaveBeenCalledOnce()
+    const sent = mocks.streamText.mock.calls[0][0] as {
+      system: string
+      messages: ModelMessageLike[]
+      providerOptions?: unknown
+    }
+    const request = mocks.generateText.mock.calls[0][0] as {
+      system: string
+      messages: ModelMessageLike[]
+      tools: Record<string, { execute?: unknown; description?: string }>
+      toolChoice?: unknown
+      providerOptions?: unknown
+    }
+    expect(request.system).toBe(sent.system)
+    expect(request.providerOptions).toEqual(sent.providerOptions)
+    expect(request).not.toHaveProperty('toolChoice')
+    // Only the room left in the window: the output cap is not part of the cached prefix.
+    expect((request as { maxOutputTokens?: number }).maxOutputTokens).toBeGreaterThanOrEqual(8_000)
+    expect((request as { maxOutputTokens?: number }).maxOutputTokens).toBeLessThanOrEqual(15_000)
+    expect(request.tools.probe).toMatchObject({ description: 'Probe the workspace.' })
+    expect(request.tools.probe.execute).toBeUndefined()
+    // The second step's request: the first messages, then the first probe's call and result.
+    expect(request.messages.slice(0, sent.messages.length)).toEqual(sent.messages)
+    expect(request.messages.slice(sent.messages.length).map((message) => message.role)).toEqual([
+      'assistant',
+      'tool',
+      'user',
+    ])
+    expect(JSON.stringify(request.messages.at(-1))).toContain('SUMMARY_INSTRUCTION')
+    expect(live).toMatchObject({ text: 'LIVE_SUMMARY', usage: { output: 700 } })
+    const assistant = listChatMessages('c').find((message) => message.id === 'a1')
+    expect(assistant?.usage?.output).toBeGreaterThanOrEqual(700)
+  })
+
+  it('returns no summary when the model calls a tool instead', async () => {
+    mocks.generateText.mockResolvedValue({
+      text: 'Let me probe first.',
+      totalUsage: { inputTokens: 185_500, outputTokens: 30 },
+      toolCalls: [{ toolCallId: 'x', toolName: 'probe', input: {} }],
+      finishReason: 'tool-calls',
+    })
+    const results: unknown[] = []
+    await runGuardedTurn(async (liveSummary) => {
+      results.push(await liveSummary?.('SUMMARY_INSTRUCTION'))
+      return { summary: 'Map-reduce summary.' }
+    })
+    expect(results).toEqual([expect.objectContaining({ text: '', usage: expect.objectContaining({ output: 30 }) })])
+  })
+})
+
+type ModelMessageLike = { role: string; content: unknown }

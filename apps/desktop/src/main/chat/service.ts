@@ -548,6 +548,7 @@ import {
   type PreparedMarker,
 } from './background-compaction/activation'
 import { applyToolPruning, planToolPruning, protectedRecentMessageIds } from './compaction/tool-pruning'
+import type { LiveSummarizer } from './compaction/live-summary'
 import { COMPACTION_OVERFLOW_LADDER, isContextOverflowError } from './compaction/overflow'
 import { fallbackCompactionSummary } from './compaction/fallback-summary'
 import {
@@ -5324,7 +5325,8 @@ async function startSend(
     )
     const compactActiveHistory = async (
       claudeTarget?: ClaudeRuntimeTarget,
-      onProgress?: (progress: PortableSummaryProgress) => void
+      onProgress?: (progress: PortableSummaryProgress) => void,
+      liveSummary?: LiveSummarizer
     ): Promise<{
       summary: string
       usage?: NormalizedAiUsage
@@ -5351,6 +5353,7 @@ async function startSend(
         // Ending the turn because the summarizer failed loses more than continuing on a mechanical digest.
         fallback: true,
         onProgress,
+        ...(liveSummary ? { liveSummary } : {}),
         contextWindow: claudeTarget?.contextWindow
           ? turnContextWindow
             ? Math.min(turnContextWindow, claudeTarget.contextWindow)
@@ -6117,7 +6120,7 @@ async function startSend(
         contextWindow: turnContextWindow,
         ...(runnerMessageMeta ? { messageMeta: runnerMessageMeta } : {}),
         // Mid-turn compaction produces only summary+usage; the runner persists the milestone inside the live bubble.
-        compactHistory: compactActiveHistory,
+        compactHistory: (liveSummary) => compactActiveHistory(undefined, undefined, liveSummary),
         ...(internalLoop
           ? {
               // ALWAYS freeze the axis: explicit 'off' when the freeze lacks reasoning (older profiles).
@@ -7411,6 +7414,11 @@ interface CompactOpts {
   /** Pending input the destination must still admit after compaction; it bounds the verbatim tail. */
   pendingTokens?: number
   /**
+   * A live API turn offers to summarize by repeating its cached last request. Tried first when recent steps stay
+   * verbatim (the request does not hold the last step, which the tail keeps); any failure falls back to map-reduce.
+   */
+  liveSummary?: LiveSummarizer
+  /**
    * When the model summary fails for any reason but cancellation, commit a mechanical digest instead of failing, so
    * the conversation is not blocked. Manual compaction never sets it: the person sees the failure.
    */
@@ -8248,9 +8256,34 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
         ...(cost != null ? { runtimeEstimatedCostUsd: cost } : {}),
       }
     }
+    let live: PortableSummaryResult | null = null
+    if (opts.liveSummary && cut && !baseOnly) {
+      try {
+        const attempt = await opts.liveSummary(compactSystem)
+        if (attempt) {
+          const issues = attempt.text ? auditCompactionSummary(attempt.text) : ['empty summary']
+          if (issues.length === 0) live = { summary: attempt.text, usage: attempt.usage, calls: 1 }
+          else if (attempt.usage) {
+            failed.usage = addCompactionUsage(failed.usage, attempt.usage)
+            failed.costComplete = false
+          }
+          chatDiag({ kind: 'compaction-live-summary', conv: conversationId, accepted: live != null, issues })
+        }
+      } catch (error) {
+        if (compactSignal.aborted) throw error
+        absorbFailure(error)
+        chatDiag({
+          kind: 'compaction-live-summary',
+          conv: conversationId,
+          accepted: false,
+          error: compactionDiagnostic(error),
+        })
+      }
+    }
     let degraded = false
     let compacted: PortableSummaryResult
     if (baseOnly) compacted = { summary: preparedBase.candidate.summary, calls: 0 }
+    else if (live) compacted = withFailed(live)
     else {
       // A background checkpoint is tied to its chunk size, so only foreground work shrinks the chunks.
       const ladder = opts.historyOverride || opts.summaryResume ? [1] : [1, ...COMPACTION_OVERFLOW_LADDER]

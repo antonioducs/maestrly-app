@@ -1232,6 +1232,64 @@ describe('service-owned compaction progress', () => {
       const ids = listChatMessages(conversationId).map((message) => message.id)
       expect(ids.indexOf('recent-assistant')).toBeGreaterThan(ids.indexOf('assistant'))
     })
+
+    it('takes the live turn summary of its cached request when a tail stays, billing it once', async () => {
+      addRecentTurn()
+      const liveUsage = { input: 900, output: 300, cacheRead: 40_000, cacheCreate: 0, totalInput: 40_900 }
+      const liveSummary = vi.fn(async () => ({ text: structuredSummary('LIVE_REQUEST_SUMMARY'), usage: liveUsage }))
+
+      const result = await compact({
+        contextWindow: 200_000,
+        allowActive: true,
+        persist: false,
+        positional: true,
+        liveSummary,
+      })
+
+      expect(result).toMatchObject({ ok: true, usage: liveUsage, marker: { messageId: 'assistant' } })
+      expect(result.summary).toContain('LIVE_REQUEST_SUMMARY')
+      expect(h.generateText).not.toHaveBeenCalled()
+      const [instruction] = liveSummary.mock.calls[0] as unknown as [string]
+      expect(instruction).toContain('## Exact identifiers')
+      expect(instruction).toMatch(/\d[\d,]* tokens/)
+    })
+
+    it('falls back to map-reduce when the live summary fails its audit or throws, billing every attempt', async () => {
+      addRecentTurn()
+      h.generateText.mockResolvedValue(success(structuredSummary('MAP_REDUCE_SUMMARY')))
+      const liveUsage = { input: 10, output: 5, cacheRead: 0, cacheCreate: 0, totalInput: 10 }
+
+      const audited = await compact({
+        contextWindow: 200_000,
+        allowActive: true,
+        persist: false,
+        positional: true,
+        liveSummary: async () => ({ text: 'Not a structured summary.', usage: liveUsage }),
+      })
+      expect(audited.summary).toContain('MAP_REDUCE_SUMMARY')
+      expect(audited.usage).toMatchObject({ input: 90, output: 21 })
+
+      const thrown = await compact({
+        contextWindow: 200_000,
+        allowActive: true,
+        persist: false,
+        positional: true,
+        liveSummary: async () => {
+          throw new Error('provider hiccup')
+        },
+      })
+      expect(thrown).toMatchObject({ ok: true })
+      expect(thrown.summary).toContain('MAP_REDUCE_SUMMARY')
+    })
+
+    it('does not ask for a live summary when nothing stays verbatim', async () => {
+      const liveSummary = vi.fn(async () => ({ text: structuredSummary('UNUSED') }))
+      h.generateText.mockResolvedValue(success(structuredSummary('WHOLE_SUMMARY')))
+      expect(
+        await compact({ contextWindow: 20_000, allowActive: true, persist: false, positional: true, liveSummary })
+      ).toMatchObject({ ok: true })
+      expect(liveSummary).not.toHaveBeenCalled()
+    })
   })
 
   describe('degrading instead of blocking', () => {

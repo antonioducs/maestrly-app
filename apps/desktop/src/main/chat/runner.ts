@@ -34,6 +34,12 @@ import type {
 import { chatDiag } from './diag-log'
 import { makeContextGuard } from './context-guard'
 import {
+  liveSummaryOutputTokens,
+  summarizeFromLiveRequest,
+  type LiveRequest,
+  type LiveSummarizer,
+} from './compaction/live-summary'
+import {
   runnerContextHistory,
   toPublicChatUsage,
   upsertChatMessage,
@@ -383,7 +389,7 @@ export interface RunChatArgs {
   /** Send acceptance timestamp, before automatic compaction, persistence, and runner setup. */
   responseStartedAt: number
   /** Summarizes active context without a separate milestone; runner inserts boundary into live bubble. */
-  compactHistory?: () => Promise<{
+  compactHistory?: (liveSummary?: LiveSummarizer) => Promise<{
     summary: string
     usage?: NormalizedAiUsage
     runtimeEstimatedCostUsd?: number
@@ -1639,9 +1645,14 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       ? makeContextGuard(contextWindow, IN_TURN_COMPACT_RATIO)
       : null
 
+  // The request the last model step received, so mid-turn compaction can repeat it against the prompt cache.
+  let lastRequest: LiveRequest | null = null
+
   /** Runs ONE streamText invocation, folds fullStream into bubble, returns stream outcome. */
   const streamOnce = async (messages: ModelMessage[]): Promise<'finished' | 'aborted' | 'error' | 'truncated'> => {
     attempt++
+    lastRequest = null
+    const requestSystem = system + (autonomousPolicy(conversationId) ? '\n\n' + AUTONOMOUS_INSTRUCTIONS : '')
     // review_plan (submit & release): once registered, stop at step boundary — no extra model step to
     // narrate/implement (user decision starts a new turn). If a retryable error occurs in the SAME
     // submission step, continuation opens streamText and this stopWhen cuts at step 0
@@ -1653,13 +1664,25 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       : [stepCountIs(turnMaxSteps), planStop]
     const result = streamText({
       model: streamModel,
-      system: system + (autonomousPolicy(conversationId) ? '\n\n' + AUTONOMOUS_INSTRUCTIONS : ''),
+      system: requestSystem,
       messages:
         harness.prompts.environment.placement === 'last-user-message'
           ? withEnvironmentOnLastUserMessage(messages, envDetails)
           : messages,
       tools: allTools,
       stopWhen,
+      // Observes only: returning nothing leaves every step's request unchanged.
+      prepareStep: ({ messages: stepMessages }) => {
+        lastRequest = {
+          model: streamModel,
+          system: requestSystem,
+          messages: stepMessages,
+          tools: allTools,
+          ...(providerOptions ? { providerOptions } : {}),
+          ...(maxOutputTokens ? { maxOutputTokens } : {}),
+        }
+        return undefined
+      },
       maxRetries: AI_SDK_MAX_RETRIES,
       abortSignal: signal,
       // fullStream delivers the same error below. The SDK default prints the whole APICallError to
@@ -2075,6 +2098,31 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     return terminal
   }
 
+  /**
+   * Repeats the last step's request with the summary instruction: the cache covers it, so it costs far less than
+   * summarizing the transcript again. Not for the OpenAI harness, whose native compaction runs instead.
+   */
+  const liveSummarizer = (): LiveSummarizer | undefined => {
+    const request = lastRequest as LiveRequest | null
+    if (useOpenAIHarness || !request || !contextWindow || !hasLastStepUsage) return undefined
+    const contextTokens = lastStepInput
+    return async (instruction) => {
+      const outputTokens = liveSummaryOutputTokens(request, instruction, { contextTokens, contextWindow })
+      if (outputTokens == null) return null
+      const result = await summarizeFromLiveRequest(request, instruction, outputTokens, signal)
+      const usage = normalizeAiUsage(result.usage)
+      recordModelCallUsage({
+        runtime: 'byok-ai-sdk',
+        providerId: selection.providerId,
+        modelId: selection.modelId,
+        conversationId,
+        agent: 'compaction',
+        usage,
+      })
+      return { text: result.complete ? result.text : '', usage }
+    }
+  }
+
   const streamHistory = (requestHistory: ReturnType<typeof modelMessagesFor>) =>
     withOpenAIRawResponsesPrefix(requestHistory.rawPrefix, () => streamOnce(requestHistory.messages))
 
@@ -2104,7 +2152,9 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       if (guard?.tripped()) {
         guard.reset()
         const compacted =
-          inTurnCompacts < MAX_IN_TURN_COMPACTS ? await withoutOpenAIRawResponsesPrefix(() => compactHistory!()) : null
+          inTurnCompacts < MAX_IN_TURN_COMPACTS
+            ? await withoutOpenAIRawResponsesPrefix(() => compactHistory!(liveSummarizer()))
+            : null
         if (!compacted) {
           if (!signal.aborted) {
             chatDiag({
