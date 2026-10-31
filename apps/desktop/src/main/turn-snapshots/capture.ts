@@ -269,7 +269,7 @@ export function captureTree(dir: SnapshotDir, opts: CaptureOptions = {}): Promis
       lastTrees.delete(index)
       result = await attempt(dir, false)
     }
-    if (opts.ref) await dir.store.write(['update-ref', opts.ref, result.tree])
+    if (opts.ref) await dir.store.ref(['update-ref', opts.ref, result.tree])
     const now = Date.now()
     const entry = dir.store.meta.dirs[dir.dirKey]
     dir.store.meta.dirs[dir.dirKey] = { ...(entry ?? { path: dir.workTree }), path: dir.workTree, lastUsedAt: now }

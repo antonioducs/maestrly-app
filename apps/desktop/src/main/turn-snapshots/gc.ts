@@ -79,7 +79,7 @@ export function collectStore(
         result.removedRefs++
       }
     }
-    if (refUpdates.length) await store.write(['update-ref', '--stdin'], { input: refUpdates.join('\n') + '\n' })
+    if (refUpdates.length) await store.ref(['update-ref', '--stdin'], { input: refUpdates.join('\n') + '\n' })
     const counts = await countObjects(store)
     if (
       opts.force ||

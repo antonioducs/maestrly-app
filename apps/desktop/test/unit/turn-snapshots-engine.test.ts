@@ -278,6 +278,23 @@ describe('repositories', { timeout: 30_000 }, () => {
     expect(git(worktree, 'status', '--porcelain')).toBe('')
   })
 
+  it('keeps a clean checkout alive under a ref, though its trees come from the user index', async () => {
+    const repo = makeRepo()
+    const worktree = path.join(tempDir('turn-snapshots-clean-'), 'clean')
+    git(repo, 'worktree', 'add', '-q', '-b', 'clean', worktree)
+    const dir = await resolveSnapshotDir(worktree)
+    // Nothing changed: write-tree answers from the seeded cache tree, whose objects only the user's repository has.
+    const start = await captureTree(dir, { ref: recordRef('clean', 'start-0') })
+    expect(start.tree).toBe(git(repo, 'rev-parse', 'HEAD^{tree}').trim())
+    write(worktree, 'lib/util.ts', 'export const changed = 1\n')
+    const end = await captureTree(dir, { ref: recordRef('clean', 'end-0') })
+    const outcome = await undo(dir, start.tree, end.tree)
+    expect(outcome.failed).toEqual([])
+    expect(fs.readFileSync(path.join(worktree, 'lib/util.ts'), 'utf8')).toBe('export {}\n')
+    await collectStore(dir.store, new Set(['clean']), { indexMaxIdleMs: 60_000, force: true })
+    expect((await treeEntries(dir.store, start.tree, ['tracked.txt'])).get('tracked.txt')).toBeTruthy()
+  })
+
   it('reads a patch and blob contents of a captured change', async () => {
     const repo = makeRepo()
     const dir = await resolveSnapshotDir(repo)

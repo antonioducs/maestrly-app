@@ -135,6 +135,14 @@ export class ShadowStore {
     return snapshotGit(args, { ...opts, cwd: opts.cwd ?? this.gitDir, gitDir: this.gitDir })
   }
 
+  /**
+   * Ref updates. Git checks that the object exists, and a captured tree may be one the user's repository has: a
+   * seeded index answers write-tree from its cached trees. No object is written, so the user's objects stay readable.
+   */
+  ref(args: readonly string[], opts: Pick<SnapshotGitOptions, 'input' | 'timeoutMs'> = {}): Promise<SnapshotGitResult> {
+    return snapshotGit(args, { ...opts, cwd: this.gitDir, gitDir: this.gitDir, alternate: this.meta.alternate })
+  }
+
   /** Commands that only read objects: diffs, tree listings, blob contents, reachability. */
   read(
     args: readonly string[],

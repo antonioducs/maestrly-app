@@ -331,7 +331,7 @@ export async function confirmTurnRevert(
       const dir = dirs.get(index)!
       const nowTree = nowTrees.get(index)!
       // The tree before this operation stays alive: it is what a redo writes back.
-      await dir.store.write(['update-ref', recordRef(record.id, `op${op}-pre-${index}`), nowTree])
+      await dir.store.ref(['update-ref', recordRef(record.id, `op${op}-pre-${index}`), nowTree])
       const outcome = await dir.store.exclusive(() =>
         applyTargets(
           dir.store,
