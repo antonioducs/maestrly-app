@@ -8049,6 +8049,9 @@ function withSummaryModelFallback(
       agent: 'portable-compaction',
       conversationId: context.conversationId,
       signal: stageSignal,
+      // An overflow is the compaction ladder's: it shrinks the chunks and keeps the chosen model.
+      canFallback: (error, classification) =>
+        classification.reason !== 'context_overflow' && !isContextOverflowError(error),
       run: async (chosen) => {
         if (chosen === primary) return summarize(prompt, phase, stageSignal)
         const result = await runOneShotTextOn({

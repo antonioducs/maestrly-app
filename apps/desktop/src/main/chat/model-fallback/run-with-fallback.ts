@@ -150,6 +150,7 @@ export function runHelperWithModelFallback<T>(args: {
   strict?: boolean
   signal?: AbortSignal
   run: (selection: HelperModelSelection) => Promise<T>
+  canFallback?: RunWithModelFallbackArgs<T>['canFallback']
   deps?: Partial<ModelFallbackDeps>
 }): Promise<T> {
   return runWithModelFallback({
@@ -158,6 +159,7 @@ export function runHelperWithModelFallback<T>(args: {
     conversationId: args.conversationId,
     strict: args.strict,
     signal: args.signal,
+    ...(args.canFallback ? { canFallback: args.canFallback } : {}),
     run: (candidate) =>
       args.run(
         candidate.primary

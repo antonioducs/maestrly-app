@@ -55,7 +55,8 @@ retried as before and does not switch.
 - **Subagents** move to the next model with a frozen profile of their own and continue the same task from what the
   failed attempt reported (its partial text, the tools it used and the files it touched).
 - **Memory extraction, image descriptions and compaction summaries** retry on the next model of the list. Image
-  descriptions use only fallbacks known to see images.
+  descriptions use only fallbacks known to see images. A compaction summary that overflows its model is split into
+  smaller chunks on the same model instead of switching.
 - Executions whose selection is frozen keep their model: review loops, bot commands and their subagents, a bot's
   routed delegations, and background compaction with its own model. Their account rotation still works as before.
 

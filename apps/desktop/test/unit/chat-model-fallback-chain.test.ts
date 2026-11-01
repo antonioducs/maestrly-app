@@ -325,6 +325,24 @@ describe('runWithModelFallback', () => {
     expect(router.isAdmissible(modelCircuitKey('openai', 'gpt-5'), NOW)).toBe(true)
   })
 
+  it('lets a helper keep an overflow for itself', async () => {
+    const seen: string[] = []
+    const overflow = Object.assign(new Error('prompt is too long: 210000 tokens > 200000 maximum'), { statusCode: 400 })
+    await expect(
+      runHelperWithModelFallback({
+        selection: { providerId: 'anthropic', modelId: 'opus' },
+        agent: 'portable-compaction',
+        deps,
+        canFallback: (_error, classification) => classification.reason !== 'context_overflow',
+        run: async (selection) => {
+          seen.push(selection.modelId)
+          throw overflow
+        },
+      })
+    ).rejects.toBe(overflow)
+    expect(seen).toEqual(['opus'])
+  })
+
   it('runs a helper fallback with the effort configured for it', async () => {
     const seen: unknown[] = []
     await runHelperWithModelFallback({
