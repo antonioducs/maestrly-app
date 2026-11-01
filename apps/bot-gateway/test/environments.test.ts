@@ -18,6 +18,7 @@ import {
   type FleetGatewayEvent,
   type FleetInstanceProfile,
   type FleetInstanceStatus,
+  type FleetInstanceStorage,
 } from '@maestrly/bot-fleet-protocol'
 import { Auth } from '../src/auth.js'
 import { loadConfig } from '../src/config.js'
@@ -123,6 +124,8 @@ async function environmentInstance(environmentId: string, capable = true, extra:
   let pausesOnInstall = true
   /** Answers held back until the test lets them through, by method and path. */
   const deferred = new Map<string, Promise<void>>()
+  /** The disk figures it answers (`environment-storage`). */
+  let storage: FleetInstanceStorage = { environment: null, bots: [] }
   const statusOf = (botId: string): FleetInstanceStatus => ({
     ...instanceStatus(botId, capabilities, seq, installed.get(botId)?.hold ?? noHold),
     ready: installed.get(botId)?.ready ?? true,
@@ -194,6 +197,7 @@ async function environmentInstance(environmentId: string, capable = true, extra:
               .sort((a, b) => a[1].slot - b[1].slot)
               .map(([botId, item]) => ({ botId, slot: item.slot, status: statusOf(botId) })),
           })
+        if (url.pathname === '/v1/environment/storage') return send(200, storage)
         const match = /^\/v1\/bots\/([^/]+)(\/.*)?$/.exec(url.pathname)
         if (match) {
           const [, botId, rest = ''] = match
@@ -298,6 +302,9 @@ async function environmentInstance(environmentId: string, capable = true, extra:
     origin: 'http://127.0.0.1:' + port,
     port,
     requests,
+    setStorage(value: FleetInstanceStorage) {
+      storage = value
+    },
     installed,
     subscriptions,
     upgrades,
@@ -1122,6 +1129,38 @@ describe('environments', () => {
     })
     await f.lifecycle.stopEnvironment('home')
     expect(f.lifecycle.resources.has('home')).toBe(false)
+  })
+
+  it('asks running environments for their disk use and gives each bot its own', async () => {
+    const f = fixture()
+    const work = await f.instance('work', true, ['environment-storage'])
+    const home = await f.instance('home')
+    const {
+      ids: [ads, scout],
+    } = await environment(f, 'Work', ['Ads', 'Scout'])
+    await environment(f, 'Home', ['Cleo'])
+    const at = '2026-11-01T10:00:00.000Z'
+    work.setStorage({
+      environment: { homeBytes: 9000, downloadsBytes: 1000, folderBytes: null, measuredAt: at },
+      bots: [{ botId: ads, usedBytes: 3000, browserBytes: 2000, measuredAt: at }],
+    })
+    const asked = (fake: typeof work) =>
+      fake.requests.filter((item) => item.path.startsWith('/v1/environment/storage')).length
+    await f.lifecycle.refreshStats()
+    await until(() => f.lifecycle.environment('work')?.storage?.homeBytes === 9000)
+    expect(f.lifecycle.get(ads)?.storage).toEqual({ usedBytes: 3000, browserBytes: 2000, measuredAt: at })
+    expect(f.lifecycle.get(scout)?.storage).toBeNull()
+    // An image without the capability is never asked.
+    expect(f.lifecycle.environment('home')?.storage).toBeNull()
+    expect(asked(home)).toBe(0)
+    // Once it has figures, at most once a minute.
+    const before = asked(work)
+    await f.lifecycle.refreshStats()
+    expect(asked(work)).toBe(before)
+    expect(work.requests.some((item) => item.path === '/v1/environment/storage?folder=1')).toBe(false)
+    // Stopped, it keeps its figures: its home volume still takes that space.
+    await f.lifecycle.stopEnvironment('work')
+    expect(f.lifecycle.environment('work')?.storage?.homeBytes).toBe(9000)
   })
 
   it('installs bots that join while their environment is starting, each in its own slot', async () => {

@@ -42,6 +42,33 @@ function codeOf(run: () => unknown): string | null {
 const json = (response: Response) => response.json() as Promise<Record<string, any>>
 
 describe('workspaces environments', () => {
+  it('asks a workspaces environment with a folder of its own to measure that folder too', async () => {
+    const seen: string[] = []
+    const h = await harness(Date.now, {
+      environments: true,
+      instanceRoutes: (req, res) => {
+        if (!req.url?.startsWith('/v1/environment/storage')) return false
+        seen.push(req.url)
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(
+          JSON.stringify({
+            environment: { homeBytes: 100, downloadsBytes: 0, folderBytes: 5000, measuredAt: new Date().toISOString() },
+            bots: [],
+          })
+        )
+        return true
+      },
+    })
+    h.instance.provisioning.capabilities.push('workspaces-host', 'environment-storage')
+    ;(h.lifecycle.config as { workspacesRoot: string | null }).workspacesRoot = '/srv/maestrly'
+    const id = await workspaces(h)
+    await h.lifecycle.refreshStats()
+    for (let i = 0; i < 200 && !h.lifecycle.environment(id)?.storage; i++)
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(seen).toContain('/v1/environment/storage?folder=1')
+    expect(h.lifecycle.environment(id)?.storage).toMatchObject({ homeBytes: 100, folderBytes: 5000 })
+  })
+
   it('starts Maestrly in server mode, with no bot mode, no bot and no host directory by default', async () => {
     const h = await setup()
     const installsBefore = h.instance.installs.length

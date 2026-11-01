@@ -63,6 +63,17 @@ const install = (botId: string): FleetInstanceBotInstall => ({
 })
 
 describe('instance client', () => {
+  it('asks for the disk figures, with the folder when it is wanted', async () => {
+    const figures = { environment: null, bots: [] }
+    const origin = await instance({
+      'GET /v1/environment/storage': json(200, figures),
+      'GET /v1/environment/storage?folder=1': json(200, figures),
+    })
+    const client = new InstanceClient('work', 'control', origin)
+    await expect(client.environmentStorage(false)).resolves.toEqual(figures)
+    await expect(client.environmentStorage(true)).resolves.toEqual(figures)
+  })
+
   it('rejects an empty answer where the route promises a body, and accepts it where none is expected', async () => {
     const origin = await instance({
       'POST /v1/bots/ads/hold': empty,
