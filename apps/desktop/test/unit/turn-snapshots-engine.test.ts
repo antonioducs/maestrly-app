@@ -26,8 +26,13 @@ function tempDir(prefix: string): string {
   return dir
 }
 
+/**
+ * The fixture's own Git, with background maintenance off: newer Git versions run it after a commit, and it would
+ * change the `.git` these tests prove the snapshots never touch.
+ */
 function git(cwd: string, ...args: string[]): string {
-  return execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...args], {
+  const config = ['user.name=t', 'user.email=t@t', 'commit.gpgsign=false', 'maintenance.auto=false', 'gc.auto=0']
+  return execFileSync('git', [...config.flatMap((entry) => ['-c', entry]), ...args], {
     cwd,
     encoding: 'utf8',
   })
