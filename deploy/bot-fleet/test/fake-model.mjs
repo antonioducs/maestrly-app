@@ -6,6 +6,19 @@ const model = 'e2e-model'
 // A second model, so that bots sharing an account can each choose their own.
 const models = [model, 'e2e-model-b']
 let summaries = 0
+// The headings a compaction summary must have (`COMPACTION_SUMMARY_SECTIONS`): Maestrly rejects a summary without them.
+const SUMMARY_SECTIONS = [
+  'Objective',
+  'Requirements and constraints',
+  'Decisions',
+  'Work state',
+  'Pending user requests',
+  'Next steps',
+  'Relevant files',
+  'Exact identifiers',
+  'Errors and fixes',
+]
+const summaryReply = (count) => `E2E-SUMMARY ${count}\n\n` + SUMMARY_SECTIONS.map((name) => `## ${name}\n(none)`).join('\n\n')
 // Requests of different bots that wait for one another: they only meet when their turns run at the same time.
 const barriers = new Map()
 // Every request for the cookie pages, with the cookie the browser sent.
@@ -92,8 +105,8 @@ function validatedTool(req, suffix, args) {
 
 async function reply(req) {
   const messages = req.messages
-  if (messages.some((entry) => entry.role === 'system' && typeof entry.content === 'string' && entry.content.startsWith('You summarize programming conversations')))
-    return { text: `E2E-SUMMARY ${++summaries}` }
+  if (messages.some((entry) => entry.role === 'system' && typeof entry.content === 'string' && /^You summarize (?:programming|an agent) conversations?/.test(entry.content)))
+    return { text: summaryReply(++summaries) }
   const lastUser = messages.filter((entry) => entry.role === 'user').at(-1)
   const text = contentText(lastUser?.content)
   const toolReturned = messages.slice(messages.lastIndexOf(lastUser) + 1).some((entry) => entry.role === 'tool')
