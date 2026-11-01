@@ -587,6 +587,15 @@ describe('environment UI wiring', () => {
     expect(archived).toContain('fleetRestoreArchivedEnvironment(')
     expect(archived).toContain('fleetDeleteArchivedEnvironment(')
   })
+
+  it('shows the disk each environment and bot takes', () => {
+    const server = source('components/fleet/ServerView.tsx')
+    expect(server).toContain("'cpu', 'disk', 'uptime'")
+    expect(server).toContain('<DiskUse')
+    expect(server).toContain('environmentDiskBytes(environment)')
+    expect(source('components/fleet/EnvironmentResources.tsx')).toContain('<EnvironmentDisk')
+    expect(source('components/fleet/EnvironmentDisk.tsx')).toContain('environmentDiskSegments(')
+  })
 })
 
 describe('environment translations', () => {
@@ -603,6 +612,7 @@ describe('environment translations', () => {
       'components/fleet/EnvironmentRack.tsx',
       'components/fleet/EnvironmentSharedSummary.tsx',
       'components/fleet/EnvironmentResources.tsx',
+      'components/fleet/EnvironmentDisk.tsx',
       'components/fleet/EnvironmentUpdateNotice.tsx',
       'components/fleet/EnvironmentConfirm.tsx',
       'components/fleet/EnvironmentSettings.tsx',
