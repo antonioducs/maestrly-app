@@ -670,6 +670,7 @@ export class Lifecycle {
       lifecycle: environment.lifecycle,
       setup: environment.setup,
       resources: resourcesView(resources),
+      storage: null,
       memoryLimitBytes: environment.memoryLimitBytes,
       cpuLimit: environment.cpuLimit,
       idleStopMinutes: environment.idleStopMinutes,
@@ -989,6 +990,7 @@ export class Lifecycle {
       peerSettings: FLEET_PEER_THREAD_SETTINGS_DEFAULT,
       delegation: null,
       sharedFiles: null,
+      storage: null,
       createdAt: at,
       updatedAt: at,
     }

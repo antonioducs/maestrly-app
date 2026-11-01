@@ -2029,6 +2029,7 @@ export class Store {
         ? (fleetBotDelegationSchema.safeParse(JSON.parse(String(row.delegation_json))).data ?? null)
         : null,
       sharedFiles: null,
+      storage: null,
       runningRun: null,
       turns: null,
     }
