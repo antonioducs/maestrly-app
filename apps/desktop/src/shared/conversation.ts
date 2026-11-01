@@ -66,6 +66,8 @@ export interface ConvUiPrefs {
     reasoning?: string
     /** Fast/Priority for embedded Codex; absent means Standard. */
     fastMode?: boolean
+    /** Pinned model: failures never move this conversation's turns to the model fallback list. */
+    modelFallbackPinned?: boolean
     /**
      * Runtime image rejection overrides catalog claims. Runner sets this to stop resending attachments;
      * model changes clear it.

@@ -100,6 +100,35 @@ import { onSubscriptionAccountExhausted } from './subscription-failover/router'
 import { resolveClaudeRuntimeTarget, type ClaudeRuntimeTarget } from './subscription-failover/claude-adapter'
 import { listClaudeAttempts, setClaudeAttemptOwner } from './subscription-failover/claude-attempts'
 import { runClaudeEphemeralWithFailover } from './subscription-failover/claude-ephemeral'
+import {
+  getModelFallbackConfig,
+  removeProviderFromModelFallback,
+  setModelFallbackConfig,
+} from './model-fallback/config'
+import type { ModelFailureReason } from './model-fallback/error-classifier'
+import { holdStrictModelSelection, runHelperWithModelFallback } from './model-fallback/run-with-fallback'
+import { runOneShotTextOn } from './one-shot-text'
+import {
+  admitRootCandidate,
+  beginRootModelFallback,
+  continuationAfterFailure,
+  fallbackAxes,
+  fallbackSelectionOverride,
+  MODEL_FALLBACK_CONTINUE_PROMPT,
+  nextAfterAdmissionFailure,
+  settleRootModelFallback,
+  shouldRetryInPlaceFor,
+  startedOffPrimaryEvent,
+  transitionEvent as modelFallbackTransitionEvent,
+  type FallbackContinuation,
+  type RootModelFallbackState,
+} from './model-fallback/turn-fallback'
+import {
+  forgetLearnedContextWindow,
+  learnContextLimitFromError,
+  learnContextLimitFromFailureText,
+  resolveProviderContextWindow,
+} from './context-window-discovery'
 import { recordModelCallUsage } from './usage-diagnostics'
 import { apiKeyStorageMode, clearApiKey, hasApiKey, setApiKey } from './credentials'
 import { currentApiKeyCheck, fetchModels, fetchModelWindow, invalidateModels } from './models'
@@ -469,6 +498,7 @@ import type {
   McpServerInfo,
   MessagePart,
   SubagentSessionSummary,
+  ChatSubscriptionFailoverEvent,
 } from '../../shared/chat'
 import type { ConversationStatus } from '../store'
 import {
@@ -1559,7 +1589,7 @@ export function claudeRuntimeAxes(
   frozenReproducible: boolean
 } {
   const supportedEfforts = model.supportedEffortLevels ?? []
-  const requestedEffort = reasoningOverride ?? getConvUiPrefs(conversationId).chat?.reasoning
+  const requestedEffort = reasoningOverride ?? turnChatReasoning(conversationId)
   const maestrlyUltra = isMaestrlyUltraEffort(requestedEffort, supportedEfforts)
   const reasoningEffort =
     requestedEffort && requestedEffort !== 'off' && model.supportsEffort
@@ -1572,7 +1602,7 @@ export function claudeRuntimeAxes(
           ? requestedEffort
           : undefined
       : undefined
-  const liveFast = model.supportsFastMode === true && getConvUiPrefs(conversationId).chat?.fastMode === true
+  const liveFast = model.supportsFastMode === true && turnChatFastMode(conversationId)
   const fastMode =
     model.supportsFastMode === true && (typeof fastModeOverride === 'boolean' ? fastModeOverride : liveFast)
   let frozenReproducible = true
@@ -2350,6 +2380,7 @@ function buildConfig(): ChatConfig {
       routes: [],
     },
     subscriptionAccountPools: accountPoolInfos(providers, accountPoolName, routerAccountPoolHealth()),
+    modelFallback: getModelFallbackConfig(),
   }
   scheduleCodexConfigRefresh(codexStatus)
   scheduleGitHubCopilotConfigRefresh(githubCopilotStatus)
@@ -3392,7 +3423,9 @@ export async function effectiveModelMeta(
   // The same precedence powers the main selector and profiles: exact provider → canonical model ID.
   const baseMeta = await getProviderModelMeta(modelId, catalogProviderId)
   const catalogWindow = baseMeta?.contextWindow
-  const providerWindow = await fetchModelWindow(providerId, modelId).catch(() => undefined)
+  const providerWindow = await resolveProviderContextWindow(providerId, modelId, () =>
+    fetchModelWindow(providerId, modelId)
+  )
   const limit = getContextLimit(providerId, modelId)
   const effective = resolveContextWindow({ limit, providerWindow, catalogWindow })
   const outMeta = baseMeta
@@ -4095,9 +4128,133 @@ interface StartSendOpts {
   stopHookContinuations?: number
   /** The Plan-mode guard already continued this user turn (this turn is its continuation, or follows it). */
   planGuardContinued?: boolean
+  /** Model fallback chain frozen when the person's turn started; a continuation runs on its current candidate. */
+  modelFallback?: RootModelFallbackState
 }
 
+/** Announces a model switch to the conversation's window (the same channel as an account switch). */
+function emitModelFallbackEvent(wc: WebContents, conversationId: string, event: ChatSubscriptionFailoverEvent): void {
+  chatDiag({ type: 'subscription-failover', conversationId, ...event })
+  sendChatEvent(wc, `chat:subscription-failover:${conversationId}`, event)
+}
+
+/** Frozen, isolated and bot executions keep their selection: their contract is fail-closed. */
+function modelFallbackIsStrict(opts: StartSendOpts | undefined): boolean {
+  return Boolean(opts?.internalLoop || opts?.botAdmission)
+}
+
+/** Fallback candidate axes of the turn being admitted or running, keyed by conversation (one turn at a time). */
+const activeModelFallback = new Map<string, RootModelFallbackState>()
+
+function clearActiveModelFallback(conversationId: string, state: RootModelFallbackState | undefined): void {
+  if (state && activeModelFallback.get(conversationId) === state) activeModelFallback.delete(conversationId)
+}
+
+/** Effort of the turn: a fallback candidate's own, otherwise the conversation's. */
+function turnChatReasoning(conversationId: string): string | undefined {
+  const axes = fallbackAxes(activeModelFallback.get(conversationId))
+  return axes ? axes.reasoning : getConvUiPrefs(conversationId).chat?.reasoning
+}
+
+/** Fast mode of the turn: a fallback candidate's own, otherwise the conversation's. */
+function turnChatFastMode(conversationId: string): boolean {
+  const axes = fallbackAxes(activeModelFallback.get(conversationId))
+  return axes ? axes.fastMode : getConvUiPrefs(conversationId).chat?.fastMode === true
+}
+
+/** Context window a fallback candidate would get, as preflight computes it. */
+async function modelFallbackWindowOf(candidate: { providerId: string; modelId: string }): Promise<number | undefined> {
+  const meta = await effectiveModelMeta(candidate.modelId, candidate.providerId).catch(() => null)
+  return meta?.meta?.contextWindow ?? undefined
+}
+
+const modelFallbackDeps = {
+  windowOf: modelFallbackWindowOf,
+  learnContextLimit: (candidate: { providerId: string; modelId: string }, limit: number) =>
+    void learnContextLimitFromError(candidate.providerId, candidate.modelId, limit),
+}
+
+const ADMISSION_SWITCH_REASON: Record<string, string> = {
+  'claude-accounts-exhausted': 'quota',
+  'codex-accounts-exhausted': 'quota',
+  'no-key': 'auth',
+  unavailable: 'server_error',
+}
+
+/**
+ * Admits a turn along the model fallback chain. The person's selection runs first (or a sticky winner); when it
+ * cannot be admitted for lack of a usable account, the next candidate is admitted instead. The conversation's own
+ * selection is never rewritten. Without a chain (disabled, pinned, frozen) this is exactly one admission.
+ */
 async function startSend(
+  deps: ChatIpcDeps,
+  wc: WebContents,
+  conversationId: string,
+  text: string,
+  attachments?: ChatAttachmentInput[],
+  opts?: StartSendOpts,
+  agentMentions?: readonly StructuredAgentMentionDraft[]
+): Promise<{ ok: boolean; error?: string }> {
+  let state =
+    opts?.modelFallback ??
+    (modelFallbackIsStrict(opts) || typeof conversationId !== 'string' || !conversationId
+      ? null
+      : await beginRootModelFallback({
+          conversationId,
+          primary: selectionFor(conversationId) ?? { providerId: '', modelId: '' },
+          deps: modelFallbackDeps,
+        }))
+  if (!state) return startSendAttempt(deps, wc, conversationId, text, attachments, opts, agentMentions)
+  if (!opts?.modelFallback) {
+    const startedOff = startedOffPrimaryEvent(state, modelFallbackDeps)
+    if (startedOff) emitModelFallbackEvent(wc, conversationId, startedOff)
+  }
+  let attemptOpts = opts
+  for (;;) {
+    admitRootCandidate(state, modelFallbackDeps)
+    activeModelFallback.set(conversationId, state)
+    let result: { ok: boolean; error?: string }
+    try {
+      result = await startSendAttempt(
+        deps,
+        wc,
+        conversationId,
+        text,
+        attachments,
+        { ...attemptOpts, modelFallback: state },
+        agentMentions
+      )
+    } catch (error) {
+      // A thrown admission must not leave this candidate's effort for the next turn to read.
+      clearActiveModelFallback(conversationId, state)
+      settleRootModelFallback(state, 'cancelled', modelFallbackDeps)
+      throw error
+    }
+    if (result.ok) return result
+    clearActiveModelFallback(conversationId, state)
+    const next = await nextAfterAdmissionFailure(state, result.error, modelFallbackDeps)
+    if (!next) return result
+    chatDiag({
+      kind: 'model-fallback-admission',
+      conv: conversationId,
+      from: `${state.current.providerId}/${state.current.modelId}`,
+      to: `${next.current.providerId}/${next.current.modelId}`,
+      error: result.error,
+    })
+    emitModelFallbackEvent(
+      wc,
+      conversationId,
+      modelFallbackTransitionEvent(state.current, next.current, {
+        reason: (ADMISSION_SWITCH_REASON[result.error ?? ''] ?? 'server_error') as ModelFailureReason,
+      })
+    )
+    state = next
+    // A slot reserved by the caller was released with the failed admission; the next one reserves its own.
+    if (attemptOpts?.operation) attemptOpts = { ...attemptOpts, operation: undefined }
+  }
+}
+
+async function startSendAttempt(
   deps: ChatIpcDeps,
   wc: WebContents,
   conversationId: string,
@@ -4164,11 +4321,13 @@ async function startSend(
   // Resolve provider/model. BYOK requires a key; the built-in provider requires a valid ChatGPT session in the
   // official runtime. If no model is chosen, both auto-select the default/first and persist it in the conversation.
   // Internal isolated turn: FROZEN selection, without auto-selection or persistence (no fallback).
+  // A model fallback candidate runs this attempt without becoming the conversation's selection.
+  const fallbackOverride = fallbackSelectionOverride(opts?.modelFallback)
   let selection = internalLoop
     ? { providerId: internalLoop.selectionOverride.providerId, modelId: internalLoop.selectionOverride.modelId }
     : opts?.botAdmission
       ? { providerId: opts.botAdmission.providerId, modelId: opts.botAdmission.modelId }
-      : selectionFor(conversationId)
+      : (fallbackOverride ?? selectionFor(conversationId))
   if (!selection?.providerId) return { ok: false, error: 'no-provider' }
   if (internalLoop && !selection.modelId) return { ok: false, error: 'no-model' }
   // The active-account selection runs on the account its pool points to now; the conversation keeps the virtual id.
@@ -4185,7 +4344,13 @@ async function startSend(
   // From here, the label must reflect the provider that will actually start for account boundaries.
   operation.providerId = selection.providerId
   // An inherited model follows the last one picked anywhere; once a turn runs on it, the conversation keeps it.
-  if (!internalLoop && !opts?.botAdmission && selection.modelId && !getConvUiPrefs(conversationId).chat?.modelId) {
+  if (
+    !internalLoop &&
+    !opts?.botAdmission &&
+    !fallbackOverride &&
+    selection.modelId &&
+    !getConvUiPrefs(conversationId).chat?.modelId
+  ) {
     patchConvChat(conversationId, { providerId: storedProviderId, modelId: selection.modelId })
   }
   if (!opts?.internal && !internalLoop) {
@@ -4210,11 +4375,10 @@ async function startSend(
   const claudeFailoverChain = isClaudeSubscriptionProvider(selection.providerId)
     ? (loopFailoverChain ?? freezeFailoverChain(storedProviderId))
     : []
-  const claudeRequestedEffort =
-    internalLoop?.selectionOverride.reasoning ?? getConvUiPrefs(conversationId).chat?.reasoning
+  const claudeRequestedEffort = internalLoop?.selectionOverride.reasoning ?? turnChatReasoning(conversationId)
   const claudeRequestedFast = internalLoop
     ? internalLoop.selectionOverride.fastMode === true
-    : getConvUiPrefs(conversationId).chat?.fastMode === true
+    : turnChatFastMode(conversationId)
   let claudeRuntimeTarget: ClaudeRuntimeTarget | undefined
   let claudeRuntimeLeaseTransferred = false
   const settleClaudeRuntimeLeaseIfUnowned = (): void => {
@@ -4239,6 +4403,8 @@ async function startSend(
   let grokIdentityAtAdmission: GrokAccountIdentity | undefined
   let releaseCwdActivity: (() => void) | null = null
   let admittedRun: ActiveRun | null = null
+  // A frozen or isolated turn keeps its children on their model too (released when the turn or its admission ends).
+  let releaseStrictSelection: (() => void) | null = null
   let codexRuntimeTarget: CodexRuntimeTarget | null = null
   let codexRuntimeLeaseTransferred = false
   let codexFailoverChain: string[] | null = null
@@ -4586,11 +4752,9 @@ async function startSend(
     // account selected from this chain; it must not observe a concurrent model/effort preference change.
     const codexFastMode =
       useCodexSubscription &&
-      (internalLoop
-        ? internalLoop.selectionOverride.fastMode === true
-        : getConvUiPrefs(conversationId).chat?.fastMode === true)
+      (internalLoop ? internalLoop.selectionOverride.fastMode === true : turnChatFastMode(conversationId))
     const codexRequestedEffort = useCodexSubscription
-      ? (internalLoop?.selectionOverride.reasoning ?? getConvUiPrefs(conversationId).chat?.reasoning)
+      ? (internalLoop?.selectionOverride.reasoning ?? turnChatReasoning(conversationId))
       : undefined
     const frozenCodexChain = useCodexSubscription
       ? (loopFailoverChain ?? freezeFailoverChain(storedProviderId))
@@ -5254,7 +5418,12 @@ async function startSend(
     // (keeps ui_prefs clean; no runner reasoning has the same effect). User picker overrides always win.
     const dr = defaultReasoningEffort()
     // Internal isolated turn: selection (including reasoning) is FROZEN — never pin/persist it here.
-    if (!internalLoop && dr !== 'off' && getConvUiPrefs(conversationId).chat?.reasoning === undefined) {
+    if (
+      !internalLoop &&
+      !fallbackOverride &&
+      dr !== 'off' &&
+      getConvUiPrefs(conversationId).chat?.reasoning === undefined
+    ) {
       patchConvChat(conversationId, { reasoning: dr })
     }
 
@@ -5267,14 +5436,53 @@ async function startSend(
     // only lets a cut finish reach here after exhausting transparent retries.
     let wasInterrupted = false
     let maestroTerminalStatus: 'completed' | 'error' | 'aborted' | 'interrupted' = 'error'
+    if (modelFallbackIsStrict(opts)) releaseStrictSelection = holdStrictModelSelection(conversationId)
+    // Model fallback: the raw failure that ended this attempt, else the error the runner showed for it.
+    const modelFallbackTurn = opts?.modelFallback
+    const fallbackTurnAxes = fallbackAxes(modelFallbackTurn)
+    let modelFallbackFailure: unknown
+    let modelFallbackErrorEvent: { message: string; code?: string } | undefined
+    let modelFallbackContinuation: FallbackContinuation | null = null
+    const modelFallbackFailureHook = modelFallbackTurn
+      ? { onTerminalFailure: (error: unknown) => void (modelFallbackFailure = error) }
+      : {}
+    const modelFallbackRunnerHooks = modelFallbackTurn
+      ? {
+          ...modelFallbackFailureHook,
+          shouldRetryInPlace: (error: unknown) => shouldRetryInPlaceFor(modelFallbackTurn, error, modelFallbackDeps),
+        }
+      : {}
     const emit = (ev: ChatStreamEvent) => {
       if (ev.kind === 'message-start') {
         run.messageId = ev.messageId
         run.maestroLive?.bindAssistantMessage(ev.messageId)
       }
-      if (ev.kind === 'error') hadError = true
+      if (ev.kind === 'error') {
+        hadError = true
+        modelFallbackErrorEvent = { message: ev.message, ...(ev.code ? { code: ev.code } : {}) }
+        // A limit the provider names in an overflow error tunes the next preflight of this BYOK model.
+        if (!isSubscriptionProvider(selection!.providerId)) {
+          learnContextLimitFromFailureText(selection!.providerId, selection!.modelId, ev.message)
+        }
+      }
       if (ev.kind === 'finish' && CUT_FINISH_REASONS.has(ev.finishReason)) wasInterrupted = true
       send(`chat:delta:${conversationId}`, ev)
+    }
+    /**
+     * Where the same turn continues after it failed, or null. Decided once the turn settled, so a Maestro turn
+     * first lets its delegations finish: the continuation must see their results, not race them.
+     */
+    const decideModelFallback = async (failure: unknown, planSubmitted: boolean) => {
+      if (!modelFallbackTurn) return null
+      if (turnBehavior === 'maestro' && run.messageId && !controller.signal.aborted) {
+        await waitForTurnDelegationsTerminal(conversationId, run.messageId, controller.signal).catch(() => undefined)
+      }
+      return continuationAfterFailure(
+        modelFallbackTurn,
+        failure,
+        { aborted: controller.signal.aborted, planSubmitted, failedWindow: turnContextWindow },
+        modelFallbackDeps
+      ).catch(() => null)
     }
     const applyCodexTurnControl = (control: CodexActiveTurnControlPort | null): void => {
       if (active.get(conversationId) !== run) return
@@ -5485,6 +5693,7 @@ async function startSend(
         run.codexThreadProviderId = logicalProviderId
         run.codexThreadAccountId = selectionAccountId
         return runCodexSubscriptionChat({
+          ...modelFallbackFailureHook,
           conversationId,
           projectId: executionContext.workspaceId,
           permissionScope: executionContext.permissionScope,
@@ -5593,6 +5802,7 @@ async function startSend(
       const maestrlyUltra = resolved.maestrlyUltra
       try {
         turnPromise = runCodexSubscriptionChat({
+          ...modelFallbackFailureHook,
           conversationId,
           projectId: executionContext.workspaceId,
           permissionScope: executionContext.permissionScope,
@@ -5865,6 +6075,7 @@ async function startSend(
           run.allowClaudePersistence && hasCurrentSessionIdentity(target)
         const initialTarget = claudeRuntimeTarget
         const promise = runClaudeChat({
+          ...modelFallbackFailureHook,
           ...(claudeRuntimeTarget ? { initialTarget: claudeRuntimeTarget } : {}),
           failoverChain: claudeFailoverChain,
           ...(!isolated || loopRouted
@@ -5986,9 +6197,7 @@ async function startSend(
       turnPromise = (async () => {
         const manager = getCursorSubscriptionManager(selectionAccountId)
         manager.assertAccountIdentity(admittedIdentity)
-        const fastMode = isolated
-          ? frozenProfile?.fastMode === true
-          : getConvUiPrefs(conversationId).chat?.fastMode === true
+        const fastMode = isolated ? frozenProfile?.fastMode === true : turnChatFastMode(conversationId)
         const cursorModel = (await manager.listModels(isolated)).find((model) => model.id === selectedCursorModelId)
         if (!cursorModel) throw new Error('no-model')
         const resolved = resolveNativeReasoningEffort({
@@ -6148,7 +6357,10 @@ async function startSend(
               frozenReasoningEffort: frozenProfile?.reasoningEffort,
               ...(typeof frozenProfile?.fastMode === 'boolean' ? { fastModeOverride: frozenProfile.fastMode } : {}),
             }
-          : {}),
+          : fallbackTurnAxes
+            ? { reasoningOverride: fallbackTurnAxes.reasoning ?? 'off', fastModeOverride: fallbackTurnAxes.fastMode }
+            : {}),
+        ...modelFallbackRunnerHooks,
         ...(maestroTurn ? { maestro: maestroTurn, maestroLive: run.maestroLive } : {}),
         ...(isolated && reviewLoopMessageMeta
           ? {
@@ -6161,6 +6373,14 @@ async function startSend(
 
     turnPromise
       .then(async ({ planSubmitted }) => {
+        // A failure another model can fix continues the same turn there; the failed bubble keeps its output.
+        if (modelFallbackTurn && hadError && !controller.signal.aborted) {
+          modelFallbackContinuation = await decideModelFallback(
+            modelFallbackFailure ?? modelFallbackErrorEvent,
+            planSubmitted
+          )
+          if (modelFallbackContinuation) return
+        }
         // Codex/Claude reopen within their own native session. Other transports use this host-owned
         // fallback: wait without a cap for workers and start a new internal reconciliation turn before
         // releasing automation/status. A session is observed if the parent already consumed a terminal wait/inspect.
@@ -6294,14 +6514,19 @@ async function startSend(
           })
         }
       })
-      .catch((e) => {
+      .catch(async (e) => {
+        modelFallbackContinuation =
+          modelFallbackTurn && !controller.signal.aborted ? await decideModelFallback(e, false) : null
+        const continuing = modelFallbackContinuation != null
         maestroTerminalStatus = controller.signal.aborted ? 'aborted' : 'error'
-        if (!controller.signal.aborted) markAcceptedSteeringFailed()
-        if (run.messageId) cancelTurnDelegations(conversationId, run.messageId)
-        try {
-          opts?.onComplete?.({ planSubmitted: false, outcome: controller.signal.aborted ? 'cancelled' : 'error' })
-        } catch {
-          // The lifecycle callback must not mask the turn error.
+        if (!controller.signal.aborted && !continuing) markAcceptedSteeringFailed()
+        if (run.messageId && !continuing) cancelTurnDelegations(conversationId, run.messageId)
+        if (!continuing) {
+          try {
+            opts?.onComplete?.({ planSubmitted: false, outcome: controller.signal.aborted ? 'cancelled' : 'error' })
+          } catch {
+            // The lifecycle callback must not mask the turn error.
+          }
         }
         const message = useGitHubCopilot
           ? githubCopilotErrorMessage(e)
@@ -6336,6 +6561,9 @@ async function startSend(
           upsertChatMessage(applyChatEvent([persisted], ev)[0])
         }
         send(`chat:delta:${conversationId}`, ev)
+        // The failed bubble keeps its record; the same turn continues on the next model.
+        if (continuing) return
+        hadError = true
         updateConversationStatus(conversationId, 'error')
         deps.emitStatus(conversationId, 'error')
         run.settleOutcome({ status: 'error', error: message, assistantMessageId: run.messageId || null })
@@ -6368,31 +6596,68 @@ async function startSend(
           ...(opts?.remoteAdmission ? { remoteAdmission: true } : {}),
           ...(opts?.runnerSignal ? { runnerSignal: opts.runnerSignal } : {}),
         }
-        const guard = maestroGuardContinuation
-          ? { prompt: maestroGuardContinuation.prompt, failure: 'maestro-guard', opts: {} }
-          : planGuardContinuation
-            ? {
-                prompt: planGuardContinuation.prompt,
-                failure: 'plan-guard',
-                opts: {
-                  planGuardContinued: true,
-                  ...(opts?.stopHookContinuations ? { stopHookContinuations: opts.stopHookContinuations } : {}),
-                  ...keptAdmission,
-                },
-              }
-            : stopHookContinuation
+        releaseStrictSelection?.()
+        // Model fallback: a continuation carries the frozen chain on; otherwise this attempt settles its circuits.
+        const fallbackNext = modelFallbackContinuation
+        clearActiveModelFallback(conversationId, modelFallbackTurn)
+        if (modelFallbackTurn && !fallbackNext) {
+          settleRootModelFallback(
+            modelFallbackTurn,
+            controller.signal.aborted ? 'cancelled' : hadError || wasInterrupted ? 'error' : 'success',
+            modelFallbackDeps
+          )
+        }
+        if (fallbackNext) {
+          chatDiag({
+            kind: 'model-fallback-continue',
+            conv: conversationId,
+            reason: fallbackNext.classification.reason,
+            from: `${fallbackNext.event.fromProviderId}/${fallbackNext.event.fromModelId}`,
+            to: `${fallbackNext.event.toProviderId}/${fallbackNext.event.toModelId}`,
+            switches: fallbackNext.state.switches,
+          })
+          emitModelFallbackEvent(wc, conversationId, fallbackNext.event)
+        }
+        const guard = fallbackNext
+          ? {
+              prompt: MODEL_FALLBACK_CONTINUE_PROMPT,
+              failure: 'model-fallback',
+              opts: {
+                modelFallback: fallbackNext.state,
+                skipMemory: true,
+                ...(opts?.planGuardContinued ? { planGuardContinued: true } : {}),
+                ...(opts?.stopHookContinuations ? { stopHookContinuations: opts.stopHookContinuations } : {}),
+                ...keptAdmission,
+              },
+            }
+          : maestroGuardContinuation
+            ? { prompt: maestroGuardContinuation.prompt, failure: 'maestro-guard', opts: {} }
+            : planGuardContinuation
               ? {
-                  prompt: stopHookContinuation.prompt,
-                  failure: 'stop-hook',
+                  prompt: planGuardContinuation.prompt,
+                  failure: 'plan-guard',
                   opts: {
-                    stopHookContinuations: stopHookContinuation.count,
-                    ...(opts?.planGuardContinued ? { planGuardContinued: true } : {}),
+                    planGuardContinued: true,
+                    ...(opts?.stopHookContinuations ? { stopHookContinuations: opts.stopHookContinuations } : {}),
                     ...keptAdmission,
                   },
                 }
-              : null
+              : stopHookContinuation
+                ? {
+                    prompt: stopHookContinuation.prompt,
+                    failure: 'stop-hook',
+                    opts: {
+                      stopHookContinuations: stopHookContinuation.count,
+                      ...(opts?.planGuardContinued ? { planGuardContinued: true } : {}),
+                      ...keptAdmission,
+                    },
+                  }
+                : null
+        // Every host continuation of this turn stays on the model chain (and the model) it ran on.
+        const keptModelFallback = modelFallbackTurn ? { modelFallback: modelFallbackTurn } : {}
         if (guard) {
           const continuation = await startSend(deps, wc, conversationId, guard.prompt, undefined, {
+            ...keptModelFallback,
             ...guard.opts,
             internal: true,
             onComplete: (result) => {
@@ -6434,6 +6699,7 @@ async function startSend(
 
     return { ok: true }
   } catch (error) {
+    releaseStrictSelection?.()
     if (admittedRun && active.get(conversationId) === admittedRun) active.delete(conversationId)
     if (admittedRun) clearHumanTurnOrigin(conversationId, admittedRun)
     if (admittedRun) clearLinkedTurnOrigin(conversationId, admittedRun)
@@ -7307,6 +7573,7 @@ export async function removeSubscriptionAccountSlot(accountId: string): Promise<
     // Remove references only after physical teardown finishes; on failure, the slot and its pool
     // membership remain consistent for retry.
     removeAccountFromAccountPools(providerId)
+    removeProviderFromModelFallback(providerId)
     removeSubscriptionAccount(accountId)
     // Clear the global default if it points to the removed provider (same policy as BYOK provider-remove).
     if (getAppSetting(CHAT_DEFAULT_PROVIDER_KEY) === providerId) {
@@ -7768,6 +8035,43 @@ async function compactReservedWithProgress(conversationId: string, opts: Compact
   return result
 }
 
+type PortableSummarize = Parameters<typeof summarizePortableTranscript>[2]
+
+/** Wraps a compaction summarizer with the model fallback list; fallbacks summarize through the one-shot runtimes. */
+function withSummaryModelFallback(
+  summarize: PortableSummarize,
+  context: { selection: ChatModelRef; conversationId: string; cwd: string; system: string }
+): PortableSummarize {
+  const primary = { providerId: context.selection.providerId, modelId: context.selection.modelId }
+  return (prompt, phase, stageSignal) =>
+    runHelperWithModelFallback({
+      selection: primary,
+      agent: 'portable-compaction',
+      conversationId: context.conversationId,
+      signal: stageSignal,
+      // An overflow is the compaction ladder's: it shrinks the chunks and keeps the chosen model.
+      canFallback: (error, classification) =>
+        classification.reason !== 'context_overflow' && !isContextOverflowError(error),
+      run: async (chosen) => {
+        if (chosen === primary) return summarize(prompt, phase, stageSignal)
+        const result = await runOneShotTextOn({
+          selection: chosen,
+          system: context.system,
+          prompt,
+          signal: stageSignal ?? new AbortController().signal,
+          conversationId: context.conversationId,
+          cwd: context.cwd,
+          agent: 'portable-compaction',
+        })
+        const { input, output, cacheRead, cacheCreate } = result.usage
+        return {
+          text: result.text,
+          usage: { input, output, cacheRead, cacheCreate, totalInput: input + cacheRead + cacheCreate },
+        }
+      },
+    })
+}
+
 async function compactReservedWork(conversationId: string, opts: CompactOpts): Promise<CompactResult> {
   const conv = getConversation(conversationId)
   if (!conv) return { ok: false, error: 'invalid-conversation' }
@@ -8218,6 +8522,16 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
         return { text: result.text ?? '', usage: normalizeAiUsage(result.totalUsage) }
       }
     }
+
+    // Extension point: a summary call that fails for capacity or auth moves to the model fallback list. A frozen
+    // profile keeps its summarizer (fail-closed); every attempt below still reports through onSummaryAttempt.
+    if (!frozen)
+      summarize = withSummaryModelFallback(summarize, {
+        selection,
+        conversationId,
+        cwd: conv.cwd,
+        system: compactSystem,
+      })
 
     if (opts.onSummaryAttempt) {
       const rawSummarize = summarize
@@ -9373,7 +9687,7 @@ export function turnReasoning(
   conversationId: string,
   frozenProfile: FrozenChatSelection | undefined
 ): string | undefined {
-  return frozenProfile ? (frozenProfile.reasoning ?? 'off') : getConvUiPrefs(conversationId).chat?.reasoning
+  return frozenProfile ? (frozenProfile.reasoning ?? 'off') : turnChatReasoning(conversationId)
 }
 
 /**
@@ -11276,6 +11590,8 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
     // Every other provider compacts through Maestrly; the web companion keeps its context inside ChatGPT.
     if (isChatGptWebProvider(providerId)) return { ok: false, error: 'unsupported' }
     setContextLimit(providerId, modelId, typeof value === 'number' ? value : null)
+    // The person's limit prevails over one an overflow error taught: it no longer caps this model.
+    forgetLearnedContextWindow(providerId, modelId)
     return { ok: true }
   })
   // macOS: ensure microphone permission (TCC) BEFORE recording — otherwise getUserMedia returns SILENCE.
@@ -11454,6 +11770,8 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
     if (isManagedProvider(id)) return { ok: false }
     if (typeof id === 'string') {
       removeProvider(id)
+      removeProviderFromModelFallback(id)
+      forgetLearnedContextWindow(id)
       clearApiKey(id)
       invalidateProvider(id)
       invalidateModels(id)
@@ -11846,6 +12164,25 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
     if (typeof accountId !== 'string' || !accountId) return { ok: false, error: 'invalid-input' }
     return removeSubscriptionAccountSlot(accountId)
   })
+  deps.mhandle('chat:model-fallback:set', (_e, input: unknown) => {
+    try {
+      return { ok: true, config: setModelFallbackConfig(input) }
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  })
+  deps.mhandle(
+    'chat:get-model-fallback-pinned',
+    (_e, conversationId: string) =>
+      typeof conversationId === 'string' && getConvUiPrefs(conversationId).chat?.modelFallbackPinned === true
+  )
+  deps.mhandle('chat:set-model-fallback-pinned', (_e, conversationId: string, pinned: boolean) => {
+    if (typeof conversationId === 'string' && conversationId && typeof pinned === 'boolean') {
+      patchConvChat(conversationId, { modelFallbackPinned: pinned || undefined })
+    }
+    return { ok: true }
+  })
+
   deps.mhandle('chat:subscription-account-pool:set', (_e, patch: ChatSubscriptionAccountPoolPatch) => {
     try {
       const pool = setAccountPool(patch)

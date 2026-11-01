@@ -676,7 +676,8 @@ tab remains available for application interaction and browser sign-ins.
   server and an environment image that support `account-pools`; otherwise the
   section says to update the server or to restart the environment. Routes saved
   by older images become the provider's rotation when the environment updates;
-  bots keep the account they chose.
+  bots keep the account they chose. The [model fallback](model-failover.md) list
+  of a desktop is not synced to bots, and a bot command keeps its model.
 - **Models:** search the complete catalog, including hidden models, and save or
   discard visibility filters per account. Models already chosen by bots remain
   usable, including an inherited compacting model.

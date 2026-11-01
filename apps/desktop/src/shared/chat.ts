@@ -1519,6 +1519,28 @@ export interface ChatSubscriptionFailoverEvent {
   toProviderId: string
   reason: string
   resetsAt?: number | null
+  /** `model`: the work moved to another provider/model of the fallback list; absent: another account. */
+  kind?: 'account' | 'model'
+  fromModelId?: string
+  toModelId?: string
+  /** Classified failure reason (model-fallback/error-classifier) for a model switch. */
+  reasonKind?: string
+}
+
+/** One entry of the ordered model fallback list. */
+export interface ChatModelFallbackCandidate {
+  providerId: string
+  modelId: string
+  /** Effort for this model; absent uses the model's default (never the primary's effort). */
+  reasoning?: string
+  fastMode?: boolean
+}
+
+/** Global ordered fallback list used when a model fails with quota, rate limit, billing, auth or overflow. */
+export interface ChatModelFallbackConfigV1 {
+  version: 1
+  enabled: boolean
+  fallbacks: ChatModelFallbackCandidate[]
 }
 
 export const SUBSCRIPTION_ACCOUNT_ID_SEPARATOR = '@'
@@ -1976,6 +1998,8 @@ export interface ChatConfig {
   }
   /** One entry per provider with two or more accounts; absent on older hosts. */
   subscriptionAccountPools?: ChatSubscriptionAccountPoolInfo[]
+  /** Fallback between providers and models (absent from hosts that do not offer it). */
+  modelFallback?: ChatModelFallbackConfigV1
 }
 
 export interface ChatHistoryPage {

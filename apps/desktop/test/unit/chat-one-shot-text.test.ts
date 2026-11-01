@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const h = vi.hoisted(() => ({
+  fallbackConfig: { version: 1, enabled: false, fallbacks: [] } as unknown,
   generateText: vi.fn(),
   runCodexEphemeralWithFailover: vi.fn(),
   recordModelCallUsage: vi.fn(),
@@ -14,11 +15,13 @@ vi.mock('ai', () => ({ generateText: h.generateText }))
 vi.mock('../../src/main/store', () => ({ getConversation: () => ({ scope: 'project' }) }))
 vi.mock('../../src/main/chat/catalog', () => ({
   getProvider: (id: string) =>
-    id === 'api'
-      ? { baseURL: 'https://example.test' }
+    id === 'api' || id === 'api2'
+      ? { id, baseURL: 'https://example.test' }
       : id === 'anthropic-api'
-        ? { baseURL: 'https://api.anthropic.com/v1', kind: 'anthropic' }
+        ? { id, baseURL: 'https://api.anthropic.com/v1', kind: 'anthropic' }
         : undefined,
+  isChatGptWebProvider: () => false,
+  isSubscriptionProvider: () => false,
   getProviderKind: (provider?: { kind?: string }) => provider?.kind ?? 'openai',
   subscriptionAccountId: () => null,
   isCodexSubscriptionProvider: (id: string) => id === 'codex-subscription',
@@ -34,6 +37,8 @@ vi.mock('../../src/main/chat/model-meta', () => ({
   getProviderModelMeta: async () => null,
   catalogProviderForBaseURL: () => null,
 }))
+vi.mock('../../src/main/chat/model-fallback/config', () => ({ getModelFallbackConfig: () => h.fallbackConfig }))
+vi.mock('../../src/main/chat/subscription-failover/ephemeral', () => ({ emitSubscriptionFailoverEvent: vi.fn() }))
 vi.mock('../../src/main/chat/usage-diagnostics', () => ({ recordModelCallUsage: h.recordModelCallUsage }))
 vi.mock('../../src/main/chat/subscription-failover', () => ({
   runCodexEphemeralWithFailover: h.runCodexEphemeralWithFailover,
@@ -57,6 +62,8 @@ vi.mock('../../src/main/chat/antigravity-subscription/isolated-prompt', () => ({
 }))
 
 import { runOneShotText } from '../../src/main/chat/one-shot-text'
+import { resetStickyWinnersForTests } from '../../src/main/chat/model-fallback/sticky'
+import { getSubscriptionFailoverRouter } from '../../src/main/chat/subscription-failover/router'
 
 const args = {
   system: 'Extract facts.',
@@ -68,6 +75,9 @@ const args = {
 }
 beforeEach(() => {
   vi.clearAllMocks()
+  h.fallbackConfig = { version: 1, enabled: false, fallbacks: [] }
+  getSubscriptionFailoverRouter().reset()
+  resetStickyWinnersForTests()
   h.runCodexEphemeralWithFailover.mockResolvedValue({
     text: 'codex',
     usage: { input: 6, output: 2, cacheRead: 4, cacheCreate: 1, totalInput: 11 },
@@ -129,6 +139,32 @@ describe('runOneShotText', () => {
     )
     expect(result).toEqual({ text: 'gemini', usage: { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 } })
     expect(h.generateText).not.toHaveBeenCalled()
+  })
+  it('moves to the model fallback list when the selected model is out of quota', async () => {
+    h.fallbackConfig = {
+      version: 1,
+      enabled: true,
+      fallbacks: [{ providerId: 'api2', modelId: 'backup', reasoning: 'low' }],
+    }
+    h.generateText
+      .mockRejectedValueOnce(Object.assign(new Error('You exceeded your current quota'), { statusCode: 429 }))
+      .mockResolvedValueOnce({ text: 'from backup', totalUsage: { inputTokens: 3, outputTokens: 1 } })
+    const result = await runOneShotText({ ...args, selection: { providerId: 'api', modelId: 'test' } })
+    expect(result.text).toBe('from backup')
+    expect(h.generateText).toHaveBeenCalledTimes(2)
+    expect(h.recordModelCallUsage).toHaveBeenCalledWith(
+      expect.objectContaining({ providerId: 'api2', modelId: 'backup', agent: args.agent })
+    )
+  })
+  it('keeps a strict selection on its model', async () => {
+    h.fallbackConfig = { version: 1, enabled: true, fallbacks: [{ providerId: 'api2', modelId: 'backup' }] }
+    h.generateText.mockRejectedValueOnce(
+      Object.assign(new Error('You exceeded your current quota'), { statusCode: 429 })
+    )
+    await expect(
+      runOneShotText({ ...args, strictSelection: true, selection: { providerId: 'api', modelId: 'test' } })
+    ).rejects.toThrow('quota')
+    expect(h.generateText).toHaveBeenCalledTimes(1)
   })
   it('rejects unknown providers', async () => {
     await expect(runOneShotText({ ...args, selection: { providerId: 'unknown', modelId: 'test' } })).rejects.toThrow(

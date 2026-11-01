@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto'
+import { computeCooldownUntil, FAILURE_COUNT_WINDOW_MS } from '../model-fallback/cooldown-policy'
 import { failoverDiag } from './diag'
 import type {
   AvailabilityLease,
+  CircuitFailureKind,
   MarkExhaustedInfo,
   SubscriptionAccountExhaustion,
   SubscriptionAccountHealth,
@@ -61,12 +63,74 @@ export function onSubscriptionAccountExhausted(listener: (providerId: string) =>
   }
 }
 
+interface FailureStats {
+  counts: Partial<Record<CircuitFailureKind, number>>
+  lastFailureAt: number
+}
+
+export interface RecordFailureInfo {
+  kind: CircuitFailureKind
+  reason: string
+  /** Provider-announced instant requests are accepted again. */
+  retryAt?: number | null
+  now?: number
+}
+
+/** Circuit key of one model on a provider/account; `::` never occurs in provider or model ids. */
+export function modelCircuitKey(providerId: string, modelId: string): string {
+  return `${providerId}::${modelId}`
+}
+
 export class SubscriptionFailoverRouter {
   private readonly healthByProvider = new Map<string, SubscriptionAccountHealth>()
   private readonly probeWaiters = new Set<ProbeWaiter>()
+  private readonly failureStats = new Map<string, FailureStats>()
 
   getHealth(providerId: string): SubscriptionAccountHealth {
     return this.healthByProvider.get(providerId) ?? unknownHealth(providerId)
+  }
+
+  /** A half-open probe whose lease expired (never settled) no longer blocks the circuit. */
+  private expiredHalfOpen(health: SubscriptionAccountHealth, now: number): boolean {
+    return health.state === 'half-open' && health.halfOpenExpiresAt !== undefined && now >= health.halfOpenExpiresAt
+  }
+
+  /**
+   * Opens the circuit of `key` with the cooldown of `info.kind`, escalating with the same-kind failures seen inside
+   * the counting window. Returns null when the policy keeps the circuit closed (rate limit without provider timing).
+   */
+  recordFailure(key: string, info: RecordFailureInfo): SubscriptionAccountHealth | null {
+    const now = info.now ?? Date.now()
+    const previous = this.failureStats.get(key)
+    const stats: FailureStats =
+      previous && now - previous.lastFailureAt <= FAILURE_COUNT_WINDOW_MS
+        ? previous
+        : { counts: {}, lastFailureAt: now }
+    const count = (stats.counts[info.kind] ?? 0) + 1
+    stats.counts[info.kind] = count
+    stats.lastFailureAt = now
+    this.failureStats.set(key, stats)
+    const until = computeCooldownUntil(info.kind, count, now, info.retryAt)
+    failoverDiag('record-failure', { key, kind: info.kind, count, until })
+    if (until == null) return null
+    // An open circuit with a later probe instant is never shortened by a new, briefer failure.
+    const current = this.getHealth(key)
+    if (current.state === 'exhausted' && (current.exhaustion?.nextProbeAt ?? 0) > until) return current
+    return this.markExhausted(key, {
+      reason: info.reason,
+      source: 'model-fallback',
+      kind: info.kind,
+      ...(info.kind === 'quota' && info.retryAt != null ? { resetsAt: info.retryAt } : {}),
+      cooldownUntil: until,
+      now,
+    })
+  }
+
+  /** Same-kind failure count of `key` inside the counting window (diagnostics and tests). */
+  failureCount(key: string, kind: CircuitFailureKind, now = Date.now()): number {
+    const stats = this.failureStats.get(key)
+    if (!stats || now - stats.lastFailureAt > FAILURE_COUNT_WINDOW_MS) return 0
+    return stats.counts[kind] ?? 0
   }
 
   private store(health: SubscriptionAccountHealth): void {
@@ -140,7 +204,9 @@ export class SubscriptionFailoverRouter {
     const nextProbeAt =
       typeof resetsAt === 'number' && Number.isFinite(resetsAt) && resetsAt > now
         ? resetsAt
-        : now + DEFAULT_PROBE_TTL_MS
+        : typeof info.cooldownUntil === 'number' && Number.isFinite(info.cooldownUntil) && info.cooldownUntil > now
+          ? info.cooldownUntil
+          : now + DEFAULT_PROBE_TTL_MS
 
     const exhaustion: SubscriptionAccountExhaustion = {
       ...(resetsAt !== undefined ? { resetsAt } : {}),
@@ -148,6 +214,7 @@ export class SubscriptionFailoverRouter {
       reason: info.reason,
       source: info.source,
       generation,
+      ...(info.kind ? { kind: info.kind } : {}),
     }
 
     const health: SubscriptionAccountHealth = {
@@ -201,6 +268,7 @@ export class SubscriptionFailoverRouter {
 
     const health: SubscriptionAccountHealth = { providerId, state: 'available' }
     this.store(health)
+    this.failureStats.delete(providerId)
     failoverDiag('mark-available', {
       providerId,
       generation: opts?.generation ?? null,
@@ -215,7 +283,8 @@ export class SubscriptionFailoverRouter {
    */
   beginHalfOpenProbe(
     providerId: string,
-    now = Date.now()
+    now = Date.now(),
+    opts?: { leaseTtlMs?: number }
   ): { allowed: boolean; leaseId?: string; generation?: number } {
     const current = this.getHealth(providerId)
 
@@ -223,7 +292,7 @@ export class SubscriptionFailoverRouter {
       return { allowed: true }
     }
 
-    if (current.state === 'half-open') {
+    if (current.state === 'half-open' && !this.expiredHalfOpen(current, now)) {
       return { allowed: false }
     }
 
@@ -234,11 +303,13 @@ export class SubscriptionFailoverRouter {
 
     const generation = current.exhaustion!.generation
     const leaseId = randomUUID()
+    const leaseTtlMs = opts?.leaseTtlMs
     const health: SubscriptionAccountHealth = {
       providerId,
       state: 'half-open',
       exhaustion: current.exhaustion,
       halfOpenLeaseId: leaseId,
+      ...(typeof leaseTtlMs === 'number' && leaseTtlMs > 0 ? { halfOpenExpiresAt: now + leaseTtlMs } : {}),
     }
     this.store(health)
     failoverDiag('half-open-begin', { providerId, leaseId, generation, now })
@@ -301,22 +372,23 @@ export class SubscriptionFailoverRouter {
   isAdmissible(providerId: string, now = Date.now()): boolean {
     const current = this.getHealth(providerId)
     if (current.state === 'available' || current.state === 'unknown') return true
-    if (current.state === 'half-open') return false
+    if (current.state === 'half-open') return this.expiredHalfOpen(current, now)
     const nextProbeAt = current.exhaustion?.nextProbeAt ?? 0
     return now >= nextProbeAt
   }
 
   /**
    * Admit an attempt: available/unknown without lease; exhausted-due → half-open lease (singleflight).
+   * `leaseTtlMs` bounds a lease whose holder might never settle it (model circuits); account leases have none.
    */
-  tryAdmit(providerId: string, now = Date.now()): TryAdmitResult {
+  tryAdmit(providerId: string, now = Date.now(), opts?: { leaseTtlMs?: number }): TryAdmitResult {
     const current = this.getHealth(providerId)
 
     if (current.state === 'available' || current.state === 'unknown') {
       return { ok: true }
     }
 
-    if (current.state === 'half-open') {
+    if (current.state === 'half-open' && !this.expiredHalfOpen(current, now)) {
       return { ok: false, reason: 'half-open-probe-in-flight' }
     }
 
@@ -325,7 +397,7 @@ export class SubscriptionFailoverRouter {
       return { ok: false, reason: 'exhausted-backoff' }
     }
 
-    const probe = this.beginHalfOpenProbe(providerId, now)
+    const probe = this.beginHalfOpenProbe(providerId, now, opts)
     if (!probe.allowed || !probe.leaseId || probe.generation === undefined) {
       return { ok: false, reason: 'half-open-probe-denied' }
     }
@@ -426,6 +498,7 @@ export class SubscriptionFailoverRouter {
   /** Forget the circuit state for one physical provider after its identity has been drained. */
   resetProvider(providerId: string): void {
     this.healthByProvider.delete(providerId)
+    this.failureStats.delete(providerId)
     this.wakeProbeWaiters(providerId)
   }
 
@@ -452,6 +525,7 @@ export class SubscriptionFailoverRouter {
   /** Test helper — wipe all health state. */
   reset(): void {
     this.healthByProvider.clear()
+    this.failureStats.clear()
     for (const waiter of [...this.probeWaiters]) waiter.resolve(true)
   }
 }

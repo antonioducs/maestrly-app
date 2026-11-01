@@ -14,6 +14,7 @@ import {
   usePersonalMemorySettings,
   type PersonalMemoryState,
 } from './MemoryCards'
+import { ModelFallbackSettings } from './ModelFallbackSettings'
 import { ModelPicker } from './ModelPicker'
 import { HighlightedModelContext, modelSelectionKey, providerTone, type ModelSelection } from './model-selection'
 import { ChatSelectionBody } from './SelectionBodies'
@@ -247,6 +248,21 @@ export function ModelsAgentsSettings({
             onOpenAccounts={onOpenAccounts}
           />
         </Section>
+
+        {connected && (
+          <Section
+            id="models-settings-fallback"
+            title={t('modelSettings.sections.fallback')}
+            hint={t('modelSettings.sections.fallbackHint')}
+          >
+            <ModelFallbackSettings
+              config={config}
+              catalogRevision={modelFilterRevision}
+              locked={locked}
+              onChanged={onChanged}
+            />
+          </Section>
+        )}
 
         <Section
           id="models-settings-background"

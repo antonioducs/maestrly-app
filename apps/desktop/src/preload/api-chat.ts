@@ -51,6 +51,7 @@ import type {
   ChatSubscriptionFailoverEvent,
   ChatSubscriptionAccountPoolPatch,
   ChatSubscriptionAccountPool,
+  ChatModelFallbackConfigV1,
   ChatSubscriptionCodeResult,
   ChatSubscriptionLoginResult,
   ChatSubscriptionLogoutResult,
@@ -415,6 +416,14 @@ export function makeChatApi(ipcRenderer: IpcTransport) {
       patch: ChatSubscriptionAccountPoolPatch
     ): Promise<{ ok: boolean; pool?: ChatSubscriptionAccountPool; error?: string }> =>
       ipcRenderer.invoke('chat:subscription-account-pool:set', patch),
+    chatModelFallbackSet: (
+      config: ChatModelFallbackConfigV1
+    ): Promise<{ ok: boolean; config?: ChatModelFallbackConfigV1; error?: string }> =>
+      ipcRenderer.invoke('chat:model-fallback:set', config),
+    chatGetModelFallbackPinned: (conversationId: string): Promise<boolean> =>
+      ipcRenderer.invoke('chat:get-model-fallback-pinned', conversationId),
+    chatSetModelFallbackPinned: (conversationId: string, pinned: boolean): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('chat:set-model-fallback-pinned', conversationId, pinned),
     chatSubagentProfilesGetGlobal: (): Promise<SubagentProfileConfigPayload> =>
       ipcRenderer.invoke('chat:subagent-profiles:get-global'),
     chatSubagentProfilesSetGlobal: (rules: SubagentProfileRulesV1): Promise<SubagentProfileSaveResult> =>

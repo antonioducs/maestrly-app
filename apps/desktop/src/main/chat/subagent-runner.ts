@@ -338,6 +338,10 @@ export async function runSubagent(args: {
    * work) is replayed as chat history ahead of `task`, so the model continues its own prior work.
    */
   replayHistory?: ReadonlyArray<{ role: 'user' | 'assistant'; content: string }>
+  /** Raw provider failure that ended the run (before it became the result's error text). */
+  onTerminalFailure?: (error: unknown) => void
+  /** Gate for the transparent in-place retry of a transient failure; false makes it final (a fallback waits). */
+  shouldRetryInPlace?: (error: unknown) => boolean
 }): Promise<{ text: string; error?: string; usage?: NormalizedAiUsage; model?: ChatModelRef }> {
   const def = args.definition
   const usage: NormalizedAiUsage = { input: 0, output: 0, cacheRead: 0, cacheCreate: 0, totalInput: 0 }
@@ -644,6 +648,17 @@ export async function runSubagent(args: {
           }
           return false
         }
+        if (args.shouldRetryInPlace && !args.shouldRetryInPlace(error)) {
+          chatDiag({
+            kind: 'retry-yielded-to-fallback',
+            runtime: 'byok-ai-sdk',
+            provider: usedModel.providerId,
+            model: usedModel.modelId,
+            agent: args.agentName,
+            attempt,
+          })
+          return false
+        }
         if (
           shouldBlockHighUsageRetry({
             steps,
@@ -943,6 +958,7 @@ export async function runSubagent(args: {
     }
     // FINAL failure (nonretryable or exhausted retries) → typed: `task` throws and part becomes
     // 'error'. Return usage even on failure (attempts still consumed tokens).
+    args.onTerminalFailure?.(e)
     return {
       text: '',
       error: describeFailure(e),

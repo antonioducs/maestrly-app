@@ -31,6 +31,7 @@ import {
 import { resolveLanguageModel } from './provider'
 import { resolveAccountPoolProviderId } from './subscription-failover/account-pool'
 import { recordModelCallUsage, type DiagnosticUsage } from './usage-diagnostics'
+import { runHelperWithModelFallback } from './model-fallback/run-with-fallback'
 
 export type OneShotSelection = {
   providerId: string
@@ -50,7 +51,7 @@ function oneShotUsage(usage: DiagnosticUsage | undefined): OneShotUsage {
   }
 }
 
-export async function runOneShotText(args: {
+export interface OneShotTextArgs {
   selection: OneShotSelection
   system: string
   prompt: string
@@ -58,7 +59,24 @@ export async function runOneShotText(args: {
   conversationId: string
   cwd: string
   agent: string
-}): Promise<{ text: string; usage: OneShotUsage }> {
+  /** Frozen selection (e.g. a background job's profile): never move to the model fallback list. */
+  strictSelection?: boolean
+}
+
+/** One text completion on the selected model, then on the model fallback list when it fails for capacity or auth. */
+export function runOneShotText(args: OneShotTextArgs): Promise<{ text: string; usage: OneShotUsage }> {
+  return runHelperWithModelFallback({
+    selection: args.selection,
+    agent: args.agent,
+    conversationId: args.conversationId,
+    strict: args.strictSelection,
+    signal: args.signal,
+    run: (selection) => runOneShotTextOn({ ...args, selection }),
+  })
+}
+
+/** One text completion on exactly `args.selection` (no model fallback). */
+export async function runOneShotTextOn(args: OneShotTextArgs): Promise<{ text: string; usage: OneShotUsage }> {
   const { selection, system, prompt, signal, conversationId, cwd, agent } = args
   const { providerId, modelId, effort, fastMode } = selection
   // The stored selection can be an active-account one; only the physical account it stands for names a manager.

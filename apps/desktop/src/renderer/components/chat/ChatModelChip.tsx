@@ -10,7 +10,7 @@ import {
   type CSSProperties,
 } from 'react'
 import { useTranslation } from 'react-i18next'
-import { AlertCircle, ChevronDown, Check, Loader2, Search } from 'lucide-react'
+import { AlertCircle, ChevronDown, Check, Loader2, Pin, Search } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { fixedPanelPlacement } from '@/lib/fixed-panel-position'
 import { useHostApi, useHostId } from '@/lib/hosts/host-context'
@@ -126,6 +126,31 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
     if (conversationId) api.chatGetSelection(conversationId).then(setConversationSel)
   }
   useEffect(load, [api, conversationId, refreshToken])
+
+  // With a fallback list, the person can keep this conversation on its model instead.
+  const [pinned, setPinned] = useState(false)
+  const fallbackOffered =
+    conversationId !== undefined &&
+    !source?.bot &&
+    config?.modelFallback?.enabled === true &&
+    config.modelFallback.fallbacks.length > 0
+  useEffect(() => {
+    if (!conversationId || source?.bot) return
+    let alive = true
+    api
+      .chatGetModelFallbackPinned(conversationId)
+      .then((value) => alive && setPinned(value))
+      .catch(() => undefined)
+    return () => {
+      alive = false
+    }
+  }, [api, conversationId, refreshToken, source?.bot])
+  const togglePinned = () => {
+    if (!conversationId) return
+    const next = !pinned
+    setPinned(next)
+    void api.chatSetModelFallbackPinned(conversationId, next).catch(() => setPinned(!next))
+  }
 
   useEffect(
     () =>
@@ -452,6 +477,30 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
               </button>
             )}
           </div>
+          {fallbackOffered && (
+            <button
+              type="button"
+              role="switch"
+              aria-checked={pinned}
+              title={t('modelFallbackPin.hint')}
+              onClick={togglePinned}
+              className="flex w-full items-center gap-2 border-t border-white/[0.08] px-3 py-2 text-left text-[12px] text-muted-foreground hover:bg-white/[0.04] hover:text-foreground"
+            >
+              <Pin className={cn('h-3.5 w-3.5 shrink-0', pinned && 'fill-current text-foreground')} />
+              <span className="min-w-0 flex-1 truncate">{t('modelFallbackPin.label')}</span>
+              <span
+                aria-hidden
+                className={cn(
+                  'h-4 w-7 shrink-0 rounded-full p-0.5 transition-colors',
+                  pinned ? 'bg-emerald-500/70' : 'bg-white/10'
+                )}
+              >
+                <span
+                  className={cn('block h-3 w-3 rounded-full bg-white transition-transform', pinned && 'translate-x-3')}
+                />
+              </span>
+            </button>
+          )}
         </div>
       )}
     </div>

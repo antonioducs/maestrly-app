@@ -131,6 +131,22 @@ export default {
       memoryHint: 'O que os agentes lembram e salvam',
       subagents: 'Subagents',
       subagentsHint: 'A regra mais específica vence: agent › categoria › padrão',
+      fallback: 'Modelos de fallback',
+      fallbackHint: 'Usados quando um modelo falha, nesta ordem',
+    },
+    fallback: {
+      title: 'Continuar em outros modelos',
+      description:
+        'Quando um modelo atinge o limite, perde o login ou fica indisponível, o turno continua no próximo modelo desta lista. A conta ativa do Claude ou do Codex passa primeiro pelo rodízio de contas. O turno seguinte volta a começar no modelo da própria conversa.',
+      toggle: 'Usar modelos de fallback',
+      addFirst: 'Adicione um modelo primeiro.',
+      add: 'Adicionar modelo',
+      next: 'depois',
+      candidateLabel: 'Modelo de fallback {{position}}',
+      tryEarlier: 'Tentar antes',
+      tryLater: 'Tentar depois',
+      remove: 'Remover',
+      hint: 'Cada modelo usa o esforço escolhido aqui, nunca o da conversa. Uma conversa fixada, um loop de revisão e um comando de bot mantêm o modelo.',
     },
     defaultModel: {
       title: 'Modelo padrão',
@@ -601,6 +617,10 @@ export default {
   fastMode: {
     label: 'Fast',
     tooltip: 'Respostas 1,5× mais rápidas, com maior consumo.',
+  },
+  modelFallbackPin: {
+    label: 'Fixar este modelo (sem fallback)',
+    hint: 'Quando este modelo falhar, o turno para em vez de continuar em um modelo de fallback.',
   },
   modelChip: {
     buttonTitle: 'Trocar modelo ({{shortcut}})',
@@ -1733,6 +1753,20 @@ export default {
     accountPoolFixedHint:
       '{{active}} segue o rodízio. Escolhida diretamente, a conta é fixa: se esgotar, o turno para e avisa em vez de trocar.',
     accountPoolSaveFailed: 'Não foi possível alterar o rodízio.',
+    modelFallbackSwitchStatus: 'Continuando em {{to}}: {{from}} {{reason}}',
+    modelFallbackReason: {
+      quota: 'atingiu o limite de uso',
+      rate_limit: 'está com limite de requisições',
+      billing: 'está com problema de cobrança',
+      auth: 'precisa que você entre de novo',
+      context_overflow: 'ficou sem contexto',
+      payload_too_large: 'recebeu uma requisição grande demais',
+      overloaded: 'está sobrecarregado',
+      server_error: 'ficou indisponível',
+      timeout: 'não respondeu',
+      model_not_found: 'não está disponível',
+      unknown: 'falhou',
+    },
     apiKeyOptionalPlaceholder: 'Chave de API (opcional agora)',
     cancel: 'Cancelar',
     add: 'Adicionar',
