@@ -12,7 +12,7 @@ vi.mock('../../src/main/store', () => ({
 }))
 vi.mock('../../src/main/chat/catalog', () => ({ getProvider: (id: string) => h.providers.get(id) }))
 vi.mock('../../src/main/chat/model-meta', () => ({
-  catalogProviderForBaseURL: (baseURL: string) => (baseURL.includes('api.openai.com') ? 'openai' : null),
+  catalogProviderForBaseURL: (baseURL: string) => (URL.parse(baseURL)?.hostname === 'api.openai.com' ? 'openai' : null),
 }))
 
 import {
