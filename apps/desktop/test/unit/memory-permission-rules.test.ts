@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { AUTO_RULESET, BOT_MEMORY_WRITE_RULES, BYOK_DEFAULT_RULESET, ruleEffect } from '../../src/main/chat/permission'
+import {
+  AUTO_RULESET,
+  BOT_MEMORY_WRITE_RULES,
+  BOT_SKILL_READ_RULES,
+  BYOK_DEFAULT_RULESET,
+  YOLO_RULESET,
+  ruleEffect,
+} from '../../src/main/chat/permission'
 
 describe('memory permission rules', () => {
   it('never prompts for memory and history reads, but still asks for writes on the desktop', () => {
@@ -33,5 +40,15 @@ describe('memory permission rules', () => {
       expect(ruleEffect('mcp', tool, bot)).toBe('allow')
     expect(ruleEffect('mcp', 'memory_forget', bot)).toBe('ask')
     expect(ruleEffect('mcp', 'memory_forget', AUTO_RULESET)).toBe('allow')
+  })
+  it('lets a bot read skills without prompting, while changing its own skills follows its ceiling', () => {
+    const ask = [...BYOK_DEFAULT_RULESET, ...BOT_MEMORY_WRITE_RULES, ...BOT_SKILL_READ_RULES]
+    for (const tool of ['skill_list', 'skill_view']) expect(ruleEffect('mcp', tool, ask)).toBe('allow')
+    const writes = ['skill_create', 'skill_patch', 'skill_write_file', 'skill_archive', 'skill_proposal']
+    for (const tool of writes) {
+      expect(ruleEffect('mcp', tool, ask)).toBe('ask')
+      expect(ruleEffect('mcp', tool, [...AUTO_RULESET, ...BOT_SKILL_READ_RULES])).toBe('allow')
+      expect(ruleEffect('mcp', tool, [...YOLO_RULESET, ...BOT_SKILL_READ_RULES])).toBe('allow')
+    }
   })
 })

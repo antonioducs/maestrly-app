@@ -6,6 +6,7 @@ import { getCompactionSummarizer } from '../../chat/compaction-summarizer'
 import { getConversation } from '../../store'
 import { getExtractionState, saveExtractionState } from '../../store/memory-extraction-state'
 import { listLocalMemories } from '../local-memory-service'
+import type { LocalMemory } from '../../../shared/memory'
 import { memorySettingsForSpace } from '../settings'
 import { onPersonalMemorySettingsChanged } from '../personal-memory-settings'
 import { extractionAllowed, extractionCommitGuard } from './guards'
@@ -13,6 +14,7 @@ import { memorySpaceForConversation } from '../spaces'
 import { applyExtraction } from './apply'
 import { maybeConsolidate } from './consolidation'
 import { getOwnerMemoryWriter } from './owner-writer'
+import { conversationSkillProvider } from '../../chat/conversation-skill-provider'
 import { EXTRACTION_LIMITS, extractionSystemPrompt, extractionUserPrompt, parseExtractionOutput } from './prompt'
 import { chunkExtractionBlocks, renderExtractionTranscript, type ExtractionBlock } from './transcript'
 
@@ -34,6 +36,24 @@ export function resolveExtractionSelection(conversationId: string): OneShotSelec
   if (!space || !extractionAllowed(space)) return null
   const settings = memorySettingsForSpace(space).extraction
   return settings.enabled && settings.selection ? settings.selection : null
+}
+
+/**
+ * Existing memories as the extractor sees them, whole entries only: a longer excerpt lets it recognize what is already
+ * saved (and supersede it) instead of saving a near duplicate.
+ */
+export function extractionMemoryCatalog(memories: readonly LocalMemory[]): string {
+  const lines: string[] = []
+  let used = 0
+  for (const memory of memories) {
+    const excerpt = memory.content.replace(/\s+/g, ' ').trim()
+    const line = `${memory.id} · ${memory.type} · ${memory.title} — ${excerpt.length <= EXTRACTION_LIMITS.catalogExcerptChars ? excerpt : `${excerpt.slice(0, EXTRACTION_LIMITS.catalogExcerptChars - 1)}…`}`
+    const size = line.length + (lines.length ? 1 : 0)
+    if (used + size > EXTRACTION_LIMITS.catalogChars) break
+    lines.push(line)
+    used += size
+  }
+  return lines.join('\n')
 }
 
 const pending = new Map<string, { personal: boolean; timer: NodeJS.Timeout; firstAt: number; upToSeq: number }>()
@@ -215,22 +235,23 @@ export async function runMemoryExtraction(
     }
     if (blocks.reduce((sum, block) => sum + block.text.length, 0) < EXTRACTION_LIMITS.minChars) return 'too-little'
     const owner = space.kind === 'bot' ? getOwnerMemoryWriter(conversationId) : undefined
+    // A bot that keeps skills of its own gets procedures worth one as proposals, from this same call.
+    const skillProvider = space.kind === 'bot' ? conversationSkillProvider(conversationId) : null
+    const skillSink = skillProvider?.suggest && skillProvider.ownCatalog ? skillProvider : null
+    let suggested = 0
     let lastSeq = state.lastSeq
     let attempts = state.attempts
     try {
       for (const chunk of chunkExtractionBlocks(blocks, EXTRACTION_LIMITS.chunkChars, EXTRACTION_LIMITS.maxChunks)) {
         const snapshotMemories = listLocalMemories(space.id, { status: 'active', limit: 300 })
         const snapshots = new Map(snapshotMemories.map((memory) => [memory.id, memory]))
-        const catalog = snapshotMemories
-          .map(
-            (memory) =>
-              `${memory.id} · ${memory.type} · ${memory.title} — ${memory.content.replace(/\s+/g, ' ').slice(0, 160)}`
-          )
-          .join('\n')
-          .slice(0, EXTRACTION_LIMITS.catalogChars)
+        const catalog = extractionMemoryCatalog(snapshotMemories)
         const chunkOwner = chunk.some((block) => block.text.startsWith('Owner:')) ? owner : undefined
         const ownerEntries = chunkOwner
           ? (await chunkOwner.list().catch(() => [])).map((entry) => `${entry.id} — ${entry.content}`).join('\n')
+          : null
+        const ownSkills = skillSink
+          ? await skillSink.ownCatalog!(EXTRACTION_LIMITS.skillCatalogChars).catch(() => '')
           : null
         if (signal.aborted || !authorized()) return 'cancelled'
         const last = chunk[chunk.length - 1]
@@ -238,10 +259,11 @@ export async function runMemoryExtraction(
         for (let retry = 0; retry < 2; retry++) {
           const result = await deps.oneShot({
             selection,
-            system: extractionSystemPrompt(space.kind),
+            system: extractionSystemPrompt(space.kind, { skills: skillSink !== null }),
             prompt: extractionUserPrompt({
               memories: catalog,
               owner: ownerEntries,
+              skills: ownSkills,
               transcript: chunk.map((block) => block.text).join('\n\n'),
             }),
             signal: AbortSignal.any([AbortSignal.timeout(600_000), signal]),
@@ -273,6 +295,15 @@ export async function runMemoryExtraction(
             signal,
             authorized,
           })
+        if (output && skillSink)
+          for (const suggestion of output.skills ?? []) {
+            if (suggested >= EXTRACTION_LIMITS.skillsPerRun || signal.aborted || !authorized()) break
+            const result = await skillSink.suggest!(suggestion).catch((error: unknown) => {
+              console.warn('[memory-extraction] Skill suggestion failed', error instanceof Error ? error.message : '')
+              return 'skipped' as const
+            })
+            if (result === 'proposed') suggested += 1
+          }
         if (signal.aborted || !authorized()) return 'cancelled'
         attempts = 0
         lastSeq = last.seq

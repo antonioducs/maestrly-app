@@ -23,6 +23,7 @@ const { InstanceInputQueue, conversationQueue, inputRunId, promptForInput, PEER_
 const { InstanceTranscriptExtras } = await import('../../src/main/fleet/instance/transcript')
 const { FleetImageStore } = await import('../../src/main/fleet/instance/images')
 const { FleetFileStore } = await import('../../src/main/fleet/instance/files')
+const { BotSkillStore } = await import('../../src/main/fleet/instance/bot-skills/store')
 const { LiveTranscript } = await import('../../src/main/fleet/instance/live-transcript')
 const { InstanceEvents, InstanceHttpError } = await import('../../src/main/fleet/instance/server')
 const { InstanceHelpStore } = await import('../../src/main/fleet/instance/help')
@@ -112,6 +113,7 @@ async function bot() {
     queue,
     images,
     files,
+    skills: new BotSkillStore(path.join(dir, 'skills')),
     extras,
     runs,
     threadReports: new ThreadReports(path.join(dir, 'thread-reports.json')),
@@ -272,6 +274,32 @@ describe('routine runs in conversations of their own', () => {
     // The prompt says the conversation is the run's own and asks whether it found anything new.
     expect(promptForInput(routineInput(runId))).toContain(RUN_CONVERSATION_NOTE)
     expect(promptForInput(routineInput(runId))).toContain('nothing_new')
+  })
+
+  it('compacts a run and its own conversation keeping how the bot did its work', async () => {
+    const { runtime, primary, runs } = await bot()
+    const runId = randomUUID()
+    await runtime.input(routineInput(runId))
+    const { start } = answer('Posted.')
+    const respond = start.getMockImplementation()!
+    let focus: string | null = null
+    start.mockImplementation((input) => {
+      focus = getCompactionFocus(input.conversationId)
+      return respond(input)
+    })
+    vi.spyOn(chatService, 'acquireChatConversationSlot').mockResolvedValue({
+      release: () => {},
+      operation: {},
+    } as never)
+    await turn(runtime)
+    expect(start).toHaveBeenCalledWith(expect.objectContaining({ conversationId: runs.get(runId)!.conversationId }))
+    expect(focus).toContain('a run of a scheduled routine of the bot "Atlas"')
+    expect(focus).toContain('the steps in order, with the commands, tool calls, parameters')
+    // The bot's own conversation gets the same, once registered as its primary.
+    Object.assign(runtime, { registeredConversation: { id: primary.id, cwd: primary.cwd } })
+    ;(BotRuntime.prototype as unknown as { applyProfile(this: unknown): void }).applyProfile.call(runtime)
+    expect(getCompactionFocus(primary.id)).toContain('the long-running conversation of the bot "Atlas"')
+    expect(getCompactionFocus(primary.id)).toContain('what failed and why')
   })
 
   it("keeps a run off the bot's desktop, and brings it forward only while it asks the owner for help", async () => {

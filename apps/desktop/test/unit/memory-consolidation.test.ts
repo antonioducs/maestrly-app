@@ -213,6 +213,7 @@ it('frees the space for a new run once a run is cancelled, and the late answer n
     getDb().prepare("SELECT * FROM chat_usage_ledger WHERE message_id LIKE 'memory-consolidation:%'").all()
   ).toHaveLength(2)
   // Once the new run ends, the space is free again.
+  createLocalMemory({ workspaceId: f.space.id, title: 'Three', content: 'Three', type: 'decision', source: 'auto' })
   incrementAutoCreated(f.space.id, 15)
   await maybeConsolidate({ ...f, now: f.now + CONSOLIDATION_LIMITS.intervalMs })
   expect(f.oneShot).toHaveBeenCalledOnce()
@@ -238,4 +239,159 @@ it('rolls back the whole merge when superseding a target fails', async () => {
   await expect(maybeConsolidate(f)).rejects.toThrow('synthetic failure')
   for (const id of f.ids) expect(getLocalMemory(f.space.id, id)?.status).toBe('active')
   expect(listLocalMemories(f.space.id)).toHaveLength(2)
+})
+
+const usage = { input: 1, output: 1, cacheRead: 0, cacheCreate: 0 }
+
+it('never merges procedures or what the person or the agent saved', async () => {
+  const space = { id: makeWorkspace().id, kind: 'workspace' as const, roots: [] }
+  const conversation = makeConversation(space.id)
+  const make = (title: string, type: 'procedure' | 'decision', source: 'auto' | 'user' | 'agent') =>
+    createLocalMemory({ workspaceId: space.id, title, content: `${title} body`, type, source }).memory.id
+  const procedure = make('Render', 'procedure', 'auto')
+  const user = make('User rule', 'decision', 'user')
+  const agent = make('Agent rule', 'decision', 'agent')
+  const auto = make('Auto rule', 'decision', 'auto')
+  const other = make('Auto rule two', 'decision', 'auto')
+  incrementAutoCreated(space.id, 15)
+  let prompt = ''
+  const oneShot = vi.fn(async (input: { prompt: string }) => {
+    prompt = input.prompt
+    return {
+      text: JSON.stringify({
+        merges: [
+          { ids: [procedure, auto], type: 'decision', title: 'A', content: 'Render body and Auto rule body' },
+          { ids: [user, other], type: 'decision', title: 'B', content: 'User rule body and Auto rule two body' },
+          { ids: [agent, other], type: 'decision', title: 'C', content: 'Agent rule body and Auto rule two body' },
+          { ids: [auto, other], type: 'procedure', title: 'D', content: 'Auto rule body and Auto rule two body' },
+        ],
+      }),
+      usage,
+    }
+  })
+  const input = { space, conversationId: conversation.id, cwd: conversation.cwd, now: 1000, oneShot }
+  expect(await maybeConsolidate({ ...input, selection: { providerId: 'test', modelId: 'test' } })).toEqual({
+    merges: 0,
+  })
+  // Only automatic, non-procedure entries are shown to the model.
+  expect(prompt).toContain(auto)
+  expect(prompt).toContain(other)
+  for (const id of [procedure, user, agent]) expect(prompt).not.toContain(id)
+  for (const id of [procedure, user, agent, auto, other]) expect(getLocalMemory(space.id, id)?.status).toBe('active')
+})
+
+it('keeps line breaks in its input and inherits importance, tags, scope and origin', async () => {
+  const f = fixture()
+  const steps = 'Steps:\n1. ffmpeg -i in.mov -r 30 out.mp4\n2. Upload it.'
+  updateLocalMemory(f.space.id, f.ids[0], { content: steps, importance: 40, tags: ['video'], scope: 'ads' })
+  updateLocalMemory(f.space.id, f.ids[1], { content: 'Upload it.', importance: 75, tags: ['upload'], scope: 'ads' })
+  incrementAutoCreated(f.space.id, 15)
+  const oneShot = vi.fn(async (input: { prompt: string; system: string }) => {
+    const lines = input.prompt.split('\n')
+    expect(lines).toHaveLength(2)
+    expect(JSON.parse(lines.find((line) => line.includes(f.ids[0]))!)).toMatchObject({ content: steps, new: true })
+    expect(input.system).toContain('"new":true')
+    return {
+      text: JSON.stringify({
+        merges: [{ ids: f.ids, type: 'decision', title: 'Video', content: `${steps}\n3. Done.` }],
+      }),
+      usage,
+    }
+  })
+  expect(await maybeConsolidate({ ...f, oneShot })).toEqual({ merges: 1 })
+  const merged = listLocalMemories(f.space.id, { status: 'active' })[0]
+  expect(merged).toMatchObject({
+    content: `${steps}\n3. Done.`,
+    importance: 75,
+    tags: ['upload', 'video'],
+    scope: 'ads',
+    source: 'auto',
+    originConversationId: getLocalMemory(f.space.id, f.ids[0])!.originConversationId ?? f.conversationId,
+  })
+})
+
+it('drops the scope when the originals disagree on it', async () => {
+  const f = fixture()
+  updateLocalMemory(f.space.id, f.ids[0], { scope: 'a' })
+  updateLocalMemory(f.space.id, f.ids[1], { scope: 'b' })
+  incrementAutoCreated(f.space.id, 15)
+  expect(await maybeConsolidate(f)).toEqual({ merges: 1 })
+  expect(listLocalMemories(f.space.id, { status: 'active' })[0].scope).toBe('')
+})
+
+it('rejects a merge that shortens its longest original', async () => {
+  const f = fixture()
+  updateLocalMemory(f.space.id, f.ids[0], { content: `Step one ${'detail '.repeat(40)}` })
+  incrementAutoCreated(f.space.id, 15)
+  expect(await maybeConsolidate(f)).toEqual({ merges: 0 })
+  for (const id of f.ids) expect(getLocalMemory(f.space.id, id)?.status).toBe('active')
+})
+
+it('merges a merged entry again only together with something new', async () => {
+  const f = fixture()
+  incrementAutoCreated(f.space.id, 15)
+  expect(await maybeConsolidate(f)).toEqual({ merges: 1 })
+  const merged = listLocalMemories(f.space.id, { status: 'active' })[0]
+  // An entry from before the last run, and the last run's own merge: neither is new.
+  const old = createLocalMemory({
+    workspaceId: f.space.id,
+    title: 'Three',
+    content: 'One and two, three.',
+    type: 'decision',
+    source: 'auto',
+  }).memory
+  getDb()
+    .prepare('UPDATE local_memories SET created_at = ? WHERE id = ?')
+    .run(f.now - 1, old.id)
+  incrementAutoCreated(f.space.id, 15)
+  const later = { ...f, now: f.now + CONSOLIDATION_LIMITS.intervalMs }
+  const again = vi.fn(async () => ({
+    text: JSON.stringify({
+      merges: [{ ids: [merged.id, old.id], type: 'decision', title: 'All', content: 'One and two, three.' }],
+    }),
+    usage,
+  }))
+  expect(await maybeConsolidate({ ...later, oneShot: again })).toEqual({ merges: 0 })
+  // With nothing new, the model is not even asked.
+  expect(again).not.toHaveBeenCalled()
+  expect(getLocalMemory(f.space.id, merged.id)?.status).toBe('active')
+
+  // Something extracted since then makes a merge with it possible.
+  const fresh = createLocalMemory({
+    workspaceId: f.space.id,
+    title: 'Four',
+    content: 'One and two, four.',
+    type: 'decision',
+    source: 'auto',
+  }).memory
+  incrementAutoCreated(f.space.id, 15)
+  const third = vi.fn(async (input: { prompt: string }) => {
+    const shown = input.prompt.split('\n').map((line) => JSON.parse(line) as { id: string; new: boolean })
+    expect(shown.find((entry) => entry.id === merged.id)?.new).toBe(false)
+    expect(shown.find((entry) => entry.id === fresh.id)?.new).toBe(true)
+    return {
+      text: JSON.stringify({
+        merges: [
+          { ids: [merged.id, old.id], type: 'decision', title: 'Old', content: 'One and two, three.' },
+          { ids: [merged.id, fresh.id], type: 'decision', title: 'New', content: 'One and two, then four.' },
+        ],
+      }),
+      usage,
+    }
+  })
+  expect(
+    await maybeConsolidate({ ...later, now: later.now + CONSOLIDATION_LIMITS.intervalMs, oneShot: third })
+  ).toEqual({ merges: 1 })
+  expect(getLocalMemory(f.space.id, old.id)?.status).toBe('active')
+  expect(getLocalMemory(f.space.id, fresh.id)?.status).toBe('superseded')
+})
+
+it('forgets what its last run created when the space is deleted', async () => {
+  const f = fixture()
+  incrementAutoCreated(f.space.id, 15)
+  await maybeConsolidate(f)
+  const key = `memory.consolidation.products.${f.space.id}`
+  expect(getDb().prepare('SELECT value FROM app_settings WHERE key = ?').get(key)).toBeDefined()
+  deleteLocalMemorySpace(f.space.id)
+  expect(getDb().prepare('SELECT value FROM app_settings WHERE key = ?').get(key)).toBeUndefined()
 })

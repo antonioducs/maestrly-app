@@ -16,6 +16,8 @@ import {
   fleetFileIdSchema,
   type FleetFileRef,
   type FleetFileSettings,
+  type FleetBotOwnSkillAction,
+  type FleetBotOwnSkillsSettings,
   type FleetFilesDeleteRequest,
   FLEET_PROTOCOL_HEADER,
   FLEET_CANCEL_CONVERSATION_QUERY,
@@ -787,6 +789,27 @@ export class InstanceClient {
     if (!this.scope?.environments)
       throw new GatewayError('PROTOCOL_INCOMPATIBLE', 'Update this bot to manage its files')
     return this.call('botFileSettings', { botId: this.scope.botId }, undefined, body)
+  }
+  /** The skills the bot keeps for itself (`bot-own-skills`). */
+  private ownSkillsBot(): string {
+    if (!this.scope?.environments)
+      throw new GatewayError('PROTOCOL_INCOMPATIBLE', 'Update this bot to manage its skills')
+    return this.scope.botId
+  }
+  ownSkillsList() {
+    return this.call('botOwnSkillsList', { botId: this.ownSkillsBot() })
+  }
+  ownSkillsSettings(body: FleetBotOwnSkillsSettings) {
+    return this.call('botOwnSkillsSettings', { botId: this.ownSkillsBot() }, undefined, body)
+  }
+  ownSkillGet(name: string) {
+    return this.call('botOwnSkillGet', { botId: this.ownSkillsBot(), name })
+  }
+  ownSkillVersion(name: string, versionId: string) {
+    return this.call('botOwnSkillVersion', { botId: this.ownSkillsBot(), name, versionId })
+  }
+  ownSkillAction(name: string, body: FleetBotOwnSkillAction) {
+    return this.call('botOwnSkillAction', { botId: this.ownSkillsBot(), name }, undefined, body, 60000)
   }
   async fileMeta(fileId: string, signal?: AbortSignal): Promise<FleetFileRef> {
     if (!fleetFileIdSchema.safeParse(fileId).success || !this.scope)

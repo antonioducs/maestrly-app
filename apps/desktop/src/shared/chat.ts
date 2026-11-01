@@ -897,7 +897,7 @@ export interface ChatSkillInfo {
   source: string
 
   dir: string
-  scope: 'project' | 'global' | 'plugin'
+  scope: 'project' | 'global' | 'plugin' | 'bot'
   /** Set for skills and commands an installed plugin provides (managed in Settings → Plugins). */
   plugin?: { key: string; displayName: string; kind: 'skill' | 'command' }
   argumentHint?: string

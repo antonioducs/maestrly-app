@@ -687,6 +687,24 @@ export function threadCompactionFocus(botName: string, thread: { peerName: strin
   ].join('\n')
 }
 
+/**
+ * What compacting the bot's own conversation or a routine run must keep. A bot learns how to do its recurring work in
+ * these conversations, and a generic summary keeps the topic but drops the commands and settings that made it work.
+ */
+export function botCompactionFocus(botName: string, kind: 'primary' | 'routine'): string {
+  return [
+    kind === 'primary'
+      ? `This is the long-running conversation of the bot "${botName}" (the assistant) with its owner.`
+      : `This is a run of a scheduled routine of the bot "${botName}" (the assistant); later runs start from your summary.`,
+    'Besides the usual, keep in the summary, verbatim where exact wording matters:',
+    '- how the assistant did each non-trivial task that worked: the steps in order, with the commands, tool calls, parameters, paths, file names and values it used;',
+    '- settings, accounts, sites and configurations it learned or set up, and what the owner corrected;',
+    '- what failed and why, next to what worked instead;',
+    '- the skills it created, updated or loaded, by name;',
+    '- commitments, pending follow-ups and the state of long-running work it must continue or must not repeat.',
+  ].join('\n')
+}
+
 export function promptForInput(input: StoredInput): string {
   switch (input.source) {
     case 'owner':

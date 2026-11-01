@@ -175,6 +175,11 @@ export const BOT_DESKTOP_READ_RULES: Ruleset = allowMcp([
   'desktop_read_chat_history',
   'desktop_wait_events',
 ])
+/**
+ * In a bot container, reading skills never prompts. Changing the bot's own skills goes through its ceiling like any
+ * other write: its owner sees, edits and reverts them, and can also require approving each change.
+ */
+export const BOT_SKILL_READ_RULES: Ruleset = allowMcp(['skill_list', 'skill_view'])
 /** In a bot container, reading its runners and jobs never prompts; submitting or cancelling a job goes through the bot's own ceiling. */
 export const BOT_RUNNER_READ_RULES: Ruleset = allowMcp(['runner_list', 'runner_status', 'runner_logs'])
 export function ruleEffect(action: string, resource: string, ...rulesets: Ruleset[]): Rule['effect'] {

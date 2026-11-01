@@ -62,7 +62,7 @@ import { redactTokens } from '../../pii-scrub'
 import type { PermissionBroker } from '../permission'
 import { buildProjectContext } from '../project-context'
 import type { QuestionBroker } from '../question-broker'
-import { renderSkillContext, skillCatalogLine, type ChatSkill } from '../skills'
+import { renderSkillCatalogEntries, renderSkillContext, type ChatSkill } from '../skills'
 import { effectiveSkills, findEffectiveSkill } from '../skill-state'
 import type { ChatAgent } from '../agents'
 import { listEffectiveAgents } from '../virtual-subagents'
@@ -692,7 +692,7 @@ export function sandboxPolicyFor(
 
 function maestrlySkillCatalog(skills: readonly ChatSkill[], project = true): string {
   if (!skills.length) return ''
-  const entries = skills.map((skill) => skillCatalogLine(skill).slice(0, 520)).join('\n')
+  const entries = renderSkillCatalogEntries(skills)
   return (
     `\n\nMaestrly ${project ? 'project ' : ''}skills (specialized capabilities) are available through the \`use_skill\` dynamic ` +
     'tool:\n' +

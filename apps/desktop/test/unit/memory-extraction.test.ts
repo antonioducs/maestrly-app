@@ -17,7 +17,13 @@ import {
   disposeMemoryExtraction,
 } from '../../src/main/memory/extraction/scheduler'
 import { chunkExtractionBlocks, renderExtractionTranscript } from '../../src/main/memory/extraction/transcript'
-import { parseExtractionOutput } from '../../src/main/memory/extraction/prompt'
+import {
+  EXTRACTION_LIMITS,
+  extractionSystemPrompt,
+  extractionUserPrompt,
+  parseExtractionOutput,
+} from '../../src/main/memory/extraction/prompt'
+import { setConversationSkillProvider } from '../../src/main/chat/conversation-skill-provider'
 import { applyExtraction } from '../../src/main/memory/extraction/apply'
 import { clearOwnerMemoryWriter, setOwnerMemoryWriter } from '../../src/main/memory/extraction/owner-writer'
 import { clearConversationMemorySpace, registerConversationMemorySpace } from '../../src/main/memory/spaces'
@@ -128,6 +134,89 @@ it('renders roles and bounded tools without recalled content', () => {
   expect(text).toContain('Assistant:')
   expect(text).not.toContain('RECALL-SHOULD-NOT-LEAK')
   expect(text).not.toContain('x'.repeat(301))
+})
+
+const toolPart = (toolName: string, input: unknown, output: string, status: 'completed' | 'error' = 'completed') => ({
+  type: 'tool' as const,
+  id: randomUUID(),
+  toolCallId: randomUUID(),
+  toolName,
+  input,
+  state: status === 'completed' ? { status, output } : { status, error: output },
+})
+const renderOne = (parts: ReturnType<typeof toolPart>[]) =>
+  renderExtractionTranscript(
+    [{ seq: 1, message: { id: 'm', conversationId, role: 'assistant', createdAt: 1, parts } as never }],
+    { bot: true }
+  )[0].text
+
+it('shares one budget among the calls of a message, never below the former floor', () => {
+  const command = { command: `ffmpeg -i in.mov ${'-vf scale=1080:-2 '.repeat(100)}` }
+  const one = renderOne([toolPart('bash', command, `frame=1\n${'o'.repeat(3_000)}`)])
+  // Line breaks of the output stay; input and output each show up to 1,500 characters.
+  expect(one).toContain('frame=1\no')
+  expect(one).toContain('o'.repeat(1_400))
+  expect(one).not.toContain('o'.repeat(1_500))
+  expect(one).toContain('-vf scale=1080:-2 '.repeat(70))
+  const many = renderOne(Array.from({ length: 60 }, () => toolPart('bash', command, 'p'.repeat(3_000))))
+  // Sixty calls keep at least the former 200 characters of input and 300 of output each.
+  expect(many).toContain(`→ completed: ${'p'.repeat(299)}…`)
+  expect(many).not.toContain('p'.repeat(301))
+  const error = renderOne([toolPart('bash', command, `failed ${'e'.repeat(1_000)}`, 'error')])
+  expect(error).toContain('e'.repeat(590))
+  expect(error).not.toContain('e'.repeat(600))
+})
+
+it('shows only which skill and file a skill call used, never its body', () => {
+  const text = renderOne([
+    toolPart('use_skill', { name: 'animate' }, 'Skill "animate" loaded.\nSECRET-BODY step one'),
+    toolPart(
+      'mcp__maestrly__skill_write_file',
+      { name: 'animate', file_path: 'scripts/run.sh', content: 'SECRET-SCRIPT' },
+      'Saved SECRET-OUTPUT'
+    ),
+    toolPart('skill_patch', { name: 'animate', old_text: 'SECRET-OLD', new_text: 'SECRET-NEW' }, 'Patched'),
+  ])
+  expect(text).toContain('[tool use_skill {"name":"animate"} → completed]')
+  expect(text).toContain('{"name":"animate","file_path":"scripts/run.sh"}')
+  expect(text).not.toContain('SECRET')
+})
+
+it('shows the extractor whole entries of existing memories, with longer excerpts', async () => {
+  const { extractionMemoryCatalog } = await import('../../src/main/memory/extraction/scheduler')
+  const long = createLocalMemory({
+    workspaceId: spaceId,
+    title: 'Render',
+    content: `Step\n${'a'.repeat(400)}TAIL${'b'.repeat(200)}`,
+    type: 'procedure',
+    source: 'agent',
+  }).memory
+  const catalog = extractionMemoryCatalog([long])
+  expect(catalog).toContain(`Step ${'a'.repeat(390)}`)
+  expect(catalog).not.toContain('TAIL')
+  const many = Array.from({ length: 100 }, (_, index) => ({ ...long, id: `memory-${index}` }))
+  const lines = extractionMemoryCatalog(many).split('\n')
+  expect(lines.join('\n').length).toBeLessThanOrEqual(20_000)
+  // Each line is a whole entry: it ends with its excerpt, never mid-id.
+  for (const line of lines) expect(line).toMatch(/^memory-\d+ · procedure · Render — Step a+…$/)
+})
+
+it('lets a procedure keep twice the content of other memories', () => {
+  const item = (type: string, length: number) => ({
+    action: 'create',
+    type,
+    title: 'T',
+    content: 'x'.repeat(length),
+  })
+  const parsed = parseExtractionOutput(
+    JSON.stringify({
+      memories: [item('procedure', 3_000), item('procedure', 3_001), item('decision', 1_500), item('decision', 1_501)],
+    })
+  )!
+  expect(parsed.memories.map((memory) => [memory.type, memory.content.length])).toEqual([
+    ['procedure', 3_000],
+    ['decision', 1_500],
+  ])
 })
 it('parses fences, rejects invalid items and limits operations', () => {
   const good = output.memories[0]
@@ -525,4 +614,88 @@ it('applies the immediate retry when it returns readable output', async () => {
   await runMemoryExtraction(conversationId, undefined, { oneShot: call, selection })
   expect(call).toHaveBeenCalledTimes(2)
   expect(listLocalMemories(spaceId)[0]?.title).toBe('Blue-green deploy')
+})
+
+it("suggests skills of a bot's own from the same call, at most two, and asks for none elsewhere", async () => {
+  registerConversationMemorySpace(conversationId, { id: 'bot-self', kind: 'bot' })
+  const suggest = vi.fn(async (_suggestion: { name: string }) => 'proposed' as const)
+  setConversationSkillProvider(conversationId, {
+    list: async () => [],
+    ownCatalog: async (max) => 'make-animation — Use when animating.'.slice(0, max),
+    suggest,
+  })
+  const skills = [
+    { name: 'make-animation', note: '3. Check the length with ffprobe.', reason: 'Missing check' },
+    { name: 'render-gif', description: 'Use when a GIF is asked for.', note: '1. Render at 24 fps.', reason: 'New' },
+    { name: 'third-one', description: 'Use when.', note: 'x', reason: 'Over the limit' },
+  ]
+  const call = vi.fn(async () => ({
+    text: JSON.stringify({ memories: [], owner: [], skills }),
+    usage: { input: 10, output: 2, cacheRead: 0, cacheCreate: 0 },
+  }))
+  try {
+    expect(await runMemoryExtraction(conversationId, undefined, { oneShot: call, selection })).toBe('done')
+    expect(call).toHaveBeenCalledTimes(1)
+    expect(call).toHaveBeenCalledWith(
+      expect.objectContaining({
+        system: expect.stringContaining('"skills" entries suggest a skill'),
+        prompt: expect.stringContaining(
+          "The bot's own skills (name — description):\nmake-animation — Use when animating."
+        ),
+      })
+    )
+    expect(suggest.mock.calls.map(([suggestion]) => suggestion)).toEqual([skills[0], skills[1]])
+  } finally {
+    setConversationSkillProvider(conversationId, null)
+  }
+  // A project conversation, even with a provider, is never asked for skills.
+  clearConversationMemorySpace(conversationId)
+  const other = makeConversation(spaceId).id
+  for (const [index, text] of ['Long enough. '.repeat(200), 'Done.'].entries())
+    upsertChatMessage({
+      id: randomUUID(),
+      conversationId: other,
+      role: index ? 'assistant' : 'user',
+      createdAt: 10 + index,
+      parts: [{ type: 'text', id: randomUUID(), text }],
+    })
+  setConversationSkillProvider(other, { list: async () => [], ownCatalog: async () => 'x', suggest })
+  suggest.mockClear()
+  try {
+    await runMemoryExtraction(other, undefined, { oneShot: call, selection })
+    expect(call).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        system: expect.stringContaining('Leave "skills" empty.'),
+        prompt: expect.not.stringContaining("The bot's own skills"),
+      })
+    )
+    expect(suggest).not.toHaveBeenCalled()
+  } finally {
+    setConversationSkillProvider(other, null)
+  }
+})
+
+it('reads skill suggestions strictly', () => {
+  const parsed = parseExtractionOutput(
+    JSON.stringify({
+      memories: [],
+      owner: [],
+      skills: [
+        { name: 'Bad Name', note: 'x', reason: 'x' },
+        { name: 'two-lines', description: 'Use when\nthis.', note: 'x', reason: 'x' },
+        { name: 'empty-note', note: '  ', reason: 'x' },
+        { name: 'too-long', note: 'x'.repeat(EXTRACTION_LIMITS.skillNoteMax + 1), reason: 'x' },
+        { name: 'kept', note: 'Steps.', reason: `A ${'long '.repeat(100)}reason` },
+      ],
+    })
+  )
+  expect(parsed?.skills?.map((skill) => skill.name)).toEqual(['kept'])
+  expect(parsed?.skills?.[0].reason.length).toBe(EXTRACTION_LIMITS.skillReasonMax)
+  // Older answers without skills still read.
+  expect(parseExtractionOutput('{"memories":[],"owner":[]}')?.skills).toEqual([])
+  expect(extractionSystemPrompt('bot')).toContain('Leave "skills" empty.')
+  expect(extractionSystemPrompt('personal', { skills: true })).toContain('Leave "skills" empty.')
+  expect(extractionUserPrompt({ memories: '', owner: null, skills: '', transcript: 'T' })).toContain(
+    "The bot's own skills (name — description):\n(none)"
+  )
 })

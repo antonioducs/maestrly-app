@@ -148,6 +148,8 @@ export interface BotPaths {
   threads: string
   /** The latest answers the bot brought back from threads it opened from its own conversation. */
   threadReports: string
+  /** The bot's own skills (`bot-skills/store.ts`), inside its folder so they move and are deleted with it. */
+  skills: string
   attachments: string
   images: string
   browserConfig: string
@@ -164,6 +166,7 @@ export function botPaths(userData: string, home: string, botId: string): BotPath
     runsFolder: path.join(folder, 'runs'),
     threads: path.join(folder, 'threads.json'),
     threadReports: path.join(folder, 'thread-reports.json'),
+    skills: path.join(folder, 'skills'),
     attachments: path.join(userData, 'fleet-inputs', botId),
     images: path.join(userData, 'fleet-images', botId),
     browserConfig: path.join(home, '.config', 'maestrly-bots', botId),

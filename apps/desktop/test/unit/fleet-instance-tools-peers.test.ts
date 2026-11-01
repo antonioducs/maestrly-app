@@ -175,6 +175,13 @@ describe('bot instance tool registration and gateway', () => {
     })
     expect((await bot.client.listTools()).tools.map((tool) => tool.name)).toEqual([
       'bot_share_file',
+      'skill_list',
+      'skill_view',
+      'skill_create',
+      'skill_patch',
+      'skill_write_file',
+      'skill_archive',
+      'skill_proposal',
       'request_owner_help',
     ])
     await bot.client.close()
@@ -190,6 +197,13 @@ describe('bot instance tool registration and gateway', () => {
     await legacy.server.close()
     const allTools = [
       'bot_share_file',
+      'skill_list',
+      'skill_view',
+      'skill_create',
+      'skill_patch',
+      'skill_write_file',
+      'skill_archive',
+      'skill_proposal',
       'request_owner_help',
       'bot_peers_list',
       'bot_peers_send',

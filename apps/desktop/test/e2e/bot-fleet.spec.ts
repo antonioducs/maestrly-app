@@ -1573,6 +1573,7 @@ async function runFleetScenario(workspaceOnly: boolean) {
           'Conversas',
           'Rotinas',
           'Memória',
+          'Skills',
           'Projetos',
           'Runners',
           'Onde roda',

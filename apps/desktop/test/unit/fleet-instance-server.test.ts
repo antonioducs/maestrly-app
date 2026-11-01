@@ -77,6 +77,28 @@ const botMemory = {
   createdAt: '2026-09-20T10:00:00.000Z',
   updatedAt: '2026-09-20T10:00:00.000Z',
 }
+const ownSkill = {
+  name: 'make-animation',
+  description: 'Use when animating.',
+  status: 'active' as const,
+  createdBy: 'bot' as const,
+  lastEditedBy: 'bot' as const,
+  createdAt: 1,
+  updatedAt: 1,
+  revision: 2,
+  locked: false,
+  files: 1,
+  hasScripts: false,
+  uses: 0,
+  lastUsedAt: null,
+  shadowed: false,
+  proposal: null,
+  currentFiles: [
+    { path: 'SKILL.md', content: '---\nname: make-animation\ndescription: Use when animating.\n---\nDo.' },
+  ],
+  proposalFiles: null,
+  versions: [],
+}
 const loginAttempt = {
   loginId: 'login-1',
   kind: 'codex' as const,
@@ -184,6 +206,11 @@ function fakeBot(botId: string, slot: number) {
       deleteWithConversations: settings.deleteWithConversations,
       updatedAt: '2026-10-20T10:00:00.000Z',
     })),
+    ownSkills: vi.fn(async () => ({ review: 'auto' as const, skills: [] })),
+    setOwnSkillsSettings: vi.fn(async (settings: { review: 'auto' | 'approve' }) => ({ ...settings, skills: [] })),
+    ownSkill: vi.fn(async (name: string) => ({ ...ownSkill, name })),
+    ownSkillVersion: vi.fn(async (_name: string, _versionId: string) => ({ files: ownSkill.currentFiles })),
+    ownSkillAction: vi.fn(async (_name: string, _action: unknown) => ({ skill: null })),
     input: vi.fn(async (_value: FleetInstanceInput) => ({
       inputId: `input-${botId}`,
       itemId: `input:${botId}`,
@@ -507,6 +534,7 @@ describe('instance control HTTP', () => {
       'bot-delegation',
       'files-manage',
       'runner-jobs',
+      'bot-own-skills',
     ])
     const { base, environment } = await setup()
     const response = await send(base, 'GET', '/v1/environment/selections')
@@ -810,6 +838,31 @@ describe('bot routes', () => {
       status: 200,
     },
     { method: 'DELETE', path: 'memories/m1', call: 'deleteMemory', args: ['m1'], status: 204 },
+    { method: 'GET', path: 'own-skills', call: 'ownSkills', args: [], status: 200 },
+    {
+      method: 'PATCH',
+      path: 'own-skills',
+      body: { review: 'approve' },
+      call: 'setOwnSkillsSettings',
+      args: [{ review: 'approve' }],
+      status: 200,
+    },
+    { method: 'GET', path: 'own-skills/make-animation', call: 'ownSkill', args: ['make-animation'], status: 200 },
+    {
+      method: 'GET',
+      path: 'own-skills/make-animation/versions/v-1',
+      call: 'ownSkillVersion',
+      args: ['make-animation', 'v-1'],
+      status: 200,
+    },
+    {
+      method: 'POST',
+      path: 'own-skills/make-animation',
+      body: { action: 'lock', revision: 2 },
+      call: 'ownSkillAction',
+      args: ['make-animation', { action: 'lock', revision: 2 }],
+      status: 200,
+    },
     {
       method: 'GET',
       path: 'transcript?before=item-9&limit=20',
@@ -938,6 +991,23 @@ describe('bot routes', () => {
     expect((await send(base, 'GET', '/v1/bots/beta/memories?status=invalid')).status).toBe(400)
     expect((await send(base, 'PATCH', '/v1/bots/beta/memories/m1', { pinned: 'yes' })).status).toBe(400)
     expect((await send(base, 'POST', '/v1/bots/alpha/files/delete', { ids: ['../x'] })).status).toBe(400)
+    // A name that no skill can have is not found; a change without the revision the owner saw is refused.
+    expect((await send(base, 'GET', '/v1/bots/beta/own-skills/Not_A_Skill')).status).toBe(404)
+    expect((await send(base, 'GET', '/v1/bots/beta/own-skills/make-animation/versions/..%2Fx')).status).toBe(404)
+    expect((await send(base, 'POST', '/v1/bots/beta/own-skills/make-animation', { action: 'lock' })).status).toBe(400)
+    expect(
+      (
+        await send(base, 'POST', '/v1/bots/beta/own-skills/make-animation', {
+          action: 'write-file',
+          revision: 1,
+          path: '../escape.sh',
+          content: 'x',
+        })
+      ).status
+    ).toBe(400)
+    expect((await send(base, 'PATCH', '/v1/bots/beta/own-skills', { review: 'never' })).status).toBe(400)
+    expect(beta.ownSkill).toHaveBeenCalledTimes(1)
+    expect(beta.ownSkillAction).toHaveBeenCalledTimes(1)
   })
 
   it('answers NOT_FOUND for unknown bots, invalid bot ids and the unprefixed bot routes', async () => {

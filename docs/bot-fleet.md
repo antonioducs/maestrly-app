@@ -884,6 +884,13 @@ User messages in the bot conversation show **Recalled: …** when memory was
 recalled. Memory tools reach only the bot's own memory; this is not a barrier
 against another bot in the same environment that runs commands.
 
+When the bot compacts its conversation with you or a routine run, the summary keeps
+how it did each task that worked (the steps in order, with the commands, tool
+calls, parameters, paths and values), the settings and accounts it learned, what
+failed next to what worked instead, the skills it used, and its commitments.
+Consolidation of [automatic memories](chat-context.md#automatic-memory-saving)
+never merges procedures or what the bot or you saved yourselves.
+
 ## Memory about you
 
 Open **Bots → Memory about you** in Maestrly to review facts and preferences
@@ -912,6 +919,79 @@ retires it in favor of that entry. Bot changes appear in activity. Before a
 turn, the bot fetches owner memory with a 1,000 ms timeout inside the 1,500 ms
 turn-memory budget, falling back to its last good copy on failure. Changes reach
 the context through memory updates or a rebuilt core.
+
+## Bot skills
+
+A bot keeps skills of its own: procedures it worked out for a kind of task it will
+do again, such as making an animation, with their scripts, templates and
+references. Its conversation with you, its routine runs and its conversations with
+other bots find them in the [skill catalog](chat-context.md#skill-catalog) as
+`name (yours)` and load them with `use_skill`; no other bot sees them, even in the
+same environment. Memory keeps facts and preferences; skills keep how the bot does
+things.
+
+| Tool | What it does |
+| --- | --- |
+| `skill_list` | Lists the bot's skills (status, uses, pending proposals) and the other skills it can load. |
+| `skill_view` | Reads `SKILL.md` or one file of a skill. |
+| `skill_create` | Creates a skill from a name, a one-line description and instructions; Maestrly writes its frontmatter. |
+| `skill_patch` | Replaces an exact span of one file, once or everywhere it appears. |
+| `skill_write_file` | Creates, replaces or removes a file under `scripts/`, `templates/`, `references/` or `assets/`, or rewrites `SKILL.md`. |
+| `skill_archive` | Archives a skill, optionally naming the skill that absorbed it, or restores one. A bot never deletes a skill. |
+| `skill_proposal` | Applies or discards a pending proposal of one of its skills. |
+
+Each change gives a one-line reason, which the skill's history keeps. The bot can
+change only its own skills: the skills of its environment and of plugins are
+readable with `skill_view` and never changed. It cannot create a skill with the
+name of one it can already load; when you later install a skill with the name of
+one of the bot's, yours is the one found, and the bot's shows as hidden in
+`skill_list`. Before changing or removing a file, the bot reads it in that
+conversation (loading a skill counts as reading its `SKILL.md`); when the file
+changed since, it reads it again.
+
+Names are lowercase words joined by hyphens, up to 64 characters. A description is
+one line of up to 1,024 characters; the bot is told to shorten one over 200
+characters and to say when to use the skill. `SKILL.md` holds up to 64 KiB, and
+other files up to 256 KiB of UTF-8 text. A skill keeps up to 40 files and 1 MiB, and
+a bot up to 100 active skills. Text that would hide characters or tell the agent
+to ignore its instructions is refused, as in memory.
+
+Memory review, which saves the bot's [automatic memories](chat-context.md#automatic-memory-saving),
+also suggests up to two skills per run for procedures the bot worked out: a new
+skill, or a note added to one of its own. A suggestion is always a proposal: the bot
+sees it in `skill_list`, can refine it with `skill_patch`, and applies or discards it
+with `skill_proposal` (applying needs its changes to take effect without your review);
+you can approve it in its settings.
+
+Reading skills never asks; changing them follows the bot's approval mode, like its
+other writes. Scripts of a skill run only through the bot's terminal, under its
+command permissions. Every change keeps a version (up to 20 per skill); changes
+that wait for review stay as proposals, and the bot keeps loading the version in
+effect.
+
+### Review a bot's skills
+
+Open the bot's **Settings → Skills** to see its skills: who created and last changed
+each one, a proposal waiting for you, whether it has scripts, whether an installed
+skill hides it, and how often the bot used it. **Show archived** adds the skills it
+archived.
+
+- **Review changes before they take effect** makes new skills and edits by the bot
+  wait for you as proposals (off by default: they take effect at once, and you can
+  see and revert them). **Lock** does the same for one skill and keeps the bot from
+  archiving it.
+- Open a skill to approve or discard its proposal, with a diff of each file, and to
+  edit its files or add one under `scripts/`, `templates/`, `references/` or
+  `assets/`; a script shows a warning, since the bot runs it.
+- **History** lists each version with who made it and why. **Compare** shows what
+  changed from a version to the current one, and **Restore this version** puts it
+  back as a new version, which can itself be undone.
+- **Archive**, **Restore** and **Delete forever** (which asks first) act on the whole
+  skill. Only you can delete one.
+
+Each change names the revision you saw; when the bot changed the skill meanwhile,
+Maestrly asks you to reload it. A bot server or environment from before this release
+shows a notice to update it instead (feature and capability `bot-own-skills`).
 
 ## Conversations at once
 

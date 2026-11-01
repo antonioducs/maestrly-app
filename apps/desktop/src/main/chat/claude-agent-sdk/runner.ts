@@ -55,7 +55,7 @@ import type { PermissionBroker } from '../permission'
 import { buildProjectContext } from '../project-context'
 import type { QuestionBroker } from '../question-broker'
 import { IN_TURN_COMPACT_RATIO, type NormalizedAiUsage } from '../runner'
-import { renderSkillContext, skillCatalogLine, type ChatSkill } from '../skills'
+import { renderSkillCatalogEntries, renderSkillContext, type ChatSkill } from '../skills'
 import { effectiveSkills, findEffectiveSkill } from '../skill-state'
 import { SubagentCoordinator } from '../subagent-coordinator'
 import { buildAndRenderSubagentDispatchCatalog } from '../subagent-dispatch-catalog'
@@ -325,7 +325,7 @@ function isIntentionalPlanInterruptDiagnostic(value: unknown): boolean {
 
 function skillsCatalog(skills: readonly ChatSkill[]): string {
   if (!skills.length) return ''
-  return skills.map(skillCatalogLine).join('\n')
+  return renderSkillCatalogEntries(skills)
 }
 
 function agentsCatalog(agents: readonly ChatAgent[], conversationId: string, forceReadOnly: boolean): string {

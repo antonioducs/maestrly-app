@@ -29,6 +29,14 @@ import { err, ok } from './context'
 
 const json = (value: unknown) => ok(JSON.stringify(value, null, 2))
 
+/**
+ * What the agent saved on purpose ranks above background extraction (which defaults to 0) in the bounded catalog, and
+ * a procedure above other kinds: losing it from view means redoing the work it describes.
+ */
+export const AGENT_MEMORY_IMPORTANCE = { default: 60, procedure: 70 } as const
+const agentMemoryImportance = (type: string) =>
+  type === 'procedure' ? AGENT_MEMORY_IMPORTANCE.procedure : AGENT_MEMORY_IMPORTANCE.default
+
 export function registerMemoryTools(ctx: McpToolContext): void {
   const { server, convId, t } = ctx
   const conversation = getConversation(convId)
@@ -222,6 +230,7 @@ export function registerMemoryTools(ctx: McpToolContext): void {
           })
         : createLocalMemory({
             ...input,
+            importance: input.importance ?? agentMemoryImportance(input.type),
             ...(id ? { id } : {}),
             workspaceId: g.space.id,
             source: 'agent',

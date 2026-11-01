@@ -1,5 +1,13 @@
 import { FLEET_SETTINGS_OPERATIONS } from './environment-settings.js'
 import {
+  fleetBotOwnSkillActionResultSchema,
+  fleetBotOwnSkillActionSchema,
+  fleetBotOwnSkillDetailSchema,
+  fleetBotOwnSkillsListSchema,
+  fleetBotOwnSkillsSettingsSchema,
+  fleetBotOwnSkillVersionFilesSchema,
+} from './bot-own-skills.js'
+import {
   fleetDictationKeyRequestSchema,
   fleetDictationKeyResponseSchema,
   fleetDictationStatusSchema,
@@ -1997,6 +2005,37 @@ export const FLEET_GATEWAY_ROUTES = {
     body: fleetFileSettingsSchema,
     response: fleetFilesUsageSchema,
   },
+  /** Feature `bot-own-skills`: the skills a bot keeps for itself. */
+  botOwnSkillsList: {
+    method: 'GET',
+    path: '/v1/bots/:id/own-skills',
+    body: null,
+    response: fleetBotOwnSkillsListSchema,
+  },
+  botOwnSkillsSettings: {
+    method: 'PATCH',
+    path: '/v1/bots/:id/own-skills',
+    body: fleetBotOwnSkillsSettingsSchema,
+    response: fleetBotOwnSkillsListSchema,
+  },
+  botOwnSkillGet: {
+    method: 'GET',
+    path: '/v1/bots/:id/own-skills/:name',
+    body: null,
+    response: fleetBotOwnSkillDetailSchema,
+  },
+  botOwnSkillVersion: {
+    method: 'GET',
+    path: '/v1/bots/:id/own-skills/:name/versions/:versionId',
+    body: null,
+    response: fleetBotOwnSkillVersionFilesSchema,
+  },
+  botOwnSkillAction: {
+    method: 'POST',
+    path: '/v1/bots/:id/own-skills/:name',
+    body: fleetBotOwnSkillActionSchema,
+    response: fleetBotOwnSkillActionResultSchema,
+  },
   botMessageSend: {
     method: 'POST',
     path: '/v1/bots/:id/messages',
@@ -2958,6 +2997,37 @@ export const FLEET_INSTANCE_ROUTES = {
     path: '/v1/bots/:botId/file-settings',
     body: fleetFileSettingsSchema,
     response: fleetFilesUsageSchema,
+  },
+  /** Capability `bot-own-skills`: the skills a bot keeps for itself. */
+  botOwnSkillsList: {
+    method: 'GET',
+    path: '/v1/bots/:botId/own-skills',
+    body: null,
+    response: fleetBotOwnSkillsListSchema,
+  },
+  botOwnSkillsSettings: {
+    method: 'PATCH',
+    path: '/v1/bots/:botId/own-skills',
+    body: fleetBotOwnSkillsSettingsSchema,
+    response: fleetBotOwnSkillsListSchema,
+  },
+  botOwnSkillGet: {
+    method: 'GET',
+    path: '/v1/bots/:botId/own-skills/:name',
+    body: null,
+    response: fleetBotOwnSkillDetailSchema,
+  },
+  botOwnSkillVersion: {
+    method: 'GET',
+    path: '/v1/bots/:botId/own-skills/:name/versions/:versionId',
+    body: null,
+    response: fleetBotOwnSkillVersionFilesSchema,
+  },
+  botOwnSkillAction: {
+    method: 'POST',
+    path: '/v1/bots/:botId/own-skills/:name',
+    body: fleetBotOwnSkillActionSchema,
+    response: fleetBotOwnSkillActionResultSchema,
   },
   botInputSend: {
     method: 'POST',

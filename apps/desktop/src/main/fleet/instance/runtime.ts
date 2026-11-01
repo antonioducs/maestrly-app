@@ -35,6 +35,12 @@ import {
   type FleetFileOrigin,
   type FleetFileRef,
   type FleetFileSettings,
+  type FleetBotOwnSkillAction,
+  type FleetBotOwnSkillActionResult,
+  type FleetBotOwnSkillDetail,
+  type FleetBotOwnSkillsList,
+  type FleetBotOwnSkillsSettings,
+  type FleetBotOwnSkillVersionFiles,
   type FleetFilesDeleted,
   type FleetFilesList,
   type FleetFilesUsage,
@@ -125,6 +131,7 @@ import { setConversationScreen, type ScreenArea } from '../../conversation-scree
 import { INSTANCE_CAPABILITIES, InstanceHttpError, type InstanceEvents, type InstanceFile } from './server'
 import {
   InstanceInputQueue,
+  botCompactionFocus,
   conversationQueue,
   inputRunId,
   promptForInput,
@@ -183,6 +190,10 @@ import { getSubscriptionFailoverRouter } from '../../chat/subscription-failover/
 import { parallelTasksPolicy, setBotTaskPolicy } from './task-policy'
 import { accountHeadroom, warmAccountHeadroom } from './account-headroom'
 import { createDelegationRouter, delegationPolicyPrompt } from './delegation'
+import { BotSkillStore } from './bot-skills/store'
+import { BotSkillOwnerApi } from './bot-skills/owner'
+import { listConversationSkills } from '../../chat/skill-state'
+import { setConversationSkillProvider } from '../../chat/conversation-skill-provider'
 
 /** Whether the bot may start turns at all; each conversation then starts its own while it runs none. */
 export function canDispatch(
@@ -410,6 +421,17 @@ export class BotRuntime {
   readonly holdManager: InstanceHoldManager
   readonly images: FleetImageStore
   readonly files: FleetFileStore
+  /** The skills the bot keeps for itself, found by all its conversations and by no other bot's. */
+  readonly skills: BotSkillStore
+  /** The owner's view and changes of those skills (`bot-own-skills`). */
+  private get ownSkillsApi(): BotSkillOwnerApi {
+    return new BotSkillOwnerApi(this.skills, () => this.installedSkillNames(this.primaryConversationId))
+  }
+  /** The skills a conversation of the bot finds from other sources than its own, which hide a skill of the bot's. */
+  private async installedSkillNames(conversationId: string | null): Promise<ReadonlySet<string>> {
+    const others = await listConversationSkills('', conversationId)
+    return new Set(others.filter((skill) => skill.scope !== 'bot').map((skill) => skill.name))
+  }
   readonly live: LiveTranscript
   /** The side conversations: routine runs' (`routine-conversations`) and threads' with other bots (`peer-conversations`). */
   readonly runs: BotRunConversations
@@ -492,6 +514,7 @@ export class BotRuntime {
     this.queue = new InstanceInputQueue(paths.inputs, paths.attachments)
     this.images = new FleetImageStore(paths.images)
     this.files = new FleetFileStore(path.join(paths.folder, 'files'))
+    this.skills = new BotSkillStore(paths.skills)
     this.extras = new InstanceTranscriptExtras(paths.transcript, (item) =>
       this.publish({ type: 'transcript.upsert', item })
     )
@@ -800,9 +823,12 @@ export class BotRuntime {
     this.registeredConversation = null
     const id = registered.id
     clearCompactionSummarizer(id)
+    setCompactionFocus(id, null)
     this.clearTasks(id)
     setConversationContextLimit(id, null)
     clearConversationMemorySpace(id)
+    setConversationSkillProvider(id, null)
+    this.skills.forgetConversation(id)
     clearMemoryCoreExtras(id)
     clearOwnerMemoryWriter(id)
     setConversationScreen(id, null)
@@ -901,6 +927,10 @@ export class BotRuntime {
     this.applyScreen(id)
     this.applyProfile()
     registerConversationMemorySpace(id, { id: this.memorySpaceId, kind: 'bot' })
+    setConversationSkillProvider(
+      id,
+      this.skills.provider(id, () => this.installedSkillNames(id))
+    )
     setMemoryCoreExtras(id, (signal) => this.primaryCoreSections(signal))
     if (this.gatewayConfig) setOwnerMemoryWriter(id, this.ownerMemory.writer())
     await this.syncCompaction()
@@ -965,6 +995,8 @@ export class BotRuntime {
     })
     publishConvChatSettings(id)
     this.applyTasks(id, this.delegationSettings().mode === 'delegate')
+    if (this.registeredConversation?.id === id)
+      setCompactionFocus(id, botCompactionFocus(this.stored.profile.name, 'primary'))
     // The owner's cap on the conversation's window, whatever its model; the usage the Mac shows follows it at once.
     const limit = this.stored.profile.compaction?.contextLimitTokens ?? null
     if ((getConversationContextLimit(id) ?? null) !== limit) {
@@ -999,6 +1031,10 @@ export class BotRuntime {
     const id = lane.conversationId
     this.applyLaneScreen(id)
     registerConversationMemorySpace(id, { id: this.memorySpaceId, kind: 'bot' })
+    setConversationSkillProvider(
+      id,
+      this.skills.provider(id, () => this.installedSkillNames(id))
+    )
     setMemoryCoreExtras(id, (signal) => this.ownerMemory.coreSections(signal))
     if (this.gatewayConfig) setOwnerMemoryWriter(id, this.ownerMemory.writer())
     setCompactionSummarizer(id, () => {
@@ -1014,9 +1050,10 @@ export class BotRuntime {
     })
     this.applyRunCompaction(id)
     const record = lane.record
+    const botName = this.stored?.profile.name ?? this.botId
     setCompactionFocus(
       id,
-      record.kind === 'thread' ? threadCompactionFocus(this.stored?.profile.name ?? this.botId, record) : null
+      record.kind === 'thread' ? threadCompactionFocus(botName, record) : botCompactionFocus(botName, 'routine')
     )
     const stopObserving = observeChatHost(id, (event) => {
       if (event.channel === `chat:delta:${id}`) this.onChatEvent(event.payload as ChatStreamEvent, lane)
@@ -1030,6 +1067,8 @@ export class BotRuntime {
       this.clearTasks(id)
       setConversationContextLimit(id, null)
       clearConversationMemorySpace(id)
+      setConversationSkillProvider(id, null)
+      this.skills.forgetConversation(id)
       clearMemoryCoreExtras(id)
       clearOwnerMemoryWriter(id)
       setConversationScreen(id, null)
@@ -1935,6 +1974,22 @@ export class BotRuntime {
       if (error instanceof FleetFileSettingsError) throw new InstanceHttpError(409, 'CONFLICT', error.message)
       throw error
     }
+  }
+
+  ownSkills(): Promise<FleetBotOwnSkillsList> {
+    return this.ownSkillsApi.list()
+  }
+  setOwnSkillsSettings(settings: FleetBotOwnSkillsSettings): Promise<FleetBotOwnSkillsList> {
+    return this.ownSkillsApi.setReview(settings.review)
+  }
+  ownSkill(name: string): Promise<FleetBotOwnSkillDetail> {
+    return this.ownSkillsApi.detail(name)
+  }
+  ownSkillVersion(name: string, versionId: string): Promise<FleetBotOwnSkillVersionFiles> {
+    return this.ownSkillsApi.version(name, versionId)
+  }
+  ownSkillAction(name: string, action: FleetBotOwnSkillAction): Promise<FleetBotOwnSkillActionResult> {
+    return this.ownSkillsApi.act(name, action)
   }
 
   private async attachmentFile(fileId: string) {
