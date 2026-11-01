@@ -14,6 +14,9 @@ import { tMain } from '../i18n'
 import { getAppSetting, setAppSetting, getAppFlag, setAppFlag } from '../store'
 import {
   ACTIVE_ACCOUNT_SLOT,
+  SUBSCRIPTION_ACCOUNT_POOL_KINDS,
+  accountPoolBaseProviderId,
+  activeAccountProviderId,
   isActiveAccountProviderId,
   CHATGPT_WEB_PROVIDER_ID,
   effectiveProviderKind,
@@ -436,6 +439,20 @@ export function listAvailableChatProviders(): ChatProvider[] {
     ...withAccounts(ANTIGRAVITY_SUBSCRIPTION_PROVIDER),
     ...listUserProviders(),
   ]
+}
+
+/**
+ * The "active account" entries the model pickers add for a provider with two or more accounts (see
+ * `accountPoolInfos`): a selection that follows the account pool instead of one physical account.
+ */
+export function listActiveAccountChatProviders(): ChatProvider[] {
+  const ids = listAvailableChatProviders().map((provider) => provider.id)
+  return SUBSCRIPTION_ACCOUNT_POOL_KINDS.flatMap((kind) => {
+    const base = accountPoolBaseProviderId(kind)
+    if (ids.filter((id) => subscriptionBaseProviderId(id) === base).length < 2) return []
+    const provider = getProvider(activeAccountProviderId(kind))
+    return provider ? [provider] : []
+  })
 }
 
 function saveProviders(list: ChatProvider[]): void {

@@ -3,7 +3,19 @@ import { OptionSelect, SelectOption } from '@/components/ui/option-select'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
-import { Bot, ChevronLeft, ChevronRight, Copy, Plus, Sparkles, Trash2, Users, X } from 'lucide-react'
+import {
+  ArrowDown,
+  ArrowUp,
+  Bot,
+  ChevronLeft,
+  ChevronRight,
+  Copy,
+  Plus,
+  Sparkles,
+  Trash2,
+  Users,
+  X,
+} from 'lucide-react'
 import { CandidateFields } from './subagent-profiles/CandidateFields'
 import type {
   MaestroConfigPayload,
@@ -56,7 +68,7 @@ export function createMaestroResource(index: number, t: Translate): MaestroResou
 }
 
 /** Reads the live catalog/meta of every candidate so the Pool exposes the same health execution will see. */
-function useCandidateHealth(
+export function useCandidateHealth(
   candidates: SubagentProfileCandidate[],
   catalogRevision: number,
   t: Translate
@@ -207,17 +219,20 @@ function PoolRow({
   )
 }
 
-function ResourceDetail({
+export function ResourceDetail({
   resource,
   config,
   catalogRevision,
   readOnly = false,
+  layout = 'stack',
   onChange,
 }: {
   resource: MaestroResourceV1
   config: ChatConfig
   catalogRevision: number
   readOnly?: boolean
+  /** `split`: models beside the other fields when the nearest container is wide enough. */
+  layout?: 'stack' | 'split'
   onChange: (resource: MaestroResourceV1) => void
 }) {
   const { t } = useTranslation('chat')
@@ -227,8 +242,16 @@ function ResourceDetail({
     candidates[index] = candidate
     onChange({ ...resource, candidates })
   }
-  return (
-    <div className="flex flex-col gap-3">
+  // Order is fallback order, so moving a candidate changes which model runs first.
+  const moveCandidate = (index: number, offset: -1 | 1) => {
+    const target = index + offset
+    if (target < 0 || target >= resource.candidates.length) return
+    const candidates = [...resource.candidates]
+    ;[candidates[index], candidates[target]] = [candidates[target]!, candidates[index]!]
+    onChange({ ...resource, candidates })
+  }
+  const fields = (
+    <>
       <div className="grid grid-cols-2 gap-2">
         <label className="text-sm text-muted-foreground">
           {t('maestro.resourceName')}
@@ -305,63 +328,103 @@ function ResourceDetail({
           />
         </label>
       </div>
-      <div className="space-y-1.5">
-        <div className="flex items-center justify-between">
-          <span className="text-sm font-medium text-foreground">{t('maestro.candidates')}</span>
+    </>
+  )
+  const candidates = (
+    <div className="min-w-0 space-y-1.5">
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-medium text-foreground">{t('maestro.candidates')}</span>
+        {!readOnly && (
+          <button
+            type="button"
+            onClick={() =>
+              onChange({
+                ...resource,
+                candidates: [...resource.candidates, { providerId: '', modelId: '', effort: '' }],
+              })
+            }
+            className="inline-flex items-center gap-1 text-sm text-primary"
+          >
+            <Plus className="size-3" /> {t('maestro.addCandidate')}
+          </button>
+        )}
+      </div>
+      <p className={cn('text-xs', health.level === 'warning' ? 'text-amber-300' : 'text-muted-foreground')}>
+        {health.message}
+      </p>
+      {resource.candidates.length === 0 && (
+        <p className="rounded bg-amber-500/[0.06] px-3 py-2 text-xs text-amber-200/80">
+          {t('maestro.candidatesInherit')}
+        </p>
+      )}
+      {resource.candidates.map((candidate, index) => (
+        <div key={index} className="flex items-start gap-1">
+          <CandidateFields
+            key={`${candidate.providerId}\0${candidate.modelId}`}
+            candidate={candidate}
+            config={config}
+            catalogRevision={catalogRevision}
+            readOnly={readOnly}
+            density="comfortable"
+            allowOff
+            onChange={(value) => updateCandidate(index, value)}
+          />
+          {!readOnly && resource.candidates.length > 1 && (
+            <>
+              <button
+                type="button"
+                title={t('maestro.moveCandidateUp')}
+                aria-label={t('maestro.moveCandidateUp')}
+                disabled={index === 0}
+                onClick={() => moveCandidate(index, -1)}
+                className="rounded p-1 text-muted-foreground hover:bg-white/[0.05] hover:text-foreground disabled:opacity-30"
+              >
+                <ArrowUp className="size-3.5" />
+              </button>
+              <button
+                type="button"
+                title={t('maestro.moveCandidateDown')}
+                aria-label={t('maestro.moveCandidateDown')}
+                disabled={index === resource.candidates.length - 1}
+                onClick={() => moveCandidate(index, 1)}
+                className="rounded p-1 text-muted-foreground hover:bg-white/[0.05] hover:text-foreground disabled:opacity-30"
+              >
+                <ArrowDown className="size-3.5" />
+              </button>
+            </>
+          )}
           {!readOnly && (
             <button
               type="button"
+              title={t('maestro.removeCandidate')}
+              aria-label={t('maestro.removeCandidate')}
               onClick={() =>
                 onChange({
                   ...resource,
-                  candidates: [...resource.candidates, { providerId: '', modelId: '', effort: '' }],
+                  candidates: resource.candidates.filter((_, candidateIndex) => candidateIndex !== index),
                 })
               }
-              className="inline-flex items-center gap-1 text-sm text-primary"
+              className="rounded p-1 text-red-300/80 hover:bg-red-500/10"
             >
-              <Plus className="size-3" /> {t('maestro.addCandidate')}
+              <Trash2 className="size-3.5" />
             </button>
           )}
         </div>
-        <p className={cn('text-xs', health.level === 'warning' ? 'text-amber-300' : 'text-muted-foreground')}>
-          {health.message}
-        </p>
-        {resource.candidates.length === 0 && (
-          <p className="rounded bg-amber-500/[0.06] px-3 py-2 text-xs text-amber-200/80">
-            {t('maestro.candidatesInherit')}
-          </p>
-        )}
-        {resource.candidates.map((candidate, index) => (
-          <div key={index} className="flex items-start gap-1">
-            <CandidateFields
-              key={`${candidate.providerId}\0${candidate.modelId}`}
-              candidate={candidate}
-              config={config}
-              catalogRevision={catalogRevision}
-              readOnly={readOnly}
-              density="comfortable"
-              allowOff
-              onChange={(value) => updateCandidate(index, value)}
-            />
-            {!readOnly && (
-              <button
-                type="button"
-                title={t('maestro.removeCandidate')}
-                aria-label={t('maestro.removeCandidate')}
-                onClick={() =>
-                  onChange({
-                    ...resource,
-                    candidates: resource.candidates.filter((_, candidateIndex) => candidateIndex !== index),
-                  })
-                }
-                className="rounded p-1 text-red-300/80 hover:bg-red-500/10"
-              >
-                <Trash2 className="size-3.5" />
-              </button>
-            )}
-          </div>
-        ))}
+      ))}
+    </div>
+  )
+  if (layout === 'split') {
+    return (
+      <div className="grid gap-4 @min-[760px]:grid-cols-[minmax(0,1.35fr)_minmax(16rem,1fr)]">
+        {candidates}
+        <div className="flex min-w-0 flex-col gap-3">{fields}</div>
       </div>
+    )
+  }
+  return (
+    <div className="flex flex-col gap-3">
+      {fields}
+      {candidates}
     </div>
   )
 }

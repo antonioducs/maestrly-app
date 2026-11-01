@@ -12,6 +12,7 @@ import {
   listMaestroStrategyProfiles,
   updateMaestroStrategyProfile,
 } from './maestro-strategy-profiles'
+import { clearMaestroSettingsDraft, getMaestroSettingsDraft, setMaestroSettingsDraft } from './maestro-settings-draft'
 
 interface MaestroIpcDeps {
   mhandle: (channel: string, fn: (event: IpcMainInvokeEvent, ...args: any[]) => unknown) => void
@@ -40,13 +41,17 @@ export function registerMaestroIpc(
   deps.mhandle('chat:maestro:strategy-profiles:create', (_event, value: MaestroStrategyProfileInput) =>
     createMaestroStrategyProfile(value, runtime.getGlobalOrchestratorProfile())
   )
-  deps.mhandle(
-    'chat:maestro:strategy-profiles:update',
-    (_event, id: string, value: MaestroStrategyProfileInput) =>
-      updateMaestroStrategyProfile(id, value, runtime.getGlobalOrchestratorProfile())
+  deps.mhandle('chat:maestro:strategy-profiles:update', (_event, id: string, value: MaestroStrategyProfileInput) =>
+    updateMaestroStrategyProfile(id, value, runtime.getGlobalOrchestratorProfile())
   )
   deps.mhandle('chat:maestro:strategy-profiles:delete', (_event, id: string) => ({
     ok: deleteMaestroStrategyProfile(id),
     catalog: listMaestroStrategyProfiles(runtime.getGlobalOrchestratorProfile()),
   }))
+  deps.mhandle('chat:maestro:settings-draft:get', () => getMaestroSettingsDraft())
+  deps.mhandle('chat:maestro:settings-draft:set', (_event, value: unknown) => setMaestroSettingsDraft(value))
+  deps.mhandle('chat:maestro:settings-draft:clear', () => {
+    clearMaestroSettingsDraft()
+    return { ok: true }
+  })
 }

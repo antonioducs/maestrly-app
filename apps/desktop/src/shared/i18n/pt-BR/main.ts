@@ -8,6 +8,10 @@ export default {
     defaultAccountLabel: 'Conta padrão',
   },
 
+  maestroConfigurator: {
+    readingImage: 'Lendo a imagem {{index}} de {{count}}…',
+  },
+
   openExternal: {
     pathNotFound: 'caminho não encontrado',
     vscodeNotFound: 'VS Code (code) não encontrado',
