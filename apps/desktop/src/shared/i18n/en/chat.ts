@@ -131,7 +131,7 @@ export default {
     fallback: {
       title: 'Fall back to other models',
       description:
-        'When a model reaches its limit, loses its login or is unavailable, the turn continues on the next model in this list. Accounts of the same subscription rotate first. The next turn starts again on the conversation’s own model.',
+        'When a model reaches its limit, loses its login or is unavailable, the turn continues on the next model in this list. A Claude or Codex active account goes through its account rotation first. The next turn starts again on the conversation’s own model.',
       toggle: 'Use fallback models',
       addFirst: 'Add a model first.',
       add: 'Add model',

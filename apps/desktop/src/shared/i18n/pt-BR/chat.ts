@@ -137,7 +137,7 @@ export default {
     fallback: {
       title: 'Continuar em outros modelos',
       description:
-        'Quando um modelo atinge o limite, perde o login ou fica indisponível, o turno continua no próximo modelo desta lista. As contas da mesma assinatura revezam primeiro. O turno seguinte volta a começar no modelo da própria conversa.',
+        'Quando um modelo atinge o limite, perde o login ou fica indisponível, o turno continua no próximo modelo desta lista. A conta ativa do Claude ou do Codex passa primeiro pelo rodízio de contas. O turno seguinte volta a começar no modelo da própria conversa.',
       toggle: 'Usar modelos de fallback',
       addFirst: 'Adicione um modelo primeiro.',
       add: 'Adicionar modelo',

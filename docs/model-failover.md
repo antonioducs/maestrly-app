@@ -21,9 +21,9 @@ fallback)**. A failure then ends the turn, as it does without a list.
 
 ## When it switches
 
-Claude and Codex subscriptions first rotate across their own accounts (**Automatic account rotation** in
-**Accounts**). Subscription accounts keep their own holds and resets. The fallback list takes over only when that rotation gave up, or for any other provider when its
-model fails with:
+A Claude or Codex **Active account** selection first moves through its provider's account rotation (**Settings →
+Accounts**); the fallback list takes over only when the rotation has no account left. A specific Claude or Codex
+account, like any other provider, moves to the list as soon as its model fails with:
 
 | Failure | What happens |
 | --- | --- |
@@ -58,7 +58,8 @@ retried as before and does not switch.
   descriptions use only fallbacks known to see images. A compaction summary that overflows its model is split into
   smaller chunks on the same model instead of switching.
 - Executions whose selection is frozen keep their model: review loops, bot commands and their subagents, a bot's
-  routed delegations, and background compaction with its own model. Their account rotation still works as before.
+  routed delegations, and background compaction with its own model. An active-account selection among them still
+  moves through its account rotation.
 
 ## Cooldowns
 
