@@ -61,3 +61,23 @@ describe('degraded compaction divider', () => {
     expect(messageListSource).toContain("{t('messages.compactionDegraded')}")
   })
 })
+
+describe('automatic stop error rendering', () => {
+  it('translates the automatic stop codes before falling back to the stored English text', async () => {
+    const { default: en } = await import('../../src/shared/i18n/en/chat')
+    const { default: ptBR } = await import('../../src/shared/i18n/pt-BR/chat')
+    const rawFallback = messageListSource.indexOf(': message.error}')
+    const branch = messageListSource.indexOf('? t(automaticStopMessageKey(message.errorCode)!)')
+    expect(branch).toBeGreaterThanOrEqual(0)
+    expect(branch).toBeLessThan(rawFallback)
+    for (const [code, key] of [
+      ['tool-loop-stopped', 'toolLoopStopped'],
+      ['invalid-tool-calls-stopped', 'invalidToolCallsStopped'],
+      ['repetitive-output-stopped', 'repetitiveOutputStopped'],
+    ] as const) {
+      expect(messageListSource).toContain(`errorCode === '${code}') return 'messages.${key}' as const`)
+      expect(en.messages[key]).toMatch(/^Maestrly stopped this response/)
+      expect(ptBR.messages[key]).toMatch(/^A Maestrly interrompeu esta resposta/)
+    }
+  })
+})

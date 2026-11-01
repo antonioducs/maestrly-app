@@ -25,6 +25,7 @@ import {
 } from '../../shared/chat'
 import { responseDurationMs } from '../../shared/response-duration'
 import type {
+  ChatErrorCode,
   ChatModelMeta,
   ChatModelRef,
   ChatStreamEvent,
@@ -174,6 +175,15 @@ import {
   openAINativeOutputText,
 } from './openai/native-tools'
 import { runnerHookContext, wrapToolSetWithHooks } from './plugin-hooks'
+import {
+  createRepetitionWatch,
+  createToolCallRepair,
+  createToolLoopGuard,
+  MAX_INVALID_TOOL_STEPS,
+  type RepetitionVerdict,
+  sanitizeHistoryMessages,
+  trailingInvalidToolSteps,
+} from './tool-robustness'
 
 const MAX_STEPS = 48
 // ULTRA PARENT agent cap. Workers stay at 48 and share an aggregate per-turn coordinator budget.
@@ -1241,14 +1251,13 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     })
   }
   // Plugin hooks run around every tool, the same way for every provider.
-  allTools = wrapToolSetWithHooks(
-    allTools,
-    runnerHookContext({ conversationId, cwd, mode, signal, emit })
-  )
+  allTools = wrapToolSetWithHooks(allTools, runnerHookContext({ conversationId, cwd, mode, signal, emit }))
+  const loopGuard = createToolLoopGuard({ conv: conversationId, model: selection.modelId })
   allTools = adaptToolSetForModel({
     tools: allTools,
     supportsImages: !dropImages,
     describeImage: (image) => describeEphemeralToolImage({ image, conversationId, cwd, signal }),
+    loopGuard,
   })
 
   // Project context (cwd AGENTS.md/CLAUDE.md + workspace memory) → append to system prompt.
@@ -1651,6 +1660,16 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   // The request the last model step received, so mid-turn compaction can repeat it against the prompt cache.
   let lastRequest: LiveRequest | null = null
 
+  // Automatic stops: a tool loop or steps with only invalid tool calls end the turn at the step boundary, and
+  // repetitive output cuts the generation. Each ends with a coded error and never with a continuation.
+  const repetition = createRepetitionWatch()
+  let invalidToolStop = false
+  const toolStop: StopCondition<typeof allTools> = ({ steps }) => {
+    if (loopGuard.stopped) return true
+    invalidToolStop ||= trailingInvalidToolSteps(steps) >= MAX_INVALID_TOOL_STEPS
+    return invalidToolStop
+  }
+
   /** Runs ONE streamText invocation, folds fullStream into bubble, returns stream outcome. */
   const streamOnce = async (messages: ModelMessage[]): Promise<'finished' | 'aborted' | 'error' | 'truncated'> => {
     attempt++
@@ -1663,16 +1682,25 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     const planStop: StopCondition<typeof allTools> = () => planSubmitted
     // guard.condition is weaker than StopCondition<TOOLS> (usage only) — structurally compatible.
     const stopWhen = guard
-      ? [stepCountIs(turnMaxSteps), guard.condition as never, planStop]
-      : [stepCountIs(turnMaxSteps), planStop]
+      ? [stepCountIs(turnMaxSteps), guard.condition as never, planStop, toolStop]
+      : [stepCountIs(turnMaxSteps), planStop, toolStop]
+    const repetitionAbort = new AbortController()
+    // The Responses ledger reconciles its own tool calls; every other transport gets a repaired tool history.
+    const historyMessages = useOpenAIHarness
+      ? messages
+      : sanitizeHistoryMessages(messages, { model: selection.modelId, conv: conversationId })
     const result = streamText({
       model: streamModel,
       system: requestSystem,
       messages:
         harness.prompts.environment.placement === 'last-user-message'
-          ? withEnvironmentOnLastUserMessage(messages, envDetails)
-          : messages,
+          ? withEnvironmentOnLastUserMessage(historyMessages, envDetails)
+          : historyMessages,
       tools: allTools,
+      repairToolCall: createToolCallRepair({
+        onEvent: (event) =>
+          chatDiag({ kind: 'tool-call-repaired', ...event, model: selection.modelId, conv: conversationId }),
+      }),
       stopWhen,
       // Observes only: returning nothing leaves every step's request unchanged.
       prepareStep: ({ messages: stepMessages }) => {
@@ -1687,7 +1715,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         return undefined
       },
       maxRetries: AI_SDK_MAX_RETRIES,
-      abortSignal: signal,
+      abortSignal: AbortSignal.any([signal, repetitionAbort.signal]),
       // fullStream delivers the same error below. The SDK default prints the whole APICallError to
       // stdout, request body (the prompt) included, and unredacted.
       onError: () => undefined,
@@ -1745,6 +1773,46 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       })
       return true
     }
+    /** Ends the turn with an error the interface translates by its code; no continuation follows. */
+    const stopAutomatically = (code: ChatErrorCode, message: string): 'error' => {
+      const pair = withStoredUsage(
+        {
+          kind: 'error' as const,
+          messageId: assistantId,
+          message,
+          code,
+          responseDurationMs: responseDurationMs(responseStartedAt),
+        },
+        buildPersistedUsage(
+          turnUsage,
+          lastStepInput,
+          lastStepOutput,
+          hasLastStepUsage,
+          subUsage,
+          subagentUsage,
+          resolvedModel.providerFingerprint
+        )
+      )
+      apply(pair.stored, true, pair.public)
+      backgroundPrefix.notifyAfterPersist()
+      discardPendingOpenAICompaction()
+      return 'error'
+    }
+    const stopRepetitiveOutput = (verdict: RepetitionVerdict): 'error' => {
+      repetitionAbort.abort()
+      chatDiag({
+        kind: 'repetitive-output-stopped',
+        channel: verdict.channel,
+        pattern: verdict.kind,
+        steps,
+        model: selection.modelId,
+        conv: conversationId,
+      })
+      return stopAutomatically(
+        'repetitive-output-stopped',
+        'Stopped automatically: the model kept repeating the same output.'
+      )
+    }
     try {
       for await (const part of result.fullStream) {
         const p = part as any
@@ -1788,10 +1856,13 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
           case 'text-start':
             apply({ kind: 'text-start', messageId: assistantId, partId: p.id })
             break
-          case 'text-delta':
+          case 'text-delta': {
             produced = true
             apply({ kind: 'text-delta', messageId: assistantId, partId: p.id, delta: p.text })
+            const verdict = repetition.push('text', p.text)
+            if (verdict) return stopRepetitiveOutput(verdict)
             break
+          }
           case 'text-end':
             // itemId/phase/annotations arrive at item close; checkpoint before any retry.
             backgroundPrefix.close(p.id)
@@ -1801,10 +1872,13 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
           case 'reasoning-start':
             apply({ kind: 'reasoning-start', messageId: assistantId, partId: p.id })
             break
-          case 'reasoning-delta':
+          case 'reasoning-delta': {
             produced = true
             apply({ kind: 'reasoning-delta', messageId: assistantId, partId: p.id, delta: p.text })
+            const verdict = repetition.push('reasoning', p.text)
+            if (verdict) return stopRepetitiveOutput(verdict)
             break
+          }
           case 'reasoning-end':
             // OpenAI adapter encrypted_content arrives here; without checkpoint the next turn loses it.
             backgroundPrefix.close(p.id)
@@ -1917,6 +1991,27 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
               hasLastStepUsage = true
               lastStepInput = finishUsage.totalInput
               lastStepOutput = finishUsage.output
+            }
+            // The tool stop ended the loop at a step boundary ('tool-calls'): an outcome, never a cut stream.
+            if (!signal.aborted && loopGuard.stopped) {
+              return stopAutomatically(
+                'tool-loop-stopped',
+                `Stopped automatically: \`${loopGuard.stopped.toolName}\` kept repeating without progress.`
+              )
+            }
+            if (!signal.aborted && invalidToolStop) {
+              chatDiag({
+                kind: 'tool-loop-guard',
+                action: 'stop',
+                reason: 'invalid-tool-calls',
+                count: MAX_INVALID_TOOL_STEPS,
+                model: selection.modelId,
+                conv: conversationId,
+              })
+              return stopAutomatically(
+                'invalid-tool-calls-stopped',
+                `Stopped automatically: the model made only invalid tool calls for ${MAX_INVALID_TOOL_STEPS} steps in a row.`
+              )
             }
             // review_plan (submit & release): plan stopWhen ended with finishReason 'tool-calls'
             // (step ended with tool call) — CLEAN end, not cutoff. Normalize to 'stop'

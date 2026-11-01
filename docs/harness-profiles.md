@@ -190,9 +190,113 @@ Add a TypeScript strategy only when the model needs a new algorithm or protocol:
 hook or environment placement goes in `strategies/`, gets its id in `types.ts` and schema, and gets its
 own tests. Profiles then reference it by id.
 
+## Tool-call robustness
+
+Models send malformed tool calls: numbers as strings, arguments encoded twice, snake_case keys learned
+from other agents, JSON cut off or with raw newlines, invented tool names, and the same call over and
+over. `apps/desktop/src/main/chat/tool-robustness/` handles them the same way for every profile.
+
+| Layer | Applied in | Runtimes |
+|---|---|---|
+| Lenient input | `adaptToolSetForModel` | All: BYOK, subagents, Maestro workers, Claude, Codex, Copilot, Antigravity, Cursor |
+| Loop guard | `adaptToolSetForModel`, as the outermost wrapper | All where Maestrly executes the tool |
+| JSON and name repair | `repairToolCall` of `streamText` | BYOK and its subagents |
+| History, call ids, schema dialects | model middleware in `provider.ts` | BYOK Anthropic and OpenAI-compatible |
+| Repetitive output | runner and subagent runner | BYOK and its subagents |
+
+OpenAI Responses keeps its ledger and its strict schemas, so the model middleware does not wrap it.
+
+### Arguments
+
+The tool's own validator runs first: a call it accepts runs with the same value, and the published
+JSON Schema does not change, so tool signatures and OpenAI strict tools stay identical. Only a rejected
+call is coerced against the JSON Schema and validated again:
+
+- strings to numbers, integers and booleans, and JSON strings to arrays and objects;
+- a whole argument object sent as a string, once or twice encoded;
+- `"null"` where null is accepted, and `null` or `""` dropped from an optional property;
+- a scalar wrapped where an array is expected, and numbers or booleans to strings;
+- enum values that match without case;
+- snake_case and camelCase keys renamed onto declared ones (`old_string` to `oldString`).
+
+If the call still fails, the model receives the issues as `path: problem` lines.
+
+Malformed JSON is repaired only when `JSON.parse` fails: markdown fences, an empty text, Python
+literals, trailing commas, raw newlines and control characters inside strings, extra closers, and
+missing closers after a complete value. Arguments cut off inside a string or after `:` or `,` are
+never completed: the model is told the call did not run and to split large content. Several
+concatenated objects are refused with a request for one call per tool.
+
+An unknown tool name is mapped only by deterministic rules with a single match: stray quotes and
+brackets; `functions.`, `default_api.`, `mcp__maestrly__` and `maestrly_` prefixes; namespaces and
+`:N` suffixes; case and separators; and known aliases (`Read`, `Bash`, `read_file`,
+`run_terminal_cmd`…) when the target exists. A near miss is only suggested ("Did you mean
+`read`?"), never executed.
+
+### History and schemas
+
+The middleware sees every request, including the AI SDK's own tool steps. A valid history passes as
+the same array, so prompt caching is unaffected. Otherwise:
+
+- a call without result gets a synthetic error result saying its outcome is unknown;
+- results without a call are dropped;
+- repeated or empty ids are renamed together with their results;
+- Anthropic ids are limited to `[A-Za-z0-9_-]`;
+- invalid names and inputs that are not objects are fixed.
+
+The BYOK runners also repair the messages before `streamText`, which refuses a call without result.
+On OpenAI-compatible servers, a streamed call id the prompt already holds (servers that answer
+`call_0` on every step) is replaced, keeping Mistral's nine-character shape.
+
+Only the copy of a schema sent to the provider takes a dialect; validation uses the original. The host
+takes precedence over the model id, and Anthropic and OpenAI Responses take none.
+
+| Dialect | Selected by | Changes |
+|---|---|---|
+| `gemini` | `generativelanguage.googleapis.com` or `*aiplatform.googleapis.com`, or a `gemini` model id | Inlines `$ref` (recursion becomes `{}`); `const` to `enum`; tuples to `prefixItems`; `required` limited to declared properties; unions of literals to `enum`; draft-04 exclusive bounds; object root |
+| `moonshot` | `api.moonshot.*`, or a `kimi` or `moonshot` model id | Inlines `$ref`; types untyped enums; tuples to an `items` union |
+| `xai` | `api.x.ai` or the Grok subscription | Drops `minContains` and `maxContains` |
+| `llamacpp` | A local or private host (llama.cpp, Ollama, LM Studio) | Drops `pattern` and `maxLength` of 2000 or more |
+
+Add a transform only with evidence of a provider rejecting the schema.
+
+### Loops and repetition
+
+The loop guard keeps one state per run: a turn, or a subagent, which guards the tools it receives
+again, so a parent and its children count apart. A call is its tool plus canonical arguments; no
+progress means the same result, text and error flag, again.
+
+| Situation | Note on the result | Refused | Stop |
+|---|---|---|---|
+| Identical call, identical result | 3rd | 5th | Retrying a refused call, or 3 refusals in the turn |
+| Identical failure | 2nd | 3rd | 4th |
+| Pollers (`wait_conversation`, `terminal_read`, `browser_wait_for`…) | — | — | 30 identical results |
+| Steps with only invalid calls (BYOK) | Error to the model | — | 3 steps in a row |
+
+A successful call to a tool that is not read-only clears the counts of every other call.
+Cancellations and permission decisions are not counted.
+
+In the AI SDK loops, a stop ends the turn at the step boundary with a coded error and no continuation;
+a subagent fails with the reason, which the parent reads in the `task` result. Claude, Codex, Copilot,
+Antigravity and Cursor run their own loop, so there the stop is soft: every later tool call of the
+turn is refused with the instruction to stop and report.
+
+Repetitive output is checked once the turn's text or reasoning passes 16,000 characters, then every
+4,000: 60-character windows repeated at least five times over half of the text, a dominant line, or
+one passage repeated five times in a row. Text whose lines are mostly distinct (tables, code, lists)
+skips the first two checks. The BYOK runners abort the request and end with a coded error.
+
+Diagnostics record `tool-call-repaired`, `tool-history-sanitized`, `tool-loop-guard` and
+`repetitive-output-stopped` without arguments or output.
+
+Tools still run only after their step finishes. Starting them while the model streams would save
+little and would bypass what keeps cut streams, retries and permissions consistent.
+
 ## Verifying
 
 - `npm run test:unit --workspace @maestrly/desktop -- test/unit/chat-harness-` runs the harness suites.
+- `npm run test:unit --workspace @maestrly/desktop -- test/unit/chat-tool-robustness-` runs the tool-call
+  robustness suites.
 - `npm run build:desktop` validates the catalog before bundling; an invalid profile names the folder,
   file and field. Profile texts are inlined into the main bundle, so the packaged app never reads `src/`.
 - In `npm run dev`, profile files are watched by the main build: adding or editing one rebuilds the main

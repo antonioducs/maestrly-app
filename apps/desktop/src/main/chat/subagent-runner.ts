@@ -64,6 +64,17 @@ import { getAppFlag } from '../store'
 import { applyFastModeServiceTier } from './fast-mode'
 import { createSubagentTextEmitter, type SubagentTextUpdateHandler } from './subagent-text-stream'
 import type { SubagentMessageOwnership } from './subagent-ownership'
+import {
+  createRepetitionWatch,
+  createToolCallRepair,
+  createToolLoopGuard,
+  guardToolSet,
+  hardenToolSetForModel,
+  MAX_INVALID_TOOL_STEPS,
+  type RepetitionVerdict,
+  sanitizeHistoryMessages,
+  trailingInvalidToolSteps,
+} from './tool-robustness'
 
 const SUB_MAX_CONTINUE = 2
 const SUB_MAX_TOTAL_CONTINUES = 3
@@ -449,6 +460,8 @@ export async function runSubagent(args: {
         subagentTaskCallId
       ),
     }
+    // The host tools arrive hardened by the parent; this covers the subagent's own built-ins.
+    tools = hardenToolSetForModel(tools)
     const standalone = args.messageOwnership?.kind === 'standalone' || args.projectId === null
     // Read once the tools are final: local_shell replaces `bash` for some OpenAI models and takes argv instead.
     const delegatedEnvironment = (): string =>
@@ -570,6 +583,21 @@ export async function runSubagent(args: {
         },
       }
     }
+    // The run's own loop guard wraps the final ToolSet; a parent guard inside passes the calls through.
+    const subLoopGuard = createToolLoopGuard({ agent: args.agentName, conv: args.conversationId })
+    tools = guardToolSet(tools, subLoopGuard)
+    const subRepetition = createRepetitionWatch()
+    let invalidToolStop = false
+    const subToolStop = (completed: ReadonlyArray<{ toolCalls: ReadonlyArray<{ invalid?: boolean }> }>) => {
+      if (subLoopGuard.stopped) return true
+      invalidToolStop ||= trailingInvalidToolSteps(completed) >= MAX_INVALID_TOOL_STEPS
+      return invalidToolStop
+    }
+    /** An automatic stop fails the subagent with its reason, which the parent reads in the task result. */
+    const automaticStop = (reason: string) =>
+      Object.assign(new Error(`Subagent ${args.agentName} stopped automatically: ${reason}`), {
+        maestrlyRetryClassified: true,
+      })
     // ---- Resilience (lean port of main-loop streamOnce/while). ----
     const taskInput = args.task
     const history: ModelMessage[] = (args.replayHistory ?? []).map((message) => ({
@@ -649,19 +677,40 @@ export async function runSubagent(args: {
         })
         return true
       }
+      const repetitionAbort = new AbortController()
+      const stopRepetitiveOutput = (verdict: RepetitionVerdict) => {
+        repetitionAbort.abort()
+        chatDiag({
+          kind: 'repetitive-output-stopped',
+          channel: verdict.channel,
+          pattern: verdict.kind,
+          steps,
+          model: usedModel.modelId,
+          agent: args.agentName,
+        })
+        return automaticStop('the model kept repeating the same output.')
+      }
       try {
+        // The Responses ledger reconciles its own tool calls; every other transport gets a repaired tool history.
+        const historyMessages = useOpenAISubagent
+          ? messages
+          : sanitizeHistoryMessages(messages, { model: usedModel.modelId, agent: args.agentName })
         const requestMessages =
-          resolvedSubModel.transport === 'anthropic' ? withAnthropicCacheControl(messages) : messages
+          resolvedSubModel.transport === 'anthropic' ? withAnthropicCacheControl(historyMessages) : historyMessages
         const result = streamText({
           model: subStreamModel,
           system: subSystem,
           messages: requestMessages,
           tools,
-          // No step cap (July 2026 decision): stop only when the model
-          // finishes without tool calls; turn abort (Stop) cuts the stream.
-          stopWhen: () => false,
+          repairToolCall: createToolCallRepair({
+            onEvent: (event) =>
+              chatDiag({ kind: 'tool-call-repaired', ...event, model: usedModel.modelId, agent: args.agentName }),
+          }),
+          // No step cap (July 2026 decision): stop when the model finishes without tool calls, or when the
+          // tool stops end the run; turn abort (Stop) cuts the stream.
+          stopWhen: ({ steps: completed }) => subToolStop(completed),
           maxRetries: AI_SDK_MAX_RETRIES,
-          abortSignal: args.signal,
+          abortSignal: AbortSignal.any([args.signal, repetitionAbort.signal]),
           // fullStream delivers the same error; the SDK default prints it to stdout with the prompt, unredacted.
           onError: () => undefined,
           ...(subMaxOutputTokens ? { maxOutputTokens: subMaxOutputTokens } : {}),
@@ -685,11 +734,19 @@ export async function runSubagent(args: {
             }
           }
           switch (part.type) {
-            case 'text-delta':
+            case 'text-delta': {
               attemptText += part.text
               emitText(text + attemptText)
               produced = true
+              const verdict = subRepetition.push('text', part.text)
+              if (verdict) throw stopRepetitiveOutput(verdict)
               break
+            }
+            case 'reasoning-delta': {
+              const verdict = subRepetition.push('reasoning', part.text)
+              if (verdict) throw stopRepetitiveOutput(verdict)
+              break
+            }
             case 'tool-call':
               produced = true
               if (isNonReplayableSubagentMutation(subLifecycle != null, part.toolName, args.tools))
@@ -720,6 +777,20 @@ export async function runSubagent(args: {
               break
             case 'finish': {
               reconcileNormalizedUsage(usage, attemptUsage, part.totalUsage)
+              if (subLoopGuard.stopped) {
+                throw automaticStop(`\`${subLoopGuard.stopped.toolName}\` kept repeating without progress.`)
+              }
+              if (invalidToolStop) {
+                chatDiag({
+                  kind: 'tool-loop-guard',
+                  action: 'stop',
+                  reason: 'invalid-tool-calls',
+                  count: MAX_INVALID_TOOL_STEPS,
+                  model: usedModel.modelId,
+                  agent: args.agentName,
+                })
+                throw automaticStop(`the model made only invalid tool calls for ${MAX_INVALID_TOOL_STEPS} steps in a row.`)
+              }
               const finish = part as { finishReason?: unknown; rawFinishReason?: unknown }
               const reason = normalizeStreamFinishReason(finish.finishReason, finish.rawFinishReason)
               // A graceful but incomplete finish never counts as success; outer loop decides whether continuation is possible.

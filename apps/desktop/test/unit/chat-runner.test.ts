@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { jsonSchema, simulateReadableStream, tool } from 'ai'
-import { MockLanguageModelV4 } from 'ai/test'
+import { MockLanguageModelV4, convertArrayToReadableStream } from 'ai/test'
 import { registerAutonomousConversation } from '../../src/main/chat/autonomous'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -1682,3 +1682,144 @@ describe('prompt cache in API-key turns', () => {
 })
 
 type ModelMessageLike = { role: string; content: unknown }
+
+describe('automatic stops of a BYOK turn', () => {
+  const usage = {
+    inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite: 0 },
+    outputTokens: { total: 5, text: 5, reasoning: 0 },
+  }
+  const toolStep = (toolName: string, input: string): LanguageModelV4StreamPart[] => [
+    { type: 'stream-start', warnings: [] },
+    { type: 'tool-call', toolCallId: `call-${nextCallId++}`, toolName, input },
+    { type: 'finish', finishReason: { unified: 'tool-calls', raw: 'tool_calls' }, usage },
+  ]
+  let nextCallId = 0
+  const probe = vi.fn(async () => 'the same answer')
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    freshDb()
+    insertWorkspace({ id: 'w', path: '/tmp/w', name: 'W', defaultBranch: 'main', addedAt: 1 })
+    insertConversation({
+      scope: 'project',
+      id: 'c',
+      workspaceId: 'w',
+      name: 'C',
+      branch: 'main',
+      mode: 'local',
+      experience: 'standard',
+      cwd: '/tmp/w',
+      status: 'idle',
+      createdAt: 1,
+      archived: 0,
+      pinnedAt: null,
+      lastActivityAt: 1,
+      isMulti: 0,
+    })
+    upsertChatMessage({
+      id: 'u1',
+      conversationId: 'c',
+      role: 'user',
+      parts: [{ type: 'text', id: 'u1-text', text: 'Hello' }],
+      createdAt: 900,
+    })
+    const { streamText } = await vi.importActual<typeof import('ai')>('ai')
+    mocks.streamText.mockImplementation(streamText as never)
+    mocks.getProviderModelMetaWithStatus.mockResolvedValue({ status: 'unavailable', meta: null })
+    mocks.buildMcpTools.mockResolvedValue({
+      tools: { probe: tool({ inputSchema: jsonSchema({ type: 'object' }), execute: probe }) },
+      close: async () => {},
+    })
+    mocks.buildAppTools.mockResolvedValue({ tools: {}, close: async () => {} })
+    mocks.hasApiKey.mockReturnValue(true)
+    mocks.getApiKey.mockReturnValue('test-key')
+  })
+  afterEach(() => {
+    mocks.streamText.mockReset()
+    closeDb()
+  })
+
+  const runWith = async (model: MockLanguageModelV4) => {
+    mocks.resolveChatModel.mockReturnValue({
+      model,
+      transport: 'openai',
+      harnessProfile: 'legacy-v1',
+      promptProfile: 'maestrly-legacy',
+      capabilities: {
+        encryptedReasoning: false,
+        nativeApplyPatch: false,
+        nativeCompaction: false,
+        nativeShell: false,
+        promptCacheKey: false,
+        toolSearch: false,
+      },
+      providerFingerprint: 'test-fp',
+    })
+    const events: ChatStreamEvent[] = []
+    await runChat({
+      conversationId: 'c',
+      projectId: 'w',
+      cwd: '/tmp/w',
+      selection: { providerId: 'openai', modelId: 'gpt-test' },
+      broker: { assert: async () => {} } as unknown as PermissionBroker,
+      questionBroker: {} as unknown as QuestionBroker,
+      emit: (event) => events.push(event),
+      signal: new AbortController().signal,
+      assistantMessageId: 'a1',
+      assistantCreatedAt: 1000,
+      responseStartedAt: 1000,
+    })
+    return { events, message: listChatMessages('c').find((m) => m.id === 'a1') }
+  }
+
+  it('stops a tool loop at the step boundary with a coded error and no continuation', async () => {
+    const model = new MockLanguageModelV4({
+      doStream: async () => ({ stream: convertArrayToReadableStream(toolStep('probe', '{"q":"x"}')) }),
+    })
+    const { events, message } = await runWith(model)
+    // Four identical calls run, the fifth is refused, retrying the refused call stops the turn.
+    expect(probe).toHaveBeenCalledTimes(4)
+    expect(model.doStreamCalls).toHaveLength(6)
+    expect(mocks.streamText).toHaveBeenCalledTimes(1)
+    expect(message?.errorCode).toBe('tool-loop-stopped')
+    expect(message?.error).toBe('Stopped automatically: `probe` kept repeating without progress.')
+    expect(events.filter((event) => event.kind === 'finish')).toEqual([])
+    expect(mocks.chatDiag).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'tool-loop-guard', action: 'stop', toolName: 'probe', conv: 'c' })
+    )
+  })
+
+  it('stops after three steps with only invalid tool calls', async () => {
+    const model = new MockLanguageModelV4({
+      doStream: async () => ({ stream: convertArrayToReadableStream(toolStep('deploy_production', '{}')) }),
+    })
+    const { message } = await runWith(model)
+    expect(model.doStreamCalls).toHaveLength(3)
+    expect(mocks.streamText).toHaveBeenCalledTimes(1)
+    expect(message?.errorCode).toBe('invalid-tool-calls-stopped')
+  })
+
+  it('cuts repetitive output and aborts the provider request', async () => {
+    const line = 'I will check the configuration file again to be sure.\n'
+    const model = new MockLanguageModelV4({
+      doStream: async () => ({
+        stream: convertArrayToReadableStream<LanguageModelV4StreamPart>([
+          { type: 'stream-start', warnings: [] },
+          { type: 'text-start', id: 't' },
+          ...Array.from({ length: 1000 }, () => ({ type: 'text-delta' as const, id: 't', delta: line })),
+          { type: 'text-end', id: 't' },
+          { type: 'finish', finishReason: { unified: 'stop', raw: 'stop' }, usage },
+        ]),
+      }),
+    })
+    const { message } = await runWith(model)
+    expect(message?.errorCode).toBe('repetitive-output-stopped')
+    expect(model.doStreamCalls).toHaveLength(1)
+    expect(model.doStreamCalls[0].abortSignal?.aborted).toBe(true)
+    const text = message?.parts.find((part) => part.type === 'text')
+    expect(text?.type === 'text' && text.text.length).toBeLessThan(line.length * 400)
+    expect(mocks.chatDiag).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'repetitive-output-stopped', channel: 'text', pattern: 'line' })
+    )
+  })
+})

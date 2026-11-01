@@ -34,6 +34,8 @@ import { openAIResponsesFetch } from './openai/raw-input'
 import { withOpenAIResponsesReplay } from './openai/replay-middleware'
 import { getGrokSubscriptionManager } from './grok-subscription/manager'
 import { GrokNotAuthenticatedError } from './grok-subscription/manager'
+import { chatDiag } from './diag-log'
+import { wrapToolRobustnessModel } from './tool-robustness/model-middleware'
 
 /** BYOK configuration error (missing key or unknown provider), presented as a readable UI message. */
 export class ChatConfigError extends Error {
@@ -124,7 +126,13 @@ function getProviderInstance(providerId: string): ModelResolver {
       apiKey: credential.apiKey,
       fetch: credential.fetch,
     })
-    resolve = (modelId) => anthropic.languageModel(modelId)
+    resolve = (modelId) =>
+      wrapToolRobustnessModel(anthropic.languageModel(modelId), {
+        transport: 'anthropic',
+        baseURL: descriptor.baseURL,
+        modelId,
+        onDiag: chatDiag,
+      })
   } else if (kind === 'openai-responses') {
     // The native Responses adapter preserves reasoning items across tool steps in the same turn.
     // The chat/completions shim loses reasoning at each tool call, degrading GPT 5.x agent tasks.
@@ -145,7 +153,14 @@ function getProviderInstance(providerId: string): ModelResolver {
       fetch: credential.fetch,
       includeUsage: true,
     })
-    resolve = (modelId) => oai(modelId)
+    resolve = (modelId) =>
+      wrapToolRobustnessModel(oai(modelId), {
+        transport: 'openai-compatible',
+        baseURL: descriptor.baseURL,
+        modelId,
+        grok: isGrokSubscriptionProvider(descriptor.id),
+        onDiag: chatDiag,
+      })
   }
   providerCache.set(providerId, { key: credential.fingerprint, resolve })
   return resolve

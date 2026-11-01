@@ -331,3 +331,16 @@ and bot image do not contain the server. It is a proprietary
 Google component, separate from Maestrly's MIT-licensed source, and its use and
 the Google AI services it reaches remain subject to Google's terms. Maestrly is
 not affiliated with or endorsed by Google.
+
+## Tool-call robustness designs
+
+The tool-call repair, loop guard, repetition watch and schema dialects in
+`apps/desktop/src/main/chat/tool-robustness/` adapt designs from the following
+projects. No source code is copied; each file names the design it follows.
+
+- [OpenCode](https://github.com/anomalyco/opencode): MIT License, Copyright (c)
+  2025 opencode.
+- [Hermes Agent](https://github.com/NousResearch/hermes-agent): MIT License,
+  Copyright (c) 2025 Nous Research.
+- [OpenClaw](https://github.com/openclaw/openclaw): MIT License, Copyright (c)
+  2026 OpenClaw Foundation.

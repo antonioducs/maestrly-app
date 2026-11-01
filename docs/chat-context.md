@@ -214,6 +214,16 @@ messages mid-turn, as bots and active Maestro runs do. To stop the agent with
 text in the composer, press Esc there. In a chat, stopping also discards the
 queued messages.
 
+Maestrly also stops a model that is stuck. When it keeps making the same tool
+call without progress, the call is refused and then the turn ends. With an API
+key, the turn also ends after three steps with only invalid tool calls, or when
+the model starts repeating the same text. The response then says why it
+stopped; send a message to continue. Subscription runtimes (Claude, Codex,
+Copilot, Google AI, Cursor) run their own loop, so there Maestrly refuses the
+remaining tool calls of the turn and asks the agent to stop and report. The
+limits are in
+[Harness profiles](harness-profiles.md#loops-and-repetition).
+
 ## Voice dictation
 
 Click the microphone in a chat or bot composer to speak, or press ⌘D (Ctrl+D on

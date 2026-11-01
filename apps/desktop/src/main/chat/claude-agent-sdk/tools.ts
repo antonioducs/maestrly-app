@@ -19,6 +19,7 @@ import {
   toolOutputToMcpCallResult,
 } from '../tool-output'
 import { isHostToolParallelSafe } from '../tool-policy'
+import { coerceToolInput as sharedCoerceToolInput } from '../tool-robustness/arg-repair'
 import type { ToolOutput } from '../../../shared/chat'
 import type { ClaudeToolJournal } from './tool-journal'
 
@@ -131,38 +132,9 @@ function schemaKinds(raw: unknown): Set<JsonKind> {
  * Restores the JSON types of arguments the Claude API returned as strings. The API types a tool call's arguments only
  * when the model names a tool it was given; a call by an alias (`bash` for `mcp__maestrly__bash`, which seeded
  * transcripts and prompts teach the model) arrives with every argument a string: `"limit": "50"`, `"tags": "[\"a\"]"`.
- * A string the schema accepts stays as it is, and one that does not parse to a kind the schema accepts is left for the
- * validator to reject.
+ * The shared tool-call coercion does it for every runtime; a string the schema accepts stays as it is.
  */
-export function coerceToolInput(schema: unknown, value: unknown): unknown {
-  const record = schemaRecord(schema)
-  if (typeof value === 'string') {
-    const kinds = schemaKinds(record)
-    if (kinds.has('string')) return value
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(value)
-    } catch {
-      return value
-    }
-    const kind = jsonKind(parsed)
-    return kind && kinds.has(kind) ? coerceToolInput(record, parsed) : value
-  }
-  if (Array.isArray(value)) {
-    return record.items === undefined ? value : value.map((item) => coerceToolInput(record.items, item))
-  }
-  if (value && typeof value === 'object') {
-    const properties = schemaRecord(record.properties)
-    if (Object.keys(properties).length === 0) return value
-    return Object.fromEntries(
-      Object.entries(value).map(([key, entry]) => [
-        key,
-        Object.hasOwn(properties, key) ? coerceToolInput(properties[key], entry) : entry,
-      ])
-    )
-  }
-  return value
-}
+export const coerceToolInput = sharedCoerceToolInput
 
 function withStringCoercion(schema: unknown, type: z.ZodType): z.ZodType {
   if (schemaKinds(schema).has('string')) return type
