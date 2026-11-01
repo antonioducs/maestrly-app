@@ -38,6 +38,8 @@ describe('standalone conversation schema rebuild', () => {
       'conversation_migrations',
       'conversation_repos',
       'chat_messages',
+      // History search triggers on chat_messages write here.
+      'chat_history_index_queue',
       'chat_inference_state',
       'chat_codex_threads',
       'chat_codex_thread_cleanup',

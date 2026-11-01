@@ -6,6 +6,7 @@ import { prepareProductionDatabasePath } from './database-path-migration'
 import { initializeBotCommandSchema } from '../bot/schema'
 import { initializeHostTransferSchema } from '../host-transfers/schema'
 import { initializeConversationMoveSchema } from '../conversation-move/schema'
+import { initializeHistoryIndexQueue } from '../chat/history-index/schema'
 
 // Use built-in node:sqlite available in the Electron runtime, avoiding an additional native module or ABI
 // rebuild.
@@ -890,6 +891,7 @@ function initializeSchema(): void {
     })
   }
   db.exec('CREATE INDEX IF NOT EXISTS idx_chat_tool_exec_message ON chat_tool_executions(message_id);')
+  initializeHistoryIndexQueue(db)
 
   // Compatibility with Codex adapter development databases predating usage snapshots.
   const codexThreadCols = db.prepare('PRAGMA table_info(chat_codex_threads)').all() as Array<{ name: string }>

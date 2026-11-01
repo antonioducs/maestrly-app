@@ -443,12 +443,26 @@ export default {
     history_search: {
       title: 'Buscar no histórico da conversa',
       description:
-        'Busca no histórico completo salvo desta conversa, inclusive trechos já compactados. Todas as palavras precisam aparecer; os resultados mais recentes vêm primeiro. Retorna posições (seq) e trechos; leia ao redor de um com history_read. Somente leitura.',
+        'Busca no histórico completo salvo desta conversa, inclusive trechos já compactados e chamadas de ferramentas. Ordena as mensagens por relevância: radicais das palavras casam sem depender de acentos, partes de palavras e texto CJK também são encontrados, e mensagens recentes desempatam. Use o modo "exact" para exigir todas as palavras, mais recentes primeiro. Sem query, percorre a conversa: o que a pessoa pediu e os resumos de compactação, mais recentes primeiro. scope "workspace" inclui as outras conversas de projeto deste workspace, arquivadas também (não em chats avulsos, conversas de bots ou trabalho delegado). Retorna posições (seq), trechos e pontuações; leia ao redor de um com history_read. Somente leitura.',
+      params: {
+        query:
+          'Palavras a procurar (2 a 500 caracteres). Coloque "uma frase" entre aspas para buscá-la como escrita. Omita para percorrer a conversa.',
+        limit: 'Máximo de resultados, de 1 a 30 (padrão 8).',
+        mode: '"relevance" (padrão) ordena por relevância; "exact" exige todas as palavras e lista as mais recentes primeiro.',
+        beforeSeq:
+          'Só mensagens antes desta posição; passe o último seq visto para paginar os resultados do modo exato e da navegação.',
+        scope:
+          '"conversation" (padrão) ou "workspace": os resultados indicam então o conversationId; sem query, lista as conversas.',
+      },
     },
     history_read: {
       title: 'Ler histórico da conversa',
       description:
         'Lê as mensagens ao redor de uma posição do histórico (seq) encontrada com history_search, com saídas de ferramentas encurtadas. Somente leitura.',
+      params: {
+        detail: '"full" mostra cada saída de ferramenta com até 8.000 caracteres em vez de 600, dentro do mesmo total de 12.000.',
+        conversationId: 'Outra conversa deste workspace, vinda de um resultado de history_search com scope "workspace".',
+      },
     },
     memory_search: {
       title: 'Buscar na memória',
@@ -667,6 +681,9 @@ export default {
       compactionSummary: '[resumo da compactação] {{text}}',
       compaction: '[compactação]',
       generatedImage: '[imagem gerada {{name}}]',
+      workspaceDenied:
+        'O histórico do workspace só está disponível em conversas de projeto, não em chats avulsos, conversas de bots ou trabalho delegado. Busque nesta conversa.',
+      conversationDenied: 'O histórico dessa conversa não está disponível daqui.',
     },
     memory: {
       nothingRelevant: 'Nada relevante o suficiente. Tente outras palavras ou use memory_list para explorar.',

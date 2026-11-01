@@ -35,6 +35,7 @@ const LOCAL_TABLES = [
   'chat_cursor_agents',
   'chat_github_copilot_session_cleanup',
   'chat_github_copilot_sessions',
+  'chat_history_index_queue',
   'chat_inference_state',
   'chat_maestro_run_messages',
   'chat_maestro_runs',
