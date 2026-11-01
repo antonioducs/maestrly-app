@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronLeft, Globe } from 'lucide-react'
+import { ChevronLeft, Globe, Repeat } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { ChatSubscriptionProviderKind, ChatSubscriptionUsage } from '../../../../shared/chat'
 import { subscriptionUsageTone } from '../subscription-usage-presentation'
@@ -90,6 +90,22 @@ export function ProviderMark({
           className={cn('absolute -bottom-0.5 -right-0.5 size-2.5 rounded-full ring-2 ring-popover', DOT_CLASS[dot])}
         />
       )}
+    </span>
+  )
+}
+
+/** A provider's rotation, drawn as the account marks are; dashed and muted while it is off. */
+export function AccountPoolMark({ enabled, size = 'md' }: { enabled: boolean; size?: 'md' | 'lg' }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        'grid shrink-0 place-items-center border border-dashed',
+        size === 'md' ? 'size-7 rounded-lg' : 'size-10 rounded-xl',
+        enabled ? 'border-indigo-400/50 bg-indigo-500/15 text-indigo-300' : 'border-border text-muted-foreground'
+      )}
+    >
+      <Repeat className={size === 'md' ? 'size-3.5' : 'size-[18px]'} />
     </span>
   )
 }

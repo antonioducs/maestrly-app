@@ -1,6 +1,6 @@
 import { environmentSettingsRoute } from './environment-settings.js'
 import {
-  FLEET_ACCOUNT_FAILOVER_FEATURE,
+  FLEET_ACCOUNT_POOLS_FEATURE,
   FLEET_BOT_MOVE_FEATURE,
   FLEET_BOT_RESTART_FEATURE,
   FLEET_ENVIRONMENT_PLUGINS_FEATURE,
@@ -321,11 +321,11 @@ export async function publicRoute(
         'settingsPluginSkills',
         'settingsMcpOAuthStatuses',
         'settingsMcpOAuthDescriptor',
-        'settingsFailover',
+        'settingsAccountPools',
       ].includes(key)
     )
       recordConfiguration(ctx, eid, res, {
-        accounts: key.includes('Account') || key.includes('Subscription') || key.includes('Failover') ? 1 : 0,
+        accounts: key.includes('Account') || key.includes('Subscription') ? 1 : 0,
         skills: key.includes('Skill') ? 1 : 0,
         mcpServers: key.includes('Mcp') ? 1 : 0,
         models: key.includes('Model') ? 1 : 0,
@@ -487,7 +487,7 @@ export async function publicRoute(
           features: [
             FLEET_FILES_FEATURE,
             FLEET_ENVIRONMENT_SETTINGS_FEATURE,
-            FLEET_ACCOUNT_FAILOVER_FEATURE,
+            FLEET_ACCOUNT_POOLS_FEATURE,
             FLEET_ARTIFACTS_FEATURE,
             FLEET_ARTIFACTS_GATEWAY_VIEWER_FEATURE,
             FLEET_ARTIFACTS_TRANSFER_FEATURE,

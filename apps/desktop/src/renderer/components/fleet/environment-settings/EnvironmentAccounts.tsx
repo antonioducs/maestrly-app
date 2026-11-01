@@ -15,7 +15,7 @@ import { useFleetProvisioning } from '@/lib/fleet/provisioning'
 import { ApiKeyAccountForm } from '../ApiKeyAccountForm'
 import { BotLoginDialog } from '../BotLoginDialog'
 import { MacImportDialog } from '../MacImportDialog'
-import { EnvironmentFailover } from './EnvironmentFailover'
+import { EnvironmentAccountPools } from './EnvironmentAccountPools'
 import {
   OwnSaveButtonsScope,
   SaveDiscard,
@@ -149,7 +149,7 @@ function AccountsPanel({ environment, fleet, onDirtyChange }: EnvironmentSetting
         </div>
       ))}
       {resource.data && (
-        <EnvironmentFailover
+        <EnvironmentAccountPools
           environment={environment}
           fleet={fleet}
           subscriptions={resource.data.subscriptions}

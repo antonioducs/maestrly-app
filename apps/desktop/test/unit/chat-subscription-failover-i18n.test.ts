@@ -5,46 +5,42 @@ import {
 import { describe, expect, it } from 'vitest'
 import en from '../../src/shared/i18n/en/chat'
 import pt from '../../src/shared/i18n/pt-BR/chat'
+import enEnvironment from '../../src/shared/i18n/en/environment-settings'
+import ptEnvironment from '../../src/shared/i18n/pt-BR/environment-settings'
 
-const KEYS = [
-  'automaticRotation',
-  'automaticRotationDescription',
-  'addFallbackAccount',
-  'moveFallbackUp',
-  'moveFallbackDown',
-  'removeFallback',
-  'fallbackDisconnectedWarning',
-  'accountsExhaustedError',
-  'claudeAccountsExhaustedError',
-  'failoverSwitchStatus',
-  'accountPoolTitle',
-  'accountPoolDescription',
-  'accountPoolIsActive',
-  'accountPoolMakeActive',
-  'accountPoolActiveBadge',
-  'accountPoolPolicyLabel',
-  'accountPoolPolicyDrain',
-  'accountPoolPolicyDrainDescription',
-  'accountPoolPolicyPreferActive',
-  'accountPoolPolicyPreferActiveDescription',
-  'accountPoolMembers',
-  'accountPoolAddMember',
-  'accountPoolRemoveMember',
-  'accountPoolSaveFailed',
-] as const
+const placeholders = (text: string) => [...text.matchAll(/{{(\w+)}}/g)].map((match) => match[1]).sort()
+const poolKeys = (settings: Record<string, unknown>) =>
+  Object.keys(settings)
+    .filter((key) => key.startsWith('accountPool'))
+    .sort()
 
 describe('subscription failover i18n', () => {
-  it('keeps settings keys in both locales', () => {
-    for (const key of KEYS) {
-      expect(typeof en.settings[key]).toBe('string')
-      expect(en.settings[key].length).toBeGreaterThan(0)
-      expect(typeof pt.settings[key]).toBe('string')
-      expect(pt.settings[key].length).toBeGreaterThan(0)
+  it('keeps the rotation keys and their placeholders in both locales', () => {
+    const keys = poolKeys(en.settings)
+    expect(keys.length).toBeGreaterThan(20)
+    expect(poolKeys(pt.settings)).toEqual(keys)
+    for (const key of [...keys, 'accountsExhaustedError', 'claudeAccountsExhaustedError', 'failoverSwitchStatus']) {
+      const english = en.settings[key as keyof typeof en.settings] as string
+      const portuguese = pt.settings[key as keyof typeof pt.settings] as string
+      expect(english.length, key).toBeGreaterThan(0)
+      expect(portuguese.length, key).toBeGreaterThan(0)
+      expect(placeholders(portuguese), key).toEqual(placeholders(english))
     }
-    expect(en.settings.failoverSwitchStatus).toContain('{{from}}')
-    expect(pt.settings.failoverSwitchStatus).toContain('{{to}}')
     expect(en.messages.accountsExhaustedError.length).toBeGreaterThan(0)
     expect(pt.messages.accountsExhaustedError.length).toBeGreaterThan(0)
+  })
+
+  it('keeps the environment rotation texts in both locales', () => {
+    const flatten = (value: unknown, prefix = ''): Array<[string, string]> =>
+      typeof value === 'string'
+        ? [[prefix, value]]
+        : Object.entries(value as Record<string, unknown>).flatMap(([key, child]) => flatten(child, `${prefix}.${key}`))
+    const english = flatten(enEnvironment.accountPools)
+    const portuguese = new Map(flatten(ptEnvironment.accountPools))
+    expect(english.map(([key]) => key).sort()).toEqual([...portuguese.keys()].sort())
+    for (const [key, text] of english) expect(placeholders(portuguese.get(key)!), key).toEqual(placeholders(text))
+    expect(enEnvironment).not.toHaveProperty('failover')
+    expect(ptEnvironment).not.toHaveProperty('failover')
   })
 
   it.each([en, pt])('resolves both error families through the shared admission and stream lookup', (locale) => {
@@ -63,6 +59,5 @@ describe('subscription failover i18n', () => {
       ).toContain(family === 'codex' ? 'Codex' : 'Claude')
     }
     expect(subscriptionExhaustionMessageKey('unknown')).toBeUndefined()
-    expect(locale.settings.automaticRotationDescription).not.toMatch(/Codex|Claude/)
   })
 })

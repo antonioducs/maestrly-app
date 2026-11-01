@@ -42,6 +42,8 @@ describe('account pool config', () => {
       activeProviderId: A,
       policy: 'drain',
       customMembers: false,
+      enabled: true,
+      autoJoin: true,
     })
   })
   it('keeps an implicit pool open to accounts added later', () => {
@@ -51,6 +53,35 @@ describe('account pool config', () => {
       memberProviderIds: [A, B, C],
       activeProviderId: B,
     })
+  })
+  it('keeps an account taken out of the rotation out while others join', () => {
+    providers = [{ id: A }, { id: B }, { id: C }]
+    pool.setAccountPool({ kind: 'claude-subscription', memberProviderIds: [A, C] })
+    const D = `${A}@acc_new`
+    providers = [...providers, { id: D }]
+    expect(pool.getAccountPool('claude-subscription')).toMatchObject({ memberProviderIds: [A, C, D], autoJoin: true })
+    pool.setAccountPool({ kind: 'claude-subscription', autoJoin: false })
+    pool.setAccountPool({ kind: 'claude-subscription', autoJoin: true })
+    const E = `${A}@acc_later`
+    providers = [...providers, { id: E }]
+    expect(pool.getAccountPool('claude-subscription').memberProviderIds).toEqual([A, C, D, E])
+    pool.setAccountPool({ kind: 'claude-subscription', memberProviderIds: [A, C, D, E, B] })
+    expect(pool.getAccountPool('claude-subscription').memberProviderIds).toEqual([A, C, D, E, B])
+  })
+  it('pins the members when accounts stop joining on their own', () => {
+    pool.setAccountPool({ kind: 'claude-subscription', autoJoin: false })
+    providers = [...providers, { id: C }]
+    expect(pool.getAccountPool('claude-subscription')).toMatchObject({ memberProviderIds: [A, B], autoJoin: false })
+  })
+  it('records a switch made by hand, newest first', () => {
+    pool.setAccountPool({ kind: 'claude-subscription', activeProviderId: B })
+    pool.setAccountPool({ kind: 'claude-subscription', activeProviderId: B })
+    pool.setAccountPool({ kind: 'claude-subscription', activeProviderId: A })
+    expect(pool.accountPoolSwitches('claude-subscription')).toEqual([
+      expect.objectContaining({ fromProviderId: B, toProviderId: A, reason: 'manual' }),
+      expect.objectContaining({ fromProviderId: A, toProviderId: B, reason: 'manual' }),
+    ])
+    expect(pool.accountPoolSwitches('codex-subscription')).toEqual([])
   })
   it('rejects invalid patches', () => {
     expect(() => pool.setAccountPool({ kind: 'cursor-subscription' } as never)).toThrow('unknown-kind')
@@ -64,6 +95,10 @@ describe('account pool config', () => {
     expect(() => pool.setAccountPool({ kind: 'claude-subscription', policy: 'sometimes' as never })).toThrow(
       'invalid-policy'
     )
+    expect(() => pool.setAccountPool({ kind: 'claude-subscription', enabled: 'yes' as never })).toThrow(
+      'invalid-enabled'
+    )
+    expect(() => pool.setAccountPool({ kind: 'claude-subscription', autoJoin: 1 as never })).toThrow('invalid-auto-join')
   })
   it('drops removed accounts and falls back to the first member', () => {
     pool.setAccountPool({ kind: 'claude-subscription', memberProviderIds: [B, A], activeProviderId: B })
@@ -89,7 +124,7 @@ describe('account pool config', () => {
     pool.removeAccountFromAccountPools(B)
     expect(JSON.parse(settings.get(pool.ACCOUNT_POOLS_CONFIG_KEY)!)).toEqual({
       version: 1,
-      pools: [{ kind: 'claude-subscription', memberProviderIds: [A] }],
+      pools: [{ kind: 'claude-subscription', memberProviderIds: [A], autoJoin: true }],
     })
   })
 })
@@ -106,6 +141,22 @@ describe('account pool chain', () => {
     blocked.add(B)
     expect(pool.accountPoolChain(VIRTUAL)).toEqual([C, A])
     expect(pool.resolveAccountPoolProviderId(VIRTUAL)).toBe(C)
+  })
+  it('runs on the active account alone while the rotation is off', () => {
+    providers = [{ id: A }, { id: B }, { id: C }]
+    pool.setAccountPool({ kind: 'claude-subscription', activeProviderId: B, enabled: false })
+    expect(pool.accountPoolChain(VIRTUAL)).toEqual([B])
+    expect(pool.isAccountPoolMember(B)).toBe(false)
+    expect(pool.accountPoolSuccessors(B)).toEqual([])
+    expect(pool.advanceAccountPoolsAfterExhaustion(B, probe())).toBeNull()
+  })
+  it('starts where quota is left under prefer-active, and on the active account under drain', () => {
+    providers = [{ id: A }, { id: B }, { id: C }]
+    const resolved = pool.getAccountPool('claude-subscription')
+    const limited = (id: string) => id === A || id === B
+    expect(pool.currentAccountPoolMember(resolved, limited)).toBe(A)
+    expect(pool.currentAccountPoolMember({ ...resolved, policy: 'prefer-active' }, limited)).toBe(C)
+    expect(pool.currentAccountPoolMember({ ...resolved, policy: 'prefer-active' }, () => true)).toBe(A)
   })
 })
 
@@ -141,6 +192,9 @@ describe('drain pointer', () => {
       pools: [{ kind: 'claude-subscription', activeProviderId: B }],
     })
     expect(pool.advanceAccountPoolsAfterExhaustion(VIRTUAL, probe())).toBeNull()
+    expect(pool.accountPoolSwitches('claude-subscription')).toEqual([
+      expect.objectContaining({ fromProviderId: A, toProviderId: B, reason: 'exhausted' }),
+    ])
   })
 })
 

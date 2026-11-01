@@ -19,12 +19,13 @@ import { environmentSubscriptionLogin } from '@/lib/fleet/use-bot-login'
 import { BotLoginDialog } from '@/components/fleet/BotLoginDialog'
 import { cn } from '@/lib/utils'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
-import type {
-  ChatConfig,
-  ChatSubscriptionAuthStatus,
-  ChatSubscriptionLoginResult,
-  ChatSubscriptionProviderKind,
-  ChatSubscriptionUsage,
+import {
+  isChatProviderConnected,
+  type ChatConfig,
+  type ChatSubscriptionAuthStatus,
+  type ChatSubscriptionLoginResult,
+  type ChatSubscriptionProviderKind,
+  type ChatSubscriptionUsage,
 } from '../../../../shared/chat'
 import type { RuntimeAssetId, RuntimeAssetInfo } from '../../../../shared/runtime-assets'
 import { accountPoolFor } from '../account-pool'
@@ -50,8 +51,7 @@ import {
   ProviderMark,
   secondaryButtonCls,
 } from './account-ui'
-import { AccountPoolEditor } from './AccountPoolEditor'
-import { FailoverRouteEditor } from './FailoverRouteEditor'
+import { AccountPoolMembership } from './AccountPoolPanel'
 import { ProviderModelFilter } from './ProviderModelFilter'
 import { ClaudeCodeSetupNotice, ClaudeManualSignIn } from './ClaudeSubscriptionHelp'
 import { claudeCodeSetupNeed } from './claude-code-setup'
@@ -100,7 +100,7 @@ export function SubscriptionAccount({
   onSnapshot,
   onConnectAnother,
   onBack,
-  showSubscriptionFailover,
+  onOpenAccountPool,
   onChanged,
   onModelFilterChanged,
 }: {
@@ -113,7 +113,7 @@ export function SubscriptionAccount({
   onSnapshot: (key: string, snapshot: SubscriptionAccountSnapshot | null) => void
   onConnectAnother: (kind: ChatSubscriptionProviderKind) => void
   onBack: () => void
-  showSubscriptionFailover: boolean
+  onOpenAccountPool: (kind: ChatSubscriptionProviderKind) => void
   onChanged: () => void
   onModelFilterChanged: () => void
 }) {
@@ -444,8 +444,6 @@ export function SubscriptionAccount({
     if (next?.state === 'signed-in') await refreshUsage(true)
   }
 
-  const defaultEntry = config.providers.find((entry) => entry.kind === providerKind && !entry.accountId)
-  const defaultLabel = titleFor({ accountId: null, accountLabel: defaultEntry?.accountLabel })
   const accountPool = accountPoolFor(config, providerKind)
   const showUsage = signedIn && usageSupported && usage?.state !== 'unsupported' && (usage !== null || usageBusy)
 
@@ -699,21 +697,11 @@ export function SubscriptionAccount({
         </DetailSection>
       )}
       {accountPool && (
-        <AccountPoolEditor
+        <AccountPoolMembership
           pool={accountPool}
           providerId={entry.key}
-          config={config}
-          defaultLabel={defaultLabel}
-          disconnectedLabel={t(copyKey('Disconnected'))}
-          onChanged={onChanged}
-        />
-      )}
-      {showSubscriptionFailover && (
-        <FailoverRouteEditor
-          primaryProviderId={entry.key}
-          defaultLabel={defaultLabel}
-          disconnectedLabel={t(copyKey('Disconnected'))}
-          config={config}
+          connected={provider ? isChatProviderConnected(provider) : false}
+          onOpenPool={() => onOpenAccountPool(providerKind)}
           onChanged={onChanged}
         />
       )}

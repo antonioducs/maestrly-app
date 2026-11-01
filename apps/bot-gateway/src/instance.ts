@@ -497,23 +497,17 @@ export class InstanceClient {
       )
     ) as FleetSettingsOutput<K>
   }
-  async settingsFailover(input: FleetSettingsInput<'failover'>): Promise<FleetSettingsOutput<'failover'>> {
-    FLEET_SETTINGS_OPERATIONS.failover.input.parse(input)
-    return FLEET_SETTINGS_OPERATIONS.failover.response.parse(
-      await this.call('settingsFailover', {}, undefined, undefined, 30000)
+  async settingsAccountPools(input: FleetSettingsInput<'accountPools'>): Promise<FleetSettingsOutput<'accountPools'>> {
+    FLEET_SETTINGS_OPERATIONS.accountPools.input.parse(input)
+    return FLEET_SETTINGS_OPERATIONS.accountPools.response.parse(
+      await this.call('settingsAccountPools', {}, undefined, undefined, 30000)
     )
   }
-  async settingsSetFailoverRoute(
-    input: FleetSettingsInput<'setFailoverRoute'>
-  ): Promise<FleetSettingsOutput<'setFailoverRoute'>> {
-    return FLEET_SETTINGS_OPERATIONS.setFailoverRoute.response.parse(
-      await this.call(
-        'settingsSetFailoverRoute',
-        { kind: input.kind, slot: input.slot ?? 'default' },
-        undefined,
-        input,
-        30000
-      )
+  async settingsSetAccountPool(
+    input: FleetSettingsInput<'setAccountPool'>
+  ): Promise<FleetSettingsOutput<'setAccountPool'>> {
+    return FLEET_SETTINGS_OPERATIONS.setAccountPool.response.parse(
+      await this.call('settingsSetAccountPool', { kind: input.kind }, undefined, input, 30000)
     )
   }
   // instance.ts

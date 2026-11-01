@@ -1,5 +1,5 @@
 import {
-  FLEET_ACCOUNT_FAILOVER_FEATURE,
+  FLEET_ACCOUNT_POOLS_FEATURE,
   FLEET_ENVIRONMENT_PLUGINS_FEATURE,
   FLEET_ENVIRONMENT_SETTINGS_FEATURE,
   FLEET_MCP_TEST_DETAIL_FEATURE,
@@ -147,7 +147,7 @@ export const INSTANCE_CAPABILITIES: readonly string[] = [
   FLEET_FILES_FEATURE,
   FLEET_ENVIRONMENT_SETTINGS_FEATURE,
   FLEET_ENVIRONMENT_PLUGINS_FEATURE,
-  FLEET_ACCOUNT_FAILOVER_FEATURE,
+  FLEET_ACCOUNT_POOLS_FEATURE,
   FLEET_PROVISIONING_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
@@ -659,9 +659,9 @@ export function createInstanceControlServer(
     settingsPreferences: () => settings().preferences(FLEET_SETTINGS_OPERATIONS.preferences.input.parse({})),
     settingsSetPreferences: ({ input }) =>
       settings().setPreferences(FLEET_SETTINGS_OPERATIONS.setPreferences.input.parse(input)),
-    settingsFailover: () => settings().failover(FLEET_SETTINGS_OPERATIONS.failover.input.parse({})),
-    settingsSetFailoverRoute: ({ input }) =>
-      settings().setFailoverRoute(FLEET_SETTINGS_OPERATIONS.setFailoverRoute.input.parse(input)),
+    settingsAccountPools: () => settings().accountPools(FLEET_SETTINGS_OPERATIONS.accountPools.input.parse({})),
+    settingsSetAccountPool: ({ input }) =>
+      settings().setAccountPool(FLEET_SETTINGS_OPERATIONS.setAccountPool.input.parse(input)),
     ...Object.fromEntries(
       FLEET_PLUGIN_SETTINGS_OPERATIONS.map((operation): [RouteKey, Handler] => [
         fleetSettingsRouteKey(operation),

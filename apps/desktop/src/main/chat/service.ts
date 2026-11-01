@@ -76,14 +76,12 @@ import {
   freezeFailoverChain,
   CodexEphemeralAttemptTimeoutError,
   getSubscriptionFailoverRouter,
-  listFailoverRoutes,
   listCodexEphemeralAttempts,
-  removeAccountFromFailoverConfig,
+  migrateFailoverRoutesToAccountPools,
   resetCodexRateLimitBinding,
   resolveCodexRuntimeTarget,
   runCodexEphemeralWithFailover,
   setCodexEphemeralAttemptOwner,
-  setFailoverRoute,
   SUPPORTED_FAILOVER_KINDS,
   type CodexRuntimeTarget,
 } from './subscription-failover'
@@ -91,9 +89,11 @@ import {
   accountPoolInfos,
   accountPoolSuccessors,
   advanceAccountPoolsAfterExhaustion,
+  isAccountPoolMember,
   removeAccountFromAccountPools,
   resolveAccountPoolProviderId,
   rotateToActive,
+  routerAccountPoolHealth,
   setAccountPool,
 } from './subscription-failover/account-pool'
 import { onSubscriptionAccountExhausted } from './subscription-failover/router'
@@ -456,6 +456,7 @@ import type {
   ChatStreamEvent,
   ChatSubscriptionAuthStatus,
   ChatSubscriptionProviderKind,
+  ChatSubscriptionAccountPoolInfo,
   ChatSubscriptionAccountPoolKind,
   ChatSubscriptionAccountPoolPatch,
   ChatSkillSelection,
@@ -2251,6 +2252,20 @@ function accountPoolName(kind: ChatSubscriptionAccountPoolKind, active: ChatProv
   })
 }
 
+/** The active-account entries of the providers with a rotation, named after the account a turn starts on now. */
+export function listChatAccountPoolInfos(): ChatSubscriptionAccountPoolInfo[] {
+  const providers = listAvailableChatProviders().map(
+    (p): ChatProviderInfo => ({
+      id: p.id,
+      name: p.name,
+      baseURL: p.baseURL,
+      apiKeyPresent: false,
+      ...(p.accountLabel ? { accountLabel: p.accountLabel } : {}),
+    })
+  )
+  return accountPoolInfos(providers, accountPoolName, routerAccountPoolHealth())
+}
+
 function buildConfig(): ChatConfig {
   const codexStatus = codexAuthSnapshot()
   const githubCopilotStatus = githubCopilotAuthSnapshot()
@@ -2332,9 +2347,9 @@ function buildConfig(): ChatConfig {
     imageInterpreter: getImageInterpreter(),
     subscriptionFailover: {
       supportedKinds: [...SUPPORTED_FAILOVER_KINDS],
-      routes: listFailoverRoutes(),
+      routes: [],
     },
-    subscriptionAccountPools: accountPoolInfos(providers, accountPoolName),
+    subscriptionAccountPools: accountPoolInfos(providers, accountPoolName, routerAccountPoolHealth()),
   }
   scheduleCodexConfigRefresh(codexStatus)
   scheduleGitHubCopilotConfigRefresh(githubCopilotStatus)
@@ -7289,9 +7304,8 @@ export async function removeSubscriptionAccountSlot(accountId: string): Promise<
         .wipe()
         .catch(() => undefined)
     }
-    // Remove references only after physical teardown finishes; on failure, the slot and route
-    // remain consistent for retry.
-    removeAccountFromFailoverConfig(providerId)
+    // Remove references only after physical teardown finishes; on failure, the slot and its pool
+    // membership remain consistent for retry.
     removeAccountFromAccountPools(providerId)
     removeSubscriptionAccount(accountId)
     // Clear the global default if it points to the removed provider (same policy as BYOK provider-remove).
@@ -10067,11 +10081,20 @@ function advanceAccountPool(providerId: string, read: ReadonlyMap<string, boolea
 }
 
 let accountPoolAdvanceInstalled = false
-/** Drain: when the active account runs out, its pool moves on and stays there; the pickers relabel. */
+/**
+ * Drain: when the active account runs out, its pool moves on and stays there; the pickers relabel. Any member
+ * running out also changes what the pool settings show.
+ */
 function installAccountPoolAdvance(): void {
   if (accountPoolAdvanceInstalled) return
   accountPoolAdvanceInstalled = true
+  try {
+    migrateFailoverRoutesToAccountPools()
+  } catch (error) {
+    console.warn('[subscription-failover] moving failover routes into account pools failed:', error)
+  }
   onSubscriptionAccountExhausted((providerId) => {
+    if (isAccountPoolMember(providerId)) sendToMainRenderers('models:catalog-changed')
     // An account not read yet this session would count as signed out and be passed over: read it first.
     const unread = accountPoolSuccessors(providerId).filter((id) => cachedPoolAccountSignIn(id) === null)
     if (unread.length === 0) return advanceAccountPool(providerId, new Map())
@@ -11823,22 +11846,6 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
     if (typeof accountId !== 'string' || !accountId) return { ok: false, error: 'invalid-input' }
     return removeSubscriptionAccountSlot(accountId)
   })
-  deps.mhandle(
-    'chat:subscription-failover:set-route',
-    (_e, input: { primaryProviderId: string; enabled: boolean; fallbackProviderIds?: string[] }) => {
-      try {
-        const route = setFailoverRoute({
-          primaryProviderId: typeof input?.primaryProviderId === 'string' ? input.primaryProviderId : '',
-          enabled: input?.enabled === true,
-          fallbackProviderIds: Array.isArray(input?.fallbackProviderIds) ? input.fallbackProviderIds : [],
-        })
-        return { ok: true, route }
-      } catch (e) {
-        return { ok: false, error: e instanceof Error ? e.message : String(e) }
-      }
-    }
-  )
-
   deps.mhandle('chat:subscription-account-pool:set', (_e, patch: ChatSubscriptionAccountPoolPatch) => {
     try {
       const pool = setAccountPool(patch)

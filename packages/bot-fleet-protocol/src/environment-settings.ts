@@ -249,16 +249,44 @@ export const fleetSettingsRuntimesSchema = z.object({ runtimes: z.array(fleetSet
 export const fleetSettingsPreferencesSchema = z
   .object({ revision, imageGenEnabled: z.boolean(), generatedInterfacesEnabled: z.boolean().optional() })
   .strict()
-/** Subscription kinds whose accounts can take over from one another when one reaches its usage limit. */
-export const FLEET_FAILOVER_KINDS = ['claude', 'codex'] as const
-const failoverKind = z.enum(FLEET_FAILOVER_KINDS)
-const fallbacks = z.array(slot).max(50)
-/** A primary account (`slot`, null for the kind's default account) and the accounts tried after it, in order. */
-export const fleetSettingsFailoverRouteSchema = z
-  .object({ kind: failoverKind, slot, enabled: z.boolean(), fallbacks })
+/** Subscription kinds whose accounts share a rotation, which bots run on when they choose the kind's active account. */
+export const FLEET_ACCOUNT_POOL_KINDS = ['claude', 'codex'] as const
+const accountPoolKind = z.enum(FLEET_ACCOUNT_POOL_KINDS)
+const accountPoolPolicy = z.enum(['drain', 'prefer-active'])
+const poolMembers = z.array(slot).min(1).max(50)
+/**
+ * The rotation of a kind with two or more accounts (`slot`, null for the kind's default account).
+ * - `members`: the rotation order.
+ * - `active`: under `drain`, the account turns run on; under `prefer-active`, the one they return to once it resets.
+ * - `current`: where the next turn starts.
+ * - `limited`: members out of quota and when each is tried again.
+ * - `bots`: bots on the active account, which rotate.
+ * - `pinned`: bots that chose one of the kind's accounts directly, which never rotate, with the model they chose.
+ * - `switches`: the most recent moves, newest first.
+ */
+export const fleetSettingsAccountPoolSchema = z
+  .object({
+    kind: accountPoolKind,
+    enabled: z.boolean(),
+    policy: accountPoolPolicy,
+    autoJoin: z.boolean(),
+    members: poolMembers,
+    active: slot,
+    current: slot,
+    limited: z.array(z.object({ slot, until: z.iso.datetime() }).strict()).max(50),
+    bots: usage,
+    pinned: z.array(z.object({ id, name, slot, modelId: id }).strict()).max(1000),
+    switches: z
+      .array(
+        z
+          .object({ at: z.iso.datetime(), from: slot, to: slot, reason: z.enum(['exhausted', 'manual']) })
+          .strict()
+      )
+      .max(20),
+  })
   .strict()
-export const fleetSettingsFailoverSchema = z
-  .object({ revision, routes: z.array(fleetSettingsFailoverRouteSchema).max(200) })
+export const fleetSettingsAccountPoolsSchema = z
+  .object({ revision, pools: z.array(fleetSettingsAccountPoolSchema).max(FLEET_ACCOUNT_POOL_KINDS.length) })
   .strict()
 
 function operation<I extends z.ZodType, O extends z.ZodType>(
@@ -534,19 +562,28 @@ export const FLEET_SETTINGS_OPERATIONS = {
     z.object({ id: fleetMcpServerIdSchema, client: fleetMcpOAuthClientSchema.nullable() }).strict(),
     fleetMcpOAuthClientResultSchema
   ),
-  /** Needs `FLEET_ACCOUNT_FAILOVER_FEATURE` from both the gateway and the environment. */
-  failover: operation('GET', '/failover', empty, fleetSettingsFailoverSchema),
-  setFailoverRoute: operation(
+  /** Needs `FLEET_ACCOUNT_POOLS_FEATURE` from both the gateway and the environment. */
+  accountPools: operation('GET', '/account-pools', empty, fleetSettingsAccountPoolsSchema),
+  /** Changes only the fields it carries; `members` lists the whole rotation in order. */
+  setAccountPool: operation(
     'PUT',
-    '/failover/:kind/:slot',
+    '/account-pools/:kind',
     z
-      .object({ kind: failoverKind, slot, ...expected, enabled: z.boolean(), fallbacks })
+      .object({
+        kind: accountPoolKind,
+        ...expected,
+        enabled: z.boolean().optional(),
+        policy: accountPoolPolicy.optional(),
+        autoJoin: z.boolean().optional(),
+        members: poolMembers.optional(),
+        active: slot.optional(),
+      })
       .strict()
       .refine(
-        (value) => !value.fallbacks.includes(value.slot) && new Set(value.fallbacks).size === value.fallbacks.length,
-        'Each account appears once in a route'
+        (value) => !value.members || new Set(value.members).size === value.members.length,
+        'Each account appears once in the rotation'
       ),
-    fleetSettingsFailoverSchema
+    fleetSettingsAccountPoolsSchema
   ),
 } as const
 export type FleetSettingsOperation = keyof typeof FLEET_SETTINGS_OPERATIONS

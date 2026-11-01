@@ -666,12 +666,17 @@ tab remains available for application interaction and browser sign-ins.
   sign-in and the existing callback relay; it never copies Google credentials
   from this computer. Leaving a replacement key or protected endpoint unchanged
   preserves the stored value. With two or more Claude or Codex accounts,
-  **Automatic account rotation** gives each account an ordered list of fallback
-  accounts of the same provider: when the account a bot uses reaches its usage
-  limit, the turn continues on the next account of its list. Each change is
-  saved at once. Rotation needs a server and an environment image that support
-  `account-failover`; otherwise the section says to update the server or to
-  restart the environment.
+  **Account rotation** keeps one ordered list per provider. Bots that choose the
+  provider's **Active account** run on the account in use and continue on the
+  next one in the list when it reaches its usage limit; a bot that chooses a
+  specific account stays on it, and the section lists those bots. The owner can
+  turn each rotation off, reorder or remove its accounts, and choose whether the
+  rotation stays on the next account (**Use them in sequence**) or returns to a
+  preferred one once it resets. Each change is saved at once. Rotation needs a
+  server and an environment image that support `account-pools`; otherwise the
+  section says to update the server or to restart the environment. Routes saved
+  by older images become the provider's rotation when the environment updates;
+  bots keep the account they chose.
 - **Models:** search the complete catalog, including hidden models, and save or
   discard visibility filters per account. Models already chosen by bots remain
   usable, including an inherited compacting model.
@@ -1424,7 +1429,7 @@ compatible. See [memory storage](local-data.md#memory-storage),
 | **Sign in again** after restarting | The generated SSH key was held only in memory because secure storage was unavailable. Use **Set up again** with the server's password or key; Maestrly keeps the pairing and replaces its key. |
 | **setup needed** / **Needs a model account** | Add an account under **Environment accounts** in the bot's environment view, or use **Log in on the environment screen**. Then choose the bot's **Main model**. |
 | **Needs a compaction model** | Choose the environment's **Default compaction model**, or a model of the bot's own in its **Settings** tab; reconnect the environment's account if it became unavailable. Queued messages resume when setup is complete. |
-| "Every Claude (or Codex) account in the rotation list reached its usage limit." | The message stays queued. The bot tries again when the first account of the list is expected back, checks at least every 10 minutes meanwhile, and checks at once when you send another message; the conversation says so once. Add another account to the list under **Automatic account rotation**, or wait. |
+| "Every Claude (or Codex) account in the rotation list reached its usage limit." | The message stays queued. The bot tries again when the first account of the list is expected back, checks at least every 10 minutes meanwhile, and checks at once when you send another message; the conversation says so once. Add another account to the provider's list under **Account rotation**, or wait. |
 | The environment screen shows Maestrly's settings but ignores clicks and scrolling | A native dialog no one answered disabled the window. Environments on images from before this fix opened a "Save as" dialog for every file their browsers downloaded. Restart the environment on a current image: downloads now go straight to `~/Downloads`. |
 | A bot stays on one command for hours, then archiving, restoring or restarting it fails and its environment's other bots can no longer be started, archived or moved | On images from before this fix, a command whose output a program it left running still held (such as `xclip`, which keeps serving the clipboard) never ended, not even at its timeout or when stopped, and uninstalling that bot then held every install and uninstall of its environment. Restart the environment; its bots come back with their data. Current images end the command when its shell exits, and an uninstall goes on without a turn that has not ended after 20 seconds. |
 | **offline** or **starting** | Check the environment's container and gateway health, image version, server resources, and the **Server** page. Try **Start** or **Restart** on the environment. |

@@ -1538,10 +1538,25 @@ export interface ChatSubscriptionAccountPool {
   kind: ChatSubscriptionAccountPoolKind
   /** Physical accounts the active-account selection may run on, in rotation order. */
   memberProviderIds: string[]
+  /** Drain: the account turns run on now. Prefer-active: the preferred account turns return to. */
   activeProviderId: string
   policy: ChatSubscriptionAccountPoolPolicy
   /** False while the pool follows every account of the provider. */
   customMembers: boolean
+  /** Off: the active-account selection stays on the active account and never moves to another one. */
+  enabled: boolean
+  /** Accounts connected later join the end of the rotation. */
+  autoJoin: boolean
+}
+
+export type ChatSubscriptionAccountPoolSwitchReason = 'exhausted' | 'manual'
+
+export interface ChatSubscriptionAccountPoolSwitch {
+  /** ISO time of the switch. */
+  at: string
+  fromProviderId: string
+  toProviderId: string
+  reason: ChatSubscriptionAccountPoolSwitchReason
 }
 
 export interface ChatSubscriptionAccountPoolInfo extends ChatSubscriptionAccountPool {
@@ -1550,6 +1565,12 @@ export interface ChatSubscriptionAccountPoolInfo extends ChatSubscriptionAccount
   /** Localized picker name, with the active account's label. */
   name: string
   connected: boolean
+  /** The account a turn starts on now: the active one, or under prefer-active the first member not out of quota. */
+  currentProviderId?: string
+  /** Members out of quota, with when they are tried again (ISO). */
+  limitedUntil?: Record<string, string>
+  /** Most recent first. */
+  recentSwitches?: ChatSubscriptionAccountPoolSwitch[]
 }
 
 export interface ChatSubscriptionAccountPoolPatch {
@@ -1557,6 +1578,8 @@ export interface ChatSubscriptionAccountPoolPatch {
   activeProviderId?: string
   policy?: ChatSubscriptionAccountPoolPolicy
   memberProviderIds?: string[]
+  enabled?: boolean
+  autoJoin?: boolean
 }
 
 export function accountPoolBaseProviderId(kind: ChatSubscriptionAccountPoolKind): string {
@@ -1943,7 +1966,10 @@ export interface ChatConfig {
   backgroundCompaction?: BackgroundCompactionConfig
 
   imageInterpreter: ChatImageInterpreter | null
-  /** Failover between Claude or Codex subscription accounts. */
+  /**
+   * Superseded by `subscriptionAccountPools`: `routes` is always empty and is kept only for older clients, which read
+   * it unguarded.
+   */
   subscriptionFailover: {
     supportedKinds: ChatSubscriptionProviderKind[]
     routes: ChatSubscriptionFailoverRoute[]

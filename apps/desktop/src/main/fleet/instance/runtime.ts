@@ -103,6 +103,7 @@ import {
   startManualCompaction,
   truncateConversationForResend,
   type ChatConversationSlot,
+  listChatAccountPoolInfos,
 } from '../../chat/service'
 import {
   clearCompactionSummarizer,
@@ -282,7 +283,7 @@ export function effectiveFleetSelection(
 /** The models the environment's accounts offer, as bots choose them; the accounts are shared by every bot. */
 export async function loadFleetAccountOptions(includeHidden = false): Promise<FleetSelectionOption[]> {
   const models = await listChatRunnerCapabilities(true)
-  return (includeHidden ? models : visibleFleetModels(models, getHiddenChatModelsFor)).map((model) => ({
+  const options = (includeHidden ? models : visibleFleetModels(models, getHiddenChatModelsFor)).map((model) => ({
     id: `${model.providerId}::${model.modelId}`,
     providerId: model.providerId,
     providerLabel: model.providerLabel,
@@ -291,6 +292,26 @@ export async function loadFleetAccountOptions(includeHidden = false): Promise<Fl
     efforts: model.reasoningEfforts,
     fastMode: model.fastMode,
   }))
+  return [...accountPoolOptions(options), ...options]
+}
+
+/**
+ * The active account of each provider with a rotation, first as the pickers list it: the models of the account a turn
+ * starts on now, without the ones hidden there. Bots on it move with the rotation.
+ */
+export function accountPoolOptions(options: FleetSelectionOption[]): FleetSelectionOption[] {
+  return listChatAccountPoolInfos().flatMap((pool) => {
+    const account = pool.currentProviderId ?? pool.activeProviderId
+    const hidden = getHiddenChatModelsFor(account)
+    return options
+      .filter((option) => option.providerId === account && !hidden.includes(option.modelId))
+      .map((option) => ({
+        ...option,
+        id: `${pool.providerId}::${option.modelId}`,
+        providerId: pool.providerId,
+        providerLabel: pool.name,
+      }))
+  })
 }
 
 function assistantText(conversationId: string, messageId: string | null): string | null {

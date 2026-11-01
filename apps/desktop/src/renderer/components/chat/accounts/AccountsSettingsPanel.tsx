@@ -1,9 +1,9 @@
 import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Plus, Repeat, Search } from 'lucide-react'
+import { Plus, Search } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { ChatConfig, ChatSubscriptionProviderKind } from '../../../../shared/chat'
-import { accountPoolFor } from '../account-pool'
+import type { ChatConfig, ChatSubscriptionAccountPoolInfo } from '../../../../shared/chat'
+import { accountPoolCurrent, accountPoolEntryKey, accountPoolFor, accountPoolKindOfEntryKey } from '../account-pool'
 import { subscriptionUsageResetDisplay } from '../subscription-usage-presentation'
 import { ChatGptWebSettings, useChatGptWebPhaseLabel } from '../ChatGptWebSettings'
 import {
@@ -21,14 +21,14 @@ import {
   CHATGPT_WEB_ENTRY_KEY,
   chatGptWebPhase,
   connectableGroups,
-  hasActiveRotation,
   isAccountListed,
   matchesAccountFilter,
   needsAttention,
   runtimeMissing,
   subscriptionPlanLabel,
 } from './account-entries'
-import { inputCls, primaryButtonCls, ProviderMark, type ProviderMarkKind, UsageGauge } from './account-ui'
+import { AccountPoolMark, inputCls, primaryButtonCls, ProviderMark, type ProviderMarkKind, UsageGauge } from './account-ui'
+import { AccountPoolPanel } from './AccountPoolPanel'
 import { AddAccountDialog, type AddAccountIntent } from './AddAccountDialog'
 import { claudeCodeSetupNeed } from './claude-code-setup'
 import { ApiKeyAccount, kindLabelKey } from './ApiKeyAccount'
@@ -41,7 +41,6 @@ interface Row {
   title: string
   meta: string
   metaTone: 'muted' | 'warn' | 'bad'
-  rotation: boolean
 }
 
 const FILTERS: AccountFilter[] = ['all', 'attention', 'near-limit']
@@ -157,7 +156,6 @@ export function AccountsSettingsPanel({
         group,
         summary,
         title: subscriptionTitle(entry),
-        rotation: hasActiveRotation(config.subscriptionFailover.routes, entry.key),
         ...subscriptionMeta(entry, snapshots[entry.key] as SubscriptionAccountSnapshot | undefined, summary),
       }
     }
@@ -172,7 +170,6 @@ export function AccountsSettingsPanel({
         title: t('settings.chatgptWebAccountLabel'),
         meta: chatGptWebLabel(phase, active),
         metaTone: phase === 'error' ? 'bad' : summary.health === 'attention' ? 'warn' : 'muted',
-        rotation: false,
       }
     }
     return {
@@ -185,7 +182,6 @@ export function AccountsSettingsPanel({
         : summary.connected
           ? { meta: baseUrlHost(entry.provider.baseURL), metaTone: 'muted' as const }
           : { meta: t('settings.accountNoApiKey'), metaTone: 'warn' as const }),
-      rotation: false,
     }
   }
 
@@ -211,7 +207,12 @@ export function AccountsSettingsPanel({
   const allEntries = groups.flatMap((group) => group.entries.map((entry) => ({ entry, group })))
   const summaries = new Map(allEntries.map(({ entry }) => [entry.key, accountSummary(entry, snapshots[entry.key])]))
   const chatGptWebEnabled = (snapshots[CHATGPT_WEB_ENTRY_KEY] as ChatGptWebAccountSnapshot | undefined)?.status?.enabled
-  const explicitKey = selectedKey && summaries.has(selectedKey) ? selectedKey : null
+  const pools = config.subscriptionAccountPools ?? []
+  const poolOf = (key: string | null) => {
+    const kind = accountPoolKindOfEntryKey(key)
+    return kind ? (pools.find((pool) => pool.kind === kind) ?? null) : null
+  }
+  const explicitKey = selectedKey && (summaries.has(selectedKey) || poolOf(selectedKey)) ? selectedKey : null
   const listed = (entry: AccountEntry, group: AccountGroup) =>
     isAccountListed(entry, summaries.get(entry.key)!, {
       selected: entry.key === explicitKey,
@@ -264,34 +265,68 @@ export function AccountsSettingsPanel({
     )
   }
   const onListKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key) || rows.length === 0) return
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key) || listKeys.length === 0) return
     event.preventDefault()
-    const index = rows.findIndex((row) => row.entry.key === effectiveKey)
+    const index = effectiveKey ? listKeys.indexOf(effectiveKey) : -1
     const next =
       event.key === 'Home'
         ? 0
         : event.key === 'End'
-          ? rows.length - 1
-          : Math.min(rows.length - 1, Math.max(0, index + (event.key === 'ArrowDown' ? 1 : -1)))
-    setSelectedKey(rows[next].entry.key)
-    focusRow(rows[next].entry.key)
+          ? listKeys.length - 1
+          : Math.min(listKeys.length - 1, Math.max(0, index + (event.key === 'ArrowDown' ? 1 : -1)))
+    setSelectedKey(listKeys[next])
+    focusRow(listKeys[next])
   }
   const clearFilters = () => {
     setFilter('all')
     setQuery('')
   }
   const back = () => setShowDetail(false)
-  const showSubscriptionFailover = (kind: ChatSubscriptionProviderKind) =>
-    config.subscriptionFailover.supportedKinds.includes(kind) &&
-    config.providers.filter((provider) => provider.kind === kind).length > 1
-
-  // Tab enters the list on the selected row, or on the first one when a filter hides it.
-  const focusableKey = rows.some((row) => row.entry.key === effectiveKey) ? effectiveKey : rows[0]?.entry.key
-  const groupedRows: Array<{ group: AccountGroup; rows: Row[] }> = []
+  const groupedRows: Array<{ group: AccountGroup; pool: ChatSubscriptionAccountPoolInfo | null; rows: Row[] }> = []
   for (const row of rows) {
     const last = groupedRows.at(-1)
     if (last?.group === row.group) last.rows.push(row)
-    else groupedRows.push({ group: row.group, rows: [row] })
+    else
+      groupedRows.push({
+        group: row.group,
+        // A provider's rotation leads its accounts while the whole list shows.
+        pool: browsing ? (pools.find((pool) => pool.kind === row.group.id) ?? null) : null,
+        rows: [row],
+      })
+  }
+  const listKeys = groupedRows.flatMap(({ pool, rows: groupRows }) => [
+    ...(pool ? [accountPoolEntryKey(pool.kind)] : []),
+    ...groupRows.map((row) => row.entry.key),
+  ])
+  // Tab enters the list on the selected row, or on the first one when a filter hides it.
+  const focusableKey = effectiveKey && listKeys.includes(effectiveKey) ? effectiveKey : listKeys[0]
+  const selectedPool = poolOf(effectiveKey)
+  const defaultLabelOf = (kind: string) =>
+    subscriptionTitle({
+      accountId: null,
+      accountLabel: config.providers.find((provider) => provider.kind === kind && !provider.accountId)?.accountLabel,
+    })
+  const labelForAccount = (providerId: string) => {
+    const provider = config.providers.find((entry) => entry.id === providerId)
+    return provider ? subscriptionTitle({ accountId: provider.accountId ?? null, accountLabel: provider.accountLabel }) : providerId
+  }
+  const poolBadge = (entry: AccountEntry) => {
+    if (entry.type !== 'subscription') return null
+    const pool = accountPoolFor(config, entry.providerKind)
+    const index = pool?.enabled ? pool.memberProviderIds.indexOf(entry.key) : -1
+    if (!pool || index < 0) return null
+    const live = accountPoolCurrent(pool) === entry.key
+    return (
+      <span
+        title={live ? t('settings.accountPoolInUseTitle') : t('settings.accountPoolPositionTitle')}
+        className={cn(
+          'shrink-0 rounded border px-1 font-mono text-[10px] leading-4',
+          live ? 'border-indigo-400/50 bg-indigo-500/15 text-indigo-300' : 'border-border text-muted-foreground'
+        )}
+      >
+        {live ? t('settings.accountPoolInUse') : t('settings.accountPoolPositionBadge', { position: index + 1 })}
+      </span>
+    )
   }
 
   return (
@@ -356,7 +391,7 @@ export function AccountsSettingsPanel({
               )}
               {nearLimitCount > 0 && <span>{t('settings.accountsSummaryNearLimit', { count: nearLimitCount })}</span>}
             </p>
-            {rows.length > 0 && (
+            {listKeys.length > 0 && (
               <div
                 ref={listRef}
                 role="listbox"
@@ -364,7 +399,7 @@ export function AccountsSettingsPanel({
                 onKeyDown={onListKeyDown}
                 className="flex flex-col"
               >
-                {groupedRows.map(({ group, rows: groupRows }) => (
+                {groupedRows.map(({ group, pool, rows: groupRows }) => (
                   <div key={group.id} role="group" aria-label={groupName(group)}>
                     <p
                       aria-hidden="true"
@@ -372,15 +407,29 @@ export function AccountsSettingsPanel({
                     >
                       {groupName(group)}
                     </p>
+                    {pool && (
+                      <AccountPoolRow
+                        pool={pool}
+                        selected={accountPoolEntryKey(pool.kind) === effectiveKey}
+                        focusable={accountPoolEntryKey(pool.kind) === focusableKey}
+                        title={t('settings.accountPoolTitle', { provider: groupName(group) })}
+                        meta={
+                          pool.enabled
+                            ? t('settings.accountPoolRowSummary', {
+                                count: pool.memberProviderIds.length,
+                                account: labelForAccount(accountPoolCurrent(pool)),
+                              })
+                            : t('settings.accountPoolRowOff')
+                        }
+                        onSelect={() => select(accountPoolEntryKey(pool.kind))}
+                      />
+                    )}
                     {groupRows.map((row) => {
                       const selected = row.entry.key === effectiveKey
                       const dot =
                         row.summary.health === 'ok' && row.summary.limitReached
                           ? ('limit' as const)
                           : row.summary.health
-                      const poolActive =
-                        row.entry.type === 'subscription' &&
-                        accountPoolFor(config, row.entry.providerKind)?.activeProviderId === row.entry.key
                       return (
                         <button
                           key={row.entry.key}
@@ -399,21 +448,7 @@ export function AccountsSettingsPanel({
                           <span className="min-w-0">
                             <span className="flex min-w-0 items-center gap-1.5">
                               <span className="truncate text-[13px] text-foreground">{row.title}</span>
-                              {row.rotation && (
-                                <span
-                                  role="img"
-                                  aria-label={t('settings.accountRotationOn')}
-                                  title={t('settings.accountRotationOn')}
-                                  className="shrink-0 text-muted-foreground"
-                                >
-                                  <Repeat className="size-3" aria-hidden="true" />
-                                </span>
-                              )}
-                              {poolActive && (
-                                <span className="shrink-0 rounded-full border border-indigo-400/40 px-1.5 text-[10px] text-indigo-200">
-                                  {t('settings.accountPoolActiveBadge')}
-                                </span>
-                              )}
+                              {poolBadge(row.entry)}
                             </span>
                             <span
                               className={cn(
@@ -502,7 +537,7 @@ export function AccountsSettingsPanel({
                   onSnapshot={reportSnapshot}
                   onConnectAnother={(kind) => setAddIntent({ kind, newAccount: true })}
                   onBack={back}
-                  showSubscriptionFailover={showSubscriptionFailover(entry.providerKind)}
+                  onOpenAccountPool={(kind) => select(accountPoolEntryKey(kind))}
                   onChanged={onChanged}
                   onModelFilterChanged={onModelFilterChanged}
                 />
@@ -530,6 +565,17 @@ export function AccountsSettingsPanel({
               />
             ) : null
           })}
+          {selectedPool && (
+            <AccountPoolPanel
+              key={selectedPool.kind}
+              pool={selectedPool}
+              config={config}
+              snapshots={snapshots}
+              defaultLabel={defaultLabelOf(selectedPool.kind)}
+              onBack={back}
+              onChanged={onChanged}
+            />
+          )}
           {effectiveKey === null && (
             <div className="flex flex-col items-center gap-3 px-4 py-12 text-center">
               <p className="max-w-sm text-[12px] text-muted-foreground">{t('settings.accountsSelectHint')}</p>
@@ -562,5 +608,47 @@ export function AccountsSettingsPanel({
         }}
       />
     </div>
+  )
+}
+
+/** A provider's rotation, listed as an entry of its own above its accounts. */
+function AccountPoolRow({
+  pool,
+  selected,
+  focusable,
+  title,
+  meta,
+  onSelect,
+}: {
+  pool: ChatSubscriptionAccountPoolInfo
+  selected: boolean
+  focusable: boolean
+  title: string
+  meta: string
+  onSelect: () => void
+}) {
+  return (
+    <>
+      <button
+        type="button"
+        role="option"
+        aria-selected={selected}
+        tabIndex={focusable ? 0 : -1}
+        data-account-entry={accountPoolEntryKey(pool.kind)}
+        onClick={onSelect}
+        className={cn(
+          'grid w-full grid-cols-[28px_minmax(0,1fr)_auto] items-center gap-2.5 border-l-2 px-3 py-1.5 text-left transition-colors',
+          selected ? 'border-indigo-400 bg-white/[0.07]' : 'border-transparent hover:bg-white/[0.035]'
+        )}
+      >
+        <AccountPoolMark enabled={pool.enabled} />
+        <span className="min-w-0">
+          <span className="block truncate text-[13px] text-foreground">{title}</span>
+          <span className="block truncate text-[11px] text-muted-foreground">{meta}</span>
+        </span>
+        {pool.enabled ? <span aria-hidden="true" className="size-1.5 rounded-full bg-emerald-400" /> : <span />}
+      </button>
+      <div aria-hidden="true" className="mx-3 my-1 h-px bg-border/70" />
+    </>
   )
 }

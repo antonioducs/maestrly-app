@@ -23,9 +23,11 @@ describe('multi-account selection surfaces', () => {
       expect(source(`src/renderer/components/chat/${file}`)).toContain('subscriptionExhaustionMessageKey')
     }
     const accounts = source('src/renderer/components/chat/accounts/AccountsSettingsPanel.tsx')
-    expect(accounts).toContain('subscriptionFailover.supportedKinds')
-    expect(accounts).toContain('showSubscriptionFailover')
-    expect(accounts).not.toContain('showCodexFailover')
+    // Each provider's rotation is an entry of the accounts list, set up once for all its accounts.
+    expect(accounts).toContain('accountPoolEntryKey(pool.kind)')
+    expect(accounts).toContain('<AccountPoolPanel')
+    expect(accounts).not.toContain('showSubscriptionFailover')
+    expect(source('src/renderer/components/chat/accounts/SubscriptionAccount.tsx')).toContain('<AccountPoolMembership')
     expect(source('src/renderer/components/chat/ChatView.tsx')).toContain('labelForSubscriptionProvider')
   })
 
@@ -67,7 +69,7 @@ describe('multi-account selection surfaces', () => {
     const accountSurfaces = [
       'src/renderer/components/chat/accounts/account-entries.ts',
       'src/renderer/components/chat/accounts/AddAccountDialog.tsx',
-      'src/renderer/components/chat/accounts/FailoverRouteEditor.tsx',
+      'src/renderer/components/chat/accounts/AccountPoolPanel.tsx',
       'src/renderer/components/chat/quick-subscription-usage.ts',
     ]
     for (const file of accountSurfaces) expect(source(file), file).not.toContain('chatProviderChoices')

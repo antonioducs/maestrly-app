@@ -1626,17 +1626,17 @@ export const FLEET_GATEWAY_ROUTES = {
     body: FLEET_SETTINGS_OPERATIONS.setMcpOAuthClient.input,
     response: FLEET_SETTINGS_OPERATIONS.setMcpOAuthClient.response,
   },
-  settingsFailover: {
+  settingsAccountPools: {
     method: 'GET',
-    path: '/v1/environments/:eid/settings/failover',
+    path: '/v1/environments/:eid/settings/account-pools',
     body: null,
-    response: FLEET_SETTINGS_OPERATIONS.failover.response,
+    response: FLEET_SETTINGS_OPERATIONS.accountPools.response,
   },
-  settingsSetFailoverRoute: {
+  settingsSetAccountPool: {
     method: 'PUT',
-    path: '/v1/environments/:eid/settings/failover/:kind/:slot',
-    body: FLEET_SETTINGS_OPERATIONS.setFailoverRoute.input,
-    response: FLEET_SETTINGS_OPERATIONS.setFailoverRoute.response,
+    path: '/v1/environments/:eid/settings/account-pools/:kind',
+    body: FLEET_SETTINGS_OPERATIONS.setAccountPool.input,
+    response: FLEET_SETTINGS_OPERATIONS.setAccountPool.response,
   },
   artifactHost: { method: 'GET', path: '/v1/artifacts/host', body: null, response: fleetArtifactHostSchema },
   artifactHostPatch: {
@@ -2785,17 +2785,17 @@ export const FLEET_INSTANCE_ROUTES = {
     body: FLEET_SETTINGS_OPERATIONS.setMcpOAuthClient.input,
     response: FLEET_SETTINGS_OPERATIONS.setMcpOAuthClient.response,
   },
-  settingsFailover: {
+  settingsAccountPools: {
     method: 'GET',
-    path: '/v1/settings/failover',
+    path: '/v1/settings/account-pools',
     body: null,
-    response: FLEET_SETTINGS_OPERATIONS.failover.response,
+    response: FLEET_SETTINGS_OPERATIONS.accountPools.response,
   },
-  settingsSetFailoverRoute: {
+  settingsSetAccountPool: {
     method: 'PUT',
-    path: '/v1/settings/failover/:kind/:slot',
-    body: FLEET_SETTINGS_OPERATIONS.setFailoverRoute.input,
-    response: FLEET_SETTINGS_OPERATIONS.setFailoverRoute.response,
+    path: '/v1/settings/account-pools/:kind',
+    body: FLEET_SETTINGS_OPERATIONS.setAccountPool.input,
+    response: FLEET_SETTINGS_OPERATIONS.setAccountPool.response,
   },
   memoriesList: { method: 'GET', path: '/v1/memories', body: null, response: fleetBotMemoriesResponseSchema },
   memoryPatch: {

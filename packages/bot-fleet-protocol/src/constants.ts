@@ -422,11 +422,12 @@ export const FLEET_ENVIRONMENT_PLUGINS_FEATURE = 'environment-plugins-v1'
  */
 export const FLEET_MCP_TEST_DETAIL_FEATURE = 'mcp-test-detail'
 /**
- * Gateway feature (`/v1/meta`) and instance capability: an environment's settings read and set the order in which its
- * Claude and Codex subscription accounts take over a turn once one reaches its usage limit (`failover`,
- * `setFailoverRoute`). An older gateway or image has no such routes.
+ * Gateway feature (`/v1/meta`) and instance capability: an environment's settings read and set the rotation
+ * of its Claude and Codex subscription accounts, which bots on a kind's active account run on
+ * (`accountPools`, `setAccountPool`), and its bots may choose the active account. An older gateway or image has no
+ * such routes.
  */
-export const FLEET_ACCOUNT_FAILOVER_FEATURE = 'account-failover'
+export const FLEET_ACCOUNT_POOLS_FEATURE = 'account-pools'
 
 /**
  * Gateway feature (`/v1/meta`) and instance capability: a bot reaches the workspaces of the Macs that gave it access,
