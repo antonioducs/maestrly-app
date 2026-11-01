@@ -5,6 +5,22 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Added
+
+- When a model reaches its usage limit, loses its login, is unavailable or runs
+  out of context, the turn can continue on the next model of an ordered list,
+  including API-key providers: **Settings → Models and agents → Fallback
+  models**. Claude and Codex accounts rotate first. The failed response keeps
+  its partial output, a notice names the model that continues, and the next
+  turn starts on the conversation's own model again. Subagents, memory
+  extraction, image descriptions and compaction summaries follow the same list;
+  review loops and bot commands keep their model. Pin a conversation to its
+  model from the model chip. The list is off until you add a model. See
+  [Model fallback](docs/model-failover.md).
+- Local and custom OpenAI-compatible servers (Ollama, LM Studio, llama.cpp,
+  vLLM) report the context window they actually run with, so conversations
+  compact before they overflow it.
+
 ## [0.31.0] - 2026-10-31
 
 ### Added
