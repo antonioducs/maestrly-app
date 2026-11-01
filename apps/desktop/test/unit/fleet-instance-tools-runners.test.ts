@@ -226,6 +226,12 @@ describe.skipIf(process.platform === 'win32')('runner tools of a fleet bot', () 
       )
     }
     const submitTool = tools.find((tool) => tool.name === 'runner_submit')!
+    expect(submitTool.description).toContain('instead of in a terminal or shell of this environment')
+    expect(submitTool.description).toContain('more than about a minute of CPU or a GB or more of memory')
+    expect(submitTool.description).toContain('when a job is borderline, use it')
+    expect(tools.find((tool) => tool.name === 'runner_list')!.description).toContain(
+      'as soon as a task involves heavy work'
+    )
     expect(submitTool.description).toContain('end your turn')
     expect(submitTool.description).toContain('named `caches`')
     expect(submitTool.description).toContain('self-contained')

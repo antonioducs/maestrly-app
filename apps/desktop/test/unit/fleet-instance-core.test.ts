@@ -412,8 +412,20 @@ describe('bot identity', () => {
     expect(botIdentityPrompt('/bot/plain')).not.toContain('runner_')
     runners = true
     const open = botIdentityPrompt('/bot/runners')
-    expect(open).toContain('minutes of CPU or a lot of memory')
-    expect(open).toContain('video renders, model inference, large builds and test suites, batch processing')
+    // A section of its own, after the rest of the identity, rather than a sentence inside it.
+    expect(open).toContain('\n\n## Heavy work runs on a runner\n')
+    expect(open.indexOf('## Heavy work')).toBeGreaterThan(open.indexOf('Plan review is unavailable'))
+    // The tools come with the gateway, whether or not a computer is linked.
+    expect(open).not.toContain('You have runners')
+    expect(open).toContain('instead of running it in a terminal or shell here')
+    expect(open).toContain('ffmpeg')
+    expect(open).toContain('Whisper')
+    expect(open).toContain('a full test suite')
+    expect(open).toContain('more than about a minute of CPU or a GB or more of memory')
+    expect(open).toContain('Quick work stays here')
+    expect(open).toContain('When a job is borderline, use a runner')
+    expect(open).toContain('stop it and send it to a runner')
+    expect(open).toContain('or when runner_list shows no runner')
     expect(open).toContain('check runner_list first')
     expect(open).toContain('Keep the command self-contained')
     expect(open).toContain('Declare every output')

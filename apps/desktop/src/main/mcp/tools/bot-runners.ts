@@ -90,9 +90,11 @@ const env = z
   .describe('Environment variables of the command. Do not put secrets here that the command does not need.')
 
 const SUBMIT_DESCRIPTION =
-  'Send a heavy job to another computer that runs jobs for you, instead of running it in this environment, whose CPU and ' +
-  'memory you share with your browser, your other conversations and the other bots. Use it for work expected to take ' +
-  'minutes of CPU or a lot of memory: video renders, model inference, large builds and test suites, batch processing. ' +
+  'Run a heavy job on another computer that runs jobs for you, instead of in a terminal or shell of this environment, ' +
+  'whose CPU and memory you share with your browser, your other conversations and the other bots. Use it for video and ' +
+  'audio renders and conversions, AI models (speech-to-text, local LLMs, image generation) and anything that needs a ' +
+  'GPU, full test suites and large builds, batch processing of many files, and any command expected to take more than ' +
+  'about a minute of CPU or a GB or more of memory; when a job is borderline, use it. ' +
   'Call runner_list first to see which runners you have and what each one offers. The job runs `command` with /bin/sh ' +
   'in a copy of `folder` on the runner; when it ends, the files matching `outputs`, and the log, are written back into ' +
   'the same folder here. Keep the command self-contained: install what it needs inside it, and use paths relative to the ' +
@@ -250,8 +252,9 @@ export function registerBotRunnerTools(ctx: McpToolContext, gateway: Gateway, bo
       description:
         "The computers that run jobs for you: each one's runnerId, name, whether it is online now, executor " +
         '(container or native), OS, architecture, CPUs, memory, GPU, slots (jobs it runs at once) and how many are busy, ' +
-        'and how many of your jobs are queued. Call it before runner_submit to pick a runner that fits the job. A runner ' +
-        'is another computer: its tools and files are not the ones of this environment.',
+        'and how many of your jobs are queued. Call it as soon as a task involves heavy work (see runner_submit), to ' +
+        'pick a runner that fits the job. A runner is another computer: its tools and files are not the ones of this ' +
+        'environment.',
       inputSchema: {},
       annotations: { readOnlyHint: true },
     },
