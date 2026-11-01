@@ -26,6 +26,7 @@ import {
   type FleetInstanceHold,
   type FleetInstanceProfile,
   type FleetInstanceStatus,
+  type FleetInstanceStorage,
   type FleetLoginAttempt,
   type FleetLoginCallbackRequest,
   type FleetLoginCallbackResponse,
@@ -67,6 +68,7 @@ import {
   assertBotFitsMove,
   botMoveDigest,
   botMoveStaging,
+  botStoragePaths,
   holdsBot,
   importBotPackage,
   receiveBotPackage,
@@ -119,6 +121,7 @@ import type { PresentationRequest } from './desktop/presentation'
 import { checkBotRuntimes } from './runtimes'
 import { SCREEN_ENCODER_PROGRAM } from './screen-encoder'
 import { INSTANCE_CAPABILITIES, InstanceEvents, InstanceHttpError, type InstanceScreenSurface } from './server'
+import { StorageMeter, duDiskUsage, type DiskUsage, type StorageTargets } from './storage'
 
 /** The part of the display manager an environment uses. */
 export interface EnvironmentDisplays {
@@ -197,6 +200,8 @@ export interface EnvironmentRuntimeDeps {
   botBrowser?(target: BotBrowserTarget): BotChromium
   /** How long an uninstall waits for each step that can hang (`UNINSTALL_STEP_MS`); tests shorten it. */
   uninstallStepMs?: number
+  /** How the environment sizes its folders (`duDiskUsage`); tests replace it. */
+  storageUsage?: DiskUsage
 }
 
 function log(level: 'info' | 'error', message: string): void {
@@ -270,6 +275,12 @@ export class EnvironmentRuntime {
   private unwireBrokers: (() => void) | null = null
   private ready = false
   private disposed = false
+  /** The disk figures of the environment and its bots (`environment-storage`). */
+  private readonly storageMeter = new StorageMeter({
+    targets: (folder) => this.storageTargets(folder),
+    usage: (paths, signal) => (this.deps.storageUsage ?? duDiskUsage)(paths, signal),
+    onError: (error) => log('error', `Could not measure the disk: ${errorMessage(error)}`),
+  })
   private readonly logins = new RemoteLogins({
     now: Date.now,
     onChanged: () => this.accountsChanged(),
@@ -358,6 +369,7 @@ export class EnvironmentRuntime {
   async dispose(): Promise<void> {
     if (this.disposed) return
     this.disposed = true
+    this.storageMeter.dispose()
     this.unwireBrokers?.()
     this.unwireBrokers = null
     await this.logins.dispose()
@@ -433,6 +445,21 @@ export class EnvironmentRuntime {
       ready: this.ready,
       bots,
     }
+  }
+
+  /** The latest disk figures (`environment-storage`): a bot environment has no server folder of its own. */
+  storage(): FleetInstanceStorage {
+    return this.measureStorage(null)
+  }
+  /** The latest disk figures with `folder` measured too; old figures start a new measurement (`StorageMeter`). */
+  measureStorage(folder: string | null): FleetInstanceStorage {
+    return this.storageMeter.read(folder)
+  }
+  private async storageTargets(folder: string | null): Promise<StorageTargets> {
+    const bots = await Promise.all(
+      this.bots().map(async (bot) => ({ botId: bot.botId, ...(await botStoragePaths(bot.botId, this.roots)) }))
+    )
+    return { home: this.deps.home, downloads: app.getPath('downloads'), folder, bots }
   }
 
   /** The models of the environment's accounts, read again, for its default compaction model. */

@@ -27,6 +27,7 @@ import {
   FLEET_FILES_FEATURE,
   FLEET_FILES_MANAGE_FEATURE,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
+  FLEET_ENVIRONMENT_STORAGE_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_INSTANCE_BRIDGE_PATH,
   FLEET_INSTANCE_ROUTES,
@@ -94,6 +95,7 @@ import {
   type FleetInstanceReleaseRequest,
   type FleetInstanceRunDeleted,
   type FleetInstanceStatus,
+  type FleetInstanceStorage,
   type FleetInteractionResolution,
   type FleetLoginAttempt,
   type FleetLoginCallbackRequest,
@@ -140,8 +142,8 @@ export type { HostFilesRoutes } from './host-files-http'
  * says why an MCP connection test failed, runs routines in conversations of their own when the gateway asks,
  * routes the tasks of a bot that delegates to the models its owner allows, and lets the owner list, delete and size
  * the files its bots shared, keeps the files of the jobs its bots send to runners (their manifests, blobs, logs and
- * outputs), and lets the owner review, edit and revert the skills each bot keeps for itself. Its health and every status
- * advertise them.
+ * outputs), lets the owner review, edit and revert the skills each bot keeps for itself, and measures the disk the
+ * environment and each of its bots take. Its health and every status advertise them.
  */
 export const INSTANCE_CAPABILITIES: readonly string[] = [
   FLEET_FILES_FEATURE,
@@ -166,6 +168,7 @@ export const INSTANCE_CAPABILITIES: readonly string[] = [
   FLEET_FILES_MANAGE_FEATURE,
   FLEET_RUNNER_JOBS_CAPABILITY,
   FLEET_BOT_OWN_SKILLS_FEATURE,
+  FLEET_ENVIRONMENT_STORAGE_FEATURE,
 ]
 
 type MemoryStatus = 'active' | 'archived' | 'superseded' | 'all'
@@ -236,6 +239,8 @@ export interface InstanceEnvironment {
     busy?: boolean
   }
   environmentStatus(): Promise<FleetInstanceEnvironmentStatus>
+  /** The latest disk figures (`environment-storage`); `folder`: a workspaces host's own folder too. */
+  storage?(folder: boolean): FleetInstanceStorage
   /** The models of the environment's accounts, freshly read; `current` is null, an environment has no selection. */
   selections(): Promise<{ options: FleetSelectionOption[]; current: null }>
   /** The installed bot, or a NOT_FOUND error. */
@@ -404,7 +409,7 @@ export function cancelTarget(search: URLSearchParams): string | null | undefined
   if (!/^[A-Za-z0-9-]{1,80}$/.test(raw)) throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Invalid conversation.')
   return raw
 }
-function parseFlag(url: URL, name: 'purge' | 'replace'): boolean {
+function parseFlag(url: URL, name: 'purge' | 'replace' | 'folder'): boolean {
   const raw = url.searchParams.get(name)
   if (raw === null || raw === '0' || raw === 'false') return false
   if (raw === '1' || raw === 'true') return true
@@ -674,6 +679,10 @@ export function createInstanceControlServer(
     ),
     health: () => environment.health(),
     environmentStatus: () => environment.environmentStatus(),
+    environmentStorage: ({ url }) => {
+      if (!environment.storage) throw new InstanceHttpError(404, 'NOT_FOUND', 'Route not found.')
+      return environment.storage(parseFlag(url, 'folder'))
+    },
     runtimesCheck: () => {
       environment.checkRuntimes()
       return { ok: true as const }

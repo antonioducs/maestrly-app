@@ -5,7 +5,12 @@ import { type InstanceEnvironment, InstanceEvents, InstanceHttpError } from '../
 import { ComputerUnavailableError } from '../../src/main/remote-host/server/computers'
 import { HostEnvironment, type HostComputers } from '../../src/main/remote-host/server/host-environment'
 
-function setup(busy = false, computers: HostComputers | null = null, desktopCalls = false) {
+function setup(
+  busy = false,
+  computers: HostComputers | null = null,
+  desktopCalls = false,
+  folder: string | null = null
+) {
   const runtime = {
     events: new InstanceEvents(),
     health: vi.fn(() => ({
@@ -41,6 +46,7 @@ function setup(busy = false, computers: HostComputers | null = null, desktopCall
     addApiKeyAccount: vi.fn(async () => ({ providerId: 'p1' })),
     removeAccount: vi.fn(async () => undefined),
     checkRuntimes: vi.fn(),
+    measureStorage: vi.fn((_folder: string | null) => ({ environment: null, bots: [] })),
     settings: { accounts: vi.fn() },
   }
   const state = { busy }
@@ -49,7 +55,8 @@ function setup(busy = false, computers: HostComputers | null = null, desktopCall
     runtime as unknown as EnvironmentRuntime,
     () => state.busy,
     computers,
-    desktopCalls
+    desktopCalls,
+    folder
   )
   return { runtime, environment, state }
 }
@@ -63,6 +70,14 @@ const statusOf = async (run: () => unknown) => {
 }
 
 describe('workspaces host environment', () => {
+  it('measures its own server folder only when the gateway asks for it', () => {
+    const { environment, runtime } = setup(false, null, false, '/srv/maestrly/workspaces')
+    expect(environment.storage?.(true)).toEqual({ environment: null, bots: [] })
+    expect(runtime.measureStorage).toHaveBeenLastCalledWith('/srv/maestrly/workspaces')
+    environment.storage?.(false)
+    expect(runtime.measureStorage).toHaveBeenLastCalledWith(null)
+  })
+
   it('tells the gateway it hosts workspaces and whether chats are running', () => {
     const { environment, state } = setup()
     expect(environment.health()).toEqual({

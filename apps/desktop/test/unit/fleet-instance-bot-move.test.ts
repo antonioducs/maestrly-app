@@ -90,7 +90,11 @@ const runtimes: EnvironmentRuntime[] = []
 const servers: Array<import('node:http').Server> = []
 
 /** One environment of a server: its own data folder, home folder and database, as each container has. */
-async function environment(name: string, before?: (userData: string) => Promise<void>) {
+async function environment(
+  name: string,
+  before?: (userData: string) => Promise<void>,
+  extra: Partial<EnvironmentRuntimeDeps> = {}
+) {
   const userData = path.join(dir, name, 'user-data')
   const home = path.join(dir, name, 'home')
   await mkdir(userData, { recursive: true })
@@ -132,6 +136,7 @@ async function environment(name: string, before?: (userData: string) => Promise<
     }),
     openSettings: vi.fn(),
     holdScreenFocus: vi.fn((_owner: ScreenFocusOwner | null) => vi.fn()),
+    ...extra,
   } as unknown as EnvironmentRuntimeDeps
   const runtime = new EnvironmentRuntime(deps)
   runtimes.push(runtime)
@@ -393,6 +398,43 @@ describe('moving a bot between environments', () => {
       item.kind === 'user' || item.kind === 'assistant' ? [item.text] : []
     )
     expect(texts).toEqual(expect.arrayContaining(['Find the invoice', 'Found it in the portal']))
+  })
+
+  it('sizes each bot from what is its own and the environment from its home', async () => {
+    const measured: string[][] = []
+    const usage = vi.fn(async (paths: readonly string[]) => {
+      measured.push([...paths])
+      return paths.length * 1024
+    })
+    const work = await environment('work', undefined, { storageUsage: usage })
+    const { conversationId } = await seededBot(work)
+    const read = async () => (await work.request('GET', '/v1/environment/storage')).json()
+    expect(await read()).toEqual({ environment: null, bots: [] })
+    await vi.waitFor(async () => expect((await read()).environment).not.toBeNull())
+    const storage = await read()
+    expect(storage.environment).toMatchObject({ homeBytes: 1024, downloadsBytes: 1024, folderBytes: null })
+    expect(storage.bots.map((bot: { botId: string }) => bot.botId).sort()).toEqual(['alpha', 'beta'])
+    expect(measured).toContainEqual([work.home])
+    expect(measured).toContainEqual([path.join(work.home, '.config', 'maestrly-bots', 'alpha')])
+    const own = measured.find((paths) => paths.includes(path.join(work.userData, 'fleet-instance', 'bots', 'alpha')))!
+    expect(own).toEqual(
+      expect.arrayContaining([
+        path.join(work.userData, 'fleet-inputs', 'alpha'),
+        path.join(work.userData, 'fleet-images', 'alpha'),
+        path.join(work.home, '.cache', 'maestrly-bots', 'alpha'),
+        path.join(await realpath(work.userData), 'standalone-chats', conversationId),
+        attachmentConversationDir(conversationId),
+      ])
+    )
+    expect(own.some((item) => item.includes('beta'))).toBe(false)
+    expect(storage.bots.find((bot: { botId: string }) => bot.botId === 'alpha')).toMatchObject({
+      browserBytes: 1024,
+      usedBytes: 1024 + own.length * 1024,
+    })
+    // A bot environment has no server folder: `?folder=1` measures nothing more.
+    expect(
+      (await (await work.request('GET', '/v1/environment/storage?folder=1')).json()).environment.folderBytes
+    ).toBeNull()
   })
 
   it('refuses to freeze a bot too large to move, which keeps running, and to pack one that grew too large', async () => {

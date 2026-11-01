@@ -340,6 +340,32 @@ async function collectSources(botId: string, roots: BotRoots): Promise<Sources> 
   return { files, links, directories }
 }
 
+/**
+ * The folders that hold what is a bot's own here, for sizing it: its browser profile apart, then its other folders
+ * (`BOT_FOLDERS`, its caches included), its conversation's working folder, attachments and generated images, and
+ * those of its side conversations. The same as a move carries, with the caches a move leaves out.
+ */
+export async function botStoragePaths(botId: string, roots: BotRoots): Promise<{ browser: string; others: string[] }> {
+  let browser = ''
+  const others: string[] = []
+  for (const folder of BOT_FOLDERS) {
+    const dir = botFolderPath(folder, roots, botId)
+    if (folder.kind === 'browser') browser = dir
+    else others.push(dir)
+  }
+  const conversationId = conversationOf(botId)
+  if (conversationId) {
+    others.push(
+      await workdirOf(roots, conversationId),
+      attachmentConversationDir(conversationId),
+      generatedImageConversationDir(conversationId)
+    )
+    for (const run of await runsOf(botId, roots))
+      others.push(attachmentConversationDir(run.conversationId), generatedImageConversationDir(run.conversationId))
+  }
+  return { browser, others }
+}
+
 function memoryRows(botId: string): Row[] {
   return getDb()
     .prepare('SELECT * FROM local_memories WHERE workspace_id = ? ORDER BY created_at, id')
