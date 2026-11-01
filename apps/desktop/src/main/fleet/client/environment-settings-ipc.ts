@@ -1,5 +1,5 @@
 import {
-  FLEET_ACCOUNT_FAILOVER_FEATURE,
+  FLEET_ACCOUNT_POOLS_FEATURE,
   FLEET_ENVIRONMENT_PLUGINS_FEATURE,
   FLEET_MCP_TEST_DETAIL_FEATURE,
   FLEET_SETTINGS_OPERATIONS,
@@ -368,19 +368,18 @@ export function registerFleetEnvironmentSettingsIpc(scoped: FleetIpcRegistrar): 
       await fleet.call('settingsSetPreferences', { params: { eid }, body: input })
     )
   })
-  scoped.handle('fleet:settings:failover', async (fleet, _event, rawId: unknown, rawInput: unknown) => {
-    const eid = target(fleet, rawId, FLEET_ACCOUNT_FAILOVER_FEATURE)
-    FLEET_SETTINGS_OPERATIONS.failover.input.parse(rawInput ?? {})
-    return FLEET_SETTINGS_OPERATIONS.failover.response.parse(await fleet.call('settingsFailover', { params: { eid } }))
+  scoped.handle('fleet:settings:accountPools', async (fleet, _event, rawId: unknown, rawInput: unknown) => {
+    const eid = target(fleet, rawId, FLEET_ACCOUNT_POOLS_FEATURE)
+    FLEET_SETTINGS_OPERATIONS.accountPools.input.parse(rawInput ?? {})
+    return FLEET_SETTINGS_OPERATIONS.accountPools.response.parse(
+      await fleet.call('settingsAccountPools', { params: { eid } })
+    )
   })
-  scoped.mhandle('fleet:settings:setFailoverRoute', async (fleet, _event, rawId: unknown, rawInput: unknown) => {
-    const eid = target(fleet, rawId, FLEET_ACCOUNT_FAILOVER_FEATURE)
-    const input = FLEET_SETTINGS_OPERATIONS.setFailoverRoute.input.parse(rawInput ?? {})
-    return FLEET_SETTINGS_OPERATIONS.setFailoverRoute.response.parse(
-      await fleet.call('settingsSetFailoverRoute', {
-        params: { eid, kind: input.kind, slot: input.slot ?? 'default' },
-        body: input,
-      })
+  scoped.mhandle('fleet:settings:setAccountPool', async (fleet, _event, rawId: unknown, rawInput: unknown) => {
+    const eid = target(fleet, rawId, FLEET_ACCOUNT_POOLS_FEATURE)
+    const input = FLEET_SETTINGS_OPERATIONS.setAccountPool.input.parse(rawInput ?? {})
+    return FLEET_SETTINGS_OPERATIONS.setAccountPool.response.parse(
+      await fleet.call('settingsSetAccountPool', { params: { eid, kind: input.kind }, body: input })
     )
   })
 }

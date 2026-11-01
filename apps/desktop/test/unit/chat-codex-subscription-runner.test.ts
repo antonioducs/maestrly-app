@@ -55,14 +55,14 @@ import {
 } from '../../src/main/chat/codex-subscription/thread-store'
 import {
   resetSubscriptionFailoverRouterForTests,
-  setFailoverRoute,
+  setAccountPool,
   getSubscriptionFailoverRouter,
 } from '../../src/main/chat/subscription-failover'
 import { chatDiag } from '../../src/main/chat/diag-log'
 import { BYOK_DEFAULT_RULESET, PermissionBroker } from '../../src/main/chat/permission'
 import { QuestionBroker } from '../../src/main/chat/question-broker'
 import { chatToolOutputToAiSdkOutput, mcpResultToChatToolOutput } from '../../src/main/chat/tool-output'
-import { toolOutputImages, toolOutputText } from '../../src/shared/chat'
+import { activeAccountProviderId, toolOutputImages, toolOutputText } from '../../src/shared/chat'
 import { resolveSubagentExecutionProfile } from '../../src/main/chat/subagent-execution-profile'
 import { setSubagentRouter } from '../../src/main/chat/subagent-route'
 import { runSubagent } from '../../src/main/chat/subagent-runner'
@@ -8474,7 +8474,12 @@ describe('Codex subscription runner', () => {
         'chat.subscriptionAccounts',
         JSON.stringify([{ id: 'acc_b', kind: 'codex-subscription', label: 'Account B', createdAt: 1 }])
       )
-      setFailoverRoute({ primaryProviderId: PRIMARY, enabled: true, fallbackProviderIds: [FALLBACK] })
+      setAccountPool({
+        kind: 'codex-subscription',
+        memberProviderIds: [PRIMARY, FALLBACK],
+        activeProviderId: PRIMARY,
+        policy: 'prefer-active',
+      })
       const workspace = makeWorkspace()
       const conversation = makeConversation(workspace.id, {})
       persistUser(conversation.id, 'user_simultaneous_quota', 'Delegate and continue', 1)
@@ -8501,7 +8506,7 @@ describe('Codex subscription runner', () => {
           version: 1,
           agentName: 'explore',
           effective: {
-            providerId: PRIMARY,
+            providerId: activeAccountProviderId('codex-subscription'),
             modelId: 'gpt-5.6-mini',
             configuredEffort: 'high',
             sentEffort: 'high',
@@ -9495,10 +9500,11 @@ describe('Codex subscription runner', () => {
         'chat.subscriptionAccounts',
         JSON.stringify([{ id: 'acc_b', kind: 'codex-subscription', label: 'Account B', createdAt: 1 }])
       )
-      setFailoverRoute({
-        primaryProviderId: PRIMARY,
-        enabled: true,
-        fallbackProviderIds: [FALLBACK],
+      setAccountPool({
+        kind: 'codex-subscription',
+        memberProviderIds: [PRIMARY, FALLBACK],
+        activeProviderId: PRIMARY,
+        policy: 'prefer-active',
       })
     }
 
@@ -9508,7 +9514,8 @@ describe('Codex subscription runner', () => {
         agentName: 'explore',
         category: 'exploration',
         effective: {
-          providerId: PRIMARY,
+          // A child of a turn on the pool runs on the pool, so it fails over like the root.
+          providerId: activeAccountProviderId('codex-subscription'),
           modelId,
           configuredEffort: 'high',
           sentEffort: 'high',
@@ -9920,14 +9927,20 @@ describe('Codex subscription runner', () => {
           },
         },
       })
-      expect(assistantMessages(conversation.id)[0].usage?.subagentUsage).toEqual([
-        expect.objectContaining({
-          modelId: 'gpt-5.6-mini',
-          input: 105,
-          output: 19,
-          cachedInput: 15,
-        }),
-      ])
+      // Both attempts are charged exactly once, each to the account that ran it: A's tokens come from the shared root
+      // client's notifications, B's from the foreign app-server's result.
+      const subagentUsage = assistantMessages(conversation.id)[0].usage?.subagentUsage ?? []
+      expect(subagentUsage.map((entry) => entry.providerId).sort()).toEqual([PRIMARY, FALLBACK].sort())
+      expect(subagentUsage.find((entry) => entry.providerId === FALLBACK)).toMatchObject({ input: 35, output: 7 })
+      expect(subagentUsage.every((entry) => entry.modelId === 'gpt-5.6-mini')).toBe(true)
+      const sum = (pick: (entry: (typeof subagentUsage)[number]) => number | undefined) =>
+        subagentUsage.reduce((total, entry) => total + (pick(entry) ?? 0), 0)
+      expect({
+        input: sum((entry) => entry.input),
+        output: sum((entry) => entry.output),
+        cachedInput: sum((entry) => entry.cachedInput),
+      }).toEqual({ input: 105, output: 19, cachedInput: 15 })
+      expect(assistantMessages(conversation.id)[0].usage).toMatchObject({ subInput: 105, subOutput: 19 })
     })
 
     it('incompatible subagent target reports model/effort incompatibility without quota exhaustion', async () => {

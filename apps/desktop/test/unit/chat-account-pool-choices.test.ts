@@ -9,11 +9,17 @@ import {
   accountPoolCandidates,
   accountPoolFor,
   accountPoolProviderInfo,
+  accountPoolCurrent,
+  accountPoolEntryKey,
+  accountPoolKindOfEntryKey,
+  accountPoolNext,
   addAccountPoolMember,
   chatProviderChoices,
   makeAccountActive,
   moveAccountPoolMember,
   removeAccountPoolMember,
+  withAccountPoolAutoJoin,
+  withAccountPoolEnabled,
   withAccountPoolPolicy,
 } from '../../src/renderer/components/chat/account-pool'
 import { subagentProfileProviders } from '../../src/renderer/lib/subagent-profile-editor'
@@ -45,6 +51,8 @@ const pool = (
   activeProviderId: 'builtin_claude_subscription@a',
   policy: 'drain',
   customMembers: false,
+  enabled: true,
+  autoJoin: true,
   ...extra,
 })
 
@@ -223,5 +231,36 @@ describe('account pool patches', () => {
     expect(moveAccountPoolMember(three, 2, 1)).toBeNull()
     expect(moveAccountPoolMember(three, -1, 1)).toBeNull()
     expect(moveAccountPoolMember(three, 3, -1)).toBeNull()
+  })
+})
+
+describe('account pool state', () => {
+  const a = 'builtin_claude_subscription@a'
+  const b = 'builtin_claude_subscription@b'
+  const c = 'builtin_claude_subscription@c'
+  const three = pool('claude-subscription', { memberProviderIds: [a, b, c], currentProviderId: b })
+
+  it('turns the rotation and accounts joining on their own on and off', () => {
+    expect(withAccountPoolEnabled(three, false)).toEqual({ kind: 'claude-subscription', enabled: false })
+    expect(withAccountPoolAutoJoin(three, false)).toEqual({ kind: 'claude-subscription', autoJoin: false })
+  })
+
+  it('lists a rotation in the accounts settings under a key of its own', () => {
+    expect(accountPoolKindOfEntryKey(accountPoolEntryKey('codex-subscription'))).toBe('codex-subscription')
+    expect(accountPoolKindOfEntryKey('account-pool:grok-subscription')).toBeNull()
+    expect(accountPoolKindOfEntryKey(a)).toBeNull()
+    expect(accountPoolKindOfEntryKey(null)).toBeNull()
+  })
+
+  it('starts on the current account, or the active one for hosts that predate it', () => {
+    expect(accountPoolCurrent(three)).toBe(b)
+    expect(accountPoolCurrent(pool('claude-subscription'))).toBe(a)
+  })
+
+  it('moves on in order past the accounts that cannot run, and nowhere while off', () => {
+    expect(accountPoolNext(three, () => true)).toBe(c)
+    expect(accountPoolNext(three, (id) => id !== c)).toBe(a)
+    expect(accountPoolNext(three, (id) => id === b)).toBeNull()
+    expect(accountPoolNext({ ...three, enabled: false }, () => true)).toBeNull()
   })
 })

@@ -516,7 +516,7 @@ describe('instance control HTTP', () => {
       'files',
       'environment-settings-v1',
       'environment-plugins-v1',
-      'account-failover',
+      'account-pools',
       'provisioning',
       'environments',
       'environment-compaction',

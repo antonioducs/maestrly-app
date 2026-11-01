@@ -1749,13 +1749,15 @@ it('does not share an old Claude in-flight description across account identity c
 
 it('changes the in-flight key when only a Claude fallback identity changes', async () => {
   const { CLAUDE_SUBSCRIPTION_PROVIDER_ID, addSubscriptionAccount } = await import('../../src/main/chat/catalog')
-  const { setFailoverRoute } = await import('../../src/main/chat/subscription-failover/config')
+  const { setAccountPool } = await import('../../src/main/chat/subscription-failover/account-pool')
+  const { activeAccountProviderId } = await import('../../src/shared/chat')
   const { getClaudeSubscriptionManager } = await import('../../src/main/chat/claude-agent-sdk/manager')
   const account = addSubscriptionAccount('claude-subscription', 'B')
-  setFailoverRoute({
-    primaryProviderId: CLAUDE_SUBSCRIPTION_PROVIDER_ID,
-    enabled: true,
-    fallbackProviderIds: [`${CLAUDE_SUBSCRIPTION_PROVIDER_ID}@${account.id}`],
+  setAccountPool({
+    kind: 'claude-subscription',
+    memberProviderIds: [CLAUDE_SUBSCRIPTION_PROVIDER_ID, `${CLAUDE_SUBSCRIPTION_PROVIDER_ID}@${account.id}`],
+    activeProviderId: CLAUDE_SUBSCRIPTION_PROVIDER_ID,
+    policy: 'prefer-active',
   })
   const primary = vi
     .spyOn(getClaudeSubscriptionManager(), 'getStatusSnapshot')
@@ -1763,7 +1765,7 @@ it('changes the in-flight key when only a Claude fallback identity changes', asy
   const fallback = vi
     .spyOn(getClaudeSubscriptionManager(account.id), 'getStatusSnapshot')
     .mockReturnValue({ accountFingerprint: 'B-old', accountEpoch: 1 } as any)
-  setImageInterpreter({ providerId: CLAUDE_SUBSCRIPTION_PROVIDER_ID, modelId: 'vision-model' })
+  setImageInterpreter({ providerId: activeAccountProviderId('claude-subscription'), modelId: 'vision-model' })
   let release!: (value: { text: string }) => void
   h.runClaudeEphemeralWithFailover
     .mockImplementationOnce(

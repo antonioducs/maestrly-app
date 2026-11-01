@@ -49,7 +49,6 @@ import type {
   ChatSearchHit,
   ChatSubscriptionAuthStatus,
   ChatSubscriptionFailoverEvent,
-  ChatSubscriptionFailoverRoute,
   ChatSubscriptionAccountPoolPatch,
   ChatSubscriptionAccountPool,
   ChatSubscriptionCodeResult,
@@ -412,12 +411,6 @@ export function makeChatApi(ipcRenderer: IpcTransport) {
     chatSubscriptionAccountRemove: (accountId: string): Promise<{ ok: boolean; error?: string }> =>
       ipcRenderer.invoke('chat:subscription-account:remove', accountId),
 
-    chatSubscriptionFailoverSetRoute: (input: {
-      primaryProviderId: string
-      enabled: boolean
-      fallbackProviderIds: string[]
-    }): Promise<{ ok: boolean; route?: ChatSubscriptionFailoverRoute; error?: string }> =>
-      ipcRenderer.invoke('chat:subscription-failover:set-route', input),
     chatSubscriptionAccountPoolSet: (
       patch: ChatSubscriptionAccountPoolPatch
     ): Promise<{ ok: boolean; pool?: ChatSubscriptionAccountPool; error?: string }> =>

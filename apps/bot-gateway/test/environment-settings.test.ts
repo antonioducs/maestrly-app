@@ -2,7 +2,7 @@ import http from 'node:http'
 import type net from 'node:net'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
-  FLEET_ACCOUNT_FAILOVER_FEATURE,
+  FLEET_ACCOUNT_POOLS_FEATURE,
   FLEET_ENVIRONMENT_PLUGINS_FEATURE,
   FLEET_ENVIRONMENT_SETTINGS_FEATURE,
   FLEET_MCP_TEST_DETAIL_FEATURE,
@@ -193,34 +193,55 @@ describe('environment settings routes', () => {
       await new Promise<void>((resolve) => server.close(() => resolve()))
     }
   })
-  it('offers account failover only for an environment whose image has it', async () => {
+  it('offers account rotation only for an environment whose image has it', async () => {
     const { h, path } = await setup()
-    expect(await (await h.request('GET', '/v1/meta')).json()).toMatchObject({
-      features: expect.arrayContaining([FLEET_ACCOUNT_FAILOVER_FEATURE]),
-    })
-    const read = vi.spyOn(InstanceClient.prototype, 'settingsFailover')
-    const response = await h.request('GET', path + '/failover')
+    const meta = await (await h.request('GET', '/v1/meta')).json()
+    expect(meta.features).toContain(FLEET_ACCOUNT_POOLS_FEATURE)
+    expect(meta.features).not.toContain('account-failover')
+    const read = vi.spyOn(InstanceClient.prototype, 'settingsAccountPools')
+    const response = await h.request('GET', path + '/account-pools')
     expect(response.status).toBe(409)
     expect(read).not.toHaveBeenCalled()
   })
-  it('reads and sets failover routes through the environment instance', async () => {
-    const { h, path } = await setup([FLEET_ENVIRONMENT_SETTINGS_FEATURE, FLEET_ACCOUNT_FAILOVER_FEATURE])
+  it('reads and sets account rotations through the environment instance', async () => {
+    const { h, path } = await setup([FLEET_ENVIRONMENT_SETTINGS_FEATURE, FLEET_ACCOUNT_POOLS_FEATURE])
     vi.spyOn(h.store, 'botsOfEnvironment').mockReturnValue([])
-    const routes = [{ kind: 'claude' as const, slot: null, enabled: true, fallbacks: ['acc_two'] }]
-    const read = vi.spyOn(InstanceClient.prototype, 'settingsFailover').mockResolvedValue({ revision, routes: [] })
-    const set = vi.spyOn(InstanceClient.prototype, 'settingsSetFailoverRoute').mockResolvedValue({ revision, routes })
-    const loaded = await h.request('GET', path + '/failover')
+    const pool = {
+      kind: 'claude' as const,
+      enabled: true,
+      policy: 'drain' as const,
+      autoJoin: true,
+      members: [null, 'acc_two'],
+      active: null,
+      current: null,
+      limited: [],
+      bots: [],
+      pinned: [],
+      switches: [],
+    }
+    const read = vi
+      .spyOn(InstanceClient.prototype, 'settingsAccountPools')
+      .mockResolvedValue({ revision, pools: [pool] })
+    const changed = { ...pool, members: ['acc_two', null] }
+    const set = vi
+      .spyOn(InstanceClient.prototype, 'settingsSetAccountPool')
+      .mockResolvedValue({ revision, pools: [changed] })
+    const loaded = await h.request('GET', path + '/account-pools')
     expect(loaded.status).toBe(200)
-    expect(await loaded.json()).toEqual({ revision, routes: [] })
+    expect(await loaded.json()).toEqual({ revision, pools: [pool] })
     expect(read).toHaveBeenCalledWith({})
 
-    const body = { kind: 'claude', slot: null, expectedRevision: revision, enabled: true, fallbacks: ['acc_two'] }
-    const saved = await h.request('PUT', path + '/failover/claude/default', body)
+    const body = { kind: 'claude', expectedRevision: revision, members: ['acc_two', null] }
+    const saved = await h.request('PUT', path + '/account-pools/claude', body)
     expect(saved.status).toBe(200)
-    expect(await saved.json()).toEqual({ revision, routes })
+    expect(await saved.json()).toEqual({ revision, pools: [changed] })
     expect(set).toHaveBeenCalledWith(body)
-    // The path and the body name the same primary account.
-    expect((await h.request('PUT', path + '/failover/claude/acc_one', body)).status).toBe(400)
+    // The path and the body name the same provider.
+    expect((await h.request('PUT', path + '/account-pools/codex', body)).status).toBe(400)
+    // Each account appears once in the rotation.
+    expect(
+      (await h.request('PUT', path + '/account-pools/claude', { ...body, members: ['acc_two', 'acc_two'] })).status
+    ).toBe(400)
     expect(set).toHaveBeenCalledTimes(1)
   })
 })

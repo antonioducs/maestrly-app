@@ -7,7 +7,6 @@ import {
   chatGptWebSummary,
   type ChatGptWebAccountSnapshot,
   connectableGroups,
-  hasActiveRotation,
   isAccountListed,
   matchesAccountFilter,
   needsAttention,
@@ -268,18 +267,6 @@ describe('account entries', () => {
     expect(matchesAccountFilter({ ...summary, nearLimit: false }, 'near-limit', 'Work', '')).toBe(false)
     expect(matchesAccountFilter(summary, 'all', 'Work · antonio@acme.example ChatGPT', 'acme chatgpt')).toBe(true)
     expect(matchesAccountFilter(summary, 'all', 'Work ChatGPT', 'work claude')).toBe(false)
-  })
-
-  it('marks only primaries whose rotation is on and has fallbacks', () => {
-    const routes = [
-      { primaryProviderId: 'a', enabled: true, fallbackProviderIds: ['b'] },
-      { primaryProviderId: 'c', enabled: true, fallbackProviderIds: [] },
-      { primaryProviderId: 'd', enabled: false, fallbackProviderIds: ['a'] },
-    ]
-    expect(hasActiveRotation(routes, 'a')).toBe(true)
-    expect(hasActiveRotation(routes, 'c')).toBe(false)
-    expect(hasActiveRotation(routes, 'd')).toBe(false)
-    expect(hasActiveRotation(routes, 'b')).toBe(false)
   })
 
   it('names the plans providers report and shows unknown codes as reported', () => {

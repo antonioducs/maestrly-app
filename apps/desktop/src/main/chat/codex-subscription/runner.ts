@@ -3912,10 +3912,11 @@ export async function runCodexSubscriptionChat(
                       settleResume(attempt)
                       addNormalizedSubagentUsage(accumulatedUsage, attempt.usage)
                       if (!useSharedRootClient && attempt.usage) {
-                        // Token notifications for a foreign app-server never hit the root childUsage map.
+                        // Token notifications for a foreign app-server never hit the root childUsage map. They are
+                        // charged to the account that ran, never to the active-account selection it stands in for.
                         recordExternalSubagentUsage(
                           {
-                            providerId: logicalProviderId,
+                            providerId: target.providerId,
                             modelId: profile.effective!.modelId,
                           },
                           attempt.usage
@@ -3981,7 +3982,7 @@ export async function runCodexSubscriptionChat(
                       if (!useSharedRootClient && quotaError.partial.usage) {
                         recordExternalSubagentUsage(
                           {
-                            providerId: logicalProviderId,
+                            providerId: target.providerId,
                             modelId: profile.effective!.modelId,
                           },
                           quotaError.partial.usage

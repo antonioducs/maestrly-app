@@ -8,7 +8,6 @@ import type {
   ChatGptWebStatus,
   ChatProviderInfo,
   ChatSubscriptionAuthStatus,
-  ChatSubscriptionFailoverRoute,
   ChatSubscriptionProviderKind,
   ChatSubscriptionUsage,
 } from '../../../../shared/chat'
@@ -262,15 +261,6 @@ export function connectableGroups(
   return groups.filter(
     (group) =>
       group.id !== 'api-keys' && group.entries.length > 0 && group.entries.every((entry) => !listed(entry, group))
-  )
-}
-
-export function hasActiveRotation(
-  routes: readonly ChatSubscriptionFailoverRoute[],
-  primaryProviderId: string
-): boolean {
-  return routes.some(
-    (route) => route.primaryProviderId === primaryProviderId && route.enabled && route.fallbackProviderIds.length > 0
   )
 }
 

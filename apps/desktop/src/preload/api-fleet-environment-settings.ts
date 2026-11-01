@@ -100,10 +100,10 @@ export const fleetEnvironmentSettings: FleetServerScoped<FleetEnvironmentSetting
     ipcRenderer.invoke('fleet:settings:patchMcpOAuthAccount', fleetServerId, environmentId, input),
   setMcpOAuthClient: (fleetServerId, environmentId, input) =>
     ipcRenderer.invoke('fleet:settings:setMcpOAuthClient', fleetServerId, environmentId, input),
-  failover: (fleetServerId, environmentId, input) =>
-    ipcRenderer.invoke('fleet:settings:failover', fleetServerId, environmentId, input),
-  setFailoverRoute: (fleetServerId, environmentId, input) =>
-    ipcRenderer.invoke('fleet:settings:setFailoverRoute', fleetServerId, environmentId, input),
+  accountPools: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:accountPools', fleetServerId, environmentId, input),
+  setAccountPool: (fleetServerId, environmentId, input) =>
+    ipcRenderer.invoke('fleet:settings:setAccountPool', fleetServerId, environmentId, input),
 }
 
 /**

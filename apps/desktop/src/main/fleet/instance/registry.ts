@@ -9,6 +9,7 @@ import { z } from 'zod'
 import { realFs } from '../../real-fs'
 import { getAppSetting, getDb, setAppSetting, transaction } from '../../store'
 import { secureGet, secureSet } from '../../secure-store'
+import { INSTALLED_BOTS_KEY } from './installed-bots-key'
 
 // A bot's folders may hold files named `*.asar`: removing them must not take those for archives.
 const fs = realFs.promises
@@ -18,7 +19,7 @@ const fs = realFs.promises
  * is recreated on start only once it is in the list, and uninstalling removes it from the list first. Each bot keeps
  * its settings under `fleet.instance.bots.<botId>.*`, its gateway token encrypted.
  */
-export const INSTALLED_BOTS_KEY = 'fleet.instance.bots'
+export { INSTALLED_BOTS_KEY }
 /** Settings of a container from before environments, when it ran a single bot. */
 export const LEGACY_PROFILE_KEY = 'fleet.instance.profile'
 export const LEGACY_PAUSED_KEY = 'fleet.instance.paused'

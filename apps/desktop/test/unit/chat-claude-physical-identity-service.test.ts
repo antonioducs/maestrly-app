@@ -235,7 +235,8 @@ function register() {
 
 import { addProvider } from '../../src/main/chat/catalog'
 import { setApiKey, clearApiKey } from '../../src/main/chat/credentials'
-import { setFailoverRoute, getSubscriptionFailoverRouter } from '../../src/main/chat/subscription-failover'
+import { setAccountPool, getSubscriptionFailoverRouter } from '../../src/main/chat/subscription-failover'
+import { activeAccountProviderId } from '../../src/shared/chat'
 import { beginClaudeAttempt, listClaudeAttempts } from '../../src/main/chat/subscription-failover/claude-attempts'
 import { resolveClaudeRuntimeTarget } from '../../src/main/chat/subscription-failover/claude-adapter'
 
@@ -275,10 +276,11 @@ function slot() {
     }),
   }
   h.slots.set(account.id, manager)
-  setFailoverRoute({
-    primaryProviderId: CLAUDE_SUBSCRIPTION_PROVIDER_ID,
-    enabled: true,
-    fallbackProviderIds: [providerId],
+  setAccountPool({
+    kind: 'claude-subscription',
+    memberProviderIds: [CLAUDE_SUBSCRIPTION_PROVIDER_ID, providerId],
+    activeProviderId: CLAUDE_SUBSCRIPTION_PROVIDER_ID,
+    policy: 'prefer-active',
   })
   return { account, providerId, manager, status }
 }
@@ -289,11 +291,12 @@ function exhaust(providerId: string, reset = Date.now() + 60_000) {
     resetsAt: reset,
   })
 }
+const ACTIVE_CLAUDE_ACCOUNT = activeAccountProviderId('claude-subscription')
 function conversation() {
   const conv = makeConversation(makeWorkspace().id, { cwd: '/repo' })
   patchConvUiPrefs(conv.id, {
     chat: {
-      providerId: CLAUDE_SUBSCRIPTION_PROVIDER_ID,
+      providerId: ACTIVE_CLAUDE_ACCOUNT,
       modelId: 'sonnet',
       mode: 'agent',
       reasoning: 'high',
@@ -456,15 +459,11 @@ describe('Claude physical account service ownership', () => {
     const conv = conversation()
     register()
     if (!routeAtFreeze) {
-      setFailoverRoute({ primaryProviderId: CLAUDE_SUBSCRIPTION_PROVIDER_ID, enabled: false, fallbackProviderIds: [] })
+      setAccountPool({ kind: 'claude-subscription', enabled: false })
     }
     const frozen = await resolveFrozenChatSelection(conv.id)
     if (!frozen.ok) throw new Error(frozen.error)
-    setFailoverRoute({
-      primaryProviderId: CLAUDE_SUBSCRIPTION_PROVIDER_ID,
-      enabled: true,
-      fallbackProviderIds: [fallback.providerId],
-    })
+    setAccountPool({ kind: 'claude-subscription', enabled: true })
     if (routeAtFreeze) exhaust(CLAUDE_SUBSCRIPTION_PROVIDER_ID)
     const loopId = `claude-route-loop-${conv.id}`
     environmentLocks.set(conv.id, loopId)
@@ -521,11 +520,27 @@ describe('Claude physical account service ownership', () => {
       expect(args.manager).toBe(fallback.manager)
       expect(args.contextWindow).toBe(32000)
       expect(args).toMatchObject({ reasoningEffort: 'high', fastMode: true })
-      expect(getConvUiPrefs(conv.id).chat?.providerId).toBe(CLAUDE_SUBSCRIPTION_PROVIDER_ID)
+      expect(getConvUiPrefs(conv.id).chat?.providerId).toBe(ACTIVE_CLAUDE_ACCOUNT)
       expect(listChatMessages(conv.id).filter((message) => message.role === 'user')).toHaveLength(1)
       await stopChatAndWait(conv.id)
     }
   )
+
+  it('keeps an account chosen directly fixed: it never falls back to another pool member', async () => {
+    const fallback = slot()
+    const conv = conversation()
+    patchConvUiPrefs(conv.id, { chat: { ...getConvUiPrefs(conv.id).chat, providerId: CLAUDE_SUBSCRIPTION_PROVIDER_ID } })
+    const { handlers } = register()
+    exhaust(CLAUDE_SUBSCRIPTION_PROVIDER_ID)
+    const frozen = await resolveFrozenChatSelection(conv.id)
+    if (!frozen.ok) throw new Error(frozen.error)
+    expect(frozen.selection).toMatchObject({ providerId: CLAUDE_SUBSCRIPTION_PROVIDER_ID })
+    expect(frozen.selection.failoverRoute).toBeUndefined()
+    expect(frozen.selection.accountPoolProviderId).toBeUndefined()
+    await expect(send(handlers, conv.id)).resolves.toMatchObject({ ok: false })
+    expect(h.runClaude).not.toHaveBeenCalled()
+    expect(getSubscriptionFailoverRouter().getHealth(fallback.providerId).state).toBe('unknown')
+  })
 
   it('distinguishes proven all-account exhaustion from mixed unavailability before persistence', async () => {
     const fallback = slot()
@@ -643,7 +658,7 @@ describe('Claude physical account service ownership', () => {
     history(conv.id)
     exhaust(CLAUDE_SUBSCRIPTION_PROVIDER_ID)
     setCompactionSummarizer(conv.id, () => ({
-      providerId: CLAUDE_SUBSCRIPTION_PROVIDER_ID,
+      providerId: ACTIVE_CLAUDE_ACCOUNT,
       modelId: 'sonnet',
       effort: 'off',
       fastMode: false,
@@ -692,8 +707,9 @@ describe('Claude physical account service ownership', () => {
       expect(
         chatHistoryStats(conv.id).perModel.find((item) => item.providerId === fallback.providerId)?.subInput
       ).toBeGreaterThan(0)
+      // The marker records the conversation's logical (active-account) selection, not the account that billed it.
       expect(listChatMessages(conv.id).at(-1)?.model).toEqual({
-        providerId: CLAUDE_SUBSCRIPTION_PROVIDER_ID,
+        providerId: ACTIVE_CLAUDE_ACCOUNT,
         modelId: 'sonnet',
       })
     } finally {
@@ -845,7 +861,7 @@ describe('Claude physical account service ownership', () => {
     h.state.status.accountFingerprint = null
     fallback.manager.getObservedModelContextWindow.mockReturnValue(16000)
     h.summarizePortable.mockImplementation(async () => {
-      setFailoverRoute({ primaryProviderId: CLAUDE_SUBSCRIPTION_PROVIDER_ID, enabled: false, fallbackProviderIds: [] })
+      setAccountPool({ kind: 'claude-subscription', enabled: false })
       return { text: 'summary', usage: { input: 80, output: 16, cacheRead: 0, cacheCreate: 0, totalInput: 80 } }
     })
     await expect(compactReserved(conv.id)).resolves.toMatchObject({ ok: true })

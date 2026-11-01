@@ -1,4 +1,5 @@
 import {
+  SUBSCRIPTION_ACCOUNT_POOL_KINDS,
   accountPoolKindOf,
   isChatProviderConnected,
   isSubscriptionFailoverProviderId,
@@ -6,6 +7,7 @@ import {
   type ChatProviderInfo,
   type ChatSubscriptionAccountPool,
   type ChatSubscriptionAccountPoolInfo,
+  type ChatSubscriptionAccountPoolKind,
   type ChatSubscriptionAccountPoolPatch,
   type ChatSubscriptionAccountPoolPolicy,
 } from '../../../shared/chat'
@@ -89,6 +91,20 @@ export function makeAccountActive(
   }
 }
 
+export function withAccountPoolEnabled(
+  pool: ChatSubscriptionAccountPool,
+  enabled: boolean
+): ChatSubscriptionAccountPoolPatch {
+  return { kind: pool.kind, enabled }
+}
+
+export function withAccountPoolAutoJoin(
+  pool: ChatSubscriptionAccountPool,
+  autoJoin: boolean
+): ChatSubscriptionAccountPoolPatch {
+  return { kind: pool.kind, autoJoin }
+}
+
 export function withAccountPoolPolicy(
   pool: ChatSubscriptionAccountPool,
   policy: ChatSubscriptionAccountPoolPolicy
@@ -129,4 +145,36 @@ export function moveAccountPoolMember(
   const members = [...pool.memberProviderIds]
   ;[members[index], members[target]] = [members[target], members[index]]
   return { kind: pool.kind, memberProviderIds: members }
+}
+
+const ACCOUNT_POOL_KEY_PREFIX = 'account-pool:'
+
+/** The Accounts settings list a provider's rotation as an entry of its own, under this key. */
+export function accountPoolEntryKey(kind: string): string {
+  return ACCOUNT_POOL_KEY_PREFIX + kind
+}
+
+export function accountPoolKindOfEntryKey(key: string | null | undefined): ChatSubscriptionAccountPoolKind | null {
+  if (!key?.startsWith(ACCOUNT_POOL_KEY_PREFIX)) return null
+  const kind = key.slice(ACCOUNT_POOL_KEY_PREFIX.length)
+  return (SUBSCRIPTION_ACCOUNT_POOL_KINDS as readonly string[]).includes(kind)
+    ? (kind as ChatSubscriptionAccountPoolKind)
+    : null
+}
+
+/** The account a turn starts on now; pools from hosts that predate it start on the active one. */
+export function accountPoolCurrent(pool: ChatSubscriptionAccountPoolInfo): string {
+  return pool.currentProviderId ?? pool.activeProviderId
+}
+
+/** The account the rotation moves to after the current one, skipping the ones that cannot run; null when none can. */
+export function accountPoolNext(
+  pool: ChatSubscriptionAccountPoolInfo,
+  canRun: (providerId: string) => boolean
+): string | null {
+  if (!pool.enabled) return null
+  const members = pool.memberProviderIds
+  const index = members.indexOf(accountPoolCurrent(pool))
+  const rotated = index < 0 ? members : [...members.slice(index + 1), ...members.slice(0, index)]
+  return rotated.find((id) => id !== accountPoolCurrent(pool) && canRun(id)) ?? null
 }

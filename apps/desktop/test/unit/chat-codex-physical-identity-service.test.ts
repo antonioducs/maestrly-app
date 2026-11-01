@@ -134,15 +134,17 @@ import {
 } from '../../src/main/chat/catalog'
 import {
   getSubscriptionFailoverRouter,
-  listFailoverRoutes,
   resetSubscriptionFailoverRouterForTests,
   runCodexEphemeralWithFailover,
-  setFailoverRoute,
 } from '../../src/main/chat/subscription-failover'
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
 import { getConvUiPrefs, patchConvUiPrefs } from '../../src/main/store'
-import { getAccountPool, setAccountPool } from '../../src/main/chat/subscription-failover/account-pool'
+import {
+  getAccountPool,
+  readSavedAccountPools,
+  setAccountPool,
+} from '../../src/main/chat/subscription-failover/account-pool'
 
 const CODEX_ACTIVE_ACCOUNT = 'builtin_codex_subscription@~active'
 import { clearApiKey, setApiKey } from '../../src/main/chat/credentials'
@@ -297,16 +299,21 @@ describe('Codex logical vs physical provider identity', () => {
     const slot = addSubscriptionAccount('codex-subscription', 'Fallback')
     const slotProviderId = subscriptionProviderIdFor('codex-subscription', slot.id)
     patchConvUiPrefs(conversation.id, {
-      chat: { providerId: CODEX_SUBSCRIPTION_PROVIDER_ID, modelId: 'gpt-test' },
+      chat: { providerId: CODEX_ACTIVE_ACCOUNT, modelId: 'gpt-test' },
     })
-    const route = { primaryProviderId: CODEX_SUBSCRIPTION_PROVIDER_ID, fallbackProviderIds: [slotProviderId] }
-    setFailoverRoute({ ...route, enabled: routeAtFreeze })
+    setAccountPool({
+      kind: 'codex-subscription',
+      memberProviderIds: [CODEX_SUBSCRIPTION_PROVIDER_ID, slotProviderId],
+      activeProviderId: CODEX_SUBSCRIPTION_PROVIDER_ID,
+      policy: 'prefer-active',
+      enabled: routeAtFreeze,
+    })
     const frozen = await resolveFrozenChatSelection(conversation.id)
     if (!frozen.ok) throw new Error(frozen.error)
     expect(frozen.selection.failoverRoute?.map((account) => account.providerId)).toEqual(
       routeAtFreeze ? [CODEX_SUBSCRIPTION_PROVIDER_ID, slotProviderId] : undefined
     )
-    setFailoverRoute({ ...route, enabled: true })
+    setAccountPool({ kind: 'codex-subscription', enabled: true })
     h.resolveCodexRuntimeTarget.mockResolvedValue(defaultTarget({ providerId: slotProviderId, accountId: slot.id }))
     const loopId = `codex-route-loop-${conversation.id}`
     environmentLocks.set(conversation.id, loopId)
@@ -352,10 +359,11 @@ describe('Codex logical vs physical provider identity', () => {
     const conversation = makeConversation(workspace.id, {})
     const slot = addSubscriptionAccount('codex-subscription', 'Fallback')
     const slotProviderId = subscriptionProviderIdFor('codex-subscription', slot.id)
-    setFailoverRoute({
-      primaryProviderId: CODEX_SUBSCRIPTION_PROVIDER_ID,
-      enabled: true,
-      fallbackProviderIds: [slotProviderId],
+    setAccountPool({
+      kind: 'codex-subscription',
+      memberProviderIds: [CODEX_SUBSCRIPTION_PROVIDER_ID, slotProviderId],
+      activeProviderId: CODEX_SUBSCRIPTION_PROVIDER_ID,
+      policy: 'prefer-active',
     })
     getSubscriptionFailoverRouter().markExhausted(CODEX_SUBSCRIPTION_PROVIDER_ID, {
       reason: 'account A quota',
@@ -363,7 +371,7 @@ describe('Codex logical vs physical provider identity', () => {
       resetsAt: Date.now() + 60_000,
     })
     patchConvUiPrefs(conversation.id, {
-      chat: { providerId: CODEX_SUBSCRIPTION_PROVIDER_ID, modelId: 'gpt-test' },
+      chat: { providerId: CODEX_ACTIVE_ACCOUNT, modelId: 'gpt-test' },
     })
     upsertChatMessage({
       id: 'logical-a-history',
@@ -580,13 +588,14 @@ describe('Codex logical vs physical provider identity', () => {
     const conversation = makeConversation(workspace.id, {})
     const fallback = addSubscriptionAccount('codex-subscription', 'Fallback')
     const fallbackProviderId = subscriptionProviderIdFor('codex-subscription', fallback.id)
-    setFailoverRoute({
-      primaryProviderId: CODEX_SUBSCRIPTION_PROVIDER_ID,
-      enabled: true,
-      fallbackProviderIds: [fallbackProviderId],
+    setAccountPool({
+      kind: 'codex-subscription',
+      memberProviderIds: [CODEX_SUBSCRIPTION_PROVIDER_ID, fallbackProviderId],
+      activeProviderId: CODEX_SUBSCRIPTION_PROVIDER_ID,
+      policy: 'prefer-active',
     })
     patchConvUiPrefs(conversation.id, {
-      chat: { providerId: CODEX_SUBSCRIPTION_PROVIDER_ID, modelId: 'gpt-test' },
+      chat: { providerId: CODEX_ACTIVE_ACCOUNT, modelId: 'gpt-test' },
     })
     upsertChatMessage({
       id: 'race-history',
@@ -685,15 +694,24 @@ describe('Codex logical vs physical provider identity', () => {
     settleOther.mockRestore()
   })
 
-  it('preserves account routes after teardown failure until retry', async () => {
+  it('preserves account pool membership after teardown failure until retry', async () => {
     const handlers = register()
     const account = addSubscriptionAccount('codex-subscription', 'Fallback')
     const providerId = subscriptionProviderIdFor('codex-subscription', account.id)
-    const route = setFailoverRoute({
-      primaryProviderId: providerId,
-      enabled: true,
-      fallbackProviderIds: [CODEX_SUBSCRIPTION_PROVIDER_ID],
+    setAccountPool({
+      kind: 'codex-subscription',
+      memberProviderIds: [providerId, CODEX_SUBSCRIPTION_PROVIDER_ID],
+      activeProviderId: providerId,
+      policy: 'prefer-active',
     })
+    const savedPools = readSavedAccountPools()
+    expect(savedPools).toEqual([
+      expect.objectContaining({
+        kind: 'codex-subscription',
+        memberProviderIds: [providerId, CODEX_SUBSCRIPTION_PROVIDER_ID],
+        activeProviderId: providerId,
+      }),
+    ])
     h.deleteAll.mockRejectedValueOnce(new Error('thread cleanup failed'))
 
     await expect(handlers.get('chat:subscription-account:remove')?.({}, account.id)).resolves.toEqual({
@@ -701,12 +719,22 @@ describe('Codex logical vs physical provider identity', () => {
       error: 'thread cleanup failed',
     })
     expect(getSubscriptionAccount(account.id)).toEqual(account)
-    expect(listFailoverRoutes()).toEqual([route])
+    expect(readSavedAccountPools()).toEqual(savedPools)
+    expect(getAccountPool('codex-subscription')).toMatchObject({
+      memberProviderIds: [providerId, CODEX_SUBSCRIPTION_PROVIDER_ID],
+      activeProviderId: providerId,
+    })
 
     h.deleteAll.mockResolvedValue([])
     await expect(handlers.get('chat:subscription-account:remove')?.({}, account.id)).resolves.toEqual({ ok: true })
     expect(getSubscriptionAccount(account.id)).toBeUndefined()
-    expect(listFailoverRoutes()).toEqual([])
+    const [afterRemoval] = readSavedAccountPools()
+    expect(afterRemoval?.memberProviderIds).toEqual([CODEX_SUBSCRIPTION_PROVIDER_ID])
+    expect(afterRemoval?.activeProviderId).toBeUndefined()
+    expect(getAccountPool('codex-subscription')).toMatchObject({
+      memberProviderIds: [CODEX_SUBSCRIPTION_PROVIDER_ID],
+      activeProviderId: CODEX_SUBSCRIPTION_PROVIDER_ID,
+    })
   })
 
   it('does not abort physical B runs on logical A logout', async () => {

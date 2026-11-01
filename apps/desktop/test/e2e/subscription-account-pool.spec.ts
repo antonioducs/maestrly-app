@@ -33,28 +33,40 @@ test.afterEach(async () => {
 })
 
 for (const locale of ['en', 'pt-BR'] as const) {
-  test(`Claude active account changes, follows the policy and shrinks the rotation (${locale})`, async ({
+  test(`Claude rotation turns on, reorders, follows the policy and shows on each account (${locale})`, async ({
     browserName: _browserName,
   }, testInfo) => {
     const copy =
       locale === 'en'
         ? {
             settings: 'Settings',
-            badge: 'Active',
-            isActive: 'This is the active account',
-            makeActive: 'Make this the active account',
-            preferActive: 'Return to the active account',
-            remove: 'Remove from the rotation',
-            add: 'Add account to the rotation',
+            off: 'Off',
+            turnOn: 'Turn on with 3 accounts',
+            inUse: 'in use',
+            moveUp: 'Move Personal up',
+            preferActive: 'Return to the preferred account',
+            preferred: 'Preferred account',
+            autoJoin: 'Add new Claude accounts automatically',
+            remove: 'Take Personal out of the rotation',
+            add: 'Add an account to the rotation',
+            memberInUse: 'In use by the rotation',
+            manage: 'Manage',
+            toggle: 'Turn on the Claude rotation',
           }
         : {
             settings: 'Configurações',
-            badge: 'Ativa',
-            isActive: 'Esta é a conta ativa',
-            makeActive: 'Tornar esta a conta ativa',
-            preferActive: 'Voltar para a conta ativa',
-            remove: 'Remover do rodízio',
+            off: 'Desativado',
+            turnOn: 'Ativar rodízio com 3 contas',
+            inUse: 'em uso',
+            moveUp: 'Subir Personal',
+            preferActive: 'Voltar para a preferida',
+            preferred: 'Conta preferida',
+            autoJoin: 'Incluir novas contas Claude automaticamente',
+            remove: 'Tirar Personal do rodízio',
             add: 'Adicionar conta ao rodízio',
+            memberInUse: 'Em uso pelo rodízio',
+            manage: 'Gerenciar',
+            toggle: 'Ativar o rodízio Claude',
           }
     app = await electron.launch({
       executablePath: process.env.MAESTRLY_PACKAGED_EXECUTABLE,
@@ -80,12 +92,17 @@ for (const locale of ['en', 'pt-BR'] as const) {
             {
               kind: ids.kind,
               providerId: `${ids.claude}@~active`,
-              name: 'Claude — Active account (Default account)',
+              name: 'Claude — Active account',
               connected: true,
               memberProviderIds: [ids.claude, ids.work, ids.personal],
               activeProviderId: ids.claude,
+              currentProviderId: ids.claude,
               policy: 'drain',
               customMembers: false,
+              enabled: false,
+              autoJoin: true,
+              limitedUntil: {},
+              recentSwitches: [],
             },
           ],
           writes: [],
@@ -110,32 +127,35 @@ for (const locale of ['en', 'pt-BR'] as const) {
           ipcMain.removeHandler(channel)
           ipcMain.handle(channel, handler)
         }
-        replace('chat:config', () => {
-          return {
-            providers,
-            presets: [],
-            mcpServers: [],
-            appToolsEnabled: false,
-            imageGenEnabled: false,
-            bashFiltersEnabled: true,
-            openAIHarnessEnabled: true,
-            storageMode: 'secure',
-            defaultSelection: null,
-            defaultReasoning: 'off',
-            imageInterpreter: null,
-            subscriptionFailover: { supportedKinds: ['claude-subscription'], routes: [] },
-            subscriptionAccountPools: state.pools,
-          }
-        })
+        replace('chat:config', () => ({
+          providers,
+          presets: [],
+          mcpServers: [],
+          appToolsEnabled: false,
+          imageGenEnabled: false,
+          bashFiltersEnabled: true,
+          openAIHarnessEnabled: true,
+          storageMode: 'secure',
+          defaultSelection: null,
+          defaultReasoning: 'off',
+          imageInterpreter: null,
+          subscriptionFailover: { supportedKinds: ['claude-subscription'], routes: [] },
+          subscriptionAccountPools: state.pools,
+        }))
         replace('chat:subscription-account-pool:set', (_event, patch: PoolPatch) => {
           state.writes.push({ ...patch })
+          const before = state.pools[0]!
+          const activeProviderId = patch.activeProviderId ?? before.activeProviderId
           const pool = {
-            ...state.pools[0]!,
+            ...before,
             ...(patch.memberProviderIds
               ? { memberProviderIds: [...patch.memberProviderIds], customMembers: true }
               : {}),
-            ...(patch.activeProviderId ? { activeProviderId: patch.activeProviderId } : {}),
             ...(patch.policy ? { policy: patch.policy } : {}),
+            ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}),
+            ...(patch.autoJoin !== undefined ? { autoJoin: patch.autoJoin } : {}),
+            activeProviderId,
+            currentProviderId: activeProviderId,
           }
           state.pools = [pool]
           return { ok: true, pool }
@@ -170,46 +190,59 @@ for (const locale of ['en', 'pt-BR'] as const) {
     // Reload after stubbing so every settings read uses the isolated fake accounts.
     await win.reload()
     await win.getByRole('button', { name: copy.settings, exact: true }).click()
+    const poolRow = win.locator(`[data-account-entry="account-pool:${kind}"]`)
     const defaultRow = win.locator(`[data-account-entry="${claude}"]`)
     const workRow = win.locator(`[data-account-entry="${work}"]`)
-    await expect(defaultRow.getByText(copy.badge, { exact: true })).toBeVisible()
-    await expect(workRow.getByText(copy.badge, { exact: true })).toHaveCount(0)
-    await workRow.click()
-    const card = win.locator('[data-subscription-provider="claude-subscription"][data-subscription-account="acc_work"]')
-    const section = card.locator(`[data-account-pool="${kind}"]`)
+    const panel = win.locator(`[data-account-pool-panel="${kind}"]`)
     const saved = async () =>
       app!.evaluate(() => (globalThis as typeof globalThis & { __accountPool: StubState }).__accountPool)
     const lastWrite = async () => (await saved()).writes.at(-1)
 
-    // Making the opened account the active one writes only the new active account.
-    await expect(section.getByText(copy.isActive, { exact: true })).toHaveCount(0)
-    await section.getByRole('button', { name: copy.makeActive, exact: true }).click()
-    await expect.poll(async () => (await saved()).writes).toEqual([{ kind, activeProviderId: work }])
-    await expect(section.getByText(copy.isActive, { exact: true })).toBeVisible()
-    await expect(section.getByRole('button', { name: copy.makeActive, exact: true })).toHaveCount(0)
-    await expect(workRow.getByText(copy.badge, { exact: true })).toBeVisible()
-    await expect(defaultRow.getByText(copy.badge, { exact: true })).toHaveCount(0)
+    // The rotation leads its provider's accounts; while off, no account shows a place in it.
+    await expect(poolRow).toContainText(copy.off)
+    await expect(workRow.getByText('#2', { exact: true })).toHaveCount(0)
+    await poolRow.click()
+    await expect(panel.getByRole('switch', { name: copy.toggle })).not.toBeChecked()
+    await panel.getByRole('button', { name: copy.turnOn, exact: true }).click()
+    await expect.poll(async () => (await saved()).writes).toEqual([{ kind, enabled: true }])
+    await expect(panel.getByRole('switch', { name: copy.toggle })).toBeChecked()
+    await expect(defaultRow.getByText(copy.inUse, { exact: true })).toBeVisible()
+    await expect(workRow.getByText('#2', { exact: true })).toBeVisible()
 
-    // The policy is a separate write.
-    const preferActive = section.getByRole('radio', { name: copy.preferActive })
-    await expect(preferActive).not.toBeChecked()
-    await preferActive.click()
+    // The queue order is a write of the whole rotation.
+    await panel.getByRole('button', { name: copy.moveUp, exact: true }).click()
+    await expect.poll(lastWrite).toEqual({ kind, memberProviderIds: [claude, personal, work] })
+    await expect(panel.locator('[data-account-pool-member]')).toHaveText([/^1/, /^2.*Personal/, /^3.*Work/])
+
+    // Returning to a preferred account asks which one.
+    await panel.getByRole('radio', { name: copy.preferActive }).click()
     await expect.poll(lastWrite).toEqual({ kind, policy: 'prefer-active' })
-    await expect(preferActive).toBeChecked()
+    await expect(panel.getByRole('radio', { name: copy.preferActive })).toHaveAttribute('aria-checked', 'true')
+    await panel.getByRole('combobox', { name: copy.preferred }).click()
+    await win.getByRole('option', { name: 'Work', exact: true }).click()
+    await expect.poll(lastWrite).toEqual({ kind, activeProviderId: work })
 
-    // Removing an account keeps the others in their order.
-    const personalItem = section.getByRole('listitem').filter({ hasText: 'Personal' })
-    await personalItem.getByRole('button', { name: copy.remove, exact: true }).click()
+    await panel.getByRole('switch', { name: copy.autoJoin }).click()
+    await expect.poll(lastWrite).toEqual({ kind, autoJoin: false })
+
+    // An account taken out can be added back.
+    await panel.getByRole('button', { name: copy.remove, exact: true }).click()
     await expect.poll(lastWrite).toEqual({ kind, memberProviderIds: [claude, work] })
-    await expect(section.getByRole('listitem').filter({ hasText: 'Personal' })).toHaveCount(0)
-    expect((await saved()).writes).toHaveLength(3)
-    const dropdown = section.getByRole('combobox', { name: copy.add })
-    await dropdown.click()
+    await panel.getByRole('combobox', { name: copy.add }).click()
     await expect(win.getByRole('option')).toHaveText([copy.add, 'Personal'])
     await win.keyboard.press('Escape')
+    expect((await saved()).writes).toHaveLength(6)
 
-    const shot = testInfo.outputPath(`claude-account-pool-${locale}.png`)
-    await card.screenshot({ path: shot, animations: 'disabled' })
-    await testInfo.attach('Claude account pool', { path: shot, contentType: 'image/png' })
+    const panelShot = testInfo.outputPath(`claude-account-pool-${locale}.png`)
+    await panel.screenshot({ path: panelShot, animations: 'disabled' })
+    await testInfo.attach('Claude rotation', { path: panelShot, contentType: 'image/png' })
+
+    // Each account's page tells where it stands and leads back to the rotation.
+    await workRow.click()
+    const card = win.locator('[data-subscription-provider="claude-subscription"][data-subscription-account="acc_work"]')
+    const membership = card.locator(`[data-account-pool-membership="${kind}"]`)
+    await expect(membership).toContainText(copy.memberInUse)
+    await membership.getByRole('button', { name: copy.manage, exact: true }).click()
+    await expect(panel).toBeVisible()
   })
 }
