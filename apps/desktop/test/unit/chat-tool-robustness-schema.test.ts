@@ -25,6 +25,9 @@ describe('selectSchemaDialect', () => {
   it('selects by host first, then by model id', () => {
     expect(pick('https://generativelanguage.googleapis.com/v1beta/openai', 'gemini-4-argon')).toBe('gemini')
     expect(pick('https://us-central1-aiplatform.googleapis.com/v1/projects/x', 'any')).toBe('gemini')
+    expect(pick('https://aiplatform.googleapis.com/v1/projects/x', 'any')).toBe('gemini')
+    expect(pick('https://evilaiplatform.googleapis.com/v1', 'any')).toBeNull()
+    expect(pick('https://aiplatform.googleapis.com.example.test/v1', 'any')).toBeNull()
     expect(pick('https://openrouter.ai/api/v1', 'google/gemini-4-argon')).toBe('gemini')
     expect(pick('https://api.moonshot.ai/v1', 'kimi-k3')).toBe('moonshot')
     expect(pick('https://openrouter.ai/api/v1', 'moonshotai/kimi-k3')).toBe('moonshot')

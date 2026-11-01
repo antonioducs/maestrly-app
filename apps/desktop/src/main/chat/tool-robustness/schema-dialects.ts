@@ -40,13 +40,16 @@ function isPrivateHost(host: string): boolean {
   )
 }
 
+/** Vertex AI: the global endpoint or a regional one (`us-central1-aiplatform.googleapis.com`). */
+const VERTEX_AI_HOST = /^(?:[a-z0-9]+(?:-[a-z0-9]+)*-)?aiplatform\.googleapis\.com$/
+
 /** Picks the dialect for one request; Anthropic and OpenAI Responses take the original schema. */
 export function selectSchemaDialect(target: SchemaDialectTarget): SchemaDialect | null {
   if (target.transport === 'anthropic' || target.transport === 'openai-responses') return null
   const host = hostOf(target.baseURL)
   const model = target.modelId.toLowerCase()
   if (target.grok || host === 'api.x.ai' || host.endsWith('.x.ai')) return 'xai'
-  if (host === 'generativelanguage.googleapis.com' || host.endsWith('aiplatform.googleapis.com')) return 'gemini'
+  if (host === 'generativelanguage.googleapis.com' || VERTEX_AI_HOST.test(host)) return 'gemini'
   if (/^api\.moonshot\./.test(host)) return 'moonshot'
   if (isPrivateHost(host)) return 'llamacpp'
   if (/(^|[/:])gemini/.test(model)) return 'gemini'
