@@ -506,6 +506,11 @@ export type MessagePart =
       toolName: string
       input: unknown
       state: ToolState
+      /**
+       * What the model receives instead of an older output that compaction pruned from its context. The output itself
+       * stays for the person and for history_read.
+       */
+      contextStub?: string
     }
   | {
       type: 'file'
@@ -539,6 +544,8 @@ export type MessagePart =
       text: string
       origin?: 'prepared' | 'manual'
       strategy?: 'summary' | 'openai-native' | 'claude-native' | 'codex-native'
+      /** The model summary failed: `text` is a mechanical digest and the older messages left the model context. */
+      degraded?: boolean
     }
   | {
       type: 'skill-invocation'
@@ -1219,6 +1226,7 @@ export type ChatStreamEvent =
       afterPartId?: string
       text: string
       strategy?: 'summary' | 'openai-native' | 'claude-native' | 'codex-native'
+      degraded?: boolean
       usage?: ChatUsage
     }
   | { kind: 'finish'; messageId: string; finishReason: string; usage?: ChatUsage; responseDurationMs: number }
@@ -2205,6 +2213,7 @@ export function applyChatEvent(messages: ChatMessage[], ev: ChatStreamEvent): Ch
                 text: ev.text,
                 ...(ev.origin ? { origin: ev.origin } : {}),
                 ...(ev.strategy ? { strategy: ev.strategy } : {}),
+                ...(ev.degraded ? { degraded: true } : {}),
               }
               if (!ev.afterPartId) return [...m.parts, marker]
               const afterIndex = m.parts.findIndex((part) => part.id === ev.afterPartId)

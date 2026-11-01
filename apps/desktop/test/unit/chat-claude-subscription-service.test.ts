@@ -106,7 +106,7 @@ const h = vi.hoisted(() => {
     runClaude: vi.fn(async () => ({ planSubmitted: false, sessionId: 'claude-session-1' })),
     compactSession: vi.fn(),
     summarizePortable: vi.fn(async () => ({
-      text: 'portable Claude summary',
+      text: PORTABLE_CLAUDE_SUMMARY,
       usage: { input: 80, output: 16, cacheRead: 0, cacheCreate: 0, totalInput: 80 },
     })),
     deleteAll: vi.fn(async () => {}),
@@ -212,6 +212,9 @@ import { createLocalMemory, getLocalMemory } from '../../src/main/memory/local-m
 import { getConvUiPrefs, patchConvUiPrefs, setAppFlag } from '../../src/main/store'
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
+import { structuredSummary } from '../helpers/compaction'
+
+const PORTABLE_CLAUDE_SUMMARY = structuredSummary('portable Claude summary')
 
 type Handler = (event: any, ...args: any[]) => unknown
 
@@ -673,7 +676,7 @@ describe('Claude subscription service integration', () => {
 
     await expect(handlers.get('chat:compact')?.({}, conversation.id)).resolves.toEqual({
       ok: true,
-      summary: 'portable Claude summary',
+      summary: PORTABLE_CLAUDE_SUMMARY,
       usage: { input: 80, output: 16, cacheRead: 0, cacheCreate: 0, totalInput: 80 },
     })
 
@@ -683,7 +686,7 @@ describe('Claude subscription service integration', () => {
     )
     expect(h.deleteOne).toHaveBeenCalledWith(conversation.id)
     expect(listChatMessages(conversation.id).at(-1)?.parts).toEqual([
-      expect.objectContaining({ type: 'compaction', text: 'portable Claude summary', strategy: 'summary' }),
+      expect.objectContaining({ type: 'compaction', text: PORTABLE_CLAUDE_SUMMARY, strategy: 'summary' }),
     ])
   })
 
@@ -735,7 +738,7 @@ describe('Claude subscription service integration', () => {
       identityEpoch: 2,
     }
     h.summarizePortable.mockResolvedValue({
-      text: 'summary frozen',
+      text: structuredSummary('summary frozen'),
       usage: { input: 80, output: 16, cacheRead: 0, cacheCreate: 0, totalInput: 80 },
       runtimeEstimatedCostUsd: 0.002,
     } as never)

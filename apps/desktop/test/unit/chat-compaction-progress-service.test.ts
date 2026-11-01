@@ -1,7 +1,7 @@
 import type { WebContents } from 'electron'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BackgroundCompactionStore } from '../../src/main/chat/background-compaction/store'
-import type { ChatCompactionProgress, ChatStreamEvent } from '../../src/shared/chat'
+import type { ChatCompactionProgress, ChatStreamEvent, MessagePart } from '../../src/shared/chat'
 
 const h = vi.hoisted(() => ({
   generateText: vi.fn(),
@@ -125,6 +125,16 @@ import {
 } from '../../src/main/chat/compaction-summarizer'
 import { setConversationContextLimit } from '../../src/main/chat/conversation-context-limit'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
+import { structuredSummary } from '../helpers/compaction'
+import { activatePreparedCompaction } from '../../src/main/chat/background-compaction/runner'
+import { renderNativeSeedTranscript, toModelMessages } from '../../src/main/chat/message'
+import { listConversationContextMessages } from '../../src/main/chat/chat-store'
+import { FALLBACK_SUMMARY_NOTICE } from '../../src/main/chat/compaction/fallback-summary'
+import {
+  compactionBreakerKey,
+  recordAutomaticCompaction,
+  resetCompactionBreaker,
+} from '../../src/main/chat/compaction/breaker'
 
 const usage = { input: 80, output: 16, cacheRead: 0, cacheCreate: 0, totalInput: 80 }
 const success = (text = 'Complete portable summary') => ({
@@ -267,6 +277,18 @@ describe('service-owned compaction progress', () => {
     const systems = h.generateText.mock.calls.map(([options]) => (options as { system?: string }).system)
     expect(systems.length).toBeGreaterThan(0)
     for (const system of systems) expect(system).toContain('Keep each question and the answer it got.')
+  })
+
+  it('summarizes on Anthropic without prompt-cache breakpoints', async () => {
+    // Each summary request is sent once, so a cache write would only cost more.
+    const anthropic = addProvider({ name: 'Anthropic', baseURL: 'https://api.anthropic.com/v1', kind: 'anthropic' })
+    patchConvUiPrefs(conversationId, { chat: { providerId: anthropic.id, modelId: 'synthetic-model' } })
+    expect(await compact()).toMatchObject({ ok: true })
+    expect(h.generateText).toHaveBeenCalled()
+    for (const [request] of h.generateText.mock.calls as unknown as [Record<string, unknown>][]) {
+      expect(request).not.toHaveProperty('messages')
+      expect(JSON.stringify(request)).not.toMatch(/cacheControl|cache_control/)
+    }
   })
 
   it('fails closed when the registered summarizer is unavailable', async () => {
@@ -729,7 +751,8 @@ describe('service-owned compaction progress', () => {
     await vi.waitFor(() => expect(h.runChat).toHaveBeenCalledWith(expect.objectContaining({ contextWindow: 200_000 })))
   })
 
-  it.each(['failed', 'cancelled'] as const)(
+  // A failed summary no longer blocks the turn (see the mechanical fallback below); cancelling still does.
+  it.each(['cancelled'] as const)(
     'removes %s preflight input from the projection without persisting or running it',
     async (status) => {
       const handlers = new Map<string, Parameters<ChatIpcDeps['mhandle']>[1]>()
@@ -784,11 +807,26 @@ describe('service-owned compaction progress', () => {
       mon: vi.fn(),
       emitStatus: vi.fn(),
     })
-    h.generateText.mockRejectedValue(Object.assign(new Error('Preflight summary rejected'), { status: 400 }))
+    // A conversation that changed under the summary is never committed, not even as a mechanical digest.
+    h.generateText.mockImplementation(async () => {
+      const latest = getChatMessage(conversationId, 'assistant')!
+      upsertChatMessage({ ...latest, error: 'Edited during the preflight' })
+      return success()
+    })
     const result = await handlers.get('chat:send')!({ sender: wc } as never, { conversationId, text: 'Pending task' })
     expect(result).toMatchObject({ ok: false, error: 'context-compaction-failed' })
-    expect(progressEvents().at(-1)).toMatchObject({ status: 'failed', error: 'Preflight summary rejected' })
-    expect(listChatMessages(conversationId)).toHaveLength(2)
+    expect(progressEvents().at(-1)).toMatchObject({
+      status: 'failed',
+      error: expect.stringContaining('Conversation changed'),
+    })
+    // Only the bill of the attempted summary is recorded; the pending input is not persisted.
+    expect(listChatMessages(conversationId).filter((message) => !message.usage?.billingOnly)).toHaveLength(2)
+    expect(
+      listChatMessages(conversationId).some((message) =>
+        message.parts.some((part) => part.type === 'text' && part.text === 'Pending task')
+      )
+    ).toBe(false)
+    expect(h.runChat).not.toHaveBeenCalled()
   })
 
   it.each(['builtin_codex_subscription', 'builtin_claude_subscription'])(
@@ -976,6 +1014,541 @@ describe('service-owned compaction progress', () => {
       expect(await compact({ contextWindow: 1_000_000 })).toMatchObject({ ok: true })
       expect(prompts()).toContain('EDITED_SOURCE_MARKER')
       expect(prompts()).not.toContain('PREPARED_SUMMARY')
+    })
+
+    it('folds the prepared summary with only the delta up to the cut, keeping the latest turn verbatim', async () => {
+      await prepare()
+      appendDelta()
+      upsertChatMessage({
+        id: 'delta-user-2',
+        conversationId,
+        role: 'user',
+        createdAt: 12,
+        parts: [{ type: 'text', id: 'delta-user-2-text', text: 'LATEST_USER_MARKER' }],
+      })
+      upsertChatMessage({
+        id: 'delta-assistant-2',
+        conversationId,
+        role: 'assistant',
+        model: largeModel(),
+        createdAt: 13,
+        finishReason: 'stop',
+        parts: [{ type: 'text', id: 'delta-assistant-2-text', text: 'LATEST_ASSISTANT_MARKER' }],
+      })
+      expect(await manualCompaction()).toMatchObject({ ok: true })
+      expect(prompts()).toContain('Previous summary:\nPREPARED_SUMMARY')
+      expect(prompts()).toContain('DELTA_USER_MARKER')
+      expect(prompts()).not.toContain('LATEST_USER_MARKER')
+      expect(prompts()).not.toContain('EARLY_SOURCE_MARKER')
+      expect(compactionTexts()).toEqual(['FOLDED_SUMMARY'])
+      expect(getChatMessage(conversationId, 'delta-assistant')?.parts.map((part) => part.type)).toEqual([
+        'text',
+        'compaction',
+      ])
+      expect(new BackgroundCompactionStore().get(conversationId)?.ready).toBeNull()
+    })
+  })
+
+  describe('verbatim tail', () => {
+    const recentModel = () => model
+    function addRecentTurn(text = 'RECENT_USER_MARKER'): void {
+      upsertChatMessage({ ...getChatMessage(conversationId, 'assistant')!, finishReason: 'stop' })
+      upsertChatMessage({
+        id: 'recent-user',
+        conversationId,
+        role: 'user',
+        createdAt: 3,
+        parts: [{ type: 'text', id: 'recent-user-text', text }],
+      })
+      upsertChatMessage({
+        id: 'recent-assistant',
+        conversationId,
+        role: 'assistant',
+        model: recentModel(),
+        createdAt: 4,
+        finishReason: 'stop',
+        parts: [{ type: 'text', id: 'recent-assistant-text', text: 'RECENT_ASSISTANT_MARKER' }],
+      })
+    }
+    const prompts = () =>
+      h.generateText.mock.calls.map((call: unknown[]) => (call[0] as { prompt: string }).prompt).join('\n')
+    const sentEvents = () =>
+      h.webContents.send.mock.calls.flatMap(([channel, event]: [string, ChatStreamEvent]) =>
+        channel === `chat:delta:${conversationId}` ? [event] : []
+      )
+    const billedInput = () => chatHistoryStats(conversationId).perModel.reduce((total, item) => total + item.input, 0)
+
+    it('summarizes only the older turns, commits the boundary in place and bills it once', async () => {
+      addRecentTurn()
+      h.generateText.mockResolvedValue(success(structuredSummary('TAIL_SUMMARY')))
+
+      const result = await compact({ contextWindow: 200_000 })
+
+      expect(result).toMatchObject({ ok: true, marker: { messageId: 'assistant', afterPartId: 'assistant-text' } })
+      expect(h.generateText).toHaveBeenCalledOnce()
+      expect(prompts()).toContain('Source context.')
+      expect(prompts()).not.toContain('RECENT_USER_MARKER')
+      expect(listChatMessages(conversationId).map((message) => message.id)).toEqual([
+        'user',
+        'assistant',
+        'recent-user',
+        'recent-assistant',
+      ])
+      expect(getChatMessage(conversationId, 'assistant')?.parts).toEqual([
+        expect.objectContaining({ id: 'assistant-text' }),
+        expect.objectContaining({ type: 'compaction', id: result.marker!.partId, strategy: 'summary' }),
+      ])
+      expect(sentEvents()).toContainEqual(
+        expect.objectContaining({ kind: 'compaction', partId: result.marker!.partId, afterPartId: 'assistant-text' })
+      )
+      // Any runtime seeded next sees the summary followed by the verbatim tail.
+      const seed = renderNativeSeedTranscript(listConversationContextMessages(conversationId))
+      expect(seed).toContain('TAIL_SUMMARY')
+      expect(seed).toContain('RECENT_USER_MARKER')
+      expect(seed).toContain('RECENT_ASSISTANT_MARKER')
+      expect(seed).not.toContain('Source context.')
+      expect(billedInput()).toBe(80)
+      expect(
+        selectContextObservation(listChatMessages(conversationId), { conversationId, model, streaming: false })
+      ).toMatchObject({ progress: { status: 'completed' } })
+    })
+
+    it('retires the native binding so the next native turn reseeds summary and tail', async () => {
+      addRecentTurn()
+      patchConvUiPrefs(conversationId, { chat: { providerId: 'builtin_claude_subscription', modelId: 'native-model' } })
+      h.summarizeNative.mockResolvedValue({ text: structuredSummary('NATIVE_TAIL_SUMMARY'), usage })
+
+      const result = await compact({ contextWindow: 200_000 })
+
+      expect(result).toMatchObject({ ok: true, marker: { messageId: 'assistant' } })
+      expect(h.deleteNativeBinding).toHaveBeenCalledWith(conversationId)
+      expect(renderNativeSeedTranscript(listConversationContextMessages(conversationId))).toContain(
+        'RECENT_ASSISTANT_MARKER'
+      )
+    })
+
+    it('does not repeat an approved plan that the verbatim tail still holds', async () => {
+      addRecentTurn('Implement it.\n<approved_plan>\nPLAN_STEP_ONE\n</approved_plan>')
+      upsertChatMessage({
+        id: 'plan-source',
+        conversationId,
+        role: 'user',
+        createdAt: 0,
+        parts: [{ type: 'text', id: 'plan-source-text', text: '<approved_plan>\nOLD_PLAN\n</approved_plan>' }],
+      })
+      h.generateText.mockResolvedValue(success(structuredSummary('PLAN_SUMMARY')))
+
+      const result = await compact({ contextWindow: 200_000 })
+
+      expect(result.ok).toBe(true)
+      expect(result.summary).not.toContain('<approved_plan>')
+      expect(listChatMessages(conversationId).map((message) => message.id)).toContain('recent-user')
+    })
+
+    it('keeps the live step verbatim mid-turn, carries the turn request, and leaves the bill to the runner', async () => {
+      upsertChatMessage({ ...getChatMessage(conversationId, 'assistant')!, finishReason: 'stop' })
+      upsertChatMessage({
+        id: 'turn-user',
+        conversationId,
+        role: 'user',
+        createdAt: 3,
+        parts: [{ type: 'text', id: 'turn-user-text', text: 'TURN_REQUEST_MARKER' }],
+      })
+      // Persistence keeps about 50k characters of each output (~17k tokens): two of them exceed the 20k tail.
+      const log = (title: string) =>
+        `${title}\n${Array.from({ length: 3_000 }, (_, line) => `build log line ${line}: compiled module`).join('\n')}`
+      const toolPart = (id: string, output: string) => ({
+        type: 'tool' as const,
+        id,
+        toolCallId: id,
+        toolName: 'bash',
+        input: { command: 'ls' },
+        state: { status: 'completed' as const, output },
+      })
+      upsertChatMessage({
+        id: 'live',
+        conversationId,
+        role: 'assistant',
+        model,
+        createdAt: 4,
+        parts: [
+          { type: 'text', id: 'live-1', text: 'Inspecting.' },
+          toolPart('tool-big', log('BIG_TOOL_OUTPUT')),
+          { type: 'text', id: 'live-mid', text: 'Building.' },
+          toolPart('tool-mid', log('MID_TOOL_OUTPUT')),
+          { type: 'text', id: 'live-2', text: 'LAST_STEP_MARKER' },
+          toolPart('tool-small', 'small output'),
+        ],
+      })
+      h.generateText.mockResolvedValue(success(structuredSummary('LIVE_SUMMARY')))
+
+      const result = await compact({ contextWindow: 200_000, allowActive: true, persist: false, positional: true })
+
+      expect(result).toMatchObject({
+        ok: true,
+        usage: { input: 80, output: 16 },
+        marker: { messageId: 'live', afterPartId: 'tool-big' },
+      })
+      expect(result.summary).toContain('<current_turn_request>\nTURN_REQUEST_MARKER\n</current_turn_request>')
+      expect(prompts()).toContain('BIG_TOOL_OUTPUT')
+      expect(prompts()).not.toContain('MID_TOOL_OUTPUT')
+      expect(prompts()).not.toContain('LAST_STEP_MARKER')
+      expect(billedInput()).toBe(0)
+      const activated = activatePreparedCompaction({
+        conversationId,
+        assistantMessageId: 'live',
+        prepared: result.marker!,
+      })
+      expect(activated.assistant.parts.map((part) => part.id)).toEqual([
+        'live-1',
+        'tool-big',
+        result.marker!.partId,
+        'live-mid',
+        'tool-mid',
+        'live-2',
+        'tool-small',
+      ])
+      expect(activated.history.map((message) => message.id)).not.toContain('live')
+    })
+
+    it('summarizes the whole history as before when no tail fits the window', async () => {
+      addRecentTurn()
+      h.generateText.mockResolvedValue(success(structuredSummary('NO_TAIL_SUMMARY')))
+      // A 20k window leaves no room for a tail once the summary, reserve and pending input are counted.
+      const result = await compact({ contextWindow: 20_000 })
+      expect(result.ok).toBe(true)
+      expect(result.marker).toBeUndefined()
+      expect(prompts()).toContain('RECENT_USER_MARKER')
+      expect(listChatMessages(conversationId).at(-1)?.parts).toEqual([
+        expect.objectContaining({ type: 'compaction', text: result.summary }),
+      ])
+    })
+
+    it('compacts before a turn keeping the latest turn verbatim and admits it', async () => {
+      addRecentTurn()
+      patchConvUiPrefs(conversationId, {
+        chat: { ...model, modelId: 'small-model', reasoning: 'high', fastMode: true },
+      })
+      setConversationContextLimit(conversationId, 30_000)
+      h.generateText.mockResolvedValue(success(structuredSummary('PREFLIGHT_SUMMARY')))
+
+      const result = await sendHandler()({ sender: wc } as never, { conversationId, text: 'Pending task' })
+
+      expect(result).toMatchObject({ ok: true })
+      await vi.waitFor(() => expect(h.runChat).toHaveBeenCalled())
+      expect(getChatMessage(conversationId, 'assistant')?.parts.map((part) => part.type)).toEqual([
+        'text',
+        'compaction',
+      ])
+      expect(prompts()).not.toContain('RECENT_USER_MARKER')
+      const ids = listChatMessages(conversationId).map((message) => message.id)
+      expect(ids.indexOf('recent-assistant')).toBeGreaterThan(ids.indexOf('assistant'))
+    })
+
+    it('takes the live turn summary of its cached request when a tail stays, billing it once', async () => {
+      addRecentTurn()
+      const liveUsage = { input: 900, output: 300, cacheRead: 40_000, cacheCreate: 0, totalInput: 40_900 }
+      const liveSummary = vi.fn(async () => ({ text: structuredSummary('LIVE_REQUEST_SUMMARY'), usage: liveUsage }))
+
+      const result = await compact({
+        contextWindow: 200_000,
+        allowActive: true,
+        persist: false,
+        positional: true,
+        liveSummary,
+      })
+
+      expect(result).toMatchObject({ ok: true, usage: liveUsage, marker: { messageId: 'assistant' } })
+      expect(result.summary).toContain('LIVE_REQUEST_SUMMARY')
+      expect(h.generateText).not.toHaveBeenCalled()
+      const [instruction] = liveSummary.mock.calls[0] as unknown as [string]
+      expect(instruction).toContain('## Exact identifiers')
+      expect(instruction).toMatch(/\d[\d,]* tokens/)
+    })
+
+    it('falls back to map-reduce when the live summary fails its audit or throws, billing every attempt', async () => {
+      addRecentTurn()
+      h.generateText.mockResolvedValue(success(structuredSummary('MAP_REDUCE_SUMMARY')))
+      const liveUsage = { input: 10, output: 5, cacheRead: 0, cacheCreate: 0, totalInput: 10 }
+
+      const audited = await compact({
+        contextWindow: 200_000,
+        allowActive: true,
+        persist: false,
+        positional: true,
+        liveSummary: async () => ({ text: 'Not a structured summary.', usage: liveUsage }),
+      })
+      expect(audited.summary).toContain('MAP_REDUCE_SUMMARY')
+      expect(audited.usage).toMatchObject({ input: 90, output: 21 })
+
+      const thrown = await compact({
+        contextWindow: 200_000,
+        allowActive: true,
+        persist: false,
+        positional: true,
+        liveSummary: async () => {
+          throw new Error('provider hiccup')
+        },
+      })
+      expect(thrown).toMatchObject({ ok: true })
+      expect(thrown.summary).toContain('MAP_REDUCE_SUMMARY')
+    })
+
+    it('does not ask for a live summary when nothing stays verbatim', async () => {
+      const liveSummary = vi.fn(async () => ({ text: structuredSummary('UNUSED') }))
+      h.generateText.mockResolvedValue(success(structuredSummary('WHOLE_SUMMARY')))
+      expect(
+        await compact({ contextWindow: 20_000, allowActive: true, persist: false, positional: true, liveSummary })
+      ).toMatchObject({ ok: true })
+      expect(liveSummary).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('degrading instead of blocking', () => {
+    const compactionParts = () =>
+      listChatMessages(conversationId)
+        .flatMap((message) => message.parts)
+        .filter((part) => part.type === 'compaction')
+    const rejected = (message = 'Summary rejected') => Object.assign(new Error(message), { status: 400 })
+
+    it('admits the turn on a mechanical summary when the preflight summary fails', async () => {
+      h.generateText.mockRejectedValue(rejected())
+      const handlers = new Map<string, Parameters<ChatIpcDeps['mhandle']>[1]>()
+      registerChatIpc({
+        mhandle: (channel, handler) => void handlers.set(channel, handler),
+        mon: vi.fn(),
+        emitStatus: vi.fn(),
+      })
+
+      const result = await handlers.get('chat:send')!({ sender: wc } as never, { conversationId, text: 'Pending task' })
+
+      expect(result).toMatchObject({ ok: true })
+      await vi.waitFor(() => expect(h.runChat).toHaveBeenCalledOnce())
+      expect(compactionParts()).toEqual([
+        expect.objectContaining({ degraded: true, text: expect.stringContaining(FALLBACK_SUMMARY_NOTICE) }),
+      ])
+      expect(
+        listChatMessages(conversationId).filter((message) =>
+          message.parts.some((part) => part.type === 'text' && part.text === 'Pending task')
+        )
+      ).toHaveLength(1) // The renderer reloads the history, where the divider learns the summary is degraded.
+      const page = (await handlers.get('chat:history:page')!({ sender: wc } as never, conversationId)) as {
+        messages: { parts: { type: string; degraded?: boolean }[] }[]
+      }
+      expect(page.messages.flatMap((message) => message.parts).filter((part) => part.type === 'compaction')).toEqual([
+        expect.objectContaining({ degraded: true }),
+      ])
+    })
+
+    it('never degrades a manual compaction: the person sees the failure', async () => {
+      h.generateText.mockRejectedValue(rejected('Manual summary rejected'))
+      const result = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+        expect(startManualCompaction(conversationId, resolve)).toEqual({ ok: true })
+      })
+      expect(result).toMatchObject({ ok: false, error: 'Manual summary rejected' })
+      expect(compactionParts()).toEqual([])
+    })
+
+    it('shrinks the chunks when the summarizer reports a context overflow, and bills every attempt', async () => {
+      h.generateText
+        .mockRejectedValueOnce(
+          Object.assign(new Error("This model's maximum context length is 20000 tokens"), {
+            status: 400,
+            usage: { inputTokens: 5, outputTokens: 0 },
+          })
+        )
+        .mockResolvedValue(success(structuredSummary('LADDER_SUMMARY')))
+
+      const result = await compact({ contextWindow: 20_000, fallback: true })
+
+      expect(result).toMatchObject({ ok: true })
+      expect(result.degraded).toBeUndefined()
+      expect(result.summary).toContain('LADDER_SUMMARY')
+      expect(h.generateText.mock.calls.length).toBeGreaterThan(2)
+      const prompt = (index: number) => (h.generateText.mock.calls[index][0] as { prompt: string }).prompt
+      expect(prompt(1).length).toBeLessThan(prompt(0).length)
+      expect(compactionParts()).toEqual([expect.not.objectContaining({ degraded: true })])
+    })
+
+    it('commits a degraded marker mid-turn for the runner to reload, leaving the bill to it', async () => {
+      h.generateText.mockRejectedValue(rejected())
+
+      const result = await compact({
+        contextWindow: 200_000,
+        allowActive: true,
+        persist: false,
+        positional: true,
+        fallback: true,
+      })
+
+      expect(result).toMatchObject({
+        ok: true,
+        degraded: true,
+        marker: { messageId: 'assistant', afterPartId: 'assistant-text' },
+      })
+      expect(getChatMessage(conversationId, 'assistant')?.parts).toEqual([
+        expect.objectContaining({ id: 'assistant-text' }),
+        expect.objectContaining({ type: 'compaction', id: result.marker!.partId, degraded: true }),
+      ])
+      const activated = activatePreparedCompaction({
+        conversationId,
+        assistantMessageId: 'assistant',
+        prepared: result.marker!,
+      })
+      expect(activated.event).toMatchObject({ kind: 'compaction', degraded: true })
+      expect(activated.event.origin).toBeUndefined()
+    })
+
+    it('never degrades a cancelled compaction', async () => {
+      const controller = new AbortController()
+      h.generateText.mockImplementation(async () => {
+        controller.abort(new Error('Cancelled by the person'))
+        throw rejected()
+      })
+      const result = await compact({ signal: controller.signal, fallback: true })
+      expect(result).toMatchObject({ ok: false })
+      expect(compactionParts()).toEqual([])
+    })
+
+    it('skips automatic compaction while the breaker is open and the context has not grown', async () => {
+      patchConvUiPrefs(conversationId, {
+        chat: { ...model, modelId: 'small-model', reasoning: 'high', fastMode: true },
+      })
+      setConversationContextLimit(conversationId, 40_000)
+      const key = compactionBreakerKey(model.providerId, 'small-model', 40_000)
+      resetCompactionBreaker(conversationId)
+      for (let round = 0; round < 2; round += 1)
+        recordAutomaticCompaction(conversationId, key, { before: 39_000, after: 38_500, threshold: 36_000 })
+
+      expect(await sendHandler()({ sender: wc } as never, { conversationId, text: 'Pending task' })).toMatchObject({
+        ok: true,
+      })
+
+      await vi.waitFor(() => expect(h.runChat).toHaveBeenCalledOnce())
+      expect(h.generateText).not.toHaveBeenCalled()
+      expect(compactionParts()).toEqual([])
+      resetCompactionBreaker(conversationId)
+    })
+  })
+
+  describe('older tool outputs', () => {
+    const log = (title: string) =>
+      `${title}\n${Array.from({ length: 1_100 }, (_, line) => `${title} line ${line}: compiled module`).join('\n')}`
+    const toolPart = (id: string, output: string) => ({
+      type: 'tool' as const,
+      id,
+      toolCallId: id,
+      toolName: 'bash',
+      input: { command: `run ${id}` },
+      state: { status: 'completed' as const, output },
+    })
+    function seedHistory(): void {
+      upsertChatMessage({
+        ...getChatMessage(conversationId, 'user')!,
+        parts: [{ type: 'text', id: 'user-text', text: 'Start the migration.' }],
+      })
+      upsertChatMessage({
+        ...getChatMessage(conversationId, 'assistant')!,
+        finishReason: 'stop',
+        parts: [
+          { type: 'text', id: 'assistant-text', text: 'Building.' },
+          toolPart('old-1', log('OLD_BUILD_ONE')),
+          toolPart('old-2', log('OLD_BUILD_TWO')),
+          toolPart('old-3', log('OLD_BUILD_THREE')),
+        ],
+      })
+      for (let index = 1; index <= 3; index += 1) {
+        upsertChatMessage({
+          id: `recent-user-${index}`,
+          conversationId,
+          role: 'user',
+          createdAt: 2 + index * 2,
+          parts: [{ type: 'text', id: `recent-user-${index}-text`, text: `RECENT_REQUEST_${index}` }],
+        })
+        upsertChatMessage({
+          id: `recent-assistant-${index}`,
+          conversationId,
+          role: 'assistant',
+          model,
+          createdAt: 3 + index * 2,
+          finishReason: 'stop',
+          parts: [{ type: 'text', id: `recent-assistant-${index}-text`, text: `RECENT_ANSWER_${index}` }],
+        })
+      }
+    }
+    const storedTool = (id: string) =>
+      getChatMessage(conversationId, 'assistant')!.parts.find((part) => part.id === id) as Extract<
+        MessagePart,
+        { type: 'tool' }
+      >
+
+    it('frees the context by pruning alone when that reaches half the window, without a summary', async () => {
+      seedHistory()
+      patchConvUiPrefs(conversationId, {
+        chat: { ...model, modelId: 'small-model', reasoning: 'high', fastMode: true },
+      })
+      setConversationContextLimit(conversationId, 60_000)
+
+      expect(await sendHandler()({ sender: wc } as never, { conversationId, text: 'Pending task' })).toMatchObject({
+        ok: true,
+      })
+
+      await vi.waitFor(() => expect(h.runChat).toHaveBeenCalledOnce())
+      expect(h.generateText).not.toHaveBeenCalled()
+      expect(
+        listChatMessages(conversationId)
+          .flatMap((message) => message.parts)
+          .some((part) => part.type === 'compaction')
+      ).toBe(false)
+      for (const id of ['old-1', 'old-2', 'old-3']) {
+        expect(storedTool(id).contextStub).toContain('output removed')
+        // The person and history_read keep the original.
+        expect(storedTool(id).state).toMatchObject({ output: expect.stringContaining('line 1099') })
+      }
+      const sent = JSON.stringify(toModelMessages(listConversationContextMessages(conversationId)))
+      expect(sent).not.toContain('OLD_BUILD_ONE line 1099')
+      expect(sent).toContain('RECENT_ANSWER_1')
+      expect(getChatMessage(conversationId, 'recent-assistant-3')?.contextSnapshot).toMatchObject({
+        quality: 'estimated',
+        modelContextWindow: 60_000,
+      })
+    })
+
+    it('summarizes instead, without persisting the pruning, when pruning alone is not enough', async () => {
+      seedHistory()
+      upsertChatMessage({
+        ...getChatMessage(conversationId, 'user')!,
+        parts: [{ type: 'text', id: 'user-text', text: 'Source context. '.repeat(4_000) }],
+      })
+      patchConvUiPrefs(conversationId, {
+        chat: { ...model, modelId: 'small-model', reasoning: 'high', fastMode: true },
+      })
+      setConversationContextLimit(conversationId, 60_000)
+      h.generateText.mockResolvedValue(success(structuredSummary('SUMMARY_AFTER_PRUNING')))
+
+      expect(await sendHandler()({ sender: wc } as never, { conversationId, text: 'Pending task' })).toMatchObject({
+        ok: true,
+      })
+
+      await vi.waitFor(() => expect(h.runChat).toHaveBeenCalledOnce())
+      expect(h.generateText).toHaveBeenCalled()
+      expect(storedTool('old-1').contextStub).toBeUndefined()
+    })
+
+    it('gives the summarizer only the head and tail of older outputs', async () => {
+      seedHistory()
+      h.generateText.mockResolvedValue(success(structuredSummary('CLIPPED_INPUT_SUMMARY')))
+
+      expect(await compact({ contextWindow: 200_000 })).toMatchObject({ ok: true })
+
+      const prompts = h.generateText.mock.calls
+        .map((call: unknown[]) => (call[0] as { prompt: string }).prompt)
+        .join('\n')
+      expect(prompts).toContain('OLD_BUILD_ONE line 0')
+      expect(prompts).toContain('OLD_BUILD_ONE line 1099')
+      expect(prompts).toContain('older output clipped for the summary')
+      expect(prompts).not.toContain('OLD_BUILD_ONE line 500')
+      expect(storedTool('old-1').contextStub).toBeUndefined()
     })
   })
 })

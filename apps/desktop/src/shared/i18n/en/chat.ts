@@ -788,6 +788,8 @@ export default {
     responseTime: 'Response time: {{duration}}',
     compacted: 'compacted',
     previousContextSummary: 'Previous context summary',
+    compactionDegraded:
+      'The automatic summary failed, so older messages were condensed without one. They remain in this history, and the next compaction will summarize them again.',
     nativeContextCheckpoint: 'Previous context preserved in a provider-native checkpoint.',
     contextImported: 'imported context',
     historyFrom: 'History from {{source}}',

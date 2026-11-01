@@ -102,7 +102,7 @@ const h = vi.hoisted(() => {
     compactSession: vi.fn(),
     summarizePortable: vi.fn(
       async (): Promise<import('../../src/main/chat/portable-summarizer').IsolatedSummaryResult> => ({
-        text: 'portable Claude summary',
+        text: PORTABLE_CLAUDE_SUMMARY,
         usage: { input: 80, output: 16, cacheRead: 0, cacheCreate: 0, totalInput: 80 },
       })
     ),
@@ -216,6 +216,9 @@ import { setCompactionSummarizer, clearCompactionSummarizer } from '../../src/ma
 import { getConvUiPrefs, patchConvUiPrefs } from '../../src/main/store'
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
+import { structuredSummary } from '../helpers/compaction'
+
+const PORTABLE_CLAUDE_SUMMARY = structuredSummary('portable Claude summary')
 
 type Handler = (event: any, ...args: any[]) => unknown
 
@@ -335,7 +338,7 @@ describe('Claude physical account service ownership', () => {
     h.manager.assertAccountIdentity.mockImplementation(() => {})
     h.runClaude.mockResolvedValue({ planSubmitted: false, sessionId: 'session' })
     h.summarizePortable.mockResolvedValue({
-      text: 'portable Claude summary',
+      text: PORTABLE_CLAUDE_SUMMARY,
       usage: { input: 80, output: 16, cacheRead: 0, cacheCreate: 0, totalInput: 80 },
     })
     modelMeta.getClaudeHarnessModelMeta.mockResolvedValue(null)
@@ -583,10 +586,10 @@ describe('Claude physical account service ownership', () => {
     await handlers.get('chat:claude-subscription:logout')!({}, {})
     expect(summaryArgs.signal.aborted).toBe(false)
     finished.resolve({
-      text: 'Summary from B.',
+      text: structuredSummary('Summary from B.'),
       usage: { input: 1, output: 1, cacheRead: 0, cacheCreate: 0, totalInput: 1 },
     })
-    await expect(compaction).resolves.toMatchObject({ ok: true, summary: 'Summary from B.' })
+    await expect(compaction).resolves.toMatchObject({ ok: true, summary: structuredSummary('Summary from B.') })
   })
 
   it('freezes active-turn effort and Fast mode for portable compaction', async () => {
@@ -600,7 +603,7 @@ describe('Claude physical account service ownership', () => {
     const args = (h.runClaude.mock.calls as any)[0][0]
     expect(args).toMatchObject({ reasoningEffort: 'high', fastMode: true })
     patchConvUiPrefs(conv.id, { chat: { ...getConvUiPrefs(conv.id).chat, reasoning: 'off', fastMode: false } })
-    await expect(args.compactHistory()).resolves.toMatchObject({ summary: 'portable Claude summary' })
+    await expect(args.compactHistory()).resolves.toMatchObject({ summary: PORTABLE_CLAUDE_SUMMARY })
     expect(h.summarizePortable).toHaveBeenCalledWith(expect.objectContaining({ effort: 'high', fastMode: true }))
     finished.resolve({ planSubmitted: false })
     await stopChatAndWait(conv.id)
@@ -624,7 +627,7 @@ describe('Claude physical account service ownership', () => {
       const args = (
         h.runClaude.mock.calls as unknown as Array<[{ compactHistory: () => Promise<{ summary?: string }> }]>
       )[0][0]
-      await expect(args.compactHistory()).resolves.toMatchObject({ summary: 'portable Claude summary' })
+      await expect(args.compactHistory()).resolves.toMatchObject({ summary: PORTABLE_CLAUDE_SUMMARY })
       expect(h.summarizePortable).toHaveBeenCalledWith(expect.objectContaining({ fastMode: false }))
       finished.resolve({ planSubmitted: false, sessionId: 'session' })
       await stopChatAndWait(conv.id)
@@ -965,7 +968,7 @@ describe('Claude physical account service ownership', () => {
       partialRuntimeEstimatedCostUsd: 0.3,
     })
     h.summarizePortable.mockRejectedValueOnce(quota).mockResolvedValueOnce({
-      text: 'portable Claude summary',
+      text: PORTABLE_CLAUDE_SUMMARY,
       usage: { input: 80, output: 16, cacheRead: 0, cacheCreate: 0, totalInput: 80 },
       runtimeEstimatedCostUsd: 0.4,
     } as any)

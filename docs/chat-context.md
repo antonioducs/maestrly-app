@@ -495,12 +495,95 @@ its lifecycle. After completion, the reduction is shown when a new context sampl
 or estimate is available. A failure shows its diagnostic and preserves the last
 available context observation; it does not mean the context was reduced.
 
-Portable summaries use a three-minute deadline per stage, with one retry for a
-stage timeout, empty summary, or transient provider error. Completed stages are
-reused within that operation. The total time budget scales with the number of
-chunks, up to one hour. Cancellation and authentication/configuration failures
-do not trigger retries. The new summary becomes a context boundary only after
-all stages finish successfully; original messages remain in visible history.
+Portable summaries use a ten-minute deadline per stage, which only catches stalled
+calls, with up to three retries for a stage timeout, empty summary, or transient
+provider error. Completed stages are reused within that operation. The total time
+budget scales with the number of chunks, up to one hour. Cancellation and
+authentication/configuration failures do not trigger retries. The new summary
+becomes a context boundary only after all stages finish successfully; original
+messages remain in visible history.
+
+Summaries follow a fixed structure: objective, requirements and constraints,
+decisions, work state, pending user requests, next steps, relevant files, exact
+identifiers, and errors and fixes. Headings stay in English, and the content uses
+the conversation's language. Identifiers, paths, commands and error messages are
+kept literally. Each compaction updates the previous summary instead of rewriting
+it. Large histories are still summarized in chunks and then consolidated section
+by section. The summary aims for about 20% of the summarized content, between
+2,000 and 10,000 tokens (or 5% of the context window, whichever is smaller).
+Maestrly checks the final summary for the required headings without another
+model call. A summary that fails this check is requested once more with the
+missing headings listed. If the second attempt also fails, the better attempt is
+kept and the compaction still completes. Background preparation applies the same
+check, and its extra attempt is billed like any other.
+
+Compaction keeps the most recent messages verbatim after the summary. The tail
+holds up to 20,000 estimated tokens, at most 12% of the context window, and is
+reduced further so that the summary, the tail, the pending message and the
+reserve fit in 70% of the window. The tail starts at a user message when the
+latest turns fit; otherwise it starts at a step of the current turn. A step is
+assistant text followed by its tool calls and their results, so a call is never
+separated from its result. When the tail starts inside a turn, that turn's
+request is copied verbatim (up to 4,000 characters) after the summary. The last
+step always stays verbatim. When the last step alone is larger than twice the
+budget, or the window leaves no room, the whole history is summarized as
+before. The summary marker is placed where the tail begins, so the divider
+appears there in the history. Native runtimes start a fresh session from the
+summary and the tail. Compaction during a turn keeps its latest steps the same
+way. Isolated review rounds and background preparation summarize their whole
+source as before. An approved plan that is still in the tail is not repeated in
+the summary.
+
+During a turn with an API key, outside the OpenAI harness, which compacts
+natively, the summary is first requested by repeating the turn's last request
+with the summary instructions appended. The system prompt, tools, provider
+options, effort and cache breakpoints are the same, so the provider's prompt
+cache covers the conversation. Tools are declared but cannot run, and no tool
+choice is forced, because that would invalidate Anthropic's cache. That request
+ends before the last step, which stays verbatim in the tail. It is used only
+when the window still has room for at least 8,000 output tokens. If the model
+calls a tool, runs out of tokens, or returns a summary that fails the structure
+check, or the request fails, the summary is made in chunks as usual. Every
+attempt is billed to the turn.
+
+With an Anthropic API key, a conversation with a person keeps its prompt cache
+for an hour between turns: the breakpoints on the first and the second-to-last
+message last an hour, and the one on the newest message lasts five minutes.
+Isolated review rounds, unattended executor runs and routines keep five
+minutes, and so do subagents. One-shot requests, such as summaries and titles,
+set no breakpoint, since they are never repeated.
+
+Automatic compaction, before a message is sent or during a turn, does not stop
+the conversation when the summary fails. When the summarizer reports that its
+input is too large, the chunks are retried at 70%, 50% and 35% of their size.
+For any other failure, the older messages are condensed without a model: the
+latest requests verbatim, the previous summary, the files, tools and errors
+involved, the approved plan and the to-do list, up to 12,000 characters. The
+divider then warns that the summary is degraded. The originals remain in the
+history and can be read with `history_search` and `history_read`. The next
+compaction summarizes them again. If the result plus the pending message still
+overflows, the tail is summarized as well, and only then is the request
+refused. Manual compaction, cancellation, and a history that changed during the
+compaction are never degraded: they fail as before, and nothing is committed.
+
+Before summarizing ahead of a send, Maestrly first tries pruning older tool
+outputs. Outputs of at least 1,000 characters are replaced by a one-line note
+with the tool, its arguments, the status (with the first line of an error), and
+the output's size. An output repeated later is reduced to a note, even when
+shorter. The latest three user turns, unfinished tools, plans, to-do lists and
+questions are never pruned. If this alone brings the next request to half the
+context window, nothing is summarized. Only the model receives the note: the
+history and `history_read` keep the full output. Native sessions start again
+from the pruned history. When pruning is not enough, it is not kept, and the
+summary goes ahead. The summarizer itself receives the start and end of older
+outputs (about 1,200 characters), and an output repeated later only once.
+
+Two automatic compactions in a row that free less than 10% of the context, or
+leave it above the compaction threshold, suspend automatic compaction before
+sending. It resumes once the context grows by 10% of the window, when it would
+overflow, after a manual compaction, or with another model or window.
+Compaction during a turn still guards against an overflow while it is
+suspended.
 
 These observations and progress states are saved with messages. Existing
 conversations remain readable; older messages without observations use the
@@ -517,8 +600,8 @@ The next-request estimate covers this complete transfer. If it exceeds the
 destination's admission budget, Maestrly first summarizes the history and checks
 the result again. Codex also has a 1,048,576-character text-input limit, which
 includes the imported history and pending message; exceeding that limit also
-triggers compaction. A failed compaction blocks the request and preserves the
-original history. A fresh Codex transfer is blocked if its context window is
+triggers compaction. A compaction that still does not fit blocks the request and
+preserves the original history. A fresh Codex transfer is blocked if its context window is
 unknown. Token estimates can differ from the provider's actual count.
 
 ### Context limit

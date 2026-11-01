@@ -246,7 +246,7 @@ import { AntigravityServiceAuth } from './antigravity-subscription/service-auth'
 import { grokReasoningMeta } from './grok-subscription/models'
 import { finalTurnCompletion } from './turn-status'
 import { QuestionBroker } from './question-broker'
-import { activeChatContext, renderTranscript, summaryWithApprovedPlan } from './message'
+import { activeChatContext, latestApprovedPlan, renderTranscript, summaryWithApprovedPlan } from './message'
 import { createContextProgressPublisher } from './context-progress'
 import { CODEX_TRANSFER_MAX_CHARACTERS, codexTransferCharacters } from './native-transfer'
 import { redactClaudeCredentials } from './claude-agent-sdk/errors'
@@ -499,6 +499,7 @@ import {
   estimatePortableContextTokens,
   estimatePortablePartsTokens,
   estimateTextTokens,
+  portableContextLoad,
   portableContextReserveTokens,
   preflightContextLoad,
   summarizePortableTranscript,
@@ -508,6 +509,12 @@ import {
 } from './portable-context'
 import { chatDiag } from './diag-log'
 import { getCompactionFocus, getCompactionSummarizer } from './compaction-summarizer'
+import {
+  auditCompactionSummary,
+  COMPACTION_SYSTEM_PROMPT,
+  compactionSummaryTargetTokens,
+  compactionTargetInstruction,
+} from './compaction/summary-prompt'
 import { isBotMode } from '../fleet/instance/config'
 import { isAppToolGroup, sanitizeAppToolGroupPatch } from '../../shared/app-tool-groups'
 import {
@@ -535,8 +542,31 @@ import {
 import {
   previewPreparedActivation,
   commitPreparedActivation,
+  previewPositionalCompaction,
+  commitPositionalCompaction,
+  commitToolPruning,
   type PreparedMarker,
 } from './background-compaction/activation'
+import { applyToolPruning, planToolPruning, protectedRecentMessageIds } from './compaction/tool-pruning'
+import type { LiveSummarizer } from './compaction/live-summary'
+import { COMPACTION_OVERFLOW_LADDER, isContextOverflowError } from './compaction/overflow'
+import { fallbackCompactionSummary } from './compaction/fallback-summary'
+import {
+  automaticCompactionSuspended,
+  compactionBreakerKey,
+  recordAutomaticCompaction,
+  resetCompactionBreaker,
+} from './compaction/breaker'
+import {
+  compactionTailBudget,
+  historyAfterCut,
+  historyEndCut,
+  historyThroughCut,
+  selectCompactionCut,
+  summaryWithoutApprovedPlan,
+  summaryWithTurnRequest,
+  turnRequestBeforeCut,
+} from './compaction/cut-point'
 import { validateSubagentProfileEffort, validateSubagentProfileFastMode } from '../../shared/subagent-profile-effort'
 import type { BackgroundCompactionConfig, BackgroundCompactionStatus } from '../../shared/background-compaction'
 import {
@@ -3508,6 +3538,26 @@ async function preflightContext(
       pendingParts
     ) > CODEX_TRANSFER_MAX_CHARACTERS
   if (!load.shouldCompact && !exceedsTransport(source)) return { ok: true, compacted: false }
+  const breakerKey = compactionBreakerKey(selection.providerId, selection.modelId, window)
+  if (
+    !exceedsTransport(source) &&
+    automaticCompactionSuspended(conversationId, breakerKey, {
+      usedTokens: load.requiredTokens,
+      contextWindow: window,
+      overflow: load.overflow,
+    })
+  ) {
+    // Recent rounds freed almost nothing: admit the turn, whose own compaction still guards an overflow.
+    chatDiag({ kind: 'preflight-compact-suspended', conv: conversationId, requiredTokens: load.requiredTokens })
+    return { ok: true, compacted: false }
+  }
+
+  // Step 0: when older tool outputs alone free enough, the model reads one-line stubs instead and nothing is summarized.
+  const pruned = pruneToolOutputsBeforeCompaction(conversationId, selection, window, pendingParts, pending, operation)
+  if (pruned) {
+    chatDiag({ kind: 'preflight-tool-pruning', conv: conversationId, beforeTokens: load.requiredTokens, ...pruned })
+    return { ok: true, compacted: true }
+  }
 
   // Preparation is speculative and never delays ordinary turns. Only consume a ready candidate when this
   // destination actually needs compaction and its summary plus the complete append-only suffix fits.
@@ -3528,14 +3578,32 @@ async function preflightContext(
     // A stale/unavailable candidate is invisible to foreground chat; normal compaction remains the fallback.
   }
 
-  const compacted = await compactReserved(conversationId, {
-    allowActive: true,
-    signal,
-    contextWindow: window,
-    operation,
-    claudeFailoverChain,
-    claudeExecutionAxes,
-  })
+  const preflightCompaction = (tail: boolean) =>
+    compactReserved(conversationId, {
+      allowActive: true,
+      signal,
+      contextWindow: window,
+      pendingTokens: pending,
+      operation,
+      claudeFailoverChain,
+      claudeExecutionAxes,
+      // A turn blocked by a failed summary is worse than one that continues on a mechanical digest.
+      fallback: true,
+      tail,
+    })
+  const projectedLoad = async () => {
+    const projected = (await readStats()).contextProjection
+    const projectedSource = projected?.source ?? 'portable-transcript'
+    const projectedContext = preflightContextLoad(
+      window,
+      projected?.usedTokens ?? 0,
+      pending,
+      projectedSource,
+      AUTO_COMPACT_RATIO
+    )
+    return { load: projectedContext, fits: !projectedContext.overflow && !exceedsTransport(projectedSource) }
+  }
+  let compacted = await preflightCompaction(true)
   if (!compacted.ok) {
     // Automatic compaction failed AND preflight required it (shouldCompact): do NOT admit the
     // turn — proceeding near the custom limit only postpones overflow with repeated silent failures.
@@ -3557,16 +3625,96 @@ async function preflightContext(
     })
     return { ok: false, compacted: false, error: 'context-compaction-failed' }
   }
-  const afterProjection = (await readStats()).contextProjection
-  const after = afterProjection?.usedTokens ?? 0
-  const afterSource = afterProjection?.source ?? 'portable-transcript'
-  if (
-    preflightContextLoad(window, after, pending, afterSource, AUTO_COMPACT_RATIO).overflow ||
-    exceedsTransport(afterSource)
-  ) {
-    return { ok: false, compacted: true, error: 'context-overflow' }
+  let after = await projectedLoad()
+  if (!after.fits && compacted.marker) {
+    // The verbatim tail itself does not fit next to the pending input: fold it into the summary too.
+    chatDiag({
+      kind: 'preflight-compact-without-tail',
+      conv: conversationId,
+      requiredTokens: after.load.requiredTokens,
+    })
+    const folded = await preflightCompaction(false)
+    if (folded.ok) {
+      compacted = folded
+      after = await projectedLoad()
+    }
+  }
+  if (!after.fits) return { ok: false, compacted: true, error: 'context-overflow' }
+  const outcome = recordAutomaticCompaction(conversationId, breakerKey, {
+    before: load.requiredTokens,
+    after: after.load.requiredTokens,
+    threshold: window * AUTO_COMPACT_RATIO,
+  })
+  if (outcome.ineffective || compacted.degraded) {
+    chatDiag({
+      kind: 'preflight-compact-outcome',
+      conv: conversationId,
+      beforeTokens: load.requiredTokens,
+      afterTokens: after.load.requiredTokens,
+      ineffective: outcome.ineffective,
+      suspended: outcome.suspended,
+      degraded: compacted.degraded === true,
+    })
   }
   return { ok: true, compacted: true }
+}
+
+/** Load, relative to the window, that pruning alone must reach to replace a summary. */
+const PRUNE_ONLY_MAX_LOAD = 0.5
+
+/**
+ * Commits only the pruning of older tool outputs when that brings the next request to half the window. All in one
+ * synchronous transaction, so the history it planned on cannot change before the commit.
+ */
+function pruneToolOutputsBeforeCompaction(
+  conversationId: string,
+  selection: ChatModelRef,
+  window: number,
+  pendingParts: readonly MessagePart[],
+  pendingTokens: number,
+  operation: PendingConversationOperation
+): { afterTokens: number; prunedOutputs: number; savedChars: number } | null {
+  let outcome: { afterTokens: number; prunedOutputs: number; savedChars: number } | null = null
+  let observation: ReturnType<typeof commitToolPruning> = null
+  transaction(() => {
+    if (operation.controller.signal.aborted || !conversationOperationIsCurrent(conversationId, operation)) return
+    const history = listConversationContextMessages(conversationId)
+    const activeMessages = activeChatContext(history).messages
+    const targets = planToolPruning(activeMessages, {
+      protectedIds: protectedRecentMessageIds(activeMessages),
+      mode: 'stub',
+    })
+    if (targets.length === 0) return
+    const prunedHistory = applyToolPruning(history, targets)
+    const prunedLoad = portableContextLoad(window, estimatePortableContextTokens(prunedHistory), pendingTokens)
+    if (prunedLoad.requiredTokens > window * PRUNE_ONLY_MAX_LOAD) return
+    if (
+      isCodexSubscriptionProvider(selection.providerId) &&
+      codexTransferCharacters(prunedHistory, pendingParts) > CODEX_TRANSFER_MAX_CHARACTERS
+    )
+      return
+    observation = commitToolPruning({
+      conversationId,
+      history: prunedHistory,
+      touchedIds: [...new Set(targets.map((target) => target.messageId))],
+      destination: selection,
+      contextWindow: window,
+    })
+    outcome = {
+      afterTokens: prunedLoad.requiredTokens,
+      prunedOutputs: targets.length,
+      savedChars: targets.reduce((total, target) => total + target.savedChars, 0),
+    }
+  })
+  const committed = observation as ReturnType<typeof commitToolPruning>
+  if (committed && !active.has(conversationId)) {
+    const channel = `chat:delta:${conversationId}`
+    const event: ChatStreamEvent = { kind: 'context-usage', ...committed }
+    const wc = getMainWebContents()
+    if (wc) sendChatEvent(wc, channel, event)
+    else emitChatHost(conversationId, channel, event)
+  }
+  return outcome
 }
 
 /** ISOLATED internal-turn preflight: frozen model window + pending + harness reserve
@@ -5177,7 +5325,8 @@ async function startSend(
     )
     const compactActiveHistory = async (
       claudeTarget?: ClaudeRuntimeTarget,
-      onProgress?: (progress: PortableSummaryProgress) => void
+      onProgress?: (progress: PortableSummaryProgress) => void,
+      liveSummary?: LiveSummarizer
     ): Promise<{
       summary: string
       usage?: NormalizedAiUsage
@@ -5199,7 +5348,12 @@ async function startSend(
         allowActive: true,
         signal: controller.signal,
         persist: false,
+        // The runners reload a committed boundary like a prepared one, keeping recent steps verbatim.
+        positional: !isolated,
+        // Ending the turn because the summarizer failed loses more than continuing on a mechanical digest.
+        fallback: true,
         onProgress,
+        ...(liveSummary ? { liveSummary } : {}),
         contextWindow: claudeTarget?.contextWindow
           ? turnContextWindow
             ? Math.min(turnContextWindow, claudeTarget.contextWindow)
@@ -5240,6 +5394,7 @@ async function startSend(
               ...(!result.billedModel && result.runtimeEstimatedCostUsd != null
                 ? { runtimeEstimatedCostUsd: result.runtimeEstimatedCostUsd }
                 : {}),
+              ...(result.marker ? { prepared: result.marker } : {}),
             }
           : null
       })
@@ -5965,7 +6120,7 @@ async function startSend(
         contextWindow: turnContextWindow,
         ...(runnerMessageMeta ? { messageMeta: runnerMessageMeta } : {}),
         // Mid-turn compaction produces only summary+usage; the runner persists the milestone inside the live bubble.
-        compactHistory: compactActiveHistory,
+        compactHistory: (liveSummary) => compactActiveHistory(undefined, undefined, liveSummary),
         ...(internalLoop
           ? {
               // ALWAYS freeze the axis: explicit 'off' when the freeze lacks reasoning (older profiles).
@@ -7218,12 +7373,7 @@ async function retireIncompatibleSubscriptionState(
   await deleteSubscriptionStateForConversation(conversationId, signal)
 }
 
-const COMPACT_SYSTEM =
-  'You summarize programming conversations to preserve context when the history gets long. Produce a CONCISE ' +
-  "summary (Markdown) in the same language as the conversation, preserving: the user's goal, decided approaches " +
-  'and decisions, the current state of the work, relevant files/symbols/commands and the pending next steps. Do ' +
-  'NOT invent anything outside the conversation and do NOT answer the last message — just summarize. When the ' +
-  'input is already a set of summaries, consolidate all of them without dropping unique facts.'
+const COMPACT_SYSTEM = COMPACTION_SYSTEM_PROMPT
 
 /**
  * Summarizes active context. Manual/pre-send persists a milestone message; mid-turn returns a summary for the
@@ -7254,6 +7404,25 @@ interface CompactOpts {
   assertCurrent?: () => void
   /** Immutable completed prefix selected by background preparation. */
   historyOverride?: readonly StoredChatMessage[]
+  /**
+   * A live turn (persist: false) that reloads its history accepts a positional marker: recent messages then stay
+   * verbatim and the result carries `marker` instead of leaving the runner to append the boundary.
+   */
+  positional?: boolean
+  /** `false` summarizes everything, without a verbatim tail. */
+  tail?: boolean
+  /** Pending input the destination must still admit after compaction; it bounds the verbatim tail. */
+  pendingTokens?: number
+  /**
+   * A live API turn offers to summarize by repeating its cached last request. Tried first when recent steps stay
+   * verbatim (the request does not hold the last step, which the tail keeps); any failure falls back to map-reduce.
+   */
+  liveSummary?: LiveSummarizer
+  /**
+   * When the model summary fails for any reason but cancellation, commit a mechanical digest instead of failing, so
+   * the conversation is not blocked. Manual compaction never sets it: the person sees the failure.
+   */
+  fallback?: boolean
   summaryMaxTokens?: number
   summaryStepTimeoutMs?: number
   summaryRetryDelayMs?: number
@@ -7277,10 +7446,25 @@ interface CompactResult {
   usage?: NormalizedAiUsage
   runtimeEstimatedCostUsd?: number
   billedModel?: ChatModelRef
+  /** Committed positional boundary: the summary covers history through it and later messages stay verbatim. */
+  marker?: PreparedMarker
+  /** The model summary failed and `summary` is the mechanical fallback (`fallback` callers only). */
+  degraded?: boolean
 }
 
 function compactionDiagnostic(error: unknown): string {
   return redactTokens(redactClaudeCredentials(error instanceof Error ? error.message : String(error)))
+}
+
+function addCompactionUsage(total: NormalizedAiUsage | undefined, next: NormalizedAiUsage | undefined) {
+  if (!total || !next) return next ?? total
+  return {
+    input: total.input + next.input,
+    output: total.output + next.output,
+    cacheRead: total.cacheRead + next.cacheRead,
+    cacheCreate: total.cacheCreate + next.cacheCreate,
+    totalInput: total.totalInput + next.totalInput,
+  }
 }
 
 /**
@@ -7498,7 +7682,8 @@ async function compactReservedWithProgress(conversationId: string, opts: Compact
   if (result.error) result.error = compactionDiagnostic(result.error)
   // The successful boundary is the newest visible message on reload; carry the finished
   // operation there so the renderer does not need to cross an older context boundary.
-  if (result.ok && anchor && progressId && stillOwnsOperation()) {
+  // A positional boundary lies before the anchor (or inside it), which therefore keeps the operation.
+  if (result.ok && !result.marker && anchor && progressId && stillOwnsOperation()) {
     const observed = getChatMessage(conversationId, anchor.id)
     const marker = lastConversationContextMessage(conversationId)
     if (
@@ -7633,7 +7818,7 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
     compactHarness = resolution.harness
   }
   const compactFocus = opts.executionId ? null : getCompactionFocus(conversationId)
-  const compactSystem =
+  const compactBaseSystem =
     (conv.scope === 'standalone'
       ? `${COMPACT_SYSTEM}\nThis is a standalone general conversation. Preserve its goals and facts without assuming a project or repository.`
       : harnessCompactionSystem(COMPACT_SYSTEM, compactHarness)) + (compactFocus ? `\n\n${compactFocus}` : '')
@@ -7693,12 +7878,43 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
       const revalidated = await revalidateFrozenChatSelection(frozen)
       if (!revalidated.ok) return { ok: false, error: revalidated.error }
     }
+    // Recent messages stay verbatim after the summary when a positional marker can be committed: the main
+    // conversation's manual/pre-send compaction, or a live turn that reloads its history (`positional`).
+    const sourceHistory = preparedBase?.history ?? history
+    const cut =
+      opts.tail !== false && !opts.executionId && !opts.historyOverride && (opts.persist !== false || opts.positional)
+        ? selectCompactionCut(activeChatContext(sourceHistory).messages, {
+            tailTokens: compactionTailBudget(
+              opts.contextWindow ?? (opts.summarizerOverride ? undefined : contextWindow),
+              opts.pendingTokens
+            ),
+          })
+        : null
+    const summarizedHistory = (cut && historyThroughCut(sourceHistory, cut)) || sourceHistory
+    // Older tool outputs reach the summarizer as head and tail, repeated ones once; recent turns stay whole.
+    const sourceActive = activeChatContext(sourceHistory).messages
+    const summaryInput = applyToolPruning(
+      summarizedHistory,
+      planToolPruning(sourceActive, { protectedIds: protectedRecentMessageIds(sourceActive), mode: 'clip' })
+    )
     // The chunker below alone splits the payload; no transcript range is omitted.
-    const transcript = renderTranscript(preparedBase?.history ?? history, {
+    const transcript = renderTranscript(summaryInput, {
       maxToolOutputChars: Number.POSITIVE_INFINITY,
       includeSkillBodies: true,
     })
     if (!transcript) return { ok: false, error: 'too-short' }
+    // A prepared base that already covers everything summarized needs no model call.
+    const baseOnly =
+      preparedBase != null &&
+      !renderTranscript(activeChatContext(summarizedHistory).messages, {
+        maxToolOutputChars: Number.POSITIVE_INFINITY,
+        includeSkillBodies: true,
+      })
+    const summaryTargetTokens = Math.min(
+      compactionSummaryTargetTokens(estimateTextTokens(transcript), contextWindow),
+      opts.summaryMaxTokens ?? Number.POSITIVE_INFINITY
+    )
+    const compactSystem = `${compactBaseSystem}\n\n${compactionTargetInstruction(summaryTargetTokens)}`
     if (opts.summaryMaxTokens && !contextWindow) throw new Error('summarizer-context-window-unknown')
     const backgroundInputBudget = contextWindow
       ? contextWindow -
@@ -7908,7 +8124,7 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
             : identity,
           cwd: conv.cwd,
           modelId: selection.modelId,
-          system: COMPACT_SYSTEM,
+          system: compactSystem,
           prompt,
           signal: stageSignal,
           fastMode: compactFastMode,
@@ -8017,22 +8233,215 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
         }
       }
     }
-    const compacted: PortableSummaryResult = preparedBase?.deltaEmpty
-      ? { summary: preparedBase.candidate.summary, calls: 0 }
-      : await summarizePortableTranscript(transcript, maxChunkChars, summarize, {
-          signal: compactSignal,
-          onProgress: opts.onProgress,
-          ...(opts.summaryResume ? { resume: opts.summaryResume } : {}),
-          ...(opts.onSummaryCheckpoint ? { onCheckpoint: opts.onSummaryCheckpoint } : {}),
-          ...(opts.summaryMaxTokens ? { maxSummaryTokens: opts.summaryMaxTokens } : {}),
-          ...(opts.summaryStepTimeoutMs != null ? { stepTimeoutMs: opts.summaryStepTimeoutMs } : {}),
-          ...(opts.summaryRetryDelayMs != null ? { retryDelayMs: opts.summaryRetryDelayMs } : {}),
-          ...(opts.summaryMaxRetries != null ? { maxRetries: opts.summaryMaxRetries } : {}),
+    // Failed attempts of rungs that did not produce the summary; they are billed with the outcome.
+    const failed = { usage: undefined as NormalizedAiUsage | undefined, cost: 0, costComplete: true }
+    const absorbFailure = (error: unknown): void => {
+      const detail = error as { partialUsage?: NormalizedAiUsage; runtimeEstimatedCostUsd?: number } | null
+      const partial = extractIsolatedSummaryAttemptUsage(error) ?? detail?.partialUsage
+      if (partial) failed.usage = addCompactionUsage(failed.usage, partial)
+      const cost = detail?.runtimeEstimatedCostUsd
+      if (typeof cost === 'number' && Number.isFinite(cost) && cost >= 0) failed.cost += cost
+      else if (partial) failed.costComplete = false
+    }
+    const withFailed = (result: PortableSummaryResult): PortableSummaryResult => {
+      if (!failed.usage) return result
+      const cost =
+        failed.costComplete && (result.runtimeEstimatedCostUsd != null || !result.usage)
+          ? failed.cost + (result.runtimeEstimatedCostUsd ?? 0)
+          : undefined
+      const { runtimeEstimatedCostUsd: _cost, ...rest } = result
+      return {
+        ...rest,
+        usage: addCompactionUsage(failed.usage, result.usage),
+        ...(cost != null ? { runtimeEstimatedCostUsd: cost } : {}),
+      }
+    }
+    let live: PortableSummaryResult | null = null
+    if (opts.liveSummary && cut && !baseOnly) {
+      try {
+        const attempt = await opts.liveSummary(compactSystem)
+        if (attempt) {
+          const issues = attempt.text ? auditCompactionSummary(attempt.text) : ['empty summary']
+          if (issues.length === 0) live = { summary: attempt.text, usage: attempt.usage, calls: 1 }
+          else if (attempt.usage) {
+            failed.usage = addCompactionUsage(failed.usage, attempt.usage)
+            failed.costComplete = false
+          }
+          chatDiag({ kind: 'compaction-live-summary', conv: conversationId, accepted: live != null, issues })
+        }
+      } catch (error) {
+        if (compactSignal.aborted) throw error
+        absorbFailure(error)
+        chatDiag({
+          kind: 'compaction-live-summary',
+          conv: conversationId,
+          accepted: false,
+          error: compactionDiagnostic(error),
         })
-    const summary = summaryWithApprovedPlan(compacted.summary, history)
+      }
+    }
+    let degraded = false
+    let compacted: PortableSummaryResult
+    if (baseOnly) compacted = { summary: preparedBase.candidate.summary, calls: 0 }
+    else if (live) compacted = withFailed(live)
+    else {
+      // A background checkpoint is tied to its chunk size, so only foreground work shrinks the chunks.
+      const ladder = opts.historyOverride || opts.summaryResume ? [1] : [1, ...COMPACTION_OVERFLOW_LADDER]
+      let result: PortableSummaryResult | null = null
+      for (let rung = 0; !result; rung += 1) {
+        try {
+          result = await summarizePortableTranscript(
+            transcript,
+            Math.max(1_000, Math.floor(maxChunkChars * ladder[rung])),
+            summarize,
+            {
+              signal: compactSignal,
+              onProgress: opts.onProgress,
+              ...(opts.summaryResume ? { resume: opts.summaryResume } : {}),
+              ...(opts.onSummaryCheckpoint ? { onCheckpoint: opts.onSummaryCheckpoint } : {}),
+              ...(opts.summaryMaxTokens ? { maxSummaryTokens: opts.summaryMaxTokens } : {}),
+              ...(opts.summaryStepTimeoutMs != null ? { stepTimeoutMs: opts.summaryStepTimeoutMs } : {}),
+              ...(opts.summaryRetryDelayMs != null ? { retryDelayMs: opts.summaryRetryDelayMs } : {}),
+              ...(opts.summaryMaxRetries != null ? { maxRetries: opts.summaryMaxRetries } : {}),
+              auditFinal: auditCompactionSummary,
+            }
+          )
+        } catch (error) {
+          absorbFailure(error)
+          const shrink = !compactSignal.aborted && rung + 1 < ladder.length && isContextOverflowError(error)
+          if (shrink) {
+            chatDiag({ kind: 'compaction-overflow-retry', conv: conversationId, chunkFactor: ladder[rung + 1] })
+            continue
+          }
+          // Cancellation and callers that must see the failure (manual compaction) never degrade.
+          if (compactSignal.aborted || !opts.fallback) {
+            if (rung > 0) {
+              // Earlier shrunk rungs were billed too; a single failure keeps reporting its own usage.
+              completedUsage = failed.usage
+              completedCost = failed.costComplete && failed.usage ? failed.cost : undefined
+            }
+            throw error
+          }
+          degraded = true
+          chatDiag({ kind: 'compaction-fallback', conv: conversationId, error: compactionDiagnostic(error) })
+          result = { summary: fallbackCompactionSummary(summarizedHistory), calls: 0 }
+        }
+      }
+      compacted = withFailed(result)
+    }
+    if (compacted.qualityDegraded) {
+      chatDiag({
+        kind: 'compaction-quality-degraded',
+        conv: conversationId,
+        issues: auditCompactionSummary(compacted.summary),
+        background: Boolean(opts.historyOverride),
+      })
+    }
+    // A plan or request still in the verbatim tail is not repeated in the summary.
+    const planInTail = cut != null && latestApprovedPlan(historyAfterCut(history, cut)) != null
+    const summary = summaryWithTurnRequest(
+      planInTail ? summaryWithoutApprovedPlan(compacted.summary) : summaryWithApprovedPlan(compacted.summary, history),
+      cut?.splitTurn ? turnRequestBeforeCut(history, cut) : null
+    )
     const usage = compacted.usage
     completedUsage = usage
     completedCost = compacted.runtimeEstimatedCostUsd
+    // A live turn appends a model summary itself, but only the service can mark one as degraded.
+    const commitCut =
+      cut ??
+      (degraded && opts.positional && opts.persist === false
+        ? historyEndCut(activeChatContext(sourceHistory).messages)
+        : null)
+    if (commitCut) {
+      const part: Extract<MessagePart, { type: 'compaction' }> = {
+        type: 'compaction',
+        id: randomUUID(),
+        text: summary,
+        strategy: 'summary',
+        ...(opts.origin ? { origin: opts.origin } : {}),
+        ...(degraded ? { degraded: true } : {}),
+      }
+      const marker: PreparedMarker = {
+        messageId: commitCut.messageId,
+        afterPartId: commitCut.afterPartId,
+        partId: part.id,
+      }
+      const destinationWindow = opts.contextWindow ?? (opts.summarizerOverride ? undefined : contextWindow)
+      let observation: ReturnType<typeof commitPositionalCompaction> = null
+      transaction(() => {
+        compactSignal.throwIfAborted()
+        opts.assertCurrent?.()
+        if (opts.operation && !conversationOperationIsCurrent(conversationId, opts.operation)) {
+          throw new Error('Conversation operation changed while context was being compacted.')
+        }
+        assertHistoryUnchanged()
+        const projected = previewPositionalCompaction(listConversationContextMessages(conversationId), marker, part)
+        if (!projected) throw new Error('The compaction boundary disappeared; compact again on the latest history.')
+        observation = commitPositionalCompaction({
+          conversationId,
+          history: projected,
+          marker,
+          destination: selectionFor(conversationId) ?? selection,
+          contextWindow: destinationWindow,
+        })
+        // No marker message carries the bill: a live turn accounts the returned usage, the others record it here.
+        if (opts.persist !== false && (usage || compacted.runtimeEstimatedCostUsd != null)) {
+          recordChatUsageAttempt({
+            id: randomUUID(),
+            conversationId,
+            model: opts.summarizerOverride
+              ? {
+                  providerId: opts.summarizerOverride.providerId,
+                  modelId: opts.summarizerOverride.resolvedModelId ?? opts.summarizerOverride.modelId,
+                }
+              : selection,
+            usage: usage ?? { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 },
+            runtimeEstimatedCostUsd: compacted.runtimeEstimatedCostUsd,
+          })
+        }
+      })
+      chatDiag({
+        kind: 'compaction-verbatim-tail',
+        conv: conversationId,
+        tailTokens: commitCut.tailTokens,
+        prefixTokens: commitCut.prefixTokens,
+        splitTurn: commitCut.splitTurn,
+        live: opts.persist === false,
+        degraded,
+      })
+      if (opts.persist !== false) {
+        backgroundCoordinator?.manualCompaction(conversationId)
+        if (opts.origin === 'manual') resetCompactionBreaker(conversationId)
+        const channel = `chat:delta:${conversationId}`
+        const wc = getMainWebContents()
+        const events: ChatStreamEvent[] = [
+          {
+            kind: 'compaction',
+            ...marker,
+            text: summary,
+            strategy: 'summary',
+            ...(opts.origin ? { origin: opts.origin } : {}),
+            ...(degraded ? { degraded: true } : {}),
+          },
+        ]
+        const committed = observation as ReturnType<typeof commitPositionalCompaction>
+        if (committed && !active.has(conversationId)) events.push({ kind: 'context-usage', ...committed })
+        for (const event of events) {
+          if (wc) sendChatEvent(wc, channel, event)
+          else emitChatHost(conversationId, channel, event)
+        }
+      }
+      return {
+        ok: true,
+        summary,
+        usage,
+        marker,
+        ...(degraded ? { degraded: true } : {}),
+        ...(compacted.runtimeEstimatedCostUsd != null
+          ? { runtimeEstimatedCostUsd: compacted.runtimeEstimatedCostUsd }
+          : {}),
+      }
+    }
     if (opts.persist !== false) {
       const marker: ChatMessage = {
         id: randomUUID(),
@@ -8045,6 +8454,7 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
             text: summary,
             strategy: 'summary',
             ...(opts.origin ? { origin: opts.origin } : {}),
+            ...(degraded ? { degraded: true } : {}),
           },
         ],
         model: opts.summarizerOverride ? (selectionFor(conversationId) ?? selection) : selection,
@@ -8095,11 +8505,13 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
         upsertChatMessage(marker)
       })
       backgroundCoordinator?.manualCompaction(conversationId)
+      if (opts.origin === 'manual') resetCompactionBreaker(conversationId)
     }
     return {
       ok: true,
       summary,
       usage,
+      ...(degraded ? { degraded: true } : {}),
       // AGGREGATED native helper-call estimate (only when complete) — the runner adds it to
       // turn cost; without it, compactor token pricing still depends on the catalog.
       ...(compacted.runtimeEstimatedCostUsd != null

@@ -543,69 +543,75 @@ describe('Codex lifecycle chat IPC integration', () => {
       expect(h.summarizeCodex).not.toHaveBeenCalled()
     })
 
-    it.each([
-      500_000, 1_000_000,
-    ])('compacts the entire seed exceeding token or transport capacity (%i window)', async (window) => {
-      const { conversation, send } = await prepare(window)
-      h.summarizeCodex.mockImplementation(async () => {
-        expect(h.runCodex).not.toHaveBeenCalled()
-        expect(listChatMessages(conversation.id)).toHaveLength(2)
-        return { text: 'portable summary' }
-      })
-      expect(await send()).toEqual({ ok: true })
-      await vi.waitFor(() => expect(h.runCodex).toHaveBeenCalledTimes(1))
-      const prompts = h.summarizeCodex.mock.calls.map(([args]) => args.prompt).join('')
-      expect(prompts).toContain(middleMarker)
-      expect(prompts).toContain(toolMarker)
-      const rows = listChatMessages(conversation.id)
-      const marker = rows.findIndex((row) => row.parts.some((part) => part.type === 'compaction'))
-      const pending = rows.findIndex((row) =>
-        row.parts.some((part) => part.type === 'text' && part.text === 'Continue from the complete transcript')
-      )
-      expect(marker).toBeGreaterThan(0)
-      expect(pending).toBeGreaterThan(marker)
-      expect(rows[marker].model).toEqual({ providerId: CODEX_SUBSCRIPTION_PROVIDER_ID, modelId: 'gpt-luna' })
-      const seed = renderNativeSeedTranscript(rows)
-      expect(seed).toContain('portable summary')
-      expect(seed.length).toBeLessThan(10_000)
-    })
+    it.each([500_000, 1_000_000])(
+      'compacts the entire seed exceeding token or transport capacity (%i window)',
+      async (window) => {
+        const { conversation, send } = await prepare(window)
+        h.summarizeCodex.mockImplementation(async () => {
+          expect(h.runCodex).not.toHaveBeenCalled()
+          expect(listChatMessages(conversation.id)).toHaveLength(2)
+          return { text: 'portable summary' }
+        })
+        expect(await send()).toEqual({ ok: true })
+        await vi.waitFor(() => expect(h.runCodex).toHaveBeenCalledTimes(1))
+        const prompts = h.summarizeCodex.mock.calls.map(([args]) => args.prompt).join('')
+        expect(prompts).toContain(middleMarker)
+        expect(prompts).toContain(toolMarker)
+        const rows = listChatMessages(conversation.id)
+        const marker = rows.findIndex((row) => row.parts.some((part) => part.type === 'compaction'))
+        const pending = rows.findIndex((row) =>
+          row.parts.some((part) => part.type === 'text' && part.text === 'Continue from the complete transcript')
+        )
+        expect(marker).toBeGreaterThan(0)
+        expect(pending).toBeGreaterThan(marker)
+        expect(rows[marker].model).toEqual({ providerId: CODEX_SUBSCRIPTION_PROVIDER_ID, modelId: 'gpt-luna' })
+        const seed = renderNativeSeedTranscript(rows)
+        expect(seed).toContain('portable summary')
+        expect(seed.length).toBeLessThan(10_000)
+      }
+    )
 
-    it('blocks a failed transfer compaction without changing transcript parts or saving pending input', async () => {
+    it('continues a transfer on a mechanical summary when its compaction fails, keeping the transcript parts', async () => {
       const { conversation, send } = await prepare(500_000)
       const original = listChatMessages(conversation.id).map(({ id, parts }) => ({ id, parts }))
       h.summarizeCodex.mockRejectedValue(Object.assign(new Error('Synthetic summary rejection'), { status: 400 }))
-      expect(await send()).toEqual({ ok: false, error: 'context-compaction-failed' })
-      expect(h.runCodex).not.toHaveBeenCalled()
-      expect(listChatMessages(conversation.id).map(({ id, parts }) => ({ id, parts }))).toEqual(original)
+      expect(await send()).toEqual({ ok: true })
+      await vi.waitFor(() => expect(h.runCodex).toHaveBeenCalledOnce())
+      const stored = listChatMessages(conversation.id)
+      for (const message of original)
+        expect(stored.find(({ id }) => id === message.id)?.parts.filter((part) => part.type !== 'compaction')).toEqual(
+          message.parts
+        )
+      expect(stored.flatMap((message) => message.parts).filter((part) => part.type === 'compaction')).toEqual([
+        expect.objectContaining({ degraded: true }),
+      ])
       expect(hDiag.chatDiag).toHaveBeenCalledWith(
-        expect.objectContaining({
-          kind: 'preflight-compact-failed',
-          source: 'portable-transcript',
-          overflow: true,
-          reserveTokens: expect.any(Number),
-          admitted: false,
-        })
+        expect.objectContaining({ kind: 'compaction-fallback', error: 'Synthetic summary rejection' })
+      )
+      expect(hDiag.chatDiag).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'preflight-compact-outcome', degraded: true })
       )
     })
 
-    it.each([
-      500_000, 1_000_000,
-    ])('blocks a summary still exceeding token or transport capacity (%i window)', async (window) => {
-      const { conversation, send } = await prepare(window)
-      h.summarizeCodex.mockImplementation(async ({ prompt }) => ({
-        text: prompt.startsWith('Summary group') ? 's'.repeat(1_500_000) : 'Small intermediate summary',
-      }))
-      expect(await send()).toEqual({ ok: false, error: 'context-overflow' })
-      expect(h.runCodex).not.toHaveBeenCalled()
-      expect(
-        listChatMessages(conversation.id).some((row) => row.parts.some((part) => part.type === 'compaction'))
-      ).toBe(true)
-      expect(
-        listChatMessages(conversation.id).some((row) =>
-          row.parts.some((part) => part.type === 'text' && part.text === 'Continue from the complete transcript')
-        )
-      ).toBe(false)
-    })
+    it.each([500_000, 1_000_000])(
+      'blocks a summary still exceeding token or transport capacity (%i window)',
+      async (window) => {
+        const { conversation, send } = await prepare(window)
+        h.summarizeCodex.mockImplementation(async ({ prompt }) => ({
+          text: prompt.startsWith('Summary group') ? 's'.repeat(1_500_000) : 'Small intermediate summary',
+        }))
+        expect(await send()).toEqual({ ok: false, error: 'context-overflow' })
+        expect(h.runCodex).not.toHaveBeenCalled()
+        expect(
+          listChatMessages(conversation.id).some((row) => row.parts.some((part) => part.type === 'compaction'))
+        ).toBe(true)
+        expect(
+          listChatMessages(conversation.id).some((row) =>
+            row.parts.some((part) => part.type === 'text' && part.text === 'Continue from the complete transcript')
+          )
+        ).toBe(false)
+      }
+    )
 
     it('blocks a transfer when the destination window is unknown without modifying history', async () => {
       const { conversation, send } = await prepare()
@@ -617,7 +623,7 @@ describe('Codex lifecycle chat IPC integration', () => {
     })
   })
 
-  it('blocks oversized sends when portable compaction fails', async () => {
+  it('admits oversized sends on a mechanical summary when portable compaction fails', async () => {
     const handlers = register()
     const workspace = makeWorkspace()
     const conversation = makeConversation(workspace.id, {})
@@ -667,20 +673,19 @@ describe('Codex lifecycle chat IPC integration', () => {
       { conversationId: conversation.id, text: 'new turn' }
     )
 
-    expect(result).toEqual({ ok: false, error: 'context-compaction-failed' })
-    expect(listChatMessages(conversation.id).map((message) => message.id)).toEqual(['user-large', 'assistant-large'])
-    expect(h.runCodex).not.toHaveBeenCalled()
+    expect(result).toEqual({ ok: true })
+    await vi.waitFor(() => expect(h.runCodex).toHaveBeenCalledOnce())
     expect(hDiag.chatDiag).toHaveBeenCalledWith(
-      expect.objectContaining({
-        kind: 'preflight-compact-failed',
-        admitted: false,
-        overflow: true,
-        error: expect.any(String),
-      })
+      expect.objectContaining({ kind: 'compaction-fallback', error: 'compact failed' })
     )
+    expect(
+      listChatMessages(conversation.id)
+        .flatMap((message) => message.parts)
+        .filter((part) => part.type === 'compaction')
+    ).toEqual([expect.objectContaining({ degraded: true })])
   })
 
-  it('blocks required-compaction failures below overflow', async () => {
+  it('admits required-compaction failures below overflow on a mechanical summary', async () => {
     const handlers = register()
     const workspace = makeWorkspace()
     const conversation = makeConversation(workspace.id, {})
@@ -731,21 +736,14 @@ describe('Codex lifecycle chat IPC integration', () => {
       { conversationId: conversation.id, text: 'still fits' }
     )
 
-    expect(result).toEqual({ ok: false, error: 'context-compaction-failed' })
-    expect(hDiag.chatDiag).toHaveBeenCalledWith(
-      expect.objectContaining({
-        kind: 'preflight-compact-failed',
-        admitted: false,
-        overflow: false,
-        error: expect.stringMatching(/502|compact/i),
-      })
-    )
-    expect(h.runCodex).not.toHaveBeenCalled()
+    expect(result).toEqual({ ok: true })
+    await vi.waitFor(() => expect(h.runCodex).toHaveBeenCalledOnce())
+    expect(hDiag.chatDiag).not.toHaveBeenCalledWith(expect.objectContaining({ kind: 'preflight-compact-failed' }))
     expect(
-      listChatMessages(conversation.id).some(
+      listChatMessages(conversation.id).filter(
         (m) => m.role === 'user' && m.parts.some((p) => p.type === 'text' && p.text === 'still fits')
       )
-    ).toBe(false)
+    ).toHaveLength(1)
   })
 
   it('defaults Standard and persists conversation Fast opt-in', () => {

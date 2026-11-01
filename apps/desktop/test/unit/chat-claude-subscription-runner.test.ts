@@ -1496,6 +1496,59 @@ describe('Claude official chat runner', () => {
     expect(assistant?.usage).toMatchObject({ input: 193, output: 23, cachedInput: 65, cacheCreate: 26 })
   })
 
+  it('adds the bill of a positional intra-turn compaction to the turn', async () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, { cwd: '/repo' })
+    upsertChatMessage({
+      id: 'user-portable-positional',
+      conversationId: conversation.id,
+      role: 'user',
+      parts: [{ type: 'text', id: 'text-portable-positional', text: 'Inspect and finish the work.' }],
+      createdAt: 1,
+    })
+    const manager = new PortableCompactionManager()
+    const compactHistory = vi.fn(async () => {
+      // The service commits the boundary after the summarized step before returning it.
+      const live = listChatMessages(conversation.id).find((message) => message.role === 'assistant')!
+      upsertChatMessage({
+        ...live,
+        parts: [
+          live.parts[0],
+          { type: 'compaction', id: 'positional-marker', text: 'Positional summary.', strategy: 'summary' },
+          ...live.parts.slice(1),
+        ],
+      })
+      return {
+        summary: 'Positional summary.',
+        usage: { input: 3, output: 4, cacheRead: 5, cacheCreate: 6, totalInput: 14 },
+        runtimeEstimatedCostUsd: 0.0045,
+        prepared: { messageId: live.id, afterPartId: live.parts[0].id, partId: 'positional-marker' },
+      }
+    })
+    await runClaudeChat({
+      conversationId: conversation.id,
+      projectId: workspace.id,
+      cwd: '/repo',
+      selection: { providerId: 'builtin_claude_subscription', modelId: 'sonnet' },
+      mode: 'agent',
+      permMode: 'ask',
+      manager: manager as unknown as ClaudeSubscriptionManager,
+      accountIdentity: identity,
+      broker: { assert: vi.fn(), on: vi.fn() } as never,
+      questionBroker: { ask: vi.fn() } as never,
+      emit: () => {},
+      signal: new AbortController().signal,
+      contextWindow: 1_000,
+      compactHistory,
+    })
+    const assistant = listChatMessages(conversation.id).find((message) => message.role === 'assistant')
+    expect(assistant?.usage?.runtimeEstimatedCostUsd).toBeCloseTo(0.0123 + 0.0045, 6)
+    expect(assistant?.usage).toMatchObject({ input: 193, output: 23, cachedInput: 65, cacheCreate: 26 })
+    expect(assistant?.parts.filter((part) => part.type === 'compaction')).toEqual([
+      expect.objectContaining({ id: 'positional-marker' }),
+    ])
+  })
+
   it('prices compaction without native estimates using catalog buckets', async () => {
     const workspace = makeWorkspace()
     const conversation = makeConversation(workspace.id, { cwd: '/repo' })
