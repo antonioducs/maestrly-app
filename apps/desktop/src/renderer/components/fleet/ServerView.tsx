@@ -13,7 +13,15 @@ import { AlertTriangle, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import type { FleetController } from '@/lib/fleet/use-fleet'
-import { type FleetMemorySegment, gb, memorySegments, outOfMemory, shownSwapBytes } from '@/lib/fleet/format'
+import {
+  type FleetMemorySegment,
+  diskSize,
+  environmentDiskBytes,
+  gb,
+  memorySegments,
+  outOfMemory,
+  shownSwapBytes,
+} from '@/lib/fleet/format'
 import { formatUptime } from '@/lib/fleet/forms'
 import {
   botsWithDifferentVersion,
@@ -80,6 +88,17 @@ function MemoryUse({ resources }: { resources: FleetResources }) {
   )
 }
 
+/** What an environment or bot takes on disk, measured every few minutes; when, in its tooltip. */
+function DiskUse({ bytes, measuredAt }: { bytes: number | null; measuredAt: string | null }) {
+  const { t, i18n } = useTranslation('fleet')
+  if (bytes === null || measuredAt === null) return <span title={t('server.diskNotMeasured')}>—</span>
+  return (
+    <span title={t('server.diskMeasuredAt', { time: new Date(measuredAt).toLocaleString(i18n.language) })}>
+      {diskSize(bytes)}
+    </span>
+  )
+}
+
 function Uptime({ startedAt }: { startedAt: string | null }) {
   const { t } = useTranslation('fleet')
   if (!startedAt) return '—'
@@ -109,6 +128,9 @@ function BotRow({
         <MemoryUse resources={bot.resources} />
       </td>
       <td className="p-3">{bot.resources.cpuPercent === null ? '—' : `${Math.round(bot.resources.cpuPercent)}%`}</td>
+      <td className="p-3">
+        <DiskUse bytes={bot.storage?.usedBytes ?? null} measuredAt={bot.storage?.measuredAt ?? null} />
+      </td>
       <td className="p-3">
         <Uptime startedAt={bot.resources.startedAt} />
       </td>
@@ -179,6 +201,9 @@ function EnvironmentRows({
         </td>
         <td className="p-3">{cpuPercent === null ? '—' : `${Math.round(cpuPercent)}%`}</td>
         <td className="p-3">
+          <DiskUse bytes={environmentDiskBytes(environment)} measuredAt={environment.storage?.measuredAt ?? null} />
+        </td>
+        <td className="p-3">
           <Uptime startedAt={startedAt} />
         </td>
         <td className="p-3">
@@ -205,11 +230,17 @@ function EnvironmentRows({
             </button>
           </td>
           <td className="p-3">{t(`status.${bot.status}`)}</td>
-          {[0, 1, 2].map((cell) => (
+          {[0, 1].map((cell) => (
             <td key={cell} className="p-3" title={t('server.measuredByEnvironment')}>
               —
             </td>
           ))}
+          <td className="p-3">
+            <DiskUse bytes={bot.storage?.usedBytes ?? null} measuredAt={bot.storage?.measuredAt ?? null} />
+          </td>
+          <td className="p-3" title={t('server.measuredByEnvironment')}>
+            —
+          </td>
           <td className="p-3">
             <BotRestartAction availability={restartAvailability(bot)} onRestart={() => onRestartBot(bot)} />
           </td>
@@ -277,8 +308,9 @@ function WorkspacesRow({
         {t(`environment.lifecycle.${environment.lifecycle}`)}
       </span>
       <span className="text-xs text-muted-foreground">
-        {t('server.memory')} <MemoryUse resources={environment.resources} /> · {t('server.uptime')}{' '}
-        <Uptime startedAt={environment.resources.startedAt} />
+        {t('server.memory')} <MemoryUse resources={environment.resources} /> · {t('server.disk')}{' '}
+        <DiskUse bytes={environmentDiskBytes(environment)} measuredAt={environment.storage?.measuredAt ?? null} /> ·{' '}
+        {t('server.uptime')} <Uptime startedAt={environment.resources.startedAt} />
       </span>
       {environment.isolation?.restartRequired && (
         <span className="text-xs text-amber-300">{t('workspaces.isolation.restartShort')}</span>
@@ -520,10 +552,10 @@ export function ServerView({
         <section>
           <h2 className="mb-3 font-semibold">{grouped ? t('server.environments') : t('server.bots')}</h2>
           <div className="overflow-x-auto rounded-lg border border-border bg-surface-elevated">
-            <table className="w-full min-w-[760px] text-left text-sm">
+            <table className="w-full min-w-[840px] text-left text-sm">
               <thead className="bg-surface-elevated text-xs text-muted-foreground">
                 <tr>
-                  {['name', 'status', 'memory', 'cpu', 'uptime', 'actions'].map((key) => (
+                  {['name', 'status', 'memory', 'cpu', 'disk', 'uptime', 'actions'].map((key) => (
                     <th key={key} className="p-3">
                       {t(`server.${key}`)}
                     </th>

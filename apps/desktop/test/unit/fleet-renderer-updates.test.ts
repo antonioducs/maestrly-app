@@ -49,6 +49,7 @@ const environment = (id: string, patch: Partial<FleetEnvironment> = {}): FleetEn
     oomKills: null,
     limitOoms: null,
   },
+  storage: null,
   memoryLimitBytes: null,
   cpuLimit: null,
   idleStopMinutes: null,

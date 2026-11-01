@@ -35,6 +35,7 @@ import {
   type FleetInstanceEnvironmentStatus,
   type FleetInstanceInput,
   type FleetInstanceStatus,
+  type FleetInstanceStorage,
   type FleetInstanceProfile,
   type FleetInteractionResolution,
   type FleetAddApiKeyAccountRequest,
@@ -533,6 +534,10 @@ export class InstanceClient {
   }
   environmentStatus(): Promise<FleetInstanceEnvironmentStatus> {
     return this.call('environmentStatus')
+  }
+  /** Capability `environment-storage`: its latest disk figures; `folder` also measures a workspaces host's own folder. */
+  environmentStorage(folder: boolean): Promise<FleetInstanceStorage> {
+    return this.call('environmentStorage', {}, folder ? { folder: 1 } : undefined)
   }
   /** Starts the environment's runtime checks; they run in the background there. */
   runtimesCheck(): Promise<{ ok: true }> {

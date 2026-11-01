@@ -151,6 +151,82 @@ export function gb(bytes: number): string {
   return (bytes / 1024 ** 3).toFixed(1)
 }
 
+/** A size on disk, in the binary units of the memory figures: MB under a gigabyte, else GB with one decimal. */
+export function diskSize(bytes: number): string {
+  return bytes < 1024 ** 3 ? `${Math.round(bytes / 1024 ** 2)} MB` : `${gb(bytes)} GB`
+}
+/** What an environment takes on the server's disk: its home volume, and a workspaces environment's own folder. */
+export function environmentDiskBytes(environment: FleetEnvironment): number | null {
+  const storage = environment.storage
+  return storage ? storage.homeBytes + (storage.folderBytes ?? 0) : null
+}
+export type FleetDiskSegment = {
+  kind: 'bot' | 'downloads' | 'folder' | 'shared'
+  id: string
+  name: string
+  bytes: number
+  /** A bot's browser profile, part of `bytes`; 0 for the other segments. */
+  browserBytes: number
+  fraction: number
+  tint: string
+}
+const DOWNLOADS_TINT = 'color-mix(in srgb, var(--muted-foreground) 55%, transparent)'
+/**
+ * An environment's disk by what it holds: each measured bot's own files in its color, Downloads, a workspaces
+ * environment's own server folder, and the rest of its home, which its bots share (the database with every
+ * conversation and memory, accounts, runtimes and settings). Bots measured at another moment than the home folder
+ * may add up to more than it: the bar then spans their sum.
+ */
+export function environmentDiskSegments(environment: FleetEnvironment, bots: FleetBot[]): FleetDiskSegment[] {
+  const storage = environment.storage
+  const total = environmentDiskBytes(environment)
+  if (!storage || !total) return []
+  const own = bots
+    .filter((bot) => bot.environmentId === environment.id && bot.storage)
+    .sort(compareByName)
+    .map((bot) => ({
+      kind: 'bot' as const,
+      id: bot.id,
+      name: bot.name,
+      bytes: bot.storage!.usedBytes,
+      browserBytes: bot.storage!.browserBytes,
+      tint: bot.tint,
+    }))
+  const counted = own.reduce((sum, item) => sum + item.bytes, 0) + storage.downloadsBytes
+  const parts = [
+    ...own,
+    {
+      kind: 'downloads' as const,
+      id: 'downloads',
+      name: '',
+      bytes: storage.downloadsBytes,
+      browserBytes: 0,
+      tint: DOWNLOADS_TINT,
+    },
+    {
+      kind: 'folder' as const,
+      id: 'folder',
+      name: '',
+      bytes: storage.folderBytes ?? 0,
+      browserBytes: 0,
+      tint: 'var(--primary)',
+    },
+    {
+      kind: 'shared' as const,
+      id: 'shared',
+      name: '',
+      bytes: Math.max(0, storage.homeBytes - counted),
+      browserBytes: 0,
+      tint: 'var(--muted-foreground)',
+    },
+  ].filter((part) => part.bytes > 0)
+  const span = Math.max(
+    total,
+    parts.reduce((sum, part) => sum + part.bytes, 0)
+  )
+  return parts.map((part) => ({ ...part, fraction: part.bytes / span }))
+}
+
 /** The first word of a bot's name: how the computer's header and its return button address the bot. */
 export function botFirstName(name: string): string {
   return name.trim().split(/\s+/)[0] ?? name

@@ -330,6 +330,26 @@ export const fleetResourcesSchema = z.object({
   limitOoms: fleetNonNegativeIntSchema.nullable().default(null),
 })
 export type FleetResources = z.infer<typeof fleetResourcesSchema>
+/** What a bot takes on its environment's disk, as `du` counts it, measured every few minutes. */
+export const fleetBotStorageSchema = z.object({
+  /** Its own folders, browser profile (Chromium's caches included) and its conversations' files. */
+  usedBytes: fleetNonNegativeIntSchema,
+  /** The part of `usedBytes` its browser profile takes: site logins and data, and Chromium's caches. */
+  browserBytes: fleetNonNegativeIntSchema,
+  measuredAt: fleetTimestampSchema,
+})
+export type FleetBotStorage = z.infer<typeof fleetBotStorageSchema>
+/** What an environment takes on the server's disk, measured with its bots'. */
+export const fleetEnvironmentStorageSchema = z.object({
+  /** Its home volume: its bots' folders, Downloads, the shared database, accounts, runtimes and the rest. */
+  homeBytes: fleetNonNegativeIntSchema,
+  /** The part of `homeBytes` in Downloads, where every bot's browser saves files. */
+  downloadsBytes: fleetNonNegativeIntSchema,
+  /** A workspaces environment's own server folder, outside its home; null for any other. */
+  folderBytes: fleetNonNegativeIntSchema.nullable(),
+  measuredAt: fleetTimestampSchema,
+})
+export type FleetEnvironmentStorage = z.infer<typeof fleetEnvironmentStorageSchema>
 
 /** The steps of a bot's move to another environment, in order. */
 export const FLEET_BOT_MOVE_PHASES = [
@@ -554,6 +574,8 @@ export const fleetBotSchema = z.object({
   delegation: fleetBotDelegationSchema.nullable().default(null),
   /** The space its shared files take, reported by the running bot (`files-manage`); null otherwise. */
   sharedFiles: fleetFilesUsageSchema.nullable().default(null),
+  /** The disk it takes in its environment (`environment-storage`); null until measured, and from older servers. */
+  storage: fleetBotStorageSchema.nullable().default(null),
   /** The routine run its turn works on now, in the run's own conversation; null otherwise. */
   runningRun: fleetRunningRoutineRunSchema.nullable().default(null),
   /**
@@ -673,6 +695,8 @@ export const fleetEnvironmentSchema = z.object({
   lifecycle: fleetLifecycleSchema,
   setup: fleetEnvironmentSetupSchema,
   resources: fleetResourcesSchema,
+  /** The disk it takes (`environment-storage`); null until measured, and from older servers or images. */
+  storage: fleetEnvironmentStorageSchema.nullable().default(null),
   /** The limit the owner set for the container; null when it uses the gateway's default. */
   memoryLimitBytes: fleetNonNegativeNumberSchema.nullable(),
   /** The CPU limit the owner set, in CPUs; null when the container may use every CPU of the server. */

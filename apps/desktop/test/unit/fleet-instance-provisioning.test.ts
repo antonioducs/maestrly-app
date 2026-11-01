@@ -285,6 +285,7 @@ it('advertises provisioning, environments, environment compaction and transcript
     'files-manage',
     'runner-jobs',
     'bot-own-skills',
+    'environment-storage',
   ])
 })
 

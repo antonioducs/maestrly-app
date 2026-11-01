@@ -68,6 +68,11 @@ export const FLEET_FILE_LIMITS = {
  * the space used (`sharedFiles`).
  */
 export const FLEET_FILES_MANAGE_FEATURE = 'files-manage'
+/**
+ * Instance capability: the environment measures the disk its home folder, Downloads and each of its bots take
+ * (`environmentStorage`), and the gateway shows the figures on environments and bots (`storage`).
+ */
+export const FLEET_ENVIRONMENT_STORAGE_FEATURE = 'environment-storage'
 /** JSON body limit for routes that carry base64 attachments (20 MiB of images, base64-encoded, plus text). */
 export const FLEET_MESSAGE_BODY_MAX = 28 * 1024 * 1024
 

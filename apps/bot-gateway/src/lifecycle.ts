@@ -12,6 +12,7 @@ import {
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
   FLEET_ENVIRONMENT_LIMITS,
   FLEET_ENVIRONMENT_SETTINGS_FEATURE,
+  FLEET_ENVIRONMENT_STORAGE_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_PORTS,
   FLEET_WORKSPACES_HOST_FEATURE,
@@ -35,6 +36,7 @@ import {
   type FleetInstanceEvent,
   type FleetInstanceProfile,
   type FleetInstanceStatus,
+  type FleetInstanceStorage,
   type FleetInstanceTurn,
   type FleetBotTurn,
   fleetInstanceTurns,
@@ -138,6 +140,8 @@ function failureCode(error: unknown): FleetErrorCode {
   return error instanceof DockerError && error.status === 404 ? 'IMAGE_MISSING' : 'DOCKER_UNAVAILABLE'
 }
 export type InstanceFactory = (environmentId: string, token: string, host: string) => InstanceClient
+/** How often a running environment is asked for its disk figures once it has some; it measures them less often. */
+const STORAGE_POLL_MS = 60_000
 type Resources = ContainerStats & CgroupMemory & { startedAt: string | null }
 const resourcesView = (resources: Resources | undefined): FleetResources => ({
   memoryBytes: resources?.memoryBytes ?? null,
@@ -154,6 +158,10 @@ export class Lifecycle {
   readonly statuses = new Map<string, FleetInstanceStatus>()
   /** Container measurements, by environment. */
   readonly resources = new Map<string, Resources>()
+  /** Each environment's latest disk figures, kept while it is stopped: its home volume still takes that space. */
+  readonly storage = new Map<string, FleetInstanceStorage>()
+  private readonly storageAskedAt = new Map<string, number>()
+  private readonly storageAsking = new Set<string>()
   /** Whether an environment's container runs an older image than the configured one, by environment. */
   readonly imageOutdated = new Map<string, boolean>()
   readonly takeovers = new Map<string, FleetTakeoverState>()
@@ -595,6 +603,13 @@ export class Lifecycle {
     bot.usage = status?.usage ?? null
     bot.compactionState = status?.compaction ?? null
     bot.sharedFiles = status?.sharedFiles ?? null
+    const measured =
+      environment && bot.lifecycle !== 'archived'
+        ? this.storage.get(environment.id)?.bots.find((item) => item.botId === bot.id)
+        : undefined
+    bot.storage = measured
+      ? { usedBytes: measured.usedBytes, browserBytes: measured.browserBytes, measuredAt: measured.measuredAt }
+      : null
     bot.takeover = this.takeovers.get(bot.id) ?? bot.takeover
     bot.activity = status?.activity ?? null
     bot.pendingCount = status?.pending.length ?? 0
@@ -670,6 +685,7 @@ export class Lifecycle {
       lifecycle: environment.lifecycle,
       setup: environment.setup,
       resources: resourcesView(resources),
+      storage: this.storage.get(environment.id)?.environment ?? null,
       memoryLimitBytes: environment.memoryLimitBytes,
       cpuLimit: environment.cpuLimit,
       idleStopMinutes: environment.idleStopMinutes,
@@ -989,6 +1005,7 @@ export class Lifecycle {
       peerSettings: FLEET_PEER_THREAD_SETTINGS_DEFAULT,
       delegation: null,
       sharedFiles: null,
+      storage: null,
       createdAt: at,
       updatedAt: at,
     }
@@ -2012,6 +2029,8 @@ export class Lifecycle {
     this.cancelReconcile(id)
     this.stopLink(id)
     this.resources.delete(id)
+    this.storage.delete(id)
+    this.storageAskedAt.delete(id)
     this.imageOutdated.delete(id)
     this.instances.delete(id)
     this.applied.delete(id)
@@ -2931,10 +2950,37 @@ export class Lifecycle {
       }
     }
   }
+  /**
+   * Asks a running environment for its disk figures, without waiting: every time until it has some, then at most once a
+   * minute. A workspaces environment measures its server folder too when the folder is its own.
+   */
+  private refreshStorage(environment: StoredEnvironment) {
+    const id = environment.id
+    if (this.storageAsking.has(id) || !this.environmentCapabilities(id).includes(FLEET_ENVIRONMENT_STORAGE_FEATURE))
+      return
+    if (this.storage.get(id)?.environment && Date.now() - (this.storageAskedAt.get(id) ?? 0) < STORAGE_POLL_MS) return
+    this.storageAsking.add(id)
+    this.storageAskedAt.set(id, Date.now())
+    const folder = environment.kind === 'workspaces' && environment.hostFolder === 'own' && !!this.config.workspacesRoot
+    void this.client(id)
+      .environmentStorage(folder)
+      .then(
+        (figures) => {
+          const current = this.store.getEnvironment(id)
+          if (!current || current.archivedAt) return
+          const before = this.storage.get(id)
+          this.storage.set(id, figures)
+          if (figures.environment?.measuredAt !== before?.environment?.measuredAt) this.emitEnvironment(id)
+        },
+        () => {}
+      )
+      .finally(() => this.storageAsking.delete(id))
+  }
   /** Measures each running environment's container; a bot alone in its environment reports the figures too. */
   async refreshStats() {
     for (const environment of this.store.listEnvironments()) {
       if (environment.lifecycle !== 'running') continue
+      this.refreshStorage(environment)
       try {
         const container = await this.container(environment)
         if (!container) continue

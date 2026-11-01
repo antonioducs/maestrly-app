@@ -140,6 +140,7 @@ function environment(id: string, name = id, patch: Partial<FleetEnvironment> = {
       oomKills: null,
       limitOoms: null,
     },
+    storage: null,
     memoryLimitBytes: null,
     cpuLimit: null,
     idleStopMinutes: null,

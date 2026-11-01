@@ -72,10 +72,12 @@ import {
   fleetBotMoveSchema,
   fleetBotSchema,
   fleetBotStatusSchema,
+  fleetBotStorageSchema,
   fleetCeilingSchema,
   fleetEnvironmentIdSchema,
   fleetEnvironmentKindSchema,
   fleetEnvironmentSchema,
+  fleetEnvironmentStorageSchema,
   fleetCpuLimitSchema,
   fleetHostFolderModeSchema,
   fleetIdleStopMinutesSchema,
@@ -1209,6 +1211,15 @@ export const fleetInstanceEnvironmentStatusSchema = z.object({
   ),
 })
 export type FleetInstanceEnvironmentStatus = z.infer<typeof fleetInstanceEnvironmentStatusSchema>
+/**
+ * Capability `environment-storage`: the environment's latest disk figures, answered at once. Figures older than a few
+ * minutes, or none yet, start a new measurement in the background, whose result answers a later call.
+ */
+export const fleetInstanceStorageSchema = z.object({
+  environment: fleetEnvironmentStorageSchema.nullable(),
+  bots: z.array(fleetBotStorageSchema.extend({ botId: fleetBotIdSchema })).max(FLEET_ENVIRONMENT_LIMITS.botsMax),
+})
+export type FleetInstanceStorage = z.infer<typeof fleetInstanceStorageSchema>
 export const fleetInstanceInputSchema = z
   .object({
     idempotencyKey: fleetIdempotencyKeySchema,
@@ -2910,6 +2921,13 @@ export const FLEET_INSTANCE_ROUTES = {
   },
   /** Capability `runtime-updates`: checks for Claude Code and Codex releases in the background. */
   runtimesCheck: { method: 'POST', path: '/v1/runtimes/check', body: null, response: fleetRuntimesCheckResponseSchema },
+  /** Capability `environment-storage`; `?folder=1` also measures a workspaces host's own server folder. */
+  environmentStorage: {
+    method: 'GET',
+    path: '/v1/environment/storage',
+    body: null,
+    response: fleetInstanceStorageSchema,
+  },
   /** Capability `environment-compaction`: the model options of the environment's accounts; `current` is null. */
   environmentSelections: {
     method: 'GET',

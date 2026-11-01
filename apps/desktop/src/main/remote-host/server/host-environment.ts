@@ -45,7 +45,9 @@ export class HostEnvironment implements InstanceEnvironment {
     private readonly busy: () => boolean,
     private readonly computers: HostComputers | null = null,
     /** Whether it takes the calls of the bots it gives access to (`host-desktop-calls`): it has a host token. */
-    private readonly desktopCalls = false
+    private readonly desktopCalls = false,
+    /** The workspaces folder it mounts (`MAESTRLY_WORKSPACES_ROOT`): its own, or the server's shared one. */
+    private readonly folder: string | null = null
   ) {
     this.events = runtime.events
     this.settings = runtime.settings
@@ -58,6 +60,10 @@ export class HostEnvironment implements InstanceEnvironment {
   async environmentStatus() {
     const status = await this.runtime.environmentStatus()
     return { ...status, capabilities: [...status.capabilities, ...this.hostCapabilities()], bots: [] }
+  }
+  /** Its disk figures; its folder only when the gateway asks, which it does for a folder of its own. It has no bots. */
+  storage(folder: boolean) {
+    return this.runtime.measureStorage(folder ? this.folder : null)
   }
   private hostCapabilities(): string[] {
     return [

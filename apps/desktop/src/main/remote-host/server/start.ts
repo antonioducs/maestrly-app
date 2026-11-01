@@ -175,7 +175,8 @@ export async function startServerHostMode(window: BrowserWindow, deps: ServerHos
         computers: started.computers,
         conversationExists: (id) => getConversation(id) !== undefined,
       },
-      deps.bots.available
+      deps.bots.available,
+      config.workspacesRoot
     )
     const server = createInstanceControlServer(config, host, {
       bridge: deps.hub,

@@ -535,6 +535,7 @@ describe('instance control HTTP', () => {
       'files-manage',
       'runner-jobs',
       'bot-own-skills',
+      'environment-storage',
     ])
     const { base, environment } = await setup()
     const response = await send(base, 'GET', '/v1/environment/selections')

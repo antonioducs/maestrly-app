@@ -11,6 +11,7 @@ import {
   cpuLimitChoices,
   cpuLimitFromValue,
   cpuLimitValue,
+  environmentBots,
   idleStopChoices,
   idleStopFromValue,
   idleStopParts,
@@ -25,6 +26,7 @@ import { gb, outOfMemory, shownSwapBytes } from '@/lib/fleet/format'
 import { formatUptime } from '@/lib/fleet/forms'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import { cn } from '@/lib/utils'
+import { EnvironmentDisk } from './EnvironmentDisk'
 
 /** From this share of its limit on, the environment's memory shows as high. */
 const HIGH_MEMORY = 0.85
@@ -128,6 +130,7 @@ export function EnvironmentResources({
             </span>
           </p>
         )}
+        <EnvironmentDisk environment={environment} bots={environmentBots(environment, fleet.state.snapshot.bots)} />
         <p className="flex flex-wrap gap-x-5 gap-y-1.5 text-[12.5px] text-muted-foreground">
           {swapBytes !== null && (
             <span>
