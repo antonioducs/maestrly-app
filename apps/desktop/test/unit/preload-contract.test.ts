@@ -456,7 +456,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(697)
+    expect(keys).toHaveLength(701)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -1572,6 +1572,25 @@ describe('preload API — chat pagination (#559)', () => {
     expect(invokeSpy).toHaveBeenLastCalledWith('chat:maestro-configurator:cancel', 'turn-1')
     api.chatMaestroConfiguratorReset()
     expect(invokeSpy).toHaveBeenLastCalledWith('chat:maestro-configurator:reset')
+    const event = { kind: 'proposal-applied', proposalId: 'proposal-1' } as const
+    api.chatMaestroConfiguratorRecordEvent(event)
+    expect(invokeSpy).toHaveBeenLastCalledWith('chat:maestro-configurator:record-event', event)
+  })
+
+  it('keeps the Settings Maestro draft session on dedicated channels', () => {
+    const session = {
+      profileId: 'global',
+      profileName: '',
+      draft: { version: 1, strategy: 'balanced', pool: [] } as any,
+      orchestrator: null,
+      savedHash: 'maestro-v1-00000000',
+    }
+    api.chatMaestroSettingsDraftGet()
+    expect(invokeSpy).toHaveBeenLastCalledWith('chat:maestro:settings-draft:get')
+    api.chatMaestroSettingsDraftSet(session)
+    expect(invokeSpy).toHaveBeenLastCalledWith('chat:maestro:settings-draft:set', session)
+    api.chatMaestroSettingsDraftClear()
+    expect(invokeSpy).toHaveBeenLastCalledWith('chat:maestro:settings-draft:clear')
   })
 
   it('exposes the per-conversation Fast preference on dedicated channels', () => {

@@ -9,7 +9,7 @@ import { maestroConfiguratorService, type MaestroConfiguratorService } from './m
 
 interface MaestroConfiguratorIpcDependencies {
   mhandle: (channel: string, handler: (event: IpcMainInvokeEvent, ...args: any[]) => unknown) => void
-  service?: Pick<MaestroConfiguratorService, 'state' | 'setProfile' | 'send' | 'cancel' | 'reset'>
+  service?: Pick<MaestroConfiguratorService, 'state' | 'setProfile' | 'send' | 'cancel' | 'reset' | 'recordEvent'>
 }
 
 const profileFrom = (value: unknown): MaestroConfiguratorProfile => {
@@ -38,6 +38,16 @@ export function registerMaestroConfiguratorIpc(dependencies: MaestroConfigurator
   dependencies.mhandle('chat:maestro-configurator:cancel', (_event, turnId?: unknown) => ({
     ok: service.cancel(typeof turnId === 'string' ? turnId : undefined),
   }))
+  dependencies.mhandle('chat:maestro-configurator:record-event', (event, value: unknown) => {
+    const message = service.recordEvent(value)
+    if (message && !event.sender.isDestroyed()) {
+      event.sender.send(MAESTRO_CONFIGURATOR_EVENT_CHANNEL, {
+        kind: 'message',
+        message,
+      } satisfies MaestroConfiguratorEvent)
+    }
+    return { ok: message !== null }
+  })
   dependencies.mhandle('chat:maestro-configurator:reset', (event) => {
     service.reset((payload) => {
       if (!event.sender.isDestroyed()) event.sender.send(MAESTRO_CONFIGURATOR_EVENT_CHANNEL, payload)

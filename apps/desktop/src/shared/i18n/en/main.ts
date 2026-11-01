@@ -5,6 +5,10 @@ export default {
     defaultAccountLabel: 'Default account',
   },
 
+  maestroConfigurator: {
+    readingImage: 'Reading image {{index}} of {{count}}…',
+  },
+
   openExternal: {
     pathNotFound: 'path not found',
     vscodeNotFound: 'VS Code (code) not found',

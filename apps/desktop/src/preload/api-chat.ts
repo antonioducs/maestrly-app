@@ -93,6 +93,8 @@ import {
   type MaestroConfiguratorSendInput,
   type MaestroConfiguratorSendResult,
   type MaestroConfiguratorState,
+  type MaestroConfiguratorThreadEvent,
+  type MaestroSettingsDraftSession,
 } from '../shared/maestro-configurator'
 import type {
   ConversationSubagentProfileConfigPayload,
@@ -493,6 +495,16 @@ export function makeChatApi(ipcRenderer: IpcTransport) {
     chatMaestroConfiguratorCancel: (turnId?: string): Promise<{ ok: boolean }> =>
       ipcRenderer.invoke('chat:maestro-configurator:cancel', turnId),
     chatMaestroConfiguratorReset: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('chat:maestro-configurator:reset'),
+    /** Tells the assistant thread about an editor action (apply, discard, save, strategy switch). */
+    chatMaestroConfiguratorRecordEvent: (event: MaestroConfiguratorThreadEvent): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('chat:maestro-configurator:record-event', event),
+    /** The Settings editor's unsaved state, kept by the host while the app runs. */
+    chatMaestroSettingsDraftGet: (): Promise<MaestroSettingsDraftSession | null> =>
+      ipcRenderer.invoke('chat:maestro:settings-draft:get'),
+    chatMaestroSettingsDraftSet: (session: MaestroSettingsDraftSession): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('chat:maestro:settings-draft:set', session),
+    chatMaestroSettingsDraftClear: (): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('chat:maestro:settings-draft:clear'),
     onChatMaestroConfiguratorEvent: (callback: (event: MaestroConfiguratorEvent) => void): (() => void) => {
       const listener = (_event: unknown, payload: MaestroConfiguratorEvent) => callback(payload)
       ipcRenderer.on(MAESTRO_CONFIGURATOR_EVENT_CHANNEL, listener)

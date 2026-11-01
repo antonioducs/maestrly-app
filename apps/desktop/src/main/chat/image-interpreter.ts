@@ -832,6 +832,35 @@ async function describeImageOn(
   return result.text ?? ''
 }
 
+/**
+ * One isolated transcription for a host surface that keeps no conversation (the Maestro configuration assistant):
+ * no cache, no persisted part, bounded by the same timeout as conversation images. Throws when the model fails.
+ */
+export async function describeStandaloneImage(args: {
+  interpreter: ChatImageInterpreter
+  image: { name: string; mediaType: string; bytes: Uint8Array }
+  surfaceId: string
+  cwd: string
+  signal: AbortSignal
+}): Promise<string> {
+  const base64 = Buffer.from(args.image.bytes).toString('base64')
+  const signal = AbortSignal.any([args.signal, AbortSignal.timeout(DESCRIBE_TIMEOUT_MS)])
+  const text = await describeImage(
+    args.interpreter,
+    {
+      name: args.image.name,
+      mediaType: args.image.mediaType,
+      base64,
+      dataUrl: `data:${args.image.mediaType};base64,${base64}`,
+    },
+    args.surfaceId,
+    args.cwd,
+    signal
+  )
+  signal.throwIfAborted()
+  return text.trim()
+}
+
 /** Describes an image returned by a tool without turning it into a persisted attachment. */
 function startEphemeralImageDescription(args: {
   key: string
