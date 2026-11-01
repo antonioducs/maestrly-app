@@ -46,6 +46,7 @@ import type { ConversationExperience } from '../../../shared/conversation-experi
 import type { SubagentAgentDto } from '../../../shared/subagent-profiles'
 import { pasteShortcutLabel } from '../../../shared/shortcuts'
 import { MentionEditor, type MentionEditorHandle } from './MentionEditor'
+import { TurnChanges, visibleTurnChanges, type TurnChangesEntry, type TurnChangesState } from './TurnChanges'
 
 function textOnly(m: ChatMessage): string {
   return m.parts
@@ -656,6 +657,7 @@ const Bubble = memo(function Bubble({
   onUiSend,
   searchQuery,
   currentSearchMatch,
+  turnChangesEntry,
 }: {
   message: ChatMessage
   canEdit: boolean
@@ -679,6 +681,8 @@ const Bubble = memo(function Bubble({
   onUiSend?: (text: string) => void
   searchQuery?: string
   currentSearchMatch?: boolean
+  /** The file changes of the turn that wrote this answer. */
+  turnChangesEntry?: TurnChangesEntry
 }) {
   const { t } = useTranslation('chat')
   const { openSettings } = useSettings()
@@ -687,6 +691,7 @@ const Bubble = memo(function Bubble({
   const isUser = message.role === 'user'
   const text = plainText(message)
   const bodyText = textOnly(message)
+  const turnChanges = visibleTurnChanges(message, turnChangesEntry)
 
   const files = message.parts.filter((p): p is Extract<MessagePart, { type: 'file' }> => p.type === 'file' && !p.hidden)
 
@@ -943,12 +948,14 @@ const Bubble = memo(function Bubble({
         </div>
       )}
       {(text.trim() ||
+        turnChanges ||
         (!isReviewLoopSource && (message.responseDurationMs != null || message.responseStartedAt != null))) && (
-        <div className="flex items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
           <div className="opacity-0 transition-opacity group-hover:opacity-100">
             {text.trim() && <CopyButton text={text} />}
           </div>
           {!isReviewLoopSource && <ResponseDuration message={message} />}
+          {turnChanges && <TurnChanges entry={turnChanges} />}
         </div>
       )}
     </>
@@ -1003,6 +1010,8 @@ interface Props extends EditCtx {
   onUiSend?: (text: string) => void
   /** What review receipts need: a check that runs, whether the agent works, and their actions. */
   reviewReceipt?: ReviewReceiptProps
+  /** Each turn's file changes, with undo; absent where turns are not snapshotted. */
+  turnChanges?: TurnChangesState
 }
 
 /** Absent actions leave receipts read-only. */
@@ -1034,6 +1043,7 @@ export const ChatMessageList = memo(function ChatMessageList({
   onRetrySteering,
   onUiSend,
   reviewReceipt,
+  turnChanges,
 }: Props) {
   const ownerWindow = useChatOwnerWindow() as Window & typeof globalThis
   const { t } = useTranslation('chat')
@@ -1255,6 +1265,7 @@ export const ChatMessageList = memo(function ChatMessageList({
             onUiSend={readOnly ? undefined : onUiSend}
             searchQuery={searchHitIds?.has(m.id) ? searchQuery : undefined}
             currentSearchMatch={currentSearchHitId === m.id}
+            turnChangesEntry={turnChanges?.byMessage.get(m.id)}
           />
         </div>
       ))}

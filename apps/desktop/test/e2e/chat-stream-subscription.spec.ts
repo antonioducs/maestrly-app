@@ -153,7 +153,9 @@ test('live chat subscriptions survive renderer churn during a turn', async () =>
     await page.locator('.chat-input[contenteditable="true"]:visible').fill('recovered-turn')
     await page.locator('button[title="Send"]:visible').click()
     await expect(page.getByText('Streaming answer:', { exact: false }).last()).toBeVisible()
-    expect(requests).toBe(2)
+    // The text above already matches the first answer; wait for the second turn to reach the model, which first
+    // snapshots the folder.
+    await expect.poll(() => requests).toBe(2)
     chunk(live!, 'recovered.')
     chunk(live!, '', 'stop')
     live!.end('data: [DONE]\n\n')

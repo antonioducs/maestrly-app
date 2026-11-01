@@ -21,6 +21,7 @@ import { COMPOSER_DRAFT_EVENT, clearComposerPrefill, joinDraft, peekComposerPref
 import { scrollChatSearchResult } from '@/lib/chat-search-scroll'
 import { subscribeSubagentProfilesChanged } from '@/lib/subagent-catalog-events'
 import { useHostApi, useHostId } from '@/lib/hosts/host-context'
+import { useTurnChangesState } from './TurnChanges'
 import { isRemoteHostId } from '../../../shared/host-key'
 import {
   composeReviewHandoff,
@@ -1020,6 +1021,7 @@ export function ChatView({
     [api, applyReview, conversationId, reloadLatestPage, sendReviewMessage, t]
   )
   const checkJob = review?.kind === 'check' ? review : null
+  const turnChanges = useTurnChangesState(conversationId, streaming)
   const reviewReceipt = useMemo(
     () => ({ check: checkJob, busy: streaming, actions: reviewReceiptActions }),
     [checkJob, streaming, reviewReceiptActions]
@@ -2279,6 +2281,7 @@ export function ChatView({
                       ])
                     }
                     reviewReceipt={reviewReceipt}
+                    turnChanges={turnChanges}
                     onOpenMention={openMention}
                     onUiSend={sendUiMessage}
                     scrollContainerRef={scrollRef}

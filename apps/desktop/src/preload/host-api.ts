@@ -14,6 +14,7 @@ import { makePtyApi, ptyApi } from './api-pty'
 import { makeReviewApi, reviewApi } from './api-review'
 import { makeRuntimeAssetsApi, runtimeAssetsApi } from './api-runtime-assets'
 import { makeSettingsHostApi, settingsHostApi } from './api-settings'
+import { makeTurnSnapshotsApi, turnSnapshotsApi } from './api-turn-snapshots'
 import { makeWorkspaceApi, workspaceApi } from './api-workspace'
 import type { IpcTransport } from './ipc-transport'
 
@@ -37,6 +38,7 @@ export function makeHostApi(ipcRenderer: IpcTransport) {
     ...makePluginsApi(ipcRenderer),
     ...makeBotApi(ipcRenderer),
     ...makeHostFsApi(ipcRenderer),
+    ...makeTurnSnapshotsApi(ipcRenderer),
   }
 }
 export type HostApi = ReturnType<typeof makeHostApi>
@@ -60,4 +62,5 @@ export const localHostApi: HostApi = {
   ...pluginsApi,
   ...botApi,
   ...hostFsApi,
+  ...turnSnapshotsApi,
 }

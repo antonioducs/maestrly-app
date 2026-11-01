@@ -17,6 +17,7 @@ import { deleteConversationGeneratedImages } from './chat/generated-images'
 import { deleteConversationAttachmentImages } from './chat/attachment-artifacts'
 import { deleteConversationToolImageMetadata } from './chat/tool-output'
 import { removeConversationTempDir } from './chat/conversation-temp'
+import { scheduleTurnSnapshotCleanup } from './turn-snapshots/maintenance'
 
 import { tMain } from './i18n'
 import { deleteCodexThreadForConversation } from './chat/codex-subscription/lifecycle'
@@ -142,6 +143,7 @@ export async function deleteConversation(
     await deleteConversationAttachmentImages(id)
     // Its processes were stopped above; a borrowed or shared checkout still loses only this conversation's directory.
     await removeConversationTempDir(id)
+    scheduleTurnSnapshotCleanup()
   }
 
   if (conv.scope === 'standalone') {

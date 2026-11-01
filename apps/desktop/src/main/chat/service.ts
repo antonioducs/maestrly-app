@@ -367,6 +367,7 @@ import {
 } from './image-gen'
 import { isImageGenProvider } from '../../shared/image-generation'
 import { GENERATED_INTERFACES_FLAG, generatedInterfacesEnabled } from './generated-interfaces'
+import { beginTurnSnapshot, type TurnSnapshotHandle } from '../turn-snapshots/lifecycle'
 import {
   clearWebSearchKey,
   getWebSearchProvider,
@@ -4402,6 +4403,7 @@ async function startSendAttempt(
   let antigravityIdentityAtAdmission: AntigravityAccountIdentity | undefined
   let grokIdentityAtAdmission: GrokAccountIdentity | undefined
   let releaseCwdActivity: (() => void) | null = null
+  let turnSnapshot: TurnSnapshotHandle | null = null
   let admittedRun: ActiveRun | null = null
   // A frozen or isolated turn keeps its children on their model too (released when the turn or its admission ends).
   let releaseStrictSelection: (() => void) | null = null
@@ -4709,6 +4711,7 @@ async function startSendAttempt(
     }
     releaseCwdActivity = tryAcquireCwdActivity(conv.cwd, 'chat', internalLoop?.cwdActivityOwner)
     if (!releaseCwdActivity) return { ok: false, error: 'cwd-locked' }
+    turnSnapshot = beginTurnSnapshot({ conversation: conv, botTurn: !!opts?.botAdmission })
 
     // Start the clock before portable compaction/mention reads, which count toward response time.
     const responseStartedAt = Date.now()
@@ -5354,6 +5357,7 @@ async function startSendAttempt(
     turnMemory?.commit()
     // Sidecars now have an owner row — finally no longer touches them.
     messageDurable = true
+    await turnSnapshot?.attach(userMessageId)
     // The session's start hooks ran for this boundary only once their context is part of a stored message.
     if (hookSessionToRecord !== null)
       patchConvUiPrefs(conversationId, { hookSession: { boundary: hookSessionToRecord } })
@@ -6582,6 +6586,7 @@ async function startSendAttempt(
         if (active.get(conversationId) === run) active.delete(conversationId)
         clearHumanTurnOrigin(conversationId, run)
         clearLinkedTurnOrigin(conversationId, run)
+        turnSnapshot?.end(run.messageId || null)
         releaseCwdActivityOnce()
         if (!isolated && !controller.signal.aborted && !isChatGptWebProvider(selection?.providerId)) {
           scheduleMemoryExtraction(conversationId)
@@ -6703,6 +6708,7 @@ async function startSendAttempt(
     if (admittedRun && active.get(conversationId) === admittedRun) active.delete(conversationId)
     if (admittedRun) clearHumanTurnOrigin(conversationId, admittedRun)
     if (admittedRun) clearLinkedTurnOrigin(conversationId, admittedRun)
+    turnSnapshot?.end(admittedRun?.messageId || null)
     releaseCwdActivityOnce()
     if (admittedRun) {
       admittedRun.maestroLive?.finish(admittedRun.controller.signal.aborted ? 'aborted' : 'error')
@@ -6724,6 +6730,7 @@ async function startSendAttempt(
   } finally {
     settleCodexRuntimeLeaseIfUnowned()
     settleClaudeRuntimeLeaseIfUnowned()
+    turnSnapshot?.abandon()
     releaseConversationOperation(conversationId, operation)
     // Exit without a durable message → sidecars created during this admission would be orphaned (no owner row).
     if (!messageDurable && createdArtifactIds.length) {
