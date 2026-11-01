@@ -5,6 +5,8 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-11-01
+
 ### Added
 
 - When a model reaches its usage limit, loses its login, is unavailable or runs
@@ -29,6 +31,82 @@ User-visible changes by version. Downloads are on
   or redo what you undid. It works in folders with or without Git, never writes
   in the project's Git data, and keeps snapshots for 7 days in the profile. See
   [Undoing a turn's file changes](docs/chat-context.md#undoing-a-turns-file-changes).
+- Bots can keep skills of their own. A bot saves a procedure it learned as a
+  skill, finds it again in its own conversations and improves it with a reason
+  for every change; its skills move, back up and are deleted with the bot. In
+  the bot's **Settings → Skills** you see them, with their history, compare and
+  restore a version, edit the files, archive or lock one, and turn on **review
+  changes before they take effect**, which holds the bot's changes as proposals
+  with a diff for you to approve or discard. From its memory, a bot can also
+  suggest a skill, always as a proposal. It needs a bot server and a bot
+  environment image on this version. See [Bot skills](docs/bot-fleet.md#bot-skills).
+- See how much disk each environment and each bot takes. The **Server** page has
+  a **Disk** column, and an environment's page splits its disk into each bot,
+  **Downloads**, the server folder of a workspaces environment and **Shared and
+  system**, with how much of each bot's disk is its browser profile. Until the
+  first measurement, and on an older server or environment image, it shows `—`.
+  The mobile app does not show it yet.
+- Review a Maestro setup proposal in the Pool. Each agent is one row with its
+  models and fallbacks, and you accept or leave out the proposal's strategy and
+  each agent's changes before they reach the draft; leaving everything out
+  records the proposal as dismissed, and the assistant is told what you left
+  out. The setup assistant can be resized and has its own model, reasoning and
+  Fast choices.
+
+### Changed
+
+- `history_search` finds messages by what they are about. It ranks them by
+  relevance, with accents and word stems ignored, `"quoted phrases"` kept
+  together, parts of words and Chinese, Japanese and Korean text found, and
+  tool calls searchable, instead of listing only messages that contain every
+  word, newest first. Without a query it outlines the conversation, and the
+  agent can search the other project conversations of the same workspace in the
+  desktop app. `mode: "exact"` keeps the old behavior. Maestrly builds its index
+  in a local file in the background; until it is ready a search still works,
+  only slower. The index stays on this computer. See
+  [Conversation history tools](docs/chat-context.md#conversation-history-tools).
+- Context compaction summarizes into fixed sections (objective, constraints,
+  decisions, work state, pending requests, next steps, files, exact identifiers
+  and errors), updates the previous summary instead of rewriting it, and keeps
+  the last part of the conversation word for word. When the summary fails,
+  Maestrly continues with a plainer digest and a warning on the divider instead
+  of blocking your turn. Old tool outputs are trimmed before a send when that
+  alone is enough, and a summary made in the middle of a turn in an API-key
+  conversation reuses the provider's cache. Interactive Anthropic API-key
+  conversations keep the start of the conversation cached for an hour.
+- Models' malformed tool calls are repaired before they fail, on every model and
+  runtime: numbers or lists written as text, arguments encoded twice, other
+  agents' key names, cut-off JSON and invented tool names. A call that cannot be
+  repaired returns a list of what is wrong, the history of tool calls is cleaned
+  before each request to Anthropic and OpenAI-compatible API-key providers, and a
+  model that repeats the same call or the same text is stopped with an
+  explanation. See
+  [Tool-call robustness](docs/harness-profiles.md#tool-call-robustness).
+- Claude and Codex accounts have one **account rotation** per provider, in
+  **Settings → Accounts**, instead of a failover list on each account: an ordered
+  queue, a policy, accounts that join on their own and the recent switches. It
+  applies to every model set to the provider's **Active account**, and to the
+  bots that choose it. An account you choose directly is fixed: when it runs out,
+  the turn stops and says so instead of switching. On first start, the failover
+  routes you had turned on become the provider's rotation (when several accounts
+  had one, the one with the most choices wins) and the choices on that account
+  move to **Active account**; a bot keeps the account it chose, and the code
+  reviewer's and Maestro's settings stay on their account. For bots it needs a
+  bot server and an environment image on this version. See
+  [Model fallback](docs/model-failover.md).
+
+### Fixed
+
+- Bots with runner tools now send heavy work to a runner. Video and audio, AI
+  models and GPUs, full test suites, large builds and batch processing are meant
+  for a runner unless you ask the bot to run them locally or it has none; before,
+  bots mostly ran them in their shared environment. Bots pick this up when their
+  environment runs this version.
+- Memory no longer loses the procedures it saved. Consolidation merges only
+  entries Maestrly saved on its own and never procedures, keeps their line
+  breaks and rejects a merge that shortens the longest original; what the agent
+  saves starts with a higher importance, procedures higher still, and the memory
+  extractor sees more of each tool call. This applies in every memory space.
 
 ## [0.31.0] - 2026-10-31
 
