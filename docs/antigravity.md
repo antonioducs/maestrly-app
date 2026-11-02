@@ -126,6 +126,14 @@ full. If the prompt still cannot fit, Maestrly stops with an error before sendin
 it; shorten the message or compact the conversation and retry. Summarization
 uses stages that fit the same limit.
 
+The first prompt also carries every tool's description and schema. Over a budget
+of 96 KB, Maestrly lists MCP tools with a one-line summary, then app tools if
+that is not enough; core, skill and delegation tools keep their schemas. The
+model fetches the full entries with `get_tool_schemas`, and a call to a
+summarized tool with invalid arguments returns that tool's schema. Subagents get
+the same treatment. When the instructions and tool list alone already exceed the
+limit, Maestrly stops with that cause instead of compacting the history.
+
 ## Credentials and local data
 
 Each Google account gets its own app-owned home directory in the profile, created
