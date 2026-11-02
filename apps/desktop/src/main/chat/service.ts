@@ -5434,6 +5434,8 @@ async function startSendAttempt(
     // The runner does NOT rethrow turn errors (emits a stream 'error' event and resolves) → capture here so
     // final status becomes 'error' (sound + error icon), not 'ready'.
     let hadError = false
+    // What the last error event told the user; the turn's outcome carries it to callers such as bots and peers.
+    let turnErrorMessage: string | undefined
     // CUT turn (CUT_FINISH_REASONS): 'interrupted' (continuation exhausted), 'other'/'unknown' (abnormal provider
     // termination, e.g. codex-proxy with dead upstream), 'tool-calls' (MAX_STEPS), 'length' (max_tokens).
     // None indicates completion: work may be unfinished. Treat as 'error' rather than green/ready. The runner
@@ -5463,6 +5465,7 @@ async function startSendAttempt(
       }
       if (ev.kind === 'error') {
         hadError = true
+        turnErrorMessage = ev.message.trim() || turnErrorMessage
         modelFallbackErrorEvent = { message: ev.message, ...(ev.code ? { code: ev.code } : {}) }
         // A limit the provider names in an overflow error tunes the next preflight of this BYOK model.
         if (!isSubscriptionProvider(selection!.providerId)) {
@@ -6499,7 +6502,7 @@ async function startSendAttempt(
         } else if (hadError || wasInterrupted) {
           run.settleOutcome({
             status: 'error',
-            error: wasInterrupted ? 'turn-interrupted' : 'turn-failed',
+            error: (hadError && turnErrorMessage) || (wasInterrupted ? 'turn-interrupted' : 'turn-failed'),
             assistantMessageId: run.messageId || null,
           })
         } else {

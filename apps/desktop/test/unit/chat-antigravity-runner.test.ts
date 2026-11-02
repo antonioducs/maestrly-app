@@ -134,6 +134,19 @@ function seedOversizedHistory() {
   } as never)
 }
 
+/** `count` MCP tools with ~2 KB of description and schema each, as a large media server publishes. */
+function syntheticMcpTools(count: number, description: string): Record<string, unknown> {
+  const tools: Record<string, unknown> = {}
+  for (let index = 0; index < count; index += 1) {
+    tools[`mcp_tool_${String(index).padStart(4, '0')}`] = tool({
+      description: `${description}${'Detail about its options and limits. '.repeat(25)}`,
+      inputSchema: z.object({ prompt: z.string().describe('What to generate. '.repeat(50)) }),
+      execute: async () => 'done',
+    })
+  }
+  return tools
+}
+
 async function cancelSlowTurn() {
   const controller = new AbortController()
   const pending = turn('SLOW', { signal: controller.signal })
@@ -348,6 +361,47 @@ describe('Antigravity chat runner', () => {
     const { events } = await turn('ECHO hi', { compactHistory })
     expect(compactHistory).toHaveBeenCalledTimes(2)
     expect(events.at(-1)).toMatchObject({ kind: 'error', message: expect.stringMatching(/too large/) })
+    expect(fake.requests('session/prompt')).toHaveLength(0)
+  })
+
+  it('lists MCP tools without schemas once the catalog outgrows its budget and serves them on request', async () => {
+    h.mcpTools = { echo, ...syntheticMcpTools(60, 'Generates media on the synthetic server. ') }
+    const { events } = await turn('TOOL get_tool_schemas {"names":["maestrly_mcp_tool_0007"]}')
+    const prompt = promptText(fake.requests('session/prompt').at(-1))
+    expect(prompt).toContain('- maestrly_mcp_tool_0007: Generates media on the synthetic server.\n')
+    expect(prompt).not.toMatch(/- maestrly_mcp_tool_0007: .+\n {2}arguments:/)
+    expect(prompt).toMatch(/- maestrly_get_tool_schemas: .+\n {2}arguments:/)
+    // Maestrly's own tools still fit with their schemas.
+    expect(prompt).toMatch(/- maestrly_memory_list: .+\n {2}arguments:/)
+    expect(Buffer.byteLength(prompt, 'utf8')).toBeLessThan(ANTIGRAVITY_PROMPT_TEXT_MAX_BYTES)
+    expect(textOf(events)).toMatch(/^tool-result:- maestrly_mcp_tool_0007: Generates media .+\n {2}arguments: \{/)
+    // The lookup is the host's own: no tool card.
+    expect(kinds(events)).not.toContain('tool-call')
+    expect(events.at(-1)).toMatchObject({ kind: 'finish' })
+  })
+
+  it('fails without compacting when the instructions and tool list alone exceed the limit', async () => {
+    seedOversizedHistory()
+    h.mcpTools = syntheticMcpTools(1_500, `Handles ${'a very long clause without a full stop '.repeat(8)}`)
+    const compactHistory = vi.fn(async () => ({ summary: 'unused' }))
+    const { events } = await turn('ECHO hi', { compactHistory })
+    expect(compactHistory).not.toHaveBeenCalled()
+    expect(events.at(-1)).toMatchObject({
+      kind: 'error',
+      message: expect.stringMatching(/Nothing was sent\. Maestrly's instructions and tool list alone exceed it/),
+    })
+    expect(fake.requests('session/prompt')).toHaveLength(0)
+  })
+
+  it('fails without compacting when the message alone exceeds the limit', async () => {
+    seedOversizedHistory()
+    const compactHistory = vi.fn(async () => ({ summary: 'unused' }))
+    const { events } = await turn(`ECHO ${'y'.repeat(ANTIGRAVITY_PROMPT_TEXT_MAX_BYTES)}`, { compactHistory })
+    expect(compactHistory).not.toHaveBeenCalled()
+    expect(events.at(-1)).toMatchObject({
+      kind: 'error',
+      message: expect.stringMatching(/The message alone exceeds it/),
+    })
     expect(fake.requests('session/prompt')).toHaveLength(0)
   })
 

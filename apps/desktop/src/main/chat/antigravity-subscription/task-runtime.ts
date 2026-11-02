@@ -64,6 +64,8 @@ export interface CreateAntigravityTaskRuntimeArgs {
   assistantId: string
   agents: readonly ChatAgent[]
   tools: ToolSet
+  /** MCP and app tools: runtimes that load tools on demand may defer them. */
+  deferredToolNames?: ReadonlySet<string>
   coordinator: SubagentCoordinator
   subagentUsage: Map<string, ChatSubagentUsage>
   apply: (event: ChatStreamEvent) => void
@@ -262,6 +264,7 @@ export function createAntigravityTaskRuntime(args: CreateAntigravityTaskRuntimeA
           task,
           readOnly,
           tools: namespacedChildTools,
+          ...(args.deferredToolNames ? { deferredToolNames: args.deferredToolNames } : {}),
           allowedToolNames: selectedChildToolNames,
           broker: args.broker,
           questionBroker: args.questionBroker,

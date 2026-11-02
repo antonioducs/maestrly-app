@@ -22,7 +22,6 @@ import {
 } from './manager'
 import { resolveAntigravityModelValue } from './models'
 import { assertAntigravityPromptFits } from './prompt-limit'
-import { renderAntigravityToolCatalog } from './tool-catalog'
 
 const FORBIDDEN_CHILD_TOOLS = new Set<string>([
   'task',
@@ -46,6 +45,8 @@ export interface RunAntigravitySubagentArgs {
   readOnly: boolean
   harness?: ResolvedHarness
   tools: ToolSet
+  /** MCP and app tools, which the catalog lists without schemas when it outgrows its budget. */
+  deferrableToolNames?: ReadonlySet<string>
   allowSkillLoader?: boolean
   progress?: (line: string) => void
   onTextUpdate?: SubagentTextUpdateHandler
@@ -114,9 +115,11 @@ export async function runAntigravitySubagent(args: RunAntigravitySubagentArgs): 
       effective.sentEffort ?? undefined
     )
     if (!modelValue) throw new AntigravityModelUnavailableError(effective.modelId)
-    const childToolset = await registerAntigravityHostToolset(tools)
+    const childToolset = await registerAntigravityHostToolset(tools, {
+      summarizable: args.deferrableToolNames ? [[...args.deferrableToolNames]] : [],
+    })
     toolset = childToolset
-    const prompt = `<maestrly_instructions>\n${instructions}\n</maestrly_instructions>\n\n${renderAntigravityToolCatalog(childToolset.specs)}\n\n# Task\n${args.task}`
+    const prompt = `<maestrly_instructions>\n${instructions}\n</maestrly_instructions>\n\n${childToolset.catalog}\n\n# Task\n${args.task}`
     assertAntigravityPromptFits([{ type: 'text', text: prompt }])
     const connection = await args.manager.connection(args.signal)
     const { client } = connection

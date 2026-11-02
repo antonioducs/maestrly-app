@@ -39,10 +39,26 @@ export class AntigravityRuntimeStoppedError extends Error {
   }
 }
 
+/**
+ * What exceeds the limit: the conversation (compacting helps), Maestrly's instructions and tool list, or the
+ * message with its attachments (neither can be compacted).
+ */
+export type AntigravityPromptOverflow = 'conversation' | 'setup' | 'message'
+
+const PROMPT_OVERFLOW_ADVICE: Record<AntigravityPromptOverflow, string> = {
+  conversation: 'Compact the conversation or shorten the message, then try again.',
+  setup:
+    "Maestrly's instructions and tool list alone exceed it, so compacting cannot help. Turn off MCP servers this conversation does not need, or choose another model.",
+  message: 'The message alone exceeds it. Shorten the message or its attachments, then try again.',
+}
+
 export class AntigravityPromptTooLargeError extends Error {
-  constructor(bytes: number) {
+  constructor(
+    bytes: number,
+    readonly overflow: AntigravityPromptOverflow = 'conversation'
+  ) {
     super(
-      `This request is too large for Google Antigravity (${bytes.toLocaleString('en-US')} bytes of text; the runtime drops everything after 192,000). Nothing was sent. Compact the conversation or shorten the message, then try again.`
+      `This request is too large for Google Antigravity (${bytes.toLocaleString('en-US')} bytes of text; the runtime drops everything after 192,000). Nothing was sent. ${PROMPT_OVERFLOW_ADVICE[overflow]}`
     )
     this.name = 'AntigravityPromptTooLargeError'
   }

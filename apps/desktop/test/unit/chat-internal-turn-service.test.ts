@@ -563,6 +563,25 @@ describe('isolated internal turn service API', () => {
     expect(await failed.handle.done).toMatchObject({ status: 'error', error: 'provider failed' })
   })
 
+  it('carries the error a runner reported in the stream into the outcome', async () => {
+    h.runChat.mockImplementationOnce(async (args: { emit: (event: unknown) => void }) => {
+      args.emit({ kind: 'message-start', messageId: 'assistant-failed', model: SELECTION, createdAt: Date.now() })
+      args.emit({ kind: 'error', messageId: 'assistant-failed', message: 'Synthetic prompt limit exceeded.' })
+      return { planSubmitted: false }
+    })
+    const failed = await startInternalChatTurn({
+      conversationId: 'conv-chat',
+      prompt: 'round',
+      selection: SELECTION,
+      loopId: 'rl_1',
+      iteration: 1,
+      maxIterations: 5,
+      signal: new AbortController().signal,
+    })
+    if (!failed.ok) throw new Error('esperava ok')
+    expect(await failed.handle.done).toMatchObject({ status: 'error', error: 'Synthetic prompt limit exceeded.' })
+  })
+
   it('accepts isolated Codex threads without binding persistence', async () => {
     codexH.setStatus('', 'padrao@example.com')
     codexH.preferredFastTier = null

@@ -154,6 +154,52 @@ describe('Antigravity host MCP server', () => {
     toolset.dispose()
   })
 
+  it('serves the schemas of tools the catalog lists without them, and repeats one after invalid arguments', async () => {
+    const count = vi.fn(async ({ count }: { count: number }) => `count:${count}`)
+    const big = tool({
+      description: `Big tool. ${'Long explanation. '.repeat(6_000)}`,
+      inputSchema: z.object({ count: z.number() }),
+      execute: count,
+    })
+    const toolset = await registerAntigravityHostToolset({ ...tools, big }, { summarizable: [['big']] })
+    expect([...toolset.summarized]).toEqual(['big'])
+    expect(toolset.catalog).toContain('- maestrly_big: Big tool.\n')
+    expect(toolset.catalog).not.toContain('Long explanation')
+    const listed = (await rpc(toolset, 'tools/list')) as { tools: Array<{ name: string }> }
+    expect(listed.tools.map((entry) => entry.name)).toEqual(['big', 'echo', 'get_tool_schemas', 'shot'])
+
+    const turn = { ...activeTurn(), tools: { ...tools, big } }
+    toolset.setActiveTurn(turn)
+    const schemas = (await rpc(toolset, 'tools/call', {
+      name: 'get_tool_schemas',
+      arguments: { names: ['maestrly_big'] },
+    })) as { content: Array<{ text: string }>; isError?: boolean }
+    expect(schemas.isError).toBeUndefined()
+    expect(schemas.content[0].text).toMatch(/^- maestrly_big: Big tool\. Long explanation\./)
+    expect(schemas.content[0].text).toMatch(/\n {2}arguments: \{.*"properties":\{"count":\{"type":"number"\}\}/)
+    expect(turn.starts).toEqual([])
+
+    const invalid = (await rpc(toolset, 'tools/call', { name: 'big', arguments: { count: 'x' } })) as {
+      content: Array<{ text: string }>
+      isError?: boolean
+    }
+    expect(invalid.isError).toBe(true)
+    expect(invalid.content[0].text).toMatch(/^Invalid arguments for "big": [\s\S]+\n {2}arguments: \{.*"count"/)
+    expect(count).not.toHaveBeenCalled()
+    expect(await rpc(toolset, 'tools/call', { name: 'big', arguments: { count: 2 } })).toEqual({
+      content: [{ type: 'text', text: 'count:2' }],
+    })
+    toolset.dispose()
+  })
+
+  it('keeps every schema in the catalog and adds no lookup tool while the catalog fits', async () => {
+    const toolset = await registerAntigravityHostToolset(tools, { summarizable: [['echo', 'shot']] })
+    expect(toolset.summarized.size).toBe(0)
+    expect(toolset.specs.map((spec) => spec.name)).toEqual(['echo', 'shot'])
+    expect(toolset.catalog).toMatch(/- maestrly_echo: Echo\n {2}arguments: /)
+    toolset.dispose()
+  })
+
   it('revokes the key on dispose', async () => {
     const toolset = await registerAntigravityHostToolset(tools)
     toolset.dispose()
