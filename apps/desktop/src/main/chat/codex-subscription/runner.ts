@@ -4181,6 +4181,7 @@ export async function runCodexSubscriptionChat(
                             tools: Object.fromEntries(
                               Object.entries(namespacedChildTools).filter(([name]) => childToolNames.has(name))
                             ),
+                            deferrableToolNames: childDeferredToolNames,
                             allowSkillLoader: args.mode === 'maestro',
                             progress,
                             onTextUpdate,

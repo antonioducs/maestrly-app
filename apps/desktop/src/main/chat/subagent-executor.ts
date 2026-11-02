@@ -665,6 +665,7 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
         manager,
         accountIdentity: identity,
         tools,
+        deferrableToolNames: deferred,
         allowSkillLoader: args.mode === 'maestro',
         progress,
         onTextUpdate,

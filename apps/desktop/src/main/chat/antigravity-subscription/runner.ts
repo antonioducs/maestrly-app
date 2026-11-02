@@ -67,6 +67,7 @@ import { enableConversationLinkTools } from '../tools/conversation-link'
 import type { GeneratedImageEmission, ToolContext } from '../tools/util'
 import {
   AntigravityModelUnavailableError,
+  AntigravityPromptTooLargeError,
   AntigravityToolsUnavailableError,
   antigravityErrorMessage,
   redactAntigravityCredentials,
@@ -91,7 +92,6 @@ import {
   retireAntigravitySessionBinding,
 } from './session-store'
 import { createAntigravityStreamMapper, readAntigravityContextUsage } from './stream-map'
-import { renderAntigravityToolCatalog } from './tool-catalog'
 import { createAntigravityTaskRuntime } from './task-runtime'
 import { SubagentCoordinator } from '../subagent-coordinator'
 import { createExplicitSubagentTurnState } from '../subagent-selection-guard'
@@ -497,6 +497,11 @@ export async function runAntigravitySubscriptionChat(
         })
       : {}
     const rawTools: ToolSet = { ...core, ...mcp.tools, ...app.tools, ...skillTools, ...taskTools, ...supervisionTools }
+    // Once the catalog outgrows its budget, MCP tools give up their schemas first, then app tools; core, skill and
+    // delegation tools keep theirs. A name belongs to the set that wins the merge above.
+    const ownedLater = (name: string) => name in skillTools || name in taskTools || name in supervisionTools
+    const appToolNames = Object.keys(app.tools).filter((name) => !ownedLater(name))
+    const mcpToolNames = Object.keys(mcp.tools).filter((name) => !(name in app.tools) && !ownedLater(name))
     // Antigravity never shows MCP tool images to the model, so tool images are always described instead.
     const tools = adaptToolSetForModel({
       tools: wrapToolSetWithHooks(rawTools, runnerHookContext(args)),
@@ -528,6 +533,7 @@ export async function runAntigravitySubscriptionChat(
         assistantId,
         agents,
         tools: rawTools,
+        deferredToolNames: new Set([...mcpToolNames, ...appToolNames]),
         coordinator: new SubagentCoordinator({
           onEvent: (event) =>
             chatDiag({
@@ -551,7 +557,7 @@ export async function runAntigravitySubscriptionChat(
     const workDir = args.manager.workDir
     const binding = ephemeral ? undefined : getAntigravitySessionBinding(args.conversationId)
     const previousMessageId = history.at(-2)?.id ?? null
-    const turnToolset = await registerAntigravityHostToolset(tools)
+    const turnToolset = await registerAntigravityHostToolset(tools, { summarizable: [mcpToolNames, appToolNames] })
     toolset = turnToolset
     const toolSignature = turnToolset.toolSignature
     const compatible =
@@ -636,16 +642,17 @@ export async function runAntigravitySubscriptionChat(
     // The runtime keeps only the start of an oversized prompt, which would drop the request at its end. A seed that
     // does not fit is replaced by a summary; whatever still does not fit fails here instead of being cut silently.
     let compactedSeed = false
-    const buildPrompt = () =>
+    const buildPrompt = (withSeed = true) =>
       buildAntigravityPromptBlocks({
         conversationId: args.conversationId,
         message: currentUser,
         newSession,
         instructions,
-        toolCatalog: renderAntigravityToolCatalog(activeToolset.specs),
-        seedTranscript: newSession
-          ? buildAntigravitySeedTranscript(history, compactedSeed ? messages[0] : undefined)
-          : '',
+        toolCatalog: activeToolset.catalog,
+        seedTranscript:
+          newSession && withSeed
+            ? buildAntigravitySeedTranscript(history, compactedSeed ? messages[0] : undefined)
+            : '',
         dropImages,
         environment,
         turnReminder,
@@ -689,8 +696,35 @@ export async function runAntigravitySubscriptionChat(
       }
       compactedSeed = true
     }
+    if (newSession && activeToolset.summarized.size) {
+      chatDiag({
+        kind: 'antigravity-tool-catalog-summarized',
+        conv: args.conversationId,
+        summarized: activeToolset.summarized.size,
+        catalogBytes: Buffer.byteLength(activeToolset.catalog, 'utf8'),
+      })
+    }
     let prompt = buildPrompt()
     const promptBytes = antigravityPromptTextBytes(prompt)
+    if (promptBytes > ANTIGRAVITY_PROMPT_TEXT_MAX_BYTES) {
+      // Compaction only shrinks the seed: when the rest of the prompt alone exceeds the limit, it cannot help.
+      const fixedBytes = antigravityPromptTextBytes(buildPrompt(false))
+      if (fixedBytes > ANTIGRAVITY_PROMPT_TEXT_MAX_BYTES) {
+        const setupBytes = newSession
+          ? Buffer.byteLength(instructions, 'utf8') + Buffer.byteLength(activeToolset.catalog, 'utf8')
+          : 0
+        const cause = setupBytes >= fixedBytes - setupBytes ? 'setup' : 'message'
+        chatDiag({
+          kind: 'antigravity-prompt-too-large',
+          conv: args.conversationId,
+          bytes: promptBytes,
+          fixedBytes,
+          setupBytes,
+          cause,
+        })
+        throw new AntigravityPromptTooLargeError(promptBytes, cause)
+      }
+    }
     // A prepared background summary can leave a suffix that is still too large; the second pass summarizes it too.
     for (
       let pass = 0;

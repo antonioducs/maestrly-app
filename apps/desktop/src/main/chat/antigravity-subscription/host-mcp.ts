@@ -23,7 +23,14 @@ import {
   toolOutputToMcpCallResult,
 } from '../tool-output'
 import { ANTIGRAVITY_HOST_MCP_SERVER_NAME } from './permissions'
-import { antigravityToolSignature, type HostToolSpec, hostToolSpecs } from './tool-catalog'
+import {
+  ANTIGRAVITY_TOOL_SCHEMAS_TOOL,
+  antigravityToolSchemasText,
+  antigravityToolSignature,
+  type HostToolSpec,
+  hostToolSpecs,
+  planAntigravityToolCatalog,
+} from './tool-catalog'
 
 export interface AntigravityActiveTurn {
   tools: ToolSet
@@ -35,6 +42,10 @@ export interface AntigravityActiveTurn {
 export interface AntigravityHostToolset {
   readonly key: string
   readonly specs: readonly HostToolSpec[]
+  /** Tools the catalog lists without their schemas; `get_tool_schemas` serves those. */
+  readonly summarized: ReadonlySet<string>
+  /** The `<maestrly_tools>` block for the first prompt of a session. */
+  readonly catalog: string
   readonly toolSignature: string
   readonly mcpServer: AcpMcpServerHttp
   setActiveTurn(turn: AntigravityActiveTurn | null): void
@@ -45,6 +56,7 @@ export interface AntigravityHostToolset {
 interface ToolsetState {
   readonly token: Buffer
   readonly specs: readonly HostToolSpec[]
+  readonly summarized: ReadonlySet<string>
   activeTurn: AntigravityActiveTurn | null
   initialized: boolean
 }
@@ -110,6 +122,10 @@ async function callTool(state: ToolsetState, params: Record<string, unknown>): P
   const turn = state.activeTurn
   if (!turn) return errorResult('No active Maestrly turn for this session.')
   const name = typeof params.name === 'string' ? params.name : ''
+  // Served by the host itself: it reads the catalog's own specs and runs nothing, so it leaves no tool card.
+  if (name === ANTIGRAVITY_TOOL_SCHEMAS_TOOL && state.summarized.size) {
+    return { content: [{ type: 'text', text: antigravityToolSchemasText(state.specs, params.arguments) }] }
+  }
   const tool = turn.tools[name] as Tool | undefined
   if (!tool || typeof tool.execute !== 'function' || !state.specs.some((spec) => spec.name === name)) {
     return errorResult(`Maestrly tool "${name || '(missing)'}" is not available in this session.`)
@@ -129,7 +145,11 @@ async function callTool(state: ToolsetState, params: Record<string, unknown>): P
       const validation = await schema.validate(args)
       if (!validation.success) {
         const detail = validation.error instanceof Error ? validation.error.message : String(validation.error)
-        return fail(`Invalid arguments for "${name}": ${detail}`)
+        // The model never saw the schema of a summarized tool unless it asked for it.
+        const schema = state.summarized.has(name)
+          ? `\n\n${antigravityToolSchemasText(state.specs, { names: [name] })}`
+          : ''
+        return fail(`Invalid arguments for "${name}": ${detail}${schema}`)
       }
       parsed = validation.value
     }
@@ -260,17 +280,26 @@ async function ensureServer(): Promise<number> {
   return (await listening).port
 }
 
-export async function registerAntigravityHostToolset(tools: ToolSet): Promise<AntigravityHostToolset> {
-  const specs = await hostToolSpecs(tools)
+/**
+ * `summarizable` lists tiers of tool names the catalog may list without schemas, in the order they give up their
+ * schemas once the catalog exceeds its budget (see `planAntigravityToolCatalog`).
+ */
+export async function registerAntigravityHostToolset(
+  tools: ToolSet,
+  options: { summarizable?: readonly (readonly string[])[] } = {}
+): Promise<AntigravityHostToolset> {
+  const { specs, summarized, catalog } = planAntigravityToolCatalog(await hostToolSpecs(tools), options.summarizable)
   const port = await ensureServer()
   const key = randomUUID()
   const token = Buffer.from(randomBytes(32).toString('hex'))
-  const state: ToolsetState = { token, specs, activeTurn: null, initialized: false }
+  const state: ToolsetState = { token, specs, summarized, activeTurn: null, initialized: false }
   toolsets.set(key, state)
   return {
     key,
     specs,
-    toolSignature: antigravityToolSignature(specs),
+    summarized,
+    catalog,
+    toolSignature: antigravityToolSignature(specs, summarized),
     mcpServer: {
       type: 'http',
       name: ANTIGRAVITY_HOST_MCP_SERVER_NAME,
