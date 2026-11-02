@@ -5,6 +5,26 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.32.1] - 2026-11-02
+
+### Fixed
+
+- Conversations on Google AI no longer fail at the first message when MCP
+  servers add many tools. The runtime keeps only the first 192,000 bytes of a
+  prompt, and a bot with two media MCP servers (113 tools) needed about 284 KB
+  before any history. When the tool list is too large, Maestrly lists MCP tools
+  with a one-line summary, then app tools if that is still not enough; the model
+  fetches a summarized tool's full schema when it needs it, and a call with
+  invalid arguments returns that schema. Core, skill and delegation tools keep
+  theirs. When the prompt cannot fit even without the history, Maestrly stops at
+  once and says whether the instructions and tool list or your message is too
+  large, instead of compacting a history that cannot help. A turn whose runner
+  reports an error now shows that message in the Fleet, not only `turn-failed`.
+  Existing Google AI sessions are recreated once after the update, so the first
+  turn of each conversation can compact. Bots pick this up when their
+  environment runs this version. See
+  [Google AI subscription](docs/antigravity.md).
+
 ## [0.32.0] - 2026-11-01
 
 ### Added
