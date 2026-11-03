@@ -30,6 +30,25 @@ describe('Claude quota classification', () => {
     ).toMatchObject({ kind: 'quota', info: { resetsAt: 1_800_000_100_000 } })
     expect(classifyClaudeQuotaFailure(null, { status: 'allowed', errorCode: 'credits_required' }).kind).toBe('quota')
   })
+  it('returns at the subscription window reset before the monthly overage reset', () => {
+    const fiveHourReset = 1_800_000_000
+    const monthlyOverageReset = 1_802_000_000
+    const info: SDKRateLimitInfo = {
+      status: 'rejected',
+      rateLimitType: 'five_hour',
+      resetsAt: fiveHourReset,
+      overageStatus: 'rejected',
+      overageDisabledReason: 'org_level_disabled',
+      overageResetsAt: monthlyOverageReset,
+    }
+    expect(classifyClaudeQuotaFailure(null, info)).toMatchObject({
+      kind: 'quota',
+      info: { resetsAt: fiveHourReset * 1000 },
+    })
+    expect(
+      classifyClaudeQuotaFailure(null, { ...info, resetsAt: monthlyOverageReset, overageResetsAt: fiveHourReset })
+    ).toMatchObject({ kind: 'quota', info: { resetsAt: fiveHourReset * 1000 } })
+  })
   it.each([
     { status: 429 },
     { type: 'assistant', error: 'rate_limit', message: { content: [] } },
