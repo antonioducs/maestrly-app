@@ -52,13 +52,16 @@ export function classifyClaudeQuotaFailure(
     if ((rateLimitInfo.isUsingOverage || rateLimitInfo.overageInUse) && rateLimitInfo.overageStatus !== 'rejected') {
       return { kind: 'suspect' }
     }
-    return quota(
-      'Claude subscription usage limit reached',
-      'rate-limits',
-      rateLimitInfo.overageStatus === 'rejected'
-        ? (rateLimitInfo.overageResetsAt ?? rateLimitInfo.resetsAt)
-        : rateLimitInfo.resetsAt
-    )
+    // With overage also rejected, the account serves again at whichever comes first: its subscription window
+    // (`resetsAt`, e.g. the 5-hour one) or the monthly overage budget (`overageResetsAt`).
+    const windowReset = resetTime(rateLimitInfo.resetsAt)
+    const overageReset =
+      rateLimitInfo.overageStatus === 'rejected' ? resetTime(rateLimitInfo.overageResetsAt) : undefined
+    const earliest =
+      windowReset !== undefined && overageReset !== undefined
+        ? Math.min(windowReset, overageReset)
+        : (windowReset ?? overageReset)
+    return quota('Claude subscription usage limit reached', 'rate-limits', earliest)
   }
   if (!error || typeof error !== 'object' || Array.isArray(error)) return { kind: 'other' }
   const record = error as Record<string, unknown>
