@@ -5,6 +5,19 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.32.2] - 2026-11-03
+
+### Fixed
+
+- A Claude account that reaches its 5-hour usage limit returns to the account
+  rotation when that window resets, not at the start of the next month. On an
+  account without extra usage (for example a Team seat), Claude reports the
+  monthly extra-usage reset next to the 5-hour one, and Maestrly used the later
+  of the two, so the account showed as "exhausted" for weeks and the rotation
+  skipped it. It now uses the earlier one. The exhausted state is not saved, so
+  restarting Maestrly after the update clears accounts the old behavior had
+  blocked. See [Model fallback](docs/model-failover.md).
+
 ## [0.32.1] - 2026-11-02
 
 ### Fixed
