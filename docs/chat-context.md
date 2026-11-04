@@ -700,9 +700,12 @@ after a response; it does not change the active context or pause the conversatio
 
 A prepared summary covers an exact point in the history. When the next request
 or a host-controlled continuation needs compaction, Maestrly checks whether that
-summary **plus all subsequent content** fits the destination model. If it does,
-the summary is activated without another summarization call. Selecting a model
-alone does not activate it. Cursor can prepare during a task and uses prepared
+summary **plus all subsequent content** brings the next request to half the
+destination model's window. If it does, the summary is activated without another
+summarization call. Otherwise, as when a long task has outgrown the preparation,
+normal compaction runs: it starts from the prepared summary, summarizes only the
+newer content, and keeps the usual verbatim tail. Selecting a model alone does
+not activate it. Cursor can prepare during a task and uses prepared
 context on a later send; provider-managed native compaction remains independent.
 
 Only the latest ready preparation and its replacement in progress are kept.

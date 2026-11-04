@@ -905,7 +905,7 @@ describe('service-owned compaction progress', () => {
         .flatMap((message) => message.parts)
         .flatMap((part) => (part.type === 'compaction' ? [part.text] : []))
 
-    async function prepare(): Promise<void> {
+    async function prepare(): Promise<Map<string, Parameters<ChatIpcDeps['mhandle']>[1]>> {
       const handlers = new Map<string, Parameters<ChatIpcDeps['mhandle']>[1]>()
       registerChatIpc({
         mhandle: (channel, handler) => {
@@ -944,6 +944,7 @@ describe('service-owned compaction progress', () => {
       await vi.waitFor(() => expect(chatRuntimeState(conversationId).backgroundCompaction?.status).toBe('ready'))
       h.generateText.mockClear()
       h.generateText.mockResolvedValue(success('FOLDED_SUMMARY'))
+      return handlers
     }
 
     function appendDelta(): void {
@@ -1002,6 +1003,29 @@ describe('service-owned compaction progress', () => {
       expect(prompts()).toContain('Previous summary:\nPREPARED_SUMMARY')
       expect(prompts()).not.toContain('EARLY_SOURCE_MARKER')
       expect(compactionTexts()).toEqual([])
+    })
+
+    it('folds instead of activating a prepared summary that would leave the next request above half the window', async () => {
+      const handlers = await prepare()
+      appendDelta()
+      // About 90k estimated tokens: below one preparation interval, so no newer candidate covers it.
+      upsertChatMessage({
+        ...getChatMessage(conversationId, 'delta-assistant')!,
+        parts: [{ type: 'text', id: 'delta-assistant-text', text: `DELTA_ASSISTANT_MARKER ${'y'.repeat(270_000)}` }],
+      })
+      await handlers.get('chat:set-selection')!({ sender: wc } as never, conversationId, {
+        ...model,
+        modelId: 'small-model',
+      })
+      await expect(
+        handlers.get('chat:send')!({ sender: wc } as never, { conversationId, text: 'Continue in smaller model' })
+      ).resolves.toMatchObject({ ok: true })
+      await vi.waitFor(() => expect(chatRuntimeState(conversationId).streaming).toBe(false))
+      expect(h.generateText).toHaveBeenCalled()
+      expect(prompts()).toContain('Previous summary:\nPREPARED_SUMMARY')
+      expect(prompts()).toContain('DELTA_ASSISTANT_MARKER')
+      expect(prompts()).not.toContain('EARLY_SOURCE_MARKER')
+      expect(compactionTexts()).toEqual(['FOLDED_SUMMARY'])
     })
 
     it('falls back to the full active history when the prepared source changed', async () => {

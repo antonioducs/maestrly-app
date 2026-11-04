@@ -3712,8 +3712,11 @@ async function preflightContext(
   return { ok: true, compacted: true }
 }
 
-/** Load, relative to the window, that pruning alone must reach to replace a summary. */
-const PRUNE_ONLY_MAX_LOAD = 0.5
+/**
+ * Load, relative to the window, that a shortcut (pruning alone, or a prepared background summary) must reach to replace
+ * a full compaction. Anything above it would leave the next compaction only a few steps away.
+ */
+const SHORTCUT_COMPACTION_MAX_LOAD = 0.5
 
 /**
  * Commits only the pruning of older tool outputs when that brings the next request to half the window. All in one
@@ -3740,7 +3743,7 @@ function pruneToolOutputsBeforeCompaction(
     if (targets.length === 0) return
     const prunedHistory = applyToolPruning(history, targets)
     const prunedLoad = portableContextLoad(window, estimatePortableContextTokens(prunedHistory), pendingTokens)
-    if (prunedLoad.requiredTokens > window * PRUNE_ONLY_MAX_LOAD) return
+    if (prunedLoad.requiredTokens > window * SHORTCUT_COMPACTION_MAX_LOAD) return
     if (
       isCodexSubscriptionProvider(selection.providerId) &&
       codexTransferCharacters(prunedHistory, pendingParts) > CODEX_TRANSFER_MAX_CHARACTERS
@@ -9199,16 +9202,25 @@ async function activateBackgroundCompactionCandidate(
     isCursorSubscriptionProvider(destination.providerId) ||
     isAntigravitySubscriptionProvider(destination.providerId)
   const tokens = nativeTransfer ? estimateNativeSeedContextTokens(projected) : estimatePortableContextTokens(projected)
-  if (
-    preflightContextLoad(
-      contextWindow,
-      tokens,
-      estimatePortablePartsTokens(pendingParts) + 16,
-      'portable-transcript',
-      AUTO_COMPACT_RATIO
-    ).shouldCompact
+  const load = preflightContextLoad(
+    contextWindow,
+    tokens,
+    estimatePortablePartsTokens(pendingParts) + 16,
+    'portable-transcript'
   )
+  // A candidate that lags behind a long turn keeps that whole suffix verbatim. The full compaction folds it as a base
+  // and keeps only a short tail instead.
+  if (load.requiredTokens > contextWindow * SHORTCUT_COMPACTION_MAX_LOAD) {
+    chatDiag({
+      kind: 'background-compaction-candidate-insufficient',
+      conv: conversationId,
+      coveredTokens: candidate.coveredTokens,
+      usedTokens: tokens,
+      requiredTokens: load.requiredTokens,
+      contextWindow,
+    })
     return null
+  }
   if (
     isCodexSubscriptionProvider(destination.providerId) &&
     codexTransferCharacters(projected, pendingParts) > CODEX_TRANSFER_MAX_CHARACTERS
