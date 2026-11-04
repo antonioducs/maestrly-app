@@ -5,6 +5,30 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.32.3] - 2026-11-04
+
+### Fixed
+
+- Automatic context compaction frees context again. It sometimes freed almost
+  nothing (for example 450.9k to 378.4k tokens on a 500k window), so a long task
+  compacted again a few steps later. A summary prepared in the background is now
+  used only when the next request lands at half the model's window; otherwise
+  compaction starts from it, summarizes only what came after and keeps the
+  recent messages word for word. Background preparation also stopped for good
+  when a long plan made its summary too large; it now starts the round over and
+  asks for a shorter summary.
+- Plans no longer bulk up summaries. Plans proposed with `review_plan` are kept
+  apart from the messages, with your decision on each (proposed, approved,
+  revised, discarded or superseded). Every summary ends with a list of the
+  conversation's plans and the approved plan being implemented, in full up to
+  about 4,000 tokens and as an outline beyond that; the agent reads the whole
+  plan with the new read-only `plan_read` tool, which needs no approval.
+  Maestrly adds a small table to its local data for them when it starts. Older
+  and moved conversations rebuild their plans from their history the first time
+  they are needed, and deleting or clearing messages removes the plans they
+  held. See [Context meter](docs/chat-context.md#context-meter) and
+  [Background preparation](docs/chat-context.md#background-preparation).
+
 ## [0.32.2] - 2026-11-03
 
 ### Fixed
