@@ -129,6 +129,7 @@ const EXPECTED_TOOL_NAMES = [
   'project_notes_quick_append',
   'history_search',
   'history_read',
+  'plan_read',
   'memory_search',
   'memory_list',
   'memory_read',
@@ -223,6 +224,7 @@ const EXPECTED_SHAPES: ToolShape[] = [
   shape('project_notes_quick_append', ['text'], ['text']),
   shape('history_search', ['beforeSeq', 'limit', 'mode', 'query', 'scope']),
   shape('history_read', ['after', 'before', 'conversationId', 'detail', 'seq'], ['seq']),
+  shape('plan_read', ['id']),
   shape('memory_search', ['limit', 'query'], ['query']),
   shape('memory_list', ['limit', 'pinned', 'scope', 'source', 'status', 'tag', 'type']),
   shape('memory_read', ['id']),
@@ -460,7 +462,7 @@ describe('MCP app tools inventory', () => {
   it('classifies every registered app-tool exactly once with no orphan policy entries', async () => {
     const registered = (await listToolInventory(convId)).map((tool) => tool.name).sort()
     const classified = Object.keys(APP_TOOL_POLICY).sort()
-    expect(registered).toHaveLength(87)
+    expect(registered).toHaveLength(88)
     expect(classified).toEqual([...registered, ...LINKED_BOARD_TOOL_NAMES, ...BOT_INSTANCE_TOOL_NAMES].sort())
   })
 

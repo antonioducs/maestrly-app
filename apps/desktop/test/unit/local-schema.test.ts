@@ -40,6 +40,7 @@ const LOCAL_TABLES = [
   'chat_maestro_run_messages',
   'chat_maestro_runs',
   'chat_messages',
+  'chat_plans',
   'chat_subagent_sessions',
   'chat_subagent_transcript',
   'chat_tool_executions',

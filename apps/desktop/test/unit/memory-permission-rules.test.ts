@@ -10,7 +10,7 @@ import {
 
 describe('memory permission rules', () => {
   it('never prompts for memory and history reads, but still asks for writes on the desktop', () => {
-    for (const tool of ['memory_search', 'memory_list', 'memory_read', 'history_search', 'history_read'])
+    for (const tool of ['memory_search', 'memory_list', 'memory_read', 'history_search', 'history_read', 'plan_read'])
       expect(ruleEffect('mcp', tool, BYOK_DEFAULT_RULESET)).toBe('allow')
     expect(ruleEffect('mcp', 'memory_upsert', BYOK_DEFAULT_RULESET)).toBe('ask')
     expect(ruleEffect('mcp', 'some_external_tool', BYOK_DEFAULT_RULESET)).toBe('ask')

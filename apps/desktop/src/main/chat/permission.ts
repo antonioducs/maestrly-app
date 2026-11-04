@@ -145,6 +145,7 @@ export const HOST_MEMORY_READ_RULES: Ruleset = allowMcp([
   'memory_read',
   'history_search',
   'history_read',
+  'plan_read',
 ])
 /** Artifact reads never prompt: they only return the user's own pages and the comments left on them. */
 export const HOST_ARTIFACT_READ_RULES: Ruleset = allowMcp([

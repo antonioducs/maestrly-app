@@ -181,7 +181,7 @@ describe('registerPlanIpc', () => {
       conversation: maestro,
       focus: true,
     })
-    expect(h.runApprovedPlan).toHaveBeenCalledExactlyOnceWith(maestro.id, '## Edited plan')
+    expect(h.runApprovedPlan).toHaveBeenCalledExactlyOnceWith(maestro.id, '## Edited plan', undefined)
     expect(h.setChatMode).not.toHaveBeenCalled()
     expect(sendToWindow).not.toHaveBeenCalledWith(`chat:mode:${source.id}`, expect.anything())
     expect(h.runApprovedPlan).not.toHaveBeenCalledWith(source.id, expect.anything())

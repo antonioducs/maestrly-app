@@ -27,6 +27,7 @@ import {
   resolveFilePdfBytesSync,
 } from "./attachment-artifacts";
 import { pdfFallbackText, sendPdfNatively } from "./pdf-attachments";
+import { summaryWithoutPlans } from "./plans/context";
 
 // ---- zod: defensive part parsing on DB reads (legacy/corrupt rows become []). ----
 
@@ -953,9 +954,9 @@ export function renderTranscript(
 ): string {
   const active = activeChatContext(messages);
   const imageText = opts.imageText ?? transcriptImageText;
-  const blocks: string[] = active.summary
-    ? [`Previous summary:\n${active.summary}`]
-    : [];
+  // Plans are appended to every summary from their store; the summarizer never needs to read them again.
+  const previous = summaryWithoutPlans(active.summary);
+  const blocks: string[] = previous ? [`Previous summary:\n${previous}`] : [];
   const maxToolOutputChars = opts.maxToolOutputChars ?? 16_000;
   for (const m of active.messages) {
     const who = m.role === "user" ? "User" : "Assistant";

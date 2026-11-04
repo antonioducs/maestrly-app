@@ -24,7 +24,7 @@ export const APP_TOOL_GROUP_PATTERNS: Record<AppToolGroup, string> = {
   browser: 'browser_*',
   notes: 'notes_*/project_notes_*',
   memory: 'memory_*',
-  history: 'history_*',
+  history: 'history_*/plan_read',
   debug: 'debug_*',
   artifacts: 'artifact_*',
 }
@@ -36,6 +36,7 @@ const PREFIXES: ReadonlyArray<readonly [string, AppToolGroup]> = [
   ['project_notes_', 'notes'],
   ['memory_', 'memory'],
   ['history_', 'history'],
+  ['plan_', 'history'],
   ['debug_', 'debug'],
   ['artifact_', 'artifacts'],
 ]

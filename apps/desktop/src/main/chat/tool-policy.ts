@@ -127,6 +127,7 @@ export const APP_TOOL_POLICY = {
   project_notes_quick_append: policy(true, false, false),
   history_search: policy(true, true, true),
   history_read: policy(true, true, true),
+  plan_read: policy(true, true, true),
   memory_search: policy(true, true, false),
   memory_list: policy(true, true, false),
   memory_read: policy(true, true, false),

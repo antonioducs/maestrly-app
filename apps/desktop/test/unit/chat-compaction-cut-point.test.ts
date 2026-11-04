@@ -191,7 +191,7 @@ describe('summary carry-over around a cut', () => {
       assistant('live', [text('s1', 10), tool('t1', 10), text('s2', 10)], false),
     ]
     const request = turnRequestBeforeCut(history, { messageId: 'live', afterPartId: 't1' })
-    expect(request).toBe('Refactor [approved plan, kept below] now')
+    expect(request).toBe('Refactor [approved plan, kept in this summary] now')
     const once = summaryWithTurnRequest('## Objective\nx', request)
     const twice = summaryWithTurnRequest(once, request)
     expect(twice.match(/<current_turn_request>/g)).toHaveLength(1)

@@ -126,6 +126,8 @@ import {
 import { setConversationContextLimit } from '../../src/main/chat/conversation-context-limit'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
 import { structuredSummary } from '../helpers/compaction'
+import { listConversationPlans, recordPlanDecision, recordStagedPlan } from '../../src/main/chat/plans/store'
+import { summaryWithPlans } from '../../src/main/chat/plans/context'
 import { activatePreparedCompaction } from '../../src/main/chat/background-compaction/runner'
 import { renderNativeSeedTranscript, toModelMessages } from '../../src/main/chat/message'
 import { listConversationContextMessages } from '../../src/main/chat/chat-store'
@@ -905,7 +907,7 @@ describe('service-owned compaction progress', () => {
         .flatMap((message) => message.parts)
         .flatMap((part) => (part.type === 'compaction' ? [part.text] : []))
 
-    async function prepare(): Promise<Map<string, Parameters<ChatIpcDeps['mhandle']>[1]>> {
+    async function prepare(userText = 'EARLY_SOURCE_MARKER'): Promise<Map<string, Parameters<ChatIpcDeps['mhandle']>[1]>> {
       const handlers = new Map<string, Parameters<ChatIpcDeps['mhandle']>[1]>()
       registerChatIpc({
         mhandle: (channel, handler) => {
@@ -917,7 +919,7 @@ describe('service-owned compaction progress', () => {
       patchConvUiPrefs(conversationId, { chat: { ...largeModel(), reasoning: 'off', fastMode: false } })
       upsertChatMessage({
         ...getChatMessage(conversationId, 'user')!,
-        parts: [{ type: 'text', id: 'user-text', text: 'EARLY_SOURCE_MARKER' }],
+        parts: [{ type: 'text', id: 'user-text', text: userText }],
       })
       upsertChatMessage({ ...getChatMessage(conversationId, 'assistant')!, finishReason: 'stop' })
       for (let index = 0; index < 2; index++)
@@ -1003,6 +1005,23 @@ describe('service-owned compaction progress', () => {
       expect(prompts()).toContain('Previous summary:\nPREPARED_SUMMARY')
       expect(prompts()).not.toContain('EARLY_SOURCE_MARKER')
       expect(compactionTexts()).toEqual([])
+    })
+
+    it('prepares a summary without the approved plan and adds the stored plans when it is activated', async () => {
+      const handlers = await prepare('Implement it.\n<approved_plan>\n- PREPARED_PLAN_STEP\n</approved_plan>')
+      expect(new BackgroundCompactionStore().get(conversationId)?.ready?.summary).not.toContain('PREPARED_PLAN_STEP')
+      await handlers.get('chat:set-selection')!({ sender: wc } as never, conversationId, {
+        ...model,
+        modelId: 'small-model',
+      })
+      await expect(
+        handlers.get('chat:send')!({ sender: wc } as never, { conversationId, text: 'Continue in smaller model' })
+      ).resolves.toMatchObject({ ok: true })
+      await vi.waitFor(() => expect(chatRuntimeState(conversationId).streaming).toBe(false))
+      expect(h.generateText).not.toHaveBeenCalled()
+      const [marker] = compactionTexts()
+      expect(marker.startsWith('PREPARED_SUMMARY')).toBe(true)
+      expect(marker).toMatch(/<conversation_plans>[\s\S]*- PREPARED_PLAN_STEP[\s\S]*<\/conversation_plans>/)
     })
 
     it('folds instead of activating a prepared summary that would leave the next request above half the window', async () => {
@@ -1167,6 +1186,34 @@ describe('service-owned compaction progress', () => {
       expect(result.ok).toBe(true)
       expect(result.summary).not.toContain('<approved_plan>')
       expect(listChatMessages(conversationId).map((message) => message.id)).toContain('recent-user')
+    })
+
+    it('ends the summary with the stored plans, which the summarizer never reads', async () => {
+      recordStagedPlan(conversationId, { version: 1, title: 'Stored', content: '- STORED_PLAN_STEP' })
+      recordPlanDecision(conversationId, { action: 'approve', content: '- STORED_PLAN_STEP' })
+      upsertChatMessage({
+        ...getChatMessage(conversationId, 'assistant')!,
+        finishReason: 'stop',
+        parts: [
+          {
+            type: 'compaction',
+            id: 'old-marker',
+            text: summaryWithPlans('OLD_SUMMARY', listConversationPlans(conversationId)),
+            strategy: 'summary',
+          },
+          { type: 'text', id: 'after-marker', text: 'More work after the old summary.' },
+        ],
+      })
+      addRecentTurn()
+      h.generateText.mockResolvedValue(success(structuredSummary('NEW_SUMMARY')))
+
+      const result = await compact({ contextWindow: 200_000 })
+
+      expect(result.ok).toBe(true)
+      expect(prompts()).toContain('OLD_SUMMARY')
+      expect(prompts()).not.toContain('STORED_PLAN_STEP')
+      expect(result.summary).toContain('NEW_SUMMARY')
+      expect(result.summary).toMatch(/<conversation_plans>[\s\S]*- STORED_PLAN_STEP[\s\S]*<\/conversation_plans>/)
     })
 
     it('keeps the live step verbatim mid-turn, carries the turn request, and leaves the bill to the runner', async () => {

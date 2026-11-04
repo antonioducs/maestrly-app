@@ -174,7 +174,7 @@ export function turnRequestBeforeCut(
     .map((part) => part.text)
     .join('')
     // The approved plan is carried verbatim on its own.
-    .replace(/<approved_plan>[\s\S]*?<\/approved_plan>/g, '[approved plan, kept below]')
+    .replace(/<approved_plan>[\s\S]*?<\/approved_plan>/g, '[approved plan, kept in this summary]')
     .trim()
   return text ? clipMiddle(text, TURN_REQUEST_MAX_CHARS, '\n… request shortened …\n') : null
 }
