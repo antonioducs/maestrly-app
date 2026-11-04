@@ -313,6 +313,38 @@ describe('chat background compaction coordinator', () => {
     expect(restarted.coordinator.status(id).status).toBe('ready')
   })
 
+  it('starts over on retry after an invalid summary instead of replaying the stages that produced it', async () => {
+    const id = createConversation()
+    const checkpoint: PortableSummaryCheckpoint = {
+      version: 1,
+      sourceHash: 'transcript',
+      maxChunkBytes: 1_000,
+      phase: 'chunk',
+      level: 0,
+      inputHash: 'input',
+      completed: ['oversized stage'],
+    }
+    let resumed: PortableSummaryCheckpoint | undefined | null = null
+    let oversized = true
+    const test = harness(async (input) => {
+      input.onAttempt('chunk').settle({ outcome: 'success' })
+      resumed = input.resume
+      input.onCheckpoint(checkpoint)
+      return { summary: oversized ? 'x'.repeat(input.maxSummaryTokens * 3 + 3) : 'fits' }
+    })
+    test.messages.set(id, [assistant(id, 'source')])
+    test.coordinator.notify(id, { conversationWindow: 128_000 })
+    await test.coordinator.settled()
+    expect(test.coordinator.status(id)).toMatchObject({ status: 'failed', error: 'summarizer-invalid-output' })
+    expect(test.coordinator.record(id)?.work).toBeNull()
+
+    oversized = false
+    expect(test.coordinator.retry(id)).toBe(true)
+    await test.coordinator.settled()
+    expect(resumed).toBeUndefined()
+    expect(test.coordinator.getCandidate(id)?.summary).toBe('fits')
+  })
+
   it('continues the global queue after a failure and preserves an older ready candidate', async () => {
     const first = createConversation()
     const second = createConversation()

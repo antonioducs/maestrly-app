@@ -4,6 +4,7 @@ import * as windowIpc from './window-ipc'
 import { getLocale } from './store'
 import { tFor } from './i18n'
 import type { StandardPlanHandoff } from '../shared/conversation-dispatch'
+import { stripProposedPlanTag } from './chat/plans/context'
 
 /**
  * Chat plan-review broker. review_plan stages the plan without blocking the turn; the user's IPC
@@ -94,6 +95,29 @@ interface Pending extends PlanSubmitInput {
   done: boolean
   /** Previous plan for revision diff, frozen at submission to reconstruct PlanReceived. */
   previousPlan: string | null
+  /** Final text of a prepared approval (edits applied), recorded once the decision commits. */
+  approvedPlan?: string
+}
+
+/** Durable record of staged plans and their decisions; the broker itself only holds the review in progress. */
+export interface PlanRecorder {
+  staged(agentId: string, plan: { version: number; title?: string; content: string }): void
+  decided(agentId: string, decision: { action: PlanDecision['action']; content: string }): void
+}
+
+let recorder: PlanRecorder | null = null
+
+export function setPlanRecorder(next: PlanRecorder | null): void {
+  recorder = next
+}
+
+function record(write: (target: PlanRecorder) => void): void {
+  if (!recorder) return
+  try {
+    write(recorder)
+  } catch {
+    // The record serves later compactions; a failed write never blocks the review itself.
+  }
 }
 
 interface RevisionReservation {
@@ -163,6 +187,7 @@ function registerPlan(input: PlanSubmitInput): PlanSubmitResult {
   const entry: Pending = { ...input, origin, version, done: false, previousPlan }
   pending.set(input.agentId, entry)
   lastPlan.set(input.agentId, { plan: input.plan, version, originKind: origin.kind })
+  record((target) => target.staged(input.agentId, { version, title: input.title, content: input.plan }))
   // The next accepted version from the reserved source resumes the cycle and consumes the reservation.
   if (reservation?.originKind === origin.kind) revisionReservations.delete(input.agentId)
   const payload: PlanReceived = {
@@ -189,24 +214,7 @@ export function stagePlan(input: PlanSubmitInput): PlanSubmitResult {
   return registerPlan({ ...input, plan: stripProposedPlanTag(input.plan) })
 }
 
-const PROPOSED_PLAN_OPEN = '<proposed_plan>'
-const PROPOSED_PLAN_CLOSE = '</proposed_plan>'
-
-/**
- * Some models (ChatGPT's) wrap the `review_plan` argument in a `<proposed_plan>` tag, which the Plan tab would show
- * as a raw line. Drops that wrapper, or an opening or closing tag left at the start or end alone; tags in the middle
- * of the plan are content.
- */
-export function stripProposedPlanTag(plan: string): string {
-  let text = plan.trim()
-  if (text.slice(0, PROPOSED_PLAN_OPEN.length).toLowerCase() === PROPOSED_PLAN_OPEN) {
-    text = text.slice(PROPOSED_PLAN_OPEN.length).trimStart()
-  }
-  const tail = text.slice(Math.max(0, text.length - PROPOSED_PLAN_CLOSE.length))
-  if (tail.toLowerCase() === PROPOSED_PLAN_CLOSE) text = text.slice(0, text.length - tail.length).trimEnd()
-  // A plan that was only the tag keeps its text: staging nothing would hide what the model sent.
-  return text || plan.trim()
-}
+export { stripProposedPlanTag }
 
 /**
  * Pending conversation plan or null, used to hydrate a panel that mounts after plan:received opens the
@@ -252,6 +260,7 @@ export function decidePlan(
             ...route,
           }
         : { action: 'discard' as const, ...route }
+  entry.approvedPlan = result.action === 'approve' ? result.approvedPlan : undefined
   if (!options?.deferCommit) commitPlanDecision(agentId, decision.action)
   return result
 }
@@ -265,6 +274,8 @@ export function commitPlanDecision(agentId: string, action: PlanDecision['action
   if (!entry || entry.done) return false
   entry.done = true
   pending.delete(agentId)
+  const content = action === 'approve' ? (entry.approvedPlan ?? entry.plan) : entry.plan
+  record((target) => target.decided(agentId, { action, content }))
   if (action === 'revise') {
     // Clear pending state while retaining source ownership until the next accepted version.
     revisionReservations.set(agentId, { originKind: entry.origin.kind, version: entry.version })

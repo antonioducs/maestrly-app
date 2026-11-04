@@ -188,7 +188,7 @@ export function registerPlanIpc(reg: IpcRegistrar, deps: PlanIpcDeps): void {
         // Preserve the source mode; only the Maestro sibling receives and implements the plan.
         deps.markMaestroStrategyProfileUsed?.(profileId)
         deps.sendToWindow('conversation:open', { conversation: maestroConversation, focus: true })
-        void runApprovedPlan(maestroConversation.id, approvedPlan)
+        void runApprovedPlan(maestroConversation.id, approvedPlan, result.title)
         return { ok: true, conversationId: maestroConversation.id }
       })()
     }

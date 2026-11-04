@@ -120,7 +120,8 @@ import {
 import { initSelectionBridge, watchConversation, stopSelectionBridge } from './selection-bridge'
 import { unwatchNotes, disposeNotes } from './notes/notes-service'
 import { registerNotesIpc } from './notes/notes-ipc'
-import { initPlanBroker, clearPlan } from './plan-broker'
+import { initPlanBroker, clearPlan, setPlanRecorder } from './plan-broker'
+import { recordPlanDecision, recordStagedPlan } from './chat/plans/store'
 import {
   initDrawer,
   flushPendingBrowserPersists,
@@ -1352,6 +1353,10 @@ app.whenReady().then(async () => {
       registry.playPlanSound(agentId)
       appNotifications?.conversations.plan(agentId)
     })
+  setPlanRecorder({
+    staged: (conversationId, plan) => recordStagedPlan(conversationId, plan),
+    decided: (conversationId, decision) => recordPlanDecision(conversationId, decision),
+  })
   if (mainWindow) initMemoryService(mainWindow)
 
   if (mainWindow) void initAppImageIntegration(mainWindow)

@@ -5,6 +5,8 @@ import { listChatMessagesAround } from '../../chat/chat-store'
 import { browseHistory, searchHistory, type HistorySearchHit } from '../../chat/history-index/search'
 import { localEmbeddingReranker } from '../../chat/history-index/semantic'
 import { canReadConversationHistory, workspaceHistoryAccess } from '../../chat/history-index/access'
+import { planRef } from '../../chat/plans/context'
+import { getConversationPlan, listConversationPlans } from '../../chat/plans/store'
 import type { McpToolContext } from './context'
 import { err, ok } from './context'
 
@@ -173,6 +175,26 @@ export function registerHistoryTools(ctx: McpToolContext): void {
       const target = conversationId ?? convId
       if (!canReadConversationHistory(convId, target, workerScope)) return err(t('returns.history.conversationDenied'))
       return ok(renderHistoryWindow(target, seq, before ?? 3, after ?? 3, t, { detail }))
+    }
+  )
+  server.registerTool(
+    'plan_read',
+    {
+      title: t('tools.plan_read.title'),
+      description: t('tools.plan_read.description'),
+      inputSchema: {
+        id: z.string().trim().min(1).max(100).optional().describe(t('tools.plan_read.params.id')),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ id }) => {
+      const plan = getConversationPlan(convId, id)
+      if (plan) {
+        const title = plan.title ? ` · ${plan.title}` : ''
+        return ok(`${planRef(plan.id)} · v${plan.version} · ${plan.status}${title}\n\n${plan.content}`)
+      }
+      const ids = listConversationPlans(convId).map((entry) => planRef(entry.id))
+      return err(ids.length ? t('returns.plans.notFound', { ids: ids.join(', ') }) : t('returns.plans.none'))
     }
   )
 }

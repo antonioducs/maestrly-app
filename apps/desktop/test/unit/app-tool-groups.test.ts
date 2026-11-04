@@ -44,7 +44,7 @@ describe('app-tool prompts', () => {
     expect(agent).toContain('Maestrly app tools (terminal, notes, memory, debug):')
     expect(agent).toContain('(terminal_*, notes_*, memory_*, debug_*)')
     expect(agent).not.toContain('browser_*,')
-    expect(agent).toContain('The user turned off browser_* and history_* in this conversation')
+    expect(agent).toContain('The user turned off browser_* and history_*/plan_read in this conversation')
 
     const ask = hostAppToolsSection(true, true, 'ask', ['notes', 'terminal'])
     expect(ask).toContain('restricted catalog: memory search/list/read and browser navigation/read.')

@@ -585,8 +585,23 @@ before. The summary marker is placed where the tail begins, so the divider
 appears there in the history. Native runtimes start a fresh session from the
 summary and the tail. Compaction during a turn keeps its latest steps the same
 way. Isolated review rounds and background preparation summarize their whole
-source as before. An approved plan that is still in the tail is not repeated in
-the summary.
+source as before.
+
+Plans submitted with `review_plan` are stored apart from the transcript, with
+the person's decision on each: proposed, approved, revised, discarded, or
+superseded by a newer version. Every summary ends with the conversation's
+plans: an index of up to 10 plans with their ids, then the approved plan being
+implemented, which is the latest plan when it was approved. That plan is kept
+verbatim up to about 4,000 estimated tokens. A longer plan is reduced to its
+headings and top-level items, and the agent is told to read it in full with
+`plan_read` before continuing. When the message that approved the plan is still
+in the tail, only the index is repeated. The summarizer never receives this
+section, and background preparation leaves it out: it is added from the plan
+store when the prepared summary is activated. Conversations from earlier
+versions, or moved from another computer, rebuild their plans from the
+transcript the first time they are needed. Deleting or clearing messages
+removes the plans they held. Isolated review rounds still carry the approved
+plan of their own history verbatim.
 
 During a turn with an API key, outside the OpenAI harness, which compacts
 natively, the summary is first requested by repeating the turn's last request
@@ -700,9 +715,12 @@ after a response; it does not change the active context or pause the conversatio
 
 A prepared summary covers an exact point in the history. When the next request
 or a host-controlled continuation needs compaction, Maestrly checks whether that
-summary **plus all subsequent content** fits the destination model. If it does,
-the summary is activated without another summarization call. Selecting a model
-alone does not activate it. Cursor can prepare during a task and uses prepared
+summary **plus all subsequent content** brings the next request to half the
+destination model's window. If it does, the summary is activated without another
+summarization call. Otherwise, as when a long task has outgrown the preparation,
+normal compaction runs: it starts from the prepared summary, summarizes only the
+newer content, and keeps the usual verbatim tail. Selecting a model alone does
+not activate it. Cursor can prepare during a task and uses prepared
 context on a later send; provider-managed native compaction remains independent.
 
 Only the latest ready preparation and its replacement in progress are kept.
@@ -714,8 +732,11 @@ recorded separately and is not charged again when its summary is activated.
 Preparation failures appear beside the context indicator, with retry and settings
 actions, without turning the conversation into an error or blocking a send.
 Authentication/configuration errors pause preparation; transient failures have a
-bounded retry. A ready, still-valid summary can survive a later preparation
-failure. If no usable summary is available when context must be reduced, normal
+bounded retry. After an empty or oversized summary, retrying starts the round
+over instead of resuming it from its completed stages. Preparation asks for a
+summary of at most half its 8,000-token limit, since the limit is measured with
+a conservative estimate. A ready, still-valid summary can survive a later
+preparation failure. If no usable summary is available when context must be reduced, normal
 foreground compaction still runs and may require waiting. The configured helper
 model applies to background preparation; manual and fallback compaction retain
 their existing behavior.
@@ -737,7 +758,7 @@ the conversation's **+** menu to change its groups. Changing one group pins only
 that group's choice; the others continue to inherit the global settings.
 
 A disabled group removes its tools from the next turn's catalog, including
-delegated workers. The existing mode limits and permission rules still apply.
+delegated workers. Conversation history also covers `plan_read`. The existing mode limits and permission rules still apply.
 Bots keep their Maestrly tools enabled and ignore these group choices.
 
 The Memory group controls memory tools, including personal memory tools. Memory
@@ -873,7 +894,8 @@ automatic saving off. Personal settings fail closed as described above. Memory
 failures do not prevent sending a message.
 
 Recall and the read-only `memory_search`, `memory_list`, `memory_read`,
-`history_search` and `history_read` tools never prompt for approval. Disabling
+`history_search`, `history_read` and `plan_read` tools never prompt for
+approval. Disabling
 automatic recall leaves the core and manual tools available. `memory_search`
 returns five hits by default, at most ten, with 300-character snippets and a
 relevance floor of 0.34. Memory is presented as evidence to check before use.

@@ -465,6 +465,14 @@ export default {
         conversationId: 'Another conversation of this workspace, from a workspace-scope history_search result.',
       },
     },
+    plan_read: {
+      title: 'Read a plan',
+      description:
+        'Reads in full a plan proposed in this conversation with review_plan, with its status (proposed, approved, revised, discarded or superseded). After a compaction, the summary lists the plans by id and may carry only the outline of a long approved plan: read it here before continuing its implementation. Without an id, reads the latest plan, the one being implemented when it is approved. Read-only.',
+      params: {
+        id: 'A plan id from the summary’s plan list, such as plan_1a2b3c4d.',
+      },
+    },
     memory_search: {
       title: 'Search memory',
       description:
@@ -681,6 +689,10 @@ export default {
       workspaceDenied:
         'Workspace history is available only in project conversations, not in standalone chats, bot conversations or delegated work. Search this conversation instead.',
       conversationDenied: 'That conversation’s history is not available from here.',
+    },
+    plans: {
+      none: 'This conversation has no plans.',
+      notFound: 'No plan with that id. Plans of this conversation: {{ids}}.',
     },
     memory: {
       nothingRelevant: 'Nothing relevant enough. Try different words, or memory_list to browse.',

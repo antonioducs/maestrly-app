@@ -877,12 +877,14 @@ export class ChatBackgroundCompactionCoordinator {
         )
         return false
       }
-      this.markFailed(conversationId, current, failureCode(error))
+      const code = failureCode(error)
+      // Resuming would replay the same completed stages into the same rejection: a retry starts the round over.
+      this.markFailed(conversationId, code === 'summarizer-invalid-output' ? { ...current, work: null } : current, code)
       this.deps.diagnostic?.({
         kind: 'failed',
         conversationId,
         durationMs: Math.max(0, this.now() - startedAt),
-        reason: failureCode(error),
+        reason: code,
       })
       return false
     }

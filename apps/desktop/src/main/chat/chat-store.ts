@@ -55,6 +55,7 @@ import {
   sanitizeToolOutputForPersistence,
 } from "./tool-output";
 import { invalidateBackgroundCompaction } from "./background-compaction/invalidation";
+import { forgetConversationPlans, forgetPlansOfMessages } from "./plans/store";
 
 /**
  * PERSISTED/INTERNAL main-process usage. Extends public `ChatUsage` with the OPAQUE identity
@@ -2598,6 +2599,7 @@ export async function clearChatMessages(conversationId: string): Promise<void> {
   newestMarkers.delete(conversationId);
   noteHistoryStatsWrite(conversationId, null);
   noteDeletedMessages("m.conversation_id = ?", conversationId);
+  forgetConversationPlans(conversationId);
   const pending = chatDeletionArtifacts(
     "SELECT id, conversation_id, parts_json FROM chat_messages WHERE conversation_id = ?",
     conversationId,
@@ -2620,6 +2622,7 @@ export function deleteChatMessage(id: string): void {
   );
   const seq = getMessageSeq(id);
   noteDeletedMessages("m.id = ?", id);
+  if (pending) forgetPlansOfMessages(pending.conversationId, "AND m.id = ?", id);
   getDb().prepare("DELETE FROM chat_messages WHERE id = ?").run(id);
   if (!pending) return;
   noteHistoryStatsWrite(pending.conversationId, seq);
@@ -2661,6 +2664,7 @@ export function deleteChatMessagesFrom(
     conversationId,
     fromSeq,
   );
+  forgetPlansOfMessages(conversationId, "AND m.seq >= ?", fromSeq);
   const pending = chatDeletionArtifacts(
     "SELECT id, conversation_id, parts_json FROM chat_messages WHERE conversation_id = ? AND seq >= ?",
     conversationId,

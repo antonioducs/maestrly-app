@@ -277,6 +277,8 @@ import { grokReasoningMeta } from './grok-subscription/models'
 import { finalTurnCompletion } from './turn-status'
 import { QuestionBroker } from './question-broker'
 import { activeChatContext, latestApprovedPlan, renderTranscript, summaryWithApprovedPlan } from './message'
+import { summaryWithPlans, summaryWithoutPlans } from './plans/context'
+import { listConversationPlans, recordApprovedPlan } from './plans/store'
 import { summaryWithLoadedSkills } from './compaction-skills'
 import { createContextProgressPublisher } from './context-progress'
 import { CODEX_TRANSFER_MAX_CHARACTERS, codexTransferCharacters } from './native-transfer'
@@ -3712,8 +3714,11 @@ async function preflightContext(
   return { ok: true, compacted: true }
 }
 
-/** Load, relative to the window, that pruning alone must reach to replace a summary. */
-const PRUNE_ONLY_MAX_LOAD = 0.5
+/**
+ * Load, relative to the window, that a shortcut (pruning alone, or a prepared background summary) must reach to replace
+ * a full compaction. Anything above it would leave the next compaction only a few steps away.
+ */
+const SHORTCUT_COMPACTION_MAX_LOAD = 0.5
 
 /**
  * Commits only the pruning of older tool outputs when that brings the next request to half the window. All in one
@@ -3740,7 +3745,7 @@ function pruneToolOutputsBeforeCompaction(
     if (targets.length === 0) return
     const prunedHistory = applyToolPruning(history, targets)
     const prunedLoad = portableContextLoad(window, estimatePortableContextTokens(prunedHistory), pendingTokens)
-    if (prunedLoad.requiredTokens > window * PRUNE_ONLY_MAX_LOAD) return
+    if (prunedLoad.requiredTokens > window * SHORTCUT_COMPACTION_MAX_LOAD) return
     if (
       isCodexSubscriptionProvider(selection.providerId) &&
       codexTransferCharacters(prunedHistory, pendingParts) > CODEX_TRANSFER_MAX_CHARACTERS
@@ -6747,10 +6752,17 @@ async function startSendAttempt(
  * (the conversation is already in Agent mode). Instructions and final plan go INLINE in an INTERNAL message
  * (hidden bubble), explicitly identifying the content as not a worktree file. The user sees only implementation.
  */
-export async function runApprovedPlan(conversationId: string, plan: string): Promise<void> {
+export async function runApprovedPlan(conversationId: string, plan: string, title?: string): Promise<void> {
   if (!savedDeps) return
   const wc = getMainWebContents()
   if (!wc) return
+  // A plan approved in another conversation (a Maestro sibling) becomes this one's plan. The record serves later
+  // compactions only, so failing to write it never holds back the implementation.
+  try {
+    recordApprovedPlan(conversationId, plan, title)
+  } catch {
+    // The transcript still holds the plan; the store rebuilds it from there.
+  }
   const prompt = tFor(getLocale(), 'prompts')('planBroker.implementApprovedPlan', { plan })
   const sendApproved = () => startSend(savedDeps!, wc, conversationId, prompt, undefined, { internal: true })
   let r = await sendApproved()
@@ -8242,9 +8254,11 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
         maxToolOutputChars: Number.POSITIVE_INFINITY,
         includeSkillBodies: true,
       })
+    // A hard limit is measured with the conservative bytes/3 estimate, above the model's own token count: aiming at
+    // the limit itself would reject a summary that followed the instruction.
     const summaryTargetTokens = Math.min(
       compactionSummaryTargetTokens(estimateTextTokens(transcript), contextWindow),
-      opts.summaryMaxTokens ?? Number.POSITIVE_INFINITY
+      opts.summaryMaxTokens ? Math.max(1, Math.floor(opts.summaryMaxTokens / 2)) : Number.POSITIVE_INFINITY
     )
     const compactSystem = `${compactBaseSystem}\n\n${compactionTargetInstruction(summaryTargetTokens)}`
     if (opts.summaryMaxTokens && !contextWindow) throw new Error('summarizer-context-window-unknown')
@@ -8681,14 +8695,18 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
     }
     // A plan or request still in the verbatim tail is not repeated in the summary.
     const planInTail = cut != null && latestApprovedPlan(historyAfterCut(history, cut)) != null
+    // Plans come from the plan store, outside the model's text. Background preparation keeps only that text (they
+    // join when it is activated); isolated rounds carry the approved plan of their own history, as before.
+    const withPlans = opts.historyOverride
+      ? summaryWithoutPlans(compacted.summary)
+      : opts.executionId
+        ? planInTail
+          ? summaryWithoutApprovedPlan(compacted.summary)
+          : summaryWithApprovedPlan(compacted.summary, history)
+        : summaryWithPlans(compacted.summary, listConversationPlans(conversationId), { activeInContext: planInTail })
     // Skills loaded in the verbatim tail are still in context; only those the summary replaced need loading again.
     const summary = summaryWithTurnRequest(
-      summaryWithLoadedSkills(
-        planInTail
-          ? summaryWithoutApprovedPlan(compacted.summary)
-          : summaryWithApprovedPlan(compacted.summary, history),
-        summarizedHistory
-      ),
+      summaryWithLoadedSkills(withPlans, summarizedHistory),
       cut?.splitTurn ? turnRequestBeforeCut(history, cut) : null
     )
     const usage = compacted.usage
@@ -9190,7 +9208,12 @@ async function activateBackgroundCompactionCandidate(
     afterPartId: candidate.boundary.partId,
     partId: randomUUID(),
   }
-  const projected = previewPreparedActivation(history, prepared, candidate.summary)
+  // The candidate holds only the summarizer's text: plans join it now, from the store, as of this activation.
+  const planInSuffix = latestApprovedPlan(historyAfterCut(history, prepared)) != null
+  const summary = summaryWithPlans(candidate.summary, listConversationPlans(conversationId), {
+    activeInContext: planInSuffix,
+  })
+  const projected = previewPreparedActivation(history, prepared, summary)
   if (!projected) return null
   const nativeTransfer =
     isCodexSubscriptionProvider(destination.providerId) ||
@@ -9199,16 +9222,25 @@ async function activateBackgroundCompactionCandidate(
     isCursorSubscriptionProvider(destination.providerId) ||
     isAntigravitySubscriptionProvider(destination.providerId)
   const tokens = nativeTransfer ? estimateNativeSeedContextTokens(projected) : estimatePortableContextTokens(projected)
-  if (
-    preflightContextLoad(
-      contextWindow,
-      tokens,
-      estimatePortablePartsTokens(pendingParts) + 16,
-      'portable-transcript',
-      AUTO_COMPACT_RATIO
-    ).shouldCompact
+  const load = preflightContextLoad(
+    contextWindow,
+    tokens,
+    estimatePortablePartsTokens(pendingParts) + 16,
+    'portable-transcript'
   )
+  // A candidate that lags behind a long turn keeps that whole suffix verbatim. The full compaction folds it as a base
+  // and keeps only a short tail instead.
+  if (load.requiredTokens > contextWindow * SHORTCUT_COMPACTION_MAX_LOAD) {
+    chatDiag({
+      kind: 'background-compaction-candidate-insufficient',
+      conv: conversationId,
+      coveredTokens: candidate.coveredTokens,
+      usedTokens: tokens,
+      requiredTokens: load.requiredTokens,
+      contextWindow,
+    })
     return null
+  }
   if (
     isCodexSubscriptionProvider(destination.providerId) &&
     codexTransferCharacters(projected, pendingParts) > CODEX_TRANSFER_MAX_CHARACTERS
@@ -9238,7 +9270,7 @@ async function activateBackgroundCompactionCandidate(
   }
   // Local bindings and retryable cleanup tombstones were committed atomically above.
   void deleteSubscriptionStateForConversation(conversationId).catch(() => undefined)
-  return { summary: candidate.summary, prepared }
+  return { summary, prepared }
 }
 
 export async function setMemorySettings(value: unknown): Promise<{ ok: boolean; error?: string }> {

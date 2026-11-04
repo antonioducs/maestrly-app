@@ -464,6 +464,14 @@ export default {
         conversationId: 'Outra conversa deste workspace, vinda de um resultado de history_search com scope "workspace".',
       },
     },
+    plan_read: {
+      title: 'Ler um plano',
+      description:
+        'Lê por inteiro um plano proposto nesta conversa com review_plan, com o estado dele (proposed, approved, revised, discarded ou superseded). Depois de uma compactação, o resumo lista os planos pelo id e pode trazer só o esboço de um plano aprovado longo: leia-o aqui antes de continuar a implementação. Sem id, lê o plano mais recente, que é o que está sendo implementado quando foi aprovado. Somente leitura.',
+      params: {
+        id: 'O id de um plano da lista do resumo, como plan_1a2b3c4d.',
+      },
+    },
     memory_search: {
       title: 'Buscar na memória',
       description:
@@ -684,6 +692,10 @@ export default {
       workspaceDenied:
         'O histórico do workspace só está disponível em conversas de projeto, não em chats avulsos, conversas de bots ou trabalho delegado. Busque nesta conversa.',
       conversationDenied: 'O histórico dessa conversa não está disponível daqui.',
+    },
+    plans: {
+      none: 'Esta conversa não tem planos.',
+      notFound: 'Nenhum plano com esse id. Planos desta conversa: {{ids}}.',
     },
     memory: {
       nothingRelevant: 'Nada relevante o suficiente. Tente outras palavras ou use memory_list para explorar.',
