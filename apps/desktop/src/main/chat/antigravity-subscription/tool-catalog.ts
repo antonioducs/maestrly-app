@@ -118,32 +118,38 @@ export interface AntigravityToolCatalogPlan {
 }
 
 /**
- * Keeps the catalog within `maxBytes` by summarizing whole tiers of tools in order (external MCP tools before app
- * tools, for example) until it fits. Tools in no tier always keep their schemas. The plan depends only on the specs,
- * so the same tools always produce the same catalog and signature.
+ * Lists the `deferred` tools by name and summary only, whatever the size of the catalog, and keeps the rest within
+ * `maxBytes` by summarizing whole tiers of tools in order (external MCP tools before app tools, for example) until it
+ * fits. Tools in no tier always keep their schemas. The plan depends only on the specs, so the same tools always
+ * produce the same catalog and signature.
  */
 export function planAntigravityToolCatalog(
   specs: readonly HostToolSpec[],
   tiers: readonly (readonly string[])[] = [],
-  maxBytes = ANTIGRAVITY_TOOL_CATALOG_MAX_BYTES
+  maxBytes = ANTIGRAVITY_TOOL_CATALOG_MAX_BYTES,
+  deferred: readonly string[] = []
 ): AntigravityToolCatalogPlan {
-  const full = renderAntigravityToolCatalog(specs)
-  const unchanged = { specs: [...specs], summarized: new Set<string>(), catalog: full }
-  if (Buffer.byteLength(full, 'utf8') <= maxBytes || specs.some((spec) => spec.name === TOOL_SCHEMAS_SPEC.name)) {
-    return unchanged
-  }
-  const served = [...specs, TOOL_SCHEMAS_SPEC].sort(byName)
   const present = new Set(specs.map((spec) => spec.name))
-  const summarized = new Set<string>()
-  let catalog = full
+  const unchanged = () => ({
+    specs: [...specs],
+    summarized: new Set<string>(),
+    catalog: renderAntigravityToolCatalog(specs),
+  })
+  if (present.has(TOOL_SCHEMAS_SPEC.name)) return unchanged()
+  const summarized = new Set(deferred.filter((name) => present.has(name)))
+  const fits = (catalog: string) => Buffer.byteLength(catalog, 'utf8') <= maxBytes
+  if (summarized.size === 0 && fits(renderAntigravityToolCatalog(specs))) return unchanged()
+  const served = [...specs, TOOL_SCHEMAS_SPEC].sort(byName)
+  let catalog = summarized.size ? renderAntigravityToolCatalog(served, summarized) : ''
+  if (summarized.size && fits(catalog)) return { specs: served, summarized, catalog }
   for (const tier of tiers) {
     const before = summarized.size
     for (const name of tier) if (present.has(name)) summarized.add(name)
     if (summarized.size === before) continue
     catalog = renderAntigravityToolCatalog(served, summarized)
-    if (Buffer.byteLength(catalog, 'utf8') <= maxBytes) break
+    if (fits(catalog)) break
   }
-  return summarized.size ? { specs: served, summarized, catalog } : unchanged
+  return summarized.size ? { specs: served, summarized, catalog } : unchanged()
 }
 
 /** Answer of `get_tool_schemas`: the full entry of each requested tool, in the catalog's format. */

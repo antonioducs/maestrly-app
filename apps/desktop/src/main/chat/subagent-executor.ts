@@ -26,6 +26,7 @@ import {
   isCodexSubscriptionProvider,
   isCursorSubscriptionProvider,
   isGitHubCopilotSubscriptionProvider,
+  providerDefersTools,
   subscriptionAccountId,
 } from './catalog'
 import type { ClaudeSubscriptionAccountIdentity, ClaudeSubscriptionManager } from './claude-agent-sdk/manager'
@@ -91,6 +92,7 @@ import { ALL_TOOL_NAMES, buildTools, selectSubagentToolNames } from './tools'
 import { buildMaestroWorkerTools, isMaestroWorkerOperationalToolName } from './maestro-worker-tools'
 import { conversationShellEnv } from './conversation-env'
 import { runnerHookContext, wrapToolSetWithHooks } from './plugin-hooks'
+import { deferredLoadingToolNames, withoutExternalMcpWrappers } from './tool-policy'
 
 export type SubagentExecutionResult = Awaited<ReturnType<typeof runSubagent>> & {
   runtimeEstimatedCostUsd?: number
@@ -310,6 +312,10 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
     runnerHookContext({ conversationId: args.conversationId, cwd: args.cwd, mode: args.mode, signal: args.signal })
   )
   const deferred = new Set([...(args.deferredToolNames ?? []), ...(maestroRuntime?.deferredToolNames ?? [])])
+  // A runtime that cannot keep a deferred tool out of its requests gets no typed wrapper of an external MCP tool: those
+  // reach it through mcp_search/mcp_call/mcp_read, whichever runtime the parent turn runs on.
+  const toolsFor = (providerId: string): ToolSet =>
+    providerDefersTools(providerId) ? tools : withoutExternalMcpWrappers(tools)
   // Maestro continuity: the parent requested continuation of this agent's previous turn. The host decides per
   // provider whether the native thread can reopen; otherwise recreate the worker with the previous
   // report injected and record the reason — never silently.
@@ -639,7 +645,7 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
             args.broker.pendingFor(args.conversationId).length ||
               args.questionBroker.pendingFor(args.conversationId).length
           ),
-        tools,
+        tools: toolsFor(effective.providerId),
         allowSkillLoader: args.mode === 'maestro',
         progress,
         onTextUpdate,
@@ -656,6 +662,7 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
         return { text: '', error: 'Google AI subscription is not authenticated.', errorCode: 'agent-unavailable' }
       }
       manager.assertAccountIdentity(identity)
+      const antigravityTools = toolsFor(effective.providerId)
       const result = await runAntigravitySubagent({
         ...args,
         profile,
@@ -664,8 +671,8 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
         readOnly: effectiveReadOnly,
         manager,
         accountIdentity: identity,
-        tools,
-        deferrableToolNames: deferred,
+        tools: antigravityTools,
+        deferrableToolNames: new Set([...deferred, ...deferredLoadingToolNames(antigravityTools)]),
         allowSkillLoader: args.mode === 'maestro',
         progress,
         onTextUpdate,
@@ -798,7 +805,7 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
       onTextUpdate,
       messageOwnership: args.parentMessageOwnership,
       readOnly: effectiveReadOnly,
-      tools,
+      tools: toolsFor(effective.providerId),
       allowSkillLoader: args.mode === 'maestro',
       onTerminalFailure: (error) => void (attemptFailure = error),
       ...(retryGate ? { shouldRetryInPlace: retryGate } : {}),

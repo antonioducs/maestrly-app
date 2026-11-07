@@ -237,8 +237,9 @@ export function appToolMetadata(name: string): Pick<AppToolPolicy, 'readOnly' | 
 export const EXTERNAL_MCP_RESTRICTED_METADATA = { readOnly: true, parallelSafe: false } as const
 
 /**
- * A tool whose schema a runtime with tool search sends only when the model looks it up. External MCP servers carry it:
- * one server can declare hundreds of tools, and a 500-tool catalog loaded in full costs ~300k tokens on every request.
+ * A tool whose schema a runtime with tool search sends only when the model looks it up. The typed wrappers of external
+ * MCP servers carry it, and so do most app tools (see appToolDeferrable): one server can declare hundreds of tools, and a
+ * 500-tool catalog loaded in full costs ~300k tokens on every request.
  */
 export const DEFERRED_LOADING_METADATA = { deferLoading: true } as const
 
@@ -248,6 +249,60 @@ export function isDeferredLoadingTool(metadata?: unknown): boolean {
     metadata !== null &&
     !Array.isArray(metadata) &&
     (metadata as Record<string, unknown>).deferLoading === true
+  )
+}
+
+/** Marks the typed wrapper of one external MCP tool, which a runtime without tool search must not receive. */
+export const EXTERNAL_MCP_WRAPPER_METADATA = { externalMcp: true } as const
+
+export function isExternalMcpWrapper(metadata?: unknown): boolean {
+  return (
+    typeof metadata === 'object' &&
+    metadata !== null &&
+    !Array.isArray(metadata) &&
+    (metadata as Record<string, unknown>).externalMcp === true
+  )
+}
+
+/**
+ * The tools of a set without the typed wrappers of external MCP tools. A runtime that cannot keep a deferred tool out
+ * of its requests gets `mcp_search`, `mcp_call` and `mcp_read` instead: a server of hundreds of tools would otherwise
+ * send every schema with every request.
+ */
+export function withoutExternalMcpWrappers<T extends Record<string, unknown>>(tools: T): T {
+  return Object.fromEntries(
+    Object.entries(tools).filter(
+      ([, entry]) => !isExternalMcpWrapper((entry as { metadata?: unknown } | undefined)?.metadata)
+    )
+  ) as T
+}
+
+/**
+ * App tools the model keeps loaded: the ones the prompt asks it to use unprompted (saving and recalling a memory,
+ * searching what was compacted, reading the plan after a compaction) and the interface preview, which is tiny and
+ * which the prompt teaches. A lookup step would discourage them. Every other app tool (terminal, browser, notes,
+ * debug, artifacts, the rest of memory, and the bot-only ones) is looked up when needed.
+ */
+const LOADED_APP_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'memory_search',
+  'memory_read',
+  'memory_upsert',
+  'history_search',
+  'history_read',
+  'plan_read',
+  'preview_interface',
+])
+
+export function appToolDeferrable(name: string): boolean {
+  return !LOADED_APP_TOOL_NAMES.has(name)
+}
+
+/** The tools of a set that a runtime with tool search keeps out of its requests until the model looks them up. */
+export function deferredLoadingToolNames(tools: Record<string, unknown>): Set<string> {
+  return new Set(
+    Object.entries(tools)
+      .filter(([, entry]) => isDeferredLoadingTool((entry as { metadata?: unknown } | undefined)?.metadata))
+      .map(([name]) => name)
   )
 }
 

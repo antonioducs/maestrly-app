@@ -4,6 +4,7 @@ import type { Tool as CopilotTool } from '@github/copilot-sdk'
 import { toolOutputImages } from '../../src/shared/chat'
 import { copilotTools, mergeCopilotToolSets, profileCopilotTools } from '../../src/main/chat/github-copilot/tools'
 import { chatToolOutputToAiSdkOutput, mcpResultToChatToolOutput } from '../../src/main/chat/tool-output'
+import { DEFERRED_LOADING_METADATA } from '../../src/main/chat/tool-policy'
 
 function namedTool(owner: string, execute = vi.fn(async () => owner)) {
   return tool({
@@ -15,6 +16,11 @@ function namedTool(owner: string, execute = vi.fn(async () => owner)) {
     }),
     execute,
   })
+}
+
+/** A tool a runtime with tool search keeps out of its requests, as the typed MCP wrappers and the app tools are. */
+function deferredTool(owner: string) {
+  return Object.assign(namedTool(owner), { metadata: DEFERRED_LOADING_METADATA })
 }
 
 async function invoke(entry: CopilotTool): Promise<unknown> {
@@ -29,18 +35,19 @@ describe('GitHub Copilot tool conversion', () => {
       shared: namedTool('core-shared'),
     }
     const mcp: ToolSet = {
-      mcp_only: namedTool('mcp-only'),
+      mcp_only: deferredTool('mcp-only'),
+      // Discovery and dispatch stay loaded: they are the way to a server whose catalog is not cached yet.
       mcp_search: namedTool('mcp-search'),
       mcp_call: namedTool('mcp-call'),
-      mcp_core: namedTool('mcp-collision'),
-      app_collision: namedTool('mcp-app-collision'),
-      shared: namedTool('mcp-shared'),
+      mcp_core: deferredTool('mcp-collision'),
+      app_collision: deferredTool('mcp-app-collision'),
+      shared: deferredTool('mcp-shared'),
     }
     const app: ToolSet = {
-      drawer_only: namedTool('drawer-only'),
-      app_collision: namedTool('app-collision'),
-      skill_app: namedTool('app-skill-collision'),
-      shared: namedTool('app-shared'),
+      drawer_only: deferredTool('drawer-only'),
+      app_collision: deferredTool('app-collision'),
+      skill_app: deferredTool('app-skill-collision'),
+      shared: deferredTool('app-shared'),
     }
     const skill: ToolSet = {
       use_skill: namedTool('skill-only'),
@@ -56,10 +63,19 @@ describe('GitHub Copilot tool conversion', () => {
     const converted = await copilotTools(merged.tools, new AbortController().signal, merged.deferredToolNames)
     const byName = new Map(converted.map((entry) => [entry.name, entry]))
 
-    for (const name of ['mcp_only', 'mcp_search', 'mcp_call', 'mcp_core', 'drawer_only', 'app_collision']) {
+    for (const name of ['mcp_only', 'mcp_core', 'drawer_only', 'app_collision']) {
       expect(byName.get(name)?.defer, name).toBe('auto')
     }
-    for (const name of ['core_only', 'use_skill', 'skill_app', 'task', 'review_plan', 'shared']) {
+    for (const name of [
+      'core_only',
+      'mcp_search',
+      'mcp_call',
+      'use_skill',
+      'skill_app',
+      'task',
+      'review_plan',
+      'shared',
+    ]) {
       expect(byName.get(name)?.defer, name).toBe('never')
     }
 

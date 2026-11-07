@@ -490,6 +490,7 @@ async function runCursorSubscriptionChatInScope(
       disabledIds,
       codexSafeNames: true,
       supportsImages: true,
+      surface: 'on-demand',
       describeImage: (image) =>
         describeEphemeralToolImage({
           image,

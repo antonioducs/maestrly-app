@@ -19,8 +19,9 @@ import {
   EXTERNAL_MCP_RESTRICTED_METADATA,
   externalMcpToolAllowed,
   isDeferredLoadingTool,
+  withoutExternalMcpWrappers,
 } from '../../src/main/chat/tool-policy'
-import { writeMcpCatalog } from '../../src/main/chat/mcp-catalog'
+import { readMcpCatalogEntry, writeMcpCatalog } from '../../src/main/chat/mcp-catalog'
 import { toolOutputImages } from '../../src/shared/chat'
 import { modelOutputToChatToolOutput, MAX_EPHEMERAL_IMAGE_BYTES } from '../../src/main/chat/tool-output'
 import { freshDb, closeDb } from '../helpers/db'
@@ -392,7 +393,7 @@ describe('buildMcpTools catalogs by mode with real stdio and store', () => {
       signal: new AbortController().signal,
     })
     try {
-      expect(Object.keys(built.tools).sort()).toEqual(['mcp_call', 'mcp_search'])
+      expect(Object.keys(built.tools).sort()).toEqual(['mcp_call', 'mcp_read', 'mcp_search'])
       expect(existsSync(fixtureStartedFile)).toBe(false)
 
       const search = built.tools.mcp_search as unknown as Executable
@@ -466,9 +467,15 @@ describe('buildMcpTools catalogs by mode with real stdio and store', () => {
         'fixture__mutate',
         'fixture__screenshot',
         'mcp_call',
+        'mcp_read',
         'mcp_search',
       ])
-      expect(built.tools.fixture__lookup.metadata).toEqual({ readOnly: true, parallelSafe: false, deferLoading: true })
+      expect(built.tools.fixture__lookup.metadata).toEqual({
+        readOnly: true,
+        parallelSafe: false,
+        deferLoading: true,
+        externalMcp: true,
+      })
       // Discovery and dispatch stay loaded: they are the way to a server whose catalog is not cached yet.
       expect(isDeferredLoadingTool(built.tools.mcp_search.metadata)).toBe(false)
       expect(isDeferredLoadingTool(built.tools.mcp_call.metadata)).toBe(false)
@@ -478,6 +485,167 @@ describe('buildMcpTools catalogs by mode with real stdio and store', () => {
     } finally {
       await built.close()
     }
+  })
+
+  /** Lists the fixture server once, so its catalog is cached and a surface built next knows its tools. */
+  const seedCatalog = async (serverId: string) => {
+    const cold = await buildMcpTools({
+      conversationId: null,
+      mode: 'agent',
+      gate: async () => {},
+      signal: new AbortController().signal,
+    })
+    await (cold.tools.mcp_search as unknown as Executable).execute({ server: serverId }, { toolCallId: 'seed' })
+  }
+  const build = (extra: Partial<Parameters<typeof buildMcpTools>[0]> = {}) =>
+    buildMcpTools({
+      conversationId: null,
+      mode: 'agent',
+      gate: async () => {},
+      signal: new AbortController().signal,
+      ...extra,
+    })
+  const search = async (built: Awaited<ReturnType<typeof build>>, input: Record<string, unknown>) =>
+    JSON.parse(
+      (await (built.tools.mcp_search as unknown as Executable).execute(input, { toolCallId: 'search' })) as string
+    )
+
+  it('on-demand surface loads no wrappers and indexes tool names in mcp_search', async () => {
+    const server = registerFixtureServer()
+    await seedCatalog(server.id)
+
+    const built = await build({ surface: 'on-demand' })
+    expect(Object.keys(built.tools).sort()).toEqual(['mcp_call', 'mcp_read', 'mcp_search'])
+    const description = String(built.tools.mcp_search.description)
+    expect(description).toContain(`fixture (${server.id}), 6 tools:`)
+    for (const name of ['lookup', 'echo', 'screenshot', 'mutate']) expect(description).toContain(name)
+    expect(built.tools.mcp_read.metadata).toEqual({ readOnly: true, parallelSafe: false })
+    expect(isDeferredLoadingTool(built.tools.mcp_search.metadata)).toBe(false)
+
+    // A runtime that announces deferred names itself needs only the servers.
+    const serversOnly = await build({ surface: 'on-demand', directory: 'servers' })
+    expect(String(serversOnly.tools.mcp_search.description)).toContain(`Servers: fixture (${server.id}).`)
+    expect(String(serversOnly.tools.mcp_search.description)).not.toContain('lookup')
+
+    // Plan and Ask already restrict mcp_call itself.
+    const plan = await build({ surface: 'on-demand', mode: 'plan' })
+    expect(Object.keys(plan.tools).sort()).toEqual(['mcp_call', 'mcp_search'])
+    expect(String(plan.tools.mcp_search.description)).not.toContain('mutate')
+  })
+
+  it('defers mcp_read with the wrappers and hands a runtime without tool search none of them', async () => {
+    const server = registerFixtureServer()
+    await seedCatalog(server.id)
+
+    const typed = await build()
+    expect(isDeferredLoadingTool(typed.tools.mcp_read.metadata)).toBe(true)
+    expect(isDeferredLoadingTool(typed.tools.fixture__lookup.metadata)).toBe(true)
+    expect(Object.keys(withoutExternalMcpWrappers(typed.tools)).sort()).toEqual(['mcp_call', 'mcp_read', 'mcp_search'])
+
+    // Without wrappers nothing is deferred: the three tools are the whole surface and load as they are.
+    const onDemand = await build({ surface: 'on-demand' })
+    expect(isDeferredLoadingTool(onDemand.tools.mcp_read.metadata)).toBe(false)
+    expect(Object.keys(withoutExternalMcpWrappers(onDemand.tools)).sort()).toEqual(Object.keys(onDemand.tools).sort())
+  })
+
+  it('mcp_search ranks a query, reads exact names and lists names a page at a time', async () => {
+    const server = registerFixtureServer()
+    await seedCatalog(server.id)
+    const built = await build({ surface: 'on-demand' })
+
+    const ranked = await search(built, { server: server.id, query: 'typed echo' })
+    expect(ranked.tools[0]).toMatchObject({ name: 'echo', inputSchema: { properties: { value: { type: 'string' } } } })
+    expect(ranked.matches).toBeGreaterThanOrEqual(1)
+
+    // Without `server`, every server whose catalog is cached is searched.
+    const across = await search(built, { query: 'echo' })
+    expect(across.tools[0]).toMatchObject({ name: 'echo' })
+
+    const exact = await search(built, { server: server.id, names: ['ECHO', 'nope'] })
+    expect(exact.tools.map((entry: { name: string }) => entry.name)).toEqual(['echo'])
+    expect(exact.missing).toEqual(['nope'])
+
+    const page = await search(built, { server: server.id, limit: 2 })
+    expect(page.total).toBe(6)
+    expect(page.tools).toHaveLength(2)
+    expect(page.nextOffset).toBe(2)
+    const rest = await search(built, { server: server.id, limit: 10, offset: 2 })
+    expect(rest.tools).toHaveLength(4)
+    expect(rest.nextOffset).toBeUndefined()
+  })
+
+  it('searches across servers from the cache and names the ones never listed', async () => {
+    const server = registerFixtureServer()
+    await seedCatalog(server.id)
+    addMcpServer({
+      name: 'other',
+      transport: 'stdio',
+      command: process.execPath,
+      args: [FIXTURE],
+      env: { MCP_FIXTURE_STARTED_FILE: path.join(fixtureDir, 'other-started') },
+    })
+    const built = await build({ surface: 'on-demand' })
+    expect(String(built.tools.mcp_search.description)).toMatch(/other \(.+\): tools not listed yet/)
+
+    const across = await search(built, { query: 'echo' })
+    expect(across.tools[0]).toMatchObject({ server: 'fixture', name: 'echo' })
+    expect(across.note).toMatch(/Not searched.*other/)
+    // Searching across servers never starts a process.
+    expect(existsSync(path.join(fixtureDir, 'other-started'))).toBe(false)
+  })
+
+  it('mcp_read calls only tools declared read-only', async () => {
+    const server = registerFixtureServer()
+    await seedCatalog(server.id)
+    const gate = vi.fn(async () => {})
+    const built = await build({ surface: 'on-demand', gate })
+    const read = built.tools.mcp_read as unknown as Executable
+
+    await expect(read.execute({ server: server.id, tool: 'mutate' }, { toolCallId: 'r1' })).rejects.toThrow(
+      /not declared read-only/
+    )
+    expect(gate).not.toHaveBeenCalled()
+    expect(await read.execute({ server: server.id, tool: 'lookup' }, { toolCallId: 'r2' })).toBe('lookup-ok')
+    expect(gate).toHaveBeenCalledExactlyOnceWith('fixture__lookup', 'r2')
+  })
+
+  it('serves an agent call from a recent catalog and a restricted call from a live listing', async () => {
+    const server = registerFixtureServer()
+    await seedCatalog(server.id)
+    const listedAt = () => readMcpCatalogEntry(server)?.refreshedAt
+    const seeded = listedAt()
+    expect(seeded).toEqual(expect.any(Number))
+    // A listing rewrites the cached catalog, which is how a test sees one happen.
+    vi.useFakeTimers({ toFake: ['Date'], now: (seeded ?? 0) + 60_000 })
+    try {
+      const agent = await build({ surface: 'on-demand' })
+      await (agent.tools.mcp_call as unknown as Executable).execute(
+        { server: server.id, tool: 'lookup' },
+        { toolCallId: 'a1' }
+      )
+      expect(listedAt()).toBe(seeded)
+
+      // Only a listing made now can say a tool turned from read-only to mutating, which Plan must refuse.
+      const plan = await build({ surface: 'on-demand', mode: 'plan' })
+      await (plan.tools.mcp_call as unknown as Executable).execute(
+        { server: server.id, tool: 'lookup' },
+        { toolCallId: 'p1' }
+      )
+      expect(listedAt()).toBe((seeded ?? 0) + 60_000)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('hands back the schema when an mcp_call has invalid arguments', async () => {
+    const server = registerFixtureServer()
+    await seedCatalog(server.id)
+    const built = await build({ surface: 'on-demand' })
+    const call = built.tools.mcp_call as unknown as Executable
+
+    await expect(
+      call.execute({ server: server.id, tool: 'echo', arguments: {} }, { toolCallId: 'bad' })
+    ).rejects.toThrow(/Input schema: .*"value"/s)
   })
 
   it('gives Design the warm mutable catalog and metadata behavior of Agent', async () => {
@@ -499,7 +667,7 @@ describe('buildMcpTools catalogs by mode with real stdio and store', () => {
     })
     try {
       expect(built.tools).toHaveProperty('fixture__mutate')
-      expect(built.tools.fixture__mutate.metadata).toEqual({ deferLoading: true })
+      expect(built.tools.fixture__mutate.metadata).toEqual({ deferLoading: true, externalMcp: true })
       expect(built.tools.mcp_call.metadata).toBeUndefined()
       const mutate = built.tools.fixture__mutate as unknown as Executable
       await expect(mutate.execute({}, { toolCallId: 'design-mutate' })).resolves.toBe('mutate-ok')
@@ -532,7 +700,12 @@ describe('buildMcpTools catalogs by mode with real stdio and store', () => {
       'mcp_call',
       'mcp_search',
     ])
-    expect(built.tools.fixture__lookup.metadata).toEqual({ readOnly: true, parallelSafe: false, deferLoading: true })
+    expect(built.tools.fixture__lookup.metadata).toEqual({
+      readOnly: true,
+      parallelSafe: false,
+      deferLoading: true,
+      externalMcp: true,
+    })
   })
 
   it('validates live schemas before permission and dispatch', async () => {

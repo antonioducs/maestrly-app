@@ -81,6 +81,18 @@ export function isGitHubCopilotSubscriptionProvider(providerId: string | null | 
   return !!providerId && subscriptionBaseProviderId(providerId) === GITHUB_COPILOT_SUBSCRIPTION_PROVIDER_ID
 }
 
+/**
+ * Whether a runtime keeps a deferred tool out of its requests until the model looks it up. The others get external MCP
+ * tools through `mcp_search`/`mcp_call` instead of a typed wrapper each (see `buildMcpTools`).
+ */
+export function providerDefersTools(providerId: string | null | undefined): boolean {
+  return (
+    isClaudeSubscriptionProvider(providerId) ||
+    isCodexSubscriptionProvider(providerId) ||
+    isGitHubCopilotSubscriptionProvider(providerId)
+  )
+}
+
 /** Claude Agent SDK virtual provider using the Claude Code authenticated subscription. */
 export const CLAUDE_SUBSCRIPTION_PROVIDER_ID = 'builtin_claude_subscription'
 export const CLAUDE_SUBSCRIPTION_PROVIDER: ChatProvider = {

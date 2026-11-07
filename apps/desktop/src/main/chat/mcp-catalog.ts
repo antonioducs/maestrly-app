@@ -40,9 +40,27 @@ export function mcpServerFingerprint(server: McpServer): string {
   return createHash('sha256').update(JSON.stringify(connection)).digest('hex')
 }
 
+// A catalog with a few hundred tools weighs megabytes, and every server of every turn reads it. Parsing and sanitizing
+// run again only when the stored text changes.
+let parsedMemo: { raw: string; catalog: StoredCatalog } | undefined
+const sanitizedEntries = new WeakMap<StoredCatalogEntry, ListedMcpTool[]>()
+
 function parseCatalog(): StoredCatalog {
   const raw = getAppSetting(MCP_CATALOG_KEY)
   if (!raw) return { version: 1, entries: {} }
+  if (parsedMemo?.raw === raw) return parsedMemo.catalog
+  const catalog = parseStoredCatalog(raw)
+  parsedMemo = { raw, catalog }
+  return catalog
+}
+
+/** An unshared copy a writer may change: the memoized one belongs to the readers. */
+function editableCatalog(): StoredCatalog {
+  const raw = getAppSetting(MCP_CATALOG_KEY)
+  return raw ? parseStoredCatalog(raw) : { version: 1, entries: {} }
+}
+
+function parseStoredCatalog(raw: string): StoredCatalog {
   try {
     const parsed = JSON.parse(raw) as Partial<StoredCatalog>
     if (
@@ -100,14 +118,30 @@ export function sanitizeMcpCatalogTools(value: unknown): ListedMcpTool[] {
   return value.map(safeTool).filter((entry): entry is ListedMcpTool => entry !== null)
 }
 
-export function readMcpCatalog(server: McpServer): ListedMcpTool[] {
+export interface McpCatalogRead {
+  tools: ListedMcpTool[]
+  /** When the server was last listed. */
+  refreshedAt: number
+}
+
+/** The cached tools of a server, or null when it was never listed or its connection settings changed since. */
+export function readMcpCatalogEntry(server: McpServer): McpCatalogRead | null {
   const entry = parseCatalog().entries[server.id]
-  if (!entry || entry.fingerprint !== mcpServerFingerprint(server)) return []
-  return sanitizeMcpCatalogTools(entry.tools)
+  if (!entry || entry.fingerprint !== mcpServerFingerprint(server)) return null
+  let tools = sanitizedEntries.get(entry)
+  if (!tools) {
+    tools = sanitizeMcpCatalogTools(entry.tools)
+    sanitizedEntries.set(entry, tools)
+  }
+  return { tools, refreshedAt: typeof entry.refreshedAt === 'number' ? entry.refreshedAt : 0 }
+}
+
+export function readMcpCatalog(server: McpServer): ListedMcpTool[] {
+  return readMcpCatalogEntry(server)?.tools ?? []
 }
 
 export function writeMcpCatalog(server: McpServer, tools: readonly ListedMcpTool[]): void {
-  const catalog = parseCatalog()
+  const catalog = editableCatalog()
   catalog.entries[server.id] = {
     fingerprint: mcpServerFingerprint(server),
     refreshedAt: Date.now(),
@@ -117,7 +151,7 @@ export function writeMcpCatalog(server: McpServer, tools: readonly ListedMcpTool
 }
 
 export function removeMcpCatalog(serverId: string): void {
-  const catalog = parseCatalog()
+  const catalog = editableCatalog()
   if (!(serverId in catalog.entries)) return
   delete catalog.entries[serverId]
   setAppSetting(MCP_CATALOG_KEY, JSON.stringify(catalog))

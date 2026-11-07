@@ -104,13 +104,41 @@ local process; an HTTP server is an external network service. Tool schemas are
 validated, calls remain permission-gated, and transports are disposed on
 conversation/provider lifecycle changes.
 
-Cached tools of external servers carry `deferLoading` metadata. The Claude Agent
-SDK runtime then enables Claude Code's built-in `ToolSearch`, its only built-in,
-and registers those tools without `alwaysLoad`: the model sees their names and
-loads a schema when it needs one. Claude Code defers nothing while `ToolSearch`
-is off, so every schema would go with every request; a 500-tool server is about
-300k tokens per call, which compaction cannot free. Maestrly's own tools,
-`mcp_search` and `mcp_call` stay loaded.
+A server can declare hundreds of tools, and a 500-tool catalog sent in full is
+about 300k tokens on every request, which compaction cannot free. So no runtime
+sends the schemas of external MCP tools with each request; the model learns that
+a tool exists, then reads its schema when it needs it (`chat/mcp-discovery.ts`,
+`chat/tool-policy.ts`):
+
+- **Runtimes with tool search** (Claude, Codex, GitHub Copilot, and the OpenAI
+  Responses harness on models that support it). Cached external tools become
+  typed wrappers, and these and most Maestrly tools carry `deferLoading`
+  metadata. The Claude Agent SDK runtime enables Claude Code's built-in
+  `ToolSearch`, its only built-in, and registers them without `alwaysLoad`:
+  Claude Code announces their names, and the model loads a schema when it needs
+  one. Claude Code defers nothing while `ToolSearch` is off.
+- **Every other runtime** (Cursor, Google Antigravity, API keys without tool
+  search, Grok, subagents and Maestro workers on any of them). No wrapper is
+  built. `mcp_search` carries an index of tool names within a fixed budget (a
+  small server lists every tool, a large one lists what fits and counts the
+  rest), ranks a keyword query, reads exact names or lists names a page at a
+  time, and never returns a whole catalog. `mcp_call` runs a tool, and hands the
+  schema back when its arguments are invalid. `mcp_read` runs only tools
+  declared read-only, for subagents limited to read-only tools. A subagent
+  inherits the typed wrappers of its parent only on a runtime that defers them.
+  The Antigravity catalog always lists deferred tools by name and summary and
+  serves their schemas through `get_tool_schemas`.
+
+Most Maestrly tools (terminal, browser, notes, Debugger, Artifacts) are deferred
+the same way on the runtimes with tool search and on Antigravity. The other
+runtimes still send them in full, which is about 14k tokens with every group on;
+turning a group off in Settings removes its tools. The tools the prompt asks
+the model to use unprompted (`memory_search`, `memory_read`, `memory_upsert`,
+`history_search`, `history_read`, `plan_read`, `preview_interface`), `mcp_search`,
+`mcp_call` and the built-in tools stay loaded everywhere: a lookup step would
+discourage them, and discovery cannot depend on a lookup. A cached catalog serves searches and calls
+for six hours, so calling a tool does not list the whole server first; Plan and
+Ask always check a live listing, because a tool may have stopped being read-only.
 
 Remote servers that require OAuth use the SDK's `authProvider` on their
 transports (`chat/mcp-oauth.ts`). The host that runs a server keeps its sign-in

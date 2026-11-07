@@ -789,10 +789,16 @@ recall and automatic extraction have their own settings under **Models & agents*
 turn off personal memory there to also disable context injection and background
 writes.
 
-On the Claude subscription, tools of external MCP servers are not sent with
-every request: Claude sees their names and loads a tool's description when it
-needs that tool, so a server with hundreds of tools does not fill the context.
-Maestrly's own tools stay loaded.
+Tools of external MCP servers are not sent with every request, on any model. The
+agent knows they exist and loads a tool's description when it needs that tool, so
+a server with hundreds of tools does not fill the context. On the Claude, Codex
+and GitHub Copilot subscriptions the runtime does this; on every other model
+`mcp_search` lists the tool names, finds tools by keyword and returns their
+schemas, and `mcp_call` runs them. Maestrly's terminal, browser, notes, Debugger
+and Artifacts tools are loaded the same way on those subscriptions, on the OpenAI
+Responses models that support it and on Google Antigravity; other models still
+receive them with every request, so turn off the groups you do not use. The tools
+to save, search and read memory and conversation history stay loaded.
 
 ## Skill catalog
 

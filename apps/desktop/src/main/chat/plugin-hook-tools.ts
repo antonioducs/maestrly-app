@@ -30,10 +30,13 @@ const FIELDS: Record<string, Record<string, string>> = {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value)
 
+/** The tools that run one external MCP tool by its server and name. */
+const isMcpCallTool = (name: string): boolean => name === 'mcp_call' || name === 'mcp_read'
+
 /** The Claude Code name of a Maestrly tool: external MCP tools (`<server>__<tool>`) become `mcp__<server>__<tool>`. */
 export function claudeToolName(maestrlyName: string, input?: unknown): string {
   if (
-    maestrlyName === 'mcp_call' &&
+    isMcpCallTool(maestrlyName) &&
     isRecord(input) &&
     typeof input.server === 'string' &&
     typeof input.tool === 'string'
@@ -54,7 +57,7 @@ export function toClaudeInput(maestrlyName: string, input: unknown): unknown {
     const command = input.action.command
     return { command: Array.isArray(command) ? command.join(' ') : String(command ?? '') }
   }
-  if (maestrlyName === 'mcp_call' && isRecord(input)) return input.arguments ?? {}
+  if (isMcpCallTool(maestrlyName) && isRecord(input)) return input.arguments ?? {}
   return rename(input, FIELDS[maestrlyName])
 }
 
@@ -68,7 +71,7 @@ export function fromClaudeInput(maestrlyName: string, input: unknown, original?:
         command: typeof input.command === 'string' ? ['/bin/sh', '-c', input.command] : original.action.command,
       },
     }
-  if (maestrlyName === 'mcp_call' && isRecord(original)) return { ...original, arguments: input }
+  if (isMcpCallTool(maestrlyName) && isRecord(original)) return { ...original, arguments: input }
   const fields = FIELDS[maestrlyName]
   if (!fields) return input
   const back = Object.fromEntries(Object.entries(fields).map(([maestrly, claude]) => [claude, maestrly]))

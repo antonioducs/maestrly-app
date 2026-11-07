@@ -102,7 +102,7 @@ model can delegate to with `task` or a `#<plugin>-<agent>` mention, like your ow
 
 - **Tools.** The tools an agent names map to Maestrly's: `Read`, `Grep`, `Glob`, `LS`, `Bash`, `Edit`, `MultiEdit`,
   `Write`, `WebFetch` and `WebSearch` keep their meaning, and any `mcp__…` tool becomes access to the enabled MCP servers
-  through `mcp_search` and `mcp_call`. `WebSearch` is Maestrly's `web_search`, so the agent searches only while web search
+  through `mcp_search`, `mcp_call` and `mcp_read`. `WebSearch` is Maestrly's `web_search`, so the agent searches only while web search
   is on in Settings. Tools with no equivalent every model can use, such as `Task` or `TodoWrite`, are left out and listed
   under **Not included**. An agent that names no tools gets the read-only set.
 - **Model.** An agent's `model` is ignored: it runs on the conversation's model, unless a subagent rule in

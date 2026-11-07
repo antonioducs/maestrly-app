@@ -605,6 +605,8 @@ async function prepareRuntime(
     gate,
     disabledIds,
     supportsImages: true,
+    // Claude Code announces the name of every tool it defers, so the search tool does not repeat them.
+    directory: 'servers',
     describeImage: (image) =>
       describeEphemeralToolImage({
         image,

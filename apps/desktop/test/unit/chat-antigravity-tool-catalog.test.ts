@@ -105,6 +105,31 @@ describe('Antigravity tool catalog budget', () => {
     expect(plan.catalog).not.toMatch(/- maestrly_app_0: .+\n {2}arguments: /)
   })
 
+  it('lists deferred tools without schemas even when the whole catalog would fit', () => {
+    const deferredNames = app.map((spec) => spec.name)
+    const plan = planAntigravityToolCatalog([...core, ...app], tiers, 100_000, deferredNames)
+    expect([...plan.summarized].sort()).toEqual(deferredNames.slice().sort())
+    expect(plan.specs.map((spec) => spec.name)).toContain(ANTIGRAVITY_TOOL_SCHEMAS_TOOL)
+    expect(plan.catalog).toMatch(/- maestrly_read: .+\n {2}arguments: /)
+    expect(plan.catalog).not.toMatch(/- maestrly_app_0: .+\n {2}arguments: /)
+    // Every deferred tool is still named, so the model knows it exists and can ask for its schema.
+    for (const name of deferredNames) expect(plan.catalog).toContain(`- maestrly_${name}: `)
+    expect(bytes(plan.catalog)).toBeLessThan(bytes(renderAntigravityToolCatalog([...core, ...app])))
+  })
+
+  it('still gives up the tiers once the deferred tools are not enough', () => {
+    const deferredNames = app.map((spec) => spec.name)
+    const plan = planAntigravityToolCatalog([...core, ...app, ...mcp], tiers, 40_000, deferredNames)
+    expect(plan.summarized.size).toBe(mcp.length + app.length)
+    expect(bytes(plan.catalog)).toBeLessThanOrEqual(40_000)
+  })
+
+  it('ignores deferred names the catalog does not serve', () => {
+    const plan = planAntigravityToolCatalog(core, [], 100_000, ['gone'])
+    expect(plan.summarized.size).toBe(0)
+    expect(plan.catalog).toBe(renderAntigravityToolCatalog(core))
+  })
+
   it('shortens long single-sentence descriptions in the summary', () => {
     const long: HostToolSpec = { name: 'mcp_long', description: 'word '.repeat(200), inputSchema: { type: 'object' } }
     const plan = planAntigravityToolCatalog([...core, long, ...mcp], [['mcp_long', ...tiers[0]]], 1_000)

@@ -1,6 +1,7 @@
 import { asSchema } from '@ai-sdk/provider-utils'
 import type { Tool as AiTool, ToolSet } from 'ai'
 import type { Tool as CopilotTool } from '@github/copilot-sdk'
+import { deferredLoadingToolNames } from '../tool-policy'
 import { toolOutputImages, toolOutputText, type ToolOutput } from '../../../shared/chat'
 import {
   modelOutputToChatToolOutput,
@@ -38,7 +39,7 @@ export function mergeCopilotToolSets(
   task: ToolSet
 ): MergedCopilotToolSet {
   const tools: ToolSet = { ...core, ...mcp, ...app, ...skill, ...task }
-  const deferredToolNames = new Set([...Object.keys(mcp), ...Object.keys(app)])
+  const deferredToolNames = deferredLoadingToolNames({ ...mcp, ...app })
   for (const name of Object.keys(skill)) deferredToolNames.delete(name)
   for (const name of Object.keys(task)) deferredToolNames.delete(name)
   return { tools, deferredToolNames }

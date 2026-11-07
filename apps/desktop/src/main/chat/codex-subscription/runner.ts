@@ -1,4 +1,5 @@
 import { hasPersonalMemoryTools, PERSONAL_MEMORY_TOOLS } from '../mcp'
+import { deferredLoadingToolNames } from '../tool-policy'
 import { isBotMode } from '../../fleet/instance/config'
 import { buildMaestrlyBasePrompt, HOST_ASK_DISPATCH_GUIDANCE, hostGenUiSection } from '../harness/host-contracts'
 import type { PermissionScope } from '../../../shared/conversation-scope'
@@ -855,7 +856,7 @@ export function mergeDynamicToolSets(
 ): { tools: ToolSet; deferredToolNames: Set<string> } {
   // Order also defines dispatch: bridge > app > MCP.
   const tools: ToolSet = { ...mcpTools, ...appTools, ...bridgeTools }
-  const deferredToolNames = new Set([...Object.keys(mcpTools), ...Object.keys(appTools)])
+  const deferredToolNames = deferredLoadingToolNames({ ...mcpTools, ...appTools })
   // A same-named bridge is the effective implementation and must remain eager.
   for (const name of Object.keys(bridgeTools)) deferredToolNames.delete(name)
   return { tools, deferredToolNames }

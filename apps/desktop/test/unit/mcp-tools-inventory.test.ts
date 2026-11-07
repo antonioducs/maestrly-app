@@ -1,7 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
-import { APP_TOOL_POLICY, appToolAllowed, appToolMetadata } from '../../src/main/chat/tool-policy'
+import {
+  APP_TOOL_POLICY,
+  DEFERRED_LOADING_METADATA,
+  appToolAllowed,
+  appToolDeferrable,
+  appToolMetadata,
+  isDeferredLoadingTool,
+} from '../../src/main/chat/tool-policy'
 import { buildAppTools } from '../../src/main/chat/mcp'
 import { createLocalMemory, getLocalMemory } from '../../src/main/memory/local-memory-service'
 import { GENERATED_INTERFACES_FLAG } from '../../src/main/chat/generated-interfaces'
@@ -168,8 +175,7 @@ const EXPECTED_TOOL_NAMES = [
 ] as const
 
 // Board tools register only for linked board or project-chat conversations.
-const LINKED_BOARD_TOOL_NAMES = [
-] as const
+const LINKED_BOARD_TOOL_NAMES = [] as const
 
 const EXPECTED_SHAPES: ToolShape[] = [
   shape('browser_navigate', ['url'], ['url']),
@@ -471,7 +477,12 @@ describe('MCP app tools inventory', () => {
     try {
       const expected = EXPECTED_TOOL_NAMES.filter((name) => appToolAllowed('plan', name)).sort()
       expect(Object.keys(plan.tools).sort()).toEqual(expected)
-      for (const name of expected) expect(plan.tools[name].metadata, name).toEqual(appToolMetadata(name))
+      for (const name of expected) {
+        expect(plan.tools[name].metadata, name).toEqual({
+          ...appToolMetadata(name),
+          ...(appToolDeferrable(name) ? DEFERRED_LOADING_METADATA : {}),
+        })
+      }
     } finally {
       await plan.close()
     }
@@ -480,6 +491,34 @@ describe('MCP app tools inventory', () => {
     try {
       expect(Object.keys(agent.tools).sort()).toEqual(EXPECTED_TOOL_NAMES.slice().sort())
       expect(agent.tools.review_plan).toBeUndefined()
+    } finally {
+      await agent.close()
+    }
+  })
+
+  it('defers every app tool except the ones the prompt asks the model to use unprompted', async () => {
+    const agent = await buildAppTools({ conversationId: convId, mode: 'agent', gate: async () => {} })
+    try {
+      const loaded = Object.keys(agent.tools)
+        .filter((name) => !isDeferredLoadingTool(agent.tools[name].metadata))
+        .sort()
+      expect(loaded.length).toBeGreaterThan(0)
+      for (const name of loaded) {
+        expect(appToolDeferrable(name), name).toBe(false)
+      }
+      expect(loaded).toEqual(
+        expect.arrayContaining(['memory_search', 'memory_read', 'memory_upsert', 'history_search', 'preview_interface'])
+      )
+      for (const name of [
+        'terminal_run',
+        'browser_click',
+        'notes_list_pages',
+        'debug_start',
+        'artifact_create',
+        'memory_forget',
+      ]) {
+        expect(isDeferredLoadingTool(agent.tools[name].metadata), name).toBe(true)
+      }
     } finally {
       await agent.close()
     }
