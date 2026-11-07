@@ -766,6 +766,11 @@ recall and automatic extraction have their own settings under **Models & agents*
 turn off personal memory there to also disable context injection and background
 writes.
 
+On the Claude subscription, tools of external MCP servers are not sent with
+every request: Claude sees their names and loads a tool's description when it
+needs that tool, so a server with hundreds of tools does not fill the context.
+Maestrly's own tools stay loaded.
+
 ## Skill catalog
 
 Every turn lists the enabled skills by name and description, and the agent loads

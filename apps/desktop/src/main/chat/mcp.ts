@@ -39,6 +39,7 @@ import {
   modelOutputToChatToolOutput,
 } from './tool-output'
 import {
+  DEFERRED_LOADING_METADATA,
   EXTERNAL_MCP_RESTRICTED_METADATA,
   appToolAllowed,
   appToolMetadata,
@@ -749,15 +750,17 @@ function cachedExternalMcpTool(
   advertised: string,
   accounts: readonly McpOAuthAccountDto[] = []
 ): Tool {
-  const metadata =
-    capabilityBehaviorFor(context.mode) !== 'agent' || externalMcpToolReadOnly(declaration.annotations)
+  const metadata = {
+    ...(capabilityBehaviorFor(context.mode) !== 'agent' || externalMcpToolReadOnly(declaration.annotations)
       ? EXTERNAL_MCP_RESTRICTED_METADATA
-      : undefined
+      : {}),
+    ...DEFERRED_LOADING_METADATA,
+  }
   const choose = accounts.length > 1
   const schema = (declaration.inputSchema as object) ?? { type: 'object', properties: {} }
   return tool({
     description: declaration.description ?? `MCP tool "${declaration.name}" from server ${server.name}.`,
-    ...(metadata ? { metadata } : {}),
+    metadata,
     inputSchema: jsonSchema(choose ? withAccountParameter(schema, server, accounts) : schema),
     execute: async (input: unknown, options: { toolCallId: string; abortSignal?: AbortSignal }) => {
       let args = input

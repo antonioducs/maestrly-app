@@ -237,6 +237,21 @@ export function appToolMetadata(name: string): Pick<AppToolPolicy, 'readOnly' | 
 export const EXTERNAL_MCP_RESTRICTED_METADATA = { readOnly: true, parallelSafe: false } as const
 
 /**
+ * A tool whose schema a runtime with tool search sends only when the model looks it up. External MCP servers carry it:
+ * one server can declare hundreds of tools, and a 500-tool catalog loaded in full costs ~300k tokens on every request.
+ */
+export const DEFERRED_LOADING_METADATA = { deferLoading: true } as const
+
+export function isDeferredLoadingTool(metadata?: unknown): boolean {
+  return (
+    typeof metadata === 'object' &&
+    metadata !== null &&
+    !Array.isArray(metadata) &&
+    (metadata as Record<string, unknown>).deferLoading === true
+  )
+}
+
+/**
  * Built-in, parent-only tools that start persistent conversations, and create or clone the projects they work in.
  * They mutate (projects, worktrees, conversations, turns), so they never enter Plan, the structurally read-only
  * Maestro parent, subagents or Maestro workers.

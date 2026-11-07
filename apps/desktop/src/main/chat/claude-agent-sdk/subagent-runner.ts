@@ -170,7 +170,7 @@ async function runClaudeSubagentAttempt(
     bridge = await buildClaudeToolBridge(
       tools,
       args.signal,
-      new Set(Object.keys(tools)),
+      undefined,
       () => args.manager.assertAccountIdentity(args.accountIdentity),
       args.journal
     )
@@ -276,7 +276,7 @@ async function runClaudeSubagentAttempt(
             settingSources: [],
             strictMcpConfig: true,
             mcpServers: { maestrly: bridge.server },
-            tools: [],
+            tools: [...bridge.nativeTools],
             allowedTools: bridge.allowedTools,
             disallowedTools: CLAUDE_DISALLOWED_NATIVE_TOOLS,
             toolAliases: bridge.toolAliases,

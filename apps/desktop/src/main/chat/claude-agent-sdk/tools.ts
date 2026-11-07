@@ -18,7 +18,7 @@ import {
   toolOutputIsError,
   toolOutputToMcpCallResult,
 } from '../tool-output'
-import { isHostToolParallelSafe } from '../tool-policy'
+import { isDeferredLoadingTool, isHostToolParallelSafe } from '../tool-policy'
 import { coerceToolInput as sharedCoerceToolInput } from '../tool-robustness/arg-repair'
 import type { ToolOutput } from '../../../shared/chat'
 import type { ClaudeToolJournal } from './tool-journal'
@@ -51,6 +51,9 @@ const CLAUDE_NATIVE_TOOL_NAMES = [
 
 export const CLAUDE_DISALLOWED_NATIVE_TOOLS = [...CLAUDE_NATIVE_TOOL_NAMES]
 
+/** Claude Code defers MCP tools only while its own search tool is enabled; `tools: []` loads every schema in full. */
+export const CLAUDE_TOOL_SEARCH_TOOL = 'ToolSearch'
+
 const NATIVE_ALIAS_CANDIDATES: Record<string, string> = {
   Agent: 'task',
   Task: 'task',
@@ -75,6 +78,8 @@ const NATIVE_ALIAS_CANDIDATES: Record<string, string> = {
 
 export interface ClaudeToolBridge {
   server: McpSdkServerConfigWithInstance
+  /** Built-in Claude Code tools the session needs: the search tool, when some Maestrly tool is deferred. */
+  nativeTools: string[]
   allowedTools: string[]
   toolAliases: Record<string, string>
   toolSignature: string
@@ -232,20 +237,19 @@ function inputHash(value: unknown): string {
   return createHash('sha256').update(encoded).digest('hex')
 }
 
+function deferredLoadingToolNames(tools: ToolSet): Set<string> {
+  return new Set(
+    Object.entries(tools)
+      .filter(([, raw]) => isDeferredLoadingTool((raw as { metadata?: unknown } | undefined)?.metadata))
+      .map(([name]) => name)
+  )
+}
+
 export async function buildClaudeToolBridge(
   tools: ToolSet,
   signal: AbortSignal,
-  eagerToolNames: ReadonlySet<string> = new Set([
-    'read',
-    'grep',
-    'glob',
-    'ask_question',
-    'todo_write',
-    'review_plan',
-    'task',
-    'delegate',
-    'use_skill',
-  ]),
+  /** Tools the model sees by name only until it looks them up. By default, those marked to defer loading. */
+  deferredToolNames: ReadonlySet<string> = deferredLoadingToolNames(tools),
   beforeExecute?: () => void,
   journal?: ClaudeToolJournal
 ): Promise<ClaudeToolBridge> {
@@ -335,7 +339,7 @@ export async function buildClaudeToolBridge(
     const zodObject = jsonSchemaToZod(jsonSchema)
     const inputShape = zodObject instanceof z.ZodObject ? zodObject.shape : { input: zodObject }
     const description = typeof aiTool.description === 'string' ? aiTool.description : `Maestrly tool ${name}.`
-    const eager = eagerToolNames.has(name)
+    const eager = !deferredToolNames.has(name)
     // readOnlyHint is the Claude runtime's only switch for running MCP tools concurrently; without it every
     // Maestrly tool (including independent `task` calls) is serialized. The runtime also reads it for its native
     // plan-mode gate, which Maestrly never enables (sessions run with permissionMode 'dontAsk'); Maestrly's own
@@ -395,7 +399,8 @@ export async function buildClaudeToolBridge(
     signatureRows.push({ name, description, schema: jsonSchema, eager })
   }
   const names = signatureRows.map((row) => row.name)
-  const allowedTools = names.map((name) => `${CLAUDE_MCP_TOOL_PREFIX}${name}`)
+  const nativeTools = signatureRows.some((row) => !row.eager) ? [CLAUDE_TOOL_SEARCH_TOOL] : []
+  const allowedTools = [...names.map((name) => `${CLAUDE_MCP_TOOL_PREFIX}${name}`), ...nativeTools]
   // The unqualified names too: the transcript a new session is seeded with names tools as Maestrly does (`bash`), and
   // the model calls them that way, which the SDK refuses as unknown before it retries with the qualified name.
   const toolAliases: Record<string, string> = Object.fromEntries(
@@ -410,6 +415,7 @@ export async function buildClaudeToolBridge(
       version: '1.0.0',
       tools: definitions,
     }),
+    nativeTools,
     allowedTools,
     toolAliases,
     toolSignature: createHash('sha256').update(JSON.stringify(signatureRows)).digest('hex'),
@@ -424,6 +430,8 @@ export async function buildClaudeToolBridge(
       hooks: [
         async (input, toolUseID) => {
           if (input.hook_event_name === 'PreToolUse') {
+            // The search only loads deferred Maestrly schemas; each tool it surfaces is verified here when called.
+            if (nativeTools.includes(input.tool_name)) return { continue: true }
             const id = toolUseID ?? input.tool_use_id
             const normalizedName = stripQualifiedName(input.tool_name)
             if (!id || !names.includes(normalizedName)) {

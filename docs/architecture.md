@@ -104,6 +104,14 @@ local process; an HTTP server is an external network service. Tool schemas are
 validated, calls remain permission-gated, and transports are disposed on
 conversation/provider lifecycle changes.
 
+Cached tools of external servers carry `deferLoading` metadata. The Claude Agent
+SDK runtime then enables Claude Code's built-in `ToolSearch`, its only built-in,
+and registers those tools without `alwaysLoad`: the model sees their names and
+loads a schema when it needs one. Claude Code defers nothing while `ToolSearch`
+is off, so every schema would go with every request; a 500-tool server is about
+300k tokens per call, which compaction cannot free. Maestrly's own tools,
+`mcp_search` and `mcp_call` stay loaded.
+
 Remote servers that require OAuth use the SDK's `authProvider` on their
 transports (`chat/mcp-oauth.ts`). The host that runs a server keeps its sign-in
 and refreshes it; the interactive sign-in (`chat/mcp-oauth-connect.ts`) runs on the

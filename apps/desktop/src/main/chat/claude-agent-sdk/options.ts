@@ -58,7 +58,7 @@ export function buildClaudeChatQueryOptions(args: BuildClaudeChatQueryOptionsArg
     },
     strictMcpConfig: true,
     mcpServers: { maestrly: args.bridge.server },
-    tools: [],
+    tools: [...args.bridge.nativeTools],
     allowedTools: args.bridge.allowedTools,
     disallowedTools: [...args.disallowedNativeTools],
     toolAliases: args.bridge.toolAliases,
