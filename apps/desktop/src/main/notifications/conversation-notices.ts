@@ -1,7 +1,7 @@
 import { tMain } from '../i18n'
 import type { SystemNotice } from './system-notices'
 
-export type ConversationNoticeKind = 'finished' | 'failed' | 'question' | 'plan'
+export type ConversationNoticeKind = 'finished' | 'failed' | 'question' | 'permission' | 'plan'
 
 export interface ConversationNoticesDeps {
   notices: { show(notice: SystemNotice): void; dismiss(key: string): void }
@@ -26,9 +26,9 @@ export class ConversationNotices {
   constructor(private readonly deps: ConversationNoticesDeps) {}
 
   /**
-   * A status the conversation's registry emitted, which emits ready and error only when a turn ends, and asking once
-   * per question. `alert` is false for a status that needs no one, such as the end of a compaction. Returns what it
-   * tells the owner, shown or not, so that a host's conversation can sound it.
+   * A status the conversation's registry emitted, which emits ready and error only when a turn ends, asking once
+   * per question, and waiting once per approval a turn needs. `alert` is false for a status that needs no one, such as
+   * the end of a compaction. Returns what it tells the owner, shown or not, so that a host's conversation can sound it.
    */
   status(conversationId: string, status: string, alert = true): ConversationNoticeKind | null {
     if (status === 'working') {
@@ -38,7 +38,15 @@ export class ConversationNotices {
     if (status === 'ready' && this.planned.delete(conversationId)) return null
     if (!alert) return null
     const kind: ConversationNoticeKind | null =
-      status === 'ready' ? 'finished' : status === 'error' ? 'failed' : status === 'asking' ? 'question' : null
+      status === 'ready'
+        ? 'finished'
+        : status === 'error'
+          ? 'failed'
+          : status === 'asking'
+            ? 'question'
+            : status === 'waiting'
+              ? 'permission'
+              : null
     if (kind) this.notify(conversationId, kind)
     return kind
   }

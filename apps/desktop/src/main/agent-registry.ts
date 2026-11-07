@@ -64,18 +64,28 @@ export class AgentRegistry extends EventEmitter {
     this.transition(this.ensure(id), 'working')
   }
 
-  /** Chat completed a turn. */
+  /** Chat completed a turn; one that ends while it waits for an approval ends too. */
   markReady(id: string, silent = false): void {
     const a = this.ensure(id)
-    if (a.status !== 'working') return
+    if (a.status !== 'working' && a.status !== 'waiting') return
     this.transition(a, 'ready', !silent)
   }
 
   /** Chat failed during a turn. */
   markError(id: string): void {
     const a = this.ensure(id)
-    if (a.status !== 'working') return
+    if (a.status !== 'working' && a.status !== 'waiting') return
     this.transition(a, 'error', true)
+  }
+
+  /**
+   * A Chat turn waits for the person to approve a tool. Enter waiting with the permission alert; further requests of
+   * the same turn are silent until it works again.
+   */
+  markWaiting(id: string): void {
+    const a = this.ensure(id)
+    if (a.status === 'waiting') return
+    this.transition(a, 'waiting', true)
   }
 
   /**

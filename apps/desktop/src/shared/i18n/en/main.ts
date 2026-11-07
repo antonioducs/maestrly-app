@@ -150,6 +150,7 @@ export default {
     finished: 'Finished its turn',
     failed: 'The turn failed',
     question: 'Has a question for you',
+    permission: 'Is waiting for your approval',
     plan: 'Has a plan for you to review',
     badge: 'Things that need you: {{count}}',
     bot: {

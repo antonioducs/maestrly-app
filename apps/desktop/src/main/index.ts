@@ -652,10 +652,16 @@ async function applyVSCodeUpdateOnIdle(): Promise<void> {
 }
 
 function broadcastStatus(payload: { agentId: string; status: string; alert?: boolean }): void {
-  // The registry emits ready/error only when a turn ends, and asking once per question: either needs the person.
-  // The host keeps the mark so that seeing it on one computer clears it on every other.
+  // The registry emits ready/error only when a turn ends, asking once per question, and waiting once per approval the
+  // turn needs: each needs the person. The host keeps the mark so that seeing it on one computer clears it on every
+  // other.
   let attention = false
-  if (payload.status === 'ready' || payload.status === 'error' || payload.status === 'asking') {
+  if (
+    payload.status === 'ready' ||
+    payload.status === 'error' ||
+    payload.status === 'asking' ||
+    payload.status === 'waiting'
+  ) {
     try {
       attention = markConversationAttention(payload.agentId)
     } catch {
@@ -1007,6 +1013,7 @@ function registerIpc(): void {
       else if (status === 'error') registry.markError(conversationId)
       else if (status === 'asking')
         registry.markAsking(conversationId) // A pending question uses the permission alert.
+      else if (status === 'waiting') registry.markWaiting(conversationId)
       else broadcastStatus({ agentId: conversationId, status })
     },
 

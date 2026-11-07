@@ -114,6 +114,8 @@ describe('FleetBotNotices', () => {
       },
     ])
     expect(s.marks()).toEqual([`${S1}/alex`])
+    // The mark says what marked it last, for the notifications center.
+    expect(s.attention.list()[0].last).toMatchObject({ kind: 'threadPaused', at: Date.parse(AT), threadId: 't-1' })
     s.shown[1].onClick()
     s.shown[2].onClick()
     expect(s.open.mock.calls).toEqual([
@@ -127,6 +129,7 @@ describe('FleetBotNotices', () => {
     s.notices.live(S1, entry('turn_completed', { source: 'peer' }))
     expect(s.shown).toEqual([])
     expect(s.marks()).toEqual([`${S1}/alex`])
+    expect(s.attention.list()[0].last?.kind).toBe('activity')
     s.attention.clear(S1, 'alex')
     s.notices.live(S1, entry('needs_you', {}, 'Bash'))
     expect(s.shown.map(({ body }) => body)).toEqual(['Needs you'])

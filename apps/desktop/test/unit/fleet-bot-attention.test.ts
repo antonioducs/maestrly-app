@@ -91,6 +91,24 @@ describe('FleetBotAttention', () => {
     expect(legacy.attention.has(S1, 'alex')).toBe(true)
   })
 
+  it('tells what marked a bot last, again for a bot already marked, without storing it', () => {
+    const s = setup()
+    const failed = { kind: 'routineFailed' as const, at: 1, summary: 'Token expired', runId: 'r1' }
+    const paused = { kind: 'threadPaused' as const, at: 2, summary: 'x'.repeat(600), threadId: 't1' }
+    s.attention.mark(S1, 'alex', 'run:r1', failed)
+    s.attention.mark(S1, 'alex', 'thread:t1', paused)
+    s.attention.mark(S1, 'alex', 'thread:t1')
+    const bounded = { ...paused, summary: `${'x'.repeat(499)}…` }
+    expect(s.changes).toEqual([
+      { serverId: S1, botId: 'alex', attention: true, last: failed },
+      { serverId: S1, botId: 'alex', attention: true, last: bounded },
+    ])
+    expect(s.attention.list()).toEqual([{ serverId: S1, botId: 'alex', last: bounded }])
+    // What marked it is for this run of the app: the stored mark keeps only what clears it.
+    expect(JSON.parse(s.saved()!)).toEqual([{ key: `${S1}/alex`, lanes: ['run:r1', 'thread:t1'] }])
+    expect(setup(s.saved()).attention.list()).toEqual([{ serverId: S1, botId: 'alex' }])
+  })
+
   it('reads back only valid marks of side conversations, and keeps one for too many as its own', () => {
     const many = Array.from({ length: 21 }, (_, index) => `run:r${index}`)
     const stored = JSON.stringify([

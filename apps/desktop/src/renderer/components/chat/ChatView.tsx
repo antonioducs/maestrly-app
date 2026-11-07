@@ -245,7 +245,7 @@ export function ChatView({
   const [highlightMsgId, setHighlightMsgId] = useState<string | null>(null)
   // Sidebar status only seeds initial state; the chat lifecycle owns it after mount.
   // A sidebar status effect can commit `working` after `done` and resurrect Stop.
-  const [streaming, setStreaming] = useState(() => status === 'working' || status === 'asking')
+  const [streaming, setStreaming] = useState(() => status === 'working' || status === 'asking' || status === 'waiting')
   const [stopPending, setStopPending] = useState(false)
   const [pending, setPending] = useState<ChatPermissionRequest[]>([])
   const [runtimeQuestions, setRuntimeQuestions] = useState<PendingChatQuestion[]>([])
@@ -1064,7 +1064,7 @@ export function ChatView({
    */
   useEffect(() => {
     if (!streaming) return
-    if (status === 'working' || status === 'asking') return
+    if (status === 'working' || status === 'asking' || status === 'waiting') return
 
     const revision = turnRevisionRef.current
     let alive = true
@@ -1094,6 +1094,7 @@ export function ChatView({
     maestroPostPending > 0 ||
     pendingQuestion !== null ||
     status === 'asking' ||
+    status === 'waiting' ||
     // A hidden standalone turn keeps its own live buffer; dropping the subscription would lose the
     // tokens emitted while hidden and later overwrite the history with that stale buffer.
     (workspaceId === null && status === 'working')

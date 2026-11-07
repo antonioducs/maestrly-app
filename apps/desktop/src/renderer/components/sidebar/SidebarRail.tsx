@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import {
   Activity,
   AppWindow,
+  Bell,
   BookOpen,
   Bot,
   CircleArrowUp,
@@ -38,6 +39,7 @@ import { ChannelBadge } from './SidebarHeader'
 import { nextSidebarTab, sidebarTabs, type SidebarTab } from './sidebar-tabs'
 
 const TAB_ICON: Record<SidebarTab, LucideIcon> = {
+  inbox: Bell,
   chats: MessagesSquare,
   workspaces: FolderTree,
   bots: Bot,
@@ -61,6 +63,7 @@ export function SidebarRail({
   onTabChange,
   onTabActivate,
   attention,
+  inbox = { waiting: 0, unread: 0 },
   botPendingCount,
   botUpdate = null,
   onOpenAbout,
@@ -76,6 +79,8 @@ export function SidebarRail({
   onTabActivate: (tab: SidebarTab) => void
   /** Sections where a conversation finished in the background and waits for the person, on any machine. */
   attention: Partial<Record<SidebarTab, boolean>>
+  /** What the notifications center counts: what waits for the owner, and what ended unread. */
+  inbox?: { waiting: number; unread: number }
   botPendingCount: number
   /** Bots can be updated, or an update of theirs runs or waits. */
   botUpdate?: 'available' | 'pending' | null
@@ -173,9 +178,27 @@ export function SidebarRail({
             {sidebarTabs.map((item) => {
               const Icon = TAB_ICON[item]
               const label = t(`sidebar.${item}`)
-              const needsYou = item !== 'bots' && attention[item]
+              const needsYou = (item === 'chats' || item === 'workspaces') && attention[item]
+              const inboxCount = inbox.waiting + inbox.unread
               let marks: ReactNode = null
-              if (item === 'bots')
+              if (item === 'inbox')
+                marks = inboxCount > 0 && (
+                  // Amber while something waits for the owner; light when only ended turns are unread.
+                  <span
+                    data-testid="sidebar-inbox-count"
+                    className={cn(
+                      'absolute -right-0.5 -top-0.5 min-w-4 rounded-full px-1 text-center text-[9.5px] font-bold leading-4 ring-2 ring-[#141416]',
+                      inbox.waiting > 0 ? 'bg-artifact-warn text-black' : 'bg-primary text-primary-foreground'
+                    )}
+                  >
+                    {inboxCount > 99 ? '99+' : inboxCount}
+                    <span className="sr-only">
+                      {' '}
+                      {t('sidebar.inboxCount', { waiting: inbox.waiting, unread: inbox.unread })}
+                    </span>
+                  </span>
+                )
+              else if (item === 'bots')
                 marks = (
                   <>
                     {/* The rail is too narrow for a text badge: the flask marks the experimental section. */}
@@ -214,7 +237,9 @@ export function SidebarRail({
               const tip =
                 item === 'bots'
                   ? [label, t('sidebar.experimental'), botUpdate ? botUpdateLabel : ''].filter(Boolean).join(' · ')
-                  : label
+                  : item === 'inbox' && inboxCount > 0
+                    ? `${label} · ${t('sidebar.inboxCount', { waiting: inbox.waiting, unread: inbox.unread })}`
+                    : label
               return (
                 <button
                   key={item}

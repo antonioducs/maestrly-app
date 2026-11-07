@@ -19,5 +19,10 @@ function botTarget(value: unknown): { serverId: FleetServerId; botId: string } |
 export function registerNotificationsIpc(reg: IpcRegistrar, notifications: () => AppNotifications | null): void {
   reg.handle('fleet:listBotAttention', () => notifications()?.botAttention.list() ?? [])
   reg.mon('fleet:visibleBot', (_event, target: unknown) => notifications()?.setVisibleBot(botTarget(target)))
+  // Marked as read in the notifications center, without opening the bot.
+  reg.mon('fleet:seeBotAttention', (_event, target: unknown) => {
+    const bot = botTarget(target)
+    if (bot) notifications()?.bots.seen(bot.serverId, bot.botId)
+  })
   reg.mon('app:badge-count', (_event, count: unknown) => notifications()?.badge.set(count))
 }

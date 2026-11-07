@@ -1,5 +1,9 @@
 import { type FleetServerId, fleetKey, isFleetServerId } from '../../shared/fleet-servers'
-import type { FleetBotAttentionChange, FleetBotAttentionEntry } from '../../shared/notifications'
+import type {
+  FleetBotAttentionChange,
+  FleetBotAttentionEntry,
+  FleetBotAttentionEvent,
+} from '../../shared/notifications'
 
 export interface FleetBotAttentionDeps {
   /** The stored marks (JSON), or null when none were stored. */
@@ -16,11 +20,30 @@ const MAX_BOT_ID = 200
 const MAX_LANES = 20
 const MAX_LANE = 300
 
+/** What a mark keeps of what the bot said, for the notifications center's row. */
+const MAX_SUMMARY = 500
+
 /**
  * A mark, and why: the side conversations it is for (`run:<id>`, `thread:<id>`), which the owner may see on another
  * device, and whether something only this computer clears marked it too, such as a turn of the bot's own conversation.
+ * `last` is what marked it last since the app started: it is not stored, so a mark read back has none.
  */
-type Mark = FleetBotAttentionEntry & { lanes: Set<string>; local: boolean }
+type Mark = {
+  serverId: FleetServerId
+  botId: string
+  lanes: Set<string>
+  local: boolean
+  last?: FleetBotAttentionEvent
+}
+
+const entryOfMark = ({ serverId, botId, last }: Mark): FleetBotAttentionEntry =>
+  last ? { serverId, botId, last } : { serverId, botId }
+
+function boundedEvent(event: FleetBotAttentionEvent): FleetBotAttentionEvent {
+  return event.summary && event.summary.length > MAX_SUMMARY
+    ? { ...event, summary: `${event.summary.slice(0, MAX_SUMMARY - 1)}…` }
+    : event
+}
 
 function entryOf(key: unknown): FleetBotAttentionEntry | null {
   if (typeof key !== 'string') return null
@@ -73,7 +96,7 @@ export class FleetBotAttention {
   }
 
   list(): FleetBotAttentionEntry[] {
-    return [...this.marks.values()].map(({ serverId, botId }) => ({ serverId, botId }))
+    return [...this.marks.values()].map(entryOfMark)
   }
 
   has(serverId: FleetServerId, botId: string): boolean {
@@ -87,13 +110,21 @@ export class FleetBotAttention {
       .flatMap(({ botId, lanes }) => [...lanes].map((lane) => ({ botId, lane })))
   }
 
-  /** Marks the bot for a side conversation (`lane`), or for something only this computer clears. */
-  mark(serverId: FleetServerId, botId: string, lane?: string): void {
+  /**
+   * Marks the bot for a side conversation (`lane`), or for something only this computer clears. `event` is what marked
+   * it: a bot already marked is told again with it, so that what shows the mark shows its newest reason.
+   */
+  mark(serverId: FleetServerId, botId: string, lane?: string, event?: FleetBotAttentionEvent): void {
     if (!botId || botId.length > MAX_BOT_ID) return
     const key = fleetKey(serverId, botId)
     const known = lane && lane.length <= MAX_LANE ? lane : undefined
+    const last = event ? boundedEvent(event) : undefined
     const current = this.marks.get(key)
     if (current) {
+      if (last) {
+        current.last = last
+        this.deps.emit({ serverId, botId, attention: true, last })
+      }
       if (current.local || (known && current.lanes.has(known))) return
       if (known && current.lanes.size < MAX_LANES) current.lanes.add(known)
       else {
@@ -103,7 +134,13 @@ export class FleetBotAttention {
       this.save()
       return
     }
-    this.marks.set(key, { serverId, botId, lanes: new Set(known ? [known] : []), local: !known })
+    this.marks.set(key, {
+      serverId,
+      botId,
+      lanes: new Set(known ? [known] : []),
+      local: !known,
+      ...(last ? { last } : {}),
+    })
     const max = this.deps.max ?? MAX_MARKS
     for (const [oldest, entry] of this.marks) {
       if (this.marks.size <= max) break
@@ -111,7 +148,7 @@ export class FleetBotAttention {
       this.deps.emit({ serverId: entry.serverId, botId: entry.botId, attention: false })
     }
     this.save()
-    this.deps.emit({ serverId, botId, attention: true })
+    this.deps.emit({ serverId, botId, attention: true, ...(last ? { last } : {}) })
   }
 
   /** The owner saw a side conversation, here or on another device: the mark goes once nothing else holds it. */

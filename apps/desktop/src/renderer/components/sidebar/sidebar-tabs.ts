@@ -1,6 +1,7 @@
 import type { Conversation } from '../../../shared/conversation'
 
-export const sidebarTabs = ['chats', 'workspaces', 'bots'] as const
+/** The notifications center first: it gathers what the other three hold that needs the owner. */
+export const sidebarTabs = ['inbox', 'chats', 'workspaces', 'bots'] as const
 export type SidebarTab = (typeof sidebarTabs)[number]
 
 export function readSidebarTab(value: string | null): SidebarTab {
@@ -39,9 +40,12 @@ export function workspaceFilterCount<
   )
 }
 
+/** The other lists the filter matches in; the notifications center filters only what it lists, and offers none. */
 export function crossTabMatches(
   current: SidebarTab,
-  counts: Record<SidebarTab, number>
+  counts: Record<Exclude<SidebarTab, 'inbox'>, number>
 ): { tab: SidebarTab; count: number }[] {
-  return sidebarTabs.filter((tab) => tab !== current && counts[tab] > 0).map((tab) => ({ tab, count: counts[tab] }))
+  return sidebarTabs
+    .filter((tab): tab is Exclude<SidebarTab, 'inbox'> => tab !== 'inbox' && tab !== current && counts[tab] > 0)
+    .map((tab) => ({ tab, count: counts[tab] }))
 }

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { FleetBot } from '@maestrly/bot-fleet-protocol'
 import { type FleetServerId, fleetKey } from '../../../shared/fleet-servers'
-import type { FleetBotAttentionChange, NotificationTarget } from '../../../shared/notifications'
+import type { FleetBotAttentionChange, FleetBotAttentionEvent, NotificationTarget } from '../../../shared/notifications'
 
 /** The marks after a change, by fleetKey; the same set when nothing changed. */
 export function applyBotAttention(marks: ReadonlySet<string>, change: FleetBotAttentionChange): ReadonlySet<string> {
@@ -11,6 +11,22 @@ export function applyBotAttention(marks: ReadonlySet<string>, change: FleetBotAt
   if (change.attention) next.add(key)
   else next.delete(key)
   return next
+}
+
+/** What last marked each marked bot, by fleetKey, after a change; the same map when nothing changed. */
+export function applyBotAttentionEvent(
+  events: ReadonlyMap<string, FleetBotAttentionEvent>,
+  change: FleetBotAttentionChange
+): ReadonlyMap<string, FleetBotAttentionEvent> {
+  const key = fleetKey(change.serverId, change.botId)
+  if (!change.attention) {
+    if (!events.has(key)) return events
+    const next = new Map(events)
+    next.delete(key)
+    return next
+  }
+  if (!change.last || events.get(key) === change.last) return events
+  return new Map(events).set(key, change.last)
 }
 
 /** The ids of the marked bots among those a server lists: the marks of bots it no longer has count for nothing. */
@@ -48,16 +64,32 @@ export function notificationFleetView(
   }
 }
 
-/** The bots marked for the owner on this computer, by fleetKey, as the main process keeps them. */
-export function useBotAttention(): ReadonlySet<string> {
-  const [marks, setMarks] = useState<ReadonlySet<string>>(() => new Set())
+export interface BotAttentionState {
+  /** The marked bots, by fleetKey. */
+  marks: ReadonlySet<string>
+  /** What marked them last, for the marks this run of the app saw happen. */
+  events: ReadonlyMap<string, FleetBotAttentionEvent>
+}
+
+/** The bots marked for the owner on this computer, by fleetKey, as the main process keeps them, and why. */
+export function useBotAttention(): BotAttentionState {
+  const [state, setState] = useState<BotAttentionState>(() => ({ marks: new Set(), events: new Map() }))
   useEffect(() => {
     let alive = true
-    const off = window.api.onFleetBotAttention((change) => setMarks((current) => applyBotAttention(current, change)))
+    const off = window.api.onFleetBotAttention((change) =>
+      setState((current) => {
+        const marks = applyBotAttention(current.marks, change)
+        const events = applyBotAttentionEvent(current.events, change)
+        return marks === current.marks && events === current.events ? current : { marks, events }
+      })
+    )
     // Changes main sent before it listed the marks are in the list; those after it arrive after the list.
     void window.api.fleetBotAttention().then(
       (list) => {
-        if (alive) setMarks(new Set(list.map(({ serverId, botId }) => fleetKey(serverId, botId))))
+        if (!alive) return
+        const events = new Map<string, FleetBotAttentionEvent>()
+        for (const { serverId, botId, last } of list) if (last) events.set(fleetKey(serverId, botId), last)
+        setState({ marks: new Set(list.map(({ serverId, botId }) => fleetKey(serverId, botId))), events })
       },
       () => undefined
     )
@@ -66,5 +98,5 @@ export function useBotAttention(): ReadonlySet<string> {
       off()
     }
   }, [])
-  return marks
+  return state
 }

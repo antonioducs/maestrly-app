@@ -61,6 +61,27 @@ describe('AgentRegistry Chat-only', () => {
     expect(playSound).toHaveBeenCalledTimes(1)
   })
 
+  it('waits for an approval with one alert, and ends the turn from there', () => {
+    const registry = new AgentRegistry()
+    const statuses: Array<[string, boolean]> = []
+    registry.on('status', ({ status, alert }) => statuses.push([status, alert]))
+    registry.markWorking('chat-1')
+    registry.markWaiting('chat-1')
+    registry.markWaiting('chat-1')
+    expect(registry.getStatus('chat-1')).toBe('waiting')
+    registry.markWorking('chat-1')
+    registry.markWaiting('chat-1')
+    // A turn stopped while it waits ends there, as one that works does.
+    registry.markError('chat-1')
+    expect(statuses).toEqual([
+      ['working', false],
+      ['waiting', true],
+      ['working', false],
+      ['waiting', true],
+      ['error', true],
+    ])
+  })
+
   it('plays bot alerts with the event voices, once per bot at a time, unless bots are silenced', () => {
     const registry = new AgentRegistry()
     const statuses = vi.fn()

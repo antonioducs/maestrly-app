@@ -153,8 +153,9 @@ export function useAgentStatuses({
       )
     }
     const offStatus = api.onStatus(({ agentId, status }) => {
-      const endedTurn = statusesRef.current[agentId] === 'working' && (status === 'ready' || status === 'error')
-      if (endedTurn || status === 'asking') {
+      const previous = statusesRef.current[agentId]
+      const endedTurn = (previous === 'working' || previous === 'waiting') && (status === 'ready' || status === 'error')
+      if (endedTurn || status === 'asking' || status === 'waiting') {
         attentionRevision++
         if (agentId !== focusedRef.current) setAttentionState((state) => applyNormalAttention(state, agentId))
         else if (document.hasFocus()) clearOnHost(agentId)
