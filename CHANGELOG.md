@@ -5,6 +5,64 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-11-07
+
+### Added
+
+- A **Notifications** tab, first in the sidebar's rail, gathers what needs you
+  in one list: questions, approvals, plans to review and bot help requests under
+  **Waiting for you**, turns and routine runs that finished or failed under
+  **New**, and what you read in the last 24 hours under **Read**. It covers this
+  computer's conversations, those of the servers and computers it reaches, and
+  the bots of every paired server, including routine runs and conversations
+  between bots. It shows each conversation or bot once, at its latest state, and
+  keeps no history. Click an item to open it while the sidebar stays on the
+  center, or use **Show in** to open it in its own tab. **Allow once** and
+  **Deny** answer approvals from the list, **Mark as read** (or `e`) also clears
+  the item's red dot in its own tab, and **Dismiss** hides an item until
+  something newer happens, with undo. Filter by environment, by source
+  (workspaces, chats, bots) or with the sidebar's filter, and move with `j` and
+  `k`. The tab's badge is amber while something waits for you. What you read and
+  dismissed stays on this computer and is not synced. See
+  [Notifications center](docs/chat-context.md#notifications-center).
+
+### Changed
+
+- A conversation waiting for your approval of a tool now has the waiting status,
+  with its own icon, system notification, alert sound and app badge, as a
+  pending question already had. After a restart, a bot with a mark shows as
+  "Something new".
+- Tool schemas load when the agent needs them, on every model. A server can
+  declare hundreds of tools, and a 500-tool server cost about 300,000 tokens on
+  every request, which compaction cannot free. The agent now learns that a tool
+  exists and reads its schema only when it needs it, for external MCP tools and,
+  on the Claude, Codex and GitHub Copilot subscriptions and on OpenAI models
+  that support tool search, for most of Maestrly's own tools too (terminal,
+  browser, notes, Debugger, Artifacts). On the Claude runtime, the fixed context
+  of Maestrly's tools measured 14.9k tokens before and 2.6k after. On every
+  other model, `mcp_search` lists tool names, finds tools by keyword and
+  returns their schemas, and `mcp_call` runs them, handing the schema back when
+  its arguments are invalid; the new `mcp_read` runs only read-only tools, for
+  subagents limited to those. Subagents and Maestro workers follow the same
+  rules. Cursor, API keys without tool search and OpenAI without tool search
+  still send Maestrly's own tools in full, about 14k tokens with every group on;
+  turn a group off in **Settings → Chat → Tools** to remove its tools. Plugin
+  agents that name `mcp__*` tools now map to `mcp_search`, `mcp_call` and
+  `mcp_read`. See
+  [MCP, skills, and memory](docs/architecture.md#mcp-skills-and-memory) and
+  [Maestrly tool groups](docs/chat-context.md#maestrly-tool-groups).
+
+### Fixed
+
+- On the Claude subscription, an external MCP server with many tools no longer
+  fills the context before the conversation starts. Maestrly turned off Claude
+  Code's tool search, so every tool's schema went with every request: a fresh
+  session with 1.5 KB of conversation already measured 350,766 input tokens,
+  compaction freed almost nothing (451k to 385k on a 500k limit) and ran again
+  a few steps later. Tools are now announced by name and the model loads a
+  schema when it needs one, in conversations and subagents. In a fresh session
+  the model needs one extra tool-search step before using an external tool.
+
 ## [0.32.3] - 2026-11-04
 
 ### Fixed
