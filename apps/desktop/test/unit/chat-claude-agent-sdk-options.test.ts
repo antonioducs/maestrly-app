@@ -10,9 +10,10 @@ import { harnessFor } from '../../src/main/chat/harness/execution'
 const createFablePostToolUseHook = () =>
   createHarnessPostToolUseHooks(harnessFor('claude-subscription', 'claude-fable-5-1'))!
 
-function bridge() {
+function bridge(nativeTools: string[] = []) {
   return {
     server: { type: 'sdk', name: 'maestrly' },
+    nativeTools,
     allowedTools: ['mcp__maestrly__read'],
     toolAliases: { mcp__maestrly__read: 'read' },
     preToolUseHook: async () => ({ continue: true }),
@@ -72,6 +73,20 @@ describe('Claude Agent SDK query options', () => {
       autoCompactEnabled: false,
       precomputeCompactionEnabled: false,
     })
+  })
+
+  it('enables only the built-in search tool, for a bridge with deferred schemas', () => {
+    const options = buildClaudeChatQueryOptions({
+      abortController: new AbortController(),
+      cwd: '/project',
+      modelId: 'claude-opus',
+      systemPrompt: 'Maestrly system prompt',
+      bridge: bridge(['ToolSearch']),
+      disallowedNativeTools: ['Bash', 'Read'],
+    })
+
+    expect(options.tools).toEqual(['ToolSearch'])
+    expect(options.disallowedTools).toEqual(['Bash', 'Read'])
   })
 
   it('isolates adaptive summarized thinking and the post-tool hook to Fable options', () => {

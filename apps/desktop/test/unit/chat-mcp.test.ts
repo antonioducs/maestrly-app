@@ -15,7 +15,11 @@ import {
   toolsFromClient,
   type ListedMcpTool,
 } from '../../src/main/chat/mcp'
-import { EXTERNAL_MCP_RESTRICTED_METADATA, externalMcpToolAllowed } from '../../src/main/chat/tool-policy'
+import {
+  EXTERNAL_MCP_RESTRICTED_METADATA,
+  externalMcpToolAllowed,
+  isDeferredLoadingTool,
+} from '../../src/main/chat/tool-policy'
 import { writeMcpCatalog } from '../../src/main/chat/mcp-catalog'
 import { toolOutputImages } from '../../src/shared/chat'
 import { modelOutputToChatToolOutput, MAX_EPHEMERAL_IMAGE_BYTES } from '../../src/main/chat/tool-output'
@@ -464,7 +468,10 @@ describe('buildMcpTools catalogs by mode with real stdio and store', () => {
         'mcp_call',
         'mcp_search',
       ])
-      expect(built.tools.fixture__lookup.metadata).toEqual({ readOnly: true, parallelSafe: false })
+      expect(built.tools.fixture__lookup.metadata).toEqual({ readOnly: true, parallelSafe: false, deferLoading: true })
+      // Discovery and dispatch stay loaded: they are the way to a server whose catalog is not cached yet.
+      expect(isDeferredLoadingTool(built.tools.mcp_search.metadata)).toBe(false)
+      expect(isDeferredLoadingTool(built.tools.mcp_call.metadata)).toBe(false)
       const mutate = built.tools.fixture__mutate as unknown as Executable
       expect(await mutate.execute({}, { toolCallId: 'c2' })).toBe('mutate-ok')
       expect(gate).toHaveBeenCalledExactlyOnceWith('fixture__mutate', 'c2')
@@ -492,7 +499,7 @@ describe('buildMcpTools catalogs by mode with real stdio and store', () => {
     })
     try {
       expect(built.tools).toHaveProperty('fixture__mutate')
-      expect(built.tools.fixture__mutate.metadata).toBeUndefined()
+      expect(built.tools.fixture__mutate.metadata).toEqual({ deferLoading: true })
       expect(built.tools.mcp_call.metadata).toBeUndefined()
       const mutate = built.tools.fixture__mutate as unknown as Executable
       await expect(mutate.execute({}, { toolCallId: 'design-mutate' })).resolves.toBe('mutate-ok')
@@ -525,7 +532,7 @@ describe('buildMcpTools catalogs by mode with real stdio and store', () => {
       'mcp_call',
       'mcp_search',
     ])
-    expect(built.tools.fixture__lookup.metadata).toEqual({ readOnly: true, parallelSafe: false })
+    expect(built.tools.fixture__lookup.metadata).toEqual({ readOnly: true, parallelSafe: false, deferLoading: true })
   })
 
   it('validates live schemas before permission and dispatch', async () => {

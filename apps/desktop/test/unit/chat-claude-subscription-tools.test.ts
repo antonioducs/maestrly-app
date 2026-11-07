@@ -154,15 +154,15 @@ describe('Claude in-process MCP bridge', () => {
       { read: namedTool('changed description'), remote: namedTool('remote') },
       new AbortController().signal
     )
-    const eagerChanged = await buildClaudeToolBridge(
+    const deferredChanged = await buildClaudeToolBridge(
       { read: namedTool('first description'), remote: namedTool('remote') },
       new AbortController().signal,
-      new Set(['read', 'remote'])
+      new Set(['remote'])
     )
 
     expect(reordered.toolSignature).toBe(first.toolSignature)
     expect(changed.toolSignature).not.toBe(first.toolSignature)
-    expect(eagerChanged.toolSignature).not.toBe(first.toolSignature)
+    expect(deferredChanged.toolSignature).not.toBe(first.toolSignature)
   })
 
   it('marks only parallel-safe tools read-only so the Claude runtime can run them concurrently', async () => {
@@ -203,19 +203,22 @@ describe('Claude in-process MCP bridge', () => {
     const deferred = await buildClaudeToolBridge(
       { delegate: namedTool('Route semantic work through Maestro.') },
       new AbortController().signal,
-      new Set()
+      new Set(['delegate'])
     )
 
     expect(eager.allowedTools).toEqual(['mcp__maestrly__delegate'])
+    expect(eager.nativeTools).toEqual([])
     expect(eager.toolSignature).not.toBe(deferred.toolSignature)
   })
 
-  it('keeps cold MCP discovery and dispatch deferred while core reads stay eager', async () => {
+  it('defers only external MCP schemas and enables Claude tool search for them', async () => {
     const bridge = await buildClaudeToolBridge(
       {
         read: namedTool('Core read.'),
+        bash: namedTool('Run a command.'),
         mcp_search: namedTool('Discover external MCP tools lazily.'),
         mcp_call: namedTool('Call an external MCP tool lazily.'),
+        datadog__query: { ...namedTool('External MCP query.'), metadata: { deferLoading: true } },
       },
       new AbortController().signal
     )
@@ -225,10 +228,39 @@ describe('Claude in-process MCP bridge', () => {
       }
     )._registeredTools
 
-    expect(registered.read?._meta).toMatchObject({ 'anthropic/alwaysLoad': true })
-    expect(registered.mcp_search?._meta).toBeUndefined()
-    expect(registered.mcp_call?._meta).toBeUndefined()
-    expect(bridge.allowedTools).toEqual(['mcp__maestrly__mcp_call', 'mcp__maestrly__mcp_search', 'mcp__maestrly__read'])
+    for (const name of ['read', 'bash', 'mcp_search', 'mcp_call'])
+      expect(registered[name]?._meta, name).toMatchObject({ 'anthropic/alwaysLoad': true })
+    expect(registered.datadog__query?._meta).toBeUndefined()
+    // Without the search tool Claude Code loads every MCP schema, deferred or not.
+    expect(bridge.nativeTools).toEqual(['ToolSearch'])
+    expect(bridge.allowedTools).toContain('ToolSearch')
+    const hook = (toolName: string) =>
+      bridge.preToolUseHook.hooks[0](
+        { hook_event_name: 'PreToolUse', tool_name: toolName, tool_input: {}, tool_use_id: toolName } as never,
+        toolName,
+        { signal: new AbortController().signal }
+      )
+    await expect(hook('ToolSearch')).resolves.toEqual({ continue: true })
+    await expect(hook('NotebookEdit')).resolves.toMatchObject({ continue: false })
+  })
+
+  it('leaves Claude tool search off when every tool is loaded', async () => {
+    const bridge = await buildClaudeToolBridge({ read: namedTool('Core read.') }, new AbortController().signal)
+
+    expect(bridge.nativeTools).toEqual([])
+    expect(bridge.allowedTools).toEqual(['mcp__maestrly__read'])
+    await expect(
+      bridge.preToolUseHook.hooks[0](
+        {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'ToolSearch',
+          tool_input: {},
+          tool_use_id: 'search',
+        } as never,
+        'search',
+        { signal: new AbortController().signal }
+      )
+    ).resolves.toMatchObject({ continue: false })
   })
 
   it('correlates the streamed Claude tool-use id with the Maestrly broker execution', async () => {
