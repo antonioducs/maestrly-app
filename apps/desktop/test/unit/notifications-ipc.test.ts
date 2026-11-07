@@ -34,6 +34,17 @@ describe('notifications IPC', () => {
     expect(setVisibleBot.mock.calls).toEqual([[{ serverId: SERVER, botId: 'alex' }], [null], [null], [null]])
   })
 
+  it('clears a valid bot as seen when the notifications center reads it', () => {
+    const seen = vi.fn()
+    const handlers = setup({ bots: { seen } } as unknown as AppNotifications)
+    const see = handlers.get('fleet:seeBotAttention')!
+    see({}, { serverId: SERVER, botId: 'alex' })
+    see({}, { serverId: 'Not A Server', botId: 'alex' })
+    see({}, null)
+    expect(seen.mock.calls).toEqual([[SERVER, 'alex']])
+    expect(() => setup(null).get('fleet:seeBotAttention')!({}, { serverId: SERVER, botId: 'alex' })).not.toThrow()
+  })
+
   it('lists no marks on an instance without notifications', () => {
     const handlers = setup(null)
     expect(handlers.get('fleet:listBotAttention')!({})).toEqual([])

@@ -44,10 +44,10 @@ application still follows its normal shutdown behavior.
 
 ## Notifications and badges
 
-When a conversation finishes its turn, fails, asks you a question, or brings a
-plan to review, Maestrly shows a system notification, unless you are looking
-at that conversation: shown in the focused main window, or in its own focused
-window. This includes conversations on a server or another computer
+When a conversation finishes its turn, fails, asks you a question, waits for
+your approval, or brings a plan to review, Maestrly shows a system notification,
+unless you are looking at that conversation: shown in the focused main window,
+or in its own focused window. This includes conversations on a server or another computer
 (see [Remote workspaces](remote-workspaces.md)). Clicking the notification
 opens the conversation, in its own window when it has one. A newer notification
 replaces the conversation's last one, and opening the conversation removes it.
@@ -63,6 +63,29 @@ sidebar, this computer's and those of the servers and computers it reaches,
 plus the count on the **Bots** tab. On macOS the
 count shows on the Dock icon, on Linux on launchers that support it, and on
 Windows a red mark shows on the taskbar button.
+
+### Notifications center
+
+The **Notifications** tab, first in the sidebar's rail, gathers what needs you
+from every conversation and bot: this computer's, those of the servers and
+computers it reaches, and the bots of every paired server, including their
+routine runs and conversations between bots. It shows each conversation or bot
+once, at its latest state, and keeps no history. Its badge is amber while
+something waits for you and counts what is waiting or new.
+
+- **Waiting for you** lists questions, approvals, plans to review, and bots
+  that ask for help. They stay until you act on them, read or not.
+- **New** lists turns and routine runs that finished or failed since you last
+  looked.
+- **Read** lists what you read in the last 24 hours, after which it leaves.
+
+Click an item to open it beside the list: the sidebar stays on the center, so
+you can go through one item after another. **Show in** opens the item in its
+own tab instead. **Allow once** and **Deny** answer an approval from the list.
+**Mark as read** (or `e`) clears an item's red dot here and in its own tab;
+**Dismiss** hides it until something newer happens. Filter by environment, by
+source (workspaces, chats, or bots), or with the sidebar's filter, and move with
+`j` and `k`. What you read and dismissed is kept on this computer.
 
 ## Task lists
 

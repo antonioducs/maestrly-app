@@ -6,6 +6,7 @@ const SOUNDS: Record<ConversationNoticeKind, SoundEvent> = {
   finished: 'ready',
   failed: 'error',
   question: 'permission',
+  permission: 'permission',
   plan: 'plan',
 }
 

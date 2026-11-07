@@ -2740,6 +2740,8 @@ function wireBroker(b: PermissionBroker): void {
       return
     }
     run.send(`chat:permission:${req.conversationId}`, toRequestPayload(req))
+    // The turn waits for the person: the conversation says so wherever it is listed, as a pending question does.
+    savedDeps?.emitStatus(req.conversationId, 'waiting')
     if (req.toolCallId) {
       const ev: ChatStreamEvent = {
         kind: 'tool-state',
@@ -2766,6 +2768,14 @@ function wireBroker(b: PermissionBroker): void {
         return
       }
       run.send(`chat:permission:${ev.conversationId}`, resolved)
+      // The request may still be listed while it resolves; the turn waits as long as another one is. A stopped turn
+      // rejects its requests before it ends, so the status it ends with comes after this one.
+      const othersPending = b.pendingFor(ev.conversationId).some((request) => request.id !== ev.requestId)
+      if (!othersPending)
+        savedDeps?.emitStatus(
+          ev.conversationId,
+          getQuestionBroker().pendingFor(ev.conversationId).length > 0 ? 'asking' : 'working'
+        )
       if (ev.toolCallId && ev.decision === 'allow') {
         const stateEv: ChatStreamEvent = {
           kind: 'tool-state',

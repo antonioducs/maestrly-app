@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next'
-import { Circle, CircleDot, HelpCircle, Loader2 } from 'lucide-react'
+import { Circle, CircleDot, HelpCircle, Loader2, ShieldAlert } from 'lucide-react'
 
 export type AgentStatus = 'idle' | 'working' | 'ready' | 'waiting' | 'asking' | 'error'
 
@@ -15,7 +15,16 @@ export function StatusIcon({ status }: { status: AgentStatus }) {
     case 'ready':
       return <CircleDot className="size-3.5 shrink-0 text-status-ready" />
     case 'waiting':
-      return <CircleDot className="size-3.5 shrink-0 text-status-waiting" />
+      return (
+        <span
+          role="img"
+          aria-label={t('sidebar.statusWaiting')}
+          title={t('sidebar.statusWaiting')}
+          className="inline-flex shrink-0 text-status-waiting"
+        >
+          <ShieldAlert className="size-3.5" />
+        </span>
+      )
     case 'asking':
       return <HelpCircle className="size-3.5 shrink-0 text-status-waiting" />
     case 'error':

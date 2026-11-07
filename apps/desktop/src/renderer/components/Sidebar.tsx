@@ -28,6 +28,7 @@ import {
   Play,
   RefreshCw,
   SquareArrowOutUpRight,
+  CheckCheck,
 } from 'lucide-react'
 import { DndContext } from '@dnd-kit/core'
 import { SortableContext, type useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
@@ -57,6 +58,9 @@ import { useConvRows } from '@/components/sidebar/conv-rows'
 import { SidebarPanelHeader, type SidebarCreateAction } from '@/components/sidebar/SidebarHeader'
 import { SidebarRail } from '@/components/sidebar/SidebarRail'
 import { UpdateCard } from '@/components/sidebar/UpdateCard'
+import { InboxPanel } from '@/components/inbox/InboxPanel'
+import { type InboxActions, useInboxView } from '@/components/inbox/use-inbox-view'
+import type { InboxItem } from '@/lib/inbox/inbox-model'
 import { FleetSidebarPanel } from '@/components/fleet/FleetSidebarPanel'
 import { FleetServerSwitcher } from '@/components/fleet/FleetServerSwitcher'
 import { HostSectionNotice, HostSwitcher, HostTile, hostName } from '@/components/sidebar/HostSection'
@@ -95,6 +99,25 @@ export interface SidebarHostSection {
   /** A paired computer's: pair with it again, or forget it here once it removed this computer. */
   onPair?: () => void
   onForget?: () => void
+}
+
+/** The notifications center: every host's and server's items, and what acting on them does there. */
+export interface SidebarInbox {
+  items: InboxItem[]
+  counts: { waiting: number; unread: number }
+  actions: InboxActions
+  /** The item open in the main area. */
+  activeKey: string | null
+}
+
+const NO_INBOX_ITEMS: InboxItem[] = []
+const NO_INBOX_ACTIONS: InboxActions = {
+  open: () => undefined,
+  reveal: () => undefined,
+  markRead: () => undefined,
+  dismiss: () => undefined,
+  restore: () => undefined,
+  resolveBotRequest: async () => undefined,
 }
 
 function filterWorkspaces(workspaces: WorkspaceWithConversations[], q: string): WorkspaceWithConversations[] {
@@ -216,6 +239,7 @@ interface Props {
   onConnectComputer?: () => void
   /** Opens Settings → Computers. */
   onOpenComputers?: () => void
+  inbox?: SidebarInbox
 }
 
 export function Sidebar({
@@ -286,6 +310,7 @@ export function Sidebar({
   requestedHost = null,
   onConnectComputer,
   onOpenComputers,
+  inbox,
 }: Props) {
   const { t } = useTranslation('ui')
   const [query, setQuery] = useState('')
@@ -310,7 +335,8 @@ export function Sidebar({
 
   useEffect(() => {
     if (!selectedConversation) return
-    selectTab(conversationSidebarTab(selectedConversation))
+    // The notifications center opens what it lists without leaving it, to go through one item after another.
+    if (tab !== 'inbox') selectTab(conversationSidebarTab(selectedConversation))
     selectHost(hostOfKey(selectedConversation.id))
   }, [selectedConversation?.id, selectedConversation?.scope])
 
@@ -321,7 +347,7 @@ export function Sidebar({
   useEffect(() => {
     if (!requestedHost) return
     selectHost(requestedHost.hostId)
-    if (tab === 'bots') selectTab('workspaces')
+    if (tab === 'bots' || tab === 'inbox') selectTab('workspaces')
     if (collapsed) onCollapsedChange(false)
   }, [requestedHost?.requestId])
 
@@ -379,7 +405,29 @@ export function Sidebar({
     workspaces: workspaceFilterCount([...workspaces, ...remoteWorkspaces], q),
     bots: q ? fleetSearchCount(fleet.state.connection, fleet.state.snapshot, q) : 0,
   }
-  const crossMatches = q && filterCounts[tab] === 0 ? crossTabMatches(tab, filterCounts) : []
+  const crossMatches = q && tab !== 'inbox' && filterCounts[tab] === 0 ? crossTabMatches(tab, filterCounts) : []
+  const inboxView = useInboxView(inbox?.items ?? NO_INBOX_ITEMS, query, inbox?.actions ?? NO_INBOX_ACTIONS)
+  /** Opens an item where it lives: its tab, its machine, and its workspace unfolded, scrolled to. */
+  const showInboxItemIn = (item: InboxItem, homeTab: 'workspaces' | 'chats' | 'bots') => {
+    selectTab(homeTab)
+    setQuery('')
+    if (item.target.kind === 'conversation') {
+      const { conversationId } = item.target
+      selectHost(hostOfKey(conversationId))
+      const workspace = [...workspaces, ...remoteWorkspaces].find((ws) =>
+        ws.conversations.some((conversation) => conversation.id === conversationId)
+      )
+      if (workspace?.collapsed) onToggleWorkspaceCollapsed(workspace.id)
+    }
+    inbox?.actions.reveal(item)
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() =>
+        document
+          .querySelector(`#sidebar-panel-${homeTab} .conv-selected, #sidebar-panel-${homeTab} [aria-current="true"]`)
+          ?.scrollIntoView({ block: 'nearest' })
+      )
+    )
+  }
 
   // What each machine's conversations do, for the switcher, and which sections hold one waiting for the person.
   const workspaceConversations = (list: WorkspaceWithConversations[]) => list.flatMap((ws) => ws.conversations)
@@ -735,7 +783,8 @@ export function Sidebar({
   }
 
   /** What the `+` of the open section creates, on the machine the sidebar shows. */
-  const createAction = ((): SidebarCreateAction => {
+  const createAction = ((): SidebarCreateAction | null => {
+    if (tab === 'inbox') return null
     if (tab === 'bots')
       return {
         label: t('sidebar.createBot'),
@@ -762,7 +811,7 @@ export function Sidebar({
 
   /** The `⋯` of the open section: how the chosen machine's lists are shown, and what can be done to that machine. */
   const viewMenu = ((): ReactNode => {
-    if (tab === 'bots') return null
+    if (tab === 'bots' || tab === 'inbox') return null
     const items: ReactNode[] = []
     if (tab === 'workspaces' && listedEditable)
       items.push(
@@ -1040,6 +1089,7 @@ export function Sidebar({
           if (collapsed) onCollapsedChange(false)
         }}
         attention={railAttention}
+        inbox={inbox?.counts}
         botPendingCount={botPendingCount}
         botUpdate={botUpdate}
         onOpenAbout={onOpenAbout}
@@ -1049,8 +1099,30 @@ export function Sidebar({
 
       {/* Hidden rather than unmounted, so the filter and what is being renamed survive a collapse. */}
       <div id="sidebar-panel" className={cn('min-w-0 flex-1 flex-col', collapsed ? 'hidden' : 'flex')}>
-        <SidebarPanelHeader tab={tab} create={createAction} viewMenu={viewMenu} query={query} onQueryChange={setQuery}>
-          {multiHost && tab !== 'bots' && (
+        <SidebarPanelHeader
+          tab={tab}
+          create={createAction}
+          actions={
+            tab === 'inbox' && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-[26px] text-muted-foreground hover:text-foreground"
+                disabled={inboxView.unreadCount === 0}
+                onClick={inboxView.markAllRead}
+                title={t('inbox.markAllRead')}
+                aria-label={t('inbox.markAllRead')}
+              >
+                <CheckCheck className="size-[15px]" />
+              </Button>
+            )
+          }
+          viewMenu={viewMenu}
+          query={query}
+          onQueryChange={setQuery}
+        >
+          {/* The center gathers every machine's: it has no switcher. */}
+          {multiHost && tab !== 'bots' && tab !== 'inbox' && (
             <HostSwitcher
               hosts={switcherHosts}
               selectedId={selectedHostId}
@@ -1067,6 +1139,23 @@ export function Sidebar({
         </SidebarPanelHeader>
 
         <div className="flex min-h-0 flex-1 flex-col border-t border-border">
+          <div
+            id="sidebar-panel-inbox"
+            role="tabpanel"
+            aria-labelledby="sidebar-tab-inbox"
+            hidden={tab !== 'inbox'}
+            className="flex min-h-0 flex-1 flex-col pt-2 [&[hidden]]:hidden"
+          >
+            <InboxPanel
+              view={inboxView}
+              activeKey={inbox?.activeKey ?? null}
+              showPlaces={inboxView.places.length > 1}
+              onShowIn={showInboxItemIn}
+              showQuickTooltip={showQuickTooltip}
+              hideQuickTooltip={hideQuickTooltip}
+            />
+          </div>
+
           <div
             id="sidebar-panel-chats"
             role="tabpanel"

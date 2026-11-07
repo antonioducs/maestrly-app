@@ -131,7 +131,8 @@ export function readBotChatHistory(input: {
   const page = rows.slice(0, limit)
   const hasMore = rows.length > limit
   const last = page.at(-1)?.seq ?? after
-  const working = conversation.status === 'working' || conversation.status === 'asking'
+  const working =
+    conversation.status === 'working' || conversation.status === 'asking' || conversation.status === 'waiting'
   const latest = latestVisibleConversationSeq(localId)
 
   return {

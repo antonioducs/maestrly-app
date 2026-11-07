@@ -1,7 +1,7 @@
 import type { FleetActivityEntry, FleetGatewayEvent } from '@maestrly/bot-fleet-protocol'
 import { type FleetServerId, fleetKey } from '../../shared/fleet-servers'
-import type { NotificationTarget } from '../../shared/notifications'
-import { fleetBotEventFor } from '../fleet/client/alerts'
+import type { FleetBotAttentionKind, NotificationTarget } from '../../shared/notifications'
+import { type FleetBotNoticeKind, fleetBotEventFor } from '../fleet/client/alerts'
 import { tMain } from '../i18n'
 import type { FleetBotAttention } from './bot-attention'
 import type { SystemNotices } from './system-notices'
@@ -30,6 +30,11 @@ export type FleetSideConversationRead = (
 ) => Promise<FleetSideConversationEvent>
 
 const noticePrefix = (serverId: FleetServerId, botId: string) => `bot:${fleetKey(serverId, botId)}:`
+
+/** What a mark says marked the bot: what its notice says, or a turn answering another bot, which tells nothing. */
+function attentionKind(notice: FleetBotNoticeKind | null): FleetBotAttentionKind {
+  return notice === null || notice === 'needsYou' ? 'activity' : notice
+}
 /** Runs remembered as seen, so that one seen before it ended marks nothing when it ends. */
 const SEEN_RUNS_MAX = 500
 /** Side conversations one reconnection reads at most to settle the marks. */
@@ -49,8 +54,16 @@ export class FleetBotNotices {
     const event = fleetBotEventFor(entry)
     if (!event || this.deps.sees(serverId, event.botId)) return
     const { botId, runId, threadId, lane } = event
-    if (event.mark && !(lane && this.seenRuns.has(`${fleetKey(serverId, botId)}:${lane}`)))
-      this.deps.attention.mark(serverId, botId, lane)
+    if (event.mark && !(lane && this.seenRuns.has(`${fleetKey(serverId, botId)}:${lane}`))) {
+      const at = Date.parse(entry.at)
+      this.deps.attention.mark(serverId, botId, lane, {
+        kind: attentionKind(event.notice),
+        at: Number.isFinite(at) ? at : Date.now(),
+        summary: event.summary,
+        ...(runId ? { runId } : {}),
+        ...(threadId ? { threadId } : {}),
+      })
+    }
     if (!event.notice) return
     const t = tMain('main')
     const phrase = t(`notices.bot.${event.notice}`)

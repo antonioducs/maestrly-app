@@ -82,6 +82,7 @@ export interface SidebarCreateAction {
 export function SidebarPanelHeader({
   tab,
   create,
+  actions,
   viewMenu,
   children,
   query,
@@ -89,6 +90,8 @@ export function SidebarPanelHeader({
 }: {
   tab: SidebarTab
   create: SidebarCreateAction | null
+  /** What the section does besides creating, such as marking everything read, before its `⋯` menu. */
+  actions?: ReactNode
   /** The items of the `⋯` menu; no menu without them. */
   viewMenu: ReactNode | null
   children?: ReactNode
@@ -97,7 +100,13 @@ export function SidebarPanelHeader({
 }) {
   const { t } = useTranslation('ui')
   const filterLabel = t(
-    tab === 'chats' ? 'sidebar.filterChats' : tab === 'bots' ? 'sidebar.filterBots' : 'sidebar.filterPlaceholder'
+    tab === 'chats'
+      ? 'sidebar.filterChats'
+      : tab === 'bots'
+        ? 'sidebar.filterBots'
+        : tab === 'inbox'
+          ? 'sidebar.filterInbox'
+          : 'sidebar.filterPlaceholder'
   )
   const createButton = create && (
     <Button
@@ -125,6 +134,7 @@ export function SidebarPanelHeader({
           )}
         </h2>
         <div className="no-drag ml-auto flex shrink-0 items-center gap-0.5">
+          {actions}
           {create &&
             (create.disabled && create.disabledReason ? (
               // A disabled button gets no hover: its wrapper says why.

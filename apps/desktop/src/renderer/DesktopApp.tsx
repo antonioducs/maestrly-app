@@ -38,6 +38,11 @@ import { FleetServerProvider } from '@/lib/fleet/server-context'
 import { defaultFleetServer, type FleetServerId, isFleetServerId, NO_FLEET_SERVER } from '../shared/fleet-servers'
 import { useBotUpdates } from '@/lib/fleet/use-bot-updates'
 import { botsTabCounts, markedBots, notificationFleetView, useBotAttention } from '@/lib/fleet/bot-attention'
+import { useInbox } from '@/lib/inbox/use-inbox'
+import { useInboxObservations } from '@/lib/inbox/use-inbox-observations'
+import { botInboxKey, conversationInboxKey } from '@/lib/inbox/inbox-sources'
+import type { InboxItem } from '@/lib/inbox/inbox-model'
+import type { InboxActions } from '@/components/inbox/use-inbox-view'
 import { PersistentBotViews } from '@/components/fleet/PersistentBotViews'
 import { EnvironmentView } from '@/components/fleet/EnvironmentView'
 import { ServerView } from '@/components/fleet/ServerView'
@@ -346,7 +351,8 @@ function DesktopShell({
   })
   const fleet = fleets.controller(botsServer)
   const botUpdates = useBotUpdates(fleet)
-  const botMarks = useBotAttention()
+  const botAttention = useBotAttention()
+  const botMarks = botAttention.marks
   // The Bots tab's badge counts what waits for the owner on every server, and the bots with something new; the
   // switcher, on each.
   const pendingByServer = botsTabCounts(
@@ -557,7 +563,10 @@ function DesktopShell({
     [agents.statuses, remote]
   ) as typeof agents.statuses
   const remoteAttention = useMemo(() => Object.values(remote).flatMap((shell) => [...shell.attention]), [remote])
-  const attention = remoteAttention.length ? new Set([...agents.attention, ...remoteAttention]) : agents.attention
+  const attention = useMemo(
+    () => (remoteAttention.length ? new Set([...agents.attention, ...remoteAttention]) : agents.attention),
+    [agents.attention, remoteAttention]
+  )
   const handleSidebarConversationSelect = useCallback(
     (conv: Conversation) => {
       if (isRemoteKey(conv.id)) remoteRef.current[hostOfKey(conv.id)]?.actions.acknowledgeConversation(conv.id)
@@ -585,6 +594,91 @@ function DesktopShell({
     () => new Set([...plan.pendingPlanIds, ...Object.values(remote).flatMap((shell) => [...shell.pendingPlanIds])]),
     [plan.pendingPlanIds, remote]
   )
+
+  // The notifications center: what every host and server has for the owner, opened without leaving it.
+  const inboxObservations = useInboxObservations({
+    workspaces,
+    standaloneConversations,
+    remote,
+    hosts,
+    statuses,
+    attention,
+    pendingPlanIds,
+    fleetServers: fleets.servers,
+    fleetSnapshots: fleets.servers.map((server) => fleets.controller(server.id).state.snapshot),
+    botMarks,
+    botEvents: botAttention.events,
+    t,
+  })
+  const {
+    markRead: markInboxRead,
+    dismiss: dismissInboxItem,
+    restore: restoreInboxItem,
+    ...inbox
+  } = useInbox(inboxObservations)
+  // The item opened last from the center, to show it selected there while it is on screen.
+  const [inboxOpened, setInboxOpened] = useState<InboxItem | null>(null)
+  const allConversationsRef = useRef(allConversations)
+  allConversationsRef.current = allConversations
+  const inboxActions = useMemo((): InboxActions => {
+    /** Clears what marks the item where it lives: on its host, or on this computer for a bot. */
+    const clearMark = (item: InboxItem): void => {
+      const { target } = item
+      if (target.kind === 'conversation') {
+        if (!isRemoteKey(target.conversationId)) acknowledgeConversation(target.conversationId)
+        else remoteRef.current[hostOfKey(target.conversationId)]?.actions.acknowledgeConversation(target.conversationId)
+      } else if (!item.ownRead) window.api.fleetSeeBotAttention({ serverId: target.serverId, botId: target.botId })
+    }
+    const open = (item: InboxItem): void => {
+      setInboxOpened(item)
+      markInboxRead([item.key])
+      const { target } = item
+      if (target.kind === 'conversation') {
+        const conversation = allConversationsRef.current.find(({ id }) => id === target.conversationId)
+        if (conversation) handleSidebarConversationSelect(conversation)
+        return
+      }
+      if (!fleets.servers.some((server) => server.id === target.serverId)) return
+      // The owner chose to see it, as a conversation opened from a list: its mark goes even in a window not focused.
+      clearMark(item)
+      // The sidebar stays on the center.
+      onBotsServer(target.serverId)
+      nav.openFleetView(notificationFleetView(target))
+    }
+    return {
+      open,
+      reveal: open,
+      markRead: (items) => {
+        markInboxRead(items.map(({ key }) => key))
+        for (const item of items) clearMark(item)
+      },
+      dismiss: (item) => dismissInboxItem(item.key),
+      restore: restoreInboxItem,
+      resolveBotRequest: async (item, reply) => {
+        const { target } = item
+        if (target.kind !== 'bot' || !target.requestId) return
+        await fleets.controller(target.serverId).resolve(target.botId, target.requestId, { kind: 'permission', reply })
+      },
+    }
+  }, [
+    acknowledgeConversation,
+    dismissInboxItem,
+    fleets,
+    handleSidebarConversationSelect,
+    markInboxRead,
+    nav.openFleetView,
+    onBotsServer,
+    restoreInboxItem,
+  ])
+  const inboxActiveKey = ((): string | null => {
+    if (mainOverride === 'fleet' && fleetView?.kind === 'bot') {
+      const opened = inboxOpened?.target
+      return opened?.kind === 'bot' && opened.serverId === botsServer && opened.botId === fleetView.botId
+        ? inboxOpened!.key
+        : botInboxKey(botsServer, fleetView.botId)
+    }
+    return !mainOverride && active ? conversationInboxKey(active.id) : null
+  })()
   const [dialogWs, setDialogWs] = useState<string | null>(null)
 
   const [branchDialogWs, setBranchDialogWs] = useState<string | null>(null)
@@ -997,6 +1091,7 @@ function DesktopShell({
               requestedHost={hostRequest}
               onConnectComputer={() => openSettings('computers', { connectComputer: true })}
               onOpenComputers={() => openSettings('computers')}
+              inbox={{ items: inbox.items, counts: inbox.counts, actions: inboxActions, activeKey: inboxActiveKey }}
               onRemoveWorkspace={(id) =>
                 onHost(
                   id,

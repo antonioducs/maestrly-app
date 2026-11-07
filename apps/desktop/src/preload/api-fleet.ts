@@ -278,6 +278,9 @@ export const fleetApi = {
   /** The bot the main window shows, which notifies nothing and is not marked; null when it shows anything else. */
   fleetSetVisibleBot: (target: { serverId: FleetServerId; botId: string } | null): void =>
     ipcRenderer.send('fleet:visibleBot', target),
+  /** Clears a bot's mark and notifications as if the owner had opened it. */
+  fleetSeeBotAttention: (target: { serverId: FleetServerId; botId: string }): void =>
+    ipcRenderer.send('fleet:seeBotAttention', target),
   /** Pairs this computer with a server; with `serverId`, pairs that server again. */
   fleetConnect: (
     input: { url: string; code: string; deviceName?: string },

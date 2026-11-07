@@ -23,11 +23,13 @@ describe('ConversationNotices', () => {
     expect(s.notices.status('chat-1', 'ready')).toBe('finished')
     expect(s.notices.status('chat-1', 'error')).toBe('failed')
     expect(s.notices.status('chat-1', 'asking')).toBe('question')
+    expect(s.notices.status('chat-1', 'waiting')).toBe('permission')
     expect(s.notices.status('chat-1', 'idle')).toBeNull()
     expect(s.shown.map(view)).toEqual([
       { key: 'conversation:chat-1', title: 'Fix login', subtitle: 'Maestrly', body: 'Finished its turn' },
       { key: 'conversation:chat-1', title: 'Fix login', subtitle: 'Maestrly', body: 'The turn failed' },
       { key: 'conversation:chat-1', title: 'Fix login', subtitle: 'Maestrly', body: 'Has a question for you' },
+      { key: 'conversation:chat-1', title: 'Fix login', subtitle: 'Maestrly', body: 'Is waiting for your approval' },
     ])
     s.shown[0].onClick()
     expect(s.open).toHaveBeenCalledWith('chat-1')
