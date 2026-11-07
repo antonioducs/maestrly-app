@@ -2,11 +2,17 @@ import { describe, expect, it } from 'vitest'
 import type { ToolSet } from 'ai'
 import {
   APP_TOOL_POLICY,
+  DEFERRED_LOADING_METADATA,
   EXTERNAL_MCP_RESTRICTED_METADATA,
+  EXTERNAL_MCP_WRAPPER_METADATA,
   appToolAllowed,
+  appToolDeferrable,
   appToolMetadata,
+  deferredLoadingToolNames,
   externalMcpToolAllowed,
+  withoutExternalMcpWrappers,
 } from '../../src/main/chat/tool-policy'
+import { providerDefersTools } from '../../src/main/chat/catalog'
 import { hasSubagentMutatingCapability, isSubagentReadOnly, selectSubagentToolNames } from '../../src/main/chat/tools'
 
 describe('external MCP tool policy', () => {
@@ -249,5 +255,88 @@ describe('subagent tool surface', () => {
         allowSkillLoader: true,
       })
     ).toEqual(new Set(['read', 'use_skill']))
+  })
+})
+
+describe('deferred tool loading policy', () => {
+  it('defers app tools except the ones the prompt asks the model to use unprompted', () => {
+    for (const name of [
+      'terminal_run',
+      'browser_click',
+      'notes_write_page',
+      'project_notes_list_pages',
+      'debug_start',
+      'artifact_create',
+    ]) {
+      expect(appToolDeferrable(name), name).toBe(true)
+    }
+    for (const name of [
+      'memory_search',
+      'memory_read',
+      'memory_upsert',
+      'history_search',
+      'history_read',
+      'plan_read',
+      'preview_interface',
+    ]) {
+      expect(appToolDeferrable(name), name).toBe(false)
+    }
+    for (const name of [
+      'memory_list',
+      'memory_archive',
+      'memory_restore',
+      'memory_forget',
+      'memory_promote_to_shared',
+    ]) {
+      expect(appToolDeferrable(name), name).toBe(true)
+    }
+    // Bot-only tools belong to no group and are looked up like the rest.
+    expect(appToolDeferrable('computer_click')).toBe(true)
+  })
+
+  it('collects the deferred tools of a set by their metadata, not by their names', () => {
+    const tools = {
+      a: { metadata: DEFERRED_LOADING_METADATA },
+      b: { metadata: { readOnly: true } },
+      c: {},
+      d: { metadata: { ...EXTERNAL_MCP_RESTRICTED_METADATA, ...DEFERRED_LOADING_METADATA } },
+    }
+    expect([...deferredLoadingToolNames(tools)].sort()).toEqual(['a', 'd'])
+  })
+
+  it('removes only the typed wrappers of external MCP tools', () => {
+    const tools = {
+      read: {},
+      mcp_search: { metadata: EXTERNAL_MCP_RESTRICTED_METADATA },
+      terminal_run: { metadata: DEFERRED_LOADING_METADATA },
+      server__lookup: { metadata: { ...DEFERRED_LOADING_METADATA, ...EXTERNAL_MCP_WRAPPER_METADATA } },
+    }
+    expect(Object.keys(withoutExternalMcpWrappers(tools))).toEqual(['read', 'mcp_search', 'terminal_run'])
+  })
+
+  it('knows which providers keep a deferred tool out of their requests', () => {
+    expect(providerDefersTools('builtin_claude_subscription')).toBe(true)
+    expect(providerDefersTools('builtin_codex_subscription')).toBe(true)
+    expect(providerDefersTools('builtin_github_copilot_subscription')).toBe(true)
+    expect(providerDefersTools('builtin_cursor_subscription')).toBe(false)
+    expect(providerDefersTools('builtin_antigravity_subscription')).toBe(false)
+    expect(providerDefersTools('openai')).toBe(false)
+    expect(providerDefersTools(null)).toBe(false)
+  })
+
+  it('lets a read-only subagent reach external tools through mcp_read only', () => {
+    const providedHostTools = {
+      mcp_search: { metadata: EXTERNAL_MCP_RESTRICTED_METADATA },
+      mcp_read: { metadata: EXTERNAL_MCP_RESTRICTED_METADATA },
+      mcp_call: {},
+    } as unknown as ToolSet
+    const selected = selectSubagentToolNames({
+      definition: { name: 'explore', source: 'builtin' } as never,
+      readOnly: true,
+      providedHostTools,
+    })
+    expect(selected.has('mcp_read')).toBe(true)
+    expect(selected.has('mcp_search')).toBe(true)
+    expect(selected.has('mcp_call')).toBe(false)
   })
 })

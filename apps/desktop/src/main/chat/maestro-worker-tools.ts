@@ -10,10 +10,10 @@ import { buildAppTools, buildMcpTools } from './mcp'
 import { describeEphemeralToolImage, hasConfiguredImageInterpreter } from './image-interpreter'
 import { adaptToolSetForModel, supportsChatToolImages } from './tool-capabilities'
 import { getSubagentProfileModelMeta } from './subagent-profile-model-meta'
-import { isClaudeSubscriptionProvider, isCodexSubscriptionProvider } from './catalog'
+import { isClaudeSubscriptionProvider, isCodexSubscriptionProvider, providerDefersTools } from './catalog'
 import { generateImageToolEnabled, GENERATE_IMAGE_TOOL_NAME } from './image-gen'
 import { ALL_TOOL_NAMES, buildTools } from './tools'
-import { PARENT_ONLY_CONVERSATION_TOOL_NAMES } from './tool-policy'
+import { PARENT_ONLY_CONVERSATION_TOOL_NAMES, deferredLoadingToolNames } from './tool-policy'
 import { buildModelSkillRuntime } from './skill-runtime'
 
 const MAESTRO_WORKER_PARENT_ONLY_TOOLS = new Set<string>([
@@ -129,6 +129,9 @@ export async function buildMaestroWorkerTools(args: {
       disabledIds,
       codexSafeNames: isCodexSubscriptionProvider(effective.providerId),
       supportsImages,
+      // Only these runtimes keep a deferred tool out of their requests; for the others a catalog of any size would go
+      // out in full, so the worker reads schemas on demand.
+      surface: providerDefersTools(effective.providerId) ? 'typed' : 'on-demand',
       describeImage,
     })
 
@@ -183,7 +186,7 @@ export async function buildMaestroWorkerTools(args: {
     })
     const allowedToolNames = new Set(Object.keys(tools))
     const deferredToolNames = new Set(
-      [...Object.keys(mcp.tools), ...Object.keys(app.tools)].filter((name) => allowedToolNames.has(name))
+      [...deferredLoadingToolNames({ ...mcp.tools, ...app.tools })].filter((name) => allowedToolNames.has(name))
     )
     let closed = false
     return {

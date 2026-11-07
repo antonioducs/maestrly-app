@@ -371,8 +371,10 @@ describe('Antigravity chat runner', () => {
     expect(prompt).toContain('- maestrly_mcp_tool_0007: Generates media on the synthetic server.\n')
     expect(prompt).not.toMatch(/- maestrly_mcp_tool_0007: .+\n {2}arguments:/)
     expect(prompt).toMatch(/- maestrly_get_tool_schemas: .+\n {2}arguments:/)
-    // Maestrly's own tools still fit with their schemas.
-    expect(prompt).toMatch(/- maestrly_memory_list: .+\n {2}arguments:/)
+    // The tools the prompt asks the model to use unprompted keep their schemas; the other app tools are listed by name.
+    expect(prompt).toMatch(/- maestrly_memory_search: .+\n {2}arguments:/)
+    expect(prompt).toMatch(/- maestrly_memory_list: .+\n/)
+    expect(prompt).not.toMatch(/- maestrly_memory_list: .+\n {2}arguments:/)
     expect(Buffer.byteLength(prompt, 'utf8')).toBeLessThan(ANTIGRAVITY_PROMPT_TEXT_MAX_BYTES)
     expect(textOf(events)).toMatch(/^tool-result:- maestrly_mcp_tool_0007: Generates media .+\n {2}arguments: \{/)
     // The lookup is the host's own: no tool card.

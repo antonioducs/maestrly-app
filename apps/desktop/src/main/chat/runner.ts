@@ -1,4 +1,5 @@
 import { hasPersonalMemoryTools, PERSONAL_MEMORY_TOOLS } from './mcp'
+import { deferredLoadingToolNames } from './tool-policy'
 import type { PermissionScope } from '../../shared/conversation-scope'
 import { autonomousPolicy, interactiveTool, governAutonomousTools, AUTONOMOUS_INSTRUCTIONS } from './autonomous'
 /**
@@ -786,6 +787,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
 
   // MCP servers follow enabled + conversation override. Wrapper retains everything in Agent, filters
   // defensively by annotations in Plan/Ask; all calls remain gated under action 'mcp'.
+  const mcpSurface = useOpenAIHarness && resolvedModel.capabilities.toolSearch ? 'typed' : 'on-demand'
   const mcp = await buildMcpTools({
     conversationId,
     mode,
@@ -793,8 +795,25 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     gate: mcpGate,
     disabledIds: mcpDisabled,
     supportsImages: true,
+    // Only the OpenAI Responses harness with tool search defers wrappers; everywhere else a catalog of any size would
+    // go out in full with every request, so the model reads schemas on demand through mcp_search.
+    surface: mcpSurface,
     describeImage: (image) => describeEphemeralToolImage({ image, conversationId, cwd, signal }),
   })
+  // Subagents run without tool search, so they never get the typed wrappers a deferring parent has.
+  const childMcp =
+    mcpSurface === 'typed'
+      ? await buildMcpTools({
+          conversationId,
+          mode,
+          signal,
+          gate: mcpGate,
+          disabledIds: mcpDisabled,
+          supportsImages: true,
+          surface: 'on-demand',
+          describeImage: (image) => describeEphemeralToolImage({ image, conversationId, cwd, signal }),
+        })
+      : mcp
 
   // General app tools follow the switch and its groups; personal memory is independently enabled. The wrapper
   // applies the mode allowlist. Blocking MCP review_plan is always excluded; Plan uses built-in submit & release.
@@ -1094,7 +1113,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
                       () => ({ meta: null })
                     )
                 const childTools = adaptToolSetForModel({
-                  tools: { ...tools, ...mcp.tools, ...app.tools, ...skillTools },
+                  tools: { ...tools, ...childMcp.tools, ...app.tools, ...skillTools },
                   supportsImages: supportsChatToolImages({
                     modelVision: childMeta.meta?.vision,
                     unknownVision: 'unsupported',
@@ -1131,7 +1150,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
                     readOnly,
                     tools: namespacedChildTools,
                     allowedToolNames: selectedToolNames,
-                    deferredToolNames: new Set([...Object.keys(mcp.tools), ...Object.keys(app.tools)]),
+                    deferredToolNames: deferredLoadingToolNames({ ...childMcp.tools, ...app.tools }),
                     broker,
                     questionBroker,
                     signal: workSignal,
@@ -1232,7 +1251,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       }
       allTools = { ...allTools, ...nativeTools }
     }
-    const deferredToolNames = [...Object.keys(mcp.tools), ...Object.keys(app.tools)]
+    const deferredToolNames = [...deferredLoadingToolNames({ ...mcp.tools, ...app.tools })]
     const optimized = await optimizeOpenAITools(allTools, {
       conversationId,
       enableToolSearch: resolvedModel.capabilities.toolSearch,

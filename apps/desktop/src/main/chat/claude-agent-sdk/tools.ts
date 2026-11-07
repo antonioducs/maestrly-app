@@ -18,7 +18,7 @@ import {
   toolOutputIsError,
   toolOutputToMcpCallResult,
 } from '../tool-output'
-import { isDeferredLoadingTool, isHostToolParallelSafe } from '../tool-policy'
+import { deferredLoadingToolNames, isHostToolParallelSafe } from '../tool-policy'
 import { coerceToolInput as sharedCoerceToolInput } from '../tool-robustness/arg-repair'
 import type { ToolOutput } from '../../../shared/chat'
 import type { ClaudeToolJournal } from './tool-journal'
@@ -235,14 +235,6 @@ function canonicalInput(value: unknown): unknown {
 function inputHash(value: unknown): string {
   const encoded = JSON.stringify(canonicalInput(value)) ?? 'undefined'
   return createHash('sha256').update(encoded).digest('hex')
-}
-
-function deferredLoadingToolNames(tools: ToolSet): Set<string> {
-  return new Set(
-    Object.entries(tools)
-      .filter(([, raw]) => isDeferredLoadingTool((raw as { metadata?: unknown } | undefined)?.metadata))
-      .map(([name]) => name)
-  )
 }
 
 export async function buildClaudeToolBridge(

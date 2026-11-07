@@ -25,7 +25,7 @@ describe('plugin agents', () => {
         name: 'reviewer',
         filePath: 'agents/reviewer.md',
         description: 'Reviews a change',
-        tools: ['read', 'grep', 'web_search', 'mcp_search', 'mcp_call'],
+        tools: ['read', 'grep', 'web_search', 'mcp_search', 'mcp_call', 'mcp_read'],
         droppedTools: ['TodoWrite'],
       },
     ])

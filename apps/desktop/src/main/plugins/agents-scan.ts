@@ -94,6 +94,7 @@ function mapTools(names: string[] | null): { tools: string[] | null; dropped: st
     if (name.startsWith('mcp__')) {
       tools.add('mcp_search')
       tools.add('mcp_call')
+      tools.add('mcp_read')
       continue
     }
     const mapped = name in AGENT_TOOL_MAP ? AGENT_TOOL_MAP[name] : MAESTRLY_TOOLS.has(name) ? name : null

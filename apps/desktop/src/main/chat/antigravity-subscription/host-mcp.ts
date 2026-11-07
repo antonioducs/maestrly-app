@@ -281,14 +281,20 @@ async function ensureServer(): Promise<number> {
 }
 
 /**
- * `summarizable` lists tiers of tool names the catalog may list without schemas, in the order they give up their
- * schemas once the catalog exceeds its budget (see `planAntigravityToolCatalog`).
+ * `deferred` lists tool names the catalog always lists without schemas; `summarizable` lists tiers of tool names that
+ * may go without them too, in the order they give up their schemas once the catalog exceeds its budget (see
+ * `planAntigravityToolCatalog`).
  */
 export async function registerAntigravityHostToolset(
   tools: ToolSet,
-  options: { summarizable?: readonly (readonly string[])[] } = {}
+  options: { summarizable?: readonly (readonly string[])[]; deferred?: readonly string[] } = {}
 ): Promise<AntigravityHostToolset> {
-  const { specs, summarized, catalog } = planAntigravityToolCatalog(await hostToolSpecs(tools), options.summarizable)
+  const { specs, summarized, catalog } = planAntigravityToolCatalog(
+    await hostToolSpecs(tools),
+    options.summarizable,
+    undefined,
+    options.deferred
+  )
   const port = await ensureServer()
   const key = randomUUID()
   const token = Buffer.from(randomBytes(32).toString('hex'))

@@ -241,7 +241,7 @@ describe('plugin MCP servers at runtime', () => {
       gate,
       signal: new AbortController().signal,
     })
-    const names = Object.keys(tools).filter((name) => name !== 'mcp_search' && name !== 'mcp_call')
+    const names = Object.keys(tools).filter((name) => !['mcp_search', 'mcp_call', 'mcp_read'].includes(name))
     expect(names).toContain('github__search')
     expect(names).toContain('github__other')
     const hashed = names.filter((name) => name.startsWith('ext_mcp__github__search_'))
@@ -255,7 +255,7 @@ describe('plugin MCP servers at runtime', () => {
       signal: new AbortController().signal,
       disabledIds: new Set([pluginServer.id]),
     })
-    expect(Object.keys(off.tools)).toEqual(['github__search', 'mcp_search', 'mcp_call'])
+    expect(Object.keys(off.tools)).toEqual(['github__search', 'mcp_search', 'mcp_call', 'mcp_read'])
   })
 
   it('applies the plugin tool filter to cached tools', async () => {
@@ -272,7 +272,7 @@ describe('plugin MCP servers at runtime', () => {
       gate,
       signal: new AbortController().signal,
     })
-    expect(Object.keys(tools)).toEqual(['demo_local__echo', 'mcp_search', 'mcp_call'])
+    expect(Object.keys(tools)).toEqual(['demo_local__echo', 'mcp_search', 'mcp_call', 'mcp_read'])
   })
 
   it('refuses to edit or remove plugin servers through the MCP settings', async () => {

@@ -70,7 +70,7 @@ import { PRELOAD_APP_TOOLS_TIMEOUT_MS, preloadAppToolsRegistry } from '../helper
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
 import { setConversationShellEnv } from '../../src/main/chat/conversation-env'
-import { PARENT_ONLY_CONVERSATION_TOOL_NAMES } from '../../src/main/chat/tool-policy'
+import { DEFERRED_LOADING_METADATA, PARENT_ONLY_CONVERSATION_TOOL_NAMES } from '../../src/main/chat/tool-policy'
 
 /**
  * Exactly the readers an Ask turn exposes, plus the conversation tools Ask offers in every turn. A turn the person did
@@ -1138,18 +1138,20 @@ describe('Codex subscription runner', () => {
         inputSchema: z.object({}),
         execute: async () => source,
       })
+    // The typed MCP wrappers and the app tools carry the deferral; discovery and dispatch stay loaded.
+    const deferred = (source: string) => Object.assign(makeTool(source), { metadata: DEFERRED_LOADING_METADATA })
     const mcpTools: ToolSet = {
-      shared: makeTool('mcp-shared'),
-      app_collision: makeTool('mcp-collision'),
+      shared: deferred('mcp-shared'),
+      app_collision: deferred('mcp-collision'),
       mcp_call: makeTool('mcp-call'),
-      mcp_only: makeTool('mcp-only'),
+      mcp_only: deferred('mcp-only'),
       mcp_search: makeTool('mcp-search'),
     }
     const appTools: ToolSet = {
-      shared: makeTool('app-shared'),
-      app_collision: makeTool('app-collision'),
-      notes_append_page: makeTool('drawer-notes-append'),
-      drawer_only: makeTool('drawer-only'),
+      shared: deferred('app-shared'),
+      app_collision: deferred('app-collision'),
+      notes_append_page: deferred('drawer-notes-append'),
+      drawer_only: deferred('drawer-only'),
     }
     const bridgeTools: ToolSet = {
       shared: makeTool('bridge-shared'),
@@ -1173,12 +1175,14 @@ describe('Codex subscription runner', () => {
     expect(byName.get('app_collision')?.spec.deferLoading).toBe(true)
     expect(byName.get('notes_append_page')?.spec.deferLoading).toBe(true)
     expect(byName.get('drawer_only')?.spec.deferLoading).toBe(true)
-    expect(byName.get('mcp_call')?.spec.deferLoading).toBe(true)
+    expect(byName.get('mcp_call')?.spec.deferLoading).toBeUndefined()
     expect(byName.get('mcp_only')?.spec.deferLoading).toBe(true)
-    expect(byName.get('mcp_search')?.spec.deferLoading).toBe(true)
+    expect(byName.get('mcp_search')?.spec.deferLoading).toBeUndefined()
     expect(byName.get('read')?.spec.deferLoading).toBeUndefined()
     expect(byName.get('shared')?.spec.deferLoading).toBeUndefined()
     expect(dynamicToolRegistrations(runtimes.map((runtime) => runtime.spec))).toMatchObject([
+      { type: 'function', name: 'mcp_call' },
+      { type: 'function', name: 'mcp_search' },
       { type: 'function', name: 'read' },
       { type: 'function', name: 'shared' },
       {
@@ -1188,9 +1192,7 @@ describe('Codex subscription runner', () => {
         tools: [
           { name: 'app_collision', deferLoading: true },
           { name: 'drawer_only', deferLoading: true },
-          { name: 'mcp_call', deferLoading: true },
           { name: 'mcp_only', deferLoading: true },
-          { name: 'mcp_search', deferLoading: true },
           { name: 'notes_append_page', deferLoading: true },
         ],
       },
@@ -2487,7 +2489,10 @@ describe('Codex subscription runner', () => {
       args.mode = mode
       args.permMode = permMode
       await runCodexSubscriptionChat(args)
-      const start = client.startThreadCalls[0] as { config: Record<string, unknown>; dynamicTools: Array<{ name: string }> }
+      const start = client.startThreadCalls[0] as {
+        config: Record<string, unknown>
+        dynamicTools: Array<{ name: string }>
+      }
       expect(start.config.web_search).toBe('disabled')
       expect(start.dynamicTools.map((spec) => spec.name)).not.toContain('web_search')
     }
@@ -5112,7 +5117,11 @@ describe('Codex subscription runner', () => {
       const running = runCodexSubscriptionChat(args)
       await vi.waitFor(() => expect(client.startTurnCalls).toHaveLength(1))
       const taskSpec = (await hostMcpTools(client.startThreadCalls[0])).find((spec) => spec.name === 'task')
-      expect((taskSpec?.inputSchema as { required?: string[] } | undefined)?.required).toEqual(['agent', 'prompt', 'complexity'])
+      expect((taskSpec?.inputSchema as { required?: string[] } | undefined)?.required).toEqual([
+        'agent',
+        'prompt',
+        'complexity',
+      ])
       await client.serverRequest({
         id: 'task_routed',
         method: 'item/tool/call',

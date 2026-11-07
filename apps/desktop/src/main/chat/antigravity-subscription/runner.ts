@@ -29,6 +29,7 @@ import { responseDurationMs } from '../../../shared/response-duration'
 import { stagePlan } from '../../plan-broker'
 import { getConvUiPrefs } from '../../store'
 import { resolveAppToolAccess } from '../app-tool-access'
+import { deferredLoadingToolNames } from '../tool-policy'
 import { AcpRpcError } from '../acp/client'
 import { ACP_RESOURCE_NOT_FOUND_CODE, type AcpPromptResult, type AcpSessionSetupResult } from '../acp/protocol'
 import {
@@ -377,6 +378,7 @@ export async function runAntigravitySubscriptionChat(
       disabledIds: new Set(prefs?.mcpDisabled ?? []),
       codexSafeNames: true,
       supportsImages: true,
+      surface: 'on-demand',
       describeImage,
     })
     mcpClose = mcp.close
@@ -502,6 +504,10 @@ export async function runAntigravitySubscriptionChat(
     const ownedLater = (name: string) => name in skillTools || name in taskTools || name in supervisionTools
     const appToolNames = Object.keys(app.tools).filter((name) => !ownedLater(name))
     const mcpToolNames = Object.keys(mcp.tools).filter((name) => !(name in app.tools) && !ownedLater(name))
+    // Deferred tools are listed by name and summary from the start; the budget above only matters for what is left.
+    const deferredNames = [...deferredLoadingToolNames({ ...mcp.tools, ...app.tools })].filter(
+      (name) => !ownedLater(name)
+    )
     // Antigravity never shows MCP tool images to the model, so tool images are always described instead.
     const tools = adaptToolSetForModel({
       tools: wrapToolSetWithHooks(rawTools, runnerHookContext(args)),
@@ -533,7 +539,7 @@ export async function runAntigravitySubscriptionChat(
         assistantId,
         agents,
         tools: rawTools,
-        deferredToolNames: new Set([...mcpToolNames, ...appToolNames]),
+        deferredToolNames: new Set(deferredNames),
         coordinator: new SubagentCoordinator({
           onEvent: (event) =>
             chatDiag({
@@ -557,7 +563,10 @@ export async function runAntigravitySubscriptionChat(
     const workDir = args.manager.workDir
     const binding = ephemeral ? undefined : getAntigravitySessionBinding(args.conversationId)
     const previousMessageId = history.at(-2)?.id ?? null
-    const turnToolset = await registerAntigravityHostToolset(tools, { summarizable: [mcpToolNames, appToolNames] })
+    const turnToolset = await registerAntigravityHostToolset(tools, {
+      summarizable: [mcpToolNames, appToolNames],
+      deferred: deferredNames,
+    })
     toolset = turnToolset
     const toolSignature = turnToolset.toolSignature
     const compatible =

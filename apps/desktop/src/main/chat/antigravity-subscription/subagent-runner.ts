@@ -117,6 +117,7 @@ export async function runAntigravitySubagent(args: RunAntigravitySubagentArgs): 
     if (!modelValue) throw new AntigravityModelUnavailableError(effective.modelId)
     const childToolset = await registerAntigravityHostToolset(tools, {
       summarizable: args.deferrableToolNames ? [[...args.deferrableToolNames]] : [],
+      deferred: args.deferrableToolNames ? [...args.deferrableToolNames] : [],
     })
     toolset = childToolset
     const prompt = `<maestrly_instructions>\n${instructions}\n</maestrly_instructions>\n\n${childToolset.catalog}\n\n# Task\n${args.task}`

@@ -10,12 +10,15 @@ const h = vi.hoisted(() => ({
   brokerAssert: vi.fn(async () => {}),
 }))
 
-function hostTool(name: string) {
-  return tool({
-    description: name,
-    inputSchema: jsonSchema({ type: 'object', properties: {} }),
-    execute: vi.fn(async () => `${name}:ok`),
-  })
+function hostTool(name: string, metadata?: object) {
+  return Object.assign(
+    tool({
+      description: name,
+      inputSchema: jsonSchema({ type: 'object', properties: {} }),
+      execute: vi.fn(async () => `${name}:ok`),
+    }),
+    metadata ? { metadata } : {}
+  )
 }
 
 vi.mock('../../src/main/chat/mcp', () => ({
@@ -42,18 +45,20 @@ vi.mock('../../src/main/chat/skill-runtime', () => ({
 }))
 
 import { buildMaestroWorkerTools } from '../../src/main/chat/maestro-worker-tools'
+import { DEFERRED_LOADING_METADATA } from '../../src/main/chat/tool-policy'
 
 describe('Maestro full worker tool runtime', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     const appTools: ToolSet = {
-      browser_click: hostTool('browser_click'),
-      terminal_run: hostTool('terminal_run'),
-      terminal_focus: hostTool('terminal_focus'),
-      notes_write_page: hostTool('notes_write_page'),
+      browser_click: hostTool('browser_click', DEFERRED_LOADING_METADATA),
+      terminal_run: hostTool('terminal_run', DEFERRED_LOADING_METADATA),
+      terminal_focus: hostTool('terminal_focus', DEFERRED_LOADING_METADATA),
+      notes_write_page: hostTool('notes_write_page', DEFERRED_LOADING_METADATA),
+      memory_search: hostTool('memory_search'),
     }
     const mcpTools: ToolSet = {
-      remote_mutate: hostTool('remote_mutate'),
+      remote_mutate: hostTool('remote_mutate', DEFERRED_LOADING_METADATA),
       mcp_search: hostTool('mcp_search'),
       mcp_call: hostTool('mcp_call'),
     }
@@ -137,9 +142,11 @@ describe('Maestro full worker tool runtime', () => {
     ]) {
       expect(runtime.allowedToolNames.has(forbidden), forbidden).toBe(false)
     }
+    // Memory and the discovery tools stay loaded; this provider has no tool search, so MCP is reached on demand.
     expect(runtime.deferredToolNames).toEqual(
-      new Set(['remote_mutate', 'mcp_search', 'mcp_call', 'browser_click', 'terminal_run', 'notes_write_page'])
+      new Set(['remote_mutate', 'browser_click', 'terminal_run', 'notes_write_page'])
     )
+    expect(h.buildMcpTools).toHaveBeenCalledWith(expect.objectContaining({ surface: 'on-demand' }))
     expect(runtime.skillCatalog).toContain('frontend-design')
     expect(h.buildModelSkillRuntime).toHaveBeenCalledWith({ cwd: '/repo', conversationId: 'conv-1', scope: 'project' })
 
