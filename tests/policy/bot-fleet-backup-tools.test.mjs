@@ -30,8 +30,8 @@ test('the bot image pins restic and rclone by version and hash for each architec
   const amd = dockerfile.match(/^\s*amd64\)([^\n]*)$/gm) ?? []
   assert.ok(arm.some((line) => /restic_sha=[0-9a-f]{64}/.test(line) && /rclone_sha=[0-9a-f]{64}/.test(line)))
   assert.ok(amd.some((line) => /restic_sha=[0-9a-f]{64}/.test(line) && /rclone_sha=[0-9a-f]{64}/.test(line)))
-  assert.match(dockerfile, /echo "\$\{restic_sha\}  \/tmp\/restic\.bz2" \| sha256sum -c -/)
-  assert.match(dockerfile, /echo "\$\{rclone_sha\}  \/tmp\/rclone\.zip" \| sha256sum -c -/)
+  assert.match(dockerfile, /echo "\$\{restic_sha\} {2}\/tmp\/restic\.bz2" \| sha256sum -c -/)
+  assert.match(dockerfile, /echo "\$\{rclone_sha\} {2}\/tmp\/rclone\.zip" \| sha256sum -c -/)
   assert.match(dockerfile, /^COPY --from=tools .*\/usr\/local\/bin\/restic .*\/usr\/local\/bin\/rclone /m)
 })
 
