@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import {
   FLEET_BACKUP_LIMITS,
   FLEET_BACKUP_RETENTION_DEFAULT,
@@ -6,23 +6,45 @@ import {
   type FleetBackupConnectResponse,
   type FleetBackupDestination,
   type FleetBackupDestinationView,
+  type FleetBackupEligibility,
   type FleetBackupEnvironmentStatus,
+  type FleetBackupError,
   type FleetBackupProbeResponse,
   type FleetBackupRun,
+  type FleetBackupRunRequest,
   type FleetBackupStatus,
   type FleetBackupUpdateRequest,
   type FleetGatewayEvent,
+  type FleetInstanceBackupSnapshot,
   fleetBackupDestinationLabel,
 } from '@maestrly/bot-fleet-protocol'
 import { sha256 } from '../auth.js'
 import type { GatewayConfig } from '../config.js'
+import type { HelperResult } from '../docker.js'
 import { GatewayError } from '../errors.js'
-import type { Lifecycle } from '../lifecycle.js'
+import { helperLabel, type Lifecycle } from '../lifecycle.js'
 import { Logger } from '../logger.js'
 import { nextRun } from '../routines.js'
 import type { Store, StoredBackupRun, StoredBackupSettings } from '../store.js'
-import type { BackupHelper } from './helper.js'
-import { formatRecoveryKey, newRecoveryKey, normalizeRecoveryKey, resticFailure } from './restic.js'
+import { BACKUP_HELPER, type BackupHelper } from './helper.js'
+import {
+  BACKUP_HOME,
+  BACKUP_SLICE_ENTRY,
+  BACKUP_SLICE_PATH,
+  backupArgs,
+  backupExcludes,
+  forgetArgs,
+  formatRecoveryKey,
+  newRecoveryKey,
+  normalizeRecoveryKey,
+  redact,
+  resticBackupSummary,
+  resticFailure,
+  resticProgress,
+  resticStatsBytes,
+  snapshotTags,
+} from './restic.js'
+import { type BackupSlice, buildBackupSlice } from './slice.js'
 
 export type BackupsDeps = {
   store: Store
@@ -38,6 +60,20 @@ export type BackupsDeps = {
 }
 
 const WRONG_KEY = 'This recovery key does not open this backup.'
+/** How long a due backup waits before it looks again at an environment that is busy updating or changing its bots. */
+const DEFER_RETRY_MS = 60_000
+/** The runs one list of runs holds, newest first. */
+const RUNS_LISTED = 200
+/** Why an environment cannot be backed up now, as a run refused or failed for it says. */
+const INELIGIBLE: Record<Exclude<FleetBackupEligibility, 'ok'>, string> = {
+  'update-environment': 'Update this environment to back it up while it runs.',
+  'shared-folder': "This environment uses the server's shared folder. Give it a folder of its own to back it up.",
+  archived: 'This environment is archived.',
+  'not-ready': 'The environment is not ready.',
+}
+/** What a restore restores: the gateway's part of the snapshot, read again when it was asked for. */
+export type RestoreJob = { snapshotId: string; slice: BackupSlice; withProjects: boolean }
+type QueueItem = { run: StoredBackupRun; notBefore: number; restore?: RestoreJob }
 
 /** A Google service account key as the app pasted it: its account, and the key that must never show. */
 function serviceAccount(json: string): { clientEmail: string; privateKey: string } {
@@ -47,13 +83,8 @@ function serviceAccount(json: string): { clientEmail: string; privateKey: string
   } catch {
     throw new GatewayError('INVALID_REQUEST', 'Not a service account key')
   }
-  const key = parsed as Record<string, unknown> | null
-  if (
-    !key ||
-    key.type !== 'service_account' ||
-    typeof key.client_email !== 'string' ||
-    typeof key.private_key !== 'string'
-  )
+  const key = (parsed && typeof parsed === 'object' ? parsed : {}) as Record<string, unknown>
+  if (key.type !== 'service_account' || typeof key.client_email !== 'string' || typeof key.private_key !== 'string')
     throw new GatewayError('INVALID_REQUEST', 'Not a service account key')
   return { clientEmail: key.client_email, privateKey: key.private_key }
 }
@@ -314,7 +345,371 @@ export class Backups {
     return this.status()
   }
   /** Cancels every queued and running run and waits for them to end. */
-  protected async cancelAll(): Promise<void> {}
+  protected async cancelAll(): Promise<void> {
+    for (const item of [...this.queue]) this.cancel(item.run.id)
+    const current = this.current
+    if (current) {
+      current.controller.abort()
+      await current.done
+    }
+  }
+
+  /** Runs one at a time, oldest first; `notBefore` holds one that waits for its environment. */
+  private readonly queue: QueueItem[] = []
+  private current: { item: QueueItem; controller: AbortController; done: Promise<void> } | null = null
+  private working: Promise<void> | null = null
+  private wakeTimer: NodeJS.Timeout | null = null
+  private tickTimer: NodeJS.Timeout | null = null
+  private ticking = false
+  private stopped = false
+
+  /** Ends what a restart of the gateway interrupted, then checks the schedule every `tickMs`. */
+  async start(): Promise<void> {
+    this.stopped = false
+    // Helpers left running by the gateway before: what they did is lost, and they still hold their volumes.
+    try {
+      for (const container of await this.helper.docker.list(`${helperLabel}=${BACKUP_HELPER}`))
+        await this.helper.docker.remove(container.id, true).catch(() => undefined)
+    } catch (error) {
+      this.logger.warn('Backup helpers not cleaned up', { failure: (error as Error).message })
+    }
+    for (const run of this.store.unfinishedBackupRuns()) {
+      if (run.kind === 'restore' && run.volumeName && !this.store.getEnvironment(run.environmentId))
+        await this.lifecycle.discardRestoreTarget(run.volumeName)
+      this.finish(run, 'failed', { code: 'interrupted', message: 'The server restarted during the operation.' })
+    }
+    this.tickTimer = setInterval(() => void this.tick(), this.deps.tickMs ?? 60_000)
+    this.tickTimer.unref?.()
+    await this.tick()
+  }
+  stop(): void {
+    this.stopped = true
+    if (this.tickTimer) clearInterval(this.tickTimer)
+    if (this.wakeTimer) clearTimeout(this.wakeTimer)
+    this.tickTimer = null
+    this.wakeTimer = null
+  }
+  /** Queues the environments whose backup is due, and gives each its next one. */
+  async tick(): Promise<void> {
+    if (this.ticking) return
+    this.ticking = true
+    try {
+      const settings = this.store.backupSettings()
+      if (!settings?.enabled || !settings.schedule) return
+      this.syncSchedule(false)
+      const now = this.now()
+      for (const row of this.store.backupEnvironments()) {
+        if (!row.nextRunAt || Date.parse(row.nextRunAt) > now) continue
+        if (!this.activeRun(row.environmentId)) this.enqueue(row.environmentId, 'schedule')
+        this.store.setBackupNextRun(row.environmentId, nextRun(settings.schedule, new Date(now)))
+      }
+    } catch (error) {
+      this.logger.warn('Backup schedule not checked', { failure: (error as Error).message })
+    } finally {
+      this.ticking = false
+      this.wake()
+    }
+  }
+  /** Settles once no run is ready to go: the queue is empty, or what is in it waits. */
+  async idle(): Promise<void> {
+    for (;;) {
+      await new Promise((resolve) => setImmediate(resolve))
+      if (!this.working) return
+      await this.working
+    }
+  }
+  private activeRun(environmentId: string): StoredBackupRun | null {
+    if (this.current?.item.run.environmentId === environmentId) return this.current.item.run
+    return this.queue.find((item) => item.run.environmentId === environmentId)?.run ?? null
+  }
+  protected enqueue(environmentId: string, trigger: FleetBackupRun['trigger'], restore?: RestoreJob): StoredBackupRun {
+    const run: StoredBackupRun = {
+      id: randomUUID(),
+      kind: restore ? 'restore' : 'backup',
+      environmentId,
+      environmentName: (
+        restore?.slice.environment.name ??
+        this.store.getEnvironment(environmentId)?.name ??
+        environmentId
+      ).slice(0, 200),
+      trigger,
+      state: 'queued',
+      phase: 'queued',
+      progress: null,
+      snapshotId: restore?.snapshotId ?? null,
+      bytesAdded: null,
+      bytesTotal: null,
+      error: null,
+      startedAt: this.iso(),
+      finishedAt: null,
+      volumeName: null,
+    }
+    this.store.saveBackupRun(run)
+    this.queue.push({ run, notBefore: this.now(), ...(restore ? { restore } : {}) })
+    this.emitRun(run)
+    // After the caller's transaction: the worker changes the run as soon as it starts.
+    queueMicrotask(() => this.wake())
+    return run
+  }
+  private wake() {
+    if (this.working || this.stopped) return
+    this.working = this.work().finally(() => {
+      this.working = null
+    })
+  }
+  private async work(): Promise<void> {
+    for (;;) {
+      if (this.stopped) return
+      const now = this.now()
+      const index = this.queue.findIndex((item) => item.notBefore <= now)
+      if (index === -1) return this.armWake()
+      const [item] = this.queue.splice(index, 1)
+      const controller = new AbortController()
+      const done = (item.restore ? this.runRestore(item, controller.signal) : this.runBackup(item, controller.signal))
+        .catch((error: unknown) => {
+          this.logger.warn('Backup run failed', { runId: item.run.id, failure: (error as Error).message })
+          this.finish(item.run, 'failed', {
+            code: 'failed',
+            message: redact((error as Error).message ?? 'Internal error', this.currentSecrets()).slice(0, 500),
+          })
+        })
+        .then(() => undefined)
+      this.current = { item, controller, done }
+      try {
+        await done
+      } finally {
+        this.current = null
+      }
+    }
+  }
+  /** Wakes the worker when the first waiting run may go. */
+  private armWake() {
+    if (this.wakeTimer) clearTimeout(this.wakeTimer)
+    this.wakeTimer = null
+    if (!this.queue.length || this.stopped) return
+    const next = Math.min(...this.queue.map((item) => item.notBefore))
+    this.wakeTimer = setTimeout(() => this.wake(), Math.max(1000, next - this.now()))
+    this.wakeTimer.unref?.()
+  }
+  private currentSecrets(): string[] {
+    const settings = this.store.backupSettings()
+    return settings ? this.secrets(settings) : []
+  }
+  protected emitRun(run: StoredBackupRun) {
+    this.deps.emit({ type: 'backup_run.updated', at: this.iso(), run: publicRun(run) })
+  }
+  protected change(run: StoredBackupRun, changes: Partial<StoredBackupRun>) {
+    Object.assign(run, changes)
+    this.store.saveBackupRun(run)
+    this.emitRun(run)
+  }
+  protected finish(
+    run: StoredBackupRun,
+    state: 'succeeded' | 'partial' | 'failed' | 'cancelled',
+    error: FleetBackupError | null
+  ): StoredBackupRun {
+    Object.assign(run, {
+      state,
+      phase: 'finish',
+      error,
+      finishedAt: this.iso(),
+      ...(state === 'succeeded' || state === 'partial' ? { progress: 1 } : {}),
+    })
+    this.store.saveBackupRun(run)
+    this.store.pruneBackupRuns(run.environmentId, FLEET_BACKUP_LIMITS.runsKeptPerEnvironment)
+    this.emitRun(run)
+    this.emitStatus()
+    return run
+  }
+  /** Updates a run's progress from restic's status lines, telling devices at most once a second. */
+  protected progress(run: StoredBackupRun): (line: string) => void {
+    let told = 0
+    return (line) => {
+      const status = resticProgress(line)
+      if (!status) return
+      run.progress = status.percent
+      if (status.totalBytes !== null) run.bytesTotal = status.totalBytes
+      const now = this.now()
+      if (now - told < 1000) return
+      told = now
+      this.change(run, {})
+    }
+  }
+
+  /** Backs up one environment now, unless it is being backed up already. */
+  runNow(request: FleetBackupRunRequest): FleetBackupRun {
+    this.requireSettings()
+    const source = this.lifecycle.backupSource(request.environmentId)
+    if (!source || source.eligibility === 'archived') throw new GatewayError('NOT_FOUND', 'Environment not found')
+    if (source.eligibility !== 'ok') throw new GatewayError('CONFLICT', INELIGIBLE[source.eligibility])
+    const active = this.activeRun(request.environmentId)
+    if (active) return publicRun(active)
+    const hash = sha256(JSON.stringify(request))
+    return this.store.idempotent('backupRun', request.idempotencyKey, hash, () => ({
+      response: publicRun(this.enqueue(request.environmentId, 'manual')),
+      status: 201,
+    })).response
+  }
+  /** Ends a queued or running backup or restore; one already ended stays as it ended. */
+  cancel(runId: string): FleetBackupRun {
+    const index = this.queue.findIndex((item) => item.run.id === runId)
+    if (index !== -1) {
+      const [item] = this.queue.splice(index, 1)
+      return publicRun(this.finish(item.run, 'cancelled', { code: 'cancelled', message: 'Cancelled.' }))
+    }
+    if (this.current?.item.run.id === runId) {
+      this.current.controller.abort()
+      return publicRun(this.current.item.run)
+    }
+    const run = this.store.backupRun(runId)
+    if (!run) throw new GatewayError('NOT_FOUND', 'Backup run not found')
+    throw new GatewayError('CONFLICT', 'This run already ended')
+  }
+  runs(environmentId?: string): FleetBackupRun[] {
+    return this.store.backupRuns({ ...(environmentId ? { environmentId } : {}), limit: RUNS_LISTED }).map(publicRun)
+  }
+  /** An archived environment is about to be deleted: its backup ends first, so its volume is free to remove. */
+  async beforePurge(environmentId: string): Promise<void> {
+    for (const item of this.queue.filter((queued) => queued.run.environmentId === environmentId && !queued.restore))
+      this.cancel(item.run.id)
+    const current = this.current
+    if (current && current.item.run.environmentId === environmentId && !current.item.restore) {
+      current.controller.abort()
+      await current.done
+    }
+  }
+
+  private async runBackup(item: QueueItem, signal: AbortSignal): Promise<void> {
+    const { run } = item
+    const settings = this.store.backupSettings()
+    if (!settings) return void this.finish(run, 'cancelled', { code: 'cancelled', message: 'Cancelled.' })
+    const source = this.lifecycle.backupSource(run.environmentId)
+    if (!source || source.eligibility !== 'ok')
+      return void this.finish(
+        run,
+        'failed',
+        source?.eligibility === 'update-environment'
+          ? { code: 'update-environment', message: INELIGIBLE['update-environment'] }
+          : { code: 'environment-unavailable', message: 'The environment was not ready.' }
+      )
+    if (this.lifecycle.backupDeferred(run.environmentId)) {
+      if (this.now() - Date.parse(run.startedAt) < FLEET_BACKUP_LIMITS.deferMaxMs) {
+        this.queue.push({ ...item, notBefore: this.now() + DEFER_RETRY_MS })
+        return
+      }
+      return void this.finish(run, 'failed', {
+        code: 'busy',
+        message: 'The environment stayed busy updating or changing its bots.',
+      })
+    }
+    const { environment, running, projects } = source
+    const secrets = this.secrets(settings)
+    this.change(run, { state: 'running', phase: running ? 'snapshot' : 'upload' })
+    let prepared: FleetInstanceBackupSnapshot | null = null
+    let result: HelperResult
+    try {
+      if (running) {
+        try {
+          prepared = await this.lifecycle.prepareBackupSnapshot(run.environmentId)
+        } catch {
+          return void this.finish(run, 'failed', {
+            code: 'environment-unavailable',
+            message: 'The environment could not copy its database.',
+          })
+        }
+        if (signal.aborted) return void this.finish(run, 'cancelled', { code: 'cancelled', message: 'Cancelled.' })
+      }
+      const slice = buildBackupSlice({
+        store: this.store,
+        environmentId: environment.id,
+        server: { id: this.store.serverId(), name: this.deps.serverName() },
+        gatewayVersion: this.deps.gatewayVersion,
+        now: this.iso(),
+        database: prepared ? { snapshot: prepared.snapshot, live: prepared.database } : null,
+        projects,
+      })
+      this.change(run, { phase: 'upload', progress: 0 })
+      result = await this.helper.restic({
+        destination: settings.destination,
+        password: settings.recoveryKey,
+        args: backupArgs({
+          host: this.store.serverId(),
+          tags: snapshotTags({ environment, serverName: this.deps.serverName() }),
+          paths: [BACKUP_HOME, ...(projects ? [projects] : []), BACKUP_SLICE_PATH],
+          excludes: backupExcludes({ running, database: prepared && { live: prepared.database }, projects }),
+        }),
+        mounts: [
+          { type: 'volume', source: environment.volumeName, target: BACKUP_HOME, readOnly: true },
+          ...(projects ? [{ type: 'bind' as const, source: projects, target: projects, readOnly: true }] : []),
+        ],
+        files: [{ path: BACKUP_SLICE_ENTRY, content: JSON.stringify(slice), mode: 0o600 }],
+        timeoutMs: FLEET_BACKUP_LIMITS.helperTimeoutMs,
+        signal,
+        onStdoutLine: this.progress(run),
+      })
+    } finally {
+      if (prepared) await this.lifecycle.releaseBackupSnapshot(run.environmentId)
+    }
+    if (result.ending !== 'exited' || (result.exitCode !== 0 && result.exitCode !== 3)) {
+      const failure = resticFailure(result, secrets)
+      return void this.finish(run, failure.code === 'cancelled' ? 'cancelled' : 'failed', failure)
+    }
+    const summary = resticBackupSummary(result.stdout)
+    if (!summary) return void this.finish(run, 'failed', { code: 'failed', message: 'restic reported no summary' })
+    this.change(run, {
+      phase: 'retention',
+      progress: 1,
+      snapshotId: summary.snapshotId,
+      bytesAdded: summary.bytesAdded,
+      bytesTotal: summary.bytesTotal,
+    })
+    const retention = await this.retain(settings, run.environmentId, signal)
+    if (result.exitCode === 3)
+      return void this.finish(run, 'partial', {
+        code: 'failed',
+        message: resticFailure(result, secrets).message || 'Some files could not be read.',
+      })
+    if (retention) return void this.finish(run, 'partial', retention)
+    this.finish(run, 'succeeded', null)
+  }
+  /**
+   * Forgets the environment's snapshots beyond the retention, prunes and checks the repository once a week, and
+   * measures it. The backup itself is made by then: a failure here only makes the run partial.
+   */
+  private async retain(
+    settings: StoredBackupSettings,
+    environmentId: string,
+    signal: AbortSignal
+  ): Promise<FleetBackupError | null> {
+    const secrets = this.secrets(settings)
+    const restic = (args: string[], timeoutMs: number) =>
+      this.helper.restic({ destination: settings.destination, password: settings.recoveryKey, args, timeoutMs, signal })
+    const failed = (result: HelperResult) => result.exitCode !== 0 || result.ending !== 'exited'
+    const forget = await restic(
+      forgetArgs({ host: this.store.serverId(), environmentId, retention: settings.retention }),
+      FLEET_BACKUP_LIMITS.helperTimeoutMs
+    )
+    if (failed(forget)) return resticFailure(forget, secrets)
+    const lastPruneAt = this.store.backupSettings()?.lastPruneAt
+    if (!lastPruneAt || this.now() - Date.parse(lastPruneAt) >= FLEET_BACKUP_LIMITS.pruneEveryMs) {
+      const prune = await restic(['prune'], FLEET_BACKUP_LIMITS.helperTimeoutMs)
+      if (failed(prune)) return resticFailure(prune, secrets)
+      const check = await restic(['check'], FLEET_BACKUP_LIMITS.helperTimeoutMs)
+      if (failed(check)) return resticFailure(check, secrets)
+      const current = this.store.backupSettings()
+      if (current) this.store.saveBackupSettings({ ...current, lastPruneAt: this.iso() })
+    }
+    const stats = await restic(['stats', '--json', '--mode', 'raw-data'], FLEET_BACKUP_LIMITS.quickTimeoutMs)
+    const bytes = failed(stats) ? null : resticStatsBytes(stats.stdout)
+    const current = this.store.backupSettings()
+    if (bytes !== null && current) this.store.saveBackupSettings({ ...current, repositoryBytes: bytes })
+    else if (bytes === null) this.logger.warn('Backup repository not measured', { environmentId })
+    return null
+  }
+  /** A restore (Task 10). */
+  protected async runRestore(item: QueueItem, _signal: AbortSignal): Promise<void> {
+    this.finish(item.run, 'failed', { code: 'failed', message: 'Restores are not available.' })
+  }
 
   /** The recovery key, formatted, for the owner to keep. */
   recoveryKey(): string {
