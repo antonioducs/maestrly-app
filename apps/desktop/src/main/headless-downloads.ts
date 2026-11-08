@@ -5,6 +5,37 @@ import { app, session, type Session } from 'electron'
 const FILENAME_MAX = 200
 
 /**
+ * The Downloads folder of a headless instance. Bot and server containers have no XDG user-dirs file, and without one
+ * Electron on Linux answers the home folder itself: downloads would land loose in it, and the environment's disk
+ * figures would count the whole home folder as Downloads. That answer becomes `~/Downloads`; any other is kept.
+ */
+export function headlessDownloadsFolder(downloads: string, home: string): string {
+  return path.resolve(downloads) === path.resolve(home) ? path.join(home, 'Downloads') : downloads
+}
+
+/**
+ * Points the app's Downloads folder at `headlessDownloadsFolder` and creates it, before anything reads it: the
+ * downloads without a dialog, the bots' Chromium and the disk figures then all use the same folder.
+ */
+export function applyHeadlessDownloadsFolder(): string {
+  const folder = headlessDownloadsFolder(app.getPath('downloads'), app.getPath('home'))
+  app.setPath('downloads', folder)
+  try {
+    mkdirSync(folder, { recursive: true })
+  } catch (error) {
+    // Each download creates it again, and cancels itself if it still cannot.
+    console.error(
+      JSON.stringify({
+        component: 'downloads',
+        level: 'error',
+        message: `Could not create the Downloads folder: ${error instanceof Error ? error.message : String(error)}`,
+      })
+    )
+  }
+  return folder
+}
+
+/**
  * In bot and server mode nobody answers a native dialog on the display. A download without a save path makes Electron
  * open a "Save as" dialog that is modal to the window that started it, and on Linux that window then drops every click
  * and wheel event until the dialog is answered: on a bot environment's display such dialogs pile up, under the
