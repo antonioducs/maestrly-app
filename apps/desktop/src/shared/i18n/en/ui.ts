@@ -1074,6 +1074,11 @@ export default {
         mode: 'Mode',
         modeAgent: 'Agent',
         modeRealtime: 'Realtime (OpenAI API)',
+        realtimeModel: 'Realtime model',
+        realtimeMini: 'gpt-realtime-2.1-mini (faster, cheaper)',
+        realtimeFull: 'gpt-realtime-2.1',
+        realtimeCost:
+          'Realtime answers in about half a second and is billed per minute of audio to your OpenAI key. The call ends after two minutes without anyone talking.',
         engine: 'Speech engine',
         engineSystem: 'System voice (free)',
         engineOpenai: 'OpenAI (natural, paid per use)',
@@ -2401,6 +2406,7 @@ export default {
       askOptions: '{{question}} Say {{options}}.',
       confirmInCard: '{{question}} Confirm it in the card.',
       answerInCard: '{{question}} Answer it in the card.',
+      realtimeTimer: 'Realtime call time',
       notUnderstood: "I didn't catch that. Tap an option.",
       dismiss: 'Dismiss',
       notice: {
@@ -2420,6 +2426,12 @@ export default {
         'speech-cancelled': 'Reading stopped.',
         'speech-no-voice': 'This computer has no system voice. Choose the OpenAI voice in Settings → Assistant.',
         'speech-playback': 'The answer could not be played; it stays in the chat.',
+        'realtime-key-missing': 'Realtime needs an OpenAI key. Add it in Settings → Dictation.',
+        'realtime-key-rejected': 'OpenAI rejected the key. Check it in Settings → Dictation.',
+        'realtime-bad-offer': 'The voice call could not start. Try again.',
+        'realtime-network': 'The voice call dropped or could not connect.',
+        'realtime-mic': 'The microphone could not open. Check its access in the system settings.',
+        'realtime-error': 'The voice call reported an error.',
       },
     },
     spoken: {

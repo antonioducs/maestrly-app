@@ -176,6 +176,7 @@ export default {
     confirmSend: 'Mandar isto para “{{target}}”?\n\n{{preview}}',
     confirmBotSend: 'Mandar isto para o bot “{{target}}”?\n\n{{preview}}',
     confirmRespond: 'Aprovar isto em “{{target}}”?\n\n{{preview}}',
+    realtimeSummary: '(pedido resumido: {{request}})',
     confirmAnswer: 'Responder “{{target}}” com isto?\n\n{{preview}}',
     confirmAnswerOnce: 'Responder',
     confirmOnce: 'Mandar',

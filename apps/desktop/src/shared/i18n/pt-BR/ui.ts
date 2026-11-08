@@ -1080,6 +1080,11 @@ export default {
         mode: 'Modo',
         modeAgent: 'Agente',
         modeRealtime: 'Realtime (OpenAI API)',
+        realtimeModel: 'Modelo Realtime',
+        realtimeMini: 'gpt-realtime-2.1-mini (mais rápido e barato)',
+        realtimeFull: 'gpt-realtime-2.1',
+        realtimeCost:
+          'O Realtime responde em cerca de meio segundo e é cobrado por minuto de áudio na sua chave OpenAI. A chamada termina depois de dois minutos sem ninguém falar.',
         engine: 'Motor de fala',
         engineSystem: 'Voz do sistema (grátis)',
         engineOpenai: 'OpenAI (natural, pago por uso)',
@@ -2427,6 +2432,7 @@ export default {
       askOptions: '{{question}} Diga {{options}}.',
       confirmInCard: '{{question}} Confirme no card.',
       answerInCard: '{{question}} Responda no card.',
+      realtimeTimer: 'Tempo da chamada Realtime',
       notUnderstood: 'Não entendi. Toque numa opção.',
       dismiss: 'Dispensar',
       notice: {
@@ -2446,6 +2452,12 @@ export default {
         'speech-cancelled': 'A leitura parou.',
         'speech-no-voice': 'Este computador não tem voz do sistema. Escolha a voz da OpenAI em Configurações → Assistente.',
         'speech-playback': 'A resposta não pôde ser tocada; ela fica no chat.',
+        'realtime-key-missing': 'O Realtime precisa de uma chave OpenAI. Adicione em Configurações → Ditado.',
+        'realtime-key-rejected': 'A OpenAI recusou a chave. Confira em Configurações → Ditado.',
+        'realtime-bad-offer': 'A chamada de voz não começou. Tente de novo.',
+        'realtime-network': 'A chamada de voz caiu ou não conectou.',
+        'realtime-mic': 'O microfone não abriu. Confira o acesso a ele nas configurações do sistema.',
+        'realtime-error': 'A chamada de voz informou um erro.',
       },
     },
     spoken: {

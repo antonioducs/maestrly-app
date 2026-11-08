@@ -152,13 +152,14 @@ function VoiceSettings({
   const chosen = voice.systemVoice && systemVoices?.find((v) => v.name === voice.systemVoice)
   const systemChoices = chosen && !fitting.includes(chosen) ? [chosen, ...fitting] : fitting
   const noSystemVoice = systemVoices !== null && systemVoices.length === 0
-  const keyMissing = voice.engine === 'openai' && options !== null && !options.openaiKey
+  const realtime = voice.mode === 'realtime'
+  const keyMissing = (voice.engine === 'openai' || realtime) && options !== null && !options.openaiKey
   const showDictation = () => dictation.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 
   const test = async () => {
     setTestError(null)
     const sample = t('settings.assistant.voice.sample')
-    if (voice.engine === 'system') {
+    if (voice.engine === 'system' && !realtime) {
       if (typeof speechSynthesis === 'undefined') return setTestError('no-voice')
       speechSynthesis.cancel()
       const utterance = new SpeechSynthesisUtterance(sample)
@@ -174,7 +175,11 @@ function VoiceSettings({
     }
     setTesting(true)
     try {
-      const result = await window.api.assistantTestVoice({ text: sample, voice: voice.openaiVoice, speed: voice.speed })
+      const result = await window.api.assistantTestVoice({
+        text: sample,
+        voice: realtime ? voice.realtimeVoice : voice.openaiVoice,
+        speed: realtime ? Math.min(1.5, voice.speed) : voice.speed,
+      })
       if (!result.ok) return setTestError(result.error)
       const context = new AudioContext()
       const source = context.createBufferSource()
@@ -207,13 +212,27 @@ function VoiceSettings({
             onValueChange={(mode) => setVoice({ mode: mode === 'realtime' ? 'realtime' : 'agent' })}
           >
             <SelectOption value="agent">{t('settings.assistant.voice.modeAgent')}</SelectOption>
-            <SelectOption value="realtime" disabled>
-              {t('settings.assistant.voice.modeRealtime')}
-            </SelectOption>
+            <SelectOption value="realtime">{t('settings.assistant.voice.modeRealtime')}</SelectOption>
           </OptionSelect>
         </Row>
+        {realtime && (
+          <Row label={t('settings.assistant.voice.realtimeModel')}>
+            <OptionSelect
+              className="h-8 w-auto shrink-0 text-[12px]"
+              aria-label={t('settings.assistant.voice.realtimeModel')}
+              value={voice.realtimeModel}
+              onValueChange={(model) =>
+                setVoice({ realtimeModel: model === 'gpt-realtime-2.1' ? 'gpt-realtime-2.1' : 'gpt-realtime-2.1-mini' })
+              }
+            >
+              <SelectOption value="gpt-realtime-2.1-mini">{t('settings.assistant.voice.realtimeMini')}</SelectOption>
+              <SelectOption value="gpt-realtime-2.1">{t('settings.assistant.voice.realtimeFull')}</SelectOption>
+            </OptionSelect>
+          </Row>
+        )}
         <Row label={t('settings.assistant.voice.engine')}>
           <OptionSelect
+            disabled={realtime}
             className="h-8 w-auto shrink-0 text-[12px]"
             aria-label={t('settings.assistant.voice.engine')}
             value={voice.engine}
@@ -224,7 +243,7 @@ function VoiceSettings({
           </OptionSelect>
         </Row>
         <Row label={t('settings.assistant.voice.voice')}>
-          {voice.engine === 'system' ? (
+          {voice.engine === 'system' && !realtime ? (
             <OptionSelect
               className="h-8 w-auto max-w-64 shrink-0 text-[12px]"
               aria-label={t('settings.assistant.voice.voice')}
@@ -243,10 +262,10 @@ function VoiceSettings({
             <OptionSelect
               className="h-8 w-auto shrink-0 text-[12px] capitalize"
               aria-label={t('settings.assistant.voice.voice')}
-              value={voice.openaiVoice}
+              value={realtime ? voice.realtimeVoice : voice.openaiVoice}
               onValueChange={(name) => {
                 const next = (options?.openai ?? ASSISTANT_OPENAI_VOICES).find((v) => v === name)
-                if (next) setVoice({ openaiVoice: next })
+                if (next) setVoice(realtime ? { realtimeVoice: next } : { openaiVoice: next })
               }}
             >
               {(options?.openai ?? ASSISTANT_OPENAI_VOICES).map((name) => (
@@ -260,7 +279,7 @@ function VoiceSettings({
             variant="outline"
             size="sm"
             onClick={() => void test()}
-            disabled={testing || (voice.engine === 'system' && noSystemVoice) || keyMissing}
+            disabled={testing || (voice.engine === 'system' && !realtime && noSystemVoice) || keyMissing}
           >
             {testing ? <Loader2 className="animate-spin" /> : <Play />}
             {t('settings.assistant.voice.test')}
@@ -278,13 +297,16 @@ function VoiceSettings({
             className="w-40 accent-primary"
           />
         </Row>
-        {voice.engine === 'system' && noSystemVoice && (
+        {voice.engine === 'system' && !realtime && noSystemVoice && (
           <p className="flex items-start gap-1 text-[11px] leading-snug text-amber-400">
             <AlertTriangle className="mt-px size-3 shrink-0" />
             {t(
               os === 'linux' ? 'settings.assistant.voice.noSystemVoiceLinux' : 'settings.assistant.voice.noSystemVoice'
             )}
           </p>
+        )}
+        {realtime && (
+          <p className="text-[11px] leading-snug text-muted-foreground">{t('settings.assistant.voice.realtimeCost')}</p>
         )}
         {keyMissing && (
           <p className="flex flex-wrap items-center gap-1 text-[11px] leading-snug text-amber-400">

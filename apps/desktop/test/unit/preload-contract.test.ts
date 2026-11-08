@@ -458,7 +458,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(720)
+    expect(keys).toHaveLength(721)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -490,6 +490,12 @@ describe('preload API — exposure', () => {
     expect(invokeSpy).toHaveBeenLastCalledWith('assistant:realtime-start', { sdp: 'v=0' })
     api.assistantRealtimeStop()
     expect(sendSpy).toHaveBeenLastCalledWith('assistant:realtime-stop')
+    await api.assistantRealtimeTool({ name: 'maestrly_overview', arguments: '{}', heard: [] })
+    expect(invokeSpy).toHaveBeenLastCalledWith('assistant:realtime-tool', {
+      name: 'maestrly_overview',
+      arguments: '{}',
+      heard: [],
+    })
     await api.assistantTestVoice({ text: 'Oi.', voice: 'cedar', speed: 1.2 })
     expect(invokeSpy).toHaveBeenLastCalledWith('assistant:test-voice', { text: 'Oi.', voice: 'cedar', speed: 1.2 })
   })

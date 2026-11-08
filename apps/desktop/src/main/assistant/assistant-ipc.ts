@@ -12,7 +12,8 @@ import type { IpcRegistrar } from '../ipc-registrar'
 import { ensureAssistantConversation, startNewAssistantSession } from './assistant-conversation'
 import { getAssistantSettings, setAssistantSettings } from './assistant-settings'
 import type { AssistantWindow } from './assistant-window'
-import { hangUpRealtimeCall, type RealtimeStartResult, startRealtimeCall } from './realtime/session'
+import { hangUpRealtimeCall, REALTIME_TOOLS, type RealtimeStartResult, startRealtimeCall } from './realtime/session'
+import { assistantRealtimeBridgeDeps, createRealtimeToolBridge } from './realtime/tool-bridge'
 import {
   createSpeechRequests,
   OPENAI_SPEECH_MAX_CHARS,
@@ -102,9 +103,31 @@ export function registerAssistantIpc(reg: IpcRegistrar, deps: AssistantIpcDeps):
   })
   // One Realtime call at a time, for the assistant window only; stopping it hangs it up on OpenAI's side too.
   let realtimeCall: string | null = null
+  /** The voice session's tool bridge: it keeps the confirmation a turn waits for, and stops with the call. */
+  let realtime: { bridge: ReturnType<typeof createRealtimeToolBridge>; heard: string[]; stop: AbortController } | null =
+    null
+  const newRealtimeSession = () => {
+    const session = {
+      heard: [] as string[],
+      stop: new AbortController(),
+      bridge: null as unknown as ReturnType<typeof createRealtimeToolBridge>,
+    }
+    session.bridge = createRealtimeToolBridge(
+      assistantRealtimeBridgeDeps({
+        wc: () => deps.window()?.webContents() ?? null,
+        conversationId: async () => (await ensureAssistantConversation()).id,
+        heard: () => session.heard,
+        locale: () => (deps.locale() === 'pt-BR' ? 'pt-BR' : 'en'),
+      })
+    )
+    realtime = session
+    return session
+  }
   const stopRealtime = () => {
     const callId = realtimeCall
     realtimeCall = null
+    realtime?.stop.abort(new Error('The voice call ended.'))
+    realtime = null
     if (callId) void hangUpRealtimeCall(callId)
   }
   reg.mhandle('assistant:realtime-start', async (event, input: unknown): Promise<RealtimeStartResult> => {
@@ -126,8 +149,36 @@ export function registerAssistantIpc(reg: IpcRegistrar, deps: AssistantIpcDeps):
       speed: voice.speed,
       locale: deps.locale(),
     })
-    if (result.ok) realtimeCall = result.callId
+    if (result.ok) {
+      realtimeCall = result.callId
+      newRealtimeSession()
+    }
     return result
+  })
+  const toolInput = z
+    .object({
+      name: z.enum(REALTIME_TOOLS.map((tool) => tool.name) as [string, ...string[]]),
+      arguments: z.string().max(20_000),
+      heard: z.array(z.string().max(4000)).max(50),
+    })
+    .strict()
+  reg.mhandle('assistant:realtime-tool', async (event, input: unknown): Promise<string> => {
+    if (!isAssistantSender(deps, event)) throw new Error('Only the assistant window calls the voice tools')
+    const call = toolInput.parse(input)
+    const session = realtime ?? newRealtimeSession()
+    let args: unknown = {}
+    try {
+      args = call.arguments ? JSON.parse(call.arguments) : {}
+    } catch {
+      return JSON.stringify({ error: 'The arguments are not valid JSON.' })
+    }
+    session.heard = call.heard
+    try {
+      return await session.bridge.call(call.name, args, session.stop.signal)
+    } catch (error) {
+      if (session.stop.signal.aborted) return JSON.stringify({ error: 'The voice call ended.' })
+      return JSON.stringify({ error: error instanceof Error ? error.message : String(error) })
+    }
   })
   reg.mon('assistant:realtime-stop', (event) => {
     if (isAssistantSender(deps, event)) stopRealtime()

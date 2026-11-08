@@ -139,6 +139,13 @@ test('the assistant registers its shortcut, follows its settings and keeps the a
   await expect(page.getByRole('button', { name: 'Test voice' })).toBeDisabled()
   await page.getByRole('button', { name: 'Set the key', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Transcription', exact: true })).toBeInViewport()
+
+  // Realtime: billed per minute, with its own model.
+  await page.getByRole('combobox', { name: 'Mode' }).click()
+  await page.getByRole('option', { name: 'Realtime (OpenAI API)' }).click()
+  await expect(page.getByText(/billed per minute of audio/)).toBeVisible()
+  await expect(page.getByRole('combobox', { name: 'Realtime model' })).toContainText('gpt-realtime-2.1-mini')
+  await expect.poll(async () => (await api(page, 'assistantSettings')).settings.voice.mode).toBe('realtime')
 })
 
 test('the assistant window opens its own pinned conversation, streams a reply and hides', async ({ session }) => {
@@ -180,6 +187,29 @@ test('the assistant window opens its own pinned conversation, streams a reply an
   await editor(assistant).press('Enter')
   await expect(assistant.getByText('Assistant reply 1.', { exact: true })).toBeVisible()
   expect(JSON.stringify(requests[0].messages[0])).toContain('Maestrly copilot')
+
+  // Realtime voice: what the person said reaches the assistant as their own message, a human turn with the
+  // assistant's tools, and the reply comes back to be spoken.
+  const spoken = await assistant.evaluate(() =>
+    (window as any).api.assistantRealtimeTool({
+      name: 'ask_assistant',
+      arguments: JSON.stringify({ request: 'status check' }),
+      heard: ['como estão as coisas?'],
+    })
+  )
+  expect(JSON.parse(spoken as string)).toEqual({ reply: expect.stringMatching(/^Assistant reply \d+\.$/) })
+  const voiced = requests.find((request) => JSON.stringify(request.messages.at(-1)).includes('🎙 como estão as coisas?'))
+  expect(voiced).toBeTruthy()
+  const offered = ((voiced as { tools?: Array<{ function?: { name?: string } }> }).tools ?? []).map(
+    (tool) => tool.function?.name
+  )
+  expect(offered).toContain('maestrly_overview')
+  await expect(assistant.getByText(/como estão as coisas\?/)).toBeVisible()
+  await expect(
+    assistant.evaluate(() =>
+      (window as any).api.assistantRealtimeTool({ name: 'bot_send', arguments: '{}', heard: [] })
+    )
+  ).rejects.toThrow()
 
   await editor(assistant).press('Escape')
   await expect.poll(() => assistantVisible(app)).toBe(false)

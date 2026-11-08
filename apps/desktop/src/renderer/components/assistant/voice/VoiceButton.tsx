@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Loader2, Mic, MicOff, Square, Volume2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -25,10 +25,11 @@ export function VoiceButton({
   }, [setSubmit])
 
   const label = t(`assistant.voice.${state}`)
+  const elapsed = useElapsed(session.realtimeStartedAt)
   const listening = state === 'listening'
   // The ring grows with the voice: quiet rooms sit near 0.01, speech around 0.05–0.2.
   const ring = listening ? Math.min(1, level * 8) : 0
-  return (
+  const button = (
     <button
       type="button"
       onClick={session.tap}
@@ -58,4 +59,30 @@ export function VoiceButton({
       )}
     </button>
   )
+  if (elapsed === null) return button
+  return (
+    <div className="flex items-center gap-1.5">
+      <span
+        className="font-mono text-[11px] tabular-nums text-muted-foreground"
+        title={t('assistant.voice.realtimeTimer')}
+        aria-label={t('assistant.voice.realtimeTimer')}
+      >
+        {elapsed}
+      </span>
+      {button}
+    </div>
+  )
+}
+
+/** Minutes and seconds since `startedAt`, ticking each second; null without a call. */
+function useElapsed(startedAt: number | null): string | null {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (startedAt === null) return
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [startedAt])
+  if (startedAt === null) return null
+  const seconds = Math.max(0, Math.floor((now - startedAt) / 1000))
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
 }

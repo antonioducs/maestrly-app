@@ -12953,6 +12953,19 @@ export async function startConversationPeerTurn(
   }
 }
 
+/**
+ * Sends `text` in a conversation as the person, from the window that shows it: a human turn, admitted as a message
+ * typed in that window's composer would be (the assistant's Realtime voice passes on what the person said).
+ */
+export function sendChatAsPerson(
+  wc: WebContents,
+  conversationId: string,
+  text: string
+): Promise<{ ok: boolean; error?: string }> {
+  if (!savedDeps) return Promise.resolve({ ok: false, error: 'unavailable' })
+  return startSend(savedDeps, wc, conversationId, text)
+}
+
 /** Resolves once the conversation's current turn and pending operation (if any) have settled. */
 export function waitForChatConversationSlot(conversationId: string): Promise<void> {
   return waitForConversationSlot(conversationId)

@@ -29,6 +29,9 @@ export const assistantApi = {
   assistantRealtimeStart: (sdp: string): Promise<AssistantRealtimeStart> =>
     ipcRenderer.invoke('assistant:realtime-start', { sdp }),
   assistantRealtimeStop: (): void => ipcRenderer.send('assistant:realtime-stop'),
+  /** Runs a Realtime tool call; `heard` is what the person said since the last request, as transcribed. */
+  assistantRealtimeTool: (input: { name: string; arguments: string; heard: string[] }): Promise<string> =>
+    ipcRenderer.invoke('assistant:realtime-tool', input),
   assistantVoices: (): Promise<AssistantVoiceOptions> => ipcRenderer.invoke('assistant:voices'),
   /** Settings: reads `text` once with an OpenAI voice, to try it. */
   assistantTestVoice: (input: {

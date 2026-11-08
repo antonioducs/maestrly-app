@@ -13,6 +13,7 @@ import { MIC_DEVICE_KEY, readLanguageMode } from '@/lib/dictation'
 import { createEndOfSpeechDetector } from '@/lib/end-of-speech'
 import { hostApi } from '@/lib/hosts/host-context'
 import { type MicRecording, startMicRecording } from '@/lib/mic-recorder'
+import { type RealtimeClient, RealtimeStartError, type RealtimeState, startRealtimeClient } from './realtime-client'
 import { createSpeaker, type Speaker } from './speaker'
 import {
   createVoiceMachine,
@@ -30,6 +31,8 @@ export interface VoiceSession {
   state: VoiceState
   /** The microphone's loudness while listening (RMS, 0–1). */
   level: number
+  /** When the open Realtime call started; null without one. */
+  realtimeStartedAt: number | null
   /** A notice code for `assistant.voice.notice.*`, shown until dismissed or for a few seconds. */
   notice: string | null
   tap(): void
@@ -234,6 +237,58 @@ export function useVoiceSession(opts: {
   // A new session (or leaving the window) stops the voice.
   useEffect(() => () => dispatchRef.current({ type: 'escape' }), [conversationId])
 
+  // Realtime mode: a voice call with OpenAI, which hands requests to the assistant conversation.
+  const realtime = useRef<RealtimeClient | null>(null)
+  const connecting = useRef(false)
+  const [realtimeState, setRealtimeState] = useState<RealtimeState | null>(null)
+  const [realtimeStartedAt, setRealtimeStartedAt] = useState<number | null>(null)
+  const closeRealtime = useCallback(() => {
+    realtime.current?.close()
+    realtime.current = null
+  }, [])
+  const tapRealtime = useCallback(() => {
+    const client = realtime.current
+    if (!client) {
+      if (connecting.current) return
+      connecting.current = true
+      showNotice(null)
+      void startRealtimeClient({
+        deviceId: localStorage.getItem(MIC_DEVICE_KEY),
+        onState: setRealtimeState,
+        onError: (code) => showNotice(`realtime-${code === 'network' ? 'network' : 'error'}`),
+        onClosed: () => {
+          realtime.current = null
+          setRealtimeState(null)
+          setRealtimeStartedAt(null)
+        },
+      })
+        .then((started) => {
+          realtime.current = started
+          setRealtimeStartedAt(started.startedAt)
+          started.listen()
+        })
+        .catch((error: unknown) => {
+          setRealtimeState(null)
+          showNotice(`realtime-${error instanceof RealtimeStartError ? error.code : 'network'}`)
+        })
+        .finally(() => {
+          connecting.current = false
+        })
+      return
+    }
+    if (realtimeState === 'listening') client.stopListening()
+    else if (realtimeState === 'speaking') client.interrupt()
+    else client.listen()
+  }, [realtimeState, showNotice])
+  useEffect(() => closeRealtime, [closeRealtime, conversationId])
+  // Leaving Realtime mode in Settings ends the call.
+  useEffect(() => {
+    if (voice?.mode !== 'realtime') closeRealtime()
+  }, [voice?.mode, closeRealtime])
+  const realtimeMode = voice?.mode === 'realtime'
+  const shownState: VoiceState =
+    realtimeMode && realtimeState ? (realtimeState === 'connecting' ? 'thinking' : realtimeState) : state
+
   useEffect(
     () => () => {
       speaker.current?.speaker.dispose()
@@ -245,20 +300,32 @@ export function useVoiceSession(opts: {
 
   // The window stays up while it listens or reads, even when it loses focus.
   useEffect(() => {
-    window.api.assistantHold('listening', state === 'listening' || state === 'transcribing')
-    window.api.assistantHold('speaking', state === 'speaking')
-  }, [state])
+    window.api.assistantHold('listening', shownState === 'listening' || shownState === 'transcribing')
+    window.api.assistantHold('speaking', shownState === 'speaking')
+  }, [shownState])
 
+  const tapRef = useRef(tapRealtime)
+  tapRef.current = tapRealtime
+  const realtimeModeRef = useRef(realtimeMode)
+  realtimeModeRef.current = realtimeMode
   return {
-    state,
+    state: shownState,
     level,
     notice,
-    tap: useCallback(() => dispatchRef.current({ type: 'tap' }), []),
+    realtimeStartedAt,
+    tap: useCallback(() => {
+      if (realtimeModeRef.current) tapRef.current()
+      else dispatchRef.current({ type: 'tap' })
+    }, []),
     escape: useCallback(() => {
+      if (realtime.current) {
+        closeRealtime()
+        return true
+      }
       if (machine.current.state === 'idle') return false
       dispatchRef.current({ type: 'escape' })
       return true
-    }, []),
+    }, [closeRealtime]),
     dismissNotice: useCallback(() => showNotice(null), [showNotice]),
     setSubmit: useCallback((submit) => {
       submitRef.current = submit
