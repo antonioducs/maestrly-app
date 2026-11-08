@@ -24,6 +24,7 @@ import {
   recordHumanTurnOrigin,
 } from './conversation-dispatch-authorization'
 import { clearLinkedTurnOrigin, recordLinkedTurnOrigin } from './conversation-link-authorization'
+import { assistantActionBudget } from '../assistant/action-budget'
 import type { ConversationDispatchSettings } from '../../shared/conversation-dispatch'
 import type { ConversationPeerMessageKind, ConversationTurnResultStatus } from '../../shared/conversation-link'
 import {
@@ -6623,6 +6624,7 @@ async function startSendAttempt(
         if (active.get(conversationId) === run) active.delete(conversationId)
         clearHumanTurnOrigin(conversationId, run)
         clearLinkedTurnOrigin(conversationId, run)
+        assistantActionBudget.clear(`message:${userMessageId}`)
         turnSnapshot?.end(run.messageId || null)
         releaseCwdActivityOnce()
         if (!isolated && !controller.signal.aborted && !isChatGptWebProvider(selection?.providerId)) {

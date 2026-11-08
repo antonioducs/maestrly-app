@@ -62,9 +62,14 @@ export interface ConversationLinkCaller {
   peerConversationId: string | null
   /** Linked turns: the sender asked for this turn's final answer. */
   reportBack: boolean
+  /** The Maestrly assistant conversation: its sends go through the per-turn action budget instead. */
+  isAssistant?: boolean
   /** Throws when the turn is no longer the conversation's live turn. */
   assertCurrent(): void
 }
+
+/** Lets a send go ahead (true) or declines it, given the target and the start of the message. */
+export type ConversationSendGate = (target: ConversationSummary, preview: string) => Promise<boolean>
 
 export interface ConversationLinkServiceDeps {
   getConversation(id: string): Conversation | undefined
@@ -375,10 +380,15 @@ export function createConversationLinkService(deps: ConversationLinkServiceDeps)
     return created ? deliver(entry) : replayed(entry)
   }
 
+  /**
+   * `confirm` asks the person before a turn they typed messages a conversation not linked to this one. The assistant
+   * passes `admit` instead, its per-turn action budget, consulted for every target it messages.
+   */
   async function send(
     caller: ConversationLinkCaller,
     input: SendToConversationInput,
-    confirm: (target: ConversationSummary, preview: string) => Promise<boolean>
+    confirm: ConversationSendGate,
+    admit?: ConversationSendGate
   ): Promise<ConversationSendResult> {
     if (input.conversationId === caller.conversationId)
       return fail('self', 'That is this conversation; a message to yourself is not needed.')
@@ -408,8 +418,9 @@ export function createConversationLinkService(deps: ConversationLinkServiceDeps)
             'continue.'
         )
     }
-    if (caller.kind === 'human' && !relation) {
-      const confirmed = await confirm(summarize(conversation, null), input.message.slice(0, 400)).catch(() => false)
+    const gate = caller.kind !== 'human' ? null : caller.isAssistant && admit ? admit : relation ? null : confirm
+    if (gate) {
+      const confirmed = await gate(summarize(conversation, null), input.message.slice(0, 400)).catch(() => false)
       if (!confirmed) return fail('declined', 'The person declined sending this message. Do not send it or retry.')
     }
     const ended = guarded(caller)

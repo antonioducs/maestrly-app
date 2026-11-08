@@ -4,6 +4,7 @@
  * conversation), and the conversation-link service owns authorization by provenance, journaling and delivery. Child
  * contexts never receive the runtime, and the names are parent-only in every child filter.
  */
+import { localRef } from '../../../shared/assistant-overview'
 import type { ChatQuestion } from '../../../shared/chat'
 import type { ChatBehavior } from '../../../shared/conversation-experience'
 import {
@@ -25,6 +26,7 @@ import {
 } from '../../../shared/conversation-link'
 import { isBotMode } from '../../fleet/instance/config'
 import { autonomousPolicy } from '../autonomous'
+import { isAssistantRoleConversation } from '../harness/assistant-role'
 import {
   assertConversationTurnProvenanceCurrent,
   currentConversationTurnProvenance,
@@ -78,6 +80,20 @@ async function confirmSend(askQuestion: AskQuestion, target: ConversationSummary
   }
 }
 
+/** The assistant's gate for a send: its per-turn action budget, which asks only past the free targets. */
+async function assistantAdmit(
+  askQuestion: AskQuestion,
+  originKey: string
+): Promise<(target: ConversationSummary, preview: string) => Promise<boolean>> {
+  const { admitAssistantAction } = await import('../../assistant/action-budget')
+  return (target, preview) =>
+    admitAssistantAction(askQuestion, originKey, localRef(target.conversationId), {
+      kind: 'send',
+      targetName: target.workspaceName ? `${target.name} (${target.workspaceName})` : target.name,
+      preview,
+    })
+}
+
 /** Whether the conversation's turns get the tool names at all: never in Plan/Maestro, bots, unattended or web turns. */
 export function conversationLinkToolsOffered(conversationId: string, mode: ChatBehavior): boolean {
   return (
@@ -107,6 +123,7 @@ export function conversationLinkRuntimeFor(
     hop: provenance.hop,
     peerConversationId: provenance.kind === 'linked' ? provenance.peerConversationId : null,
     reportBack: provenance.kind === 'linked' ? provenance.reportBack : false,
+    isAssistant: isAssistantRoleConversation(conversationId),
     assertCurrent: () => assertConversationTurnProvenanceCurrent(provenance),
   }
   const ended = (): ConversationLinkError | null => {
@@ -131,10 +148,10 @@ export function conversationLinkRuntimeFor(
       return ended() ?? (await service()).wait(caller, input, signal)
     },
     async send(input, askQuestion) {
-      return (
-        ended() ??
-        (await service()).send(caller, input, (target, preview) => confirmSend(askQuestion, target, preview))
-      )
+      const refusal = ended()
+      if (refusal) return refusal
+      const admit = caller.isAssistant ? await assistantAdmit(askQuestion, caller.originKey) : undefined
+      return (await service()).send(caller, input, (target, preview) => confirmSend(askQuestion, target, preview), admit)
     },
     async report(input) {
       return ended() ?? (await service()).report(caller, input)

@@ -172,5 +172,13 @@ export default {
   assistant: {
     trayOpen: 'Abrir assistente',
     trayQuit: 'Sair',
+    confirmHeader: 'Assistente',
+    confirmSend: 'Mandar isto para “{{target}}”?\n\n{{preview}}',
+    confirmBotSend: 'Mandar isto para o bot “{{target}}”?\n\n{{preview}}',
+    confirmRespond: 'Aprovar isto em “{{target}}”?\n\n{{preview}}',
+    confirmOnce: 'Mandar',
+    confirmApprove: 'Aprovar',
+    confirmRelease: 'Liberar o resto deste pedido',
+    confirmCancel: 'Cancelar',
   },
 } as const
