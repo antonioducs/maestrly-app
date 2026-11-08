@@ -4,6 +4,7 @@ import { ArrowUp, Square, X, FileText, Paperclip } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { hasDraggedFiles } from '@/lib/attachment-kind'
 import type { StructuredAgentMentionDraft } from '../../../shared/chat-agent-mentions'
+import type { PeerMentionOption } from '../../../shared/chat-peer-mentions'
 import type { SubagentAgentDto } from '../../../shared/subagent-profiles'
 import type { ChatAttachmentKind, ChatFileHit, ChatSlashCommand } from '../../../shared/chat'
 import { bindingMatchesEvent, pasteShortcutLabel } from '../../../shared/shortcuts'
@@ -61,6 +62,11 @@ interface Props {
 
   agents?: SubagentAgentDto[] | null
 
+  /** Other bots, in a bot's conversation: `@` lists them. */
+  peers?: PeerMentionOption[] | null
+
+  onPickPeer?: (peer: PeerMentionOption) => boolean | Promise<boolean>
+
   commands?: ChatSlashCommand[]
 
   onPickCommand?: (cmd: ChatSlashCommand) => void
@@ -99,6 +105,8 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatC
     onMentionsChange,
     structuredAgentMentions = [],
     agents = null,
+    peers = null,
+    onPickPeer,
     commands = [],
     onPickCommand,
     onCycleMode,
@@ -355,6 +363,8 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(function ChatC
           onMentionsChange={onMentionsChange}
           structuredAgentMentions={structuredAgentMentions}
           agents={agents}
+          peers={peers}
+          onPickPeer={onPickPeer}
           disabled={disabled}
           placeholder={
             disabled

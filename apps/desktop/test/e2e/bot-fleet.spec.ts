@@ -1299,7 +1299,7 @@ async function runFleetScenario(workspaceOnly: boolean) {
       const conversation = page.getByRole('region', { name: 'Conversa do Scout', exact: true })
       const computer = page.getByRole('region', { name: 'Computador do Scout', exact: true })
       const separator = page.getByRole('separator', { name: 'Redimensionar conversa e computador' })
-      const draft = page.locator('[data-placeholder="Mensagem para Scout…"]')
+      const draft = page.locator('[data-placeholder^="Mensagem para Scout…"]')
       const scroll = page.locator('[data-bot-transcript-scroll]')
       const ratio = async () => Number(await separator.getAttribute('aria-valuenow'))
       const openScout = async () => {
@@ -1645,7 +1645,7 @@ async function runFleetScenario(workspaceOnly: boolean) {
         const placeholder = conversation.getByText('Esta conversa está aberta em outra janela.', { exact: true })
         await expect(placeholder).toBeVisible()
         // The draft and the composer are in the new window; the computer and its stream stay in the main one.
-        await expect(child.locator('[data-placeholder="Mensagem para Scout…"]')).toHaveText(
+        await expect(child.locator('[data-placeholder^="Mensagem para Scout…"]')).toHaveText(
           'Draft that travels with the window'
         )
         await expect(computer).toBeVisible()
@@ -1952,7 +1952,7 @@ async function runFleetScenario(workspaceOnly: boolean) {
     bots[0] = configuredScout
     emit({ type: 'bot.updated', at: now(), bot: configuredScout })
     await page.getByRole('button', { name: 'Fechar ajustes', exact: true }).click()
-    await page.locator('[data-placeholder="Mensagem para Scout…"]').fill('/compact')
+    await page.locator('[data-placeholder^="Mensagem para Scout…"]').fill('/compact')
     await page.getByRole('button', { name: /^\/compact / }).click()
     await expect
       .poll(
@@ -1978,9 +1978,9 @@ async function runFleetScenario(workspaceOnly: boolean) {
       )
       .toEqual(['fixture-mcp'])
     await page.getByTitle('Adicionar').click()
-    await page.locator('[data-placeholder="Mensagem para Scout…"]').fill('/order')
+    await page.locator('[data-placeholder^="Mensagem para Scout…"]').fill('/order')
     await expect(page.getByText('/order-check')).toBeVisible()
-    await page.locator('[data-placeholder="Mensagem para Scout…"]').fill('')
+    await page.locator('[data-placeholder^="Mensagem para Scout…"]').fill('')
     await page.getByTitle('Skills', { exact: true }).click()
     await expect(page.getByText('/order-check')).toBeVisible()
     await page.getByRole('button', { name: 'Desligada' }).click()
@@ -2039,7 +2039,7 @@ async function runFleetScenario(workspaceOnly: boolean) {
       .locator('input[type="file"][accept*="image/*"]')
       .setInputFiles({ name: 'test.png', mimeType: 'image/png', buffer: png })
     await expect(page.getByAltText('test.png')).toBeVisible()
-    await page.locator('[data-placeholder="Mensagem para Scout…"]').fill('Check the orders')
+    await page.locator('[data-placeholder^="Mensagem para Scout…"]').fill('Check the orders')
     await page.getByRole('button', { name: 'Enviar', exact: true }).click()
     await expect.poll(() => requests.filter((item) => item.key === 'botMessageSend').length).toBe(1)
     const sent = requests.find((item) => item.key === 'botMessageSend')?.body as {
