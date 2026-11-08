@@ -74,6 +74,29 @@ describe('instance client', () => {
     await expect(client.environmentStorage(true)).resolves.toEqual(figures)
   })
 
+  it('asks the environment for a copy of its database for a backup, then lets it go', async () => {
+    const copy = {
+      snapshot: '.config/maestrly-app-dev/.maestrly-backup-staging/maestrly-agents.db',
+      database: '.config/maestrly-app-dev/maestrly-agents.db',
+      bytes: 4096,
+    }
+    const calls: string[] = []
+    const origin = await instance({
+      'POST /v1/environment/backup': (res, req) => {
+        calls.push(req.method + ' ' + req.headers.authorization)
+        json(200, copy)(res, req)
+      },
+      'DELETE /v1/environment/backup': (res, req) => {
+        calls.push(req.method + ' ' + req.headers.authorization)
+        empty(res, req)
+      },
+    })
+    const client = new InstanceClient('work', 'control', origin)
+    await expect(client.environmentBackupPrepare()).resolves.toEqual(copy)
+    await expect(client.environmentBackupRelease()).resolves.toBeUndefined()
+    expect(calls).toEqual(['POST Bearer control', 'DELETE Bearer control'])
+  })
+
   it('rejects an empty answer where the route promises a body, and accepts it where none is expected', async () => {
     const origin = await instance({
       'POST /v1/bots/ads/hold': empty,

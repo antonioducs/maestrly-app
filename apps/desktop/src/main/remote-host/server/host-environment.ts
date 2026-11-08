@@ -65,6 +65,13 @@ export class HostEnvironment implements InstanceEnvironment {
   storage(folder: boolean) {
     return this.runtime.measureStorage(folder ? this.folder : null)
   }
+  /** The copy of its database a backup reads: its chats and workspaces are in the same database as a bot's. */
+  prepareBackup() {
+    return this.runtime.prepareBackup()
+  }
+  releaseBackup() {
+    return this.runtime.releaseBackup()
+  }
   private hostCapabilities(): string[] {
     return [
       FLEET_WORKSPACES_HOST_FEATURE,
