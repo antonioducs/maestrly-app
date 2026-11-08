@@ -2,6 +2,7 @@ import { capabilityBehaviorFor } from '../../../shared/chat-mode'
 import { isBotMode } from '../../fleet/instance/config'
 import { BOT_APP_TOOLS_GUIDANCE, botIdentityPrompt } from '../../fleet/instance/identity'
 import { botTaskPolicyPrompt } from '../../fleet/instance/task-policy'
+import { assistantRolePrompt } from './assistant-role'
 import type { ChatBehavior } from '../../../shared/conversation-experience'
 import { renderDesignModePrompt } from '../design-mode-prompt'
 import { MAESTRO_SYSTEM_SPEC } from '../maestro-prompt'
@@ -257,6 +258,7 @@ ${scopeLine}
 This directory is an execution location, not an operating-system sandbox. Answer ordinary conversation without requiring file inspection, tests or commits. Profile guidance about code applies only when the user requests work on files or code.
 ${discovery} Online research requires an actually available tool: use web_search to search when it is in your tool catalog and webfetch to read a specific URL. Never claim to have searched without calling a search tool.`,
       chatStyle,
+      isBot ? '' : assistantRolePrompt(input.conversationId),
       harnessBehaviorHeader(input.harness),
       botIdentityPrompt(input.cwd),
       botTaskPolicyPrompt(input.conversationId),

@@ -231,7 +231,8 @@ import { registerPlanIpc } from './plan-ipc'
 import { getConversationDispatchService } from './conversation-dispatch-service'
 import { registerDrawerIpc } from './drawer-ipc'
 import { archiveConversation, type ConversationIpcDeps, registerConversationIpc } from './conversation-ipc'
-import { setAssistantConversationArchiver } from './assistant/assistant-conversation'
+import { isAssistantConversation, setAssistantConversationArchiver } from './assistant/assistant-conversation'
+import { setAssistantRoleResolver } from './chat/harness/assistant-role'
 import { createSiblingConversation, deleteConversation } from './workspace-service'
 import { registerLocalConversationIpc } from './local-conversation/ipc'
 import { registerTurnSnapshotIpc } from './turn-snapshots/ipc'
@@ -998,6 +999,7 @@ function registerIpc(): void {
   }
   registerConversationIpc(reg, conversationIpcDeps)
   setAssistantConversationArchiver((id) => archiveConversation(conversationIpcDeps, id, true))
+  setAssistantRoleResolver(isAssistantConversation)
   registerLocalConversationIpc(reg)
   registerTurnSnapshotIpc(reg, { isRunning: isChatConversationRunning })
   disposeConversationMigrationIpc?.()
