@@ -14,6 +14,7 @@ import {
   useState,
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
+  type ReactNode,
 } from 'react'
 import { useTranslation } from 'react-i18next'
 import { X, Pencil, ArrowDown, Lock } from 'lucide-react'
@@ -151,6 +152,11 @@ interface Props {
   status?: string
 
   onEvictionSafetyChange?: (conversationId: string, safeToEvict: boolean) => void
+  /**
+   * Replaces the composer's microphone (the assistant window puts its voice there). `submitText` sends a message as
+   * a dictation does, joined to the draft; it returns false when the message could not be sent.
+   */
+  micSlotOverride?: (api: { submitText(text: string): boolean }) => ReactNode
 }
 
 /**
@@ -191,6 +197,7 @@ export function ChatView({
   visible,
   status,
   onEvictionSafetyChange,
+  micSlotOverride,
 }: Props) {
   const { t } = useTranslation('chat')
   const api = useHostApi()
@@ -1728,6 +1735,13 @@ export function ChatView({
     ]
   )
 
+  /** A dictation or the assistant's voice, sent joined to the draft. */
+  const sendDictation = (text: string): boolean => {
+    if (keyMissing || botBlocked) return false
+    submitDraft({ text: appendDictation(draft, text), agentMentions: draftMentions })
+    return true
+  }
+
   const searchFiles = useCallback((q: string) => api.chatSearchFiles(conversationId, q), [api, conversationId])
 
   // ChatPlusMenu → ConversationSubagentProfiles).
@@ -2531,15 +2545,15 @@ export function ChatView({
                   onCycleMode={isMaestro ? undefined : cycleMode}
                   onCycleReasoning={canCycleReasoning ? cycleReasoning : undefined}
                   micSlot={
-                    <ChatMicButton
-                      onTranscribed={(t) => setDraft((d) => (d.trim() ? d.replace(/\s*$/, ' ') + t : t))}
-                      onSendDictation={(t) => {
-                        if (keyMissing || botBlocked) return false
-                        submitDraft({ text: appendDictation(draft, t), agentMentions: draftMentions })
-                        return true
-                      }}
-                      disabled={keyMissing}
-                    />
+                    micSlotOverride ? (
+                      micSlotOverride({ submitText: sendDictation })
+                    ) : (
+                      <ChatMicButton
+                        onTranscribed={(t) => setDraft((d) => (d.trim() ? d.replace(/\s*$/, ' ') + t : t))}
+                        onSendDictation={sendDictation}
+                        disabled={keyMissing}
+                      />
+                    )
                   }
                   leftSlot={
                     <>

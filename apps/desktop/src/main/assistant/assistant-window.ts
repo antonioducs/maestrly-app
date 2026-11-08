@@ -170,9 +170,16 @@ export class AssistantWindow {
     if (win && !win.isDestroyed() && win.isVisible()) win.hide()
   }
 
-  /** Shown and focused hides; anything else shows (a window left behind others comes back to the front). */
+  /**
+   * Shown and focused hides; anything else shows (a window left behind others comes back to the front). While the
+   * voice listens or reads, it is a tap on the voice instead: it stops listening, or stops reading.
+   */
   async toggle(opts: { listen?: boolean } = {}): Promise<void> {
     const win = this.win
+    if (win && !win.isDestroyed() && win.isVisible() && (this.holds.has('listening') || this.holds.has('speaking'))) {
+      await this.show({ listen: true })
+      return
+    }
     if (win && !win.isDestroyed() && win.isVisible() && win.isFocused()) {
       this.hide()
       return

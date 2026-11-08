@@ -139,6 +139,9 @@ test('the assistant window opens its own pinned conversation, streams a reply an
   const assistant = await opened
   await expect(assistant.getByRole('button', { name: 'New session', exact: true })).toBeVisible()
   await expect(editor(assistant)).toBeVisible()
+  // The voice takes the microphone's place in the assistant's composer.
+  await expect(assistant.getByRole('button', { name: 'Talk to the assistant', exact: true })).toBeVisible()
+  await expect(assistant.locator('[data-voice-state]')).toHaveAttribute('data-voice-state', 'idle')
 
   const chats = (await api(page, 'listStandaloneConversations', false)) as Array<{
     id: string

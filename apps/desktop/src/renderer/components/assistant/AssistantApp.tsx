@@ -1,21 +1,47 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ExternalLink, RotateCcw, SquarePen, X } from 'lucide-react'
-import type { AssistantInfo } from '../../../shared/assistant'
+import type { AssistantInfo, AssistantVoiceSettings } from '../../../shared/assistant'
 import { ChatView } from '@/components/chat/ChatView'
 import { Button } from '@/components/ui/button'
 import { SettingsProvider, type OpenSettings } from '@/lib/use-settings'
 import { hostApi } from '@/lib/hosts/host-context'
 import { LOCAL_HOST_ID } from '../../../shared/host-key'
+import { useVoiceSession } from './voice/use-voice-session'
+import { VoiceButton } from './voice/VoiceButton'
 
 /** Statuses that wait for the person: the window stays up while it loses focus, so the card can be answered. */
 const NEEDS_PERSON = new Set(['asking', 'waiting'])
 
 export function AssistantApp() {
-  const { t } = useTranslation('ui')
+  const { t, i18n } = useTranslation('ui')
   const [info, setInfo] = useState<AssistantInfo | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [status, setStatus] = useState<string | undefined>(undefined)
+  const [voiceSettings, setVoiceSettings] = useState<AssistantVoiceSettings | null>(null)
+  const locale = (i18n.resolvedLanguage ?? i18n.language).toLowerCase().startsWith('pt') ? 'pt-BR' : 'en'
+  const voice = useVoiceSession({ conversationId: info?.conversationId ?? null, voice: voiceSettings, locale })
+  const { tap: voiceTap, escape: voiceEscape } = voice
+
+  // Settings change in the main window: read them again each time the window comes back.
+  const loadVoiceSettings = useCallback(() => {
+    void window.api
+      .assistantSettings()
+      .then((state) => setVoiceSettings(state.settings.voice))
+      .catch(() => {})
+  }, [])
+  useEffect(() => {
+    loadVoiceSettings()
+    window.addEventListener('focus', loadVoiceSettings)
+    const off = window.api.onAssistantShown(({ listen }) => {
+      loadVoiceSettings()
+      if (listen) voiceTap()
+    })
+    return () => {
+      window.removeEventListener('focus', loadVoiceSettings)
+      off()
+    }
+  }, [loadVoiceSettings, voiceTap])
 
   const load = useCallback(() => {
     setError(null)
@@ -49,11 +75,16 @@ export function AssistantApp() {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.defaultPrevented) return
       if (document.querySelector('[role="dialog"], [role="menu"], [role="listbox"]')) return
+      // Esc first stops the voice; once it is quiet, Esc hides the window.
+      if (voiceEscape()) {
+        event.preventDefault()
+        return
+      }
       window.api.assistantHide()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  }, [voiceEscape])
 
   const openSettings = useCallback<OpenSettings>((sectionOrEvent) => {
     void window.api.assistantOpenSettings(typeof sectionOrEvent === 'string' ? sectionOrEvent : undefined)
@@ -107,6 +138,20 @@ export function AssistantApp() {
             </Button>
           </div>
         </header>
+        {voice.notice && (
+          <div role="status" className="hairline-b flex items-start gap-2 px-3 py-1.5 text-xs text-muted-foreground">
+            <span className="flex-1">{t(`assistant.voice.notice.${voice.notice}`)}</span>
+            <button
+              type="button"
+              className="shrink-0 rounded p-0.5 hover:bg-white/[0.06] hover:text-foreground"
+              title={t('assistant.voice.dismiss')}
+              aria-label={t('assistant.voice.dismiss')}
+              onClick={voice.dismissNotice}
+            >
+              <X className="size-3.5" />
+            </button>
+          </div>
+        )}
         <main className="relative min-h-0 flex-1">
           {info ? (
             <ChatView
@@ -117,6 +162,7 @@ export function AssistantApp() {
               experience="standard"
               visible
               status={status}
+              micSlotOverride={({ submitText }) => <VoiceButton session={voice} submitText={submitText} />}
             />
           ) : (
             <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center text-sm text-muted-foreground">

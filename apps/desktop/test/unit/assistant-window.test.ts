@@ -166,6 +166,21 @@ it('tells the renderer whether the shortcut should start listening', async () =>
   expect(last().sent).toContainEqual(['assistant:shown', { listen: true }])
 })
 
+it('taps the voice instead of hiding while it listens or reads', async () => {
+  const assistant = new AssistantWindow(deps())
+  await assistant.show()
+  for (const reason of ['listening', 'speaking']) {
+    assistant.setHold(reason, true)
+    last().sent = []
+    await assistant.toggle({ listen: false })
+    expect(assistant.isVisible(), reason).toBe(true)
+    expect(last().sent, reason).toEqual([['assistant:shown', { listen: true }]])
+    assistant.setHold(reason, false)
+  }
+  await assistant.toggle()
+  expect(assistant.isVisible()).toBe(false)
+})
+
 it('hides on blur unless a question or a recording holds it, or the setting is off', async () => {
   const assistant = new AssistantWindow(deps())
   await assistant.show()

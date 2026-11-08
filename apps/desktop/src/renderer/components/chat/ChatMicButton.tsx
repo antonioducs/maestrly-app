@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils'
 import { dictationLanguage, type AsrLanguage, type AsrSupport, type DictationLanguageMode } from '../../../shared/asr'
 import { DICTATION_API_MAX_MS, type DictationApiProvider, type DictationConfig } from '../../../shared/dictation'
 import type { RuntimeAssetInfo } from '../../../shared/runtime-assets'
-import { MIC_LANGUAGE_KEY, readLanguageMode } from '@/lib/dictation'
+import { MIC_DEVICE_KEY, MIC_LANGUAGE_KEY, readLanguageMode } from '@/lib/dictation'
 import { decodeTo16kMono, openMicStream } from '@/lib/mic-recorder'
 import { useSettings } from '@/lib/use-settings'
 import { DictationModelCard } from './DictationModelCard'
@@ -27,7 +27,6 @@ type Notice =
   | { kind: 'key-missing'; provider: DictationApiProvider }
   | { kind: 'failed'; error: 'key-rejected' | 'quota' | 'too-long' | 'unavailable' }
 
-const DEVICE_KEY = 'chat.mic.deviceId'
 const HOLD_KEY = 'chat.mic.hold'
 
 const barIconCls =
@@ -71,7 +70,7 @@ export function ChatMicButton({
   const [session, setSession] = useState<{ stream: MediaStream; startedAt: number } | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
-  const [deviceId, setDeviceId] = useState<string>(() => localStorage.getItem(DEVICE_KEY) ?? '')
+  const [deviceId, setDeviceId] = useState<string>(() => localStorage.getItem(MIC_DEVICE_KEY) ?? '')
   const [hold, setHold] = useState<boolean>(() => localStorage.getItem(HOLD_KEY) === '1')
   const [languageMode, setLanguageMode] = useState<DictationLanguageMode>(() => readLanguageMode(localStorage))
   const [support, setSupport] = useState<AsrSupport | null>(null)
@@ -470,8 +469,8 @@ export function ChatMicButton({
 
   const chooseDevice = (id: string) => {
     setDeviceId(id)
-    if (id) localStorage.setItem(DEVICE_KEY, id)
-    else localStorage.removeItem(DEVICE_KEY)
+    if (id) localStorage.setItem(MIC_DEVICE_KEY, id)
+    else localStorage.removeItem(MIC_DEVICE_KEY)
     setMenuOpen(false)
   }
   const toggleHold = () => {

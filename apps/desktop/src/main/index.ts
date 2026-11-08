@@ -381,11 +381,16 @@ function rebuildTrayMenu(): void {
   )
 }
 
+/** The global shortcut (or the toggle flag): it opens the window listening when the voice settings ask for it. */
+function toggleAssistantFromShortcut(): Promise<void> | undefined {
+  return assistant()?.toggle({ listen: getAssistantSettings().voice.shortcutListens })
+}
+
 /** Register the global shortcut and the tray entry the settings ask for; returns why the shortcut failed, if it did. */
 function applyAssistantSettings(settings: AssistantSettings): 'conflict' | 'unsupported' | null {
   if (isHeadlessInstance()) return null
   const binding = settings.enabled ? effectiveAssistantShortcut(settings, osFromPlatform(process.platform)) : null
-  const result = registerAssistantShortcut(binding, () => void assistant()?.toggle())
+  const result = registerAssistantShortcut(binding, () => void toggleAssistantFromShortcut())
   assistantShortcutError = result.ok ? null : result.reason
   if (!settings.enabled) assistantWindow?.hide()
   rebuildTrayMenu()
@@ -1298,7 +1303,7 @@ if (!app.requestSingleInstanceLock()) {
 } else {
   app.on('second-instance', (_event, argv) => {
     if (!isHeadlessInstance() && parseAssistantArgv(argv).toggleAssistant && getAssistantSettings().enabled) {
-      void assistant()?.toggle()
+      void toggleAssistantFromShortcut()
       return
     }
     const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : BrowserWindow.getAllWindows()[0]
