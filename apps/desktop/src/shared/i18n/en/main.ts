@@ -169,4 +169,8 @@ export default {
     withoutDetail: '{{provider}} failed without an error message.',
     unnamedProvider: 'The provider',
   },
+  assistant: {
+    trayOpen: 'Open assistant',
+    trayQuit: 'Quit',
+  },
 } as const

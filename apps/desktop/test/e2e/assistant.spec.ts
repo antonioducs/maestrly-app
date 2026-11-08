@@ -94,6 +94,44 @@ async function assistantVisible(app: ElectronApplication): Promise<boolean> {
   )
 }
 
+test('the assistant registers its shortcut, follows its settings and keeps the app in the background', async ({
+  session,
+}) => {
+  const { app, page } = session
+  const registered = (accelerator: string) =>
+    app.evaluate(({ globalShortcut }, value) => globalShortcut.isRegistered(value), accelerator)
+  const defaultAccelerator = process.platform === 'darwin' ? 'Super+Shift+Space' : 'Control+Shift+Space'
+  await expect.poll(() => registered(defaultAccelerator)).toBe(true)
+
+  const changed = await api(page, 'setAssistantSettings', { shortcut: { key: 'k', mods: ['control', 'alt'] } })
+  expect(changed.shortcutError).toBeNull()
+  expect(await registered('Control+Alt+K')).toBe(true)
+  expect(await registered(defaultAccelerator)).toBe(false)
+  await api(page, 'setAssistantSettings', { enabled: false })
+  expect(await registered('Control+Alt+K')).toBe(false)
+  await api(page, 'setAssistantSettings', { enabled: true })
+
+  const mainVisible = () =>
+    app.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows().some((win) => win.webContents.getURL().endsWith('/index.html') && win.isVisible())
+    )
+  await app.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows()
+      .find((win) => win.webContents.getURL().endsWith('/index.html'))
+      ?.close()
+  )
+  await expect.poll(mainVisible).toBe(false)
+  expect(app.windows().includes(page)).toBe(true)
+
+  await api(page, 'assistantOpenSettings', 'assistant')
+  await expect.poll(mainVisible).toBe(true)
+  await expect(page.getByText('Global shortcut', { exact: true })).toBeVisible()
+  await expect(page.getByRole('switch', { name: /Keep running in the background/ })).toHaveAttribute(
+    'aria-checked',
+    'true'
+  )
+})
+
 test('the assistant window opens its own pinned conversation, streams a reply and hides', async ({ session }) => {
   const { app, page, requests } = session
   const opened = app.waitForEvent('window')

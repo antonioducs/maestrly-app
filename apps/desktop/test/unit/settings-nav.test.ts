@@ -16,6 +16,7 @@ describe('settings navigation', () => {
     const ids = [...navSource.matchAll(/\{ id: '([^']+)'/g)].map((match) => match[1])
     expect(ids).toEqual([
       'chat',
+      'assistant',
       'fleet',
       'computers',
       'runner',
@@ -41,6 +42,13 @@ describe('settings navigation', () => {
     expect(resources['pt-BR'].ui.settings.nav.computers).toBe('Computadores')
     expect(resources.en.ui.settings.nav.runner).toBe('Runner')
     expect(resources['pt-BR'].ui.settings.nav.runner).toBe('Runner')
+    expect(resources.en.ui.settings.nav.assistant).toBe('Assistant')
+    expect(resources['pt-BR'].ui.settings.nav.assistant).toBe('Assistente')
+  })
+
+  it('shows the assistant section for this computer, outside the profile of the host chosen in Settings', () => {
+    expect(settingsViewSource).toContain("{section === 'assistant' && <AssistantSection t={t} />}")
+    expect(settingsViewSource).not.toContain('inProfile(<AssistantSection')
   })
 
   it('offers Computers only where Settings can leave for a paired computer', () => {

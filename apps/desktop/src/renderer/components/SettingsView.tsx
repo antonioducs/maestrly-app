@@ -34,6 +34,7 @@ import {
 } from '@/lib/drawer-tabs'
 import { cn } from '@/lib/utils'
 import { SETTINGS_NAV, type SettingsSection } from '@/components/settings/nav'
+import { AssistantSection } from '@/components/settings/AssistantSection'
 import { MaestrlyChatSection } from '@/components/settings/MaestrlyChatSection'
 import type { ChatSettingsOptions } from '@/components/chat/chat-settings-tabs'
 import type { SettingsRequest } from '@/lib/use-settings'
@@ -430,6 +431,7 @@ export function SettingsView({
             )}
 
             {section === 'chat' && inProfile(<MaestrlyChatSection t={t} chat={chatOptions} />)}
+            {section === 'assistant' && <AssistantSection t={t} />}
 
             {section === 'artifacts' && (
               <ArtifactsSettings

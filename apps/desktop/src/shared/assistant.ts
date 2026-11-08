@@ -44,6 +44,42 @@ export function effectiveAssistantShortcut(settings: AssistantSettings, os: Shor
   return settings.shortcut
 }
 
+export interface RecordedKey {
+  code: string
+  key: string
+  metaKey: boolean
+  ctrlKey: boolean
+  altKey: boolean
+  shiftKey: boolean
+}
+
+/**
+ * The binding a key press records in the shortcut field: null while only modifiers are held, and 'invalid' for a key
+ * a global shortcut cannot use or a press without a modifier other than Shift.
+ */
+export function bindingFromKeyPress(event: RecordedKey): ShortcutBinding | null | 'invalid' {
+  if (
+    /^(Meta|Control|Alt|Shift|OS)(Left|Right)?$/.test(event.code) ||
+    ['Meta', 'Control', 'Alt', 'Shift'].includes(event.key)
+  )
+    return null
+  let key: string | null = null
+  if (/^Key[A-Z]$/.test(event.code)) key = event.code.slice(3).toLowerCase()
+  else if (/^Digit[0-9]$/.test(event.code)) key = event.code.slice(5)
+  else if (/^F([1-9]|1[0-9]|2[0-4])$/.test(event.code)) key = event.code.toLowerCase()
+  else if (event.code === 'Space') key = 'space'
+  else if (event.code === 'Enter') key = 'enter'
+  else if (event.code === 'Tab') key = 'tab'
+  else if (/^Arrow(Up|Down|Left|Right)$/.test(event.code)) key = event.code.toLowerCase()
+  const mods: ShortcutBinding['mods'] = []
+  if (event.metaKey) mods.push('meta')
+  if (event.ctrlKey) mods.push('control')
+  if (event.altKey) mods.push('alt')
+  if (event.shiftKey) mods.push('shift')
+  if (!key || !mods.some((mod) => mod !== 'shift')) return 'invalid'
+  return { key, mods }
+}
+
 /** Stored settings, falling back to defaults field by field when the stored value is missing or invalid. */
 export function parseAssistantSettings(raw: unknown): AssistantSettings {
   const parsed = assistantSettingsSchema.safeParse(raw ?? {})

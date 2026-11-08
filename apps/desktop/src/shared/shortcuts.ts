@@ -183,7 +183,16 @@ export function isValidBinding(binding: ShortcutBinding): boolean {
 const MAC_SYMBOL: Record<ShortcutMod, string> = { meta: '⌘', control: '⌃', alt: '⌥', shift: '⇧' }
 const PC_LABEL: Record<ShortcutMod, string> = { meta: 'Win', control: 'Ctrl', alt: 'Alt', shift: 'Shift' }
 
-const KEY_LABEL: Record<string, string> = { escape: 'Esc' }
+const KEY_LABEL: Record<string, string> = {
+  escape: 'Esc',
+  space: 'Space',
+  enter: 'Enter',
+  tab: 'Tab',
+  arrowup: '↑',
+  arrowdown: '↓',
+  arrowleft: '←',
+  arrowright: '→',
+}
 
 export function formatAccelerator(binding: ShortcutBinding, os: ShortcutOs): string {
   const ordered = MOD_ORDER.filter((m) => binding.mods.includes(m))

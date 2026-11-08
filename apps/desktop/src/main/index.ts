@@ -236,6 +236,14 @@ import { setAssistantRoleResolver } from './chat/harness/assistant-role'
 import type { AssistantWindow } from './assistant/assistant-window'
 import { createDesktopAssistantWindow } from './assistant/assistant-runtime'
 import { registerAssistantIpc } from './assistant/assistant-ipc'
+import { getAssistantSettings } from './assistant/assistant-settings'
+import {
+  parseAssistantArgv,
+  registerAssistantShortcut,
+  unregisterAssistantShortcut,
+} from './assistant/assistant-shortcut'
+import { type AssistantSettings, effectiveAssistantShortcut } from '../shared/assistant'
+import { osFromPlatform } from '../shared/shortcuts'
 import { createSiblingConversation, deleteConversation } from './workspace-service'
 import { registerLocalConversationIpc } from './local-conversation/ipc'
 import { registerTurnSnapshotIpc } from './turn-snapshots/ipc'
@@ -340,6 +348,48 @@ function assistant(): AssistantWindow | null {
   if (isHeadlessInstance()) return null
   assistantWindow ??= createDesktopAssistantWindow()
   return assistantWindow
+}
+/** Why the assistant's global shortcut is not registered, when it is not. */
+let assistantShortcutError: 'conflict' | 'unsupported' | null = null
+
+function revealMainWindow(): void {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show()
+    mainWindow.focus()
+  } else void createWindow()
+}
+
+function rebuildTrayMenu(): void {
+  if (!appTray) return
+  const t = tMain('main')
+  const assistantOn = !isHeadlessInstance() && getAssistantSettings().enabled
+  appTray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: 'Maestrly', click: revealMainWindow },
+      ...(assistantOn ? [{ label: t('assistant.trayOpen'), click: () => void assistant()?.show() }] : []),
+      { type: 'separator' },
+      { label: t('assistant.trayQuit'), click: () => app.quit() },
+    ])
+  )
+}
+
+/** Register the global shortcut and the tray entry the settings ask for; returns why the shortcut failed, if it did. */
+function applyAssistantSettings(settings: AssistantSettings): 'conflict' | 'unsupported' | null {
+  if (isHeadlessInstance()) return null
+  const binding = settings.enabled ? effectiveAssistantShortcut(settings, osFromPlatform(process.platform)) : null
+  const result = registerAssistantShortcut(binding, () => void assistant()?.toggle())
+  assistantShortcutError = result.ok ? null : result.reason
+  if (!settings.enabled) assistantWindow?.hide()
+  rebuildTrayMenu()
+  return assistantShortcutError
+}
+
+/** Closing the main window only hides it while the assistant keeps the app running in the background. */
+function keepsRunningInBackground(): boolean {
+  if (isHeadlessInstance()) return false
+  const settings = getAssistantSettings()
+  return settings.enabled && settings.keepRunning
 }
 
 /** Events the main window shows about the profile; on a host, the main renderer of each connected computer too. */
@@ -904,7 +954,7 @@ async function createWindow(): Promise<void> {
   // Windows ends the session by closing the windows; nobody is left to answer a confirmation.
   mainWindow.on('session-end', quitForSystem)
   mainWindow.on('close', (e) => {
-    if (isHeadlessInstance() && !backgroundQuit) {
+    if ((isHeadlessInstance() || keepsRunningInBackground()) && !backgroundQuit && !systemQuit) {
       e.preventDefault()
       mainWindow?.hide()
       return
@@ -1032,8 +1082,8 @@ function registerIpc(): void {
         revealMain()
         safeWindowSend(mainWindow, 'assistant:open-settings', section)
       },
-      applySettings: () => null,
-      shortcutError: () => null,
+      applySettings: applyAssistantSettings,
+      shortcutError: () => assistantShortcutError,
       wayland: process.platform === 'linux' && process.env.XDG_SESSION_TYPE === 'wayland',
     })
   }
@@ -1231,8 +1281,12 @@ function registerIpc(): void {
 if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
-  app.on('second-instance', () => {
-    const win = BrowserWindow.getAllWindows()[0]
+  app.on('second-instance', (_event, argv) => {
+    if (!isHeadlessInstance() && parseAssistantArgv(argv).toggleAssistant && getAssistantSettings().enabled) {
+      void assistant()?.toggle()
+      return
+    }
+    const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : BrowserWindow.getAllWindows()[0]
     if (win) {
       if (win.isMinimized()) win.restore()
       if (!win.isVisible()) win.show()
@@ -1422,20 +1476,12 @@ app.whenReady().then(async () => {
     if (process.platform === 'darwin') trayIcon.setTemplateImage(true)
     appTray = new Tray(trayIcon)
     appTray.setToolTip('Maestrly')
-    const reveal = () => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.show()
-        mainWindow.focus()
-      } else void createWindow()
-    }
-    appTray.on('click', reveal)
-    appTray.setContextMenu(
-      Menu.buildFromTemplate([
-        { label: 'Maestrly', click: reveal },
-        { type: 'separator' },
-        { label: getLocale().startsWith('pt') ? 'Sair' : 'Quit', click: () => app.quit() },
-      ])
-    )
+    appTray.on('click', revealMainWindow)
+    rebuildTrayMenu()
+  }
+  if (!isHeadlessInstance()) {
+    applyAssistantSettings(getAssistantSettings())
+    if (parseAssistantArgv(process.argv).toggleAssistant && getAssistantSettings().enabled) void assistant()?.show()
   }
   if (isBotMode() && mainWindow) {
     const environmentScreen = mainWindow
@@ -1570,7 +1616,10 @@ app.whenReady().then(async () => {
 })
 
 // History writes are debounced; persist the last visits in every mode, bots included.
-app.on('will-quit', () => flushBrowserHistory())
+app.on('will-quit', () => {
+  flushBrowserHistory()
+  unregisterAssistantShortcut()
+})
 
 app.on('window-all-closed', () => {
   if (isHeadlessInstance()) return

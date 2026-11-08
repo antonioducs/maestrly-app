@@ -169,4 +169,8 @@ export default {
     withoutDetail: '{{provider}} falhou sem mensagem de erro.',
     unnamedProvider: 'O provedor',
   },
+  assistant: {
+    trayOpen: 'Abrir assistente',
+    trayQuit: 'Sair',
+  },
 } as const
