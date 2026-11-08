@@ -444,9 +444,9 @@ async function runCursorSubscriptionChatInScope(
           signal: toolSignal,
         }),
       submitPlan: (plan, title) => {
-        const result = stagePlan({ agentId: args.conversationId, cwd: args.cwd, plan, title })
-        state.planSubmitted = result.ok
-        return result.ok
+        stagePlan({ agentId: args.conversationId, cwd: args.cwd, plan, title })
+        state.planSubmitted = true
+        return true
       },
       ...(state.emitGeneratedImage
         ? { emitGeneratedImage: (image: GeneratedImageEmission) => state.emitGeneratedImage?.(toolCallId, image) }

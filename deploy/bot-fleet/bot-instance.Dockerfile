@@ -22,8 +22,7 @@ RUN case "${TARGETARCH}" in \
     esac && \
     node scripts/fetch-codex-runtime.mjs --target "$target" && \
     node scripts/fetch-github-copilot-runtime.mjs --target "$target" && \
-    node scripts/fetch-cursor-sdk-platform.mjs --target "$target" && \
-    node scripts/fetch-tunnel-client.mjs --target "$target"
+    node scripts/fetch-cursor-sdk-platform.mjs --target "$target"
 
 FROM debian:bookworm-slim AS tools
 ARG TARGETARCH

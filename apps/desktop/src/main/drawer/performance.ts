@@ -1,5 +1,4 @@
 import type { FloatTab } from '../store'
-import { noteChatGptSurfaceVisibility } from '../chat/chatgpt-web/companion-window'
 import { setResourcePlacementActive, setResourceVisible } from '../performance/resource-governor'
 import {
   activeConvId,
@@ -42,13 +41,6 @@ function setPlacementReason(
     }
     return
   }
-  if (tab === 'chatgpt') {
-    if (drawer.chatgptView) {
-      setResourcePlacementActive('chatgpt', convId, undefined, reason, active)
-      noteChatGptSurfaceVisibility(convId)
-    }
-    return
-  }
   if (tab === 'vscode') {
     if (drawer.vscodeView) setResourcePlacementActive('vscode', convId, undefined, reason, active)
     return
@@ -75,13 +67,6 @@ function setSlotVisible(convId: string, drawer: ConvDrawer, tab: FloatTab, visib
     if (drawer.remoteBrowserView) setResourceVisible('panel', convId, REMOTE_BROWSER_RESOURCE, false)
     return
   }
-  if (tab === 'chatgpt') {
-    if (drawer.chatgptView) {
-      setResourceVisible('chatgpt', convId, undefined, visible)
-      noteChatGptSurfaceVisibility(convId)
-    }
-    return
-  }
   if (tab === 'vscode') {
     if (drawer.vscodeView) setResourceVisible('vscode', convId, undefined, visible)
     return
@@ -106,7 +91,7 @@ export function syncDrawerResourcePerformance(): void {
   for (const [convId, drawer] of drawers) {
     const popupOpen = convHasPopup(convId)
     const visibleConversation = convId === activeConvId && slotLive && !popupOpen
-    const tabs: FloatTab[] = ['browser', 'vscode', 'chatgpt', 'computer', ...PANEL_TABS]
+    const tabs: FloatTab[] = ['browser', 'vscode', 'computer', ...PANEL_TABS]
     for (const tab of tabs) {
       const placement = getPlacement(convId, tab)
       const visible =

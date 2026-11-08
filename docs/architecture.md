@@ -25,7 +25,7 @@ The primary renderer runs with context isolation enabled and Node integration
 disabled. It is not a security authority: every sensitive identifier and payload
 is checked again in the main process. Some trusted application renderers are not
 Electron-sandboxed because they depend on the preload and native integration;
-OAuth and visual companion surfaces use stricter isolated sessions. See the
+OAuth surfaces use stricter isolated sessions. See the
 [security model](security-model.md) for the resulting assumptions. For the
 separate Linux gateway and desktop containers used by remote bots, see the
 [remote bots guide](bot-fleet.md).
@@ -82,9 +82,9 @@ being exposed directly to React.
 
 The chat service owns conversations, streams, tool state, permissions, usage,
 and persistence. Provider adapters translate one stable internal contract into
-API-key, Codex, Claude, GitHub Copilot, Grok, Google Antigravity ACP, ChatGPT
-Web, or compatible provider protocols. Provider failures are isolated from other
-local features.
+API-key, Codex, Claude, GitHub Copilot, Grok, Google Antigravity ACP, or
+compatible provider protocols. Provider failures are isolated from other local
+features.
 
 Maestro coordinates parent and subagent turns through explicit execution
 profiles. The host remains authoritative for agent selection, tool catalogs,
@@ -152,8 +152,7 @@ A server can keep several signed-in accounts. `buildMcpTools` resolves the
 accounts that serve the conversation (scope and per-conversation toggles); with
 several, each cached wrapper gets a required `mcp_account` parameter and
 `mcp_call` an `account`, and the call runs on a per-account connection
-(`McpServer.oauthAccountId`, pooled by `mcpConnectionKey`). The ChatGPT-web
-gateway routes `account` the same way, so the choice works with every model.
+(`McpServer.oauthAccountId`, pooled by `mcpConnectionKey`).
 
 Skills are local packages installed from an explicit source. Project memory and
 notes are local data, with indexes treated as reproducible caches. Promotion to
@@ -185,10 +184,10 @@ user-invocable skills, and plugin agents join the subagent catalog
 (`listPluginAgents`, merged in `listEffectiveAgents`) as `<plugin>-<agent>`
 with Claude tool names mapped to Maestrly's and no model of their own. Plugin MCP servers join the proxied MCP surface through
 `listRuntimeMcpServers`, so every provider (API keys, Claude, Codex, GitHub
-Copilot, Cursor, Google AI and ChatGPT web) receives them through the mechanism
-it already uses for skills and MCP. Contexts that switch MCP off by id cover
-plugin servers too. On a remote workspaces host, the `chat:plugins:*` channels
-run on the host, so a remote conversation uses the host's plugins.
+Copilot, Cursor and Google AI) receives them through the mechanism it already
+uses for skills and MCP. Contexts that switch MCP off by id cover plugin servers
+too. On a remote workspaces host, the `chat:plugins:*` channels run on the host,
+so a remote conversation uses the host's plugins.
 
 Plugin hooks run in the main process, never in a provider runtime, with
 Claude Code's stdin/stdout contract (`chat/plugin-hooks.ts`,
@@ -207,13 +206,11 @@ message (outside the cached project context), records the session's
 compaction boundary in the conversation's preferences (`hookSession`, which a
 conversation move leaves behind), and turns a `Stop`
 hook's reason into an internal continuation turn, like the Maestro
-reconciliation guard. The ChatGPT Web bridge takes `toolHooks` around its
-tools; the manager refuses a companion when turn hooks apply. Hook notices are
-a stream event (`hook-notice`) that is never persisted. The mobile API of a
-host (`remote-host/server/mobile-api.ts`) lists plugin servers by the
-conversation's scope, offers each account of a server with several as an
-entry `<serverId>#<accountId>`, and reports a blocked prompt as
-`blocked-by-hook`.
+reconciliation guard. Hook notices are a stream event (`hook-notice`) that is
+never persisted. The mobile API of a host (`remote-host/server/mobile-api.ts`)
+lists plugin servers by the conversation's scope, offers each account of a
+server with several as an entry `<serverId>#<accountId>`, and reports a blocked
+prompt as `blocked-by-hook`.
 
 A bot environment serves the same engine through environment-settings
 operations behind the `environment-plugins-v1` feature (gateway, announced in
@@ -231,10 +228,9 @@ Embedded browsing is expected network activity initiated through browser or web
 features. Site permissions are denied by default for shared browser sessions and
 navigation-sensitive surfaces restrict popups and cross-origin transitions.
 
-The ChatGPT Web bridge and embedded editor bind to loopback and use random local
-capability tokens. Tokens are not a substitute for operating-system isolation;
-they limit accidental or unrelated local access while the owning process is
-alive.
+The embedded editor binds to loopback and uses random local capability tokens.
+Tokens are not a substitute for operating-system isolation; they limit
+accidental or unrelated local access while the owning process is alive.
 
 [Artifacts](artifacts.md) are hosted only on the bot server. Pages render in a
 sandboxed, opaque-origin frame; see the [security model](security-model.md#artifacts).

@@ -63,7 +63,6 @@ vi.mock('../../src/main/chat/catalog', () => ({
   isCodexSubscriptionProvider: vi.fn(() => false),
   isGitHubCopilotSubscriptionProvider: vi.fn(() => false),
   isSubscriptionProvider: h.isClaude,
-  isChatGptWebProvider: vi.fn(() => false),
   subscriptionAccountId: vi.fn(() => null),
   subscriptionProviderIdFor: vi.fn(() => 'builtin'),
   getSubscriptionAccount: vi.fn(() => undefined),

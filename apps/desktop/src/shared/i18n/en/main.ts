@@ -68,7 +68,6 @@ export default {
     review: 'Review',
     notes: 'Notes',
     files: 'Files',
-    chatgpt: 'ChatGPT',
 
     pin: 'Keep open when switching conversations',
     unpin: 'Unpin',
@@ -136,8 +135,6 @@ export default {
     remoteFailedTitle: 'Couldn’t start VS Code on the server',
     remoteFailedSub:
       'The server could not download or start the editor. Check its internet connection and open the Code tab again to retry.',
-    chatgptRestoringTitle: 'Restoring ChatGPT…',
-    chatgptRestoringSub: 'Reloading the last conversation. Your login and session stay intact.',
   },
   peer: {
     pairingNotice: {

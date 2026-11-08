@@ -14,9 +14,6 @@ import type {
   ChatConfig,
   ChatConvTools,
   ChatConvToolsPatch,
-  ChatGptWebStatus,
-  ChatGptWebCapabilities,
-  ChatGptWebCapabilitiesInfo,
   ChatImageInterpreter,
   ChatModelRef,
   ChatPermissionEvent,
@@ -150,12 +147,6 @@ const SUBSCRIPTION_CHANNELS: Record<
   },
 }
 
-export type ChatGptWebStatusPayload = ChatGptWebStatus & { enabled: boolean }
-
-export interface ChatGptWebTurnCompletedPayload {
-  conversationId: string
-}
-
 /** The microphone and the local transcription model belong to this computer, whatever host a chat runs on. */
 export const chatLocalApi = {
   chatEnsureMicAccess: (): Promise<{ ok: boolean; status?: string }> => ipcRenderer.invoke('chat:ensure-mic-access'),
@@ -193,10 +184,7 @@ export const chatLocalApi = {
     ipcRenderer.invoke('mcp-oauth:cancel', hostId, serverId),
 }
 
-/**
- * The chat engine of a host. The transport parameter keeps Electron's name on purpose: see ipc-transport.ts. The
- * companion's copy actions write to the clipboard of the host's own desktop, so a remote host refuses them.
- */
+/** The chat engine of a host. The transport parameter keeps Electron's name on purpose: see ipc-transport.ts. */
 export function makeChatApi(ipcRenderer: IpcTransport) {
   function subscriptionStatus(
     provider: ChatSubscriptionProviderKind,
@@ -277,106 +265,6 @@ export function makeChatApi(ipcRenderer: IpcTransport) {
 
     onChatCodexSubscriptionStatus: (cb: (status: CodexSubscriptionAuthStatus) => void): (() => void) =>
       onSubscriptionStatus('codex-subscription', cb),
-
-    chatGptWebStatus: (): Promise<ChatGptWebStatusPayload> => ipcRenderer.invoke('chat:chatgpt-web:status'),
-    /** Conversation-owned external access policy. Secrets and repository roots never cross the preload. */
-    chatGptWebCapabilities: (conversationId: string): Promise<ChatGptWebCapabilitiesInfo> =>
-      ipcRenderer.invoke('chat:chatgpt-web:capabilities:get', conversationId),
-    chatGptWebSetCapabilities: (
-      conversationId: string,
-      capabilities: ChatGptWebCapabilities
-    ): Promise<ChatGptWebCapabilitiesInfo> =>
-      ipcRenderer.invoke('chat:chatgpt-web:capabilities:set', conversationId, capabilities),
-
-    chatGptWebConfigure: (input: {
-      apiKey?: string
-      tunnelId?: string
-      appName?: string
-      enabled?: boolean
-    }): Promise<ChatGptWebStatusPayload> => ipcRenderer.invoke('chat:chatgpt-web:configure', input),
-
-    chatGptWebPrincipals: (
-      apiKey?: string
-    ): Promise<
-      | {
-          ok: true
-          organizations: Array<{ id: string; name: string }>
-          workspaces: Array<{ id: string; name: string }>
-        }
-      | { ok: false; error: string; status: number }
-    > => ipcRenderer.invoke('chat:chatgpt-web:principals', apiKey),
-
-    chatGptWebTunnels: (
-      apiKey?: string
-    ): Promise<
-      { ok: true; tunnels: Array<{ id: string; name?: string; description?: string }> } | { ok: false; error: string }
-    > => ipcRenderer.invoke('chat:chatgpt-web:tunnels', apiKey),
-
-    chatGptWebCreateTunnel: (input: {
-      name?: string
-      description?: string
-    }): Promise<{ ok: boolean; tunnelId?: string; error?: string }> =>
-      ipcRenderer.invoke('chat:chatgpt-web:create-tunnel', input),
-
-    chatGptWebCompanionStart: (
-      conversationId: string
-    ): Promise<{ ok: boolean; kickoff?: string | null; pairingRequired?: boolean; error?: string }> =>
-      ipcRenderer.invoke('chat:chatgpt-web:companion-start', { conversationId }),
-
-    chatGptWebCompanionEnd: (conversationId: string): Promise<{ ok: boolean }> =>
-      ipcRenderer.invoke('chat:chatgpt-web:companion-end', { conversationId }),
-
-    chatGptWebChecks: (conversationId?: string): Promise<{ raw: string; detected: string[] }> =>
-      ipcRenderer.invoke('chat:chatgpt-web:checks', conversationId),
-    chatGptWebSetChecks: (raw: string): Promise<{ ok: boolean }> =>
-      ipcRenderer.invoke('chat:chatgpt-web:set-checks', raw),
-
-    chatGptWebProbeStart: (): Promise<{ ok: boolean; error?: string }> =>
-      ipcRenderer.invoke('chat:chatgpt-web:probe-start'),
-
-    chatGptWebProbeStop: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('chat:chatgpt-web:probe-stop'),
-
-    chatGptWebCompanionPrompt: (conversationId: string): Promise<{ ok: boolean; kickoff?: string | null }> =>
-      ipcRenderer.invoke('chat:chatgpt-web:companion-prompt', { conversationId }),
-
-    // Electron 44 keeps the clipboard out of preload; main copies without returning the value to the renderer.
-    chatGptWebCompanionCopyPrompt: (conversationId: string): Promise<{ ok: boolean; error?: string }> =>
-      ipcRenderer.invoke('chat:chatgpt-web:companion-copy-prompt', { conversationId }),
-
-    chatGptWebCompanionCopySessionKey: (conversationId: string): Promise<{ ok: boolean; error?: string }> =>
-      ipcRenderer.invoke('chat:chatgpt-web:companion-copy-session-key', { conversationId }),
-
-    chatGptWebCompanionOpen: (conversationId: string): Promise<{ ok: boolean; error?: string }> =>
-      ipcRenderer.invoke('chat:chatgpt-web:companion-open', { conversationId }),
-
-    chatGptWebBrowserReset: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('chat:chatgpt-web:browser-reset'),
-
-    chatGptWebLogs: (): Promise<string[]> => ipcRenderer.invoke('chat:chatgpt-web:logs'),
-
-    onChatGptWebStatus: (cb: (status: ChatGptWebStatusPayload) => void): (() => void) => {
-      const listener = (_event: unknown, status: ChatGptWebStatusPayload) => cb(status)
-      ipcRenderer.on('chat:chatgpt-web:changed', listener)
-      return () => ipcRenderer.removeListener('chat:chatgpt-web:changed', listener)
-    },
-
-    onChatGptWebOpen: (cb: (conversationId: string) => void): (() => void) => {
-      const listener = (_event: unknown, conversationId: string) => cb(conversationId)
-      ipcRenderer.on('chat:chatgpt-web:open', listener)
-      return () => ipcRenderer.removeListener('chat:chatgpt-web:open', listener)
-    },
-
-    onChatGptWebDelivery: (conversationId: string, cb: () => void): (() => void) => {
-      const channel = `chat:chatgpt-web:delivery:${conversationId}`
-      const listener = () => cb()
-      ipcRenderer.on(channel, listener)
-      return () => ipcRenderer.removeListener(channel, listener)
-    },
-
-    onChatGptWebTurnCompleted: (cb: (payload: ChatGptWebTurnCompletedPayload) => void): (() => void) => {
-      const listener = (_event: unknown, payload: ChatGptWebTurnCompletedPayload) => cb(payload)
-      ipcRenderer.on('chat:chatgpt-web:turn-completed', listener)
-      return () => ipcRenderer.removeListener('chat:chatgpt-web:turn-completed', listener)
-    },
 
     /** A workspaces host asks the computer showing one of its conversations to open an artifact an agent opened. */
     onChatArtifactOpen: (cb: (request: ArtifactOpenRequest) => void): (() => void) => {

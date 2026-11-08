@@ -3,9 +3,6 @@ import {
   accountGroups,
   apiKeyAccountSummary,
   type AccountSummary,
-  chatGptWebPhase,
-  chatGptWebSummary,
-  type ChatGptWebAccountSnapshot,
   connectableGroups,
   isAccountListed,
   matchesAccountFilter,
@@ -14,7 +11,7 @@ import {
   subscriptionAccountSummary,
   subscriptionPlanLabel,
 } from '../../src/renderer/components/chat/accounts/account-entries'
-import type { ChatGptWebStatus, ChatProviderInfo, ChatSubscriptionUsage } from '../../src/shared/chat'
+import type { ChatProviderInfo, ChatSubscriptionUsage } from '../../src/shared/chat'
 import enChat from '../../src/shared/i18n/en/chat'
 import ptBrChat from '../../src/shared/i18n/pt-BR/chat'
 
@@ -48,25 +45,6 @@ function usage(...percents: number[]): ChatSubscriptionUsage {
   }
 }
 
-function webStatus(overrides: Partial<ChatGptWebStatus & { enabled: boolean }> = {}): ChatGptWebAccountSnapshot {
-  return {
-    tunnelReady: true,
-    status: {
-      enabled: true,
-      binaryAvailable: true,
-      configured: true,
-      tunnelId: 'tun_1',
-      apiKeyPresent: true,
-      appName: 'Maestrly Bridge',
-      tunnelState: 'ready',
-      probeActive: false,
-      appRefreshRequired: false,
-      sessions: [],
-      ...overrides,
-    },
-  }
-}
-
 const subscriptionEntry = (entry: ChatProviderInfo): SubscriptionAccountEntry => ({
   type: 'subscription',
   key: entry.id,
@@ -77,11 +55,10 @@ const subscriptionEntry = (entry: ChatProviderInfo): SubscriptionAccountEntry =>
 })
 
 describe('account entries', () => {
-  it('orders subscriptions by provider, puts ChatGPT Web after ChatGPT and API keys last', () => {
+  it('orders subscriptions by provider and puts API keys last', () => {
     const groups = accountGroups({ providers: [openRouter, codexWork, codexDefault, claudeDefault] })
     expect(groups.map((group) => group.id)).toEqual([
       'codex-subscription',
-      'chatgpt-web',
       'github-copilot-subscription',
       'claude-subscription',
       'grok-subscription',
@@ -92,7 +69,7 @@ describe('account entries', () => {
     expect(groups[0].entries.map((entry) => entry.key)).toEqual([codexDefault.id, codexWork.id])
     expect(groups.at(-1)?.entries.map((entry) => entry.key)).toEqual([openRouter.id])
     // A host that does not list a provider still gets its default slot, under the canonical id.
-    expect(groups[2].entries).toEqual([
+    expect(groups[1].entries).toEqual([
       expect.objectContaining({ key: 'builtin_github_copilot_subscription', provider: undefined, accountId: null }),
     ])
   })
@@ -138,15 +115,12 @@ describe('account entries', () => {
       nearLimit: false,
       limitReached: false,
     }
-    const context = { selected: false, chatGptWebEnabled: false }
+    const context = { selected: false }
 
     expect(isAccountListed(claudeGroup.entries[0], idle, { ...context, group: claudeGroup })).toBe(false)
     expect(isAccountListed(claudeGroup.entries[0], idle, { ...context, group: claudeGroup, selected: true })).toBe(true)
     // An unused default slot stays next to the added accounts of the same provider.
     expect(isAccountListed(codexGroup.entries[0], idle, { ...context, group: codexGroup })).toBe(true)
-    const web = groups.find((group) => group.id === 'chatgpt-web')!
-    expect(isAccountListed(web.entries[0], idle, { ...context, group: web })).toBe(false)
-    expect(isAccountListed(web.entries[0], idle, { ...context, group: web, chatGptWebEnabled: true })).toBe(true)
   })
 
   it('flags an API-key account whose key the provider refused and stops counting it as connected', () => {
@@ -180,7 +154,7 @@ describe('account entries', () => {
     const groups = accountGroups({ providers: [codexDefault, claudeDefault] })
     const claudeGroup = groups.find((group) => group.id === 'claude-subscription')!
     const entry = claudeGroup.entries[0] as SubscriptionAccountEntry
-    const context = { selected: false, chatGptWebEnabled: false, group: claudeGroup }
+    const context = { selected: false, group: claudeGroup }
     const unavailable = (errorCode: 'claude-code-not-installed' | 'claude-code-incompatible', saved: boolean) =>
       subscriptionAccountSummary(entry, {
         status: {
@@ -217,7 +191,6 @@ describe('account entries', () => {
     expect(groups.find((group) => group.id === 'api-keys')?.entries).toEqual([])
     const offered = connectableGroups(groups, (entry) => entry.key.startsWith('builtin_codex'))
     expect(offered.map((group) => group.id)).toEqual([
-      'chatgpt-web',
       'github-copilot-subscription',
       'claude-subscription',
       'grok-subscription',
@@ -225,33 +198,6 @@ describe('account entries', () => {
       'antigravity-subscription',
     ])
     expect(offered.every((group) => group.entries.length > 0)).toBe(true)
-  })
-
-  it('reports the next ChatGPT Web setup step', () => {
-    expect(chatGptWebPhase(undefined)).toBe('loading')
-    expect(chatGptWebPhase(webStatus({ enabled: false }))).toBe('off')
-    expect(chatGptWebPhase({ ...webStatus(), tunnelReady: false })).toBe('component')
-    expect(chatGptWebPhase(webStatus({ apiKeyPresent: false }))).toBe('key')
-    expect(chatGptWebPhase(webStatus({ tunnelId: null }))).toBe('tunnel')
-    expect(chatGptWebPhase(webStatus({ tunnelState: 'error' }))).toBe('error')
-    expect(chatGptWebPhase(webStatus({ appRefreshRequired: true }))).toBe('refresh')
-    expect(chatGptWebPhase(webStatus())).toBe('ready')
-    const session = {
-      state: 'live' as const,
-      pairingRequired: false,
-      conversationId: 'c1',
-      cwd: '/repo',
-      startedAt: 0,
-      lastActivityAt: null,
-      toolCalls: 0,
-      deliveries: 0,
-    }
-    expect(chatGptWebPhase(webStatus({ sessions: [session] }))).toBe('sessions')
-    expect(chatGptWebPhase(webStatus({ sessions: [{ ...session, state: 'ended' }] }))).toBe('ready')
-
-    expect(needsAttention(chatGptWebSummary(webStatus({ tunnelId: null })))).toBe(true)
-    expect(needsAttention(chatGptWebSummary(webStatus({ enabled: false })))).toBe(false)
-    expect(chatGptWebSummary(webStatus()).connected).toBe(true)
   })
 
   it('filters by attention, usage and every search term', () => {

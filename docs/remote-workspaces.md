@@ -342,8 +342,8 @@ notification goes away once you open the conversation on any computer. See
   on the server's own desktop, which nobody sees.
 - **On a conversation's computer:** sound, dragging files onto it, and uploading files through it; computers do not
   survive a restart of the server's Maestrly.
-- **ChatGPT Web** companion sessions, paired reviews between two conversations, and moving a conversation between
-  folders are for conversations of this computer.
+- **Paired reviews between two conversations** and moving a conversation between folders are for conversations of
+  this computer.
 - **Moving plain chats and multi-repository conversations** between this computer and the server: only conversations
   of a workspace with one repository move (see [Move a conversation](#move-a-conversation)).
 - **Isolation between workspaces of one environment.** They share one container, one user, and one set of accounts:

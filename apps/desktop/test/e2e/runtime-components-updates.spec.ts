@@ -145,7 +145,6 @@ for (const selection of [
       replace('runtime-assets:list', () => [
         runtimeInfo(),
         other('github-copilot-runtime'),
-        other('tunnel-client'),
         other('local-ml-runtime'),
         other('whisper-model'),
       ])

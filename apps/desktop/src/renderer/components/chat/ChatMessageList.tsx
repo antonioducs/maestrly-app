@@ -13,13 +13,13 @@ import {
   type RefObject,
 } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Copy, Check, Pencil, FileText, ScanText, TriangleAlert, Sparkles, ChevronRight } from 'lucide-react'
+import { Copy, Check, Pencil, FileText, ScanText, TriangleAlert, Sparkles } from 'lucide-react'
 import { MarkdownViewer, type OpenFileReference } from '@/components/MarkdownViewer'
 import { GenUiContext, type GenUiHost } from '@/genui/context'
 import { genUiPreviewsOf } from '../../../shared/genui-widget'
 import { cn } from '@/lib/utils'
 import { useSettings } from '@/lib/use-settings'
-import { useHostApi, useHostId } from '@/lib/hosts/host-context'
+import { useHostId } from '@/lib/hosts/host-context'
 import { useAgentActivityMode } from '@/lib/agent-activity-preference'
 import { chatActivitySegments, isSharedScreenshot } from '@/lib/agent-activity'
 import { MemorySourcesChip } from './MemorySourcesChip'
@@ -38,9 +38,9 @@ import { AttachmentImage } from './AttachmentImage'
 import { PdfAttachmentChip } from './PdfAttachmentChip'
 import { ReviewReceiptCard, type ReviewReceiptActions } from './review/ReviewReceiptCard'
 import type { ReviewJobInfo } from '../../../shared/review'
-import { CUT_FINISH_REASONS, estimatedCostOfUsageWithSubagents, toolOutputText } from '../../../shared/chat'
+import { CUT_FINISH_REASONS, toolOutputText } from '../../../shared/chat'
 import { formatResponseDuration, responseDurationMs } from '../../../shared/response-duration'
-import type { ChatMessage, ChatModelMeta, MessagePart } from '../../../shared/chat'
+import type { ChatMessage, MessagePart } from '../../../shared/chat'
 import type { StructuredAgentMentionDraft } from '../../../shared/chat-agent-mentions'
 import type { ConversationExperience } from '../../../shared/conversation-experience'
 import type { SubagentAgentDto } from '../../../shared/subagent-profiles'
@@ -131,162 +131,12 @@ function ResponseDuration({ message }: { message: ChatMessage }) {
   )
 }
 
-const fmtReviewLoopCost = (c: number): string =>
-  c >= 1 ? `$${c.toFixed(2)}` : c >= 0.01 ? `$${c.toFixed(3)}` : `$${c.toFixed(4)}`
-
 /** Turns the host stopped on its own (tool loop, invalid calls, repetitive output); the stored text is English. */
 function automaticStopMessageKey(errorCode?: string) {
   if (errorCode === 'tool-loop-stopped') return 'messages.toolLoopStopped' as const
   if (errorCode === 'invalid-tool-calls-stopped') return 'messages.invalidToolCallsStopped' as const
   if (errorCode === 'repetitive-output-stopped') return 'messages.repetitiveOutputStopped' as const
   return undefined
-}
-
-type ReviewLoopRoundStatus = 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
-
-function reviewLoopRoundStatus(message: ChatMessage): ReviewLoopRoundStatus {
-  if (message.errorCode === 'review-loop-process-interrupted') return 'interrupted'
-  if (message.error) return 'failed'
-  if (message.finishReason === 'aborted') return 'cancelled'
-
-  if (message.finishReason != null && CUT_FINISH_REASONS.has(message.finishReason)) return 'failed'
-  if (message.finishReason != null || message.responseDurationMs != null) return 'completed'
-  return 'running'
-}
-
-function ReviewLoopRoundChrome({
-  message,
-  collapsed,
-  onToggle,
-}: {
-  message: ChatMessage
-  collapsed: boolean
-  onToggle?: () => void
-}) {
-  const { t } = useTranslation('chat')
-  const api = useHostApi()
-
-  const [metaByModel, setMetaByModel] = useState<Record<string, ChatModelMeta | null>>({})
-  const metaByModelRef = useRef(metaByModel)
-  metaByModelRef.current = metaByModel
-  const modelPairsKey = useMemo(() => {
-    const pairs = new Map<string, [string, string]>()
-    const parentModel = message.model?.modelId
-    if (parentModel) pairs.set(`${message.model!.providerId}\0${parentModel}`, [message.model!.providerId, parentModel])
-    for (const s of message.usage?.subagentUsage ?? []) {
-      if (!s.modelId) continue
-      pairs.set(`${s.providerId}\0${s.modelId}`, [s.providerId, s.modelId])
-    }
-    return JSON.stringify(
-      [...pairs.values()].sort(([pa, ma], [pb, mb]) => pa.localeCompare(pb) || ma.localeCompare(mb))
-    )
-  }, [message.model, message.usage])
-  useEffect(() => {
-    const pairs = JSON.parse(modelPairsKey) as Array<[string, string]>
-    const missing = pairs.filter(([providerId, modelId]) => !(`${providerId}\0${modelId}` in metaByModelRef.current))
-    if (missing.length === 0) return
-    let alive = true
-    Promise.all(
-      missing.map(([providerId, modelId]) =>
-        api.chatModelMeta(modelId, providerId || undefined).then((mm) => [`${providerId}\0${modelId}`, mm] as const)
-      )
-    ).then((loaded) => {
-      if (alive) setMetaByModel((prev) => ({ ...prev, ...Object.fromEntries(loaded) }))
-    })
-    return () => {
-      alive = false
-    }
-  }, [api, modelPairsKey])
-
-  const modelId = message.model?.modelId
-  const status = reviewLoopRoundStatus(message)
-  const loop = message.reviewLoop
-  const isSummary = message.source === 'chatgpt-web-review-loop' && !loop
-
-  const cost =
-    message.usage != null
-      ? estimatedCostOfUsageWithSubagents(message.usage, message.model, (pid, mid) => {
-          const mm = metaByModelRef.current[`${pid}\0${mid}`]
-          return mm !== undefined ? mm : null
-        })
-      : null
-
-  const duration =
-    message.responseDurationMs ??
-    (message.responseStartedAt != null ? responseDurationMs(message.responseStartedAt) : undefined)
-
-  const statusKey =
-    status === 'running'
-      ? 'reviewLoopStatusRunning'
-      : status === 'failed'
-        ? 'reviewLoopStatusFailed'
-        : status === 'cancelled'
-          ? 'reviewLoopStatusCancelled'
-          : status === 'interrupted'
-            ? 'reviewLoopStatusInterrupted'
-            : 'reviewLoopStatusCompleted'
-
-  const statusClass =
-    status === 'failed'
-      ? 'border-red-500/30 bg-red-500/10 text-red-200'
-      : status === 'cancelled' || status === 'interrupted'
-        ? 'border-amber-500/30 bg-amber-500/10 text-amber-200'
-        : status === 'running'
-          ? 'border-sky-500/30 bg-sky-500/10 text-sky-200'
-          : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
-
-  const headerClass =
-    status === 'failed'
-      ? 'border-red-500/25 bg-red-500/[0.06]'
-      : status === 'cancelled' || status === 'interrupted'
-        ? 'border-amber-500/25 bg-amber-500/[0.06]'
-        : 'border-white/[0.08] bg-white/[0.03]'
-
-  return (
-    <div className={cn('flex w-full min-w-0 flex-col gap-1.5 rounded-lg border px-2.5 py-1.5', headerClass)}>
-      <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-[11px]">
-        {onToggle && (
-          <button
-            type="button"
-            onClick={onToggle}
-            className="inline-flex shrink-0 items-center rounded p-0.5 text-muted-foreground hover:bg-white/[0.06] hover:text-foreground"
-            title={collapsed ? t('chatgptWeb.reviewLoopExpandRound') : t('chatgptWeb.reviewLoopCollapseRound')}
-            aria-expanded={!collapsed}
-          >
-            <ChevronRight className={cn('h-3.5 w-3.5 transition-transform', !collapsed && 'rotate-90')} />
-          </button>
-        )}
-        <span className="font-medium text-foreground/90">
-          {isSummary
-            ? t('chatgptWeb.reviewLoopSummaryBadge')
-            : t('chatgptWeb.reviewLoopRoundHeader', { iteration: loop?.iteration ?? 0 })}
-        </span>
-        {modelId && (
-          <span className="max-w-[160px] truncate font-mono text-[10px] text-muted-foreground" title={modelId}>
-            {modelId}
-          </span>
-        )}
-        {!isSummary && (
-          <span
-            className={cn('rounded border px-1.5 py-px text-[10px] font-medium uppercase tracking-wide', statusClass)}
-          >
-            {t(`chatgptWeb.${statusKey}`)}
-          </span>
-        )}
-        {duration != null && (
-          <span className="font-mono tabular-nums text-muted-foreground/80">{formatResponseDuration(duration)}</span>
-        )}
-        {cost != null && (
-          <span
-            className="font-mono tabular-nums text-muted-foreground/80"
-            title={t('chatgptWeb.reviewLoopCostEstimate', { cost: fmtReviewLoopCost(cost) })}
-          >
-            ~{fmtReviewLoopCost(cost)}
-          </span>
-        )}
-      </div>
-    </div>
-  )
 }
 
 function Reasoning({ text, onOpenMention, searchQuery, currentSearchMatch }: SearchableTextProps) {
@@ -703,16 +553,6 @@ const Bubble = memo(function Bubble({
   const catalogLoading = agents === null || agents === undefined
   const editBlockedByCatalog = hasAgentMentions && catalogLoading
 
-  const isReviewLoopSource = message.source === 'chatgpt-web-review-loop'
-  const isReviewLoopRound = isReviewLoopSource && !!message.reviewLoop
-  const roundStatus = isReviewLoopRound ? reviewLoopRoundStatus(message) : null
-
-  const [roundCollapsed, setRoundCollapsed] = useState(() => isReviewLoopRound && roundStatus !== 'running')
-  useEffect(() => {
-    if (!isReviewLoopRound) return
-    if (roundStatus === 'running') setRoundCollapsed(false)
-  }, [isReviewLoopRound, roundStatus])
-
   if (isUser) {
     if (isEditing) {
       const editMentions: StructuredAgentMentionDraft[] = message.parts
@@ -831,7 +671,6 @@ const Bubble = memo(function Bubble({
   }
 
   const wasCut = !message.error && message.finishReason != null && CUT_FINISH_REASONS.has(message.finishReason)
-  const showRoundBody = !isReviewLoopRound || !roundCollapsed
   const delegateParts = message.parts.filter(
     (part): part is Extract<MessagePart, { type: 'tool' }> => part.type === 'tool' && part.toolName === 'delegate'
   )
@@ -910,25 +749,22 @@ const Bubble = memo(function Bubble({
         <div
           role={
             message.errorCode === 'claude-authentication-required' ||
-            subscriptionExhaustionMessageKey(message.errorCode) ||
-            message.errorCode === 'review-loop-process-interrupted'
+            subscriptionExhaustionMessageKey(message.errorCode)
               ? 'alert'
               : undefined
           }
           className="flex min-w-0 max-w-full flex-col items-start gap-2 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-[14px] text-red-300"
         >
           <span>
-            {message.errorCode === 'review-loop-process-interrupted'
-              ? t('chatgptWeb.reviewLoopProcessInterruptedError')
-              : message.errorCode === 'process-interrupted'
-                ? t('messages.processInterruptedError')
-                : message.errorCode === 'claude-authentication-required'
-                  ? t('messages.claudeAuthenticationRequired')
-                  : subscriptionExhaustionMessageKey(message.errorCode)
-                    ? t(subscriptionExhaustionMessageKey(message.errorCode)!)
-                    : automaticStopMessageKey(message.errorCode)
-                      ? t(automaticStopMessageKey(message.errorCode)!)
-                      : message.error}
+            {message.errorCode === 'process-interrupted'
+              ? t('messages.processInterruptedError')
+              : message.errorCode === 'claude-authentication-required'
+                ? t('messages.claudeAuthenticationRequired')
+                : subscriptionExhaustionMessageKey(message.errorCode)
+                  ? t(subscriptionExhaustionMessageKey(message.errorCode)!)
+                  : automaticStopMessageKey(message.errorCode)
+                    ? t(automaticStopMessageKey(message.errorCode)!)
+                    : message.error}
           </span>
           {message.errorCode === 'claude-authentication-required' && (
             <button
@@ -947,14 +783,12 @@ const Bubble = memo(function Bubble({
           {t('messages.interrupted')}
         </div>
       )}
-      {(text.trim() ||
-        turnChanges ||
-        (!isReviewLoopSource && (message.responseDurationMs != null || message.responseStartedAt != null))) && (
+      {(text.trim() || turnChanges || message.responseDurationMs != null || message.responseStartedAt != null) && (
         <div className="flex flex-wrap items-center gap-1.5">
           <div className="opacity-0 transition-opacity group-hover:opacity-100">
             {text.trim() && <CopyButton text={text} />}
           </div>
-          {!isReviewLoopSource && <ResponseDuration message={message} />}
+          <ResponseDuration message={message} />
           {turnChanges && <TurnChanges entry={turnChanges} />}
         </div>
       )}
@@ -963,19 +797,7 @@ const Bubble = memo(function Bubble({
 
   return (
     <div className="group flex w-full min-w-0 max-w-full flex-col gap-2.5">
-      {message.source === 'chatgpt-web' && (
-        <div className="w-fit rounded-full border border-violet-400/25 bg-violet-400/[0.08] px-2 py-0.5 text-[10px] font-medium text-violet-200">
-          ChatGPT Web
-        </div>
-      )}
-      {isReviewLoopSource && (
-        <ReviewLoopRoundChrome
-          message={message}
-          collapsed={roundCollapsed}
-          onToggle={isReviewLoopRound ? () => setRoundCollapsed((v) => !v) : undefined}
-        />
-      )}
-      {showRoundBody && <GenUiContext.Provider value={genUiHost}>{body}</GenUiContext.Provider>}
+      <GenUiContext.Provider value={genUiHost}>{body}</GenUiContext.Provider>
     </div>
   )
 })

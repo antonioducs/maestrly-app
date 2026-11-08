@@ -31,7 +31,6 @@ const origins = new Map<string, HumanTurnOrigin>()
 /** The admission options that decide provenance (a structural subset of the chat service's send options). */
 export interface TurnAdmissionShape {
   internal?: boolean
-  internalLoop?: unknown
   botAdmission?: unknown
   remoteAdmission?: boolean
   runnerAdmission?: unknown
@@ -43,13 +42,12 @@ export interface TurnAdmissionShape {
 
 /**
  * Only text a person typed into this conversation (chat:send / edit-and-resend) is a human origin. Every host path
- * (plans, review loops, bots, remote/web, unattended executors, dispatch seeds, messages from other conversations,
+ * (plans, bots, remote/web, unattended executors, dispatch seeds, messages from other conversations,
  * guard continuations) passes options that exclude it.
  */
 export function isHumanTurnAdmission(opts: TurnAdmissionShape | undefined): boolean {
   return (
     !opts?.internal &&
-    !opts?.internalLoop &&
     !opts?.botAdmission &&
     !opts?.remoteAdmission &&
     !opts?.runnerAdmission &&

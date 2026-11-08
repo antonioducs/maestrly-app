@@ -158,6 +158,19 @@ describe('runtime asset app service in a bot', () => {
     expect((await readdir(root)).sort()).toEqual(['.tmp-unknown-1a2b', 'claude-code-runtime'])
   })
 
+  it('removes the retired tunnel-client install and its staging folder, keeping live runtimes', async () => {
+    const root = path.join(state.userData, 'runtime-assets')
+    await mkdir(path.join(root, 'tunnel-client', 'versions', '1.0.0'), { recursive: true })
+    await writeFile(path.join(root, 'tunnel-client', 'versions', '1.0.0', 'client'), '#!/bin/sh\n')
+    await mkdir(path.join(root, '.tmp-tunnel-client-3e4f', 'staging'), { recursive: true })
+    await mkdir(path.join(root, 'codex-runtime', 'versions'), { recursive: true })
+    await mkdir(path.join(root, 'tunnel-client-notes'), { recursive: true })
+
+    await cleanupOrphanRuntimeAssetTemps()
+
+    expect((await readdir(root)).sort()).toEqual(['codex-runtime', 'tunnel-client-notes'])
+  })
+
   it('schedules checks for all three runtimes', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval', 'clearTimeout', 'clearInterval'] })
     const cycle = vi.spyOn(RuntimeUpdateController.prototype, 'cycle').mockResolvedValue()

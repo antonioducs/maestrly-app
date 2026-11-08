@@ -348,8 +348,7 @@ export function detach(convId: string, tab: FloatTab, options: { focus?: boolean
   if (!byTab) floats.set(convId, (byTab = new Map()))
   byTab.set(tab, { win, reattaching: false, pinned: false })
   if (!floatView(convId, tab, win)) {
-    // The tool, especially ChatGPT Companion, may close between detach and container creation. Do not
-    // register an empty window.
+    // The tool may close between detach and container creation. Do not register an empty window.
     byTab.delete(tab)
     if (byTab.size === 0) floats.delete(convId)
     if (!win.isDestroyed()) win.destroy()
@@ -484,11 +483,6 @@ export function visibleFloatingTabsOf(convId: string): FloatTab[] {
   return [...byTab.entries()]
     .filter(([, entry]) => !entry.win.isDestroyed() && entry.win.isVisible())
     .map(([tab]) => tab)
-}
-
-/** ChatGPT visible in a native window, including a pinned background conversation. */
-export function isChatGptVisible(convId: string): boolean {
-  return visibleFloatingTabsOf(convId).includes('chatgpt')
 }
 
 export function getFloatWin(convId: string, tab: FloatTab): BrowserWindow | null {

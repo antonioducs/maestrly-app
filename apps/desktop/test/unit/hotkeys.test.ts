@@ -21,8 +21,8 @@ function capture() {
       { preventDefault },
       {
         type: 'keyDown',
-        key: 'g',
-        code: 'KeyG',
+        key: 'b',
+        code: 'KeyB',
         meta: true,
         control: true,
         alt: false,

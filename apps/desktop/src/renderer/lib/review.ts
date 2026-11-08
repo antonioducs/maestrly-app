@@ -35,7 +35,6 @@ const KNOWN_ERRORS = new Set([
   'no-model',
   'invalid-conversation',
   'invalid-reviewer',
-  'reviewer-unsupported',
   'plan-changed',
   'nothing-to-check',
   'no-revision',

@@ -74,11 +74,6 @@ vi.mock('../../src/main/drawer/vscode', () => ({
   noteVSCodeSurfaceVisibility: vi.fn(),
 }))
 vi.mock('../../src/main/drawer/stream-window', () => ({ disposeStreamWindow: vi.fn() }))
-vi.mock('../../src/main/chat/chatgpt-web/companion-window', () => ({
-  closeChatGptWebView: vi.fn(),
-  disposeChatGptWebViews: vi.fn(),
-  noteChatGptSurfaceVisibility: vi.fn(),
-}))
 vi.mock('../../src/main/performance/resource-governor', () => ({
   disposeConversationResources: vi.fn(),
   disposeResourceGovernor: vi.fn(),

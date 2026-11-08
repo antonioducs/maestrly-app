@@ -5,21 +5,17 @@ import { cn } from '@/lib/utils'
 import type { ChatConfig, ChatSubscriptionAccountPoolInfo } from '../../../../shared/chat'
 import { accountPoolCurrent, accountPoolEntryKey, accountPoolFor, accountPoolKindOfEntryKey } from '../account-pool'
 import { subscriptionUsageResetDisplay } from '../subscription-usage-presentation'
-import { ChatGptWebSettings, useChatGptWebPhaseLabel } from '../ChatGptWebSettings'
 import {
   type AccountEntry,
   type AccountFilter,
   type AccountGroup,
   type AccountSnapshot,
   type AccountSummary,
-  type ChatGptWebAccountSnapshot,
   type SubscriptionAccountEntry,
   type SubscriptionAccountSnapshot,
   accountGroups,
   accountSummary,
   baseUrlHost,
-  CHATGPT_WEB_ENTRY_KEY,
-  chatGptWebPhase,
   connectableGroups,
   isAccountListed,
   matchesAccountFilter,
@@ -47,7 +43,6 @@ const FILTERS: AccountFilter[] = ['all', 'attention', 'near-limit']
 
 function markKind(entry: AccountEntry): ProviderMarkKind {
   if (entry.type === 'subscription') return entry.providerKind
-  if (entry.type === 'chatgpt-web') return 'chatgpt-web'
   return { apiName: entry.provider.name, baseURL: entry.provider.baseURL }
 }
 
@@ -62,7 +57,6 @@ export function AccountsSettingsPanel({
 }) {
   const { t, i18n } = useTranslation('chat')
   const subscriptionTitle = useSubscriptionAccountTitle()
-  const chatGptWebLabel = useChatGptWebPhaseLabel()
   const groups = useMemo(() => accountGroups(config), [config])
   const [snapshots, setSnapshots] = useState<Record<string, AccountSnapshot>>({})
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
@@ -159,19 +153,6 @@ export function AccountsSettingsPanel({
         ...subscriptionMeta(entry, snapshots[entry.key] as SubscriptionAccountSnapshot | undefined, summary),
       }
     }
-    if (entry.type === 'chatgpt-web') {
-      const snapshot = snapshots[entry.key] as ChatGptWebAccountSnapshot | undefined
-      const phase = chatGptWebPhase(snapshot)
-      const active = snapshot?.status?.sessions.filter((session) => session.state !== 'ended').length ?? 0
-      return {
-        entry,
-        group,
-        summary,
-        title: t('settings.chatgptWebAccountLabel'),
-        meta: chatGptWebLabel(phase, active),
-        metaTone: phase === 'error' ? 'bad' : summary.health === 'attention' ? 'warn' : 'muted',
-      }
-    }
     return {
       entry,
       group,
@@ -196,8 +177,6 @@ export function AccountsSettingsPanel({
         status?.planType ?? '',
         subscriptionPlanLabel(status?.planType, t) ?? ''
       )
-    } else if (row.entry.type === 'chatgpt-web') {
-      parts.push(t('settings.chatgptWebHeading'))
     } else {
       parts.push(row.entry.provider.baseURL, t(kindLabelKey[row.entry.provider.kind ?? 'openai']))
     }
@@ -206,7 +185,6 @@ export function AccountsSettingsPanel({
 
   const allEntries = groups.flatMap((group) => group.entries.map((entry) => ({ entry, group })))
   const summaries = new Map(allEntries.map(({ entry }) => [entry.key, accountSummary(entry, snapshots[entry.key])]))
-  const chatGptWebEnabled = (snapshots[CHATGPT_WEB_ENTRY_KEY] as ChatGptWebAccountSnapshot | undefined)?.status?.enabled
   const pools = config.subscriptionAccountPools ?? []
   const poolOf = (key: string | null) => {
     const kind = accountPoolKindOfEntryKey(key)
@@ -217,7 +195,6 @@ export function AccountsSettingsPanel({
     isAccountListed(entry, summaries.get(entry.key)!, {
       selected: entry.key === explicitKey,
       group,
-      chatGptWebEnabled: chatGptWebEnabled === true,
     })
 
   const browsing = filter === 'all' && !query.trim()
@@ -543,17 +520,6 @@ export function AccountsSettingsPanel({
                 />
               )
             }
-            if (entry.type === 'chatgpt-web') {
-              return (
-                <ChatGptWebSettings
-                  key={entry.key}
-                  selected={selected}
-                  onSnapshot={reportSnapshot}
-                  onBack={back}
-                  onChanged={onChanged}
-                />
-              )
-            }
             return selected ? (
               <ApiKeyAccount
                 key={entry.key}
@@ -597,10 +563,6 @@ export function AccountsSettingsPanel({
           setAddIntent(null)
           selectWhenListed(providerId)
           setPendingLogin(providerId)
-        }}
-        onChatGptWeb={() => {
-          setAddIntent(null)
-          select(CHATGPT_WEB_ENTRY_KEY)
         }}
         onApiProviderAdded={(providerId) => {
           setAddIntent(null)

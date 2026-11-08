@@ -7,7 +7,7 @@ import { useTranslation } from 'react-i18next'
 import { PanelRight, MessagesSquare } from 'lucide-react'
 import { i18n } from '@/lib/i18n'
 import { setComposerPrefill } from '@/lib/composer-prefill'
-import type { Conversation, Workspace, FloatTab } from '../preload'
+import type { Conversation, Workspace } from '../preload'
 import { cn } from '@/lib/utils'
 import { Sidebar, type SidebarHostSection } from '@/components/Sidebar'
 import { ChatView } from '@/components/chat/ChatView'
@@ -151,7 +151,6 @@ function DesktopShell({
     toggleDrawerFull,
     fullActive,
     dragging,
-    chatGptWebEnabled,
     drawerShortcutLabel,
   } = drawer
   // A conversation of the window carries its host in its id (see lib/hosts/shell-keys). What this computer's own
@@ -492,69 +491,10 @@ function DesktopShell({
     return () => window.removeEventListener('maestrly:new-chat-with-prompt', onRequest)
   }, [handleCreated, handleSelect])
 
-  const [chatGptFloating, setChatGptFloating] = useState(false)
-  const [chatGptFloatingVisible, setChatGptFloatingVisible] = useState(false)
-  useEffect(() => {
-    const conversationId = active?.id ?? null
-    setChatGptFloating(false)
-    setChatGptFloatingVisible(false)
-    if (!conversationId) return
-    let alive = true
-    const apply = (state: { convId: string; floating: string[]; visible?: string[] }) => {
-      if (!alive || state.convId !== conversationId) return
-      setChatGptFloating(state.floating.includes('chatgpt'))
-      setChatGptFloatingVisible(state.visible?.includes('chatgpt') === true)
-    }
-    void window.api
-      .getFloatingState(conversationId)
-      .then(apply)
-      .catch(() => undefined)
-    const off = window.api.onFloatingState(apply)
-    return () => {
-      alive = false
-      off()
-    }
-  }, [active?.id])
-
-  const [visiblePopupTab, setVisiblePopupTab] = useState<FloatTab | null>(null)
-  useEffect(() => {
-    const conversationId = active?.id ?? null
-    setVisiblePopupTab(null)
-    if (!conversationId) return
-    let alive = true
-    const apply = (state: { convId: string | null; stack: Array<{ tab: FloatTab }>; suppressed: boolean }) => {
-      if (!alive) return
-      if (state.convId === null) {
-        setVisiblePopupTab(null)
-        return
-      }
-      if (state.convId !== conversationId) return
-      setVisiblePopupTab(state.suppressed ? null : (state.stack[state.stack.length - 1]?.tab ?? null))
-    }
-    void window.api
-      .getPopupState(conversationId)
-      .then(apply)
-      .catch(() => undefined)
-    const off = window.api.onPopupState(apply)
-    return () => {
-      alive = false
-      off()
-    }
-  }, [active?.id])
-  const chatGptDrawerVisibleConversationId =
-    active && drawerOpen && !mainOverride && !chatGptFloating && visiblePopupTab === null && drawerTab === 'chatgpt'
-      ? active.id
-      : null
-  const chatGptPopupVisibleConversationId = active && visiblePopupTab === 'chatgpt' ? active.id : null
-  const chatGptVisibleConversationId =
-    chatGptPopupVisibleConversationId ??
-    chatGptDrawerVisibleConversationId ??
-    (chatGptFloatingVisible ? (active?.id ?? null) : null)
   const agents = useAgentStatuses({
     refreshWorkspaces,
     activeId: activeLocal?.id ?? null,
     mainOverride,
-    chatGptVisibleConversationId,
   })
   const { acknowledgeConversation } = agents
   // What the window shows of every host together: this computer's, and each remote host's under its keys.
@@ -1546,7 +1486,6 @@ function DesktopShell({
                       onCloseTab={closeDrawerTab}
                       onReorderOpenTabs={reorderOpenTabs}
                       catalogOrder={mainTabOrder}
-                      chatGptWebEnabled={chatGptWebEnabled && !activeRemote}
                     />
                   </HostProvider>
                 </div>

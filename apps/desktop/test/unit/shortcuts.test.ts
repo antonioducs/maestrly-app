@@ -47,7 +47,7 @@ describe('defaultShortcuts', () => {
     expect(mac.browser).toEqual({ key: 'b', mods: ['meta', 'control'] })
     expect(win.browser).toEqual({ key: 'b', mods: ['control', 'alt'] })
     expect(defaultShortcuts('linux').notes).toEqual({ key: 'n', mods: ['control', 'alt'] })
-    expect(defaultShortcuts('mac').chatgpt).toEqual({ key: 'g', mods: ['meta', 'control'] })
+    expect(defaultShortcuts('mac').notes).toEqual({ key: 'n', mods: ['meta', 'control'] })
   })
 
   it('covers every tool with distinct letters and at least two OS-safe modifiers', () => {

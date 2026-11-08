@@ -6,7 +6,6 @@ import {
   GitPullRequest,
   Globe,
   GripVertical,
-  MessageCircle,
   Monitor,
   PanelRight,
   RotateCw,
@@ -27,7 +26,6 @@ const TAB_ICON: Record<DrawerTab, ReactNode> = {
   plan: <ClipboardList className="size-4" />,
   review: <GitPullRequest className="size-4" />,
   notes: <StickyNote className="size-4" />,
-  chatgpt: <MessageCircle className="size-4" />,
 }
 
 export function TabOrderSection({
@@ -52,7 +50,6 @@ export function TabOrderSection({
     plan: t('drawer.tabPlan'),
     review: t('drawer.tabReview'),
     notes: t('drawer.tabNotes'),
-    chatgpt: t('drawer.tabChatGpt'),
   }
 
   return (

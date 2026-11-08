@@ -15,7 +15,7 @@ const REMOTE = 'server-1/workspaces#conv-1'
 describe('drawer scope', () => {
   it('admits every tool of a conversation of this computer but review in a chat, and files', () => {
     getConversation.mockReturnValue({ scope: 'project' })
-    for (const tab of ['browser', 'vscode', 'terminal', 'plan', 'review', 'notes', 'chatgpt'] as const)
+    for (const tab of ['browser', 'vscode', 'terminal', 'plan', 'review', 'notes'] as const)
       expect(conversationTabAllowed('conv-1', tab), tab).toBe(true)
     // Its files are at hand on this computer: the Files tab moves files to and from a host.
     expect(conversationTabAllowed('conv-1', 'files')).toBe(false)
@@ -31,9 +31,9 @@ describe('drawer scope', () => {
     expect(isRemoteConversation('conv-1')).toBe(false)
     for (const tab of ['terminal', 'files', 'plan', 'review', 'notes'] as const)
       expect(conversationTabAllowed(REMOTE, tab), tab).toBe(true)
-    // Its browser, editor, computer and companion live on the host: this computer shows none it was not told the host
+    // Its browser, editor and computer live on the host: this computer shows none it was not told the host
     // serves.
-    for (const tab of ['browser', 'vscode', 'computer', 'chatgpt'] as const)
+    for (const tab of ['browser', 'vscode', 'computer'] as const)
       expect(conversationTabAllowed(REMOTE, tab), tab).toBe(false)
     expect(getConversation).not.toHaveBeenCalled()
     // A conversation of this computer runs on no server's computer.
@@ -64,9 +64,6 @@ describe('drawer scope', () => {
       // The host streams its browser here, into the drawer, a popup or a floating window.
       expect(conversationTabAllowed(REMOTE, 'browser')).toBe(true)
       expect(conversationTabAllowed(REMOTE, 'vscode')).toBe(false)
-      // Its companion stays local only.
-      setRemoteToolHosts(() => true)
-      expect(conversationTabAllowed(REMOTE, 'chatgpt')).toBe(false)
     } finally {
       setRemoteToolHosts(() => false)
     }

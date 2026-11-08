@@ -2055,20 +2055,15 @@ async function buildDynamicTools(
         },
         execute: async (input) => {
           const parsed = reviewPlanTool.parameters.parse(input)
-          const result = stagePlan({
+          stagePlan({
             agentId: args.conversationId,
             cwd: args.cwd,
             plan: parsed.plan,
             title: parsed.title,
           })
-          if (result.ok) {
-            state.planSubmitted = true
-            state.requestTurnStop()
-          }
-          return reviewPlanTool.toModelText(
-            parsed,
-            result.ok ? { staged: true } : { staged: false, error: result.error }
-          )
+          state.planSubmitted = true
+          state.requestTurnStop()
+          return reviewPlanTool.toModelText(parsed, { staged: true })
         },
       })
     }

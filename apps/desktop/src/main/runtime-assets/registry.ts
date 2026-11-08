@@ -99,14 +99,6 @@ const copilot = [
   ],
   ['win-x64', 'win32-x64', '02kXOBd9CwBbCaztuf71WYWn+uGapCuiaasomN4tcMH3HBVZ4gi3J0ZUoRcgcS80xh81uQyeBHbnUKzb/RE/9A=='],
 ] as const
-const tunnel = [
-  ['mac-arm64', 'darwin-arm64', '288accc7fd20cfee1d495adb933773af9e19ebc0cdef3173f7fb544afa5065b2'],
-  ['mac-x64', 'darwin-amd64', '1a48616e584484f8bef4c1128d515ac96cf44d0d9609c1462abccc1793f4b847'],
-  ['linux-arm64', 'linux-arm64', 'b842a9b2352eebd80514cf01a1fbb1c0d400a7d24a4015e85a7ea5f1aeaa5b30'],
-  ['linux-x64', 'linux-amd64', 'b9e0388a343f2d7adeff3992f411a0bd3d916a64bc56534aac5fd15ac1b20cd5'],
-  ['win-arm64', 'windows-arm64', '08954ccda078abfeac9382f9b19d178ce0656cfe1e84f5941f0f8a5c4e91ea78'],
-  ['win-x64', 'windows-amd64', '5e64a056f1d96786da0a6f8db1da5f5f4a03fd19a90d951a25cf2ca8d9093d00'],
-] as const
 
 function targetRecord(rows: readonly (readonly string[])[], make: (row: readonly string[]) => RuntimeAssetTarget) {
   return Object.freeze(Object.fromEntries(rows.map((row) => [row[0], Object.freeze(make(row))])))
@@ -274,17 +266,6 @@ const copilotTargets = targetRecord(copilot, ([id, suffix, digest]) => ({
   criticalPaths: [id.startsWith('win-') ? 'copilot.exe' : 'copilot', 'package.json', 'LICENSE.md'],
   executablePath: id.startsWith('win-') ? 'copilot.exe' : 'copilot',
 }))
-const tunnelTargets = targetRecord(tunnel, ([id, asset, digest]) => ({
-  id: id as RuntimeTargetId,
-  url: `https://persistent.oaistatic.com/tunnel-client/v0.0.10/tunnel-client-v0.0.10-${asset}.zip`,
-  archive: 'zip',
-  hash: { algorithm: 'sha256', digest, encoding: 'hex' },
-  downloadBytes: 20_000_000,
-  maxDownloadBytes: 20_000_000,
-  unpackedBytes: 20_000_000,
-  criticalPaths: [id.startsWith('win-') ? 'tunnel-client.exe' : 'tunnel-client'],
-  executablePath: id.startsWith('win-') ? 'tunnel-client.exe' : 'tunnel-client',
-}))
 const localMlTargets = Object.freeze(
   Object.fromEntries(
     Object.entries(localMlManifest.targets).map(([id, target]) => [
@@ -384,7 +365,6 @@ export const RUNTIME_ASSET_REGISTRY: Readonly<Record<RuntimeAssetId, RuntimeAsse
     targets: claudeCodeTargets,
   }),
   'github-copilot-runtime': Object.freeze({ id: 'github-copilot-runtime', version: '1.0.71', targets: copilotTargets }),
-  'tunnel-client': Object.freeze({ id: 'tunnel-client', version: '0.0.10', targets: tunnelTargets }),
   'local-ml-runtime': Object.freeze({
     id: 'local-ml-runtime',
     version: localMlManifest.version,

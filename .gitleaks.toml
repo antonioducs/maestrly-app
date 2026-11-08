@@ -2,14 +2,6 @@
 useDefault = true
 
 [[allowlists]]
-description = "Non-secret idempotency fixtures in bridge/router tests"
-targetRules = ["generic-api-key"]
-condition = "AND"
-paths = ['''^test/unit/chat-chatgpt-web-(?:bridge|router)\.test\.ts$''']
-regexTarget = "line"
-regexes = ['''(?:idempotency_key|idempotencyKey)\s*:\s*['"][a-z0-9][a-z0-9-]*['"]''']
-
-[[allowlists]]
 description = "Exact vendor-owned public OAuth client identifier for a secretless desktop flow"
 targetRules = ["generic-api-key"]
 condition = "AND"

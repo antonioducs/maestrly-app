@@ -2585,7 +2585,6 @@ describe('Cursor subscription runner', () => {
     const mainBefore = structuredClone(getCursorAgentBinding(conversation.id))
     const executionId = 'exec-cursor-1'
     const messageMeta = {
-      source: 'chatgpt-web-review-loop' as const,
       internal: true as const,
       executionScope: {
         kind: 'review-loop' as const,

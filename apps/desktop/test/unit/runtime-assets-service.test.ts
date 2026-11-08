@@ -18,7 +18,7 @@ afterEach(async () => {
 
 function definition(version = '1.0.0', sizes = { downloadBytes: 100, unpackedBytes: 200 }): RuntimeAssetDefinition {
   return {
-    id: 'tunnel-client',
+    id: 'whisper-model',
     version,
     targets: {
       'mac-arm64': {
@@ -41,9 +41,8 @@ function registry(version = '1.0.0', sizes = { downloadBytes: 100, unpackedBytes
     'codex-runtime': empty('codex-runtime'),
     'claude-code-runtime': empty('claude-code-runtime'),
     'github-copilot-runtime': empty('github-copilot-runtime'),
-    'tunnel-client': definition(version, sizes),
     'local-ml-runtime': empty('local-ml-runtime'),
-    'whisper-model': empty('whisper-model'),
+    'whisper-model': definition(version, sizes),
     'antigravity-acp-runtime': empty('antigravity-acp-runtime'),
   }
 }
@@ -96,13 +95,13 @@ describe('RuntimeAssetService', () => {
       target: 'mac-arm64',
       ...deps,
     })
-    expect(await service.status('tunnel-client')).toEqual({ id: 'tunnel-client', state: 'not-installed' })
+    expect(await service.status('whisper-model')).toEqual({ id: 'whisper-model', state: 'not-installed' })
 
-    const installed = await service.install('tunnel-client')
+    const installed = await service.install('whisper-model')
     expect(installed).toMatchObject({ state: 'ready', version: '1.0.0', target: 'mac-arm64' })
-    expect(installed.path).toContain(path.join(userData, 'runtime-assets', 'tunnel-client', 'versions'))
+    expect(installed.path).toContain(path.join(userData, 'runtime-assets', 'whisper-model', 'versions'))
     const marker = JSON.parse(await readFile(path.join(installed.path!, '.runtime-asset.json'), 'utf8'))
-    expect(marker).toMatchObject({ schema: 1, id: 'tunnel-client', version: '1.0.0', criticalPaths: ['bin/tool'] })
+    expect(marker).toMatchObject({ schema: 1, id: 'whisper-model', version: '1.0.0', criticalPaths: ['bin/tool'] })
     expect(marker.files.map((file: { path: string }) => file.path)).toEqual(['bin/tool', 'README'])
     expect(marker.files[0].sha256).toMatch(/^[a-f0-9]{64}$/)
     expect(await service.list()).toHaveLength(RUNTIME_ASSET_IDS.length)
@@ -110,11 +109,11 @@ describe('RuntimeAssetService', () => {
 
   it('installs a single-file asset without extraction and verifies it', async () => {
     const reg = registry()
-    reg['tunnel-client'] = {
-      ...reg['tunnel-client'],
+    reg['whisper-model'] = {
+      ...reg['whisper-model'],
       targets: {
         'mac-arm64': {
-          ...reg['tunnel-client'].targets['mac-arm64']!,
+          ...reg['whisper-model'].targets['mac-arm64']!,
           archive: 'file',
           fileName: 'model.bin',
           criticalPaths: ['model.bin'],
@@ -129,7 +128,7 @@ describe('RuntimeAssetService', () => {
       downloader,
       availableBytes,
     })
-    const installed = await service.install('tunnel-client')
+    const installed = await service.install('whisper-model')
     expect(installed.state).toBe('ready')
     expect(await readFile(path.join(installed.path!, 'model.bin'), 'utf8')).toBe('fixture')
     expect(downloader.mock.calls[0]?.[1]).toMatch(/download\.bin$/)
@@ -143,11 +142,11 @@ describe('RuntimeAssetService', () => {
       target: 'mac-arm64',
       ...deps,
     })
-    const first = service.install('tunnel-client')
-    const second = service.install('tunnel-client')
+    const first = service.install('whisper-model')
+    const second = service.install('whisper-model')
     expect(second).not.toBe(first)
-    await vi.waitFor(async () => expect((await service.status('tunnel-client')).state).toBe('downloading'))
-    expect(service.cancel('tunnel-client')).toBe(true)
+    await vi.waitFor(async () => expect((await service.status('whisper-model')).state).toBe('downloading'))
+    expect(service.cancel('whisper-model')).toBe(true)
     await expect(first).resolves.toMatchObject({ state: 'failed', error: expect.stringMatching(/cancel/i) })
     await expect(second).resolves.toMatchObject({ state: 'failed', error: expect.stringMatching(/cancel/i) })
     expect(deps.downloader).toHaveBeenCalledTimes(1)
@@ -174,9 +173,9 @@ describe('RuntimeAssetService', () => {
       target: 'mac-arm64',
       ...deps,
     })
-    const install = service.install('tunnel-client')
-    await vi.waitFor(async () => expect((await service.status('tunnel-client')).state).toBe('downloading'))
-    expect(service.cancel('tunnel-client')).toBe(true)
+    const install = service.install('whisper-model')
+    await vi.waitFor(async () => expect((await service.status('whisper-model')).state).toBe('downloading'))
+    expect(service.cancel('whisper-model')).toBe(true)
     await expect(install).resolves.toMatchObject({ state: 'failed', error: 'Runtime asset installation cancelled' })
   })
 
@@ -189,9 +188,9 @@ describe('RuntimeAssetService', () => {
       ...deps,
     })
     const firstController = new AbortController()
-    const first = service.install('tunnel-client', firstController.signal)
-    const second = service.install('tunnel-client')
-    await vi.waitFor(async () => expect((await service.status('tunnel-client')).state).toBe('downloading'))
+    const first = service.install('whisper-model', firstController.signal)
+    const second = service.install('whisper-model')
+    await vi.waitFor(async () => expect((await service.status('whisper-model')).state).toBe('downloading'))
 
     firstController.abort(new Error('first waiter stopped'))
     await expect(first).rejects.toThrow('first waiter stopped')
@@ -240,14 +239,14 @@ describe('RuntimeAssetService', () => {
       downloader,
     })
     const firstController = new AbortController()
-    const first = service.install('tunnel-client', firstController.signal)
-    await vi.waitFor(async () => expect((await service.status('tunnel-client')).state).toBe('downloading'))
+    const first = service.install('whisper-model', firstController.signal)
+    await vi.waitFor(async () => expect((await service.status('whisper-model')).state).toBe('downloading'))
 
     firstController.abort(new Error('first waiter stopped'))
     await expect(first).rejects.toThrow('first waiter stopped')
     await oldDownloadAbortObserved
 
-    const retry = service.install('tunnel-client')
+    const retry = service.install('whisper-model')
     expect(downloader).toHaveBeenCalledTimes(1)
 
     releaseOldDownload()
@@ -266,10 +265,10 @@ describe('RuntimeAssetService', () => {
       ...deps,
     })
 
-    await service.status('tunnel-client')
+    await service.status('whisper-model')
     expect(onStatusChanged).not.toHaveBeenCalled()
 
-    await service.install('tunnel-client')
+    await service.install('whisper-model')
     expect(onStatusChanged.mock.calls.map(([status]) => status.state)).toEqual([
       'downloading',
       'downloading',
@@ -279,10 +278,10 @@ describe('RuntimeAssetService', () => {
     ])
 
     onStatusChanged.mockClear()
-    await service.status('tunnel-client')
+    await service.status('whisper-model')
     expect(onStatusChanged).not.toHaveBeenCalled()
 
-    await service.remove('tunnel-client')
+    await service.remove('whisper-model')
     expect(onStatusChanged.mock.calls.map(([status]) => status.state)).toEqual(['removing', 'not-installed'])
   })
 
@@ -294,7 +293,7 @@ describe('RuntimeAssetService', () => {
       target: 'mac-arm64',
       ...deps,
     })
-    await expect(service.install('tunnel-client')).resolves.toMatchObject({
+    await expect(service.install('whisper-model')).resolves.toMatchObject({
       state: 'failed',
       error: expect.stringMatching(/disk space/i),
     })
@@ -310,7 +309,7 @@ describe('RuntimeAssetService', () => {
       ...deps,
     })
 
-    await expect(service.install('tunnel-client')).resolves.toMatchObject({
+    await expect(service.install('whisper-model')).resolves.toMatchObject({
       state: 'failed',
       error: expect.stringMatching(/need .* bytes/i),
     })
@@ -325,13 +324,13 @@ describe('RuntimeAssetService', () => {
       target: 'mac-arm64',
       ...deps,
     })
-    const installed = await service.install('tunnel-client')
+    const installed = await service.install('whisper-model')
     await writeFile(path.join(installed.path!, 'bin/tool'), 'tampered')
-    expect(await service.status('tunnel-client')).toMatchObject({
+    expect(await service.status('whisper-model')).toMatchObject({
       state: 'corrupt',
       error: expect.stringMatching(/verification/i),
     })
-    const repaired = await service.repair('tunnel-client')
+    const repaired = await service.repair('whisper-model')
     expect(repaired.state).toBe('ready')
     expect(await readFile(path.join(repaired.path!, 'bin/tool'), 'utf8')).toBe('binary-1.0.0')
     expect(existsSync(`${repaired.path}.partial`)).toBe(false)
@@ -345,12 +344,12 @@ describe('RuntimeAssetService', () => {
       target: 'mac-arm64',
       ...deps,
     })
-    const installed = await service.install('tunnel-client')
+    const installed = await service.install('whisper-model')
     await writeFile(path.join(installed.path!, 'README'), 'tampered')
 
-    await expect(service.status('tunnel-client')).resolves.toMatchObject({ state: 'ready' })
-    await expect(service.acquireLease('tunnel-client')).rejects.toThrow(/verification/i)
-    await expect(service.status('tunnel-client')).resolves.toMatchObject({ state: 'corrupt' })
+    await expect(service.status('whisper-model')).resolves.toMatchObject({ state: 'ready' })
+    await expect(service.acquireLease('whisper-model')).rejects.toThrow(/verification/i)
+    await expect(service.status('whisper-model')).resolves.toMatchObject({ state: 'corrupt' })
   })
 
   it('does not hash same-size critical tamper passively but rejects it at lease acquisition', async () => {
@@ -361,11 +360,11 @@ describe('RuntimeAssetService', () => {
       target: 'mac-arm64',
       ...deps,
     })
-    const installed = await service.install('tunnel-client')
+    const installed = await service.install('whisper-model')
     await writeFile(path.join(installed.path!, 'bin/tool'), 'xxxxxxxxxxxx')
 
-    await expect(service.status('tunnel-client')).resolves.toMatchObject({ state: 'ready' })
-    await expect(service.acquireLease('tunnel-client')).rejects.toThrow(/verification/i)
+    await expect(service.status('whisper-model')).resolves.toMatchObject({ state: 'ready' })
+    await expect(service.acquireLease('whisper-model')).rejects.toThrow(/verification/i)
   })
 
   it('revalidates a generation for a new lease session after the previous lease is released', async () => {
@@ -376,12 +375,12 @@ describe('RuntimeAssetService', () => {
       target: 'mac-arm64',
       ...deps,
     })
-    const installed = await service.install('tunnel-client')
-    const lease = await service.acquireLease('tunnel-client')
+    const installed = await service.install('whisper-model')
+    const lease = await service.acquireLease('whisper-model')
     lease.release()
     await writeFile(path.join(installed.path!, 'README'), 'tampered')
 
-    await expect(service.acquireLease('tunnel-client')).rejects.toThrow(/verification/i)
+    await expect(service.acquireLease('whisper-model')).rejects.toThrow(/verification/i)
   })
 
   it('does not retain a full verification from a ready no-op install', async () => {
@@ -392,11 +391,11 @@ describe('RuntimeAssetService', () => {
       target: 'mac-arm64',
       ...deps,
     })
-    const installed = await service.install('tunnel-client')
-    await expect(service.install('tunnel-client')).resolves.toMatchObject({ state: 'ready' })
+    const installed = await service.install('whisper-model')
+    await expect(service.install('whisper-model')).resolves.toMatchObject({ state: 'ready' })
     await writeFile(path.join(installed.path!, 'README'), 'tampered')
 
-    await expect(service.acquireLease('tunnel-client')).rejects.toThrow(/verification/i)
+    await expect(service.acquireLease('whisper-model')).rejects.toThrow(/verification/i)
   })
 
   it('single-flights full verification for concurrent leases of one generation', async () => {
@@ -415,9 +414,9 @@ describe('RuntimeAssetService', () => {
         return marker.files
       },
     })
-    const installed = await service.install('tunnel-client')
-    const first = service.acquireLease('tunnel-client')
-    const second = service.acquireLease('tunnel-client')
+    const installed = await service.install('whisper-model')
+    const first = service.acquireLease('whisper-model')
+    const second = service.acquireLease('whisper-model')
     const [firstLease, secondLease] = await Promise.all([first, second])
 
     expect(fullManifestCalls).toBe(1)
@@ -435,13 +434,13 @@ describe('RuntimeAssetService', () => {
       target: 'mac-arm64',
       ...deps,
     })
-    await service.install('tunnel-client')
-    const lease = await service.acquireLease('tunnel-client')
-    await expect(service.remove('tunnel-client')).rejects.toThrow(/leased/i)
+    await service.install('whisper-model')
+    const lease = await service.acquireLease('whisper-model')
+    await expect(service.remove('whisper-model')).rejects.toThrow(/leased/i)
     lease.release()
     lease.release()
-    await expect(service.remove('tunnel-client')).resolves.toEqual({ id: 'tunnel-client', state: 'not-installed' })
-    expect(await service.status('tunnel-client')).toEqual({ id: 'tunnel-client', state: 'not-installed' })
+    await expect(service.remove('whisper-model')).resolves.toEqual({ id: 'whisper-model', state: 'not-installed' })
+    expect(await service.status('whisper-model')).toEqual({ id: 'whisper-model', state: 'not-installed' })
   })
 
   it('does not replace a leased installation during repair', async () => {
@@ -452,20 +451,20 @@ describe('RuntimeAssetService', () => {
       target: 'mac-arm64',
       ...deps,
     })
-    const installed = await service.install('tunnel-client')
-    expect(await service.status('tunnel-client')).toMatchObject({ state: 'ready', path: installed.path })
-    const lease = await service.acquireLease('tunnel-client')
+    const installed = await service.install('whisper-model')
+    expect(await service.status('whisper-model')).toMatchObject({ state: 'ready', path: installed.path })
+    const lease = await service.acquireLease('whisper-model')
 
-    await expect(service.repair('tunnel-client')).rejects.toThrow(/leased/i)
+    await expect(service.repair('whisper-model')).rejects.toThrow(/leased/i)
 
-    expect(await service.status('tunnel-client')).toMatchObject({ state: 'ready', path: installed.path })
+    expect(await service.status('whisper-model')).toMatchObject({ state: 'ready', path: installed.path })
     expect(deps.downloader).toHaveBeenCalledTimes(1)
     expect(await readFile(path.join(installed.path!, 'bin/tool'), 'utf8')).toBe('binary-1.0.0')
-    await expect(service.remove('tunnel-client')).rejects.toThrow(/leased/i)
+    await expect(service.remove('whisper-model')).rejects.toThrow(/leased/i)
 
     lease.release()
-    expect(await service.status('tunnel-client')).toMatchObject({ state: 'ready', path: installed.path })
-    await expect(service.remove('tunnel-client')).resolves.toEqual({ id: 'tunnel-client', state: 'not-installed' })
+    expect(await service.status('whisper-model')).toMatchObject({ state: 'ready', path: installed.path })
+    await expect(service.remove('whisper-model')).resolves.toEqual({ id: 'whisper-model', state: 'not-installed' })
   })
 
   it('aborts repair when a lease wins after the initial repair check', async () => {
@@ -476,7 +475,7 @@ describe('RuntimeAssetService', () => {
       target: 'mac-arm64',
       ...deps,
     })
-    const installed = await service.install('tunnel-client')
+    const installed = await service.install('whisper-model')
     deps.downloader.mockClear()
 
     type StartInstall = (
@@ -496,18 +495,18 @@ describe('RuntimeAssetService', () => {
       })
     })
 
-    const repair = service.repair('tunnel-client')
+    const repair = service.repair('whisper-model')
     await startInstallReached
 
-    const lease = await service.acquireLease('tunnel-client')
+    const lease = await service.acquireLease('whisper-model')
     allowStartInstall()
 
     await expect(repair).rejects.toThrow(/leased/i)
     expect(deps.downloader).not.toHaveBeenCalled()
     expect(await readFile(path.join(installed.path!, 'bin/tool'), 'utf8')).toBe('binary-1.0.0')
-    expect(await service.status('tunnel-client')).toMatchObject({ state: 'ready', path: installed.path })
+    expect(await service.status('whisper-model')).toMatchObject({ state: 'ready', path: installed.path })
     expect(
-      JSON.parse(await readFile(path.join(userData, 'runtime-assets/tunnel-client/current.json'), 'utf8')).directory
+      JSON.parse(await readFile(path.join(userData, 'runtime-assets/whisper-model/current.json'), 'utf8')).directory
     ).toBe(path.basename(installed.path!))
 
     lease.release()
@@ -522,13 +521,13 @@ describe('RuntimeAssetService', () => {
       target: 'mac-arm64',
       ...deps,
     })
-    mutableRegistry['tunnel-client'] = definition('1.0.0')
-    const first = await service.install('tunnel-client')
-    const lease = await service.acquireLease('tunnel-client')
-    mutableRegistry['tunnel-client'] = definition('2.0.0')
-    await service.install('tunnel-client')
-    mutableRegistry['tunnel-client'] = definition('3.0.0')
-    await service.install('tunnel-client')
+    mutableRegistry['whisper-model'] = definition('1.0.0')
+    const first = await service.install('whisper-model')
+    const lease = await service.acquireLease('whisper-model')
+    mutableRegistry['whisper-model'] = definition('2.0.0')
+    await service.install('whisper-model')
+    mutableRegistry['whisper-model'] = definition('3.0.0')
+    await service.install('whisper-model')
 
     expect(existsSync(first.path!)).toBe(true)
     lease.release()
@@ -544,11 +543,11 @@ describe('RuntimeAssetService', () => {
       target: 'mac-arm64',
       ...deps,
     })
-    mutableRegistry['tunnel-client'] = definition('1.0.0')
-    await service.install('tunnel-client')
-    const lease = await service.acquireLease('tunnel-client')
+    mutableRegistry['whisper-model'] = definition('1.0.0')
+    await service.install('whisper-model')
+    const lease = await service.acquireLease('whisper-model')
 
-    mutableRegistry['tunnel-client'] = definition('2.0.0')
+    mutableRegistry['whisper-model'] = definition('2.0.0')
     type WritePointer = (id: RuntimeAssetId, name: string, pointer: { readonly directory: string }) => Promise<void>
     const internals = service as unknown as { writePointer: WritePointer }
     const originalWritePointer = internals.writePointer.bind(service)
@@ -568,9 +567,9 @@ describe('RuntimeAssetService', () => {
       return originalWritePointer(id, name, pointer)
     })
 
-    const install = service.install('tunnel-client')
+    const install = service.install('whisper-model')
     await currentWriteStarted
-    const newGeneration = path.join(userData, 'runtime-assets/tunnel-client/versions/2.0.0-mac-arm64')
+    const newGeneration = path.join(userData, 'runtime-assets/whisper-model/versions/2.0.0-mac-arm64')
     expect(existsSync(newGeneration)).toBe(true)
 
     lease.release()
@@ -592,12 +591,12 @@ describe('RuntimeAssetService', () => {
       ...deps,
     })
     for (const version of ['1.0.0', '2.0.0', '3.0.0']) {
-      mutableRegistry['tunnel-client'] = definition(version)
-      await service.install('tunnel-client')
+      mutableRegistry['whisper-model'] = definition(version)
+      await service.install('whisper-model')
     }
-    const versions = await readdir(path.join(userData, 'runtime-assets/tunnel-client/versions'))
+    const versions = await readdir(path.join(userData, 'runtime-assets/whisper-model/versions'))
     expect(versions.sort()).toEqual(['2.0.0-mac-arm64', '3.0.0-mac-arm64'])
-    expect(await service.status('tunnel-client')).toMatchObject({ state: 'ready', version: '3.0.0' })
+    expect(await service.status('whisper-model')).toMatchObject({ state: 'ready', version: '3.0.0' })
   })
 
   it('promotes a verified previous generation for an offline registry downgrade', async () => {
@@ -610,23 +609,23 @@ describe('RuntimeAssetService', () => {
       ...deps,
     })
 
-    mutableRegistry['tunnel-client'] = definition('1.0.0')
-    const first = await service.install('tunnel-client')
-    mutableRegistry['tunnel-client'] = definition('2.0.0')
-    const second = await service.install('tunnel-client')
+    mutableRegistry['whisper-model'] = definition('1.0.0')
+    const first = await service.install('whisper-model')
+    mutableRegistry['whisper-model'] = definition('2.0.0')
+    const second = await service.install('whisper-model')
     deps.downloader.mockClear()
 
-    mutableRegistry['tunnel-client'] = definition('1.0.0')
-    await expect(service.status('tunnel-client')).resolves.toMatchObject({
+    mutableRegistry['whisper-model'] = definition('1.0.0')
+    await expect(service.status('whisper-model')).resolves.toMatchObject({
       state: 'ready',
       version: '1.0.0',
       path: first.path,
     })
     expect(deps.downloader).not.toHaveBeenCalled()
 
-    const current = JSON.parse(await readFile(path.join(userData, 'runtime-assets/tunnel-client/current.json'), 'utf8'))
+    const current = JSON.parse(await readFile(path.join(userData, 'runtime-assets/whisper-model/current.json'), 'utf8'))
     const previous = JSON.parse(
-      await readFile(path.join(userData, 'runtime-assets/tunnel-client/previous.json'), 'utf8')
+      await readFile(path.join(userData, 'runtime-assets/whisper-model/previous.json'), 'utf8')
     )
     expect(current.directory).toBe(path.basename(first.path!))
     expect(previous.directory).toBe(path.basename(second.path!))
@@ -642,11 +641,11 @@ describe('RuntimeAssetService', () => {
       ...deps,
     })
 
-    mutableRegistry['tunnel-client'] = definition('1.0.0')
-    const first = await service.install('tunnel-client')
-    mutableRegistry['tunnel-client'] = definition('2.0.0')
-    await service.install('tunnel-client')
-    mutableRegistry['tunnel-client'] = definition('1.0.0')
+    mutableRegistry['whisper-model'] = definition('1.0.0')
+    const first = await service.install('whisper-model')
+    mutableRegistry['whisper-model'] = definition('2.0.0')
+    await service.install('whisper-model')
+    mutableRegistry['whisper-model'] = definition('1.0.0')
 
     type WritePointer = (id: RuntimeAssetId, name: string, pointer: { readonly directory: string }) => Promise<void>
     const internals = service as unknown as { writePointer: WritePointer }
@@ -667,11 +666,11 @@ describe('RuntimeAssetService', () => {
       return originalWritePointer(id, name, pointer)
     })
 
-    const promotion = service.status('tunnel-client')
+    const promotion = service.status('whisper-model')
     await currentWriteStarted
 
     let removalSettled = false
-    const removal = service.remove('tunnel-client').then((result) => {
+    const removal = service.remove('whisper-model').then((result) => {
       removalSettled = true
       return result
     })
@@ -680,7 +679,7 @@ describe('RuntimeAssetService', () => {
 
     allowCurrentWrite()
     await expect(promotion).resolves.toMatchObject({ state: 'ready', path: first.path })
-    await expect(removal).resolves.toEqual({ id: 'tunnel-client', state: 'not-installed' })
+    await expect(removal).resolves.toEqual({ id: 'whisper-model', state: 'not-installed' })
   })
 
   it('does not use an invalid previous generation as a downgrade fallback', async () => {
@@ -693,15 +692,15 @@ describe('RuntimeAssetService', () => {
       ...deps,
     })
 
-    mutableRegistry['tunnel-client'] = definition('1.0.0')
-    await service.install('tunnel-client')
-    mutableRegistry['tunnel-client'] = definition('2.0.0')
-    const current = await service.install('tunnel-client')
-    await writeFile(path.join(userData, 'runtime-assets/tunnel-client/versions/1.0.0-mac-arm64/bin/tool'), 'tampered')
+    mutableRegistry['whisper-model'] = definition('1.0.0')
+    await service.install('whisper-model')
+    mutableRegistry['whisper-model'] = definition('2.0.0')
+    const current = await service.install('whisper-model')
+    await writeFile(path.join(userData, 'runtime-assets/whisper-model/versions/1.0.0-mac-arm64/bin/tool'), 'tampered')
     deps.downloader.mockClear()
 
-    mutableRegistry['tunnel-client'] = definition('1.0.0')
-    await expect(service.status('tunnel-client')).resolves.toMatchObject({
+    mutableRegistry['whisper-model'] = definition('1.0.0')
+    await expect(service.status('whisper-model')).resolves.toMatchObject({
       state: 'corrupt',
       path: current.path,
       error: expect.stringMatching(/pinned registry/i),
@@ -726,7 +725,7 @@ describe('RuntimeAssetService', () => {
 })
 
 describe('RuntimeAssetService independent updates', () => {
-  const root = () => path.join(userData, 'runtime-assets/tunnel-client')
+  const root = () => path.join(userData, 'runtime-assets/whisper-model')
   const pointer = async (name: 'current' | 'previous') =>
     (JSON.parse(await readFile(path.join(root(), `${name}.json`), 'utf8')) as { directory: string }).directory
 
@@ -742,7 +741,7 @@ describe('RuntimeAssetService independent updates', () => {
         target: 'mac-arm64',
         acceptedDefinition: (id, version) => {
           if (unavailable) throw new Error('metadata unavailable')
-          return id === 'tunnel-client' ? (accepted.get(version) ?? null) : null
+          return id === 'whisper-model' ? (accepted.get(version) ?? null) : null
         },
         onStatusChanged,
         ...deps,
@@ -769,7 +768,7 @@ describe('RuntimeAssetService independent updates', () => {
 
   it('keeps the active installation ready while a newer candidate is known or fails', async () => {
     const { service, deps, commit } = updatable()
-    const installed = await service.install('tunnel-client')
+    const installed = await service.install('whisper-model')
     deps.downloader.mockImplementationOnce(async (_target, destination) => {
       await writeFile(destination, 'tampered')
       return { bytes: 8, digest: 'wrong', finalUrl: 'https://fixture.test/runtime.zip' }
@@ -778,7 +777,7 @@ describe('RuntimeAssetService independent updates', () => {
     const failure = await service.update(definition('2.0.0'), { commit }).catch((error) => error)
     expect(failure).toMatchObject({ name: 'RuntimeAssetUpdateError', code: 'integrity' })
     expect(commit).not.toHaveBeenCalled()
-    expect(await service.status('tunnel-client')).toMatchObject({
+    expect(await service.status('whisper-model')).toMatchObject({
       state: 'ready',
       version: '1.0.0',
       path: installed.path,
@@ -789,7 +788,7 @@ describe('RuntimeAssetService independent updates', () => {
 
   it('validates in staging, persists metadata, then swaps current and previous', async () => {
     const { service, commit, onStatusChanged } = updatable()
-    const installed = await service.install('tunnel-client')
+    const installed = await service.install('whisper-model')
     onStatusChanged.mockClear()
     const validate = vi.fn(async (installation: string) => {
       expect(installation).not.toContain(`${path.sep}versions${path.sep}`)
@@ -816,7 +815,7 @@ describe('RuntimeAssetService independent updates', () => {
     ])
     // The active installation's status is never replaced by update progress.
     expect(onStatusChanged.mock.calls.map(([status]) => status.state)).toEqual(['ready'])
-    expect(await service.previousInstallation('tunnel-client')).toMatchObject({ version: '1.0.0' })
+    expect(await service.previousInstallation('whisper-model')).toMatchObject({ version: '1.0.0' })
   })
 
   it('preserves the active installation on insufficient disk space', async () => {
@@ -824,18 +823,18 @@ describe('RuntimeAssetService independent updates', () => {
     await writeFile(path.join(userData, 'marker'), '')
     // Install first with enough space, then update with too little.
     deps.availableBytes.mockResolvedValueOnce(100_000_000)
-    await service.install('tunnel-client')
+    await service.install('whisper-model')
     deps.downloader.mockClear()
 
     await expect(service.update(definition('2.0.0'), { commit })).rejects.toMatchObject({ code: 'disk-space' })
     expect(deps.downloader).not.toHaveBeenCalled()
-    expect(await service.status('tunnel-client')).toMatchObject({ state: 'ready', version: '1.0.0' })
+    expect(await service.status('whisper-model')).toMatchObject({ state: 'ready', version: '1.0.0' })
   })
 
   it('cancels a download without touching the active installation or blocking leases', async () => {
     const { service, deps } = updatable({ delayDownload: true })
     deps.unblock()
-    await service.install('tunnel-client')
+    await service.install('whisper-model')
     // A second instance over the same profile whose download stays blocked until cancelled.
     const blocked = updatable({ delayDownload: true })
     const commit = blocked.commit
@@ -843,11 +842,11 @@ describe('RuntimeAssetService independent updates', () => {
     const pending = blocked.service.update(definition('2.0.0'), { commit, signal: controller.signal })
     // Same userData: the second instance sees the first installation.
     await vi.waitFor(() => expect(blocked.deps.downloader).toHaveBeenCalled())
-    const lease = await blocked.service.acquireLease('tunnel-client')
+    const lease = await blocked.service.acquireLease('whisper-model')
     controller.abort(new Error('user cancelled'))
 
     await expect(pending).rejects.toMatchObject({ code: 'cancelled' })
-    expect(await blocked.service.status('tunnel-client')).toMatchObject({ state: 'ready', version: '1.0.0' })
+    expect(await blocked.service.status('whisper-model')).toMatchObject({ state: 'ready', version: '1.0.0' })
     expect(await tempEntries()).toEqual([])
     lease.release()
     expect(commit).not.toHaveBeenCalled()
@@ -855,7 +854,7 @@ describe('RuntimeAssetService independent updates', () => {
 
   it('rejects an incompatible candidate before it is activated', async () => {
     const { service, commit } = updatable()
-    await service.install('tunnel-client')
+    await service.install('whisper-model')
     await expect(
       service.update(definition('2.0.0'), {
         commit,
@@ -871,19 +870,19 @@ describe('RuntimeAssetService independent updates', () => {
 
   it('keeps the previous pointer usable when metadata persistence fails', async () => {
     const { service, commit } = updatable()
-    await service.install('tunnel-client')
+    await service.install('whisper-model')
     commit.mockImplementationOnce(() => {
       throw new Error('database is locked')
     })
     await expect(service.update(definition('2.0.0'), { commit })).rejects.toMatchObject({ code: 'failed' })
     expect(await pointer('current')).toBe('1.0.0-mac-arm64')
     expect(await readdir(path.join(root(), 'versions'))).toEqual(['1.0.0-mac-arm64'])
-    expect(await service.status('tunnel-client')).toMatchObject({ state: 'ready', version: '1.0.0' })
+    expect(await service.status('whisper-model')).toMatchObject({ state: 'ready', version: '1.0.0' })
   })
 
   it('recovers consistently when the process stops between pointer writes', async () => {
     const { service, commit, restart } = updatable()
-    await service.install('tunnel-client')
+    await service.install('whisper-model')
     type WritePointer = (id: RuntimeAssetId, name: string, pointer: { readonly directory: string }) => Promise<void>
     const internals = service as unknown as { writePointer: WritePointer }
     const original = internals.writePointer.bind(service)
@@ -895,18 +894,18 @@ describe('RuntimeAssetService independent updates', () => {
 
     // A new process sees the old active version; accepted metadata without an installation is harmless.
     const restarted = restart()
-    expect(await restarted.status('tunnel-client')).toMatchObject({ state: 'ready', version: '1.0.0' })
+    expect(await restarted.status('whisper-model')).toMatchObject({ state: 'ready', version: '1.0.0' })
   })
 
   it('recognizes an activated dynamic version after an offline restart', async () => {
     const { service, commit, restart, deps } = updatable()
-    await service.install('tunnel-client')
+    await service.install('whisper-model')
     await service.update(definition('2.0.0'), { commit })
     deps.downloader.mockClear()
 
     const restarted = restart()
-    expect(await restarted.status('tunnel-client')).toMatchObject({ state: 'ready', version: '2.0.0' })
-    const lease = await restarted.acquireLease('tunnel-client')
+    expect(await restarted.status('whisper-model')).toMatchObject({ state: 'ready', version: '2.0.0' })
+    const lease = await restarted.acquireLease('whisper-model')
     expect(lease.path).toContain('2.0.0-mac-arm64')
     lease.release()
     expect(deps.downloader).not.toHaveBeenCalled()
@@ -914,30 +913,30 @@ describe('RuntimeAssetService independent updates', () => {
 
   it('rolls back offline after full verification and refuses a tampered previous version', async () => {
     const { service, commit, deps } = updatable()
-    await service.install('tunnel-client')
+    await service.install('whisper-model')
     await service.update(definition('2.0.0'), { commit })
     deps.downloader.mockClear()
 
-    await expect(service.rollback('tunnel-client')).resolves.toMatchObject({ state: 'ready', version: '1.0.0' })
+    await expect(service.rollback('whisper-model')).resolves.toMatchObject({ state: 'ready', version: '1.0.0' })
     expect(await pointer('current')).toBe('1.0.0-mac-arm64')
     expect(await pointer('previous')).toBe('2.0.0-mac-arm64')
     expect(deps.downloader).not.toHaveBeenCalled()
 
     await writeFile(path.join(root(), 'versions/2.0.0-mac-arm64/README'), 'tampered')
-    await expect(service.rollback('tunnel-client')).rejects.toMatchObject({ code: 'rollback-unavailable' })
-    expect(await service.status('tunnel-client')).toMatchObject({ state: 'ready', version: '1.0.0' })
+    await expect(service.rollback('whisper-model')).rejects.toMatchObject({ code: 'rollback-unavailable' })
+    expect(await service.status('whisper-model')).toMatchObject({ state: 'ready', version: '1.0.0' })
   })
 
   it('reports no rollback without a distinct previous installation', async () => {
     const { service } = updatable()
-    await service.install('tunnel-client')
-    expect(await service.previousInstallation('tunnel-client')).toBeNull()
-    await expect(service.rollback('tunnel-client')).rejects.toMatchObject({ code: 'rollback-unavailable' })
+    await service.install('whisper-model')
+    expect(await service.previousInstallation('whisper-model')).toBeNull()
+    await expect(service.rollback('whisper-model')).rejects.toMatchObject({ code: 'rollback-unavailable' })
   })
 
   it('serializes concurrent updates', async () => {
     const { service, commit, deps } = updatable()
-    await service.install('tunnel-client')
+    await service.install('whisper-model')
     let active = 0
     let overlap = false
     const original = deps.downloader.getMockImplementation()!
@@ -965,26 +964,26 @@ describe('RuntimeAssetService independent updates', () => {
 
   it('keeps a leased older version until its connection releases it', async () => {
     const { service, commit } = updatable()
-    const first = await service.install('tunnel-client')
-    const lease = await service.acquireLease('tunnel-client')
+    const first = await service.install('whisper-model')
+    const lease = await service.acquireLease('whisper-model')
     await service.update(definition('2.0.0'), { commit })
     await service.update(definition('3.0.0'), { commit })
 
     expect(existsSync(first.path!)).toBe(true)
-    expect(service.leasedInstallations('tunnel-client')).toEqual([{ version: '1.0.0', path: first.path }])
+    expect(service.leasedInstallations('whisper-model')).toEqual([{ version: '1.0.0', path: first.path }])
     lease.release()
     await vi.waitFor(() => expect(existsSync(first.path!)).toBe(false))
-    expect(service.leasedInstallations('tunnel-client')).toEqual([])
+    expect(service.leasedInstallations('whisper-model')).toEqual([])
   })
 
   it('repairs a dynamic version by reinstalling that accepted version, not the embedded pin', async () => {
     const { service, commit, deps } = updatable()
-    await service.install('tunnel-client')
+    await service.install('whisper-model')
     const updated = await service.update(definition('2.0.0'), { commit })
     // Same-size tamper keeps passive status ready; an explicit repair still reinstalls 2.0.0.
     await writeFile(path.join(updated.path!, 'bin/tool'), 'tampered-bytes')
     deps.downloader.mockClear()
-    await expect(service.repair('tunnel-client')).resolves.toMatchObject({ state: 'ready', version: '2.0.0' })
+    await expect(service.repair('whisper-model')).resolves.toMatchObject({ state: 'ready', version: '2.0.0' })
     expect(deps.downloader.mock.calls[0][0].hash.digest).toBe('archive-2.0.0')
   })
 
@@ -992,26 +991,26 @@ describe('RuntimeAssetService independent updates', () => {
     const { service, commit, deps } = updatable()
     const updated = await service.update(definition('2.0.0'), { commit })
     await writeFile(path.join(updated.path!, 'bin/tool'), 'tampered: different size')
-    expect(await service.status('tunnel-client')).toMatchObject({ state: 'corrupt', path: updated.path })
+    expect(await service.status('whisper-model')).toMatchObject({ state: 'corrupt', path: updated.path })
     deps.downloader.mockClear()
 
-    await expect(service.install('tunnel-client')).resolves.toMatchObject({ state: 'ready', version: '2.0.0' })
+    await expect(service.install('whisper-model')).resolves.toMatchObject({ state: 'ready', version: '2.0.0' })
     expect(deps.downloader.mock.calls[0][0].hash.digest).toBe('archive-2.0.0')
   })
 
   it('fails status without promotion when accepted metadata is unavailable', async () => {
     const { service, commit, setUnavailable, deps } = updatable()
-    await service.install('tunnel-client')
+    await service.install('whisper-model')
     await service.update(definition('2.0.0'), { commit })
     deps.downloader.mockClear()
 
     setUnavailable(true)
-    await expect(service.status('tunnel-client')).rejects.toThrow('metadata unavailable')
-    await expect(service.install('tunnel-client')).rejects.toThrow('metadata unavailable')
+    await expect(service.status('whisper-model')).rejects.toThrow('metadata unavailable')
+    await expect(service.install('whisper-model')).rejects.toThrow('metadata unavailable')
     expect(await pointer('current')).toBe('2.0.0-mac-arm64')
     expect(deps.downloader).not.toHaveBeenCalled()
     setUnavailable(false)
-    expect(await service.status('tunnel-client')).toMatchObject({ state: 'ready', version: '2.0.0' })
+    expect(await service.status('whisper-model')).toMatchObject({ state: 'ready', version: '2.0.0' })
   })
 
   it('publishes first-install progress through status when nothing is installed', async () => {
@@ -1028,11 +1027,11 @@ describe('RuntimeAssetService independent updates', () => {
   it('does not remove an asset while an update is active', async () => {
     const { service, deps } = updatable({ delayDownload: true })
     deps.unblock()
-    await service.install('tunnel-client')
+    await service.install('whisper-model')
     const blocked = updatable({ delayDownload: true })
     const pending = blocked.service.update(definition('2.0.0'), { commit: blocked.commit })
     await vi.waitFor(() => expect(blocked.deps.downloader).toHaveBeenCalled())
-    await expect(blocked.service.remove('tunnel-client')).rejects.toThrow(/active/)
+    await expect(blocked.service.remove('whisper-model')).rejects.toThrow(/active/)
     blocked.deps.unblock()
     await expect(pending).resolves.toMatchObject({ version: '2.0.0' })
   })

@@ -79,7 +79,6 @@ export interface ConversationDispatchServiceDeps {
   openConversation(conversation: Conversation, focus: boolean): void
   notifyChanged(conversationId: string): void
   reportStartFailure(conversationId: string, error: string): void
-  isReserved(conversationId: string): boolean
   isMigrating(conversationId: string): boolean
   text(key: string, params?: Record<string, string>): string
 }
@@ -92,7 +91,6 @@ export type ConversationDispatchErrorCode =
   | 'source-archived'
   | 'conversation-migrating'
   | 'unsupported-layout'
-  | 'source-reserved'
   | 'source-revision-unavailable'
   | 'request-conflict'
   | 'destination-deleted'
@@ -214,11 +212,6 @@ export function createConversationDispatchService(deps: ConversationDispatchServ
       throw new ConversationDispatchError(
         'unsupported-layout',
         'Multi-repository conversations cannot start other conversations yet.'
-      )
-    if (placement === 'shared' && deps.isReserved(sourceConversationId))
-      throw new ConversationDispatchError(
-        'source-reserved',
-        'A review loop is using this checkout. Use a separate worktree or wait for the loop to finish.'
       )
     return source
   }
@@ -897,19 +890,17 @@ export async function listConversationDispatchWorkspaces(): Promise<Conversation
 }
 
 async function buildDefaultConversationDispatchService(): Promise<ConversationDispatchService> {
-  const [store, chat, workspace, git, windowIpc, i18n, migration, chatGptWeb, settings, dispatchStore] =
-    await Promise.all([
-      import('./store'),
-      import('./chat/service'),
-      import('./workspace-service'),
-      import('./git-service'),
-      import('./window-ipc'),
-      import('./i18n'),
-      import('./conversation-migration/store'),
-      import('./chat/chatgpt-web/manager'),
-      import('./conversation-dispatch-settings'),
-      import('./conversation-dispatch-store'),
-    ])
+  const [store, chat, workspace, git, windowIpc, i18n, migration, settings, dispatchStore] = await Promise.all([
+    import('./store'),
+    import('./chat/service'),
+    import('./workspace-service'),
+    import('./git-service'),
+    import('./window-ipc'),
+    import('./i18n'),
+    import('./conversation-migration/store'),
+    import('./conversation-dispatch-settings'),
+    import('./conversation-dispatch-store'),
+  ])
   return createConversationDispatchService({
     getConversation: (id) => store.getConversation(id),
     resolveSettings: (sourceConversationId, requested) =>
@@ -985,7 +976,6 @@ async function buildDefaultConversationDispatchService(): Promise<ConversationDi
     openConversation: (conversation, focus) => windowIpc.broadcast('conversation:open', { conversation, focus }),
     notifyChanged: (conversationId) => windowIpc.broadcast('conversation-dispatch:changed', { conversationId }),
     reportStartFailure: chat.reportConversationDispatchStartFailure,
-    isReserved: (conversationId) => !!chatGptWeb.projectEnvironmentLockFor(conversationId),
     isMigrating: (conversationId) => !!migration.incompleteMigrationForConversation(conversationId),
     text: (key, params) => i18n.tFor(store.getLocale(), 'prompts')(key, params),
   })

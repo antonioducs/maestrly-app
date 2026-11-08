@@ -45,11 +45,11 @@ that isolation is required.
 | React renderer to preload/main | IDs, paths, settings, messages, tool intent | Context isolation, no Node integration, named preload API, schema/main-process validation |
 | Main process to SQLite/filesystem | Persisted content, migrations, assets, reset/export operations | Transactions, savepoints, validated paths, recoverable staging, explicit confirmation |
 | Main process to Git/terminal | Repositories, arguments, environment, command output | Structured process arguments, project binding, permission broker, lifecycle ownership |
-| Main process to embedded browser | URLs, cookies, downloads, site permissions, popups | Separate partition, navigation guards, denied permissions, isolated companion/OAuth surfaces |
+| Main process to embedded browser | URLs, cookies, downloads, site permissions, popups | Separate partition, navigation guards, denied permissions, isolated OAuth surfaces |
 | Main process to MCP/skills | Tool schemas, commands, files, remote responses, installed content | Explicit configuration/install, lazy lifecycle, schema validation, permission and project scope |
 | Main process to AI providers | Prompt, context, tool results, attachments, account state | User-enabled provider, host-owned tools, permission modes, redaction, bounded context |
 | Main process to Local ML | Model/runtime archive and inference payload | Target manifest, critical-file verification, utility process, package checks |
-| Loopback clients to local services | Editor or ChatGPT Web bridge requests | Loopback bind, random capability token, session lifecycle, restricted host/path |
+| Loopback clients to local services | Embedded editor requests | Loopback bind, random capability token, session lifecycle, restricted host/path |
 | Fleet environment to gateway and other environments | Bot calls, screen input, network traffic, provisioned secrets | Separate container, home volume, keyring and control token per environment; per-bot gateway token; screens streamed only through the authenticated control server; screen tickets and takeover |
 
 ## Renderer and IPC boundary
@@ -63,8 +63,8 @@ The primary trusted renderer, floating windows, and some tool panels currently
 use `sandbox: false` because their preloads and native integrations need Electron
 capabilities. This increases the importance of context isolation, navigation
 blocking, dependency hygiene, content sanitization, and the narrow preload API.
-OAuth popups and ChatGPT visual/companion surfaces use sandboxed, isolated
-sessions with stricter origin and permission controls.
+OAuth popups use sandboxed, isolated sessions with stricter origin and
+permission controls.
 
 New renderer APIs should expose one domain operation, not a generic IPC sender,
 SQL executor, filesystem primitive, process launcher, or credential accessor.
@@ -274,9 +274,8 @@ permission requests by default, and application-owned OAuth/preview surfaces
 guard popups and navigation. Web content remains untrusted; do not expose preload
 capabilities to arbitrary pages.
 
-The embedded VS Code server and ChatGPT Web bridge bind to loopback and use
-random tokens. The editor token file receives best-effort owner-only permissions.
-The ChatGPT bridge uses a random per-session path and validates loopback hosts.
+The embedded VS Code server binds to loopback and uses a random token. The
+editor token file receives best-effort owner-only permissions.
 The Google Antigravity tool endpoint binds to `127.0.0.1`, rejects non-loopback
 `Host` headers, and requires a random bearer token per ACP session; each token
 exposes only the tools that session was granted, and every call still passes
@@ -1083,11 +1082,6 @@ or access to its transcript. The user can manage entries while assistant access
 is disabled. Disabling personal memory prevents new tool access, context
 injection and background writes; it cannot retract data already sent to a
 provider or erase historical messages.
-
-Companion has a separate personal-memory capability, disabled by default.
-Project-memory consent does not grant personal access. Read and Write are
-session-scoped, and context delivery must respect the same capability as tools.
-Revoked or ended sessions cannot continue reading or writing the collection.
 
 Personal background extraction is independently opt-in and sends local
 conversation excerpts to the selected model. Each accepted operation must cite

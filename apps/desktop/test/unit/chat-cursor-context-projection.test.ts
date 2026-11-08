@@ -291,7 +291,6 @@ describe('Cursor context projection uses the runner resume boundary', () => {
       role: 'user',
       parts: [{ type: 'text', id: 'r1u', text: 'findings round um '.repeat(200) }],
       internal: true,
-      source: 'chatgpt-web-review-loop',
       executionScope: scope('exec-a', 1),
       createdAt: Date.now() + 10,
     } as never)
@@ -301,7 +300,6 @@ describe('Cursor context projection uses the runner resume boundary', () => {
       role: 'assistant',
       parts: [{ type: 'text', id: 'r1a', text: 'fix round um '.repeat(200) }],
       model: { providerId: 'builtin_cursor_subscription', modelId: 'composer-2.5' },
-      source: 'chatgpt-web-review-loop',
       executionScope: scope('exec-a', 1),
       createdAt: Date.now() + 11,
     } as never)
@@ -311,7 +309,6 @@ describe('Cursor context projection uses the runner resume boundary', () => {
       role: 'user',
       parts: [{ type: 'text', id: 'r2u', text: 'findings round dois '.repeat(200) }],
       internal: true,
-      source: 'chatgpt-web-review-loop',
       executionScope: scope('exec-b', 2),
       createdAt: Date.now() + 12,
     } as never)
@@ -321,7 +318,6 @@ describe('Cursor context projection uses the runner resume boundary', () => {
       role: 'assistant',
       parts: [{ type: 'text', id: 'r2a', text: 'fix round dois '.repeat(200) }],
       model: { providerId: 'builtin_cursor_subscription', modelId: 'composer-2.5' },
-      source: 'chatgpt-web-review-loop',
       executionScope: scope('exec-b', 2),
       createdAt: Date.now() + 13,
     } as never)

@@ -6,7 +6,7 @@
 import type { ChatModelFallbackConfigV1, ChatSubscriptionFailoverEvent } from '../../../shared/chat'
 import { getConvUiPrefs } from '../../store'
 import { autonomousProviderAllowed } from '../autonomous'
-import { getProvider, isChatGptWebProvider, isSubscriptionProvider } from '../catalog'
+import { getProvider, isSubscriptionProvider } from '../catalog'
 import { hasApiKey } from '../credentials'
 import { freezeFailoverChain } from '../subscription-failover/config'
 import { getSubscriptionFailoverRouter, type SubscriptionFailoverRouter } from '../subscription-failover/router'
@@ -43,10 +43,9 @@ export const defaultModelFallbackDeps: ModelFallbackDeps = {
   config: getModelFallbackConfig,
   router: getSubscriptionFailoverRouter,
   accountChainOf: (providerId) => (hasAccountFailoverLayer(providerId) ? freezeFailoverChain(providerId) : []),
-  // A fallback must be able to run unattended: a BYOK provider needs its key, and the ChatGPT web companion never can.
+  // A fallback must be able to run unattended: a BYOK provider needs its key.
   isProviderUsable: (providerId, conversationId) =>
     Boolean(getProvider(providerId)) &&
-    !isChatGptWebProvider(providerId) &&
     (isSubscriptionProvider(providerId) || hasApiKey(providerId)) &&
     autonomousProviderAllowed(providerId, conversationId ?? ''),
   classify: (error) => classifyModelFailure(error),

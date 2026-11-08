@@ -151,9 +151,9 @@ and [effort guidance](https://platform.claude.com/docs/en/build-with-claude/effo
 ## Runtimes and icons
 
 Optional provider assets can be installed through app settings or the scripts
-`fetch-codex-runtime.mjs`, `fetch-github-copilot-runtime.mjs`, and
-`fetch-tunnel-client.mjs` in `scripts/`. These select a target and verify pinned
-metadata or integrity. For models and offline setup, see the
+`fetch-codex-runtime.mjs` and `fetch-github-copilot-runtime.mjs` in `scripts/`.
+These select a target and verify pinned metadata or integrity. For models and
+offline setup, see the
 [Local ML guide](../apps/desktop/runtime-assets/local-ml/README.md).
 
 The Codex pin in `apps/desktop/src/main/runtime-assets/registry.ts`, the

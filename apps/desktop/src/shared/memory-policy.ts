@@ -5,10 +5,6 @@ export const MEMORY_AUTO_RECLAIM_KEY = 'memory.autoReclaim'
 export const CHAT_VIEW_COLD_TTL_MS = 5 * 60_000
 export const BROWSER_TAB_COLD_TTL_MS = 10 * 60_000
 export const PANEL_COLD_TTL_MS = 10 * 60_000
-// ChatGPT is expensive to rematerialize (remote navigation + SPA hydration). Hidden views are already
-// background-throttled, so keep a small warm set longer and reserve destructive eviction for genuinely
-// cold views or hard memory pressure.
-export const CHATGPT_VIEW_COLD_TTL_MS = 30 * 60_000
 export const VSCODE_VIEW_COLD_TTL_MS = 15 * 60_000
 export const VSCODE_SERVER_IDLE_TTL_MS = 15 * 60_000
 export const WORKER_IDLE_TTL_MS = 5 * 60_000
@@ -17,7 +13,6 @@ export const TOOL_IMAGE_CACHE_TTL_MS = 15 * 60_000
 
 export const MAX_SAFE_HOT_CHAT_VIEWS = 4
 export const MAX_MOUNTED_CHAT_VIEWS = 8
-export const MAX_HIDDEN_HOT_CHATGPT_VIEWS = 2
 
 export const CHAT_HISTORY_PAGE_SIZE = 100
 export const CHAT_HISTORY_MAX_MESSAGES = 300

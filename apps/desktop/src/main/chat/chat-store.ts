@@ -95,16 +95,10 @@ export interface StoredChatHistoryPage {
   hasMoreAfter?: boolean;
 }
 
-/** Store-only row used by the ChatGPT Web conversation projection. Never crosses the bridge directly. */
-export interface CompanionConversationMessageRow {
+/** Visible conversation row with its per-conversation `seq`. */
+export interface VisibleConversationMessageRow {
   seq: number;
   message: StoredChatMessage;
-}
-
-export interface CompanionConversationMessagePage {
-  messages: CompanionConversationMessageRow[];
-  hasMoreBefore: boolean;
-  hasMoreAfter: boolean;
 }
 
 interface MetaJson {
@@ -493,8 +487,6 @@ function rowToMessage(r: any): StoredChatMessage {
   const reviewLoop = reviewLoopMetaOf(executionScope);
   const memoryContext = parseMemoryContext(meta.memoryContext);
   const source =
-    meta.source === "chatgpt-web" ||
-    meta.source === "chatgpt-web-review-loop" ||
     meta.source === "maestrly-review" ||
     meta.source === "conversation-dispatch" ||
     meta.source === "conversation-message"
@@ -962,13 +954,13 @@ const CONVERSATION_CONTEXT_SQL = `(json_valid(meta_json) <> 1
   OR json_extract(meta_json, '$.executionScope.kind') = 'conversation')`;
 
 /**
- * Hidden orchestration messages are never part of the remote companion's visible conversation.
+ * Hidden orchestration messages are never part of the visible conversation (reviewer brief, bot transcript).
  *
  * Unlike the local runner predicate, malformed non-empty metadata fails closed here: it cannot prove that
  * a row is a legacy/main-context message without risking that an internal or isolated message is exposed.
  * SQL NULL and empty metadata remain the explicitly supported legacy representation.
  */
-const COMPANION_VISIBLE_MESSAGE_SQL = `(
+const VISIBLE_MESSAGE_SQL = `(
   meta_json IS NULL
   OR trim(meta_json) = ''
   OR (
@@ -1031,17 +1023,14 @@ export function listUndeliveredReviewReports(
   ).map(rowToMessage);
 }
 
-/**
- * Conversation-scoped source rows for the remote companion projection. The caller must still sanitize parts.
- * Keeping seq alongside the parsed message avoids exposing generic transcript APIs to the bridge layer.
- */
-export function listCompanionConversationMessages(
+/** Visible conversation rows in order. The caller must still sanitize parts before they leave the store. */
+export function listVisibleConversationMessages(
   conversationId: string,
-): CompanionConversationMessageRow[] {
+): VisibleConversationMessageRow[] {
   const rows = getDb()
     .prepare(
       `SELECT * FROM chat_messages
-       WHERE conversation_id = ? AND ${COMPANION_VISIBLE_MESSAGE_SQL}
+       WHERE conversation_id = ? AND ${VISIBLE_MESSAGE_SQL}
        ORDER BY seq ASC`,
     )
     .all(conversationId) as any[];
@@ -1061,7 +1050,7 @@ export function latestVisibleConversationSeq(conversationId: string): number {
   const row = getDb()
     .prepare(
       `SELECT MAX(seq) AS seq FROM chat_messages
-       WHERE conversation_id = ? AND ${COMPANION_VISIBLE_MESSAGE_SQL}`,
+       WHERE conversation_id = ? AND ${VISIBLE_MESSAGE_SQL}`,
     )
     .get(conversationId) as { seq: number | null } | undefined;
   return row?.seq === null || row?.seq === undefined ? -1 : Number(row.seq);
@@ -1079,11 +1068,11 @@ export function listVisibleConversationMessagePage(
   afterSeq: number,
   throughSeq: number,
   limit: number,
-): CompanionConversationMessageRow[] {
+): VisibleConversationMessageRow[] {
   const rows = getDb()
     .prepare(
       `SELECT * FROM chat_messages
-       WHERE conversation_id = ? AND seq > ? AND seq <= ? AND ${COMPANION_VISIBLE_MESSAGE_SQL}
+       WHERE conversation_id = ? AND seq > ? AND seq <= ? AND ${VISIBLE_MESSAGE_SQL}
        ORDER BY seq ASC
        LIMIT ?`,
     )
@@ -1097,106 +1086,6 @@ export function listVisibleConversationMessagePage(
     seq: row.seq as number,
     message: rowToMessage(row),
   }));
-}
-
-/**
- * Search source rows in recent-first order; only the dedicated safe projection is allowed to decide whether
- * text matches. The bounded caller can therefore prioritize the latest decision when older messages overflow it.
- */
-export function listCompanionConversationSearchCandidates(
-  conversationId: string,
-): CompanionConversationMessageRow[] {
-  const rows = getDb()
-    .prepare(
-      `SELECT * FROM chat_messages
-       WHERE conversation_id = ?
-         AND ${COMPANION_VISIBLE_MESSAGE_SQL}
-       ORDER BY seq DESC`,
-    )
-    .all(conversationId) as any[];
-  return rows.map((row) => ({
-    seq: row.seq as number,
-    message: rowToMessage(row),
-  }));
-}
-
-/** Balanced, context-scoped window around an exact visible seq. A foreign execution seq returns null. */
-export function readCompanionConversationPage(
-  conversationId: string,
-  aroundSeq: number,
-  limit: number,
-  isProjectable: (row: CompanionConversationMessageRow) => boolean = () => true,
-): CompanionConversationMessagePage | null {
-  const db = getDb();
-  const anchorRecord = db
-    .prepare(
-      `SELECT * FROM chat_messages
-       WHERE conversation_id = ? AND seq = ? AND ${COMPANION_VISIBLE_MESSAGE_SQL}
-       LIMIT 1`,
-    )
-    .get(conversationId, aroundSeq);
-  if (!anchorRecord) return null;
-
-  const toRow = (row: any): CompanionConversationMessageRow => ({
-    seq: row.seq as number,
-    message: rowToMessage(row),
-  });
-  const anchor = toRow(anchorRecord);
-  if (!isProjectable(anchor)) return null;
-
-  const boundedLimit = Math.max(1, Math.min(Math.floor(limit), 20));
-  const beforeLimit = Math.floor(boundedLimit / 2);
-  const collectProjectable = (
-    direction: "before" | "after",
-    target: number,
-  ): CompanionConversationMessageRow[] => {
-    const projectable: CompanionConversationMessageRow[] = [];
-    let cursor = aroundSeq;
-    let firstQuery = true;
-    const batchSize = Math.max(32, target);
-    while (projectable.length < target) {
-      const comparison = direction === "before" ? "<" : firstQuery ? ">=" : ">";
-      const order = direction === "before" ? "DESC" : "ASC";
-      const candidates = db
-        .prepare(
-          `SELECT * FROM chat_messages
-           WHERE conversation_id = ? AND seq ${comparison} ? AND ${COMPANION_VISIBLE_MESSAGE_SQL}
-           ORDER BY seq ${order} LIMIT ?`,
-        )
-        .all(conversationId, cursor, batchSize) as any[];
-      if (candidates.length === 0) break;
-      for (const candidate of candidates) {
-        const row = toRow(candidate);
-        if (isProjectable(row)) projectable.push(row);
-        if (projectable.length >= target) break;
-      }
-      if (candidates.length < batchSize || projectable.length >= target) break;
-      cursor = candidates.at(-1).seq as number;
-      firstQuery = false;
-    }
-    return projectable;
-  };
-
-  // Fetch one extra projected row on each side as the continuation sentinel. The SQL predicate alone is
-  // message-level; the callback is what makes the limit and flags describe the safe remote projection.
-  const projectableBefore = collectProjectable("before", beforeLimit + 1);
-  const before = projectableBefore.slice(0, beforeLimit).reverse();
-  const projectableFromTarget = collectProjectable(
-    "after",
-    boundedLimit - before.length + 1,
-  );
-  const fromTarget = projectableFromTarget.slice(
-    0,
-    boundedLimit - before.length,
-  );
-  const rows = [...before, ...fromTarget];
-  const hasMoreBefore = projectableBefore.length > before.length;
-  const hasMoreAfter = projectableFromTarget.length > fromTarget.length;
-  return {
-    messages: rows,
-    hasMoreBefore,
-    hasMoreAfter,
-  };
 }
 
 /**

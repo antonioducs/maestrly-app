@@ -12,7 +12,6 @@ playwright-report/
 apps/desktop/runtime-assets/local-ml/archives/
 apps/desktop/runtime-assets/local-ml/bundle/
 apps/desktop/runtime-assets/local-ml/node_modules/
-apps/desktop/resources/tunnel-client/
 apps/desktop/resources/codex/
 apps/desktop/resources/github-copilot/
 *.log

@@ -23,7 +23,6 @@ import { ensurePanelView, ensureRemoteBrowserView, ensureRemoteComputerView } fr
 function singleView(d: ConvDrawer, tab: FloatTab): WebContentsView | null | undefined {
   if (tab === 'browser') return d.remoteBrowserView
   if (tab === 'vscode') return d.vscodeView
-  if (tab === 'chatgpt') return d.chatgptView
   if (tab === 'computer') return d.remoteComputerView
   return d.panelViews.get(tab as PanelTab)
 }
@@ -44,11 +43,7 @@ export function ensureViewFor(convId: string, tab: FloatTab): boolean {
     if (!isRemoteConversation(convId)) return false
     ensureRemoteComputerView(d, convId)
   } else if (tab === 'vscode') ensureVSCodeView(d, convId)
-  else if (tab === 'chatgpt') {
-    // The companion view is created by the explicit session start. A shortcut/IPC cannot silently
-    // create a ChatGPT session or a remote renderer when no session exists.
-    if (!d.chatgptView) return false
-  } else ensurePanelView(d, convId, tab as PanelTab)
+  else ensurePanelView(d, convId, tab as PanelTab)
   return true
 }
 

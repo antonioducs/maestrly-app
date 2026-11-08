@@ -108,14 +108,6 @@ export class AgentRegistry extends EventEmitter {
   }
 
   /**
-   * Play the configured ready alert without changing or emitting status. Used for external attention
-   * events such as Companion completion.
-   */
-  playReadySound(id: string): void {
-    this.maybePlay(this.ensure(id), 'ready', 'lastSoundAt')
-  }
-
-  /**
    * Play a remote bot's alert without a status: the fleet reports bots' state itself. Bots share the event voices
    * and volumes, can be silenced on their own, and each has its own dedupe window, apart from the conversations.
    */

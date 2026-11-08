@@ -4,7 +4,7 @@
  * registered targets receive throttling decisions.
  */
 
-export type ResourceKind = 'browser' | 'chatgpt' | 'vscode' | 'panel'
+export type ResourceKind = 'browser' | 'vscode' | 'panel'
 export type WakeReason = 'visible' | 'agent' | 'floating' | 'popup' | 'stream'
 
 export type ResourceState = {
@@ -285,7 +285,6 @@ export function disposeConversationResources(convId: string): void {
 export function getResourceGovernorDiagnostics(): ResourceGovernorDiagnostics {
   const byKind: ResourceGovernorDiagnostics['byKind'] = {
     browser: { total: 0, fullSpeed: 0, throttled: 0 },
-    chatgpt: { total: 0, fullSpeed: 0, throttled: 0 },
     vscode: { total: 0, fullSpeed: 0, throttled: 0 },
     panel: { total: 0, fullSpeed: 0, throttled: 0 },
   }

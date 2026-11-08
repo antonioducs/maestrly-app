@@ -1,11 +1,11 @@
 /** JSON-safe, on-demand performance snapshot exposed to the local diagnostics surface. */
 export type PerformanceCounterName = 'ptyChunks' | 'ipcSends' | 'screenEvaluates' | 'browserCdpEvents'
 
-export type MemoryReclaimKind = 'browser' | 'chatgpt' | 'panel' | 'vscode' | 'renderer-chat' | 'cache' | 'worker'
+export type MemoryReclaimKind = 'browser' | 'panel' | 'vscode' | 'renderer-chat' | 'cache' | 'worker'
 
 export type MemoryResourceState = 'hot' | 'cold' | 'protected'
 
-export type OwnedProcessKind = 'pty' | 'vscode-serve-web' | 'tunnel-client' | 'asr' | 'embeddings' | 'provider'
+export type OwnedProcessKind = 'pty' | 'vscode-serve-web' | 'asr' | 'embeddings' | 'provider'
 
 export type OwnedProcessState = 'idle' | 'busy' | 'starting' | 'stopping' | 'ready' | 'error'
 
@@ -109,7 +109,7 @@ export interface PerformanceDiagnostics {
     fullSpeed: number
     throttled: number
     activeAgentLeases: number
-    byKind: Record<'browser' | 'chatgpt' | 'vscode' | 'panel', { total: number; fullSpeed: number; throttled: number }>
+    byKind: Record<'browser' | 'vscode' | 'panel', { total: number; fullSpeed: number; throttled: number }>
   }
   webContents: PerformanceWebContentsEntry[]
   reclaimer: MemoryReclaimerSnapshot

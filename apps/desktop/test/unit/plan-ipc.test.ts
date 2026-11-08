@@ -15,7 +15,6 @@ const h = vi.hoisted(() => ({
   isConversationUnderReview: vi.fn((_conversationId: string) => false),
   createMaestroSibling: vi.fn(),
   deleteConversation: vi.fn(),
-  isConversationReserved: vi.fn(),
   applyMaestroStrategyProfile: vi.fn(),
   markMaestroStrategyProfileUsed: vi.fn(),
   excludeFromGitInfo: vi.fn(),
@@ -71,8 +70,6 @@ describe('registerPlanIpc', () => {
     h.createMaestroSibling.mockReset()
     h.deleteConversation.mockReset()
     h.deleteConversation.mockResolvedValue(undefined)
-    h.isConversationReserved.mockReset()
-    h.isConversationReserved.mockReturnValue(false)
     h.applyMaestroStrategyProfile.mockReset()
     h.applyMaestroStrategyProfile.mockResolvedValue({ ok: true })
     h.markMaestroStrategyProfileUsed.mockReset()
@@ -154,7 +151,6 @@ describe('registerPlanIpc', () => {
       sendToWindow,
       createMaestroSibling: h.createMaestroSibling,
       deleteConversation: h.deleteConversation,
-      isConversationReserved: h.isConversationReserved,
       applyMaestroStrategyProfile: h.applyMaestroStrategyProfile,
       markMaestroStrategyProfileUsed: h.markMaestroStrategyProfileUsed,
     })
@@ -261,29 +257,6 @@ describe('registerPlanIpc', () => {
     expect(h.runApprovedPlan).not.toHaveBeenCalled()
   })
 
-  it('an active review loop blocks handoff before creating a sibling or consuming the plan', async () => {
-    const { reg, mhandles } = createTestRegistrar()
-    h.getConversation.mockReturnValue({ id: 'conv-standard', name: 'Feature', experience: 'standard' })
-    h.decidePlan.mockReturnValue({ action: 'approve', approvedPlan: '# Plan' })
-    h.isConversationReserved.mockReturnValue(true)
-    registerPlanIpc(reg, {
-      sendToWindow: vi.fn(),
-      createMaestroSibling: h.createMaestroSibling,
-      deleteConversation: h.deleteConversation,
-      isConversationReserved: h.isConversationReserved,
-      applyMaestroStrategyProfile: h.applyMaestroStrategyProfile,
-    })
-
-    const result = await mhandles.get('plan:decide')?.({} as never, 'conv-standard', {
-      action: 'approve',
-      implementationTarget: 'maestro',
-    })
-
-    expect(result).toEqual({ ok: false, error: 'plan-maestro-source-reserved' })
-    expect(h.createMaestroSibling).not.toHaveBeenCalled()
-    expect(h.commitPlanDecision).not.toHaveBeenCalled()
-  })
-
   it('revise (chat) starts a revision turn with feedback without changing modes', () => {
     const { reg, mhandles } = createTestRegistrar()
     const sendToWindow = vi.fn()
@@ -322,116 +295,6 @@ describe('registerPlanIpc', () => {
     expect(h.runApprovedPlan).not.toHaveBeenCalled()
     expect(h.runPlanRevision).not.toHaveBeenCalled()
     expect(h.setChatMode).not.toHaveBeenCalled()
-  })
-
-  it('revise (Web) resolves the correct review without starting a Maestrly revision', () => {
-    const { reg, mhandles } = createTestRegistrar()
-    const resolveChatGptWebPlanReview = vi.fn(() => ({ ok: true }))
-    h.getConversation.mockReturnValue({ cli: 'chat' })
-    h.decidePlan.mockReturnValue({
-      action: 'revise',
-      feedbackText: 'structured feedback',
-      route: { kind: 'chatgpt-web', reviewId: 'pr_web_v1' },
-    })
-    registerPlanIpc(reg, { sendToWindow: vi.fn(), resolveChatGptWebPlanReview })
-
-    mhandles.get('plan:decide')?.({} as never, 'conv-chat', { action: 'revise' })
-
-    expect(resolveChatGptWebPlanReview).toHaveBeenCalledWith('conv-chat', 'pr_web_v1', {
-      status: 'revise',
-      feedbackText: 'structured feedback',
-    })
-    expect(h.runPlanRevision).not.toHaveBeenCalled()
-    expect(h.runApprovedPlan).not.toHaveBeenCalled()
-  })
-
-  it('approve (Web) publishes approved and retains Agent mode with Maestrly implementation', () => {
-    const { reg, mhandles } = createTestRegistrar()
-    const sendToWindow = vi.fn()
-    const resolveChatGptWebPlanReview = vi.fn(() => ({ ok: true }))
-    h.getConversation.mockReturnValue({ cli: 'chat' })
-    h.decidePlan.mockReturnValue({
-      action: 'approve',
-      approvedPlan: '# aprovado',
-      route: { kind: 'chatgpt-web', reviewId: 'pr_web_v2' },
-    })
-    registerPlanIpc(reg, { sendToWindow, resolveChatGptWebPlanReview })
-
-    mhandles.get('plan:decide')?.({} as never, 'conv-chat', { action: 'approve' })
-
-    expect(resolveChatGptWebPlanReview).toHaveBeenCalledWith('conv-chat', 'pr_web_v2', { status: 'approved' })
-    expect(h.setChatMode).toHaveBeenCalledWith('conv-chat', 'agent')
-    expect(sendToWindow).toHaveBeenCalledWith('chat:mode:conv-chat', 'agent')
-    expect(h.runApprovedPlan).toHaveBeenCalledWith('conv-chat', '# aprovado')
-  })
-
-  it('Maestro approval (Web) removes the sibling and stays pending when the companion does not confirm', async () => {
-    const { reg, mhandles } = createTestRegistrar()
-    const resolveChatGptWebPlanReview = vi.fn(() => ({ ok: false, error: 'plan-review-unavailable' }))
-    const maestro = { id: 'conv-maestro', name: 'Feature · Maestro', experience: 'maestro' }
-    h.getConversation.mockReturnValue({ id: 'conv-standard', name: 'Feature', experience: 'standard' })
-    h.decidePlan.mockReturnValue({
-      action: 'approve',
-      approvedPlan: '# aprovado',
-      route: { kind: 'chatgpt-web', reviewId: 'pr_web_maestro' },
-    })
-    h.createMaestroSibling.mockResolvedValue(maestro)
-    registerPlanIpc(reg, {
-      sendToWindow: vi.fn(),
-      resolveChatGptWebPlanReview,
-      createMaestroSibling: h.createMaestroSibling,
-      deleteConversation: h.deleteConversation,
-      applyMaestroStrategyProfile: h.applyMaestroStrategyProfile,
-    })
-
-    const result = await mhandles.get('plan:decide')?.({} as never, 'conv-standard', {
-      action: 'approve',
-      implementationTarget: 'maestro',
-    })
-
-    expect(result).toEqual({ ok: false, error: 'plan-review-unavailable' })
-    expect(resolveChatGptWebPlanReview).toHaveBeenCalledWith('conv-standard', 'pr_web_maestro', {
-      status: 'approved',
-    })
-    expect(h.deleteConversation).toHaveBeenCalledExactlyOnceWith(maestro.id)
-    expect(h.commitPlanDecision).not.toHaveBeenCalled()
-    expect(h.runApprovedPlan).not.toHaveBeenCalled()
-  })
-
-  it('discard (Web) publishes discarded without starting a turn', () => {
-    const { reg, mhandles } = createTestRegistrar()
-    const resolveChatGptWebPlanReview = vi.fn(() => ({ ok: true }))
-    h.getConversation.mockReturnValue({ cli: 'chat' })
-    h.decidePlan.mockReturnValue({
-      action: 'discard',
-      route: { kind: 'chatgpt-web', reviewId: 'pr_web_discard' },
-    })
-    registerPlanIpc(reg, { sendToWindow: vi.fn(), resolveChatGptWebPlanReview })
-
-    mhandles.get('plan:decide')?.({} as never, 'conv-chat', { action: 'discard' })
-
-    expect(resolveChatGptWebPlanReview).toHaveBeenCalledWith('conv-chat', 'pr_web_discard', {
-      status: 'discarded',
-    })
-    expect(h.runPlanRevision).not.toHaveBeenCalled()
-    expect(h.runApprovedPlan).not.toHaveBeenCalled()
-  })
-
-  it('missing companion during Web revision returns an observable error without fallback', async () => {
-    const { reg, mhandles } = createTestRegistrar()
-    h.getConversation.mockReturnValue({ cli: 'chat' })
-    h.decidePlan.mockReturnValue({
-      action: 'revise',
-      feedbackText: 'do not redirect',
-      route: { kind: 'chatgpt-web', reviewId: 'pr_missing' },
-    })
-    registerPlanIpc(reg, { sendToWindow: vi.fn() })
-
-    const result = await mhandles.get('plan:decide')?.({} as never, 'conv-chat', { action: 'revise' })
-
-    expect(result).toEqual({ ok: false, error: 'plan-review-unavailable' })
-    expect(h.commitPlanDecision).not.toHaveBeenCalled()
-    expect(h.runPlanRevision).not.toHaveBeenCalled()
   })
 
   it('every approved conversation starts a Chat turn', () => {
@@ -668,7 +531,7 @@ describe('registerPlanIpc — implement in a new Standard conversation', () => {
     expect(deps.startStandardPlanHandoff).not.toHaveBeenCalled()
   })
 
-  it('removes only the unstarted destination when the decision is stale or the companion refuses', async () => {
+  it('removes only the unstarted destination when the decision is stale', async () => {
     h.commitPlanDecision.mockReturnValue(false)
     const stale = register()
     await expect(
@@ -676,23 +539,6 @@ describe('registerPlanIpc — implement in a new Standard conversation', () => {
     ).resolves.toEqual({ ok: false, error: 'plan-decision-stale' })
     expect(stale.deps.discardStandardPlanHandoff).toHaveBeenCalledExactlyOnceWith('dispatch-1')
     expect(stale.deps.startStandardPlanHandoff).not.toHaveBeenCalled()
-
-    h.commitPlanDecision.mockClear()
-    h.commitPlanDecision.mockReturnValue(true)
-    h.decidePlan.mockReturnValue({
-      action: 'approve',
-      approvedPlan: '# plan',
-      version: 1,
-      route: { kind: 'chatgpt-web', reviewId: 'review-1' },
-    })
-    const web = register({
-      resolveChatGptWebPlanReview: vi.fn(() => ({ ok: false, error: 'plan-review-unavailable' })),
-    })
-    await expect(
-      web.decide({ action: 'approve', implementationTarget: 'standard', standardHandoff: HANDOFF })
-    ).resolves.toEqual({ ok: false, error: 'plan-review-unavailable' })
-    expect(web.deps.discardStandardPlanHandoff).toHaveBeenCalledExactlyOnceWith('dispatch-1')
-    expect(h.commitPlanDecision).not.toHaveBeenCalled()
   })
 
   it('refuses a concurrent decision instead of racing the first handoff', async () => {

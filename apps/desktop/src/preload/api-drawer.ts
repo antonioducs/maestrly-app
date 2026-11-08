@@ -149,7 +149,6 @@ export const drawerApi = {
     return () => ipcRenderer.removeListener('drawer:floating-state', listener)
   },
   getFloatingState: (convId: string): Promise<FloatingState> => ipcRenderer.invoke('drawer:floating-state-get', convId),
-  isChatGptVisible: (convId: string): Promise<boolean> => ipcRenderer.invoke('drawer:chatgpt-visible', convId),
   getDrawerPlacement: (convId: string): Promise<DrawerPlacement> => ipcRenderer.invoke('drawer:placement-get', convId),
   onDrawerPlacement: (cb: (placement: DrawerPlacement) => void): (() => void) => {
     const listener = (_e: unknown, placement: DrawerPlacement) => cb(placement)
