@@ -173,6 +173,12 @@ export interface AssistantSettingsState {
 
 export type AssistantHoldReason = 'question' | 'listening' | 'speaking'
 
+/** The voices Settings offers for the OpenAI engine, and whether a key to use them is set. */
+export interface AssistantVoiceOptions {
+  openai: AssistantOpenAiVoice[]
+  openaiKey: boolean
+}
+
 export type AssistantTtsError = 'key-missing' | 'key-rejected' | 'too-long' | 'network' | 'cancelled'
 export type AssistantTtsResult =
   | { ok: true; audio: ArrayBuffer; mime: 'audio/mpeg' }

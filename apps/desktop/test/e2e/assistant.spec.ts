@@ -130,6 +130,15 @@ test('the assistant registers its shortcut, follows its settings and keeps the a
     'aria-checked',
     'true'
   )
+
+  // Voice: the OpenAI engine without a key points to the dictation key, embedded below.
+  await expect(page.getByRole('heading', { name: 'Voice', exact: true })).toBeVisible()
+  await page.getByRole('combobox', { name: 'Speech engine' }).click()
+  await page.getByRole('option', { name: 'OpenAI (natural, paid per use)' }).click()
+  await expect.poll(async () => (await api(page, 'assistantSettings')).settings.voice.engine).toBe('openai')
+  await expect(page.getByRole('button', { name: 'Test voice' })).toBeDisabled()
+  await page.getByRole('button', { name: 'Set the key', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Transcription', exact: true })).toBeInViewport()
 })
 
 test('the assistant window opens its own pinned conversation, streams a reply and hides', async ({ session }) => {

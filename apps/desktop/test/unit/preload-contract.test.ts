@@ -458,7 +458,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(716)
+    expect(keys).toHaveLength(718)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -484,6 +484,10 @@ describe('preload API — exposure', () => {
     expect(invokeSpy).toHaveBeenLastCalledWith('assistant:tts', { text: 'Tudo pronto.' })
     api.assistantTtsCancel()
     expect(sendSpy).toHaveBeenLastCalledWith('assistant:tts-cancel')
+    await api.assistantVoices()
+    expect(invokeSpy).toHaveBeenLastCalledWith('assistant:voices')
+    await api.assistantTestVoice({ text: 'Oi.', voice: 'cedar', speed: 1.2 })
+    expect(invokeSpy).toHaveBeenLastCalledWith('assistant:test-voice', { text: 'Oi.', voice: 'cedar', speed: 1.2 })
   })
 
   it('forwards an active-account pool patch unchanged', async () => {

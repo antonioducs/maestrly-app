@@ -180,6 +180,28 @@ describe('the speech channel', () => {
     ).rejects.toThrow('Only the assistant window reads answers aloud')
   })
 
+  it('lists the OpenAI voices and says whether a key is set', async () => {
+    const { handlers } = register()
+    expect(await handlers.get('assistant:voices')?.({})).toEqual({
+      openai: ['alloy', 'ash', 'ballad', 'coral', 'echo', 'sage', 'shimmer', 'verse', 'marin', 'cedar'],
+      openaiKey: false,
+    })
+    h.dictationKey = 'sk'
+    expect(await handlers.get('assistant:voices')?.({})).toMatchObject({ openaiKey: true })
+  })
+
+  it('tries a voice for Settings with the voice and speed chosen, and refuses anything else', async () => {
+    const { handlers } = register()
+    expect(
+      await handlers.get('assistant:test-voice')?.({ sender: { id: 1 } }, { text: 'Oi.', voice: 'cedar' })
+    ).toEqual({
+      ok: false,
+      error: 'key-missing',
+    })
+    expect(() => handlers.get('assistant:test-voice')?.({}, { text: 'Oi.', voice: 'robot' })).toThrow()
+    expect(() => handlers.get('assistant:test-voice')?.({}, { text: 'x'.repeat(201) })).toThrow()
+  })
+
   it('answers key-missing for the assistant window when the person has no key', async () => {
     const { handlers, assistant } = register()
     expect(await handlers.get('assistant:tts')?.({ sender: assistant }, { text: 'Oi.' })).toEqual({

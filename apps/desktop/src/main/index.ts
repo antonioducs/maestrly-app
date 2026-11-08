@@ -329,6 +329,8 @@ if (process.platform === 'linux') {
   const linuxApp = app as typeof app & { setDesktopName?: (name: string) => void }
   linuxApp.setDesktopName?.(`${desktopToken}.desktop`)
   app.commandLine.appendSwitch('class', desktopToken)
+  // The assistant's free voice: Chromium reads system voices on Linux only through speech-dispatcher, when asked to.
+  app.commandLine.appendSwitch('enable-speech-dispatcher')
 }
 
 const registry = new AgentRegistry()

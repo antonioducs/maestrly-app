@@ -1,11 +1,24 @@
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron'
 import { z } from 'zod'
-import type { AssistantInfo, AssistantSettings, AssistantSettingsState } from '../../shared/assistant'
+import {
+  ASSISTANT_OPENAI_VOICES,
+  type AssistantInfo,
+  type AssistantSettings,
+  type AssistantSettingsState,
+  type AssistantVoiceOptions,
+  assistantVoiceSchema,
+} from '../../shared/assistant'
 import type { IpcRegistrar } from '../ipc-registrar'
 import { ensureAssistantConversation, startNewAssistantSession } from './assistant-conversation'
 import { getAssistantSettings, setAssistantSettings } from './assistant-settings'
 import type { AssistantWindow } from './assistant-window'
-import { createSpeechRequests, OPENAI_SPEECH_MAX_CHARS, type TtsResult } from './tts'
+import {
+  createSpeechRequests,
+  OPENAI_SPEECH_MAX_CHARS,
+  openAiSpeechKey,
+  synthesizeOpenAiSpeech,
+  type TtsResult,
+} from './tts'
 
 export interface AssistantIpcDeps {
   window(): AssistantWindow | null
@@ -85,6 +98,31 @@ export function registerAssistantIpc(reg: IpcRegistrar, deps: AssistantIpcDeps):
   })
   reg.mon('assistant:tts-cancel', (event) => {
     if (isAssistantSender(deps, event)) speech.cancel()
+  })
+  reg.handle(
+    'assistant:voices',
+    async (): Promise<AssistantVoiceOptions> => ({
+      openai: [...ASSISTANT_OPENAI_VOICES],
+      openaiKey: !!(await openAiSpeechKey().catch(() => null)),
+    })
+  )
+  // Settings try a voice before choosing it: the sample sentence, read once with the voice and speed given.
+  const testInput = z
+    .object({
+      text: z.string().trim().min(1).max(200),
+      voice: assistantVoiceSchema.shape.openaiVoice.optional(),
+      speed: assistantVoiceSchema.shape.speed.optional(),
+    })
+    .strict()
+  reg.mhandle('assistant:test-voice', (_event, input: unknown): Promise<TtsResult> => {
+    const { text, voice, speed } = testInput.parse(input)
+    const current = getAssistantSettings().voice
+    return synthesizeOpenAiSpeech(text, {
+      voice: voice ?? current.openaiVoice,
+      speed: speed ?? current.speed,
+      locale: deps.locale(),
+      signal: AbortSignal.timeout(30_000),
+    })
   })
   reg.mon('assistant:hold', (event, reason: unknown, held: unknown) => {
     if (!isAssistantSender(deps, event)) return
