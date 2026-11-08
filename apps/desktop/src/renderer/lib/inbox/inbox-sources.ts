@@ -3,6 +3,7 @@ import type { Conversation, ConversationStatus } from '../../../shared/conversat
 import { type FleetServerId, fleetKey } from '../../../shared/fleet-servers'
 import type { FleetBotAttentionEvent, FleetBotAttentionKind } from '../../../shared/notifications'
 import type { InboxKind, InboxLane, InboxObservation, InboxPlace } from './inbox-model'
+import { botRequestKind, botRequestSummary, conversationKind } from '../../../shared/inbox-kind'
 
 export interface InboxConversationInput {
   conversation: Conversation
@@ -25,15 +26,6 @@ export const conversationInboxKey = (conversationId: string): string => `convers
 export const botInboxKey = (serverId: FleetServerId, botId: string): string => `bot:${fleetKey(serverId, botId)}`
 export const botRequestInboxKey = (serverId: FleetServerId, botId: string, requestId: string): string =>
   `request:${fleetKey(serverId, botId)}/${requestId}`
-
-/** What a conversation needs from the owner now, or what it told them unread; null when nothing. */
-function conversationKind(status: ConversationStatus, planned: boolean, marked: boolean): InboxKind | null {
-  if (planned) return 'plan'
-  if (status === 'asking') return 'question'
-  if (status === 'waiting') return 'approval'
-  if (marked) return status === 'error' ? 'error' : 'finished'
-  return null
-}
 
 /** Every listed conversation, active or not: one that is not lets the center show it as read. */
 export function conversationObservations(
@@ -91,17 +83,8 @@ function laneOf(event: FleetBotAttentionEvent | undefined): InboxLane {
   return event.threadId || event.kind === 'threadPaused' ? 'thread' : 'main'
 }
 
-function requestKind(item: FleetInboxItem): InboxKind {
-  const { kind } = item.interaction
-  return kind === 'permission' ? 'approval' : kind === 'question' ? 'question' : 'help'
-}
-
-function requestSummary(item: FleetInboxItem): string | null {
-  const { interaction } = item
-  if (interaction.kind === 'permission') return interaction.title
-  if (interaction.kind === 'question') return interaction.questions[0]?.question ?? null
-  return interaction.reason
-}
+const requestKind = botRequestKind
+const requestSummary = botRequestSummary
 
 /**
  * Each bot of each paired server, marked or not, and each request of theirs that waits for the owner. A mark says why

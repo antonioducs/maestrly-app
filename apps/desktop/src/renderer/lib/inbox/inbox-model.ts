@@ -16,7 +16,8 @@ const NEWER_SLACK_MS = 2_000
  * What an item is about: something that waits for the owner, or a turn that ended. `activity` is a bot with something
  * new that says nothing more: a turn answering another bot, or a mark kept from before the app restarted.
  */
-export type InboxKind = 'question' | 'approval' | 'plan' | 'help' | 'error' | 'finished' | 'activity'
+export type { InboxKind } from '../../../shared/inbox-kind'
+import type { InboxKind } from '../../../shared/inbox-kind'
 export type InboxGroup = 'waiting' | 'new' | 'read'
 export type InboxSource = 'workspace' | 'chat' | 'bot'
 /** Where in a bot it happened: its own conversation, a routine run, or a conversation with another bot. */
