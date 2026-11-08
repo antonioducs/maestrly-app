@@ -29,7 +29,7 @@ FROM debian:bookworm-slim AS tools
 ARG TARGETARCH
 ARG UV_VERSION=0.12.15
 ARG MISE_VERSION=2026.9.10
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl bzip2 unzip && rm -rf /var/lib/apt/lists/*
 RUN set -eu; \
     case "${TARGETARCH}" in \
       arm64) uv_target=aarch64-unknown-linux-gnu; uv_sha=0e9a3499b0587d449c9ff684c0160da607826e4af1cee220bc87f378702d3e08; mise_arch=arm64; mise_sha=1b46a14314c18f9bbce4bf6f88cc1fb3b31be8dd2b23327a851555f4e144fc61 ;; \
@@ -43,6 +43,25 @@ RUN set -eu; \
     curl -fsSLo /usr/local/bin/mise "https://github.com/jdx/mise/releases/download/v${MISE_VERSION}/mise-v${MISE_VERSION}-linux-${mise_arch}"; \
     echo "${mise_sha}  /usr/local/bin/mise" | sha256sum -c -; \
     chmod 0755 /usr/local/bin/mise
+# Backups of environments: the gateway runs restic (with rclone for Google Drive and Cloud Storage) in a helper
+# container of this image; the environments never run them.
+ARG RESTIC_VERSION=0.19.1
+ARG RCLONE_VERSION=1.76.0
+RUN set -eu; \
+    case "${TARGETARCH}" in \
+      arm64) restic_sha=a5f64aaab53d51e311fa3829124c5b703f2d14cf187d8640b6be3b2b49376465; rclone_sha=ee169016675e23a69d77240565133ff7dbc9b33d16fa8f7053d4af39f1eaeb78 ;; \
+      amd64) restic_sha=f415415624dcc452f2a02b8c33641791a8c6d6d3b65bbb3543fcf9a25151585c; rclone_sha=b00f00b3266c3764413afe599d3ec316f6f43b3e0ea8a0bc1d186d2133e46df7 ;; \
+      *) echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSLo /tmp/restic.bz2 "https://github.com/restic/restic/releases/download/v${RESTIC_VERSION}/restic_${RESTIC_VERSION}_linux_${TARGETARCH}.bz2"; \
+    echo "${restic_sha}  /tmp/restic.bz2" | sha256sum -c -; \
+    bunzip2 -c /tmp/restic.bz2 > /usr/local/bin/restic; \
+    chmod 0755 /usr/local/bin/restic; \
+    curl -fsSLo /tmp/rclone.zip "https://downloads.rclone.org/v${RCLONE_VERSION}/rclone-v${RCLONE_VERSION}-linux-${TARGETARCH}.zip"; \
+    echo "${rclone_sha}  /tmp/rclone.zip" | sha256sum -c -; \
+    unzip -q /tmp/rclone.zip -d /tmp; \
+    install -m 0755 "/tmp/rclone-v${RCLONE_VERSION}-linux-${TARGETARCH}/rclone" /usr/local/bin/rclone; \
+    rm -rf /tmp/restic.bz2 /tmp/rclone.zip "/tmp/rclone-v${RCLONE_VERSION}-linux-${TARGETARCH}"
 
 # Shows each bot's Maestrly browser, drawn on the environment display, as a window of the bot's own desktop.
 FROM debian:bookworm-slim AS presenter
@@ -89,7 +108,7 @@ COPY --from=build /usr/local/bin/node /usr/local/bin/node
 COPY --from=build /usr/local/include/node /usr/local/include/node
 COPY --from=build /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
 COPY --from=build /usr/local/lib/node_modules/corepack /usr/local/lib/node_modules/corepack
-COPY --from=tools /usr/local/bin/uv /usr/local/bin/uvx /usr/local/bin/mise /usr/local/bin/
+COPY --from=tools /usr/local/bin/uv /usr/local/bin/uvx /usr/local/bin/mise /usr/local/bin/restic /usr/local/bin/rclone /usr/local/bin/
 COPY deploy/bot-fleet/maestrly-toolchain.sh /etc/profile.d/maestrly-toolchain.sh
 RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
     && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
