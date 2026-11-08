@@ -5,9 +5,12 @@ import type { IpcRegistrar } from '../ipc-registrar'
 import { ensureAssistantConversation, startNewAssistantSession } from './assistant-conversation'
 import { getAssistantSettings, setAssistantSettings } from './assistant-settings'
 import type { AssistantWindow } from './assistant-window'
+import { createSpeechRequests, OPENAI_SPEECH_MAX_CHARS, type TtsResult } from './tts'
 
 export interface AssistantIpcDeps {
   window(): AssistantWindow | null
+  /** This computer's locale, for the voice's instructions. */
+  locale(): string
   /** Show the main window on a conversation. */
   openConversationInApp(conversationId: string): void
   /** Show the main window on a Settings section. */
@@ -71,6 +74,17 @@ export function registerAssistantIpc(reg: IpcRegistrar, deps: AssistantIpcDeps):
   reg.mhandle('assistant:show', (_event, listen: unknown) => deps.window()?.show({ listen: listen === true }))
   reg.mon('assistant:hide', (event) => {
     if (isAssistantSender(deps, event)) deps.window()?.hide()
+  })
+  const speech = createSpeechRequests()
+  const ttsInput = z.object({ text: z.string().min(1).max(OPENAI_SPEECH_MAX_CHARS) }).strict()
+  reg.mhandle('assistant:tts', async (event, input: unknown): Promise<TtsResult> => {
+    if (!isAssistantSender(deps, event)) throw new Error('Only the assistant window reads answers aloud')
+    const { text } = ttsInput.parse(input)
+    const { voice } = getAssistantSettings()
+    return speech.speak(text, { voice: voice.openaiVoice, speed: voice.speed, locale: deps.locale() })
+  })
+  reg.mon('assistant:tts-cancel', (event) => {
+    if (isAssistantSender(deps, event)) speech.cancel()
   })
   reg.mon('assistant:hold', (event, reason: unknown, held: unknown) => {
     if (!isAssistantSender(deps, event)) return

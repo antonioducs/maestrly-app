@@ -17,6 +17,8 @@ exports[`preload API — exposure > preserves the public preload API inventory 1
   "assistantOpenSettings",
   "assistantSettings",
   "assistantShow",
+  "assistantTts",
+  "assistantTtsCancel",
   "botSetManagement",
   "botSetManualChatEnabled",
   "browserStreamAck",

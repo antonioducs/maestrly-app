@@ -458,7 +458,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(714)
+    expect(keys).toHaveLength(716)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -479,6 +479,11 @@ describe('preload API — exposure', () => {
     ])
     api.assistantHold('question', true)
     expect(sendSpy).toHaveBeenLastCalledWith('assistant:hold', 'question', true)
+    invokeSpy.mockClear()
+    await api.assistantTts('Tudo pronto.')
+    expect(invokeSpy).toHaveBeenLastCalledWith('assistant:tts', { text: 'Tudo pronto.' })
+    api.assistantTtsCancel()
+    expect(sendSpy).toHaveBeenLastCalledWith('assistant:tts-cancel')
   })
 
   it('forwards an active-account pool patch unchanged', async () => {

@@ -83,7 +83,7 @@ import { conversationTabAllowed, isRemoteConversation, setRemoteToolHosts } from
 import { registerPerformanceWebContents } from './performance/metrics'
 import { disposeMemoryReclaimer } from './performance/memory-reclaimer'
 import { disposeOwnedProcesses } from './performance/owned-processes'
-import { setMainLocale, tMain } from './i18n'
+import { getMainLocale, setMainLocale, tMain } from './i18n'
 import * as floatingManager from './floating-manager'
 import * as popupManager from './popup-manager'
 import { setHotkeyHandler, attachHotkeyCapture } from './hotkeys'
@@ -1086,6 +1086,7 @@ function registerIpc(): void {
     }
     registerAssistantIpc(reg, {
       window: assistant,
+      locale: getMainLocale,
       openConversationInApp: (conversationId) => {
         const conversation = getConversation(conversationId)
         if (!conversation) return

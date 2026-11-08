@@ -20,6 +20,40 @@ export const assistantShortcutSchema = z
   })
   .strict()
 
+export const ASSISTANT_OPENAI_VOICES = [
+  'alloy',
+  'ash',
+  'ballad',
+  'coral',
+  'echo',
+  'sage',
+  'shimmer',
+  'verse',
+  'marin',
+  'cedar',
+] as const
+export type AssistantOpenAiVoice = (typeof ASSISTANT_OPENAI_VOICES)[number]
+
+export const assistantVoiceSchema = z
+  .object({
+    /** `agent`: the assistant conversation answers, read aloud; `realtime`: an OpenAI Realtime session talks. */
+    mode: z.enum(['agent', 'realtime']).default('agent'),
+    /** Who reads the answers in agent mode: the system's voices, or OpenAI's with the person's key. */
+    engine: z.enum(['system', 'openai']).default('system'),
+    /** The system voice's name; null for the system default. */
+    systemVoice: z.string().max(200).nullable().default(null),
+    openaiVoice: z.enum(ASSISTANT_OPENAI_VOICES).default('marin'),
+    speed: z.number().min(0.5).max(2).default(1),
+    /** Read an answer aloud when the message was spoken. */
+    autoSpeak: z.boolean().default(true),
+    /** The global shortcut opens the window listening. */
+    shortcutListens: z.boolean().default(true),
+    realtimeModel: z.enum(['gpt-realtime', 'gpt-realtime-mini']).default('gpt-realtime-mini'),
+    realtimeVoice: z.enum(ASSISTANT_OPENAI_VOICES).default('marin'),
+  })
+  .strict()
+export type AssistantVoiceSettings = z.infer<typeof assistantVoiceSchema>
+
 export const assistantSettingsSchema = z
   .object({
     enabled: z.boolean().default(true),
@@ -27,11 +61,37 @@ export const assistantSettingsSchema = z
     shortcut: assistantShortcutSchema.nullable().optional(),
     hideOnBlur: z.boolean().default(true),
     keepRunning: z.boolean().default(true),
+    voice: assistantVoiceSchema.default(() => assistantVoiceSchema.parse({})),
   })
   .strict()
 
 export type AssistantSettings = z.infer<typeof assistantSettingsSchema>
-export type AssistantSettingsPatch = Partial<z.input<typeof assistantSettingsSchema>>
+/** A change to the settings; `voice` changes only the fields it names. */
+export type AssistantSettingsPatch = Partial<Omit<z.input<typeof assistantSettingsSchema>, 'voice'>> & {
+  voice?: Partial<AssistantVoiceSettings>
+}
+
+/** Valid fields of a stored or patched voice object, each falling back on its own. */
+function voiceFields(raw: unknown): Partial<AssistantVoiceSettings> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+  const shape = assistantVoiceSchema.shape
+  const out: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(raw)) {
+    const field = shape[key as keyof typeof shape]
+    if (!field) continue
+    const one = field.safeParse(value)
+    if (one.success) out[key] = one.data
+  }
+  return out as Partial<AssistantVoiceSettings>
+}
+
+/** The settings after `patch`; an invalid patch throws and changes nothing. `voice` merges field by field. */
+export function mergeAssistantSettings(current: AssistantSettings, patch: unknown): AssistantSettings {
+  const value = (patch ?? {}) as AssistantSettingsPatch
+  if (typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid assistant settings')
+  const voice = value.voice === undefined ? current.voice : { ...current.voice, ...value.voice }
+  return assistantSettingsSchema.parse({ ...current, ...value, voice })
+}
 
 /** ⌘⇧Space on macOS, Ctrl+Shift+Space elsewhere. */
 export function defaultAssistantShortcut(os: ShortcutOs): ShortcutBinding {
@@ -87,6 +147,10 @@ export function parseAssistantSettings(raw: unknown): AssistantSettings {
   const out = assistantSettingsSchema.parse({})
   if (raw && typeof raw === 'object') {
     for (const [key, value] of Object.entries(raw)) {
+      if (key === 'voice') {
+        out.voice = { ...out.voice, ...voiceFields(value) }
+        continue
+      }
       const one = assistantSettingsSchema.safeParse({ [key]: value })
       if (one.success && key in one.data) Object.assign(out, { [key]: (one.data as Record<string, unknown>)[key] })
     }
@@ -108,3 +172,8 @@ export interface AssistantSettingsState {
 }
 
 export type AssistantHoldReason = 'question' | 'listening' | 'speaking'
+
+export type AssistantTtsError = 'key-missing' | 'key-rejected' | 'too-long' | 'network' | 'cancelled'
+export type AssistantTtsResult =
+  | { ok: true; audio: ArrayBuffer; mime: 'audio/mpeg' }
+  | { ok: false; error: AssistantTtsError }

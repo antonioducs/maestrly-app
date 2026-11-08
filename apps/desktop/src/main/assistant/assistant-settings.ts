@@ -3,8 +3,7 @@ import {
   ASSISTANT_SETTINGS_KEY,
   ASSISTANT_WINDOW_BOUNDS_KEY,
   type AssistantSettings,
-  type AssistantSettingsPatch,
-  assistantSettingsSchema,
+  mergeAssistantSettings,
   parseAssistantSettings,
 } from '../../shared/assistant'
 import { getAppSetting, setAppSetting } from '../store'
@@ -24,8 +23,7 @@ export function getAssistantSettings(): AssistantSettings {
 
 /** Merge a patch into the stored settings; an invalid patch throws and changes nothing. */
 export function setAssistantSettings(patch: unknown): AssistantSettings {
-  const current = getAssistantSettings()
-  const next = assistantSettingsSchema.parse({ ...current, ...(patch as AssistantSettingsPatch) })
+  const next = mergeAssistantSettings(getAssistantSettings(), patch)
   setAppSetting(ASSISTANT_SETTINGS_KEY, JSON.stringify(next))
   return next
 }

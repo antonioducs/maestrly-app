@@ -4,6 +4,7 @@ import type {
   AssistantInfo,
   AssistantSettingsPatch,
   AssistantSettingsState,
+  AssistantTtsResult,
 } from '../shared/assistant'
 
 export const assistantApi = {
@@ -18,6 +19,9 @@ export const assistantApi = {
   assistantShow: (listen?: boolean): Promise<void> => ipcRenderer.invoke('assistant:show', listen === true),
   assistantHide: (): void => ipcRenderer.send('assistant:hide'),
   assistantHold: (reason: AssistantHoldReason, held: boolean): void => ipcRenderer.send('assistant:hold', reason, held),
+  /** Reads one sentence with the OpenAI voice; the audio comes back, the key never does. */
+  assistantTts: (text: string): Promise<AssistantTtsResult> => ipcRenderer.invoke('assistant:tts', { text }),
+  assistantTtsCancel: (): void => ipcRenderer.send('assistant:tts-cancel'),
   onAssistantShown: (cb: (payload: { listen: boolean }) => void): (() => void) => {
     const listener = (_event: unknown, payload: { listen: boolean }) => cb(payload)
     ipcRenderer.on('assistant:shown', listener)
