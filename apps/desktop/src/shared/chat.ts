@@ -459,6 +459,8 @@ export interface ChatQuestion {
   multiSelect?: boolean
 
   isSecret?: boolean
+  /** Answered only by a click on the card: the assistant's voice reads it but never answers it (approvals). */
+  clickOnly?: boolean
   options: ChatQuestionOption[]
 }
 

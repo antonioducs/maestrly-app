@@ -3,6 +3,7 @@
  * engine, the message sent through the composer, and the answer read aloud as it streams.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import type { AssistantVoiceSettings } from '../../../../shared/assistant'
 import { dictationLanguage } from '../../../../shared/asr'
 import type { ChatStreamEvent } from '../../../../shared/chat'
@@ -13,7 +14,15 @@ import { createEndOfSpeechDetector } from '@/lib/end-of-speech'
 import { hostApi } from '@/lib/hosts/host-context'
 import { type MicRecording, startMicRecording } from '@/lib/mic-recorder'
 import { createSpeaker, type Speaker } from './speaker'
-import { createVoiceMachine, type VoiceEffect, type VoiceEvent, type VoiceState, voiceReducer } from './voice-machine'
+import {
+  createVoiceMachine,
+  questionPrompt,
+  type Translate,
+  type VoiceEffect,
+  type VoiceEvent,
+  type VoiceState,
+  voiceReducer,
+} from './voice-machine'
 
 const NOTICE_MS = 6000
 
@@ -44,6 +53,9 @@ export function useVoiceSession(opts: {
   locale: SupportedLocale
 }): VoiceSession {
   const { conversationId, voice, locale } = opts
+  const { t } = useTranslation('ui')
+  const translate = useRef<Translate>(t)
+  translate.current = t
   const [state, setState] = useState<VoiceState>('idle')
   const [level, setLevel] = useState(0)
   const [notice, setNotice] = useState<string | null>(null)
@@ -56,6 +68,8 @@ export function useVoiceSession(opts: {
   const transcription = useRef(0)
   const speaker = useRef<{ key: string; speaker: Speaker } | null>(null)
   const following = useRef<Following>({ awaiting: false, messageId: null, partId: null })
+  /** The cards waiting in the conversation, as last published. */
+  const questions = useRef(new Set<string>())
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const dispatchRef = useRef<(event: VoiceEvent) => void>(() => {})
 
@@ -153,6 +167,10 @@ export function useVoiceSession(opts: {
         currentSpeaker().speak(effect.speak)
         return
       }
+      if ('answer' in effect) {
+        hostApi(LOCAL_HOST_ID).chatQuestionRespond(effect.answer.toolCallId, [[effect.answer.label]])
+        return
+      }
       showNotice(effect.notice)
     },
     [currentSpeaker, showNotice, transcribe]
@@ -176,6 +194,23 @@ export function useVoiceSession(opts: {
     if (!conversationId) return
     return hostApi(LOCAL_HOST_ID).onChatStream(conversationId, (raw) => {
       const event = raw as ChatStreamEvent
+      if (event.kind === 'questions-pending') {
+        const known = questions.current
+        const now = new Set(event.questions.map((pending) => pending.toolCallId))
+        for (const id of known) if (!now.has(id)) dispatchRef.current({ type: 'question-gone', toolCallId: id })
+        const fresh = event.questions.find((pending) => !known.has(pending.toolCallId))
+        questions.current = now
+        if (fresh) {
+          const prompt = questionPrompt(fresh, translate.current, settings.current.locale)
+          dispatchRef.current({
+            type: 'question',
+            toolCallId: fresh.toolCallId,
+            retry: translate.current('assistant.voice.notUnderstood'),
+            ...prompt,
+          })
+        }
+        return
+      }
       const follow = following.current
       if (event.kind === 'message-start') {
         if (follow.awaiting) following.current = { awaiting: false, messageId: event.messageId, partId: null }

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
+import { tFor } from '../../src/shared/i18n'
 import {
   createVoiceMachine,
+  questionPrompt,
   type VoiceEffect,
   type VoiceEvent,
   type VoiceMachine,
@@ -171,5 +173,98 @@ describe('voice machine', () => {
     })
     expect(spoken(effects)).toEqual([])
     expect(states.at(-1)).toBe('idle')
+  })
+})
+
+describe('answering a card by voice', () => {
+  const card: VoiceEvent = {
+    type: 'question',
+    toolCallId: 'call-1',
+    speech: 'Mandar isto para “Deploy”? Diga Mandar ou Cancelar.',
+    retry: 'Não entendi. Toque numa opção.',
+    options: ['Mandar', 'Cancelar'],
+    answerable: true,
+  }
+  const heard = (text: string): VoiceEvent[] => [
+    { type: 'speech-queue-empty' },
+    { type: 'speech-end' },
+    { type: 'transcribed', text },
+  ]
+
+  it('reads the card, listens once and answers with the option said', () => {
+    const { machine, effects, states } = run([...asked, card, ...heard('pode mandar')])
+    expect(states.slice(3)).toEqual(['speaking', 'listening', 'transcribing', 'thinking'])
+    expect(effects.slice(3)).toEqual([
+      { speak: 'Mandar isto para “Deploy”? Diga Mandar ou Cancelar.' },
+      'start-mic',
+      'stop-mic',
+      { answer: { toolCallId: 'call-1', label: 'Mandar' } },
+    ])
+    expect(machine.question).toBeNull()
+  })
+
+  it('says it did not understand and leaves the card when the answer names no option', () => {
+    const { machine, effects } = run([...asked, card, ...heard('talvez amanhã'), { type: 'speech-queue-empty' }])
+    expect(effects.at(-1)).toEqual({ speak: 'Não entendi. Toque numa opção.' })
+    expect(effects.some((effect) => typeof effect === 'object' && 'answer' in effect)).toBe(false)
+    expect(machine.state).toBe('thinking')
+  })
+
+  it('reads an approval without listening: the card takes the click', () => {
+    const approval = { ...card, speech: 'Aprovar isto em “Deploy”? Confirme no card.', options: [], answerable: false }
+    const { machine, effects } = run([...asked, approval, { type: 'speech-queue-empty' }])
+    expect(effects.slice(3)).toEqual([{ speak: 'Aprovar isto em “Deploy”? Confirme no card.' }])
+    expect(machine.state).toBe('thinking')
+  })
+
+  it('stops hearing when the card is answered by a click, and goes back to the turn', () => {
+    const { machine, effects } = run([
+      ...asked,
+      card,
+      { type: 'speech-queue-empty' },
+      { type: 'question-gone', toolCallId: 'call-1' },
+      delta('Mandei para o Deploy. '),
+    ])
+    expect(effects).toContain('cancel-mic')
+    expect(spoken(effects).at(-1)).toBe('Mandei para o Deploy.')
+    expect(machine.state).toBe('speaking')
+  })
+
+  it('goes back to the turn when it hears nothing, and ignores a card outside a voice session', () => {
+    const silent = run([...asked, card, { type: 'speech-queue-empty' }, { type: 'no-speech' }])
+    expect(silent.machine).toMatchObject({ state: 'thinking', question: null })
+    expect(silent.effects).toContainEqual({ notice: 'no-speech' })
+    expect(run([card]).effects).toEqual([])
+    expect(run([...asked, card], { autoSpeak: false }).effects.at(-1)).toEqual({ submit: '🎙 como estão as coisas?' })
+  })
+
+  it('builds what it says from the card', () => {
+    const t = tFor('pt-BR', 'ui')
+    const confirm = {
+      messageId: 'm',
+      toolCallId: 'c',
+      questions: [
+        {
+          header: 'Assistente',
+          question: 'Mandar isto para “Deploy”?\n\nRode os testes **agora**.',
+          options: [{ label: 'Mandar' }, { label: 'Liberar o resto deste pedido' }, { label: 'Cancelar' }],
+        },
+      ],
+    }
+    expect(questionPrompt(confirm, t, 'pt-BR')).toEqual({
+      speech: 'Mandar isto para “Deploy”? Diga Mandar, Liberar o resto deste pedido ou Cancelar.',
+      options: ['Mandar', 'Liberar o resto deste pedido', 'Cancelar'],
+      answerable: true,
+    })
+    const approval = { ...confirm, questions: [{ ...confirm.questions[0], clickOnly: true }] }
+    expect(questionPrompt(approval, t, 'pt-BR')).toMatchObject({
+      speech: 'Mandar isto para “Deploy”? Confirme no card.',
+      answerable: false,
+    })
+    const multi = { ...confirm, questions: [confirm.questions[0], confirm.questions[0]] }
+    expect(questionPrompt(multi, tFor('en', 'ui'), 'en')).toMatchObject({
+      speech: 'Mandar isto para “Deploy”? Answer it in the card.',
+      answerable: false,
+    })
   })
 })

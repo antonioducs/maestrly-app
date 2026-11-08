@@ -269,6 +269,7 @@ describe('the assistant runtime', () => {
       {
         header: 'Assistant',
         question: 'Approve this in “Deploy”?\n\nRun a command\n\nnpm publish',
+        clickOnly: true,
         options: [{ label: 'Approve' }, { label: 'Cancel' }],
       },
     ])

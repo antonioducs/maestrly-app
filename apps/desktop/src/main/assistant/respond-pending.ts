@@ -84,7 +84,7 @@ async function respondLocal(
     if (!question) return fail('not-found', RESOLVED)
     if (answer.kind !== 'question') return wrongKind('question')
     const [only, ...rest] = question.questions
-    if (!only || rest.length || only.isSecret)
+    if (!only || rest.length || only.isSecret || only.clickOnly)
       return fail('unavailable', 'This question needs the person in the app: tell them to open the conversation.')
     const label = matchOption(only.options, answer.option)
     if (!label)

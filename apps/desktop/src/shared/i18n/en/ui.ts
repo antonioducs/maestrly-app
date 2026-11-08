@@ -2371,6 +2371,10 @@ export default {
       thinking: 'Working on it. Tap to stop reading this answer aloud',
       speaking: 'Reading aloud. Tap to stop',
       error: 'Tap to talk again',
+      askOptions: '{{question}} Say {{options}}.',
+      confirmInCard: '{{question}} Confirm it in the card.',
+      answerInCard: '{{question}} Answer it in the card.',
+      notUnderstood: "I didn't catch that. Tap an option.",
       dismiss: 'Dismiss',
       notice: {
         'no-speech': "I didn't hear anything.",

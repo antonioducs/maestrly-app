@@ -3,8 +3,10 @@
  * sentence by sentence while it streams. A tap stops the reading (the turn goes on in writing) and Esc stops it all.
  * Pure: the session hook runs the effects.
  */
+import type { PendingChatQuestion } from '../../../../shared/chat'
 import type { SupportedLocale } from '../../../../shared/locale'
 import { SentenceChunker, toSpeakable } from '../../../../shared/speakable'
+import { matchSpokenOption } from '../../../../shared/spoken-option'
 
 /** Marks a message the person spoke, as dictation does. */
 export const VOICE_MARKER = '🎙 '
@@ -22,6 +24,12 @@ export type VoiceEvent =
   | { type: 'turn-ended' }
   | { type: 'speech-queue-empty' }
   | { type: 'speech-failed'; error: string }
+  /**
+   * A card in the conversation waits for the person: `speech` reads it, and when `answerable` the voice then listens
+   * once for one of `options`; `retry` is what it says when the answer names none.
+   */
+  | { type: 'question'; toolCallId: string; speech: string; retry: string; options: string[]; answerable: boolean }
+  | { type: 'question-gone'; toolCallId: string }
   | { type: 'escape' }
 
 export type VoiceEffect =
@@ -32,6 +40,7 @@ export type VoiceEffect =
   | { submit: string }
   | { speak: string }
   | { notice: string }
+  | { answer: { toolCallId: string; label: string } }
 
 export interface VoiceMachine {
   state: VoiceState
@@ -45,10 +54,21 @@ export interface VoiceMachine {
   turnEnded: boolean
   /** Reading failed this turn: the rest of the answer stays in the chat. */
   muted: boolean
+  /** The card being read, then answered by voice: `listen` once it is read, `answering` while the voice hears. */
+  question: { toolCallId: string; options: string[]; retry: string; listen: boolean; answering: boolean } | null
 }
 
 export function createVoiceMachine(opts: { locale: SupportedLocale; autoSpeak: boolean }): VoiceMachine {
-  return { state: 'idle', ...opts, pending: '', pendingSpoken: 0, lastSpoken: null, turnEnded: false, muted: false }
+  return {
+    state: 'idle',
+    ...opts,
+    pending: '',
+    pendingSpoken: 0,
+    lastSpoken: null,
+    turnEnded: false,
+    muted: false,
+    question: null,
+  }
 }
 
 const FENCE_LINE = /^\s*(`{3,}|~{3,})/
@@ -115,7 +135,16 @@ function takeSentences(m: VoiceMachine, delta: string, final: boolean): { next: 
 }
 
 function reset(m: VoiceMachine, state: VoiceState): VoiceMachine {
-  return { ...m, state, pending: '', pendingSpoken: 0, lastSpoken: null, turnEnded: false, muted: false }
+  return {
+    ...m,
+    state,
+    pending: '',
+    pendingSpoken: 0,
+    lastSpoken: null,
+    turnEnded: false,
+    muted: false,
+    question: null,
+  }
 }
 
 const speakAll = (sentences: string[]): VoiceEffect[] => sentences.map((sentence) => ({ speak: sentence }))
@@ -123,6 +152,12 @@ const speakAll = (sentences: string[]): VoiceEffect[] => sentences.map((sentence
 export function voiceReducer(m: VoiceMachine, event: VoiceEvent): { next: VoiceMachine; effects: VoiceEffect[] } {
   const stay = { next: m, effects: [] as VoiceEffect[] }
   const following = m.state === 'thinking' || m.state === 'speaking'
+  const answering = m.question?.answering ? m.question : null
+  // Hearing the answer to a card: the turn waits on it, and the voice goes back to following it after.
+  const backToTurn = (effects: VoiceEffect[]) => ({
+    next: { ...m, state: 'thinking' as const, question: null },
+    effects,
+  })
   switch (event.type) {
     case 'escape':
       return m.state === 'idle' ? stay : { next: reset(m, 'idle'), effects: ['cancel-mic', 'stop-speaking'] }
@@ -134,19 +169,29 @@ export function voiceReducer(m: VoiceMachine, event: VoiceEvent): { next: VoiceM
     case 'speech-end':
       return m.state === 'listening' ? { next: { ...m, state: 'transcribing' }, effects: ['stop-mic'] } : stay
     case 'no-speech':
+      if (answering && m.state === 'listening') return backToTurn(['cancel-mic', { notice: 'no-speech' }])
       return m.state === 'listening'
         ? { next: reset(m, 'idle'), effects: ['cancel-mic', { notice: 'no-speech' }] }
         : stay
     case 'mic-failed':
+      if (answering && m.state === 'listening') return backToTurn(['cancel-mic', { notice: 'mic' }])
       return m.state === 'listening' ? { next: reset(m, 'error'), effects: ['cancel-mic', { notice: 'mic' }] } : stay
     case 'transcribed': {
       if (m.state !== 'transcribing') return stay
       const text = event.text.trim()
+      if (answering) {
+        const index = matchSpokenOption(text, answering.options, m.locale)
+        if (index === null)
+          return { next: { ...m, state: 'speaking', question: null }, effects: [{ speak: answering.retry }] }
+        return backToTurn([{ answer: { toolCallId: answering.toolCallId, label: answering.options[index] } }])
+      }
       if (!text) return { next: reset(m, 'idle'), effects: [{ notice: 'no-speech' }] }
       return { next: reset(m, 'thinking'), effects: [{ submit: VOICE_MARKER + text }] }
     }
     case 'transcribe-failed':
       if (m.state !== 'transcribing') return stay
+      if (answering)
+        return backToTurn([{ notice: event.error === 'silent' ? 'no-speech' : `transcribe-${event.error}` }])
       if (event.error === 'silent') return { next: reset(m, 'idle'), effects: [{ notice: 'no-speech' }] }
       return { next: reset(m, 'error'), effects: [{ notice: `transcribe-${event.error}` }] }
     case 'reply-delta': {
@@ -156,21 +201,70 @@ export function voiceReducer(m: VoiceMachine, event: VoiceEvent): { next: VoiceM
       return { next: { ...next, state: 'speaking' }, effects: speakAll(sentences) }
     }
     case 'turn-ended': {
+      if (answering && (m.state === 'listening' || m.state === 'transcribing'))
+        return { next: reset(m, 'idle'), effects: ['cancel-mic'] }
       if (!following) return stay
       const { next, sentences } = m.autoSpeak && !m.muted ? takeSentences(m, '', true) : { next: m, sentences: [] }
       if (!sentences.length && m.state === 'thinking') return { next: reset(m, 'idle'), effects: [] }
       return {
-        next: { ...next, state: 'speaking', turnEnded: true, pending: '', pendingSpoken: 0 },
+        next: { ...next, state: 'speaking', turnEnded: true, pending: '', pendingSpoken: 0, question: null },
         effects: speakAll(sentences),
       }
     }
     case 'speech-queue-empty':
       if (m.state !== 'speaking') return stay
+      if (m.question?.listen)
+        return {
+          next: { ...m, state: 'listening', question: { ...m.question, listen: false, answering: true } },
+          effects: ['start-mic'],
+        }
       return m.turnEnded ? { next: reset(m, 'idle'), effects: [] } : { next: { ...m, state: 'thinking' }, effects: [] }
     case 'speech-failed': {
       if (!following) return stay
-      const next = m.turnEnded ? reset(m, 'idle') : { ...m, state: 'thinking' as const, muted: true }
+      const next = m.turnEnded ? reset(m, 'idle') : { ...m, state: 'thinking' as const, muted: true, question: null }
       return { next, effects: ['stop-speaking', { notice: `speech-${event.error}` }] }
     }
+    case 'question':
+      if (!following || m.question || !m.autoSpeak || m.muted) return stay
+      return {
+        next: {
+          ...m,
+          state: 'speaking',
+          question: {
+            toolCallId: event.toolCallId,
+            options: event.options,
+            retry: event.retry,
+            listen: event.answerable && event.options.length > 0,
+            answering: false,
+          },
+        },
+        effects: [{ speak: event.speech }],
+      }
+    case 'question-gone':
+      if (m.question?.toolCallId !== event.toolCallId) return stay
+      if (answering && (m.state === 'listening' || m.state === 'transcribing')) return backToTurn(['cancel-mic'])
+      return { next: { ...m, question: null }, effects: [] }
   }
+}
+
+export type Translate = (key: string, vars?: Record<string, unknown>) => string
+
+/**
+ * What the voice says of a card, and whether it may answer it: one plain question with options, not an approval.
+ * Only the question's first paragraph is read; the details stay on the card.
+ */
+export function questionPrompt(pending: PendingChatQuestion, t: Translate, locale: SupportedLocale) {
+  const [only, ...rest] = pending.questions
+  const question = toSpeakable((only?.question ?? '').split(/\n\s*\n/)[0], locale)
+  const options = only?.options.map((option) => option.label) ?? []
+  const answerable =
+    !!only && !rest.length && !only.multiSelect && !only.isSecret && !only.clickOnly && options.length > 0
+  if (!answerable)
+    return {
+      speech: t(only?.clickOnly ? 'assistant.voice.confirmInCard' : 'assistant.voice.answerInCard', { question }),
+      options: [],
+      answerable: false,
+    }
+  const list = new Intl.ListFormat(locale, { type: 'disjunction' }).format(options)
+  return { speech: t('assistant.voice.askOptions', { question, options: list }), options, answerable: true }
 }

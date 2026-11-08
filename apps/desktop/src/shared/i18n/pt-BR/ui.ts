@@ -2397,6 +2397,10 @@ export default {
       thinking: 'Trabalhando nisso. Toque para não ler esta resposta em voz alta',
       speaking: 'Lendo em voz alta. Toque para parar',
       error: 'Toque para falar de novo',
+      askOptions: '{{question}} Diga {{options}}.',
+      confirmInCard: '{{question}} Confirme no card.',
+      answerInCard: '{{question}} Responda no card.',
+      notUnderstood: 'Não entendi. Toque numa opção.',
       dismiss: 'Dispensar',
       notice: {
         'no-speech': 'Não ouvi nada.',

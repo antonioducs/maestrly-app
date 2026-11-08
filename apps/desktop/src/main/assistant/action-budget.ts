@@ -98,6 +98,7 @@ export async function confirmAssistantAction(
       {
         header: t('assistant.confirmHeader'),
         question: t(QUESTION_KEY[action.kind], { target: action.targetName, preview: action.preview }),
+        ...(action.kind === 'respond' ? { clickOnly: true } : {}),
         options: [
           { label: labels.once },
           ...(allowRelease ? [{ label: labels.release }] : []),
