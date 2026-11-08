@@ -615,7 +615,8 @@ Left out, because they come back by themselves or do not belong to the environme
 
 A running environment writes a consistent copy of its database for each backup, so it keeps working meanwhile. The
 rest of its files are read as they are at that moment: a site session that a browser changes during the backup may ask
-you to sign in again after a restore.
+you to sign in again after a restore. A stopped environment is read as it is, without a lock, so starting it during its
+backup can copy its database in the middle of a write.
 
 ### Where to keep them
 
