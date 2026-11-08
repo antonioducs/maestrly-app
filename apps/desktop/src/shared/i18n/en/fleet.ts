@@ -2154,6 +2154,38 @@ export default {
         resume: 'Resume backups',
         disconnect: 'Disconnect',
       },
+      restoreDialog: {
+        title: 'Restore from a backup',
+        description:
+          'The environment comes back as a new one, with its bots, conversations, memory, accounts and files, and the ids it had.',
+        noBackupHere: 'There is no Maestrly backup here. Check the folder, or choose where the backups are.',
+        loading: 'Looking for backups…',
+        none: 'There are no backups here yet.',
+        choose: 'Environments backed up',
+        kind: { bots: 'Bots', workspaces: 'Workspaces' },
+        latest: 'Last backup {{when}}',
+        fromServer: 'from the server {{server}}',
+        taken: 'An environment with this id is on this server.',
+        date: 'Backup from',
+        reading: 'Reading the backup…',
+        bots: 'Bots: {{names}}',
+        noBots: 'No bots',
+        projects: 'Projects in {{path}}',
+        keepExisting: 'Keep the files already in {{path}}',
+        restore: 'Restore',
+        restoring: 'Restoring… {{percent}}%',
+        done: 'Restored. The environment is starting.',
+        problems: {
+          'environment-taken':
+            'An environment with this id is on this server, archived ones included. Delete it to restore this backup.',
+          'bot-taken': 'Bots with the same ids are on this server: {{names}}. Delete them to restore this backup.',
+          'format-newer': 'This backup was made by a newer Maestrly. Update the bot server first.',
+          'workspaces-root-missing':
+            'This server has no workspaces folder (MAESTRLY_GATEWAY_WORKSPACES_ROOT), so the projects cannot come back.',
+          'workspaces-root-different': 'The projects were in {{path}}, and this server keeps them elsewhere.',
+          'workspaces-limit': 'This server already has as many workspaces environments as it can hold.',
+        },
+      },
       disconnectTitle: 'Disconnect backups?',
       disconnectConfirm:
         'Scheduled backups stop. Backups already in {{label}} stay there, and you can restore them with the recovery key.',

@@ -1,6 +1,8 @@
 import {
   type FleetBackupError,
+  type FleetBackupRestorePreview,
   type FleetBackupRun,
+  type FleetBackupSnapshotGroup,
   type FleetBackupSchedule,
   type FleetBackupStatus,
   type FleetGatewayEvent,
@@ -155,4 +157,42 @@ export function s3MinimumPolicy(bucket: string, prefix: string): string {
     null,
     2
   )
+}
+
+/** How an environment backed up at the destination shows in the list to restore from. */
+export type RestoreGroupView = {
+  disabled: boolean
+  /** Why it cannot be restored here, when it cannot. */
+  reason: BackupText | null
+  /** The server it was backed up from, when not this one. */
+  from: BackupText | null
+  latest: FleetBackupSnapshotGroup['snapshots'][number] | null
+}
+export function restoreGroupView(group: FleetBackupSnapshotGroup): RestoreGroupView {
+  return {
+    disabled: group.taken || group.snapshots.length === 0,
+    reason: group.taken ? { key: 'botServer.backups.restoreDialog.taken', values: {} } : null,
+    from: group.thisServer
+      ? null
+      : { key: 'botServer.backups.restoreDialog.fromServer', values: { server: group.serverName || group.serverId } },
+    latest: group.snapshots[0] ?? null,
+  }
+}
+/** What keeps a backup from coming back here, as texts. */
+export function restoreProblemKeys(preview: FleetBackupRestorePreview): BackupText[] {
+  return preview.problems.map((problem): BackupText => {
+    const key = `botServer.backups.restoreDialog.problems.${problem}`
+    if (problem === 'bot-taken')
+      return {
+        key,
+        values: {
+          names: preview.bots
+            .filter((bot) => bot.taken)
+            .map((bot) => bot.name)
+            .join(', '),
+        },
+      }
+    if (problem === 'workspaces-root-different') return { key, values: { path: preview.projects?.path ?? '' } }
+    return { key, values: {} }
+  })
 }

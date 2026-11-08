@@ -13,6 +13,7 @@ import { bindFleetServer, useFleetServerId } from '@/lib/fleet/server-context'
 import { cn } from '@/lib/utils'
 import { BackupSetupDialog } from './BackupSetupDialog'
 import { RecoveryKeyStep } from './RecoveryKeyStep'
+import { RestoreBackupDialog } from './RestoreBackupDialog'
 
 export type BackupsSectionState =
   | { kind: 'loading' }
@@ -219,7 +220,7 @@ export function BackupsSection() {
   const [state, setState] = useState<BackupsSectionState>({ kind: 'loading' })
   const [names, setNames] = useState<Record<string, string>>({})
   const [pending, setPending] = useState<ReadonlySet<string>>(new Set())
-  const [dialog, setDialog] = useState<'setup' | 'change' | 'key' | 'disconnect' | null>(null)
+  const [dialog, setDialog] = useState<'setup' | 'change' | 'restore' | 'key' | 'disconnect' | null>(null)
   const [recoveryKey, setRecoveryKey] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -299,6 +300,7 @@ export function BackupsSection() {
         pending={pending}
         onRetry={() => void load()}
         onSetUp={() => setDialog('setup')}
+        onRestore={() => setDialog('restore')}
         onRunNow={runNow}
         onCancel={(runId) => void act(async () => void (await api.cancel(runId)))}
         onChange={() => setDialog('change')}
@@ -317,6 +319,15 @@ export function BackupsSection() {
           status={status}
           environmentNames={names}
           change={dialog === 'change'}
+          onClose={() => setDialog(null)}
+          onStatus={setStatus}
+        />
+      )}
+      {status && dialog === 'restore' && (
+        <RestoreBackupDialog
+          api={api}
+          serverId={serverId}
+          status={status}
           onClose={() => setDialog(null)}
           onStatus={setStatus}
         />

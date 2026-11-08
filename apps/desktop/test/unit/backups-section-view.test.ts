@@ -1,6 +1,11 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import type { FleetBackupRun, FleetBackupStatus } from '@maestrly/bot-fleet-protocol'
+import {
+  type FleetBackupRun,
+  type FleetBackupStatus,
+  fleetBackupErrorCodeSchema,
+  fleetBackupRestoreProblemSchema,
+} from '@maestrly/bot-fleet-protocol'
 import { describe, expect, it, vi } from 'vitest'
 
 // The texts come back as their keys, with the values they are given, so that what each place says is what is asserted.
@@ -126,5 +131,14 @@ describe('Backups in Settings', () => {
     expect(html).toContain('botServer.backups.status.paused')
     expect(html).toContain('botServer.backups.actions.resume')
     expect(html).not.toContain('botServer.backups.status.next')
+  })
+
+  it('has a text for every error and every reason a backup cannot be restored', () => {
+    for (const catalog of [en, ptBr]) {
+      const { errors, restoreDialog } = catalog.botServer.backups
+      for (const code of fleetBackupErrorCodeSchema.options) expect(errors[code], code).toBeTruthy()
+      for (const problem of fleetBackupRestoreProblemSchema.options)
+        expect(restoreDialog.problems[problem], problem).toBeTruthy()
+    }
   })
 })

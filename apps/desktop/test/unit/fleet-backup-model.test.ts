@@ -1,9 +1,16 @@
-import type { FleetBackupRun, FleetBackupStatus } from '@maestrly/bot-fleet-protocol'
+import type {
+  FleetBackupRestorePreview,
+  FleetBackupRun,
+  FleetBackupSnapshotGroup,
+  FleetBackupStatus,
+} from '@maestrly/bot-fleet-protocol'
 import { describe, expect, it } from 'vitest'
 import {
   backupReducer,
   backupRowView,
   presetFromSchedule,
+  restoreGroupView,
+  restoreProblemKeys,
   s3MinimumPolicy,
   scheduleFromPreset,
 } from '../../src/renderer/lib/fleet/backup'
@@ -159,5 +166,61 @@ describe('S3 permissions', () => {
     expect(statements.find((statement) => statement.Action.includes('s3:ListBucket'))?.Condition).toEqual({
       StringLike: { 's3:prefix': ['maestrly-backups', 'maestrly-backups/*'] },
     })
+  })
+})
+
+describe('restoring', () => {
+  const group = (overrides: Partial<FleetBackupSnapshotGroup> = {}): FleetBackupSnapshotGroup => ({
+    environmentId: 'work',
+    name: 'Work',
+    kind: 'bots',
+    serverId: 'other-server',
+    serverName: 'Home server',
+    thisServer: false,
+    taken: false,
+    snapshots: [
+      { id: 'b'.repeat(64), at: '2026-11-07T03:00:00.000Z', format: 1 },
+      { id: 'a'.repeat(64), at: '2026-11-06T03:00:00.000Z', format: 1 },
+    ],
+    ...overrides,
+  })
+
+  it('lists an environment with its server and newest backup, and disables one taken here', () => {
+    expect(restoreGroupView(group())).toEqual({
+      disabled: false,
+      reason: null,
+      from: { key: 'botServer.backups.restoreDialog.fromServer', values: { server: 'Home server' } },
+      latest: group().snapshots[0],
+    })
+    expect(restoreGroupView(group({ thisServer: true, taken: true }))).toMatchObject({
+      disabled: true,
+      reason: { key: 'botServer.backups.restoreDialog.taken' },
+      from: null,
+    })
+  })
+
+  it('names what keeps a backup from coming back', () => {
+    const preview: FleetBackupRestorePreview = {
+      snapshotId: 'b'.repeat(64),
+      at: '2026-11-07T03:00:00.000Z',
+      environment: { id: 'work', name: 'Work', kind: 'workspaces' },
+      bots: [
+        { id: 'ana', name: 'Ana', taken: true },
+        { id: 'bea', name: 'Bea', taken: false },
+        { id: 'cid', name: 'Cid', taken: true },
+      ],
+      projects: { path: '/srv/maestrly/work', state: 'absent' },
+      problems: ['environment-taken', 'bot-taken', 'workspaces-root-different', 'workspaces-limit'],
+    }
+    expect(restoreProblemKeys(preview)).toEqual([
+      { key: 'botServer.backups.restoreDialog.problems.environment-taken', values: {} },
+      { key: 'botServer.backups.restoreDialog.problems.bot-taken', values: { names: 'Ana, Cid' } },
+      {
+        key: 'botServer.backups.restoreDialog.problems.workspaces-root-different',
+        values: { path: '/srv/maestrly/work' },
+      },
+      { key: 'botServer.backups.restoreDialog.problems.workspaces-limit', values: {} },
+    ])
+    expect(restoreProblemKeys({ ...preview, problems: [] })).toEqual([])
   })
 })

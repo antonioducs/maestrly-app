@@ -2178,6 +2178,38 @@ export default {
         resume: 'Retomar backups',
         disconnect: 'Desconectar',
       },
+      restoreDialog: {
+        title: 'Restaurar um backup',
+        description:
+          'O ambiente volta como um ambiente novo, com seus bots, conversas, memória, contas e arquivos, e os ids que tinha.',
+        noBackupHere: 'Não há um backup do Maestrly aqui. Confira a pasta, ou escolha onde estão os backups.',
+        loading: 'Procurando backups…',
+        none: 'Ainda não há backups aqui.',
+        choose: 'Ambientes com backup',
+        kind: { bots: 'Bots', workspaces: 'Workspaces' },
+        latest: 'Último backup {{when}}',
+        fromServer: 'do servidor {{server}}',
+        taken: 'Já existe um ambiente com este id neste servidor.',
+        date: 'Backup de',
+        reading: 'Lendo o backup…',
+        bots: 'Bots: {{names}}',
+        noBots: 'Nenhum bot',
+        projects: 'Projetos em {{path}}',
+        keepExisting: 'Manter os arquivos que já estão em {{path}}',
+        restore: 'Restaurar',
+        restoring: 'Restaurando… {{percent}}%',
+        done: 'Restaurado. O ambiente está iniciando.',
+        problems: {
+          'environment-taken':
+            'Já existe um ambiente com este id neste servidor, contando os arquivados. Apague-o para restaurar este backup.',
+          'bot-taken': 'Há bots com os mesmos ids neste servidor: {{names}}. Apague-os para restaurar este backup.',
+          'format-newer': 'Este backup foi feito por um Maestrly mais novo. Atualize o servidor de bots primeiro.',
+          'workspaces-root-missing':
+            'Este servidor não tem uma pasta de workspaces (MAESTRLY_GATEWAY_WORKSPACES_ROOT), então os projetos não podem voltar.',
+          'workspaces-root-different': 'Os projetos estavam em {{path}}, e este servidor os guarda em outro lugar.',
+          'workspaces-limit': 'Este servidor já tem tantos ambientes de workspaces quanto comporta.',
+        },
+      },
       disconnectTitle: 'Desconectar os backups?',
       disconnectConfirm:
         'Os backups agendados param. Os backups que já estão em {{label}} continuam lá, e você pode restaurá-los com a chave de recuperação.',
