@@ -19,6 +19,7 @@ import type { HostFilesProxy } from './host-files.js'
 import type { HostEditorProxy } from './host-editor.js'
 import type { PushNotifier } from './push.js'
 import type { DictationService } from './dictation.js'
+import type { Backups } from './backups/service.js'
 export type GatewayContext = {
   artifacts?: ArtifactHosting
   network?: FleetNetwork
@@ -41,5 +42,6 @@ export type GatewayContext = {
   runnerTransfers?: RunnerTransfers
   push?: PushNotifier
   dictation?: DictationService
+  backups?: Backups
   revokeDevice?: (deviceId: string) => Promise<void>
 }

@@ -976,9 +976,10 @@ export class Backups {
   }
 
   /** The recovery key, formatted, for the owner to keep. */
-  recoveryKey(): string {
+  recoveryKey(deviceName?: string): string {
     const settings = this.store.backupSettings()
     if (!settings) throw new GatewayError('NOT_FOUND', 'No backup destination')
+    if (deviceName !== undefined) this.logger.info('Backup recovery key shown', { device: deviceName })
     return formatRecoveryKey(settings.recoveryKey)
   }
 }

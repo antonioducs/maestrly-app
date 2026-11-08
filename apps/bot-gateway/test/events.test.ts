@@ -80,6 +80,40 @@ describe('event hub', () => {
     hub.close()
   })
 
+  it('sends backups only to devices that asked for them', () => {
+    const hub = new EventHub(async () => {})
+    const older = subscriber()
+    const backups = subscriber()
+    hub.add(older.response, 0, 'mac-old', { routineRuns: true, peerThreads: true, runners: true })
+    hub.add(backups.response, 0, 'mac-backups', { backups: true })
+    const at = '2026-11-07T03:00:00.000Z'
+    hub.emit({
+      type: 'backup_run.updated',
+      at,
+      run: {
+        id: '0b7a3c52-9d41-4c2e-8f60-1a2b3c4d5e6f',
+        kind: 'backup',
+        environmentId: 'work',
+        environmentName: 'Work',
+        trigger: 'schedule',
+        state: 'running',
+        phase: 'upload',
+        progress: 0.5,
+        snapshotId: null,
+        bytesAdded: null,
+        bytesTotal: null,
+        error: null,
+        startedAt: at,
+        finishedAt: null,
+      },
+    })
+    hub.emit({ type: 'transcript.reset', at, botId: 'alpha' })
+    const shape = (events: FleetGatewayEvent[]) => events.map((event) => event.type)
+    expect(shape(older.sent())).toEqual(['hello', 'transcript.reset'])
+    expect(shape(backups.sent())).toEqual(['hello', 'backup_run.updated', 'transcript.reset'])
+    hub.close()
+  })
+
   it("sends routine runs only to devices that asked for them, a run's reasoning only to those that asked for it", () => {
     const hub = new EventHub(async () => {})
     const older = subscriber()
