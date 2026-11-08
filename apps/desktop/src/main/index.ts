@@ -244,6 +244,8 @@ import {
 } from './assistant/assistant-shortcut'
 import { type AssistantSettings, effectiveAssistantShortcut } from '../shared/assistant'
 import { osFromPlatform } from '../shared/shortcuts'
+import { createHostInvoker, HostUnavailableError } from './remote-host/host-invoker'
+import { setAssistantHostAccess } from './assistant/assistant-context'
 import { createSiblingConversation, deleteConversation } from './workspace-service'
 import { registerLocalConversationIpc } from './local-conversation/ipc'
 import { registerTurnSnapshotIpc } from './turn-snapshots/ipc'
@@ -349,6 +351,11 @@ function assistant(): AssistantWindow | null {
   assistantWindow ??= createDesktopAssistantWindow()
   return assistantWindow
 }
+/** Reaches a remote host's handlers from this process, under the main window's origin. */
+const hostInvoker = createHostInvoker({
+  registry: () => hostRegistry(),
+  mainWebContentsId: () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents.id : null),
+})
 /** Why the assistant's global shortcut is not registered, when it is not. */
 let assistantShortcutError: 'conflict' | 'unsupported' | null = null
 
@@ -1066,6 +1073,13 @@ function registerIpc(): void {
   setAssistantConversationArchiver((id) => archiveConversation(conversationIpcDeps, id, true))
   setAssistantRoleResolver(isAssistantConversation)
   if (!isHeadlessInstance()) {
+    setAssistantHostAccess({
+      invoker: hostInvoker,
+      hosts: () =>
+        (hostRegistry()?.list() ?? [])
+          .filter((host) => host.remote)
+          .map((host) => ({ id: host.id, label: host.label, state: host.state })),
+    })
     const revealMain = () => {
       if (mainWindow && !mainWindow.isDestroyed()) focusMainWindow()
       else void createWindow()
@@ -1721,12 +1735,11 @@ function registerConversationMove(reg: IpcRegistrar): void {
       .some((host) => host.id === hostId && host.state === 'online')
   const remote = (hostId: HostId): MoveEndpoint =>
     createRemoteMoveEndpoint(hostId, {
-      call: (channel, input) => {
-        const registry = hostRegistry()
-        const origin = mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents.id : null
-        if (!registry || origin === null) throw new MoveError('host-unavailable', 'No window can reach the host.')
-        return registry.use(hostId, origin, () => ({ role: 'main' })).invoke(origin, channel, [input])
-      },
+      call: (channel, input) =>
+        hostInvoker.invoke(hostId, channel, [input]).catch((error: unknown) => {
+          if (error instanceof HostUnavailableError) throw new MoveError('host-unavailable', error.message)
+          throw error
+        }),
       onEvent: onHostEvent,
     })
   conversationMoveService = new ConversationMoveService({

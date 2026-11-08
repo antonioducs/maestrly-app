@@ -510,7 +510,13 @@ import {
   type MaestroToStandardResult,
   type StandardToMaestroResult,
 } from '../../shared/conversation-experience'
-import type { ChatAttachmentPdfFileResult, ChatMode, ChatOpenAttachmentResult } from '../../shared/chat'
+import type {
+  ChatAttachmentPdfFileResult,
+  ChatMode,
+  ChatOpenAttachmentResult,
+  ChatPermissionRequest,
+  PendingChatQuestion,
+} from '../../shared/chat'
 import type { ConvUiPrefs } from '../../shared/conversation'
 import { isChatMode, normalizeChatMode } from '../../shared/chat-mode'
 import type { MaestroOrchestratorProfileV1, MaestroTurnSnapshotV1 } from '../../shared/maestro'
@@ -2985,6 +2991,19 @@ function getBroker(): PermissionBroker {
 /** Shared executor boundary for host workflows that reuse Chat subagents outside a model tool call. */
 export function getChatPermissionBroker(): PermissionBroker {
   return getBroker()
+}
+
+/** What a conversation waits for from the person, read without the side effects of `chatRuntimeState`. */
+export function chatPendingInteractions(conversationId: string): {
+  permissions: ChatPermissionRequest[]
+  questions: PendingChatQuestion[]
+} {
+  return {
+    permissions: getBroker()
+      .pendingFor(conversationId)
+      .map((request) => toRequestPayload(request).request),
+    questions: getQuestionBroker().pendingQuestionsFor(conversationId),
+  }
 }
 
 /** ask_question broker (round trip from toolCallId to answers; the card comes from the part). Event wiring here
