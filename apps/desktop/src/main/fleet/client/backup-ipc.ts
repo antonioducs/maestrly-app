@@ -28,6 +28,7 @@ import type {
 import { fleetBackupDraftLabel } from '../../../shared/fleet-backup'
 import { tMain } from '../../i18n'
 import { FleetClientError } from './api'
+import { configuredGoogleDriveClient, runGoogleDriveSignIn } from './backup-drive-oauth'
 import type { FleetIpcRegistrar } from './scoped-ipc'
 import type { FleetClientService } from './service'
 import { fleetBackupRecoveryKeyFor, saveFleetBackupRecoveryKey } from './settings'
@@ -64,9 +65,23 @@ async function chooseWithDialog(sender: IpcMainInvokeEvent['sender'], defaultPat
   })
   return result.canceled || !result.filePath ? null : result.filePath
 }
-export function defaultFleetBackupIpcDeps(): FleetBackupIpcDeps {
+export function defaultFleetBackupIpcDeps(packaged: boolean): FleetBackupIpcDeps {
+  const client = configuredGoogleDriveClient(packaged)
   return {
     grants: new Map(),
+    ...(client
+      ? {
+          driveSignIn: async (signal: AbortSignal): Promise<FleetBackupDriveAuthorization> => {
+            const { shell } = await import('electron')
+            const { email, ...token } = await runGoogleDriveSignIn({
+              client,
+              openExternal: (url) => shell.openExternal(url),
+              signal,
+            })
+            return { client, token, account: email }
+          },
+        }
+      : {}),
     chooseKeyFile: chooseWithDialog,
     writeKeyFile: (path, text) => writeFile(path, text, { encoding: 'utf8', mode: 0o600 }),
     savedKey: fleetBackupRecoveryKeyFor,

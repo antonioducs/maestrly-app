@@ -188,7 +188,7 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
   const scoped = fleetScopedRegistrar(reg)
   registerFleetProvisioningIpc(reg, scoped)
   registerFleetEnvironmentSettingsIpc(scoped)
-  registerFleetBackupIpc(scoped, defaultFleetBackupIpcDeps())
+  registerFleetBackupIpc(scoped, defaultFleetBackupIpcDeps(app.isPackaged))
   if (!isHeadlessInstance()) {
     fleetServers.start()
     app.once('will-quit', () => fleetServers.stop())

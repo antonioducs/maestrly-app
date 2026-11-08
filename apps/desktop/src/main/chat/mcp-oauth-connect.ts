@@ -47,7 +47,7 @@ interface Callback {
  * A loopback listener on 127.0.0.1 for one authorization response, on `port` (0: a random one). It accepts only
  * `GET /callback` with the expected `state`; anything else gets 404 and is ignored.
  */
-async function listenForCallback(
+export async function listenForCallback(
   state: string,
   port = 0
 ): Promise<{
