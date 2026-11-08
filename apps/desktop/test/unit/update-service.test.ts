@@ -126,6 +126,7 @@ function quitHarness(options: { closeBrowsers?: () => Promise<void> } = {}) {
     releaseInstanceLock: cleanup,
     floatingManager: { flushPendingFloatPersists: vi.fn(), disposeAll: vi.fn() },
     chatWindowManager: { dispose: vi.fn() },
+    assistantWindow: { dispose: vi.fn() },
     popupManager: { disposeAll: vi.fn() },
     releasePowerBlocker: vi.fn(),
     killAllPtys: vi.fn(),

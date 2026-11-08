@@ -51,11 +51,14 @@ import {
 } from '../../src/main/chat/conversation-link-authorization'
 import {
   APP_TOOL_POLICY,
+  ASSISTANT_TOOL_NAMES,
   CONVERSATION_DISPATCH_TOOL_NAMES,
   CONVERSATION_LINK_TOOL_NAMES,
   PARENT_ONLY_CONVERSATION_TOOL_NAMES,
 } from '../../src/main/chat/tool-policy'
 import { interactiveTool } from '../../src/main/chat/autonomous'
+import { setAssistantRoleResolver } from '../../src/main/chat/harness/assistant-role'
+import { assistantActionBudget } from '../../src/main/assistant/action-budget'
 import { isMaestroWorkerOperationalToolName } from '../../src/main/chat/maestro-worker-tools'
 
 const humans: HumanTurnOrigin[] = []
@@ -106,7 +109,11 @@ afterEach(() => {
 
 describe('conversation link tool surface', () => {
   it('is an opt-in, parent-only built-in outside the app-tools catalog', () => {
-    expect(PARENT_ONLY_CONVERSATION_TOOL_NAMES).toEqual([...CONVERSATION_DISPATCH_TOOL_NAMES, ...CONVERSATION_LINK_TOOL_NAMES])
+    expect(PARENT_ONLY_CONVERSATION_TOOL_NAMES).toEqual([
+      ...CONVERSATION_DISPATCH_TOOL_NAMES,
+      ...CONVERSATION_LINK_TOOL_NAMES,
+      ...ASSISTANT_TOOL_NAMES,
+    ])
     for (const name of CONVERSATION_LINK_TOOL_NAMES) {
       expect(ALL_TOOL_NAMES).toContain(name)
       expect(isOptInToolName(name)).toBe(true)
@@ -278,6 +285,32 @@ describe('conversation link tool execution', () => {
       })
     )
     expect(confirmed).toEqual([false])
+  })
+
+  it('gives only the assistant conversation the action budget in place of the per-message confirmation', async () => {
+    h.service.send.mockResolvedValue({ ok: true, status: 'delivered', conversationId: 'other', conversationName: 'Other' })
+    const input = { conversationId: 'other', message: 'README changed.' }
+    humanTurn()
+    await sendToConversationTool.execute(input, context({ conversationLink: conversationLinkRuntimeFor('source', 'agent')! }))
+    expect(h.service.send.mock.calls[0][0]).toMatchObject({ isAssistant: false })
+    expect(h.service.send.mock.calls[0][3]).toBeUndefined()
+
+    setAssistantRoleResolver((id) => id === 'source')
+    try {
+      const askQuestion = vi.fn(async () => [['Send']])
+      const runtime = conversationLinkRuntimeFor('source', 'agent')!
+      await sendToConversationTool.execute(input, context({ conversationLink: runtime, askQuestion }))
+      const [caller, , , admit] = h.service.send.mock.calls[1]
+      expect(caller).toMatchObject({ isAssistant: true, originKey: 'message:typed-1' })
+      const target = { conversationId: 'other', name: 'Other', workspaceName: 'Repo' }
+      for (let n = 0; n < 3; n++) expect(await admit({ ...target, conversationId: `t${n}` }, 'x')).toBe(true)
+      expect(askQuestion).not.toHaveBeenCalled()
+      expect(await admit(target, 'README changed.')).toBe(true)
+      expect(askQuestion).toHaveBeenCalledOnce()
+    } finally {
+      setAssistantRoleResolver(null)
+      assistantActionBudget.clear('message:typed-1')
+    }
   })
 
   it('passes the turn signal to waits and validates input at the schema boundary', async () => {

@@ -32,7 +32,7 @@ import {
   type SendToConversationInput,
   type WaitConversationInput,
 } from '../shared/conversation-link'
-import type { SequencedChatMessage } from './chat/chat-store'
+import type { SequencedChatMessage, StoredChatMessage } from './chat/chat-store'
 import { isConversationContextMessage } from './chat/chat-store'
 import { hopAllowed } from './chat/conversation-link-authorization'
 import type { ConversationPeerTurnInput } from './chat/service'
@@ -62,9 +62,14 @@ export interface ConversationLinkCaller {
   peerConversationId: string | null
   /** Linked turns: the sender asked for this turn's final answer. */
   reportBack: boolean
+  /** The Maestrly assistant conversation: its sends go through the per-turn action budget instead. */
+  isAssistant?: boolean
   /** Throws when the turn is no longer the conversation's live turn. */
   assertCurrent(): void
 }
+
+/** Lets a send go ahead (true) or declines it, given the target and the start of the message. */
+export type ConversationSendGate = (target: ConversationSummary, preview: string) => Promise<boolean>
 
 export interface ConversationLinkServiceDeps {
   getConversation(id: string): Conversation | undefined
@@ -105,7 +110,7 @@ function fold(value: string): string {
     .toLowerCase()
 }
 
-function textOf(message: SequencedChatMessage['message']): string {
+function textOf(message: Pick<StoredChatMessage, 'parts'>): string {
   return message.parts
     .filter((part): part is Extract<typeof part, { type: 'text' }> => part.type === 'text')
     .map((part) => part.text)
@@ -119,6 +124,52 @@ function cut(text: string, max: number): { text: string; truncated?: true } {
 
 function sha256(...values: string[]): string {
   return createHash('sha256').update(values.join('\0')).digest('hex')
+}
+
+/** What `transcriptFromMessages` reads of a message: stored here, or public from a remote computer's history page. */
+export interface TranscriptMessage {
+  /** Absent for a remote computer's messages: its history pages do not number them. */
+  seq?: number
+  message: Pick<StoredChatMessage, 'role' | 'parts' | 'internal' | 'peer' | 'executionScope'>
+}
+
+/**
+ * Readable text of `messages` (oldest first), newest last: tool activity, hidden framing, internal and review-loop
+ * messages are omitted. Also finds the latest assistant answer with text when `wantsReply`. `complete` says it holds
+ * `opts.messages` entries (and the reply when wanted), so older messages need not be read.
+ */
+export function transcriptFromMessages(
+  messages: readonly TranscriptMessage[],
+  opts: { messages: number; wantsReply: boolean; olderExist: boolean }
+): {
+  entries: ConversationTranscriptEntry[]
+  lastReply: ConversationReadResult['lastReply']
+  hasMore: boolean
+  complete: boolean
+} {
+  const entries: ConversationTranscriptEntry[] = []
+  let lastReply: ConversationReadResult['lastReply'] = null
+  let hasMore = false
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const { seq, message } = messages[index]
+    if (message.internal || !isConversationContextMessage(message)) continue
+    const text = textOf(message)
+    if (!text) continue
+    const at = seq !== undefined ? { seq } : {}
+    if (opts.wantsReply && !lastReply && message.role === 'assistant')
+      lastReply = { ...at, ...cut(text, CONVERSATION_RESULT_MAX_BODY) }
+    if (entries.length < opts.messages)
+      entries.unshift({
+        ...at,
+        role: message.role,
+        ...(message.peer ? { from: message.peer.fromConversationName } : {}),
+        ...cut(text, CONVERSATION_READ_MAX_TEXT),
+      })
+    else hasMore = true
+    if (entries.length >= opts.messages && (lastReply || !opts.wantsReply))
+      return { entries, lastReply, hasMore: hasMore || index > 0 || opts.olderExist, complete: true }
+  }
+  return { entries, lastReply, hasMore, complete: false }
 }
 
 export function createConversationLinkService(deps: ConversationLinkServiceDeps) {
@@ -182,42 +233,26 @@ export function createConversationLinkService(deps: ConversationLinkServiceDeps)
   }
 
   /**
-   * Readable text of a conversation, newest last: tool activity, hidden framing, internal and review-loop messages are
-   * omitted. Also finds the latest assistant answer with text unless paging older messages.
+   * Readable text of a conversation, newest last (see transcriptFromMessages), scanning older pages until it has
+   * enough.
    */
   function transcript(conversationId: string, input: { messages: number; beforeSeq?: number }) {
-    const entries: ConversationTranscriptEntry[] = []
-    let lastReply: ConversationReadResult['lastReply'] = null
-    let hasMore = false
-    let before = input.beforeSeq
     const wantsReply = input.beforeSeq === undefined
+    let collected: SequencedChatMessage[] = []
+    let before = input.beforeSeq
     for (let page = 0; page < MAX_SCAN_PAGES; page++) {
       const { messages, hasMore: older } = deps.messagesPage(conversationId, {
         ...(before !== undefined ? { beforeSeq: before } : {}),
         limit: PAGE,
       })
-      for (let index = messages.length - 1; index >= 0; index--) {
-        const { seq, message } = messages[index]
-        if (message.internal || !isConversationContextMessage(message)) continue
-        const text = textOf(message)
-        if (!text) continue
-        if (wantsReply && !lastReply && message.role === 'assistant')
-          lastReply = { seq, ...cut(text, CONVERSATION_RESULT_MAX_BODY) }
-        if (entries.length < input.messages)
-          entries.unshift({
-            seq,
-            role: message.role,
-            ...(message.peer ? { from: message.peer.fromConversationName } : {}),
-            ...cut(text, CONVERSATION_READ_MAX_TEXT),
-          })
-        else hasMore = true
-        if (entries.length >= input.messages && (lastReply || !wantsReply))
-          return { entries, lastReply, hasMore: hasMore || index > 0 || older }
-      }
-      if (!older || !messages.length) return { entries, lastReply, hasMore }
+      collected = [...messages, ...collected]
+      const scan = transcriptFromMessages(collected, { messages: input.messages, wantsReply, olderExist: older })
+      if (scan.complete || !older || !messages.length)
+        return { entries: scan.entries, lastReply: scan.lastReply, hasMore: scan.hasMore }
       before = messages[0].seq
     }
-    return { entries, lastReply, hasMore: true }
+    const scan = transcriptFromMessages(collected, { messages: input.messages, wantsReply, olderExist: true })
+    return { entries: scan.entries, lastReply: scan.lastReply, hasMore: true }
   }
 
   function read(caller: ConversationLinkCaller, input: ReadConversationInput): ConversationReadResult | ConversationLinkError {
@@ -375,10 +410,15 @@ export function createConversationLinkService(deps: ConversationLinkServiceDeps)
     return created ? deliver(entry) : replayed(entry)
   }
 
+  /**
+   * `confirm` asks the person before a turn they typed messages a conversation not linked to this one. The assistant
+   * passes `admit` instead, its per-turn action budget, consulted for every target it messages.
+   */
   async function send(
     caller: ConversationLinkCaller,
     input: SendToConversationInput,
-    confirm: (target: ConversationSummary, preview: string) => Promise<boolean>
+    confirm: ConversationSendGate,
+    admit?: ConversationSendGate
   ): Promise<ConversationSendResult> {
     if (input.conversationId === caller.conversationId)
       return fail('self', 'That is this conversation; a message to yourself is not needed.')
@@ -408,8 +448,9 @@ export function createConversationLinkService(deps: ConversationLinkServiceDeps)
             'continue.'
         )
     }
-    if (caller.kind === 'human' && !relation) {
-      const confirmed = await confirm(summarize(conversation, null), input.message.slice(0, 400)).catch(() => false)
+    const gate = caller.kind !== 'human' ? null : caller.isAssistant && admit ? admit : relation ? null : confirm
+    if (gate) {
+      const confirmed = await gate(summarize(conversation, null), input.message.slice(0, 400)).catch(() => false)
       if (!confirmed) return fail('declined', 'The person declined sending this message. Do not send it or retry.')
     }
     const ended = guarded(caller)

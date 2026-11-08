@@ -144,6 +144,7 @@ import { conversationShellEnv } from '../conversation-env'
 import { buildTools, isSubagentReadOnly, selectSubagentToolNames } from '../tools'
 import { enableConversationDispatchTools } from '../tools/conversation-dispatch'
 import { enableConversationLinkTools, isParentOnlyConversationToolName } from '../tools/conversation-link'
+import { enableAssistantTools } from '../tools/assistant'
 import { getWebSearchProvider, webSearchToolEnabled } from '../web-search/settings'
 import { WEB_SEARCH_TOOL_NAME } from '../../../shared/web-search'
 import type { GeneratedImageEmission, GeneratedImageUsage, ToolContext } from '../tools/util'
@@ -1920,6 +1921,8 @@ async function buildDynamicTools(
     const conversationDispatch = enableConversationDispatchTools(bridgeNames, args.conversationId, args.mode)
     // Reading and messaging other conversations: a turn typed by the person or started by another conversation.
     const conversationLink = enableConversationLinkTools(bridgeNames, args.conversationId, args.mode)
+    // The assistant conversation's own tools: a turn the person typed there.
+    const assistantTools = enableAssistantTools(bridgeNames, args.conversationId, args.mode)
     const bridgeTools = bridgeNames.size
       ? buildTools({
           executorReport: true,
@@ -1959,6 +1962,7 @@ async function buildDynamicTools(
               state.generateImage(prompt, generationSignal, onUsage),
             ...(conversationDispatch ? { conversationDispatch } : {}),
             ...(conversationLink ? { conversationLink } : {}),
+            ...(assistantTools ? { assistant: assistantTools } : {}),
           }),
         })
       : {}

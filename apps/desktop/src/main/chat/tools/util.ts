@@ -54,6 +54,8 @@ export interface ToolContext {
    * the person typed, or one started by another conversation). Absent in child/subagent and restricted turns.
    */
   conversationLink?: import('./conversation-link').ConversationLinkToolRuntime
+  /** Main-turn-only runtime of the assistant conversation's tools, for a turn the person typed there. */
+  assistant?: import('./assistant').AssistantToolRuntime
 }
 
 /** Artifact already written to the store (`generated-images.ts`) — only the opaque handle travels, never bytes. */

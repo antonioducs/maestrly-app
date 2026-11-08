@@ -61,6 +61,8 @@ const CATEGORY_BY_NAME: Record<string, ActivityCategory> = {
   grep: 'search',
   glob: 'search',
   find_github_repositories: 'search',
+  maestrly_overview: 'search',
+  bot_read: 'read',
   web_search: 'web_search',
   webfetch: 'web_fetch',
   web_fetch: 'web_fetch',

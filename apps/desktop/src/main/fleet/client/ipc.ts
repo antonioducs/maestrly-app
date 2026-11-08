@@ -1,6 +1,14 @@
 import { registerFleetEnvironmentSettingsIpc } from './environment-settings-ipc'
 import { app } from 'electron'
-import { validateAttachmentBytes } from '../instance/incoming-attachments'
+import {
+  listBotRuns,
+  ownerMessage,
+  readBotRunTranscript,
+  readBotTranscript,
+  requireFiles,
+  resolveBotInteraction,
+  sendBotMessage,
+} from './bot-actions'
 import { registerFleetProvisioningIpc } from './provisioning/ipc'
 import { defaultFleetBackupIpcDeps, registerFleetBackupIpc } from './backup-ipc'
 import { z } from 'zod'
@@ -41,17 +49,13 @@ import {
   fleetPatchRoutineRequestSchema,
   fleetTakeoverReleaseRequestSchema,
   fleetUiOpenRequestSchema,
-  fleetSendMessageRequestSchema,
   fleetEditMessageRequestSchema,
-  FLEET_FILES_FEATURE,
   FLEET_FILES_MANAGE_FEATURE,
-  FLEET_FILE_LIMITS,
   fleetFileSettingsSchema,
   fleetFilesDeleteRequestSchema,
   FLEET_MESSAGE_EDIT_FEATURE,
   FLEET_REASONING_QUERY,
   FLEET_ROUTINE_CONVERSATIONS_FEATURE,
-  FLEET_ROUTINE_RUN_LIMITS,
   FLEET_PEER_CONVERSATIONS_FEATURE,
   FLEET_OWNER_SEEN_FEATURE,
   fleetPeerThreadSettingsSchema,
@@ -110,22 +114,6 @@ const createWorkspacesInput = z
   .strict()
 const opaqueId = z.string().min(1).max(256)
 const optionalLimit = z.number().int().min(1).max(500).optional()
-const outgoingAttachments = z
-  .array(
-    z
-      .object({
-        kind: z.enum(['image', 'pdf', 'text']).default('image'),
-        name: z.string().min(1).max(200),
-        mediaType: z.enum(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'application/pdf', 'text/plain']),
-        data: z.instanceof(Uint8Array).refine((data) => data.byteLength <= FLEET_FILE_LIMITS.pdfMaxBytes),
-      })
-      .strict()
-  )
-  .max(FLEET_FILE_LIMITS.attachmentsMax)
-  .refine(
-    (items) => items.reduce((sum, item) => sum + item.data.byteLength, 0) <= FLEET_FILE_LIMITS.attachmentsTotalMaxBytes
-  )
-  .refine((items) => items.filter((item) => item.kind === 'pdf').length <= FLEET_FILE_LIMITS.pdfsMax)
 const imageId = z.string().regex(/^[A-Za-z0-9_-]{1,120}$/)
 /** The files a window shows, each with its server; each send replaces that window's whole list. */
 const attendedFiles = z
@@ -383,51 +371,11 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
     return fleet.call(route.key, { params: route.params })
   })
   scoped.handle('fleet:getTranscript', (fleet, _event, botId: unknown, before: unknown, limit: unknown) =>
-    fleet.call('botTranscript', {
-      params: { id: id.parse(botId) },
-      query: {
-        before: z.string().max(256).nullable().optional().parse(before),
-        limit: optionalLimit.parse(limit),
-        // This app reads `reasoning` items; an older gateway ignores the parameter and sends none.
-        [FLEET_REASONING_QUERY]: 1,
-      },
+    readBotTranscript(fleet, id.parse(botId), {
+      before: z.string().max(256).nullable().optional().parse(before),
+      limit: optionalLimit.parse(limit),
     })
   )
-  /** An owner's message, as the composer sends it; with `citation`, it refers to one of the bot's routine runs. */
-  const ownerMessage = (fleet: FleetClientService, text: unknown, attachments: unknown, citation?: string) => {
-    const admitted = outgoingAttachments.parse(attachments)
-    try {
-      for (const attachment of admitted) validateAttachmentBytes(attachment, attachment.data)
-    } catch {
-      throw new Error('FLEET_ATTACHMENT_INVALID')
-    }
-    return fleetSendMessageRequestSchema.parse({
-      text: z.string().max(16_000).parse(text),
-      attachments: admitted.map((item) => ({
-        kind: item.kind,
-        name: item.name,
-        mediaType: item.mediaType,
-        dataBase64: Buffer.from(item.data).toString('base64'),
-      })),
-      idempotencyKey: fleet.idempotencyKey(),
-      ...(citation ? { citation: { runId: citation } } : {}),
-    })
-  }
-  /**
-   * Checks the bot can take documents, when the message has some. A gateway without them throws at once, as every
-   * invalid input does; the bot's answer settles the promise.
-   */
-  const requireFiles = (
-    fleet: FleetClientService,
-    botId: string,
-    input: { attachments: Array<{ kind?: string }> }
-  ): Promise<void> => {
-    if (!input.attachments.some((attachment) => attachment.kind !== 'image')) return Promise.resolve()
-    if (!fleet.hasFeature(FLEET_FILES_FEATURE)) throw new Error('FLEET_FILES_UNSUPPORTED')
-    return fleet.call('botGet', { params: { id: botId } }).then((bot) => {
-      if (!bot.capabilities.includes(FLEET_FILES_FEATURE)) throw new Error('FLEET_FILES_UNSUPPORTED')
-    })
-  }
   /** Checks the gateway and the bot manage the files it shared (`files-manage`). */
   const requireFilesManage = async (fleet: FleetClientService, botId: string): Promise<void> => {
     if (!fleet.hasFeature(FLEET_FILES_MANAGE_FEATURE)) throw new Error(FLEET_FILES_MANAGE_UNSUPPORTED)
@@ -459,28 +407,15 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
   }
   scoped.mhandle(
     'fleet:sendMessage',
-    (fleet, _event, botId: unknown, text: unknown, attachments: unknown = [], citation: unknown = null) => {
-      const params = { id: id.parse(botId) }
-      const run = citation === null ? undefined : opaqueId.parse(citation)
-      const input = ownerMessage(fleet, text, attachments, run)
-      if (run && !fleet.hasFeature(FLEET_ROUTINE_CONVERSATIONS_FEATURE)) throw new Error(FLEET_RUNS_UNSUPPORTED)
-      return requireFiles(fleet, params.id, input).then(() => fleet.call('botMessageSend', { params, body: input }))
-    }
+    (fleet, _event, botId: unknown, text: unknown, attachments: unknown = [], citation: unknown = null) =>
+      sendBotMessage(fleet, id.parse(botId), text, attachments, citation === null ? null : opaqueId.parse(citation))
   )
   // A bot's routine runs, each in a conversation of its own (`routine-conversations`).
-  scoped.handle(
-    'fleet:listRuns',
-    (fleet, _event, botId: unknown, before: unknown = null, routineId: unknown = null) => {
-      if (!fleet.hasFeature(FLEET_ROUTINE_CONVERSATIONS_FEATURE)) throw new Error(FLEET_RUNS_UNSUPPORTED)
-      return fleet.call('botRuns', {
-        params: { id: id.parse(botId) },
-        query: {
-          before: opaqueId.nullable().parse(before) ?? undefined,
-          routineId: opaqueId.nullable().parse(routineId) ?? undefined,
-          limit: FLEET_ROUTINE_RUN_LIMITS.pageMax,
-        },
-      })
-    }
+  scoped.handle('fleet:listRuns', (fleet, _event, botId: unknown, before: unknown = null, routineId: unknown = null) =>
+    listBotRuns(fleet, id.parse(botId), {
+      before: opaqueId.nullable().parse(before),
+      routineId: opaqueId.nullable().parse(routineId),
+    })
   )
   scoped.handle('fleet:getRun', (fleet, _event, botId: unknown, runId: unknown) =>
     fleet.call('botRunGet', { params: { id: id.parse(botId), runId: opaqueId.parse(runId) } })
@@ -488,13 +423,9 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
   scoped.handle(
     'fleet:getRunTranscript',
     (fleet, _event, botId: unknown, runId: unknown, before: unknown, limit: unknown) =>
-      fleet.call('botRunTranscript', {
-        params: { id: id.parse(botId), runId: opaqueId.parse(runId) },
-        query: {
-          before: z.string().max(256).nullable().optional().parse(before),
-          limit: optionalLimit.parse(limit),
-          [FLEET_REASONING_QUERY]: 1,
-        },
+      readBotRunTranscript(fleet, id.parse(botId), opaqueId.parse(runId), {
+        before: z.string().max(256).nullable().optional().parse(before),
+        limit: optionalLimit.parse(limit),
       })
   )
   scoped.mhandle('fleet:pinRun', (fleet, _event, botId: unknown, runId: unknown, pinned: unknown) =>
@@ -711,10 +642,12 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
   scoped.mhandle(
     'fleet:resolveInteraction',
     (fleet, _event, botId: unknown, interactionId: unknown, resolution: unknown) =>
-      fleet.call('botInteractionResolve', {
-        params: { id: id.parse(botId), interactionId: opaqueId.parse(interactionId) },
-        body: fleetInteractionResolutionSchema.parse(resolution),
-      })
+      resolveBotInteraction(
+        fleet,
+        id.parse(botId),
+        opaqueId.parse(interactionId),
+        fleetInteractionResolutionSchema.parse(resolution)
+      )
   )
   scoped.mhandle('fleet:takeover', async (fleet, _event, botId: unknown) => {
     try {

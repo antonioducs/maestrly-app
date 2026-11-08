@@ -2037,6 +2037,8 @@ describe('Claude official chat runner', () => {
         'mcp__maestrly__generate_image',
       ])
     )
+    // Only the assistant conversation gets its tools.
+    expect(tools).not.toContain('mcp__maestrly__maestrly_overview')
     // What the preflight checks between turns, before the next one is admitted.
     expect(await inspectClaudeSessionCompatibility(turn)).toBe(true)
 

@@ -24,6 +24,7 @@ import {
   recordHumanTurnOrigin,
 } from './conversation-dispatch-authorization'
 import { clearLinkedTurnOrigin, recordLinkedTurnOrigin } from './conversation-link-authorization'
+import { assistantActionBudget } from '../assistant/action-budget'
 import type { ConversationDispatchSettings } from '../../shared/conversation-dispatch'
 import type { ConversationPeerMessageKind, ConversationTurnResultStatus } from '../../shared/conversation-link'
 import {
@@ -497,7 +498,14 @@ import {
   type MaestroToStandardResult,
   type StandardToMaestroResult,
 } from '../../shared/conversation-experience'
-import type { ChatAttachmentPdfFileResult, ChatMode, ChatOpenAttachmentResult } from '../../shared/chat'
+import type {
+  ChatAttachmentPdfFileResult,
+  ChatMode,
+  ChatOpenAttachmentResult,
+  ChatPermissionRequest,
+  PendingChatQuestion,
+  PermissionReply,
+} from '../../shared/chat'
 import type { ConvUiPrefs } from '../../shared/conversation'
 import { isChatMode, normalizeChatMode } from '../../shared/chat-mode'
 import type { MaestroOrchestratorProfileV1, MaestroTurnSnapshotV1 } from '../../shared/maestro'
@@ -2919,6 +2927,29 @@ function getBroker(): PermissionBroker {
 /** Shared executor boundary for host workflows that reuse Chat subagents outside a model tool call. */
 export function getChatPermissionBroker(): PermissionBroker {
   return getBroker()
+}
+
+/** The person's reply to a permission request, as the window's prompt sends it (`chat:permission-respond`). */
+export function replyChatPermission(requestId: string, reply: PermissionReply, message?: string): void {
+  getBroker().reply({ requestId, reply, message })
+}
+
+/** The person's answers to an ask_question card, as the window sends them (`chat:question-respond`). */
+export function replyChatQuestion(toolCallId: string, answers: string[][]): void {
+  getQuestionBroker().reply(toolCallId, answers)
+}
+
+/** What a conversation waits for from the person, read without the side effects of `chatRuntimeState`. */
+export function chatPendingInteractions(conversationId: string): {
+  permissions: ChatPermissionRequest[]
+  questions: PendingChatQuestion[]
+} {
+  return {
+    permissions: getBroker()
+      .pendingFor(conversationId)
+      .map((request) => toRequestPayload(request).request),
+    questions: getQuestionBroker().pendingQuestionsFor(conversationId),
+  }
 }
 
 /** ask_question broker (round trip from toolCallId to answers; the card comes from the part). Event wiring here
@@ -6100,6 +6131,7 @@ async function startSendAttempt(
         if (active.get(conversationId) === run) active.delete(conversationId)
         clearHumanTurnOrigin(conversationId, run)
         clearLinkedTurnOrigin(conversationId, run)
+        assistantActionBudget.clear(`message:${userMessageId}`)
         turnSnapshot?.end(run.messageId || null)
         releaseCwdActivityOnce()
         if (!controller.signal.aborted) {
@@ -11927,6 +11959,19 @@ export async function startConversationPeerTurn(
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) }
   }
+}
+
+/**
+ * Sends `text` in a conversation as the person, from the window that shows it: a human turn, admitted as a message
+ * typed in that window's composer would be (the assistant's Realtime voice passes on what the person said).
+ */
+export function sendChatAsPerson(
+  wc: WebContents,
+  conversationId: string,
+  text: string
+): Promise<{ ok: boolean; error?: string }> {
+  if (!savedDeps) return Promise.resolve({ ok: false, error: 'unavailable' })
+  return startSend(savedDeps, wc, conversationId, text)
 }
 
 /** Resolves once the conversation's current turn and pending operation (if any) have settled. */

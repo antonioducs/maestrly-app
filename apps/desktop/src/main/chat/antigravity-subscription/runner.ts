@@ -65,6 +65,7 @@ import { adaptToolSetForModel } from '../tool-capabilities'
 import { buildTools, builtinToolNamesForMode } from '../tools'
 import { enableConversationDispatchTools } from '../tools/conversation-dispatch'
 import { enableConversationLinkTools } from '../tools/conversation-link'
+import { enableAssistantTools } from '../tools/assistant'
 import type { GeneratedImageEmission, ToolContext } from '../tools/util'
 import {
   AntigravityModelUnavailableError,
@@ -343,12 +344,15 @@ export async function runAntigravitySubscriptionChat(
       generateImage,
       ...(conversationDispatch ? { conversationDispatch } : {}),
       ...(conversationLink ? { conversationLink } : {}),
+      ...(assistantTools ? { assistant: assistantTools } : {}),
     })
 
     const enabledBuiltins = builtinToolNamesForMode(args.mode)
     const conversationDispatch = enableConversationDispatchTools(enabledBuiltins, args.conversationId, args.mode)
     // Reading and messaging other conversations: a turn typed by the person or started by another conversation.
     const conversationLink = enableConversationLinkTools(enabledBuiltins, args.conversationId, args.mode)
+    // The assistant conversation's own tools: a turn the person typed there.
+    const assistantTools = enableAssistantTools(enabledBuiltins, args.conversationId, args.mode)
     if (await generateImageToolEnabled(args.conversationId, args.mode, { antigravityAccountId: accountId })) {
       enabledBuiltins.add(GENERATE_IMAGE_TOOL_NAME)
     }

@@ -6,7 +6,8 @@ import { cn } from '@/lib/utils'
 import { dictationLanguage, type AsrLanguage, type AsrSupport, type DictationLanguageMode } from '../../../shared/asr'
 import { DICTATION_API_MAX_MS, type DictationApiProvider, type DictationConfig } from '../../../shared/dictation'
 import type { RuntimeAssetInfo } from '../../../shared/runtime-assets'
-import { MIC_LANGUAGE_KEY, readLanguageMode } from '@/lib/dictation'
+import { MIC_DEVICE_KEY, MIC_LANGUAGE_KEY, readLanguageMode } from '@/lib/dictation'
+import { decodeTo16kMono, openMicStream } from '@/lib/mic-recorder'
 import { useSettings } from '@/lib/use-settings'
 import { DictationModelCard } from './DictationModelCard'
 import { DictationNoticeCard, type DictationNoticeAction } from './DictationNoticeCard'
@@ -26,41 +27,10 @@ type Notice =
   | { kind: 'key-missing'; provider: DictationApiProvider }
   | { kind: 'failed'; error: 'key-rejected' | 'quota' | 'too-long' | 'unavailable' }
 
-const DEVICE_KEY = 'chat.mic.deviceId'
 const HOLD_KEY = 'chat.mic.hold'
 
 const barIconCls =
   'flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-white/[0.06] hover:text-foreground'
-
-async function decodeTo16kMono(buf: ArrayBuffer): Promise<Float32Array> {
-  const AC =
-    window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
-  const ctx = new AC()
-  let decoded: AudioBuffer
-  try {
-    decoded = await ctx.decodeAudioData(buf)
-  } finally {
-    void ctx.close()
-  }
-  const len = decoded.length
-  const mono = new Float32Array(len)
-  for (let ch = 0; ch < decoded.numberOfChannels; ch++) {
-    const data = decoded.getChannelData(ch)
-    for (let i = 0; i < len; i++) mono[i] += data[i] / decoded.numberOfChannels
-  }
-  const TARGET = 16000
-  if (decoded.sampleRate === TARGET) return mono
-  const outLen = Math.max(1, Math.ceil((len * TARGET) / decoded.sampleRate))
-  const offline = new OfflineAudioContext(1, outLen, TARGET)
-  const srcBuf = offline.createBuffer(1, len, decoded.sampleRate)
-  srcBuf.getChannelData(0).set(mono)
-  const src = offline.createBufferSource()
-  src.buffer = srcBuf
-  src.connect(offline.destination)
-  src.start()
-  const rendered = await offline.startRendering()
-  return rendered.getChannelData(0).slice()
-}
 
 function Switch({ on }: { on: boolean }) {
   return (
@@ -100,7 +70,7 @@ export function ChatMicButton({
   const [session, setSession] = useState<{ stream: MediaStream; startedAt: number } | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
-  const [deviceId, setDeviceId] = useState<string>(() => localStorage.getItem(DEVICE_KEY) ?? '')
+  const [deviceId, setDeviceId] = useState<string>(() => localStorage.getItem(MIC_DEVICE_KEY) ?? '')
   const [hold, setHold] = useState<boolean>(() => localStorage.getItem(HOLD_KEY) === '1')
   const [languageMode, setLanguageMode] = useState<DictationLanguageMode>(() => readLanguageMode(localStorage))
   const [support, setSupport] = useState<AsrSupport | null>(null)
@@ -356,11 +326,7 @@ export function ChatMicButton({
       }
       startingRef.current = true
       try {
-        await window.api.chatEnsureMicAccess().catch(() => {})
-        const wanted = deviceId ? { deviceId: { exact: deviceId } } : true
-        const stream = await navigator.mediaDevices
-          .getUserMedia({ audio: wanted })
-          .catch(() => navigator.mediaDevices.getUserMedia({ audio: true }))
+        const stream = await openMicStream(deviceId)
         if (by === 'hold' && !holdingRef.current) {
           // Released before the microphone opened.
           stream.getTracks().forEach((track) => track.stop())
@@ -503,8 +469,8 @@ export function ChatMicButton({
 
   const chooseDevice = (id: string) => {
     setDeviceId(id)
-    if (id) localStorage.setItem(DEVICE_KEY, id)
-    else localStorage.removeItem(DEVICE_KEY)
+    if (id) localStorage.setItem(MIC_DEVICE_KEY, id)
+    else localStorage.removeItem(MIC_DEVICE_KEY)
     setMenuOpen(false)
   }
   const toggleHold = () => {

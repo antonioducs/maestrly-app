@@ -84,7 +84,7 @@ import { conversationTabAllowed, isRemoteConversation, setRemoteToolHosts } from
 import { registerPerformanceWebContents } from './performance/metrics'
 import { disposeMemoryReclaimer } from './performance/memory-reclaimer'
 import { disposeOwnedProcesses } from './performance/owned-processes'
-import { setMainLocale, tMain } from './i18n'
+import { getMainLocale, setMainLocale, tMain } from './i18n'
 import * as floatingManager from './floating-manager'
 import * as popupManager from './popup-manager'
 import { setHotkeyHandler, attachHotkeyCapture } from './hotkeys'
@@ -223,7 +223,22 @@ import { reconcilePluginsOnStartup } from './plugins/service'
 import { registerPlanIpc } from './plan-ipc'
 import { getConversationDispatchService } from './conversation-dispatch-service'
 import { registerDrawerIpc } from './drawer-ipc'
-import { registerConversationIpc } from './conversation-ipc'
+import { archiveConversation, type ConversationIpcDeps, registerConversationIpc } from './conversation-ipc'
+import { isAssistantConversation, setAssistantConversationArchiver } from './assistant/assistant-conversation'
+import { setAssistantRoleResolver } from './chat/harness/assistant-role'
+import type { AssistantWindow } from './assistant/assistant-window'
+import { createDesktopAssistantWindow } from './assistant/assistant-runtime'
+import { registerAssistantIpc } from './assistant/assistant-ipc'
+import { getAssistantSettings } from './assistant/assistant-settings'
+import {
+  parseAssistantArgv,
+  registerAssistantShortcut,
+  unregisterAssistantShortcut,
+} from './assistant/assistant-shortcut'
+import { type AssistantSettings, effectiveAssistantShortcut } from '../shared/assistant'
+import { osFromPlatform } from '../shared/shortcuts'
+import { createHostInvoker, HostUnavailableError } from './remote-host/host-invoker'
+import { setAssistantHostAccess } from './assistant/assistant-context'
 import { createSiblingConversation, deleteConversation } from './workspace-service'
 import { registerLocalConversationIpc } from './local-conversation/ipc'
 import { registerTurnSnapshotIpc } from './turn-snapshots/ipc'
@@ -307,6 +322,8 @@ if (process.platform === 'linux') {
   const linuxApp = app as typeof app & { setDesktopName?: (name: string) => void }
   linuxApp.setDesktopName?.(`${desktopToken}.desktop`)
   app.commandLine.appendSwitch('class', desktopToken)
+  // The assistant's free voice: Chromium reads system voices on Linux only through speech-dispatcher, when asked to.
+  app.commandLine.appendSwitch('enable-speech-dispatcher')
 }
 
 const registry = new AgentRegistry()
@@ -321,6 +338,66 @@ let cancelProjectSetupsAndWait: (() => Promise<void>) | null = null
 let disposeConversationMigrationIpc: (() => void) | null = null
 let conversationMoveService: ConversationMoveService | null = null
 let disposeConversationMoveIpc: (() => void) | null = null
+
+/** The floating assistant window of this computer, created on first use; never on a headless instance. */
+let assistantWindow: AssistantWindow | null = null
+function assistant(): AssistantWindow | null {
+  if (isHeadlessInstance()) return null
+  assistantWindow ??= createDesktopAssistantWindow()
+  return assistantWindow
+}
+/** Reaches a remote host's handlers from this process, under the main window's origin. */
+const hostInvoker = createHostInvoker({
+  registry: () => hostRegistry(),
+  mainWebContentsId: () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents.id : null),
+})
+/** Why the assistant's global shortcut is not registered, when it is not. */
+let assistantShortcutError: 'conflict' | 'unsupported' | null = null
+
+function revealMainWindow(): void {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show()
+    mainWindow.focus()
+  } else void createWindow()
+}
+
+function rebuildTrayMenu(): void {
+  if (!appTray) return
+  const t = tMain('main')
+  const assistantOn = !isHeadlessInstance() && getAssistantSettings().enabled
+  appTray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: 'Maestrly', click: revealMainWindow },
+      ...(assistantOn ? [{ label: t('assistant.trayOpen'), click: () => void assistant()?.show() }] : []),
+      { type: 'separator' },
+      { label: t('assistant.trayQuit'), click: () => app.quit() },
+    ])
+  )
+}
+
+/** The global shortcut (or the toggle flag): it opens the window listening when the voice settings ask for it. */
+function toggleAssistantFromShortcut(): Promise<void> | undefined {
+  return assistant()?.toggle({ listen: getAssistantSettings().voice.shortcutListens })
+}
+
+/** Register the global shortcut and the tray entry the settings ask for; returns why the shortcut failed, if it did. */
+function applyAssistantSettings(settings: AssistantSettings): 'conflict' | 'unsupported' | null {
+  if (isHeadlessInstance()) return null
+  const binding = settings.enabled ? effectiveAssistantShortcut(settings, osFromPlatform(process.platform)) : null
+  const result = registerAssistantShortcut(binding, () => void toggleAssistantFromShortcut())
+  assistantShortcutError = result.ok ? null : result.reason
+  if (!settings.enabled) assistantWindow?.hide()
+  rebuildTrayMenu()
+  return assistantShortcutError
+}
+
+/** Closing the main window only hides it while the assistant keeps the app running in the background. */
+function keepsRunningInBackground(): boolean {
+  if (isHeadlessInstance()) return false
+  const settings = getAssistantSettings()
+  return settings.enabled && settings.keepRunning
+}
 
 /** Events the main window shows about the profile; on a host, the main renderer of each connected computer too. */
 const sendToWindow = (channel: string, payload?: unknown): void => {
@@ -604,6 +681,7 @@ function broadcastStatus(payload: { agentId: string; status: string; alert?: boo
     }
   }
   sendToWindow('agent:status', payload)
+  if (assistantWindow?.conversationId() === payload.agentId) assistantWindow.send('agent:status', payload)
   if (attention) sendToWindow('conversation:attention', { conversationId: payload.agentId, attention: true })
 
   onAgentStatus(payload.agentId, payload.status)
@@ -825,7 +903,7 @@ async function createWindow(): Promise<void> {
   // Windows ends the session by closing the windows; nobody is left to answer a confirmation.
   mainWindow.on('session-end', quitForSystem)
   mainWindow.on('close', (e) => {
-    if (isHeadlessInstance() && !backgroundQuit) {
+    if ((isHeadlessInstance() || keepsRunningInBackground()) && !backgroundQuit && !systemQuit) {
       e.preventDefault()
       mainWindow?.hide()
       return
@@ -833,6 +911,9 @@ async function createWindow(): Promise<void> {
     if (!confirmQuitOnce(() => e.preventDefault())) return
 
     chatWindowManager?.dispose()
+    // The assistant only hides when closed: release it so that closing the last window still quits.
+    assistantWindow?.dispose()
+    assistantWindow = null
     floatingManager.flushPendingFloatPersists()
     floatingManager.disposeAll()
     popupManager.disposeAll()
@@ -920,14 +1001,47 @@ function registerIpc(): void {
     notifyWorkspacesChanged: () => sendToMainTargets('workspace:changed'),
   })
   cancelProjectSetupsAndWait = registerProjectSetupIpc(reg).cancelAndWait
-  registerConversationIpc(reg, {
+  const conversationIpcDeps: ConversationIpcDeps = {
     stopChat,
     resumeBackgroundCompaction,
     emitAttention: (conversationId, attention) => {
       sendToWindow('conversation:attention', { conversationId, attention })
       if (!attention) appNotifications?.conversations.seen(conversationId)
     },
-  })
+  }
+  registerConversationIpc(reg, conversationIpcDeps)
+  setAssistantConversationArchiver((id) => archiveConversation(conversationIpcDeps, id, true))
+  setAssistantRoleResolver(isAssistantConversation)
+  if (!isHeadlessInstance()) {
+    setAssistantHostAccess({
+      invoker: hostInvoker,
+      hosts: () =>
+        (hostRegistry()?.list() ?? [])
+          .filter((host) => host.remote)
+          .map((host) => ({ id: host.id, label: host.label, state: host.state })),
+    })
+    const revealMain = () => {
+      if (mainWindow && !mainWindow.isDestroyed()) focusMainWindow()
+      else void createWindow()
+    }
+    registerAssistantIpc(reg, {
+      window: assistant,
+      locale: getMainLocale,
+      openConversationInApp: (conversationId) => {
+        const conversation = getConversation(conversationId)
+        if (!conversation) return
+        revealMain()
+        safeWindowSend(mainWindow, 'conversation:open', { conversation, focus: true })
+      },
+      openSettingsInApp: (section) => {
+        revealMain()
+        safeWindowSend(mainWindow, 'assistant:open-settings', section)
+      },
+      applySettings: applyAssistantSettings,
+      shortcutError: () => assistantShortcutError,
+      wayland: process.platform === 'linux' && process.env.XDG_SESSION_TYPE === 'wayland',
+    })
+  }
   registerLocalConversationIpc(reg)
   registerTurnSnapshotIpc(reg, { isRunning: isChatConversationRunning })
   disposeConversationMigrationIpc?.()
@@ -1109,8 +1223,12 @@ function registerIpc(): void {
 if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
-  app.on('second-instance', () => {
-    const win = BrowserWindow.getAllWindows()[0]
+  app.on('second-instance', (_event, argv) => {
+    if (!isHeadlessInstance() && parseAssistantArgv(argv).toggleAssistant && getAssistantSettings().enabled) {
+      void toggleAssistantFromShortcut()
+      return
+    }
+    const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : BrowserWindow.getAllWindows()[0]
     if (win) {
       if (win.isMinimized()) win.restore()
       if (!win.isVisible()) win.show()
@@ -1304,20 +1422,12 @@ app.whenReady().then(async () => {
     if (process.platform === 'darwin') trayIcon.setTemplateImage(true)
     appTray = new Tray(trayIcon)
     appTray.setToolTip('Maestrly')
-    const reveal = () => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.show()
-        mainWindow.focus()
-      } else void createWindow()
-    }
-    appTray.on('click', reveal)
-    appTray.setContextMenu(
-      Menu.buildFromTemplate([
-        { label: 'Maestrly', click: reveal },
-        { type: 'separator' },
-        { label: getLocale().startsWith('pt') ? 'Sair' : 'Quit', click: () => app.quit() },
-      ])
-    )
+    appTray.on('click', revealMainWindow)
+    rebuildTrayMenu()
+  }
+  if (!isHeadlessInstance()) {
+    applyAssistantSettings(getAssistantSettings())
+    if (parseAssistantArgv(process.argv).toggleAssistant && getAssistantSettings().enabled) void assistant()?.show()
   }
   if (isBotMode() && mainWindow) {
     const environmentScreen = mainWindow
@@ -1452,7 +1562,10 @@ app.whenReady().then(async () => {
 })
 
 // History writes are debounced; persist the last visits in every mode, bots included.
-app.on('will-quit', () => flushBrowserHistory())
+app.on('will-quit', () => {
+  flushBrowserHistory()
+  unregisterAssistantShortcut()
+})
 
 app.on('window-all-closed', () => {
   if (isHeadlessInstance()) return
@@ -1554,12 +1667,11 @@ function registerConversationMove(reg: IpcRegistrar): void {
       .some((host) => host.id === hostId && host.state === 'online')
   const remote = (hostId: HostId): MoveEndpoint =>
     createRemoteMoveEndpoint(hostId, {
-      call: (channel, input) => {
-        const registry = hostRegistry()
-        const origin = mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents.id : null
-        if (!registry || origin === null) throw new MoveError('host-unavailable', 'No window can reach the host.')
-        return registry.use(hostId, origin, () => ({ role: 'main' })).invoke(origin, channel, [input])
-      },
+      call: (channel, input) =>
+        hostInvoker.invoke(hostId, channel, [input]).catch((error: unknown) => {
+          if (error instanceof HostUnavailableError) throw new MoveError('host-unavailable', error.message)
+          throw error
+        }),
       onEvent: onHostEvent,
     })
   conversationMoveService = new ConversationMoveService({
@@ -1612,6 +1724,8 @@ app.on('before-quit', (e) => {
   if (!confirmQuitOnce(() => e.preventDefault())) return
 
   chatWindowManager?.dispose()
+  assistantWindow?.dispose()
+  assistantWindow = null
 
   // First, within the container's stop grace: once this process exits, the bots' displays stop, and a Chromium still
   // closing then loses the cookies it changed last (the session tokens Google rotates), signing the bots out.

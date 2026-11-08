@@ -41,6 +41,28 @@ export interface ConversationIpcDeps {
   emitAttention?: (conversationId: string, attention: boolean) => void
 }
 
+/** Archive or restore a conversation, as the conversation list does. */
+export async function archiveConversation(deps: ConversationIpcDeps, id: string, archived: boolean): Promise<void> {
+  assertConversationMigrationMutationAllowed(id, archived ? 'Archive conversation' : 'Unarchive conversation')
+  if (archived) {
+    // Stop streams and invalidate late callbacks before destroying views. stopChat retires active
+    // official sessions; preserve completed sessions because archive is reversible. What its terminals and commands
+    // left running ends too: after a restart nothing could tell it belonged to this conversation.
+    clearPlan(id)
+    await deps.stopChat(id)
+    await stopConversationProcesses(id)
+    // On a workspaces host its computer goes back at once, before the windows it presents.
+    await serverComputers()?.close(id)
+    floatingManager.disposeConversation(id) // close floating windows before destroying views
+    popupManager.disposeConversation(id) // clear popup state before destroying views (#328)
+    disposeConversation(id)
+    cleanupSharedWatchers(id) // #322: release shared watchers only when no active sibling needs them
+  }
+  setConversationArchived(id, archived)
+  if (archived && clearConversationAttention(id)) deps.emitAttention?.(id, false)
+  if (!archived) deps.resumeBackgroundCompaction?.(id)
+}
+
 export function registerConversationIpc(reg: IpcRegistrar, deps: ConversationIpcDeps): void {
   reg.mhandle('conversation:create-standalone', (_e, payload: unknown) => createStandaloneConversation(payload))
   reg.handle('conversation:list-standalone', (_e, includeArchived: unknown = false) =>
@@ -106,26 +128,7 @@ export function registerConversationIpc(reg: IpcRegistrar, deps: ConversationIpc
     const conversationId = z.string().min(1).parse(id)
     if (clearConversationAttention(conversationId)) deps.emitAttention?.(conversationId, false)
   })
-  reg.mhandle('conversation:archive', async (_e, id: string, archived: boolean) => {
-    assertConversationMigrationMutationAllowed(id, archived ? 'Archive conversation' : 'Unarchive conversation')
-    if (archived) {
-      // Stop streams and invalidate late callbacks before destroying views. stopChat retires active
-      // official sessions; preserve completed sessions because archive is reversible. What its terminals and commands
-      // left running ends too: after a restart nothing could tell it belonged to this conversation.
-      clearPlan(id)
-      await deps.stopChat(id)
-      await stopConversationProcesses(id)
-      // On a workspaces host its computer goes back at once, before the windows it presents.
-      await serverComputers()?.close(id)
-      floatingManager.disposeConversation(id) // close floating windows before destroying views
-      popupManager.disposeConversation(id) // clear popup state before destroying views (#328)
-      disposeConversation(id)
-      cleanupSharedWatchers(id) // #322: release shared watchers only when no active sibling needs them
-    }
-    setConversationArchived(id, archived)
-    if (archived && clearConversationAttention(id)) deps.emitAttention?.(id, false)
-    if (!archived) deps.resumeBackgroundCompaction?.(id)
-  })
+  reg.mhandle('conversation:archive', (_e, id: string, archived: boolean) => archiveConversation(deps, id, archived))
   reg.mhandle('conversation:delete', async (_e, id: string) => {
     assertConversationMigrationMutationAllowed(id, 'Delete conversation')
     // Permanent deletion stops the agent, the drawer terminals and what both started, releases views, and removes

@@ -10,7 +10,7 @@ import {
 } from 'react'
 import type { Conversation, WorkspaceWithConversations } from '../../preload'
 import { requestMainNavigation } from './main-navigation'
-import type { SettingsSection } from '@/components/settings/nav'
+import { SETTINGS_NAV, type SettingsSection } from '@/components/settings/nav'
 import type { OpenSettingsOptions, SettingsRequest } from './use-settings'
 import { hostApi } from '@/lib/hosts/host-context'
 import { type HostId, LOCAL_HOST_ID, parseHostKey } from '../../shared/host-key'
@@ -207,6 +207,16 @@ export function useMainPanels({
       })
     },
     []
+  )
+
+  // The assistant window asks this window to show Settings (its own section, or the dictation keys).
+  useEffect(
+    () =>
+      window.api.onAssistantOpenSettings((section) => {
+        const known = SETTINGS_NAV.some((item) => item.id === section)
+        openSettings(known ? (section as SettingsSection) : 'chat')
+      }),
+    [openSettings]
   )
 
   const openArtifacts = useCallback(() => {

@@ -10,6 +10,7 @@ import {
   Palette,
   PanelRight,
   ShieldCheck,
+  Sparkles,
   Workflow,
 } from 'lucide-react'
 
@@ -25,9 +26,11 @@ export type SettingsSection =
   | 'execution'
   | 'privacy'
   | 'updates'
+  | 'assistant'
 
 export const SETTINGS_NAV: { id: SettingsSection; icon: ReactNode; labelKey: string }[] = [
   { id: 'chat', icon: <MessagesSquare className="size-4" />, labelKey: 'settings.nav.chat' },
+  { id: 'assistant', icon: <Sparkles className="size-4" />, labelKey: 'settings.nav.assistant' },
   { id: 'fleet', icon: <Bot className="size-4" />, labelKey: 'settings.nav.fleet' },
   { id: 'computers', icon: <Laptop className="size-4" />, labelKey: 'settings.nav.computers' },
   { id: 'runner', icon: <Cpu className="size-4" />, labelKey: 'settings.nav.runner' },
