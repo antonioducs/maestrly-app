@@ -187,5 +187,5 @@ export type AssistantRealtimeStart =
 
 export type AssistantTtsError = 'key-missing' | 'key-rejected' | 'too-long' | 'network' | 'cancelled'
 export type AssistantTtsResult =
-  | { ok: true; audio: ArrayBuffer; mime: 'audio/mpeg' }
+  | { ok: true; audio: ArrayBuffer; mime: 'audio/wav' }
   | { ok: false; error: AssistantTtsError }

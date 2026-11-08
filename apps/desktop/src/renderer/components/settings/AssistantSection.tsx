@@ -153,6 +153,9 @@ function VoiceSettings({
   const systemChoices = chosen && !fitting.includes(chosen) ? [chosen, ...fitting] : fitting
   const noSystemVoice = systemVoices !== null && systemVoices.length === 0
   const realtime = voice.mode === 'realtime'
+  // OpenAI's voices speak at most 1.5×; the system's go up to 2×.
+  const maxSpeed = realtime || voice.engine === 'openai' ? 1.5 : 2
+  const shownSpeed = Math.min(voice.speed, maxSpeed)
   const keyMissing = (voice.engine === 'openai' || realtime) && options !== null && !options.openaiKey
   const showDictation = () => dictation.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 
@@ -178,7 +181,7 @@ function VoiceSettings({
       const result = await window.api.assistantTestVoice({
         text: sample,
         voice: realtime ? voice.realtimeVoice : voice.openaiVoice,
-        speed: realtime ? Math.min(1.5, voice.speed) : voice.speed,
+        speed: shownSpeed,
       })
       if (!result.ok) return setTestError(result.error)
       const context = new AudioContext()
@@ -285,14 +288,14 @@ function VoiceSettings({
             {t('settings.assistant.voice.test')}
           </Button>
         </Row>
-        <Row label={t('settings.assistant.voice.speed', { speed: voice.speed.toFixed(1) })}>
+        <Row label={t('settings.assistant.voice.speed', { speed: shownSpeed.toFixed(1) })}>
           <input
             type="range"
             min={0.5}
-            max={2}
+            max={maxSpeed}
             step={0.1}
-            value={voice.speed}
-            aria-label={t('settings.assistant.voice.speed', { speed: voice.speed.toFixed(1) })}
+            value={shownSpeed}
+            aria-label={t('settings.assistant.voice.speed', { speed: shownSpeed.toFixed(1) })}
             onChange={(event) => setVoice({ speed: Math.round(Number(event.target.value) * 10) / 10 })}
             className="w-40 accent-primary"
           />
