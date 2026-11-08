@@ -38,8 +38,30 @@ import {
   type FleetRunnerJobSpec,
   type FleetRunnerJobState,
   type FleetRunnerRequirements,
+  type FleetBackupDestination,
+  type FleetBackupRetention,
+  type FleetBackupRun,
+  type FleetBackupSchedule,
+  type FleetBackupSelection,
 } from '@maestrly/bot-fleet-protocol'
 import { GatewayError } from './errors.js'
+
+/** Where and when the server backs up its environments. */
+export type StoredBackupSettings = {
+  destination: FleetBackupDestination
+  /** restic's password: the recovery key normalized (32 base32 characters, no dashes). */
+  recoveryKey: string
+  enabled: boolean
+  schedule: FleetBackupSchedule | null
+  retention: FleetBackupRetention
+  selection: FleetBackupSelection
+  lastPruneAt: string | null
+  repositoryBytes: number | null
+  updatedAt: string
+  updatedBy: string
+}
+/** A backup or restore run, with the home volume a restore created (removed again if it fails). */
+export type StoredBackupRun = FleetBackupRun & { volumeName: string | null }
 
 export type StoredRoutineRun = FleetRoutineRun & { inputId: string }
 /** A message between bots, with the thread it continues (null from before threads). */
@@ -375,7 +397,7 @@ export class Store {
     const version = Number(
       (this.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get() as Row | undefined)?.value ?? 0
     )
-    if (version > 23) throw new Error('Gateway database schema is newer than this binary')
+    if (version > 24) throw new Error('Gateway database schema is newer than this binary')
     if (version === 0) {
       this.db.exec(`
         CREATE TABLE devices (id TEXT PRIMARY KEY, name TEXT NOT NULL, token_sha256 TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, last_seen_at TEXT, revoked_at TEXT);
@@ -572,6 +594,18 @@ export class Store {
         CREATE INDEX IF NOT EXISTS idx_runner_jobs_device ON runner_jobs(device_id, state);
       `)
       this.db.prepare("UPDATE meta SET value='23' WHERE key='schema_version'").run()
+    }
+    if (version <= 23) {
+      // Schema 24: backups of environments (`backups`). The destination's credentials and the recovery key are kept in
+      // plaintext like the dictation key. A run keeps no foreign key: its history outlives the environment, and a
+      // restore records its run before the environment exists.
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS backup_settings (id INTEGER PRIMARY KEY CHECK (id = 1), provider TEXT NOT NULL CHECK (provider IN ('s3','gcs','drive')), destination_json TEXT NOT NULL, recovery_key TEXT NOT NULL, enabled INTEGER NOT NULL CHECK (enabled IN (0,1)), schedule_json TEXT, retention_json TEXT NOT NULL, selection_json TEXT NOT NULL, last_prune_at TEXT, repository_bytes INTEGER, updated_at TEXT NOT NULL, updated_by TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS backup_environments (environment_id TEXT PRIMARY KEY REFERENCES environments(id) ON DELETE CASCADE, next_run_at TEXT);
+        CREATE TABLE IF NOT EXISTS backup_runs (id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK (kind IN ('backup','restore')), environment_id TEXT NOT NULL, environment_name TEXT NOT NULL, trigger TEXT NOT NULL CHECK (trigger IN ('schedule','manual')), state TEXT NOT NULL CHECK (state IN ('queued','running','succeeded','partial','failed','cancelled')), phase TEXT NOT NULL, progress REAL, snapshot_id TEXT, bytes_added INTEGER, bytes_total INTEGER, error_code TEXT, error_message TEXT, volume_name TEXT, started_at TEXT NOT NULL, finished_at TEXT);
+        CREATE INDEX IF NOT EXISTS idx_backup_runs_environment ON backup_runs(environment_id, started_at);
+      `)
+      this.db.prepare("UPDATE meta SET value='24' WHERE key='schema_version'").run()
     }
 
     if (this.db.prepare('PRAGMA foreign_key_check').all().length)
@@ -1064,6 +1098,158 @@ export class Store {
   }
   clearDictationSettings(): boolean {
     return this.db.prepare('DELETE FROM dictation_settings WHERE id=1').run().changes > 0
+  }
+  /** Where the server backs up its environments, and when; its secrets in plaintext like the dictation key. */
+  backupSettings(): StoredBackupSettings | null {
+    const row = this.db.prepare('SELECT * FROM backup_settings WHERE id=1').get() as Row | undefined
+    if (!row) return null
+    return {
+      destination: JSON.parse(String(row.destination_json)) as FleetBackupDestination,
+      recoveryKey: String(row.recovery_key),
+      enabled: Boolean(row.enabled),
+      schedule: row.schedule_json ? (JSON.parse(String(row.schedule_json)) as FleetBackupSchedule) : null,
+      retention: JSON.parse(String(row.retention_json)) as FleetBackupRetention,
+      selection: JSON.parse(String(row.selection_json)) as FleetBackupSelection,
+      lastPruneAt: (row.last_prune_at as string | null) ?? null,
+      repositoryBytes: row.repository_bytes == null ? null : Number(row.repository_bytes),
+      updatedAt: String(row.updated_at),
+      updatedBy: String(row.updated_by),
+    }
+  }
+  saveBackupSettings(settings: StoredBackupSettings): void {
+    this.db
+      .prepare(
+        `INSERT INTO backup_settings(id,provider,destination_json,recovery_key,enabled,schedule_json,retention_json,selection_json,last_prune_at,repository_bytes,updated_at,updated_by)
+        VALUES(1,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET provider=excluded.provider,destination_json=excluded.destination_json,
+        recovery_key=excluded.recovery_key,enabled=excluded.enabled,schedule_json=excluded.schedule_json,retention_json=excluded.retention_json,
+        selection_json=excluded.selection_json,last_prune_at=excluded.last_prune_at,repository_bytes=excluded.repository_bytes,
+        updated_at=excluded.updated_at,updated_by=excluded.updated_by`
+      )
+      .run(
+        settings.destination.provider,
+        JSON.stringify(settings.destination),
+        settings.recoveryKey,
+        Number(settings.enabled),
+        settings.schedule ? JSON.stringify(settings.schedule) : null,
+        JSON.stringify(settings.retention),
+        JSON.stringify(settings.selection),
+        settings.lastPruneAt,
+        settings.repositoryBytes,
+        settings.updatedAt,
+        settings.updatedBy
+      )
+  }
+  /** Forgets the destination and the schedule of every environment; the backups already made stay where they are. */
+  clearBackupSettings(): void {
+    this.transaction(() => {
+      this.db.prepare('DELETE FROM backup_settings WHERE id=1').run()
+      this.db.prepare('DELETE FROM backup_environments').run()
+    })
+  }
+  /** The environments with a schedule of their own, and when each is backed up next. */
+  backupEnvironments(): Array<{ environmentId: string; nextRunAt: string | null }> {
+    return (this.db.prepare('SELECT * FROM backup_environments ORDER BY environment_id').all() as Row[]).map((row) => ({
+      environmentId: String(row.environment_id),
+      nextRunAt: (row.next_run_at as string | null) ?? null,
+    }))
+  }
+  setBackupNextRun(environmentId: string, nextRunAt: string | null): void {
+    this.db
+      .prepare(
+        'INSERT INTO backup_environments(environment_id,next_run_at) VALUES(?,?) ON CONFLICT(environment_id) DO UPDATE SET next_run_at=excluded.next_run_at'
+      )
+      .run(environmentId, nextRunAt)
+  }
+  removeBackupEnvironment(environmentId: string): void {
+    this.db.prepare('DELETE FROM backup_environments WHERE environment_id=?').run(environmentId)
+  }
+  private backupRunOf(row: Row): StoredBackupRun {
+    return {
+      id: String(row.id),
+      kind: row.kind === 'restore' ? 'restore' : 'backup',
+      environmentId: String(row.environment_id),
+      environmentName: String(row.environment_name),
+      trigger: row.trigger === 'schedule' ? 'schedule' : 'manual',
+      state: row.state as StoredBackupRun['state'],
+      phase: row.phase as StoredBackupRun['phase'],
+      progress: row.progress == null ? null : Number(row.progress),
+      snapshotId: (row.snapshot_id as string | null) ?? null,
+      bytesAdded: row.bytes_added == null ? null : Number(row.bytes_added),
+      bytesTotal: row.bytes_total == null ? null : Number(row.bytes_total),
+      error: row.error_code
+        ? {
+            code: row.error_code as NonNullable<StoredBackupRun['error']>['code'],
+            message: String(row.error_message ?? ''),
+          }
+        : null,
+      volumeName: (row.volume_name as string | null) ?? null,
+      startedAt: String(row.started_at),
+      finishedAt: (row.finished_at as string | null) ?? null,
+    }
+  }
+  saveBackupRun(run: StoredBackupRun): void {
+    this.db
+      .prepare(
+        `INSERT INTO backup_runs(id,kind,environment_id,environment_name,trigger,state,phase,progress,snapshot_id,bytes_added,bytes_total,error_code,error_message,volume_name,started_at,finished_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET environment_name=excluded.environment_name,state=excluded.state,
+        phase=excluded.phase,progress=excluded.progress,snapshot_id=excluded.snapshot_id,bytes_added=excluded.bytes_added,
+        bytes_total=excluded.bytes_total,error_code=excluded.error_code,error_message=excluded.error_message,
+        volume_name=excluded.volume_name,finished_at=excluded.finished_at`
+      )
+      .run(
+        run.id,
+        run.kind,
+        run.environmentId,
+        run.environmentName,
+        run.trigger,
+        run.state,
+        run.phase,
+        run.progress,
+        run.snapshotId,
+        run.bytesAdded,
+        run.bytesTotal,
+        run.error?.code ?? null,
+        run.error?.message ?? null,
+        run.volumeName,
+        run.startedAt,
+        run.finishedAt
+      )
+  }
+  backupRun(id: string): StoredBackupRun | null {
+    const row = this.db.prepare('SELECT * FROM backup_runs WHERE id=?').get(id) as Row | undefined
+    return row ? this.backupRunOf(row) : null
+  }
+  /** Runs newest first. */
+  backupRuns(options: { environmentId?: string; limit: number }): StoredBackupRun[] {
+    const rows =
+      options.environmentId === undefined
+        ? this.db.prepare('SELECT * FROM backup_runs ORDER BY started_at DESC, id DESC LIMIT ?').all(options.limit)
+        : this.db
+            .prepare('SELECT * FROM backup_runs WHERE environment_id=? ORDER BY started_at DESC, id DESC LIMIT ?')
+            .all(options.environmentId, options.limit)
+    return (rows as Row[]).map((row) => this.backupRunOf(row))
+  }
+  /** Queued and running runs, oldest first. */
+  unfinishedBackupRuns(): StoredBackupRun[] {
+    return (
+      this.db
+        .prepare("SELECT * FROM backup_runs WHERE state IN ('queued','running') ORDER BY started_at, id")
+        .all() as Row[]
+    ).map((row) => this.backupRunOf(row))
+  }
+  /** Keeps an environment's newest `keep` finished runs; queued and running ones always stay. */
+  pruneBackupRuns(environmentId: string, keep: number): void {
+    this.db
+      .prepare(
+        `DELETE FROM backup_runs WHERE environment_id=? AND state NOT IN ('queued','running') AND id NOT IN (
+          SELECT id FROM backup_runs WHERE environment_id=? AND state NOT IN ('queued','running') ORDER BY started_at DESC, id DESC LIMIT ?)`
+      )
+      .run(environmentId, environmentId, keep)
+  }
+  /** The display slot a bot takes in its environment; null for an unknown bot. */
+  botSlot(id: string): number | null {
+    const row = this.db.prepare('SELECT slot FROM bots WHERE id=?').get(id) as Row | undefined
+    return row ? Number(row.slot) : null
   }
   /** The registrations of phones still paired. */
   activePushRegistrations(): { deviceId: string; registration: FleetPushRegistration }[] {
@@ -1651,6 +1837,7 @@ export class Store {
       this.db.prepare('DELETE FROM environment_secrets WHERE environment_id=?').run(id)
       this.db.prepare('DELETE FROM host_secrets WHERE environment_id=?').run(id)
       this.db.prepare('DELETE FROM environment_desktop_links WHERE environment_id=?').run(id)
+      this.db.prepare('DELETE FROM backup_environments WHERE environment_id=?').run(id)
       this.db.prepare('DELETE FROM environments WHERE id=?').run(id)
       return { botIds, ownerMemoriesDeleted }
     })
