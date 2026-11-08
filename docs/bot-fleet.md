@@ -285,6 +285,8 @@ Maestrly cannot replace the images of a server it did not install. When the gate
 
 A gateway that schedules updates compares each environment's container with the configured image itself, so a rebuilt image with the same version, such as `:local`, also counts as an update. With an older gateway, the environment view offers **Update environment** when the configured image's `org.opencontainers.image.version` label differs from the version the environment reports; unlabeled images and builds with the same version still update through **Restart environment**.
 
+To back up environments from the app, with a schedule, encryption, and restores on a new server, see [Back up environments](#back-up-environments). Those backups leave out the gateway's own records (paired devices, the dictation key, and the backup settings), so to back up a whole server you manage, copy its volumes as below.
+
 Back up the Compose `gateway-data` volume and **every** environment home volume: `maestrly-env-<environment-id>-home`, and `maestrly-bot-<bot-id>-home` for environments that were single bots before the update. The former contains pairing records, environment and bot configuration, schedules, activity, messages, and the secrets required to reach existing containers. The latter contains the environment's desktop profile, accounts, site logins, browser profiles, files, and each of its bots' conversation, queue, and memory. Preserve volume contents and permissions, and restore the gateway data and matching home volumes together before starting the service. Keep backups private. Archived environments keep their home volume and server history; a bot archived on its own keeps its data in its environment's home volume.
 
 Stop the gateway and environment containers before making a file-level copy of these volumes. SQLite uses WAL files, so copying only a live `.sqlite` file can omit committed data. SQLite's backup API can take a consistent database snapshot while it is open; a complete environment backup must also keep the other profile files and queued attachments consistent with that snapshot.
@@ -326,7 +328,7 @@ Desktop apps from before environments can list, restore and delete an archived e
 
 **Start** can also retry a failed bot in an already running shared environment without restarting its neighbours. Starting an environment that already runs does the same for each of its bots that is not running, which is how the current app's **Start** on such a bot reaches it; its container and running bots are left alone. Other start and stop aliases retain the restrictions above; see [Restart one bot](#restart-one-bot) for restart. A stopped or failed environment must be started before the app offers it for a new bot to join.
 
-The gateway migrates schemas 5 to 22 to schema 23 in place and refuses databases with a newer schema. Schema 8 records when an environment update was scheduled; schema 9 whether a bot may publish artifacts; schema 10 which computers linked which bot for the desktop bridge; schema 11 whether an environment runs bots or hosts workspaces; schema 12 the token a workspaces environment publishes artifacts with; schema 13 each environment's CPU limit, idle stop, color, and (for workspaces) which server folder it mounts, keeping the whole folder for workspaces environments created before; schema 14 the push token and notification choices of each phone; schema 15 whether each device is a phone or a computer, and its platform, as it says when it pairs (unknown for devices paired before); schema 16 which workspaces environments linked which bot for the desktop bridge; schema 17 the moves of bots between environments; schema 18 the conversation of each routine run and each bot's run settings; schema 19 the conversations between bots, the conversation each message between bots belongs to (none for messages from before), and each bot's settings for them; schema 20 the server's dictation key; schema 21 how each bot splits its work into tasks; schema 22 which routine runs and conversations between bots you have seen, counting those from before as seen; and schema 23 the computers that run jobs for bots, what each last reported about itself, and the jobs, keeping a job's command and environment variables only until it ends. Older gateways cannot open a newer schema; back up the gateway volume before upgrading and restore a matching backup to downgrade.
+The gateway migrates schemas 5 to 23 to schema 24 in place and refuses databases with a newer schema. Schema 8 records when an environment update was scheduled; schema 9 whether a bot may publish artifacts; schema 10 which computers linked which bot for the desktop bridge; schema 11 whether an environment runs bots or hosts workspaces; schema 12 the token a workspaces environment publishes artifacts with; schema 13 each environment's CPU limit, idle stop, color, and (for workspaces) which server folder it mounts, keeping the whole folder for workspaces environments created before; schema 14 the push token and notification choices of each phone; schema 15 whether each device is a phone or a computer, and its platform, as it says when it pairs (unknown for devices paired before); schema 16 which workspaces environments linked which bot for the desktop bridge; schema 17 the moves of bots between environments; schema 18 the conversation of each routine run and each bot's run settings; schema 19 the conversations between bots, the conversation each message between bots belongs to (none for messages from before), and each bot's settings for them; schema 20 the server's dictation key; schema 21 how each bot splits its work into tasks; schema 22 which routine runs and conversations between bots you have seen, counting those from before as seen; schema 23 the computers that run jobs for bots, what each last reported about itself, and the jobs, keeping a job's command and environment variables only until it ends; and schema 24 the backup destination and its recovery key, when and which environments are backed up, and the last backup and restore runs of each environment. Older gateways cannot open a newer schema; back up the gateway volume before upgrading and restore a matching backup to downgrade.
 
 Workspaces environments need the gateway's `workspaces-host` feature and a bot image that can host workspaces. The desktop app offers **Set up workspaces on this server** only with that feature. A desktop app from before it shows a workspaces environment as an environment with no bots; the gateway refuses to add a bot to it. On an image from before it, a workspaces environment fails to start with "This bot image cannot host workspaces. Update the server."
 
@@ -349,6 +351,8 @@ desktop app with **Settings → Runner**. Until the gateway and the image are up
 and its **Runners** settings say what is missing. A runner reports the job protocol version it speaks when it
 connects, and the gateway sends jobs only to runners that speak its own. This adds schema 23 (`runner_links`, `runner_jobs`) to
 the gateway database.
+
+[Backups](#back-up-environments) need the gateway's `backups` feature (announced in `moreFeatures` of `/v1/meta`), and its readers of events get `backup.updated` and `backup_run.updated` only when they ask with `backups=1`. Until the gateway is updated, the **Backups** section asks you to update the bot server. A running environment is backed up only when its image has the `environment-backup` capability, with which it writes a consistent copy of its database: on an older image its backups fail with "Update this environment to back it up while it runs", while a stopped environment is backed up anyway. Backups made by a newer gateway's format are listed but not restored until the gateway is updated. This adds schema 24 (`backup_settings`, `backup_environments`, `backup_runs`) to the gateway database.
 
 Restarting one bot of a shared environment needs the gateway's `bot-restart` feature (announced in `moreFeatures` of `/v1/meta`) and an environment on an image from after environments. With an older gateway the desktop app offers only the environment's **Restart**; with an older image it asks you to restart the environment first.
 
@@ -575,6 +579,117 @@ image.
 A restart waits up to a minute for the bot to leave its environment. If it does not, the restart fails, and the
 gateway installs the bot again as it is shortly after. The gateway API is `POST /v1/bots/:id/restart` (feature
 `bot-restart`); for a bot alone in its environment it restarts the environment.
+
+## Back up environments
+
+The server can back up its environments, on a schedule, to storage you own: your Google Drive, Amazon S3 or an
+S3-compatible service (Cloudflare R2, Backblaze B2, MinIO), or Google Cloud Storage. Set it up in **Settings → Bot
+servers**, under **Backups**. Each backup is a [restic](https://restic.net/) snapshot: encrypted with a recovery key
+that only you and the server hold, and deduplicated, so after the first one a backup uploads only what changed. One
+backup holds one whole environment, with every bot in it.
+
+### What a backup holds
+
+- The environment's desktop profile: each bot's conversation, queue, memory, settings, and the conversations of its
+  routine runs and of its threads with other bots.
+- Model accounts and subscription sign-ins, skills, and MCP servers.
+- Each bot's browser profile, with its tabs and site logins.
+- The files of the home folder, and the tools the bots installed there (`~/.local`).
+- For a workspaces environment, its own folder of projects on the server (`<MAESTRLY_GATEWAY_WORKSPACES_ROOT>/<environment id>`).
+- The gateway's records of the environment: its settings, its bots in their slots, their routines, the owner memory
+  entries its bots see (its own and the global ones), and the password its keyring is encrypted with. Device tokens
+  are not in it: a restored environment gets new ones.
+
+Left out, because they come back by themselves or do not belong to the environment:
+
+- Caches: `~/.cache`, Chromium's caches, and any folder marked with a `CACHEDIR.TAG`.
+- What Maestrly downloads or indexes again: Claude Code and Codex runtimes, search indexes, and media caches.
+- Dependencies inside projects and chat folders: `node_modules`, `.venv`, `__pycache__`, `.next`, `.nuxt`, `.turbo`,
+  `.gradle`, `.pytest_cache`, and `.mypy_cache`. Skills and MCP servers in the home folder keep theirs.
+- The list of routine runs (their conversations stay), and bots archived on their own.
+- Archived environments, and workspaces environments that still mount the server's shared workspaces folder: give
+  such an environment a folder of its own under **Isolation** to back it up, since the shared folder also holds other
+  environments' projects.
+- The gateway's own records: paired devices, the dictation key, and the backup settings. See [Updates, backups, and
+  removal](#updates-backups-and-removal) to back up the whole server.
+
+A running environment writes a consistent copy of its database for each backup, so it keeps working meanwhile. The
+rest of its files are read as they are at that moment: a site session that a browser changes during the backup may ask
+you to sign in again after a restore.
+
+### Where to keep them
+
+**Google Drive** is the easiest: choose it, select **Sign in with Google**, and pick a folder name (`Maestrly backups`
+by default). Maestrly asks only for access to the files it creates (`drive.file`), so it never sees the rest of your
+Drive. Backups use your Drive's storage.
+
+**Amazon S3 or compatible** needs a bucket, a folder in it, and an access key. Leave the endpoint empty for Amazon S3,
+or enter the service's endpoint (for example `https://<account>.r2.cloudflarestorage.com`). Give the key only what
+restic needs, as **Minimum permissions** in the app shows:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    { "Effect": "Allow", "Action": ["s3:GetBucketLocation"], "Resource": "arn:aws:s3:::my-bucket" },
+    {
+      "Effect": "Allow",
+      "Action": ["s3:ListBucket"],
+      "Resource": "arn:aws:s3:::my-bucket",
+      "Condition": { "StringLike": { "s3:prefix": ["maestrly-backups", "maestrly-backups/*"] } }
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+      "Resource": "arn:aws:s3:::my-bucket/maestrly-backups/*"
+    }
+  ]
+}
+```
+
+**Google Cloud Storage** needs a bucket, a folder in it, and the JSON key of a service account with the **Storage
+Object Admin** role on that bucket only.
+
+**Check connection** has the server reach the storage. An empty folder gets a new backup; a folder that already holds a
+Maestrly backup asks for its recovery key.
+
+### The recovery key
+
+Setting up a new backup creates a recovery key and shows it once. Copy it or save it as a file, and keep it somewhere
+safe, away from the server: it is what restores the backups on a new server, and Maestrly cannot recover it for you.
+This computer also keeps a copy in its secure storage, by destination, and never removes it on its own, not even when
+you disconnect backups or remove the server; **Show recovery key** reads it from there, or else from the server.
+Connecting another server to the same destination offers the copy this computer kept.
+
+### When, and how many
+
+Choose every day at a time, every week on a day at a time, or every 1 to 24 hours; times follow this computer's time
+zone. Choose **Every environment, new ones too**, or only some of them. The server backs up one environment at a time
+and waits, up to six hours, for one that is updating or changing its bots. Each environment keeps 7 daily, 4 weekly,
+and 6 monthly backups by default (**Advanced** changes this); older ones are forgotten after each backup, and once a
+week the server reclaims their space and checks the repository. **Back up now** runs one at once.
+
+The **Backups** section shows each environment's last backup, its next one, and a backup in progress, which you can
+cancel. A scheduled backup that fails shows a system notification on this computer. **Pause backups** stops the
+schedule; **Disconnect** stops it and forgets the destination, while the backups stay there.
+
+### Restore
+
+**Restore from a backup** lists the environments backed up at the destination, from this server and others, with the
+date of each backup. A restore brings the environment back as a new one, with its ids, bots, conversations, accounts,
+files, routines (rescheduled from now), and owner memory, then starts it. Its bots reconnect to the peers still on the
+server.
+
+- **On the same server**, delete the environment first (archive it, then **Delete forever**): a restore never replaces
+  an environment, active or archived, nor a bot with the same id elsewhere on the server, and it says which ones are in
+  the way.
+- **On a new server**, set up backups with the same destination and the recovery key, then restore.
+- A workspaces environment's projects come back into its own folder under the server's workspaces folder, which must
+  be the same path as on the server it was backed up on. If that folder already has files, choose **Keep the files
+  already in** it: they stay, and the projects do not come back.
+
+A restore that fails removes the home volume it created and nothing else; a projects folder keeps whatever it holds.
+Restoring one bot alone, or an environment as a copy with new ids, is not available.
 
 ## Bot conversation controls
 
@@ -1410,6 +1525,9 @@ each job's state; it keeps a job's command, image, and environment variables onl
 stores files, logs, or conversations, which it relays without keeping. The bot's environment checks output archives
 for paths and links that leave the folder, and the runner checks every file it receives against its SHA-256. One
 bot's files and caches are never used by another bot's jobs.
+
+**Backups hold an environment's secrets**, and the gateway keeps the credentials of their destination and their
+recovery key: see [Environment backups](security-model.md#environment-backups).
 
 Environments and their default compaction models move the gateway database to
 schema v7. Older gateways that do not support v7 refuse to open it; back up the gateway volume before upgrading and
