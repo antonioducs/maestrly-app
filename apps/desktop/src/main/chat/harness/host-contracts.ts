@@ -101,7 +101,10 @@ export const HOST_MAESTRLY_OVERVIEW_GUIDANCE =
   "See everything at once: the person's conversations in every local workspace and chat, those of their remote " +
   'computers, and their bots, grouped as needsYou (questions, approvals, plans and errors waiting for the person), ' +
   'running, recent (last day), bots, workspaces and hosts (whether each remote computer and bot server answered). ' +
-  'Each conversation and bot carries a ref that names it to your other tools. Filter with query by conversation, ' +
+  'Each conversation and bot carries a ref that names it to your other tools: pass a conversation ref, a remote ' +
+  "computer's one too, as conversationId to read_conversation and send_to_conversation. A remote computer's " +
+  'conversation is read 60 messages at a time (beforeSeq set to earliestSeq reads the page before; raise messages to ' +
+  'see more of a page), cannot be waited for and takes no reportBack. Filter with query by conversation, ' +
   'workspace, computer or bot name. Call it first for any status question. Read-only.'
 
 /** Contract of `create_workspace`, carried in its tool description. */

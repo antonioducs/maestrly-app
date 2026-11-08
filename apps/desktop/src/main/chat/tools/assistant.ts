@@ -6,7 +6,13 @@
  */
 import { z } from 'zod'
 import { type AssistantOverview, compactOverview } from '../../../shared/assistant-overview'
+import type { ChatQuestion } from '../../../shared/chat'
 import type { ChatBehavior } from '../../../shared/conversation-experience'
+import type {
+  ConversationLinkError,
+  ConversationReadResult,
+  ConversationSendResult,
+} from '../../../shared/conversation-link'
 import {
   assertConversationTurnProvenanceCurrent,
   currentConversationTurnProvenance,
@@ -28,8 +34,22 @@ export const maestrlyOverviewInputSchema = z
   .strict()
 export type MaestrlyOverviewInput = z.infer<typeof maestrlyOverviewInputSchema>
 
+type AskQuestion = (questions: ChatQuestion[]) => Promise<string[][]>
+
 export interface AssistantToolRuntime {
   overview(input: MaestrlyOverviewInput): Promise<AssistantOverview | { error: string }>
+  /** A conversation of a remote computer, named by its `host:` ref in the overview. */
+  readRemote(
+    hostId: string,
+    conversationId: string,
+    input: { messages?: number; beforeSeq?: number }
+  ): Promise<ConversationReadResult | ConversationLinkError>
+  sendRemote(
+    hostId: string,
+    conversationId: string,
+    input: { message: string; reportBack?: boolean },
+    askQuestion: AskQuestion
+  ): Promise<ConversationSendResult>
 }
 
 /** Whether the conversation's turns get the assistant tool names at all. */
@@ -52,12 +72,51 @@ export function assistantRuntimeFor(conversationId: string, mode: ChatBehavior):
       return errorText(error)
     }
   }
+  const originKey = `message:${provenance.messageId}`
+  const turnEnded = (error: string): ConversationLinkError => ({ ok: false, code: 'turn-ended', error })
+  const remoteDeps = async () => {
+    const [{ assistantHostAccess }, { tMain }] = await Promise.all([
+      import('../../assistant/assistant-context'),
+      import('../../i18n'),
+    ])
+    const access = assistantHostAccess()
+    return {
+      invoke: access
+        ? access.invoker.invoke
+        : () => Promise.reject(new Error('This computer reaches no remote computers.')),
+      hosts: () => access?.hosts() ?? [],
+      viaLine: () => tMain('main')('assistant.viaLine'),
+    }
+  }
   return {
     async overview(input) {
       const refusal = ended()
       if (refusal) return { error: refusal }
       const { collectAssistantOverview } = await import('../../assistant/assistant-context')
       return collectAssistantOverview(conversationId, { query: input.query })
+    },
+    async readRemote(hostId, remoteId, input) {
+      const refusal = ended()
+      if (refusal) return turnEnded(refusal)
+      const { readRemoteConversation } = await import('../../assistant/remote-conversations')
+      return readRemoteConversation(await remoteDeps(), hostId, remoteId, input)
+    },
+    async sendRemote(hostId, remoteId, input, askQuestion) {
+      const refusal = ended()
+      if (refusal) return turnEnded(refusal)
+      const [{ sendRemoteConversation }, { admitAssistantAction }] = await Promise.all([
+        import('../../assistant/remote-conversations'),
+        import('../../assistant/action-budget'),
+      ])
+      return sendRemoteConversation(await remoteDeps(), hostId, remoteId, input, (target, preview) => {
+        const late = ended()
+        if (late) return Promise.resolve(false)
+        return admitAssistantAction(askQuestion, originKey, target.conversationId, {
+          kind: 'send',
+          targetName: target.workspaceName ? `${target.name} (${target.workspaceName})` : target.name,
+          preview,
+        })
+      })
     },
   }
 }

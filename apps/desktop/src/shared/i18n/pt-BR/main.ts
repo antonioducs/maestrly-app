@@ -180,5 +180,6 @@ export default {
     confirmApprove: 'Aprovar',
     confirmRelease: 'Liberar o resto deste pedido',
     confirmCancel: 'Cancelar',
+    viaLine: '— via Assistente do Maestrly',
   },
 } as const

@@ -4,7 +4,7 @@
  * conversation), and the conversation-link service owns authorization by provenance, journaling and delivery. Child
  * contexts never receive the runtime, and the names are parent-only in every child filter.
  */
-import { localRef } from '../../../shared/assistant-overview'
+import { localRef, parseOverviewRef } from '../../../shared/assistant-overview'
 import type { ChatQuestion } from '../../../shared/chat'
 import type { ChatBehavior } from '../../../shared/conversation-experience'
 import {
@@ -44,7 +44,7 @@ import {
   conversationLinkToolsAllowed,
   PARENT_ONLY_CONVERSATION_TOOL_NAMES,
 } from '../tool-policy'
-import { defineTool } from './util'
+import { defineTool, type ToolContext } from './util'
 
 type AskQuestion = (questions: ChatQuestion[]) => Promise<string[][]>
 
@@ -151,7 +151,12 @@ export function conversationLinkRuntimeFor(
       const refusal = ended()
       if (refusal) return refusal
       const admit = caller.isAssistant ? await assistantAdmit(askQuestion, caller.originKey) : undefined
-      return (await service()).send(caller, input, (target, preview) => confirmSend(askQuestion, target, preview), admit)
+      return (await service()).send(
+        caller,
+        input,
+        (target, preview) => confirmSend(askQuestion, target, preview),
+        admit
+      )
     },
     async report(input) {
       return ended() ?? (await service()).report(caller, input)
@@ -185,6 +190,47 @@ const UNAVAILABLE =
   'project conversation, started by the person or by another conversation.'
 
 const unavailable = (): ConversationLinkError => ({ ok: false, code: 'unavailable', error: UNAVAILABLE })
+
+type OverviewTarget =
+  | { kind: 'as-is' }
+  | { kind: 'local'; conversationId: string }
+  | { kind: 'host'; hostId: string; conversationId: string; assistant: NonNullable<ToolContext['assistant']> }
+  | { kind: 'refused'; error: ConversationLinkError }
+
+/**
+ * A ref from maestrly_overview, for the assistant: a remote computer's conversation goes to its runtime and
+ * `local:<id>` names this computer's. Other callers know no remote conversations: a `host:` ref is not found.
+ */
+function overviewTarget(conversationId: string, ctx: ToolContext): OverviewTarget {
+  const ref = parseOverviewRef(conversationId)
+  if (ref?.kind === 'host') {
+    if (!ctx.assistant)
+      return {
+        kind: 'refused',
+        error: {
+          ok: false,
+          code: 'not-found',
+          error: 'No conversation has this conversationId; use list_conversations.',
+        },
+      }
+    return { kind: 'host', hostId: ref.hostId, conversationId: ref.conversationId, assistant: ctx.assistant }
+  }
+  if (!ctx.assistant) return { kind: 'as-is' }
+  if (ref?.kind === 'bot')
+    return {
+      kind: 'refused',
+      error: { ok: false, code: 'not-found', error: 'That ref names a bot, not a conversation.' },
+    }
+  if (ref?.kind === 'local' && ref.conversationId !== conversationId)
+    return { kind: 'local', conversationId: ref.conversationId }
+  return { kind: 'as-is' }
+}
+
+const REMOTE_WAIT_UNAVAILABLE: ConversationLinkError = {
+  ok: false,
+  code: 'unavailable',
+  error: "Waiting is not available for a remote computer's conversation; read it again later.",
+}
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error))
 const json = (_args: unknown, result: unknown) => JSON.stringify(result, null, 2)
 
@@ -216,7 +262,12 @@ export const readConversationTool = defineTool<
   execute: async (args, ctx) => {
     if (!ctx.conversationLink) return unavailable()
     try {
-      return await ctx.conversationLink.read(args)
+      const target = overviewTarget(args.conversationId, ctx)
+      if (target.kind === 'refused') return target.error
+      if (target.kind === 'host') return await target.assistant.readRemote(target.hostId, target.conversationId, args)
+      return await ctx.conversationLink.read(
+        target.kind === 'local' ? { ...args, conversationId: target.conversationId } : args
+      )
     } catch (error) {
       return { ok: false, code: 'unavailable', error: errorText(error) }
     }
@@ -231,7 +282,13 @@ export const waitConversationTool = defineTool<typeof waitConversationInputSchem
   execute: async (args, ctx) => {
     if (!ctx.conversationLink) return unavailable()
     try {
-      return await ctx.conversationLink.wait(args, ctx.signal)
+      const target = overviewTarget(args.conversationId, ctx)
+      if (target.kind === 'refused') return target.error
+      if (target.kind === 'host') return REMOTE_WAIT_UNAVAILABLE
+      return await ctx.conversationLink.wait(
+        target.kind === 'local' ? { ...args, conversationId: target.conversationId } : args,
+        ctx.signal
+      )
     } catch (error) {
       return { ok: false, code: 'unavailable', error: errorText(error) }
     }
@@ -246,7 +303,14 @@ export const sendToConversationTool = defineTool<typeof sendToConversationInputS
   execute: async (args, ctx) => {
     if (!ctx.conversationLink) return unavailable()
     try {
-      return await ctx.conversationLink.send(args, ctx.askQuestion)
+      const target = overviewTarget(args.conversationId, ctx)
+      if (target.kind === 'refused') return target.error
+      if (target.kind === 'host')
+        return await target.assistant.sendRemote(target.hostId, target.conversationId, args, ctx.askQuestion)
+      return await ctx.conversationLink.send(
+        target.kind === 'local' ? { ...args, conversationId: target.conversationId } : args,
+        ctx.askQuestion
+      )
     } catch (error) {
       return { ok: false, code: 'delivery-failed', error: errorText(error) }
     }

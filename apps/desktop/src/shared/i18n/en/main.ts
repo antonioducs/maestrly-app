@@ -180,5 +180,6 @@ export default {
     confirmApprove: 'Approve',
     confirmRelease: 'Allow the rest of this request',
     confirmCancel: 'Cancel',
+    viaLine: '— via Maestrly Assistant',
   },
 } as const

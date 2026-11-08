@@ -135,7 +135,8 @@ export interface ConversationSummary {
 }
 
 export interface ConversationTranscriptEntry {
-  seq: number
+  /** Absent for a remote computer's conversation, whose history pages do not number messages. */
+  seq?: number
   role: 'user' | 'assistant'
   /** Sending conversation of a message that came from another conversation. */
   from?: string
@@ -146,7 +147,7 @@ export interface ConversationTranscriptEntry {
 export interface ConversationReadResult {
   conversation: ConversationSummary
   /** Latest assistant answer with text; absent when paging older messages. */
-  lastReply: { seq: number; text: string; truncated?: true } | null
+  lastReply: { seq?: number; text: string; truncated?: true } | null
   messages: ConversationTranscriptEntry[]
   hasMore: boolean
   earliestSeq: number | null
