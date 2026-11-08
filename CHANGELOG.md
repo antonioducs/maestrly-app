@@ -5,6 +5,72 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-11-08
+
+### Added
+
+- A Maestrly assistant, a floating window you open from anywhere on the computer
+  with a global shortcut (⌘⇧Space on macOS, Ctrl+Shift+Space elsewhere), the
+  tray menu or **Settings → Assistant**. It keeps a conversation of its own and
+  acts for you across your local conversations, your remote computers and your
+  bots: it tells what needs you, what is running and what your bots do, reads
+  and messages conversations and bots, and answers questions and permission
+  requests that wait for you. Reading never asks. It may reach up to three
+  different targets in one turn; from the fourth, one card asks about the rest.
+  Allowing a permission always shows you what it approves on a card, and voice
+  never answers it. You can talk to it: tap the microphone or press the
+  shortcut, and it transcribes with your dictation engine and reads the answer
+  aloud with the system voice (free) or an OpenAI voice, or you can use
+  **Realtime**, a voice call with an OpenAI model, billed per minute to your
+  OpenAI key. The OpenAI voice and Realtime send the answer or your speech to
+  OpenAI with your key; the system voice needs `speech-dispatcher` on Linux. On
+  Wayland, bind a system shortcut to `maestrly --toggle-assistant`. See
+  [Maestrly assistant](docs/chat-context.md#maestrly-assistant).
+- Back up your bot server's environments, on a schedule, encrypted, and restore
+  them on the same server or a new one. Choose your Google Drive, Amazon S3 or
+  an S3-compatible service (Cloudflare R2, Backblaze B2, MinIO), or Google Cloud
+  Storage in **Settings → Bot servers → Backups**, the environments to back up,
+  when, and how many to keep (7 daily, 4 weekly and 6 monthly by default). A
+  backup holds a whole environment: its bots' conversations, memory and
+  settings, model accounts and sign-ins, browser profiles, home folder and, for
+  a workspaces environment, its projects folder on the server. Each backup is
+  encrypted with a recovery key that you see once when you set it up and that
+  Maestrly cannot recover for you: keep it away from the server. A backup holds
+  logins and saved passwords, so keep its storage private. A running environment
+  keeps working while it is backed up, a failed scheduled backup shows a system
+  notification, and **Restore from a backup** brings an environment back as a
+  new one, never replacing an existing one. Restoring a single bot and a mobile
+  screen for backups are not available yet. It needs a bot server and an
+  environment image on this version: until the server is updated, the section
+  asks you to update it, and a running environment on an older image cannot be
+  backed up. The bot image now carries restic and rclone. The bot gateway
+  database moves to schema 24 for this. Older gateways cannot open it, so back
+  up the gateway volume before updating the server. See
+  [Back up environments](docs/bot-fleet.md#back-up-environments) and
+  [compatibility](docs/bot-fleet.md#compatibility).
+- Type **@** in a bot's conversation to mention another bot. The list shows the
+  other bots, filtered by name or role as you type, each tagged "Conversation
+  enabled" or "Conversation disabled", and a pick goes out as `@Name`. Picking a
+  bot this one may not talk to yet asks whether to enable it, which changes the
+  same setting as the bot's settings does. Two bots with the same name make
+  `@Name` ambiguous. Chats on the desktop still list files with **@**. See
+  [Bot conversation controls](docs/bot-fleet.md#bot-conversation-controls).  ###
+  Changed
+- Closing the main window no longer quits Maestrly. With the assistant on, which
+  is the default, closing it hides the window and the app keeps running in the
+  tray, so the shortcut and your running agents keep working; click the tray
+  icon to bring the window back, and use **Quit** in the tray menu (or ⌘Q on
+  macOS) to quit. To go back to quitting when the window closes, turn off
+  **Keep running in the background** or the assistant itself in
+  **Settings → Assistant**.  ### Removed
+- **Breaking:** the ChatGPT Web companion, which paired a conversation with
+  chatgpt.com, is gone, with its drawer tab, settings and "+" menu entry. The
+  first time Maestrly starts after the update it deletes what the companion
+  left: its settings, the Platform API key it kept, the chatgpt.com sign-in
+  stored by the app, the `tunnel-client` component and the saved tab and
+  shortcut. Going back to an older version does not bring them back. Messages
+  from past sessions stay readable as ordinary messages.
+
 ## [0.33.0] - 2026-11-07
 
 ### Added

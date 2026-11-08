@@ -1140,6 +1140,19 @@ inherit explicit execution profiles and cannot silently become a separate
 authority. Context budgeting and redaction reduce accidental disclosure but
 cannot determine whether user-authored prompt content is sensitive.
 
+The [Maestrly assistant](chat-context.md#maestrly-assistant) acts only through
+existing paths: it sends messages as the person, calls the bot actions the
+app itself uses, and answers permission requests through the broker. Its tools
+exist only in its own conversation and run only on turns the person started.
+Content it reads from other conversations, bots, remote computers and tools is
+data, never instructions. Up to three distinct targets may be reached in a turn
+without asking; past that, one confirmation card asks. Allowing a permission
+always asks the person on a card, and voice never answers it. An OpenAI voice
+and Realtime mode connect to `api.openai.com` with the person's own key, which
+stays in the main process: the voice sends the text of an answer to be read, and
+Realtime exchanges the person's speech and the model's with OpenAI and hands
+requests to the assistant conversation as the person's own words.
+
 The Google Antigravity ACP server's native tools are all disabled, including its
 file viewer, which would otherwise read its working directory and the account
 home without asking. Its permission requests are approved once only for calls

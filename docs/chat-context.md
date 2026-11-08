@@ -348,6 +348,78 @@ later on Apple silicon, where it uses the GPU, or Windows x64 or Linux x64
 (glibc 2.34 or later), where it runs on the CPU and is slower. With an API
 engine and no key yet, the microphone points to the dictation settings.
 
+## Maestrly assistant
+
+The assistant is a small floating window you open from anywhere on the
+computer. It shows a conversation of its own, pinned there, and acts for you
+across your local conversations, your remote computers and your bots. Open it
+with the global shortcut (⌘⇧Space on macOS, Ctrl+Shift+Space elsewhere), the
+**Open assistant** item of the tray menu, or the button in **Settings →
+Assistant**. **New session** archives its conversation as any other and starts a
+new one. The assistant's role applies only to that conversation.
+
+**Settings → Assistant** turns the assistant off (and with it the shortcut and
+the tray item), changes or turns off the shortcut, and sets the model of its
+conversation; a fast one keeps replies quick. If another app already uses the
+shortcut, Settings says so and the previous one keeps working. **Hide when it
+loses focus** takes the window away when you click elsewhere, unless it waits
+for your answer. **Keep running in the background** makes closing the main
+window only hide it: the app stays in the tray and the shortcut keeps working.
+Click the tray icon to bring the main window back, and use **Quit** in the tray
+menu to quit. Both are on by default, so closing the main window no longer
+quits Maestrly; turn **Keep running in the background** off to get that back.
+On Wayland, global shortcuts may not work; create a system shortcut that runs
+`maestrly --toggle-assistant` instead.
+
+It can:
+
+- Show what needs you, what is running and your bots, on this computer, on your
+  remote computers and on your bot servers (`maestrly_overview`).
+- Read conversations here and on remote computers, and read bots, including
+  their latest routine runs.
+- Message conversations and bots as you would. Messages to bots and to
+  conversations on remote computers start with "— via Maestrly Assistant".
+- Answer what waits for you: a question with one of its options, or a
+  permission request with allow or deny.
+
+Reading never asks. When your message asks for an action, the assistant may
+reach up to three different targets (conversations, remote conversations or
+bots) in one turn; from the fourth on, one card asks about the rest, and **Allow
+the rest of this request** lets the turn finish. Allowing a permission always
+shows what it approves and waits for you on a card; denying and answering do not.
+Items of remote computers, bot requests for help and questions with several
+parts are answered in the app. Its tools exist only in its own conversation and
+act only on turns you started, and what it reads in other conversations, bots
+and tool results is treated as data, never as instructions.
+
+### Voice
+
+Tap the microphone in the window, or press the shortcut (while **The shortcut
+starts listening** is on), and talk. The recording stops when you stop talking
+and is transcribed by the [dictation](#voice-dictation) engine you chose.
+With **Read answers aloud** on, the answer to a message you spoke is read
+sentence by sentence while it is written; pressing the shortcut while it
+listens or reads stops it. Choose the voice in **Settings → Assistant → Voice**:
+
+- **System voice (free)**, the default, uses the voices of the operating
+  system. On Linux it needs `speech-dispatcher`; without it, Settings suggests
+  the OpenAI voice.
+- **OpenAI voice** sends the text of each answer to OpenAI to be read aloud,
+  with your OpenAI key (the one of dictation, else a provider of yours that
+  talks to `api.openai.com`), and bills it to you. Its speed goes up to 1.5×;
+  the system voice's goes up to 2×.
+- **Realtime (OpenAI API)** is a voice call: an OpenAI Realtime model
+  (`gpt-realtime-2.1-mini`, or `gpt-realtime-2.1`) talks with you and hands what
+  you ask to the assistant conversation as your own words, so the same rules
+  apply. It is billed per minute of audio to your OpenAI key, and the call ends
+  after two minutes without anyone talking.
+
+Simple confirmations can be answered by voice. Permission approvals never can:
+the assistant asks you to confirm them on the card. With a subscription, local
+Whisper and the system voice, talking to the assistant costs nothing beyond the
+subscription. The window shows why a voice step failed, for example a missing or
+rejected key or an unavailable microphone, and the answer stays in the chat.
+
 ## Starting other conversations
 
 A project conversation can start new Standard conversations that keep working on
