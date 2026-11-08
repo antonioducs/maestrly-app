@@ -48,7 +48,8 @@ export const assistantVoiceSchema = z
     autoSpeak: z.boolean().default(true),
     /** The global shortcut opens the window listening. */
     shortcutListens: z.boolean().default(true),
-    realtimeModel: z.enum(['gpt-realtime', 'gpt-realtime-mini']).default('gpt-realtime-mini'),
+    // gpt-realtime and gpt-realtime-mini shut down on 2027-01-20; a stored one falls back to the default.
+    realtimeModel: z.enum(['gpt-realtime-2.1-mini', 'gpt-realtime-2.1']).default('gpt-realtime-2.1-mini'),
     realtimeVoice: z.enum(ASSISTANT_OPENAI_VOICES).default('marin'),
   })
   .strict()
@@ -178,6 +179,11 @@ export interface AssistantVoiceOptions {
   openai: AssistantOpenAiVoice[]
   openaiKey: boolean
 }
+
+export type AssistantRealtimeError = 'key-missing' | 'key-rejected' | 'network' | 'bad-offer'
+export type AssistantRealtimeStart =
+  | { ok: true; answerSdp: string; callId: string | null }
+  | { ok: false; error: AssistantRealtimeError }
 
 export type AssistantTtsError = 'key-missing' | 'key-rejected' | 'too-long' | 'network' | 'cancelled'
 export type AssistantTtsResult =

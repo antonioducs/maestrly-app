@@ -2,6 +2,7 @@ import { ipcRenderer } from 'electron'
 import type {
   AssistantHoldReason,
   AssistantOpenAiVoice,
+  AssistantRealtimeStart,
   AssistantVoiceOptions,
   AssistantInfo,
   AssistantSettingsPatch,
@@ -24,6 +25,10 @@ export const assistantApi = {
   /** Reads one sentence with the OpenAI voice; the audio comes back, the key never does. */
   assistantTts: (text: string): Promise<AssistantTtsResult> => ipcRenderer.invoke('assistant:tts', { text }),
   assistantTtsCancel: (): void => ipcRenderer.send('assistant:tts-cancel'),
+  /** Realtime voice: trades the window's SDP offer for OpenAI's answer; the key stays in main. */
+  assistantRealtimeStart: (sdp: string): Promise<AssistantRealtimeStart> =>
+    ipcRenderer.invoke('assistant:realtime-start', { sdp }),
+  assistantRealtimeStop: (): void => ipcRenderer.send('assistant:realtime-stop'),
   assistantVoices: (): Promise<AssistantVoiceOptions> => ipcRenderer.invoke('assistant:voices'),
   /** Settings: reads `text` once with an OpenAI voice, to try it. */
   assistantTestVoice: (input: {

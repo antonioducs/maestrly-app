@@ -151,6 +151,22 @@ test('the assistant window opens its own pinned conversation, streams a reply an
   // The voice takes the microphone's place in the assistant's composer.
   await expect(assistant.getByRole('button', { name: 'Talk to the assistant', exact: true })).toBeVisible()
   await expect(assistant.locator('[data-voice-state]')).toHaveAttribute('data-voice-state', 'idle')
+  // Realtime voice runs over WebRTC under the app's content security policy.
+  const webrtc = await assistant.evaluate(async () => {
+    const violations: string[] = []
+    document.addEventListener('securitypolicyviolation', (event) => violations.push(event.violatedDirective))
+    const peer = new RTCPeerConnection()
+    peer.createDataChannel('oai-events')
+    peer.addTransceiver('audio', { direction: 'sendrecv' })
+    const offer = await peer.createOffer()
+    await peer.setLocalDescription(offer)
+    const audio = document.createElement('audio')
+    audio.srcObject = new MediaStream()
+    peer.close()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    return { sdp: offer.sdp?.startsWith('v=') && offer.sdp.includes('webrtc-datachannel'), violations }
+  })
+  expect(webrtc).toEqual({ sdp: true, violations: [] })
 
   const chats = (await api(page, 'listStandaloneConversations', false)) as Array<{
     id: string

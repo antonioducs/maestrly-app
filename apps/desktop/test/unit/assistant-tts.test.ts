@@ -133,7 +133,7 @@ describe('voice settings', () => {
       speed: 1,
       autoSpeak: true,
       shortcutListens: true,
-      realtimeModel: 'gpt-realtime-mini',
+      realtimeModel: 'gpt-realtime-2.1-mini',
       realtimeVoice: 'marin',
     })
   })

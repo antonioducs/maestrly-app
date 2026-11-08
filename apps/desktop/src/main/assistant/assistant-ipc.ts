@@ -12,6 +12,7 @@ import type { IpcRegistrar } from '../ipc-registrar'
 import { ensureAssistantConversation, startNewAssistantSession } from './assistant-conversation'
 import { getAssistantSettings, setAssistantSettings } from './assistant-settings'
 import type { AssistantWindow } from './assistant-window'
+import { hangUpRealtimeCall, type RealtimeStartResult, startRealtimeCall } from './realtime/session'
 import {
   createSpeechRequests,
   OPENAI_SPEECH_MAX_CHARS,
@@ -98,6 +99,38 @@ export function registerAssistantIpc(reg: IpcRegistrar, deps: AssistantIpcDeps):
   })
   reg.mon('assistant:tts-cancel', (event) => {
     if (isAssistantSender(deps, event)) speech.cancel()
+  })
+  // One Realtime call at a time, for the assistant window only; stopping it hangs it up on OpenAI's side too.
+  let realtimeCall: string | null = null
+  const stopRealtime = () => {
+    const callId = realtimeCall
+    realtimeCall = null
+    if (callId) void hangUpRealtimeCall(callId)
+  }
+  reg.mhandle('assistant:realtime-start', async (event, input: unknown): Promise<RealtimeStartResult> => {
+    if (!isAssistantSender(deps, event)) throw new Error('Only the assistant window starts a voice call')
+    const { sdp } = z
+      .object({
+        sdp: z
+          .string()
+          .min(1)
+          .max(64 * 1024),
+      })
+      .strict()
+      .parse(input)
+    stopRealtime()
+    const { voice } = getAssistantSettings()
+    const result = await startRealtimeCall(sdp, {
+      model: voice.realtimeModel,
+      voice: voice.realtimeVoice,
+      speed: voice.speed,
+      locale: deps.locale(),
+    })
+    if (result.ok) realtimeCall = result.callId
+    return result
+  })
+  reg.mon('assistant:realtime-stop', (event) => {
+    if (isAssistantSender(deps, event)) stopRealtime()
   })
   reg.handle(
     'assistant:voices',
