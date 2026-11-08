@@ -233,6 +233,9 @@ import { registerDrawerIpc } from './drawer-ipc'
 import { archiveConversation, type ConversationIpcDeps, registerConversationIpc } from './conversation-ipc'
 import { isAssistantConversation, setAssistantConversationArchiver } from './assistant/assistant-conversation'
 import { setAssistantRoleResolver } from './chat/harness/assistant-role'
+import type { AssistantWindow } from './assistant/assistant-window'
+import { createDesktopAssistantWindow } from './assistant/assistant-runtime'
+import { registerAssistantIpc } from './assistant/assistant-ipc'
 import { createSiblingConversation, deleteConversation } from './workspace-service'
 import { registerLocalConversationIpc } from './local-conversation/ipc'
 import { registerTurnSnapshotIpc } from './turn-snapshots/ipc'
@@ -330,6 +333,14 @@ let cancelProjectSetupsAndWait: (() => Promise<void>) | null = null
 let disposeConversationMigrationIpc: (() => void) | null = null
 let conversationMoveService: ConversationMoveService | null = null
 let disposeConversationMoveIpc: (() => void) | null = null
+
+/** The floating assistant window of this computer, created on first use; never on a headless instance. */
+let assistantWindow: AssistantWindow | null = null
+function assistant(): AssistantWindow | null {
+  if (isHeadlessInstance()) return null
+  assistantWindow ??= createDesktopAssistantWindow()
+  return assistantWindow
+}
 
 /** Events the main window shows about the profile; on a host, the main renderer of each connected computer too. */
 const sendToWindow = (channel: string, payload?: unknown): void => {
@@ -671,6 +682,7 @@ function broadcastStatus(payload: { agentId: string; status: string; alert?: boo
     }
   }
   sendToWindow('agent:status', payload)
+  if (assistantWindow?.conversationId() === payload.agentId) assistantWindow.send('agent:status', payload)
   if (attention) sendToWindow('conversation:attention', { conversationId: payload.agentId, attention: true })
 
   onAgentStatus(payload.agentId, payload.status)
@@ -900,6 +912,9 @@ async function createWindow(): Promise<void> {
     if (!confirmQuitOnce(() => e.preventDefault())) return
 
     chatWindowManager?.dispose()
+    // The assistant only hides when closed: release it so that closing the last window still quits.
+    assistantWindow?.dispose()
+    assistantWindow = null
     floatingManager.flushPendingFloatPersists()
     floatingManager.disposeAll()
     popupManager.disposeAll()
@@ -1000,6 +1015,28 @@ function registerIpc(): void {
   registerConversationIpc(reg, conversationIpcDeps)
   setAssistantConversationArchiver((id) => archiveConversation(conversationIpcDeps, id, true))
   setAssistantRoleResolver(isAssistantConversation)
+  if (!isHeadlessInstance()) {
+    const revealMain = () => {
+      if (mainWindow && !mainWindow.isDestroyed()) focusMainWindow()
+      else void createWindow()
+    }
+    registerAssistantIpc(reg, {
+      window: assistant,
+      openConversationInApp: (conversationId) => {
+        const conversation = getConversation(conversationId)
+        if (!conversation) return
+        revealMain()
+        safeWindowSend(mainWindow, 'conversation:open', { conversation, focus: true })
+      },
+      openSettingsInApp: (section) => {
+        revealMain()
+        safeWindowSend(mainWindow, 'assistant:open-settings', section)
+      },
+      applySettings: () => null,
+      shortcutError: () => null,
+      wayland: process.platform === 'linux' && process.env.XDG_SESSION_TYPE === 'wayland',
+    })
+  }
   registerLocalConversationIpc(reg)
   registerTurnSnapshotIpc(reg, { isRunning: isChatConversationRunning })
   disposeConversationMigrationIpc?.()
@@ -1693,6 +1730,8 @@ app.on('before-quit', (e) => {
   if (!confirmQuitOnce(() => e.preventDefault())) return
 
   chatWindowManager?.dispose()
+  assistantWindow?.dispose()
+  assistantWindow = null
 
   // First, within the container's stop grace: once this process exits, the bots' displays stop, and a Chromium still
   // closing then loses the cookies it changed last (the session tokens Google rotates), signing the bots out.

@@ -2356,4 +2356,13 @@ export default {
     replace: 'Substituir (Enter)',
     replaceAll: 'Substituir tudo',
   },
+  assistant: {
+    title: 'Assistente',
+    newSession: 'Nova sessão',
+    openInApp: 'Abrir no Maestrly',
+    hide: 'Esconder (Esc)',
+    loading: 'Abrindo o assistente…',
+    loadFailed: 'O assistente não abriu: {{error}}',
+    retry: 'Tentar de novo',
+  },
 } as const

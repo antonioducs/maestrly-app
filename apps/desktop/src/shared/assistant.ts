@@ -62,3 +62,13 @@ export interface AssistantInfo {
   conversationId: string
   cwd: string
 }
+
+export interface AssistantSettingsState {
+  settings: AssistantSettings
+  /** Why the global shortcut is not registered, when it is not. */
+  shortcutError: 'conflict' | 'unsupported' | null
+  /** Global shortcuts are unreliable on Wayland: the person binds a system shortcut to the toggle flag instead. */
+  wayland: boolean
+}
+
+export type AssistantHoldReason = 'question' | 'listening' | 'speaking'

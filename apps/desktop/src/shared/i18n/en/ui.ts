@@ -2331,4 +2331,13 @@ export default {
     replace: 'Replace (Enter)',
     replaceAll: 'Replace all',
   },
+  assistant: {
+    title: 'Assistant',
+    newSession: 'New session',
+    openInApp: 'Open in Maestrly',
+    hide: 'Hide (Esc)',
+    loading: 'Opening the assistant…',
+    loadFailed: 'The assistant could not open: {{error}}',
+    retry: 'Try again',
+  },
 } as const

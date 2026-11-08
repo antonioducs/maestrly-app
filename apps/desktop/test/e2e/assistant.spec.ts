@@ -1,0 +1,128 @@
+import { createServer, type ServerResponse } from 'node:http'
+import { access, mkdtemp } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { expect, test as base, type ElectronApplication, type Page } from '@playwright/test'
+import { removeTempDirEventually } from './helpers/temp-cleanup'
+
+const desktop = fileURLToPath(new URL('../..', import.meta.url))
+const modelId = 'assistant-fixture'
+const editor = (page: Page) => page.locator('.chat-input[contenteditable="true"]:visible')
+const api = (page: Page, name: string, ...args: unknown[]) =>
+  page.evaluate(({ name, args }) => (window as any).api[name](...args), { name, args })
+
+function chunk(response: ServerResponse, text: string, finish: string | null = null) {
+  response.write(
+    `data: ${JSON.stringify({
+      id: 'assistant-fixture',
+      object: 'chat.completion.chunk',
+      created: 0,
+      model: modelId,
+      choices: [{ index: 0, delta: { content: text }, finish_reason: finish }],
+    })}\n\n`
+  )
+}
+
+interface Session {
+  app: ElectronApplication
+  page: Page
+  requests: Array<{ messages: Array<{ role: string; content: unknown }> }>
+}
+
+const test = base.extend<{ session: Session }>({
+  session: async ({ playwright }, use) => {
+    await access(path.join(desktop, 'out/main/index.js'))
+    const root = await mkdtemp(path.join(os.tmpdir(), 'maestrly-assistant-e2e-'))
+    const requests: Session['requests'] = []
+    let app: ElectronApplication | undefined
+    const model = createServer(async (request, response) => {
+      if (request.url === '/v1/models') {
+        response.setHeader('content-type', 'application/json')
+        response.end(JSON.stringify({ data: [{ id: modelId, object: 'model' }] }))
+        return
+      }
+      if (request.url !== '/v1/chat/completions') return void response.writeHead(404).end()
+      let body = ''
+      for await (const part of request) body += part
+      requests.push(JSON.parse(body))
+      response.setHeader('content-type', 'text/event-stream')
+      chunk(response, `Assistant reply ${requests.length}.`)
+      chunk(response, '', 'stop')
+      response.end('data: [DONE]\n\n')
+    })
+    try {
+      await new Promise<void>((resolve) => model.listen(0, '127.0.0.1', resolve))
+      app = await playwright._electron.launch({
+        args: [path.join(desktop, 'out/main/index.js')],
+        env: {
+          ...process.env,
+          AGENTS_E2E: '1',
+          AGENTS_CHANNEL: 'dev',
+          AGENTS_INSTANCE: 'assistant-e2e',
+          AGENTS_USERDATA: path.join(root, 'profile'),
+          AGENTS_LOCALE: 'en',
+          ELECTRON_RENDERER_URL: '',
+          OPENAI_API_KEY: '',
+          ANTHROPIC_API_KEY: '',
+        },
+      })
+      const page = await app.firstWindow()
+      await page.waitForFunction(() => Boolean((window as any).api))
+      await page.getByRole('button', { name: 'Skip', exact: true }).click()
+      const provider = await api(page, 'chatAddProvider', {
+        name: 'Assistant fixture',
+        kind: 'openai',
+        key: 'fixture-key',
+        baseURL: `http://127.0.0.1:${(model.address() as { port: number }).port}/v1`,
+      })
+      expect(provider.ok).toBe(true)
+      await api(page, 'chatSetDefault', { providerId: provider.id, modelId })
+      await use({ app, page, requests })
+    } finally {
+      await app?.close().catch(() => undefined)
+      model.closeAllConnections()
+      await new Promise<void>((resolve) => model.close(() => resolve()))
+      await removeTempDirEventually(root)
+    }
+  },
+})
+
+async function assistantVisible(app: ElectronApplication): Promise<boolean> {
+  return app.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows().some((win) => win.webContents.getURL().endsWith('/assistant.html') && win.isVisible())
+  )
+}
+
+test('the assistant window opens its own pinned conversation, streams a reply and hides', async ({ session }) => {
+  const { app, page, requests } = session
+  const opened = app.waitForEvent('window')
+  await api(page, 'assistantShow')
+  const assistant = await opened
+  await expect(assistant.getByRole('button', { name: 'New session', exact: true })).toBeVisible()
+  await expect(editor(assistant)).toBeVisible()
+
+  const chats = (await api(page, 'listStandaloneConversations', false)) as Array<{
+    id: string
+    name: string
+    pinnedAt: number | null
+  }>
+  const conversation = chats.find((chat) => chat.name === 'Assistant')
+  expect(conversation?.pinnedAt).toBeTruthy()
+
+  await editor(assistant).fill('How are things?')
+  await editor(assistant).press('Enter')
+  await expect(assistant.getByText('Assistant reply 1.', { exact: true })).toBeVisible()
+  expect(JSON.stringify(requests[0].messages[0])).toContain('Maestrly copilot')
+
+  await editor(assistant).press('Escape')
+  await expect.poll(() => assistantVisible(app)).toBe(false)
+
+  await api(page, 'assistantShow')
+  await expect.poll(() => assistantVisible(app)).toBe(true)
+  await assistant.getByRole('button', { name: 'New session', exact: true }).click()
+  await expect(assistant.getByText('Assistant reply 1.', { exact: true })).toHaveCount(0)
+  const after = (await api(page, 'listStandaloneConversations', true)) as Array<{ id: string; archived: number }>
+  expect(after.find((chat) => chat.id === conversation!.id)?.archived).toBe(1)
+  expect(after.filter((chat) => !chat.archived && chat.id !== conversation!.id).length).toBeGreaterThan(0)
+})

@@ -39,11 +39,13 @@ export default defineConfig({
     },
     build: {
       rollupOptions: {
-        // The panel entry serves drawer tabs hosted in a WebContentsView.
+        // The panel entry serves drawer tabs hosted in a WebContentsView; the assistant entry, the floating
+        // assistant window.
 
         input: {
           index: resolve(__dirname, 'src/renderer/index.html'),
           panel: resolve(__dirname, 'src/renderer/panel.html'),
+          assistant: resolve(__dirname, 'src/renderer/assistant.html'),
         },
       },
     },

@@ -37,6 +37,7 @@ import { artifactsApi } from '../../src/preload/api-artifacts'
 import { transfersApi } from '../../src/preload/api-transfers'
 import { conversationMoveApi } from '../../src/preload/api-conversation-move'
 import { turnSnapshotsApi } from '../../src/preload/api-turn-snapshots'
+import { assistantApi } from '../../src/preload/api-assistant'
 import type { FleetServerId } from '../../src/shared/fleet-servers'
 
 /** A paired bot server, as the fleet preload calls name it first. */
@@ -93,6 +94,7 @@ const apiSlices: Array<[string, Record<string, unknown>]> = [
   ['transfersApi', transfersApi],
   ['conversationMoveApi', conversationMoveApi],
   ['turnSnapshotsApi', turnSnapshotsApi],
+  ['assistantApi', assistantApi],
 ]
 beforeAll(async () => {
   await import('../../src/preload/index') // Runs contextBridge.exposeInMainWorld('api', api).
@@ -456,8 +458,27 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(702)
+    expect(keys).toHaveLength(714)
     expect(keys.sort()).toMatchSnapshot()
+  })
+
+  it('forwards the assistant window calls in exact argument order', async () => {
+    await api.assistantInfo()
+    await api.setAssistantSettings({ hideOnBlur: false })
+    await api.assistantOpenSettings()
+    await api.assistantOpenSettings('assistant')
+    await api.assistantShow()
+    await api.assistantShow(true)
+    expect(invokeSpy.mock.calls).toEqual([
+      ['assistant:info'],
+      ['assistant:settings-set', { hideOnBlur: false }],
+      ['assistant:open-settings', null],
+      ['assistant:open-settings', 'assistant'],
+      ['assistant:show', false],
+      ['assistant:show', true],
+    ])
+    api.assistantHold('question', true)
+    expect(sendSpy).toHaveBeenLastCalledWith('assistant:hold', 'question', true)
   })
 
   it('forwards an active-account pool patch unchanged', async () => {
