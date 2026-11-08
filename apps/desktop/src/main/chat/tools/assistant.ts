@@ -22,9 +22,11 @@ import {
   HOST_BOT_READ_GUIDANCE,
   HOST_BOT_SEND_GUIDANCE,
   HOST_MAESTRLY_OVERVIEW_GUIDANCE,
+  HOST_RESPOND_PENDING_GUIDANCE,
 } from '../harness/host-contracts'
 import { FLEET_MESSAGE_TEXT_MAX } from '@maestrly/bot-fleet-protocol'
 import type { BotReadResult } from '../../assistant/bot-tools'
+import type { RespondPendingResult } from '../../assistant/respond-pending'
 import { ASSISTANT_TOOL_NAMES } from '../tool-policy'
 import { conversationLinkToolsOffered } from './conversation-link'
 import { defineTool } from './util'
@@ -72,6 +74,23 @@ export const botSendInputSchema = z
   .strict()
 export type BotSendInput = z.infer<typeof botSendInputSchema>
 
+export const respondPendingInputSchema = z
+  .object({
+    ref: z.string().trim().min(1).max(300).describe('The conversation or bot ref from maestrly_overview.'),
+    itemId: z.string().trim().min(1).max(300).describe("The pending item's itemId from maestrly_overview."),
+    answer: z.discriminatedUnion('kind', [
+      z
+        .object({
+          kind: z.literal('question'),
+          option: z.string().trim().min(1).max(200).describe("The label of one of the question's options."),
+        })
+        .strict(),
+      z.object({ kind: z.literal('permission'), decision: z.enum(['allow', 'deny']) }).strict(),
+    ]),
+  })
+  .strict()
+export type RespondPendingToolInput = z.infer<typeof respondPendingInputSchema>
+
 type AskQuestion = (questions: ChatQuestion[]) => Promise<string[][]>
 
 export interface AssistantToolRuntime {
@@ -90,6 +109,7 @@ export interface AssistantToolRuntime {
   ): Promise<ConversationSendResult>
   botRead(input: BotReadInput): Promise<BotReadResult | ConversationLinkError>
   botSend(input: BotSendInput, askQuestion: AskQuestion): Promise<ConversationSendResult>
+  respondPending(input: RespondPendingToolInput, askQuestion: AskQuestion): Promise<RespondPendingResult>
 }
 
 /** Whether the conversation's turns get the assistant tool names at all. */
@@ -191,6 +211,46 @@ export function assistantRuntimeFor(conversationId: string, mode: ChatBehavior):
         })
       })
     },
+    async respondPending(input, askQuestion) {
+      const refusal = ended()
+      if (refusal) return { ok: false, code: 'unavailable', error: refusal }
+      const [{ respondPending }, budget, chat, { assistantBotServer }, bots, { getConversation }] = await Promise.all([
+        import('../../assistant/respond-pending'),
+        import('../../assistant/action-budget'),
+        import('../service'),
+        import('../../assistant/assistant-context'),
+        import('../../fleet/client/bot-actions'),
+        import('../../store'),
+      ])
+      return respondPending(
+        {
+          localPending: (id) => {
+            const conversation = id === conversationId ? undefined : getConversation(id)
+            if (!conversation || conversation.archived) return null
+            return { name: conversation.name, ...chat.chatPendingInteractions(id) }
+          },
+          replyPermission: (requestId, reply) => {
+            if (!ended()) chat.replyChatPermission(requestId, reply)
+          },
+          replyQuestion: (toolCallId, answers) => {
+            if (!ended()) chat.replyChatQuestion(toolCallId, answers)
+          },
+          botServer: assistantBotServer,
+          resolveBot: (fleet, botId, interactionId, resolution) => {
+            const late = ended()
+            if (late) return Promise.reject(new Error(late))
+            return bots.resolveBotInteraction(fleet, botId, interactionId, resolution)
+          },
+          admit: (targetRef, action) =>
+            ended() ? Promise.resolve(false) : budget.admitAssistantAction(askQuestion, originKey, targetRef, action),
+          confirmApproval: async (action) =>
+            !ended() &&
+            (await budget.confirmAssistantAction(askQuestion, action, { allowRelease: false })) === 'once' &&
+            !ended(),
+        },
+        input
+      )
+    },
   }
 }
 
@@ -261,6 +321,22 @@ export const botSendTool = defineTool<typeof botSendInputSchema, ConversationSen
     if (!ctx.assistant) return unavailableLink()
     try {
       return await ctx.assistant.botSend(args, ctx.askQuestion)
+    } catch (error) {
+      return { ok: false, code: 'delivery-failed', error: errorText(error) }
+    }
+  },
+  toModelText: (_args, result) => JSON.stringify(result),
+})
+
+export const respondPendingTool = defineTool<typeof respondPendingInputSchema, RespondPendingResult>({
+  name: 'respond_pending',
+  description: HOST_RESPOND_PENDING_GUIDANCE,
+  parameters: respondPendingInputSchema,
+  metadata: { readOnly: false, parallelSafe: false },
+  execute: async (args, ctx) => {
+    if (!ctx.assistant) return { ok: false, code: 'unavailable', error: ASSISTANT_TOOLS_UNAVAILABLE }
+    try {
+      return await ctx.assistant.respondPending(args, ctx.askQuestion)
     } catch (error) {
       return { ok: false, code: 'delivery-failed', error: errorText(error) }
     }

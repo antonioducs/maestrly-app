@@ -6,6 +6,7 @@ import {
   readBotRunTranscript,
   readBotTranscript,
   requireFiles,
+  resolveBotInteraction,
   sendBotMessage,
 } from './bot-actions'
 import { registerFleetProvisioningIpc } from './provisioning/ipc'
@@ -639,10 +640,12 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
   scoped.mhandle(
     'fleet:resolveInteraction',
     (fleet, _event, botId: unknown, interactionId: unknown, resolution: unknown) =>
-      fleet.call('botInteractionResolve', {
-        params: { id: id.parse(botId), interactionId: opaqueId.parse(interactionId) },
-        body: fleetInteractionResolutionSchema.parse(resolution),
-      })
+      resolveBotInteraction(
+        fleet,
+        id.parse(botId),
+        opaqueId.parse(interactionId),
+        fleetInteractionResolutionSchema.parse(resolution)
+      )
   )
   scoped.mhandle('fleet:takeover', async (fleet, _event, botId: unknown) => {
     try {

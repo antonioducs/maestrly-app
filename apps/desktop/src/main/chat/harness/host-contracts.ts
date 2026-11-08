@@ -118,6 +118,13 @@ export const HOST_BOT_SEND_GUIDANCE =
   'work. Take ref from maestrly_overview. The message is marked as sent by the Maestrly assistant. Relay refusals; ' +
   'do not work around them.'
 
+export const HOST_RESPOND_PENDING_GUIDANCE =
+  "Answer what waits for the person in one of their conversations or bots, when the person's message asks you to: " +
+  'a question with one of its options, or a permission request with allow or deny. Take ref and itemId from ' +
+  "maestrly_overview's pending items. Allowing always shows the person what it approves and waits for them; denying " +
+  "and answering do not. A remote computer's items, requests for help and questions with several parts are answered " +
+  'in the app: tell the person. If the item is gone, it was already answered.'
+
 /** Contract of `create_workspace`, carried in its tool description. */
 export const HOST_WORKSPACE_CREATION_GUIDANCE =
   'Create or clone a project into the person\'s projects folder and register it as a Maestrly workspace, so ' +

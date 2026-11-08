@@ -11,7 +11,7 @@ const MAX_TURNS = 64
 
 type AskQuestion = (questions: ChatQuestion[]) => Promise<string[][]>
 
-export type AssistantActionKind = 'send' | 'bot-send' | 'respond'
+export type AssistantActionKind = 'send' | 'bot-send' | 'answer' | 'respond'
 
 export interface AssistantAction {
   kind: AssistantActionKind
@@ -65,7 +65,15 @@ export const assistantActionBudget: ActionBudget = createActionBudget()
 const QUESTION_KEY: Record<AssistantActionKind, string> = {
   send: 'assistant.confirmSend',
   'bot-send': 'assistant.confirmBotSend',
+  answer: 'assistant.confirmAnswer',
   respond: 'assistant.confirmRespond',
+}
+
+const ONCE_KEY: Record<AssistantActionKind, string> = {
+  send: 'assistant.confirmOnce',
+  'bot-send': 'assistant.confirmOnce',
+  answer: 'assistant.confirmAnswerOnce',
+  respond: 'assistant.confirmApprove',
 }
 
 /**
@@ -80,7 +88,7 @@ export async function confirmAssistantAction(
   const { tMain } = await import('../i18n')
   const t = tMain('main')
   const labels = {
-    once: t(action.kind === 'respond' ? 'assistant.confirmApprove' : 'assistant.confirmOnce'),
+    once: t(ONCE_KEY[action.kind]),
     release: t('assistant.confirmRelease'),
     cancel: t('assistant.confirmCancel'),
   }

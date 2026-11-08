@@ -517,6 +517,7 @@ import type {
   ChatOpenAttachmentResult,
   ChatPermissionRequest,
   PendingChatQuestion,
+  PermissionReply,
 } from '../../shared/chat'
 import type { ConvUiPrefs } from '../../shared/conversation'
 import { isChatMode, normalizeChatMode } from '../../shared/chat-mode'
@@ -2992,6 +2993,16 @@ function getBroker(): PermissionBroker {
 /** Shared executor boundary for host workflows that reuse Chat subagents outside a model tool call. */
 export function getChatPermissionBroker(): PermissionBroker {
   return getBroker()
+}
+
+/** The person's reply to a permission request, as the window's prompt sends it (`chat:permission-respond`). */
+export function replyChatPermission(requestId: string, reply: PermissionReply, message?: string): void {
+  getBroker().reply({ requestId, reply, message })
+}
+
+/** The person's answers to an ask_question card, as the window sends them (`chat:question-respond`). */
+export function replyChatQuestion(toolCallId: string, answers: string[][]): void {
+  getQuestionBroker().reply(toolCallId, answers)
 }
 
 /** What a conversation waits for from the person, read without the side effects of `chatRuntimeState`. */

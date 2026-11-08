@@ -94,7 +94,7 @@ afterEach(() => {
 
 describe('assistant tool surface', () => {
   it('is an opt-in, parent-only, read-only built-in that unattended turns never get', () => {
-    expect(ASSISTANT_TOOL_NAMES).toEqual(['maestrly_overview', 'bot_read', 'bot_send'])
+    expect(ASSISTANT_TOOL_NAMES).toEqual(['maestrly_overview', 'bot_read', 'bot_send', 'respond_pending'])
     for (const name of ASSISTANT_TOOL_NAMES) {
       expect(ALL_TOOL_NAMES).toContain(name)
       expect(isOptInToolName(name)).toBe(true)

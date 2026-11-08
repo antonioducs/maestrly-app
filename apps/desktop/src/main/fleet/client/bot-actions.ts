@@ -11,6 +11,7 @@ import {
   FLEET_ROUTINE_CONVERSATIONS_FEATURE,
   FLEET_ROUTINE_RUN_LIMITS,
   type FleetInputReceipt,
+  type FleetInteractionResolution,
   type FleetRoutineRunPage,
   type FleetTranscriptPage,
   fleetSendMessageRequestSchema,
@@ -135,4 +136,14 @@ export function sendBotMessage(
   return requireFiles(fleet, botId, input).then(
     () => fleet.call('botMessageSend', { params: { id: botId }, body: input }) as Promise<FleetInputReceipt>
   )
+}
+
+/** Answers a request of the bot that waits for the owner: a permission, a question or a request for help. */
+export function resolveBotInteraction(
+  fleet: BotFleet,
+  botId: string,
+  interactionId: string,
+  resolution: FleetInteractionResolution
+): Promise<unknown> {
+  return fleet.call('botInteractionResolve', { params: { id: botId, interactionId }, body: resolution })
 }
