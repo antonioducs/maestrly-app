@@ -1071,6 +1071,13 @@ export default {
       invalid: 'This file does not contain a valid image, PDF, or UTF-8 text.',
     },
     placeholder: 'Message {{name}}…',
+    placeholderPeers: 'Message {{name}}… use @ to bring in another bot',
+    peerConfirm: {
+      title: 'Conversation with {{name}} is disabled',
+      message: '{{bot}} and {{name}} cannot talk to each other yet. Enable their conversation to continue?',
+      confirm: 'Yes, enable',
+      cancel: 'No',
+    },
     manageMcp: "Manage MCP servers on the bot's screen",
     manageSkills: "Manage skills on the bot's screen",
     manageMcpSettings: 'Manage environment MCP servers',

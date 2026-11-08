@@ -14,6 +14,7 @@ import {
   fleetPeerThreadSchema,
   fleetSendMessageRequestSchema,
   type FleetBot,
+  type FleetPatchBotRequest,
   type FleetPeerThread,
   type FleetPeerThreadPatchRequest,
   type FleetPeerThreadSettings,
@@ -36,11 +37,16 @@ type Fixture = {
   deletes: string[]
   settings: FleetPeerThreadSettings[]
   cancels: string[]
+  botPatches: FleetPatchBotRequest[]
+  sent: FleetSendMessageRequest[]
   screenshot: (name: string) => Promise<void>
 }
 
-/** A bot that talks with another one in conversations of their own, behind a gateway that keeps them. */
-async function withThreads(run: (fixture: Fixture) => Promise<void>) {
+/**
+ * A bot that talks with another one in conversations of their own, behind a gateway that keeps them. With `orion`, a
+ * third bot that Atlas may not talk to yet.
+ */
+async function withThreads(run: (fixture: Fixture) => Promise<void>, { orion: withOrion = false } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'maestrly-peer-threads-'))
   const now = Date.now()
   const ago = (minutes: number) => new Date(now - minutes * MINUTE).toISOString()
@@ -71,6 +77,14 @@ async function withThreads(run: (fixture: Fixture) => Promise<void>) {
     updatedAt: at,
   })
   const nina = fleetBotSchema.parse({ ...bot, id: 'nina', name: 'Nina', tint: '#13a394', talksTo: ['atlas'] })
+  let orion = fleetBotSchema.parse({
+    ...bot,
+    id: 'orion',
+    name: 'Orion',
+    role: 'Infra and deploys',
+    tint: '#e0a030',
+    talksTo: [],
+  })
   const record = (fields: Partial<FleetPeerThread> & Pick<FleetPeerThread, 'id' | 'title'>) =>
     fleetPeerThreadSchema.parse({
       botId: bot.id,
@@ -193,6 +207,8 @@ async function withThreads(run: (fixture: Fixture) => Promise<void>) {
   const deletes: string[] = []
   const settings: FleetPeerThreadSettings[] = []
   const cancels: string[] = []
+  const botPatches: FleetPatchBotRequest[] = []
+  const sent: FleetSendMessageRequest[] = []
   const failures: string[] = []
   const streams = new Set<ServerResponse>()
   const emit = (event: unknown) => {
@@ -268,10 +284,26 @@ async function withThreads(run: (fixture: Fixture) => Promise<void>) {
           }
           break
         case 'botsList':
-          value = { bots: [bot, nina] }
+          value = { bots: withOrion ? [bot, nina, orion] : [bot, nina] }
           break
         case 'botGet':
-          value = url.pathname.endsWith('/nina') ? nina : bot
+          value = url.pathname.endsWith('/nina') ? nina : url.pathname.endsWith('/orion') ? orion : bot
+          break
+        case 'botPatch': {
+          if (!url.pathname.endsWith('/atlas')) return send(404, { code: 'NOT_FOUND', message: 'Bot not found' })
+          botPatches.push(body)
+          setBot(body)
+          // The gateway allows a pair both ways.
+          if (body.talksTo?.includes('orion') && !orion.talksTo.includes('atlas')) {
+            orion = fleetBotSchema.parse({ ...orion, talksTo: [...orion.talksTo, 'atlas'] })
+            emit({ type: 'bot.updated', at: new Date().toISOString(), bot: orion })
+          }
+          value = bot
+          break
+        }
+        case 'botMessageSend':
+          sent.push(fleetSendMessageRequestSchema.parse(body))
+          value = { inputId: randomUUID(), itemId: randomUUID(), queued: false }
           break
         case 'inbox':
           value = { items: [] }
@@ -409,6 +441,8 @@ async function withThreads(run: (fixture: Fixture) => Promise<void>) {
       deletes,
       settings,
       cancels,
+      botPatches,
+      sent,
       screenshot: async (name) => {
         const dir = process.env.MAESTRLY_E2E_SCREENSHOTS
         if (dir) await page.screenshot({ path: path.join(dir, `${name}.png`), animations: 'disabled' })
@@ -511,6 +545,62 @@ test('conversations with other bots: the bridge, a thread, a paused one, writing
     await settingsDialog.getByRole('button', { name: 'Close', exact: true }).first().click()
     await expect(page.getByTitle('Settings of the conversations with other bots')).toHaveText('60 days')
   })
+})
+
+test('mentioning bots with @: a chip for an allowed bot, and a question before allowing another', async () => {
+  await withThreads(
+    async ({ page, bot, botPatches, sent, screenshot }) => {
+      const editor = page.locator('[data-placeholder="Message Atlas… use @ to bring in another bot"]')
+      await editor.click()
+      await page.keyboard.type('Ask @ni')
+      const menu = page.getByRole('listbox', { name: 'Bots to mention' })
+      await expect(menu.getByRole('option')).toHaveCount(1)
+      const ninaOption = menu.getByRole('option', { name: /Nina/ })
+      await expect(ninaOption).toContainText('Conversation enabled')
+      await screenshot('06-mention-menu')
+      // Nina may talk with Atlas already: Enter puts her in as a chip.
+      await page.keyboard.press('Enter')
+      await expect(menu).toHaveCount(0)
+      await expect(editor.locator('[data-peer-mention="nina"]')).toHaveText(/Nina/)
+
+      // Orion may not: saying no leaves what was typed and allows nothing.
+      await page.keyboard.type('and @or')
+      const orionOption = menu.getByRole('option', { name: /Orion/ })
+      await expect(orionOption).toContainText('Conversation disabled')
+      await page.keyboard.press('Enter')
+      const question = page.getByRole('dialog', { name: 'Conversation with Orion is disabled' })
+      await expect(question.getByText('Atlas and Orion cannot talk to each other yet.', { exact: false })).toBeVisible()
+      await screenshot('07-mention-question')
+      await question.getByRole('button', { name: 'No', exact: true }).click()
+      await expect(question).toHaveCount(0)
+      await expect(editor.locator('[data-peer-mention="orion"]')).toHaveCount(0)
+      await expect(editor).toContainText('and @or')
+      expect(botPatches).toEqual([])
+
+      // Saying yes allows the pair the way the settings do, and the chip goes in.
+      await page.keyboard.type('i')
+      await expect(orionOption).toBeVisible()
+      await orionOption.click()
+      await question.getByRole('button', { name: 'Yes, enable' }).click()
+      await expect(question).toHaveCount(0)
+      expect(botPatches).toEqual([{ talksTo: ['nina', 'orion'] }])
+      expect(bot().talksTo).toEqual(['nina', 'orion'])
+      await expect(editor.locator('[data-peer-mention="orion"]')).toHaveText(/Orion/)
+
+      // The bot list knows Orion is allowed now, and Escape closes it until the text changes.
+      await page.keyboard.type('about @')
+      await expect(menu.getByRole('option', { name: /Orion/ })).toContainText('Conversation enabled')
+      await page.keyboard.press('Escape')
+      await expect(menu).toHaveCount(0)
+      await page.keyboard.press('Backspace')
+      await page.keyboard.type('the deploy')
+
+      // The chips go out as @Name, which the bot resolves among the bots it may talk to.
+      await page.keyboard.press('Enter')
+      await expect.poll(() => sent.map((item) => item.text)).toEqual(['Ask @Nina and @Orion about the deploy'])
+    },
+    { orion: true }
+  )
 })
 
 test('conversations with other bots: a thread works beside the bot conversation and stops on its own', async () => {

@@ -4,7 +4,9 @@ import { FLEET_FILES_FEATURE, FLEET_PARALLEL_TURNS_FEATURE } from '@maestrly/bot
 import type { FleetBot, FleetSelection, FleetSelectionOption } from '@maestrly/bot-fleet-protocol'
 import type { FleetOutgoingAttachment } from '../../../preload/api-fleet'
 import type { ChatSlashCommand } from '../../../shared/chat'
+import type { PeerMentionOption } from '../../../shared/chat-peer-mentions'
 import { ChatComposer, type UIAttachment } from '@/components/chat/ChatComposer'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { ChatPlusMenu } from '@/components/chat/ChatPlusMenu'
 import { ChatSkillsMenu } from '@/components/chat/ChatSkillsMenu'
 import { ChatModelChip } from '@/components/chat/ChatModelChip'
@@ -29,13 +31,16 @@ import {
   validateAttachments,
   writeBotDraft,
 } from '@/lib/fleet/composer'
+import { peerGroups } from '@/lib/fleet/create-bot'
 import { hasEnvironments } from '@/lib/fleet/environments'
 import { environmentScreenAvailability } from '@/lib/fleet/provisioning'
-import { environmentOf } from '@/lib/fleet/selectors'
+import { botEnvironments, environmentOf } from '@/lib/fleet/selectors'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import { primaryWorking } from '@/lib/fleet/turns'
 
 type PendingImage = { file: File; attachment: UIAttachment }
+/** A bot mentioned with `@` that this one may not talk to yet, waiting for the owner to allow it. */
+type PeerConfirm = { peer: PeerMentionOption; busy: boolean; error: string | null }
 
 export function BotComposer({
   bot,
@@ -133,6 +138,63 @@ export function BotComposer({
   )
   // A moving bot runs nowhere until it arrives: its conversation is read-only meanwhile.
   const locked = !!bot.move || ['paused', 'human', 'offline', 'starting', 'setup'].includes(bot.status)
+
+  // Every bot the settings offer as a peer, itself excluded, marked by whether it may talk to this one already.
+  const snapshotBots = fleet.state.snapshot.bots
+  const snapshotEnvironments = fleet.state.snapshot.environments
+  const withEnvironments = hasEnvironments(fleet.state.connection)
+  const peers = useMemo<PeerMentionOption[]>(
+    () =>
+      peerGroups(snapshotBots, withEnvironments ? botEnvironments(snapshotEnvironments) : undefined, bot.id)
+        .flatMap((group) => group.bots)
+        .map((peer) => ({
+          id: peer.id,
+          name: peer.name,
+          role: peer.role,
+          tint: peer.tint,
+          enabled: bot.talksTo.includes(peer.id),
+        })),
+    [snapshotBots, snapshotEnvironments, withEnvironments, bot.id, bot.talksTo]
+  )
+  const [peerConfirm, setPeerConfirm] = useState<PeerConfirm | null>(null)
+  const peerDecision = useRef<((allowed: boolean) => void) | null>(null)
+  const settlePeer = useCallback((allowed: boolean) => {
+    peerDecision.current?.(allowed)
+    peerDecision.current = null
+    setPeerConfirm(null)
+  }, [])
+  // Another bot, or leaving, answers "no" for a question still open.
+  useEffect(() => () => settlePeer(false), [bot.id, settlePeer])
+  const peerBusy = useRef(false)
+  peerBusy.current = !!peerConfirm?.busy
+  // Stable, so the dialog keeps its focus handling through the busy state; nothing cancels a change on its way.
+  const cancelPeer = useCallback(() => {
+    if (!peerBusy.current) settlePeer(false)
+  }, [settlePeer])
+  const pickPeer = (peer: PeerMentionOption): boolean | Promise<boolean> => {
+    if (peer.enabled) return true
+    peerDecision.current?.(false)
+    return new Promise<boolean>((resolve) => {
+      peerDecision.current = resolve
+      setPeerConfirm({ peer, busy: false, error: null })
+    })
+  }
+  // The same change as the settings: the gateway allows the pair both ways and updates both bots.
+  const allowPeer = async () => {
+    if (!peerConfirm || peerConfirm.busy) return
+    const { peer } = peerConfirm
+    setPeerConfirm({ peer, busy: true, error: null })
+    try {
+      const talksTo = bot.talksTo.includes(peer.id) ? bot.talksTo : [...bot.talksTo, peer.id]
+      const updated = await window.api.fleetUpdateBot(serverId, bot.id, { talksTo })
+      fleet.dispatch({ type: 'event', value: { type: 'bot.updated', at: new Date().toISOString(), bot: updated } })
+      settlePeer(true)
+    } catch (cause) {
+      setPeerConfirm((current) =>
+        current?.peer.id === peer.id ? { ...current, busy: false, error: fleetErrorMessage(cause) } : current
+      )
+    }
+  }
 
   const reloadCommands = useCallback(() => {
     void source
@@ -335,7 +397,9 @@ export function BotComposer({
                 : t(`composer.${bot.status}`)
             : undefined
         }
-        placeholder={t('composer.placeholder', { name: bot.name })}
+        placeholder={t(peers.length ? 'composer.placeholderPeers' : 'composer.placeholder', { name: bot.name })}
+        peers={peers}
+        onPickPeer={pickPeer}
         onSend={({ text }) => void send(text)}
         onStop={() =>
           // Only this conversation's turn stops: the bot's routine runs and other conversations keep working.
@@ -466,6 +530,18 @@ export function BotComposer({
         <p role="alert" className="mt-2 text-xs text-destructive">
           {error}
         </p>
+      )}
+      {peerConfirm && (
+        <ConfirmDialog
+          title={t('composer.peerConfirm.title', { name: peerConfirm.peer.name })}
+          message={t('composer.peerConfirm.message', { name: peerConfirm.peer.name, bot: bot.name })}
+          confirmLabel={t('composer.peerConfirm.confirm')}
+          cancelLabel={t('composer.peerConfirm.cancel')}
+          busy={peerConfirm.busy}
+          error={peerConfirm.error}
+          onCancel={cancelPeer}
+          onConfirm={() => void allowPeer()}
+        />
       )}
     </>
   )
