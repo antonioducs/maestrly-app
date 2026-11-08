@@ -51,6 +51,7 @@ import {
 } from '../../src/main/chat/conversation-link-authorization'
 import {
   APP_TOOL_POLICY,
+  ASSISTANT_TOOL_NAMES,
   CONVERSATION_DISPATCH_TOOL_NAMES,
   CONVERSATION_LINK_TOOL_NAMES,
   PARENT_ONLY_CONVERSATION_TOOL_NAMES,
@@ -106,7 +107,11 @@ afterEach(() => {
 
 describe('conversation link tool surface', () => {
   it('is an opt-in, parent-only built-in outside the app-tools catalog', () => {
-    expect(PARENT_ONLY_CONVERSATION_TOOL_NAMES).toEqual([...CONVERSATION_DISPATCH_TOOL_NAMES, ...CONVERSATION_LINK_TOOL_NAMES])
+    expect(PARENT_ONLY_CONVERSATION_TOOL_NAMES).toEqual([
+      ...CONVERSATION_DISPATCH_TOOL_NAMES,
+      ...CONVERSATION_LINK_TOOL_NAMES,
+      ...ASSISTANT_TOOL_NAMES,
+    ])
     for (const name of CONVERSATION_LINK_TOOL_NAMES) {
       expect(ALL_TOOL_NAMES).toContain(name)
       expect(isOptInToolName(name)).toBe(true)

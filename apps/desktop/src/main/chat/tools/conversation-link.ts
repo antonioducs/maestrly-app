@@ -79,7 +79,7 @@ async function confirmSend(askQuestion: AskQuestion, target: ConversationSummary
 }
 
 /** Whether the conversation's turns get the tool names at all: never in Plan/Maestro, bots, unattended or web turns. */
-function conversationLinkToolsOffered(conversationId: string, mode: ChatBehavior): boolean {
+export function conversationLinkToolsOffered(conversationId: string, mode: ChatBehavior): boolean {
   return (
     conversationLinkToolsAllowed(mode) &&
     !isBotMode() &&

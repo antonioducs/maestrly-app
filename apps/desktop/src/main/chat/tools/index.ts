@@ -32,11 +32,13 @@ import {
   sendToConversationTool,
   waitConversationTool,
 } from './conversation-link'
+import { maestrlyOverviewTool } from './assistant'
 import { boundText, type ToolContext, type ToolDef } from './util'
 import { chatToolOutputToAiSdkOutput, modelOutputToChatToolOutput } from '../tool-output'
 import type { ChatBehavior } from '../../../shared/conversation-experience'
 import { capabilityBehaviorFor } from '../../../shared/chat-mode'
 import {
+  ASSISTANT_TOOL_NAMES,
   CONVERSATION_DISPATCH_TOOL_NAMES,
   CONVERSATION_LINK_TOOL_NAMES,
   isHostToolReadOnly,
@@ -69,6 +71,7 @@ export const ALL_TOOLS: ToolDef<any, any>[] = [
   waitConversationTool,
   sendToConversationTool,
   reportToSourceTool,
+  maestrlyOverviewTool,
 ]
 export const ALL_TOOL_NAMES = ALL_TOOLS.map((t) => t.name)
 
@@ -87,6 +90,8 @@ const OPT_IN_TOOL_NAMES = new Set<string>([
   ...CONVERSATION_DISPATCH_TOOL_NAMES,
   // Only for a main turn typed by the person or started by another conversation (conversationLinkRuntimeFor).
   ...CONVERSATION_LINK_TOOL_NAMES,
+  // Only in the assistant conversation, for a main turn typed by the person (assistantRuntimeFor).
+  ...ASSISTANT_TOOL_NAMES,
 ])
 
 /** Capabilities that make an Agent subagent a worker instead of a read-only investigator. */
@@ -288,7 +293,7 @@ function toAiTool(def: ToolDef<any, any>, makeCtx: (toolCallId: string, signal: 
 
 /** Builds the ToolSet for `streamText({ tools })`. */
 export function buildTools(opts: {
-  executorReport?:boolean
+  executorReport?: boolean
   enabled?: Set<string>
   makeCtx: (toolCallId: string, signal: AbortSignal) => ToolContext
 }): ToolSet {
@@ -300,5 +305,5 @@ export function buildTools(opts: {
     if (opts.enabled && !opts.enabled.has(def.name)) continue
     out[def.name] = toAiTool(def, opts.makeCtx)
   }
-  return opts.executorReport ? {...out,...autonomousReportTools()} : out
+  return opts.executorReport ? { ...out, ...autonomousReportTools() } : out
 }

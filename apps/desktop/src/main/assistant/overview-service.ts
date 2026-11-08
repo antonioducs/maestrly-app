@@ -10,6 +10,7 @@ import {
   type OverviewPending,
   type OverviewPlace,
   type OverviewWorkspace,
+  matchesOverviewQuery,
   overviewSummary,
   summarizeOverview,
 } from '../../shared/assistant-overview'
@@ -239,15 +240,21 @@ export function createOverviewService(deps: OverviewServiceDeps) {
   }
 
   return {
-    /** The overview, leaving out `exclude` (the assistant's own conversation). */
-    async collect(exclude: string | null = null): Promise<AssistantOverview> {
+    /**
+     * The overview, leaving out `exclude` (the assistant's own conversation). A `query` keeps the conversations, bots
+     * and workspaces whose name, workspace, host or bot server holds it; every host keeps its state.
+     */
+    async collect(exclude: string | null = null, opts: { query?: string } = {}): Promise<AssistantOverview> {
       const mine = local(exclude)
       const fleet = bots()
       const remotes = await Promise.all(deps.hosts().map((host) => remote(host)))
+      const query = opts.query?.trim() ?? ''
+      const keep = <T extends Parameters<typeof matchesOverviewQuery>[0]>(items: T[]) =>
+        query ? items.filter((item) => matchesOverviewQuery(item, query)) : items
       return summarizeOverview({
-        conversations: [...mine.conversations, ...remotes.flatMap((r) => r.conversations)],
-        bots: fleet.bots,
-        workspaces: [...mine.workspaces, ...remotes.flatMap((r) => r.workspaces)],
+        conversations: keep([...mine.conversations, ...remotes.flatMap((r) => r.conversations)]),
+        bots: keep(fleet.bots),
+        workspaces: keep([...mine.workspaces, ...remotes.flatMap((r) => r.workspaces)]),
         hosts: [...remotes.map((r) => r.state), ...fleet.hosts],
         now: deps.now(),
       })

@@ -70,6 +70,7 @@ import { buildTools, builtinToolNamesForMode, isSubagentReadOnly, selectSubagent
 import { environmentLine } from './tools/command-shell'
 import { enableConversationDispatchTools } from './tools/conversation-dispatch'
 import { enableConversationLinkTools } from './tools/conversation-link'
+import { enableAssistantTools } from './tools/assistant'
 import {
   emitGeneratedImagePart,
   generateImageToolEnabled,
@@ -638,6 +639,8 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   const conversationDispatch = enableConversationDispatchTools(enabledNames, conversationId, mode)
   // Reading and messaging other conversations: a turn typed by the person or started by another conversation.
   const conversationLink = enableConversationLinkTools(enabledNames, conversationId, mode)
+  // The assistant conversation's own tools: a turn the person typed there.
+  const assistantTools = enableAssistantTools(enabledNames, conversationId, mode)
 
   if (autonomousPolicy(conversationId))
     for (const name of enabledNames) {
@@ -757,6 +760,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     onGeneratedImageUsage: recordGeneratedImageUsage,
     ...(conversationDispatch ? { conversationDispatch } : {}),
     ...(conversationLink ? { conversationLink } : {}),
+    ...(assistantTools ? { assistant: assistantTools } : {}),
   })
   // generate_image is OPT-IN: requires global/conversation imagegen toggle and connected ChatGPT
   // subscription — it generates the image even when the conversation uses another provider.

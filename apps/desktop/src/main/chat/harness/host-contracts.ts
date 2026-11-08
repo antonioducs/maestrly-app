@@ -96,6 +96,14 @@ export const HOST_REPORT_TO_SOURCE_GUIDANCE =
   'final answer is delivered automatically at the end of this turn and this tool only acknowledges. Make the ' +
   'report self-contained: what was done, results, open questions.'
 
+/** Contracts of the tools only the Maestrly assistant conversation gets, carried in their tool descriptions. */
+export const HOST_MAESTRLY_OVERVIEW_GUIDANCE =
+  "See everything at once: the person's conversations in every local workspace and chat, those of their remote " +
+  'computers, and their bots, grouped as needsYou (questions, approvals, plans and errors waiting for the person), ' +
+  'running, recent (last day), bots, workspaces and hosts (whether each remote computer and bot server answered). ' +
+  'Each conversation and bot carries a ref that names it to your other tools. Filter with query by conversation, ' +
+  'workspace, computer or bot name. Call it first for any status question. Read-only.'
+
 /** Contract of `create_workspace`, carried in its tool description. */
 export const HOST_WORKSPACE_CREATION_GUIDANCE =
   'Create or clone a project into the person\'s projects folder and register it as a Maestrly workspace, so ' +

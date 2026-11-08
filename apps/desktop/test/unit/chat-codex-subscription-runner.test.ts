@@ -70,13 +70,26 @@ import { PRELOAD_APP_TOOLS_TIMEOUT_MS, preloadAppToolsRegistry } from '../helper
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
 import { setConversationShellEnv } from '../../src/main/chat/conversation-env'
-import { DEFERRED_LOADING_METADATA, PARENT_ONLY_CONVERSATION_TOOL_NAMES } from '../../src/main/chat/tool-policy'
+import {
+  CONVERSATION_DISPATCH_TOOL_NAMES,
+  CONVERSATION_LINK_TOOL_NAMES,
+  DEFERRED_LOADING_METADATA,
+} from '../../src/main/chat/tool-policy'
 
 /**
  * Exactly the readers an Ask turn exposes, plus the conversation tools Ask offers in every turn. A turn the person did
  * not type receives them without a runtime, so they refuse; they are offered anyway to keep the thread's tool set.
  */
-const ASK_TOOL_NAMES = ['glob', 'grep', 'read', 'web_search', 'webfetch', ...PARENT_ONLY_CONVERSATION_TOOL_NAMES].sort()
+// A typed turn outside the assistant conversation: the dispatch and link tools, never the assistant's own.
+const ASK_TOOL_NAMES = [
+  'glob',
+  'grep',
+  'read',
+  'web_search',
+  'webfetch',
+  ...CONVERSATION_DISPATCH_TOOL_NAMES,
+  ...CONVERSATION_LINK_TOOL_NAMES,
+].sort()
 const toolNames = (start: unknown) =>
   (start as { dynamicTools: Array<{ name: string }> }).dynamicTools.map((tool) => tool.name).sort()
 import { insertConversation, patchConvUiPrefs, setAppSetting, setAppFlag } from '../../src/main/store'

@@ -133,6 +133,115 @@ function cap<T>(items: T[], limit: number): { items: T[]; truncated: boolean } {
   return { items: items.slice(0, limit), truncated: items.length > limit }
 }
 
+const fold = (text: string): string =>
+  text
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toLowerCase()
+
+export function placeName(place: OverviewPlace): string {
+  if (place.kind === 'local') return 'this computer'
+  return place.kind === 'host' ? place.hostName : place.serverName
+}
+
+/** Whether an item's name, workspace, host or bot server holds `query`, ignoring accents and case. */
+export function matchesOverviewQuery(
+  item: OverviewConversation | OverviewBot | OverviewWorkspace,
+  query: string
+): boolean {
+  const needle = fold(query.trim())
+  if (!needle) return true
+  const fields = [item.name, placeName(item.place)]
+  if ('workspaceName' in item && item.workspaceName) fields.push(item.workspaceName)
+  if ('role' in item && item.role) fields.push(item.role)
+  return fields.some((field) => fold(field).includes(needle))
+}
+
+/** How long ago, in a few words: "just now", "5 min ago", "3 h ago", "2 d ago". */
+export function relativeAge(at: number, now: number): string {
+  const minutes = Math.floor(Math.max(0, now - at) / 60_000)
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes} min ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours} h ago`
+  return `${Math.floor(hours / 24)} d ago`
+}
+
+/** Drops nulls, empty strings, empty lists and false flags, so the model reads only what is there. */
+function prune(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(prune)
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {}
+    for (const [key, field] of Object.entries(value)) {
+      if (field === null || field === undefined || field === '' || field === false) continue
+      if (Array.isArray(field) && field.length === 0) continue
+      out[key] = prune(field)
+    }
+    return out
+  }
+  return value
+}
+
+function compactPending(pending: OverviewPending[]) {
+  return pending.map((p) => ({ need: p.need, itemId: p.itemId, summary: p.summary }))
+}
+
+function compactConversation(c: OverviewConversation, now: number) {
+  return {
+    ref: c.ref,
+    name: c.name,
+    place: placeName(c.place),
+    workspace: c.workspaceName,
+    branch: c.branch,
+    status: c.status,
+    running: c.running,
+    pending: compactPending(c.pending),
+    createdByBot: c.botCreated,
+    lastActivity: c.lastActivityAt ? relativeAge(c.lastActivityAt, now) : null,
+  }
+}
+
+function compactBot(b: OverviewBot) {
+  return {
+    ref: b.ref,
+    name: b.name,
+    role: b.role,
+    place: placeName(b.place),
+    status: b.status,
+    activity: b.activity,
+    pending: compactPending(b.pending),
+    runningRoutine: b.runningRoutine,
+  }
+}
+
+const isBotItem = (item: OverviewConversation | OverviewBot): item is OverviewBot => item.ref.startsWith('bot:')
+
+/** The overview as the assistant's tools return it: compact JSON with relative times and no empty fields. */
+export function compactOverview(overview: AssistantOverview, now: number): Record<string, unknown> {
+  const truncated = Object.entries(overview.truncated)
+    .filter(([, cut]) => cut)
+    .map(([list]) => list)
+  return prune({
+    needsYou: overview.needsYou.map((item) => (isBotItem(item) ? compactBot(item) : compactConversation(item, now))),
+    running: overview.running.map((c) => compactConversation(c, now)),
+    recent: overview.recent.map((c) => compactConversation(c, now)),
+    bots: overview.bots.map(compactBot),
+    workspaces: overview.workspaces.map((w) => ({
+      name: w.name,
+      place: placeName(w.place),
+      conversations: w.conversations,
+      running: w.running,
+    })),
+    hosts: overview.hosts.map((h) => ({
+      place: placeName(h.place),
+      kind: h.place.kind,
+      state: h.state,
+      error: h.error,
+    })),
+    truncated,
+  }) as Record<string, unknown>
+}
+
 export function summarizeOverview(
   input: {
     conversations: OverviewConversation[]

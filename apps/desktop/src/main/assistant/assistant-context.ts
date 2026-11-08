@@ -33,7 +33,10 @@ function serverName(connection: { hostname: string | null; url: string | null },
 }
 
 /** The overview across this computer, its remote hosts and its bot servers, without `exclude`. */
-export async function collectAssistantOverview(exclude: string | null): Promise<AssistantOverview> {
+export async function collectAssistantOverview(
+  exclude: string | null,
+  opts: { query?: string } = {}
+): Promise<AssistantOverview> {
   const [{ createOverviewService }, store, workspaces, chat, plans, { fleetServers }] = await Promise.all([
     import('./overview-service'),
     import('../store'),
@@ -64,5 +67,5 @@ export async function collectAssistantOverview(exclude: string | null): Promise<
       }),
     now: () => Date.now(),
   })
-  return service.collect(exclude)
+  return service.collect(exclude, opts)
 }

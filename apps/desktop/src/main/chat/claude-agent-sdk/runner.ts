@@ -65,6 +65,7 @@ import { builtinToolNamesForMode, buildTools } from '../tools'
 import { commandShellEnvironment } from '../tools/command-shell'
 import { enableConversationDispatchTools } from '../tools/conversation-dispatch'
 import { enableConversationLinkTools } from '../tools/conversation-link'
+import { enableAssistantTools } from '../tools/assistant'
 import type { GeneratedImageEmission, GeneratedImageUsage, ToolContext } from '../tools/util'
 import {
   emitGeneratedImagePart,
@@ -569,12 +570,15 @@ async function prepareRuntime(
     ...(state.onGeneratedImageUsage ? { onGeneratedImageUsage: state.onGeneratedImageUsage } : {}),
     ...(conversationDispatch ? { conversationDispatch } : {}),
     ...(conversationLink ? { conversationLink } : {}),
+    ...(assistantTools ? { assistant: assistantTools } : {}),
   })
   const enabledBuiltins = builtinToolNamesForMode(args.mode)
   // Starting other conversations: only in a main turn admitted from text the person typed.
   const conversationDispatch = enableConversationDispatchTools(enabledBuiltins, args.conversationId, args.mode)
   // Reading and messaging other conversations: a turn typed by the person or started by another conversation.
   const conversationLink = enableConversationLinkTools(enabledBuiltins, args.conversationId, args.mode)
+  // The assistant conversation's own tools: a turn the person typed there.
+  const assistantTools = enableAssistantTools(enabledBuiltins, args.conversationId, args.mode)
   // generate_image is OPT-IN and exists only when a part can be published: toggle enabled + ChatGPT subscription
   // connected (it generates the image even here, in a conversation running on Claude).
   if (state.emitGeneratedImage && (await generateImageToolEnabled(args.conversationId, args.mode))) {
