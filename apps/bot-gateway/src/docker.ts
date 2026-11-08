@@ -1,6 +1,8 @@
 import http from 'node:http'
 import { createHash } from 'node:crypto'
+import { StringDecoder } from 'node:string_decoder'
 import { GatewayError } from './errors.js'
+import { tarFiles } from './tar.js'
 
 export type ContainerSpec = {
   name: string
@@ -32,6 +34,39 @@ export type OneShotSpec = {
   capAdd: string[]
   labels: Record<string, string>
 }
+export type HelperMount = { type: 'volume' | 'bind'; source: string; target: string; readOnly: boolean }
+/** A file written into a helper before it starts; `path` is relative to `/`, entries are owned by uid/gid 1000. */
+export type HelperFile = { path: string; content: string | Buffer; mode: number }
+/** A short-lived container that runs one program to its end with mounts, files and a network, streaming its output. */
+export type HelperSpec = {
+  image: string
+  command: string[]
+  user: string
+  env: string[]
+  /** A network with outbound access, or 'none'. */
+  network: string
+  mounts: HelperMount[]
+  files: HelperFile[]
+  securityOpt: string[]
+  capAdd: string[]
+  labels: Record<string, string>
+  timeoutMs: number
+  signal?: AbortSignal
+  /** Each complete stdout line, as the program prints it. */
+  onStdoutLine?: (line: string) => void
+  /** Bytes of stdout kept in the result (its tail); default 1 MiB. stderr keeps its last 64 KiB. */
+  stdoutLimitBytes?: number
+}
+export type HelperResult = {
+  exitCode: number
+  stdout: string
+  stderr: string
+  ending: 'exited' | 'timeout' | 'cancelled'
+}
+const HELPER_STDOUT_LIMIT = 1024 * 1024
+const HELPER_STDERR_LIMIT = 64 * 1024
+/** How long a helper's end is awaited once its output closed, or once it was killed. */
+const HELPER_WAIT_MS = 30_000
 /** A container attached to a network, with its addresses there (without prefix lengths). */
 export type NetworkMember = { id: string; name: string; addresses: string[] }
 export type ContainerInfo = {
@@ -64,6 +99,8 @@ export interface DockerDriver {
   networkRemove(name: string): Promise<void>
   /** Runs a one-shot container to its end and removes it; returns its exit code. */
   runOnce(spec: OneShotSpec): Promise<number>
+  /** Runs a helper container to its end, streaming its output, and removes it whatever happens. */
+  runHelper(spec: HelperSpec): Promise<HelperResult>
   imageInspect(ref: string): Promise<ImageInfo | null>
   volumeCreate(name: string, labels: Record<string, string>): Promise<void>
   volumeExists(name: string): Promise<boolean>
@@ -120,16 +157,91 @@ export function parseCgroupMemory(text: string): CgroupMemory {
   const safe = (value: number | null | undefined) => (value !== undefined && Number.isSafeInteger(value) ? value : null)
   return { swapBytes: safe(swapBytes), oomKills: safe(events.get('oom_kill')), limitOoms: safe(events.get('oom')) }
 }
+/**
+ * Splits the output of a program run without a terminal, which Docker frames as [stream, 0, 0, 0, size (4 bytes)],
+ * into its streams as the bytes arrive: a header or a frame may be cut anywhere between chunks.
+ */
+export class DockerStreamDemuxer {
+  private header = Buffer.alloc(0)
+  private remaining = 0
+  private stream: 'stdout' | 'stderr' | null = null
+  push(chunk: Buffer): Array<{ stream: 'stdout' | 'stderr'; data: Buffer }> {
+    const parts: Array<{ stream: 'stdout' | 'stderr'; data: Buffer }> = []
+    let offset = 0
+    while (offset < chunk.length) {
+      if (this.remaining === 0) {
+        const needed = 8 - this.header.length
+        this.header = Buffer.concat([this.header, chunk.subarray(offset, offset + needed)])
+        offset += Math.min(needed, chunk.length - offset)
+        if (this.header.length < 8) break
+        this.stream = this.header[0] === 1 ? 'stdout' : this.header[0] === 2 ? 'stderr' : null
+        this.remaining = this.header.readUInt32BE(4)
+        this.header = Buffer.alloc(0)
+        continue
+      }
+      const take = Math.min(this.remaining, chunk.length - offset)
+      if (this.stream) parts.push({ stream: this.stream, data: chunk.subarray(offset, offset + take) })
+      offset += take
+      this.remaining -= take
+    }
+    return parts
+  }
+}
 /** The standard output of a command run without a terminal, which Docker frames as [stream, 0, 0, 0, size (4 bytes)]. */
 export function execStdout(raw: Buffer): Buffer {
-  const parts: Buffer[] = []
-  let offset = 0
-  while (offset + 8 <= raw.length) {
-    const end = offset + 8 + raw.readUInt32BE(offset + 4)
-    if (raw[offset] === 1) parts.push(raw.subarray(offset + 8, Math.min(end, raw.length)))
-    offset = end
+  return Buffer.concat(
+    new DockerStreamDemuxer()
+      .push(raw)
+      .filter((part) => part.stream === 'stdout')
+      .map((part) => part.data)
+  )
+}
+/** Keeps the last `limit` bytes written to it. */
+class TailBuffer {
+  private chunks: Buffer[] = []
+  private size = 0
+  constructor(private readonly limit: number) {}
+  push(data: Buffer) {
+    this.chunks.push(data)
+    this.size += data.length
+    while (this.size > this.limit && this.chunks.length) {
+      const excess = this.size - this.limit
+      const first = this.chunks[0]
+      if (first.length <= excess) {
+        this.chunks.shift()
+        this.size -= first.length
+      } else {
+        this.chunks[0] = first.subarray(excess)
+        this.size -= excess
+      }
+    }
   }
-  return Buffer.concat(parts)
+  text(): string {
+    return Buffer.concat(this.chunks).toString('utf8')
+  }
+}
+/** Calls `onLine` with each complete line of the text written to it, and the last one without a newline on `end`. */
+class LineSplitter {
+  private decoder = new StringDecoder('utf8')
+  private pending = ''
+  constructor(private readonly onLine: (line: string) => void) {}
+  push(data: Buffer) {
+    const lines = (this.pending + this.decoder.write(data)).split('\n')
+    this.pending = lines.pop() ?? ''
+    for (const line of lines) this.emit(line)
+  }
+  end() {
+    const last = this.pending + this.decoder.end()
+    this.pending = ''
+    if (last) this.emit(last)
+  }
+  private emit(line: string) {
+    try {
+      this.onLine(line.endsWith('\r') ? line.slice(0, -1) : line)
+    } catch {
+      // A listener's failure does not stop reading the program's output.
+    }
+  }
 }
 /**
  * How long Docker may take to create, start, stop or remove a container. It answers only once the work is done, which
@@ -185,6 +297,65 @@ export class DockerEngineDriver implements DockerDriver {
         reject(error instanceof GatewayError ? error : new GatewayError('DOCKER_UNAVAILABLE', 'Docker unavailable'))
       )
       req.end(payload)
+    })
+  }
+  /** Sends raw bytes (an archive) to the Engine API; fails on an error status. */
+  private upload(route: string, data: Buffer, contentType: string, timeoutMs: number): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const req = http.request(
+        {
+          socketPath: this.socketPath,
+          method: 'PUT',
+          path: route,
+          timeout: timeoutMs,
+          headers: { 'content-type': contentType, 'content-length': data.length },
+        },
+        (res) => {
+          res.resume()
+          res.on('error', () => reject(new GatewayError('DOCKER_UNAVAILABLE', 'Docker unavailable')))
+          res.on('end', () => {
+            const status = res.statusCode ?? 500
+            if (status >= 400) reject(new DockerError(status, 'Docker could not write the files'))
+            else resolve()
+          })
+        }
+      )
+      req.on('timeout', () => req.destroy(new GatewayError('DOCKER_UNAVAILABLE', 'Docker timed out')))
+      req.on('error', (error) =>
+        reject(error instanceof GatewayError ? error : new GatewayError('DOCKER_UNAVAILABLE', 'Docker unavailable'))
+      )
+      req.end(data)
+    })
+  }
+  /**
+   * A call to the Engine API whose answer is read as it streams (a container's logs), passing each chunk to `onData`.
+   * It settles once the answer ends, Docker fails, or `signal` aborts it; it never times out on its own.
+   */
+  private stream(route: string, onData: (chunk: Buffer) => void, signal: AbortSignal): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (signal.aborted) return resolve()
+      const req = http.request({ socketPath: this.socketPath, method: 'GET', path: route }, (res) => {
+        const status = res.statusCode ?? 500
+        if (status >= 400) {
+          res.resume()
+          return reject(new DockerError(status, 'Docker could not read the output'))
+        }
+        res.on('data', (chunk) => onData(Buffer.from(chunk)))
+        res.on('error', () => resolve())
+        res.on('close', () => resolve())
+        res.on('end', () => resolve())
+      })
+      const abort = () => {
+        req.destroy()
+        resolve()
+      }
+      signal.addEventListener('abort', abort, { once: true })
+      req.on('close', () => signal.removeEventListener('abort', abort))
+      req.on('error', (error) => {
+        if (signal.aborted) return resolve()
+        reject(error instanceof GatewayError ? error : new GatewayError('DOCKER_UNAVAILABLE', 'Docker unavailable'))
+      })
+      req.end()
     })
   }
   private async request(method: string, route: string, body?: unknown, timeoutMs = this.timeoutMs): Promise<any> {
@@ -329,6 +500,116 @@ export class DockerEngineDriver implements DockerDriver {
       await this.request('DELETE', await this.route('/containers/' + encodeURIComponent(id) + '?force=true')).catch(
         () => undefined
       )
+    }
+  }
+  async runHelper(spec: HelperSpec): Promise<HelperResult> {
+    let created: any
+    try {
+      created = await this.request(
+        'POST',
+        await this.route('/containers/create'),
+        {
+          Image: spec.image,
+          User: spec.user,
+          Entrypoint: spec.command.slice(0, 1),
+          Cmd: spec.command.slice(1),
+          Env: spec.env,
+          Labels: spec.labels,
+          ...(spec.network === 'none' ? { NetworkDisabled: true } : {}),
+          HostConfig: {
+            NetworkMode: spec.network,
+            Init: true,
+            AutoRemove: false,
+            Mounts: spec.mounts.map((mount) => ({
+              Type: mount.type,
+              Source: mount.source,
+              Target: mount.target,
+              ReadOnly: mount.readOnly,
+            })),
+            SecurityOpt: spec.securityOpt,
+            CapDrop: ['ALL'],
+            ...(spec.capAdd.length ? { CapAdd: spec.capAdd } : {}),
+          },
+        },
+        CONTAINER_CHANGE_TIMEOUT_MS
+      )
+    } catch (error) {
+      if (error instanceof DockerError && error.status === 404)
+        throw new GatewayError('IMAGE_MISSING', 'Bot image missing')
+      throw error
+    }
+    const id = String(created.Id)
+    const container = '/containers/' + encodeURIComponent(id)
+    const stdout = new TailBuffer(spec.stdoutLimitBytes ?? HELPER_STDOUT_LIMIT)
+    const stderr = new TailBuffer(HELPER_STDERR_LIMIT)
+    const lines = spec.onStdoutLine ? new LineSplitter(spec.onStdoutLine) : null
+    const reading = new AbortController()
+    let ending: HelperResult['ending'] = 'exited'
+    let timer: NodeJS.Timeout | undefined
+    const kill = () => {
+      reading.abort()
+      void this.route(container + '/kill').then(
+        (route) => this.request('POST', route).catch(() => undefined),
+        () => undefined
+      )
+    }
+    const cancel = () => {
+      if (ending !== 'exited') return
+      ending = 'cancelled'
+      kill()
+    }
+    try {
+      if (spec.files.length)
+        await this.upload(
+          await this.route(container + '/archive?path=' + encodeURIComponent('/')),
+          tarFiles(spec.files),
+          'application/x-tar',
+          CONTAINER_CHANGE_TIMEOUT_MS
+        )
+      await this.request('POST', await this.route(container + '/start'), undefined, CONTAINER_CHANGE_TIMEOUT_MS)
+      timer = setTimeout(() => {
+        if (ending !== 'exited') return
+        ending = 'timeout'
+        kill()
+      }, spec.timeoutMs)
+      if (spec.signal?.aborted) cancel()
+      else spec.signal?.addEventListener('abort', cancel, { once: true })
+      const demuxer = new DockerStreamDemuxer()
+      await this.stream(
+        await this.route(container + '/logs?follow=1&stdout=1&stderr=1'),
+        (chunk) => {
+          for (const part of demuxer.push(chunk)) {
+            if (part.stream === 'stderr') stderr.push(part.data)
+            else {
+              stdout.push(part.data)
+              lines?.push(part.data)
+            }
+          }
+        },
+        reading.signal
+      )
+      lines?.end()
+      const result = await this.request(
+        'POST',
+        await this.route(container + '/wait?condition=not-running'),
+        undefined,
+        HELPER_WAIT_MS
+      ).catch(() => null)
+      return {
+        exitCode: Number(result?.StatusCode ?? (ending === 'exited' ? 1 : 137)),
+        stdout: stdout.text(),
+        stderr: stderr.text(),
+        ending,
+      }
+    } finally {
+      clearTimeout(timer)
+      spec.signal?.removeEventListener('abort', cancel)
+      await this.request(
+        'DELETE',
+        await this.route(container + '?force=true'),
+        undefined,
+        CONTAINER_CHANGE_TIMEOUT_MS
+      ).catch(() => undefined)
     }
   }
   async imageInspect(ref: string): Promise<ImageInfo | null> {
@@ -491,6 +772,13 @@ export class FakeDockerDriver implements DockerDriver {
   readonly oneShots: OneShotSpec[] = []
   /** The exit code of the next one-shot containers; 0 by default. */
   oneShotExitCode = 0
+  readonly helperRuns: HelperSpec[] = []
+  /** What each helper does; its stdout is passed line by line to the spec's listener. */
+  helperHandler: (spec: HelperSpec) => Promise<{ exitCode: number; stdout?: string; stderr?: string }> = async () => ({
+    exitCode: 0,
+  })
+  /** Volumes a running helper mounts, as many times as helpers mount each. */
+  private readonly helperVolumes = new Map<string, number>()
   memoryUpdateFailure: DockerError | null = null
   cpuUpdateFailure: DockerError | null = null
   /** Refuses to create networks, as a server with no address pool left does. */
@@ -543,6 +831,44 @@ export class FakeDockerDriver implements DockerDriver {
     this.oneShots.push(spec)
     return this.oneShotExitCode
   }
+  async runHelper(spec: HelperSpec): Promise<HelperResult> {
+    if (!(await this.imageInspect(spec.image))) throw new GatewayError('IMAGE_MISSING', 'Bot image missing')
+    this.helperRuns.push(spec)
+    const cancelled: HelperResult = { exitCode: 137, stdout: '', stderr: '', ending: 'cancelled' }
+    if (spec.signal?.aborted) return cancelled
+    const volumes = spec.mounts.filter((mount) => mount.type === 'volume').map((mount) => mount.source)
+    for (const volume of volumes) this.helperVolumes.set(volume, (this.helperVolumes.get(volume) ?? 0) + 1)
+    let onAbort: (() => void) | undefined
+    try {
+      const aborted = new Promise<null>((resolve) => {
+        onAbort = () => resolve(null)
+        spec.signal?.addEventListener('abort', onAbort, { once: true })
+      })
+      const result = await Promise.race([this.helperHandler(spec), aborted])
+      if (!result || spec.signal?.aborted) return cancelled
+      const stdout = result.stdout ?? ''
+      if (spec.onStdoutLine) {
+        const lines = stdout.split('\n')
+        if (lines.at(-1) === '') lines.pop()
+        for (const line of lines) spec.onStdoutLine(line)
+      }
+      const limit = spec.stdoutLimitBytes ?? HELPER_STDOUT_LIMIT
+      const bytes = Buffer.from(stdout)
+      return {
+        exitCode: result.exitCode,
+        stdout: bytes.length > limit ? bytes.subarray(bytes.length - limit).toString() : stdout,
+        stderr: result.stderr ?? '',
+        ending: 'exited',
+      }
+    } finally {
+      if (onAbort) spec.signal?.removeEventListener('abort', onAbort)
+      for (const volume of volumes) {
+        const count = (this.helperVolumes.get(volume) ?? 1) - 1
+        if (count > 0) this.helperVolumes.set(volume, count)
+        else this.helperVolumes.delete(volume)
+      }
+    }
+  }
   setImage(ref: string, id: string) {
     this.images.add(ref)
     this.imageIds.set(ref, id)
@@ -559,7 +885,7 @@ export class FakeDockerDriver implements DockerDriver {
     return this.volumes.has(name)
   }
   async volumeRemove(name: string) {
-    if ([...this.containers.values()].some((item) => item.spec.volume === name))
+    if ([...this.containers.values()].some((item) => item.spec.volume === name) || this.helperVolumes.has(name))
       throw new DockerError(409, 'Volume is in use')
     this.volumes.delete(name)
   }
