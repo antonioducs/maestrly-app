@@ -2364,5 +2364,11 @@ export default {
     loading: 'Opening the assistant…',
     loadFailed: 'The assistant could not open: {{error}}',
     retry: 'Try again',
+    spoken: {
+      code: '(code in the chat)',
+      diagram: '(diagram in the chat)',
+      table: '(table in the chat)',
+      link: '(link in the chat)',
+    },
   },
 } as const

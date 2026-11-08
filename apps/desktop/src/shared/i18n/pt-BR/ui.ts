@@ -2390,5 +2390,11 @@ export default {
     loading: 'Abrindo o assistente…',
     loadFailed: 'O assistente não abriu: {{error}}',
     retry: 'Tentar de novo',
+    spoken: {
+      code: '(código no chat)',
+      diagram: '(diagrama no chat)',
+      table: '(tabela no chat)',
+      link: '(link no chat)',
+    },
   },
 } as const
