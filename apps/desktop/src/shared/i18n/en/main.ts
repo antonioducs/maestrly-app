@@ -163,6 +163,10 @@ export default {
       threadPaused: 'Paused a conversation with another bot',
     },
   },
+  fleetBackup: {
+    keyFile:
+      'Maestrly recovery key\n\nServer: {{server}}\nBackups: {{destination}}\nRecovery key: {{key}}\n\nYou need this key to restore these backups on another server. Keep it somewhere safe: Maestrly cannot recover it for you.',
+  },
   chatProviderError: {
     http: '{{provider}} returned HTTP {{status}}: {{detail}}',
     httpWithoutDetail: '{{provider}} returned HTTP {{status}} without an error message.',

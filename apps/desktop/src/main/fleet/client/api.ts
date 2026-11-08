@@ -45,6 +45,14 @@ const SLOW_ROUTES: Partial<Record<RouteKey, number>> = {
     ])
   ),
   settingsInstallSkill: 130_000,
+  // The gateway waits for the backup storage through helper containers, each for up to 120 s; a restore reads the
+  // snapshot again before it is queued.
+  backupProbe: 180_000,
+  backupConnect: 180_000,
+  backupDisconnect: 180_000,
+  backupSnapshots: 180_000,
+  backupRestorePreview: 180_000,
+  backupRestore: 180_000,
   settingsAccounts: 35_000,
   settingsPatchAccount: 35_000,
   settingsRenameSubscription: 35_000,

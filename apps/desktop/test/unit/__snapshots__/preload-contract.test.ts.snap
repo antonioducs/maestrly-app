@@ -266,6 +266,7 @@ exports[`preload API — exposure > preserves the public preload API inventory 1
   "fleetActOnBotOwnSkill",
   "fleetAddApiKeyAccount",
   "fleetAttendDownloads",
+  "fleetBackup",
   "fleetBotAccounts",
   "fleetBotAction",
   "fleetBotAttention",

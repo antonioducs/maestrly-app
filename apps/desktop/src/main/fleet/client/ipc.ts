@@ -2,6 +2,7 @@ import { registerFleetEnvironmentSettingsIpc } from './environment-settings-ipc'
 import { app } from 'electron'
 import { validateAttachmentBytes } from '../instance/incoming-attachments'
 import { registerFleetProvisioningIpc } from './provisioning/ipc'
+import { defaultFleetBackupIpcDeps, registerFleetBackupIpc } from './backup-ipc'
 import { z } from 'zod'
 import {
   FLEET_BOT_MOVE_FEATURE,
@@ -187,6 +188,7 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
   const scoped = fleetScopedRegistrar(reg)
   registerFleetProvisioningIpc(reg, scoped)
   registerFleetEnvironmentSettingsIpc(scoped)
+  registerFleetBackupIpc(scoped, defaultFleetBackupIpcDeps())
   if (!isHeadlessInstance()) {
     fleetServers.start()
     app.once('will-quit', () => fleetServers.stop())

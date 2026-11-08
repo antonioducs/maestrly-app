@@ -27,6 +27,7 @@ import { workspaceApi } from '../../src/preload/api-workspace'
 import { botApi } from '../../src/preload/api-bot'
 import { fleetApi } from '../../src/preload/api-fleet'
 import { fleetEnvironmentPlugins, fleetEnvironmentSettings } from '../../src/preload/api-fleet-environment-settings'
+import { fleetBackup } from '../../src/preload/api-fleet-backup'
 import { FLEET_SETTINGS_OPERATIONS } from '@maestrly/bot-fleet-protocol'
 import { fleetInstallerApi } from '../../src/preload/api-fleet-installer'
 import { runnerApi } from '../../src/preload/api-runner'
@@ -84,6 +85,7 @@ const apiSlices: Array<[string, Record<string, unknown>]> = [
   ['fleetApi', fleetApi],
   ['fleetEnvironmentSettings', { fleetEnvironmentSettings }],
   ['fleetEnvironmentPlugins', { fleetEnvironmentPlugins }],
+  ['fleetBackup', { fleetBackup }],
   ['fleetInstallerApi', fleetInstallerApi],
   ['runnerApi', runnerApi],
   ['hostsApi', hostsApi],
@@ -456,7 +458,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(702)
+    expect(keys).toHaveLength(703)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -598,6 +600,16 @@ describe('preload API — exposure', () => {
     })
     fleetEnvironmentPlugins.mcpOAuthCancel(server, 'env-1', 'mcp_1')
     expect(invokeSpy).toHaveBeenLastCalledWith('fleet:mcp-oauth:cancel', SERVER, 'env-1', 'mcp_1')
+  })
+
+  it("reaches a server's backups through one channel per method, with the server first", () => {
+    expect(api.fleetBackup).toBe(fleetBackup)
+    for (const [name, method] of Object.entries(fleetBackup)) {
+      invokeSpy.mockClear()
+      ;(method as (...args: unknown[]) => unknown)(SERVER, 'argument')
+      expect(invokeSpy.mock.calls[0]?.[0]).toBe('fleet:backup:' + name)
+      expect(invokeSpy.mock.calls[0]?.[1]).toBe(SERVER)
+    }
   })
 
   it('composes disjoint slices whose union equals the exposed API', () => {

@@ -5,6 +5,7 @@ import {
   FLEET_RUNNERS_QUERY,
   FLEET_ROUTINE_RUNS_QUERY,
   FLEET_PEER_THREADS_QUERY,
+  FLEET_BACKUPS_QUERY,
   buildPath,
   fleetGatewayEventSchema,
   type FleetGatewayEvent,
@@ -81,7 +82,7 @@ export class FleetEvents {
       heartbeat = setTimeout(() => controller.abort(), this.heartbeatMs)
     }
     try {
-      // This app reads `reasoning` items, routine runs and threads between bots; an older gateway ignores the
+      // This app reads `reasoning` items, routine runs, threads between bots and backups; an older gateway ignores the
       // parameters and sends none. The same holds for desktop calls.
       const path = buildPath(
         FLEET_GATEWAY_ROUTES.events.path,
@@ -90,6 +91,7 @@ export class FleetEvents {
           [FLEET_REASONING_QUERY]: 1,
           [FLEET_ROUTINE_RUNS_QUERY]: 1,
           [FLEET_PEER_THREADS_QUERY]: 1,
+          [FLEET_BACKUPS_QUERY]: 1,
           ...(this.options.desktopBridge ? { [FLEET_DESKTOP_BRIDGE_QUERY]: 1 } : {}),
           ...(this.options.runners ? { [FLEET_RUNNERS_QUERY]: 1 } : {}),
         }

@@ -156,3 +156,30 @@ export function saveFleetServerToken(id: FleetServerId, token: string): TokenPer
   memoryTokens.set(id, token)
   return 'memory'
 }
+
+/**
+ * The recovery keys of the backup destinations this computer connected a server to, by destination label, in the OS
+ * keyring. Never removed on its own, not when a server disconnects or is removed: it restores backups on a new server.
+ */
+const BACKUP_KEYS = 'fleet.backup.recoveryKeys'
+const backupKeysSchema = z.record(z.string().min(1).max(600), z.string().min(1).max(200))
+
+function readBackupKeys(): Record<string, string> {
+  try {
+    const parsed = backupKeysSchema.safeParse(JSON.parse(secureGet(BACKUP_KEYS) || '{}'))
+    return parsed.success ? parsed.data : {}
+  } catch {
+    return {}
+  }
+}
+
+/** Keeps a destination's recovery key; false when the keyring is unavailable and the owner must keep it alone. */
+export function saveFleetBackupRecoveryKey(destinationLabel: string, key: string): boolean {
+  const keys = readBackupKeys()
+  if (keys[destinationLabel] === key) return true
+  return secureSet(BACKUP_KEYS, JSON.stringify({ ...keys, [destinationLabel]: key }))
+}
+
+export function fleetBackupRecoveryKeyFor(destinationLabel: string): string | null {
+  return readBackupKeys()[destinationLabel] ?? null
+}
