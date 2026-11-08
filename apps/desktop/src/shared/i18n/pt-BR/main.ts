@@ -162,6 +162,22 @@ export default {
       needsYou: 'Precisa de você',
       threadPaused: 'Pausou uma conversa com outro bot',
     },
+    backup: {
+      failedTitle: 'O backup de {{environment}} falhou',
+      unreachable: 'O servidor não alcançou o armazenamento dos backups.',
+      denied: 'O armazenamento dos backups recusou as credenciais.',
+      'not-found': 'O bucket ou a pasta dos backups não existe mais.',
+      'wrong-key': 'A chave de recuperação não abre mais os backups.',
+      locked: 'Outra operação estava usando os backups.',
+      'storage-full': 'O armazenamento dos backups está cheio.',
+      'environment-unavailable': 'O ambiente não estava pronto.',
+      'update-environment': 'Atualize o ambiente para fazer backup dele enquanto ele roda.',
+      busy: 'O ambiente continuou ocupado atualizando.',
+      interrupted: 'O servidor reiniciou durante o backup.',
+      timeout: 'O backup demorou demais.',
+      cancelled: 'O backup foi cancelado.',
+      failed: 'Abra as Configurações para ver o motivo.',
+    },
   },
   fleetBackup: {
     keyFile:

@@ -723,7 +723,9 @@ function DesktopShell({
   }, [pendingFocusKey, everyHostWorkspaces, handleSelect])
   const refreshHost = useCallback(
     (hostId: HostId): Promise<unknown> =>
-      hostId === LOCAL_HOST_ID ? refreshWorkspaces() : (remoteRef.current[hostId]?.actions.refresh() ?? Promise.resolve()),
+      hostId === LOCAL_HOST_ID
+        ? refreshWorkspaces()
+        : (remoteRef.current[hostId]?.actions.refresh() ?? Promise.resolve()),
     [refreshWorkspaces]
   )
   const move = useConversationMove({ refreshHost, focusConversationKey: setPendingFocusKey })
@@ -873,11 +875,15 @@ function DesktopShell({
           )
           return
         }
+        if (target.kind === 'backups') {
+          openSettings('fleet', { fleetServer: target.serverId })
+          return
+        }
         if (!fleets.servers.some((server) => server.id === target.serverId)) return
         onBotsServer(target.serverId)
         openFleetView(notificationFleetView(target))
       }),
-    [fleets.servers, onBotsServer, openFleetView]
+    [fleets.servers, onBotsServer, openFleetView, openSettings]
   )
 
   // The app icon counts the conversations of every host that wait for the owner, and what the Bots tab counts.

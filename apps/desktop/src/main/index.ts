@@ -1100,6 +1100,7 @@ function registerIpc(): void {
     client.onAlert = (botId, alert) => registry.playBotAlert(fleetKey(client.serverId, botId), alert)
     client.onLiveEvent = (entry) => appNotifications?.bots.live(client.serverId, entry)
     client.onSideConversation = (event) => appNotifications?.bots.sideConversation(client.serverId, event)
+    client.onBackupRun = (run) => appNotifications?.backups.run(client.serverId, run)
     // Runs and threads seen on another device while this computer was away or off no longer mark their bots.
     client.onResynced = () => {
       if (!client.hasFeature(FLEET_OWNER_SEEN_FEATURE)) return

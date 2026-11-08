@@ -4,6 +4,8 @@ import type { FleetServerId } from './fleet-servers'
 export type NotificationTarget =
   | { kind: 'conversation'; conversationId: string }
   | { kind: 'bot'; serverId: FleetServerId; botId: string; runId?: string; threadId?: string }
+  /** A server's backups, in Settings. */
+  | { kind: 'backups'; serverId: FleetServerId }
 
 /**
  * What last marked a bot, as the notifications center shows it: a turn of the bot's own conversation that ended or

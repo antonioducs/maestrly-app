@@ -162,6 +162,22 @@ export default {
       needsYou: 'Needs you',
       threadPaused: 'Paused a conversation with another bot',
     },
+    backup: {
+      failedTitle: 'Backup of {{environment}} failed',
+      unreachable: 'The server could not reach the backup storage.',
+      denied: 'The backup storage refused the credentials.',
+      'not-found': 'The backup bucket or folder is gone.',
+      'wrong-key': 'The recovery key no longer opens the backups.',
+      locked: 'Another operation was using the backups.',
+      'storage-full': 'The backup storage is full.',
+      'environment-unavailable': 'The environment was not ready.',
+      'update-environment': 'Update the environment to back it up while it runs.',
+      busy: 'The environment stayed busy updating.',
+      interrupted: 'The server restarted during the backup.',
+      timeout: 'The backup took too long.',
+      cancelled: 'The backup was cancelled.',
+      failed: 'Open Settings to see why.',
+    },
   },
   fleetBackup: {
     keyFile:
