@@ -230,7 +230,8 @@ import { onPluginMcpSurfaceChanged, reconcilePluginsOnStartup } from './plugins/
 import { registerPlanIpc } from './plan-ipc'
 import { getConversationDispatchService } from './conversation-dispatch-service'
 import { registerDrawerIpc } from './drawer-ipc'
-import { registerConversationIpc } from './conversation-ipc'
+import { archiveConversation, type ConversationIpcDeps, registerConversationIpc } from './conversation-ipc'
+import { setAssistantConversationArchiver } from './assistant/assistant-conversation'
 import { createSiblingConversation, deleteConversation } from './workspace-service'
 import { registerLocalConversationIpc } from './local-conversation/ipc'
 import { registerTurnSnapshotIpc } from './turn-snapshots/ipc'
@@ -987,14 +988,16 @@ function registerIpc(): void {
     notifyWorkspacesChanged: () => sendToMainTargets('workspace:changed'),
   })
   cancelProjectSetupsAndWait = registerProjectSetupIpc(reg).cancelAndWait
-  registerConversationIpc(reg, {
+  const conversationIpcDeps: ConversationIpcDeps = {
     stopChat,
     resumeBackgroundCompaction,
     emitAttention: (conversationId, attention) => {
       sendToWindow('conversation:attention', { conversationId, attention })
       if (!attention) appNotifications?.conversations.seen(conversationId)
     },
-  })
+  }
+  registerConversationIpc(reg, conversationIpcDeps)
+  setAssistantConversationArchiver((id) => archiveConversation(conversationIpcDeps, id, true))
   registerLocalConversationIpc(reg)
   registerTurnSnapshotIpc(reg, { isRunning: isChatConversationRunning })
   disposeConversationMigrationIpc?.()
