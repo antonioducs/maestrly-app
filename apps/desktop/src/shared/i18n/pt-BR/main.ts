@@ -69,7 +69,6 @@ export default {
     review: 'Review',
     notes: 'Notas',
     files: 'Arquivos',
-    chatgpt: 'ChatGPT',
     // pin da tira da janela flutuante (fixada permanece visível ao trocar de conversa)
     pin: 'Manter aberta ao trocar de conversa',
     unpin: 'Deixar de fixar',
@@ -136,8 +135,6 @@ export default {
     remoteFailedTitle: 'Não foi possível iniciar o VS Code no servidor',
     remoteFailedSub:
       'O servidor não conseguiu baixar ou iniciar o editor. Verifique a conexão dele com a internet e abra a aba Código novamente para tentar de novo.',
-    chatgptRestoringTitle: 'Restaurando ChatGPT…',
-    chatgptRestoringSub: 'Recarregando a última conversa. Login e sessão permanecem intactos.',
   },
   peer: {
     pairingNotice: {
@@ -162,6 +159,26 @@ export default {
       needsYou: 'Precisa de você',
       threadPaused: 'Pausou uma conversa com outro bot',
     },
+    backup: {
+      failedTitle: 'O backup de {{environment}} falhou',
+      unreachable: 'O servidor não alcançou o armazenamento dos backups.',
+      denied: 'O armazenamento dos backups recusou as credenciais.',
+      'not-found': 'O bucket ou a pasta dos backups não existe mais.',
+      'wrong-key': 'A chave de recuperação não abre mais os backups.',
+      locked: 'Outra operação estava usando os backups.',
+      'storage-full': 'O armazenamento dos backups está cheio.',
+      'environment-unavailable': 'O ambiente não estava pronto.',
+      'update-environment': 'Atualize o ambiente para fazer backup dele enquanto ele roda.',
+      busy: 'O ambiente continuou ocupado atualizando.',
+      interrupted: 'O servidor reiniciou durante o backup.',
+      timeout: 'O backup demorou demais.',
+      cancelled: 'O backup foi cancelado.',
+      failed: 'Abra as Configurações para ver o motivo.',
+    },
+  },
+  fleetBackup: {
+    keyFile:
+      'Chave de recuperação do Maestrly\n\nServidor: {{server}}\nBackups: {{destination}}\nChave de recuperação: {{key}}\n\nVocê precisa desta chave para restaurar estes backups em outro servidor. Guarde-a num lugar seguro: o Maestrly não consegue recuperá-la para você.',
   },
   chatProviderError: {
     http: '{{provider}} retornou HTTP {{status}}: {{detail}}',

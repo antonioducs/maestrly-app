@@ -33,7 +33,7 @@ export function panelSearch(tab: string, convId: string): string {
 /** Main-process admission for renderer requests and restored native views. */
 export function conversationTabAllowed(convId: string, tab: FloatTab): boolean {
   if (!isFloatTab(tab)) return false
-  // This computer holds no companion for a conversation that runs on another host. Its browser is the host's, streamed
+  // A conversation that runs on another host has its tools there. Its browser is the host's, streamed
   // here (drawer/panels), its editor is the host's too (drawer/remote-vscode), and so is its computer, whose screen a
   // panel watches out of the drawer (drawer/panels): each is shown once the host serves it.
   if (isRemoteConversation(convId))

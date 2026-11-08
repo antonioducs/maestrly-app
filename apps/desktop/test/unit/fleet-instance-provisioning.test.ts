@@ -286,6 +286,7 @@ it('advertises provisioning, environments, environment compaction and transcript
     'runner-jobs',
     'bot-own-skills',
     'environment-storage',
+    'environment-backup',
   ])
 })
 

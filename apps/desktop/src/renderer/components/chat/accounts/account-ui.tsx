@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronLeft, Globe, Repeat } from 'lucide-react'
+import { ChevronLeft, Repeat } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { ChatSubscriptionProviderKind, ChatSubscriptionUsage } from '../../../../shared/chat'
 import { subscriptionUsageTone } from '../subscription-usage-presentation'
@@ -24,12 +24,10 @@ export const linkButtonCls =
   'inline-flex items-center gap-1 text-[11px] text-indigo-300 hover:text-indigo-200 disabled:text-muted-foreground disabled:opacity-60'
 
 /** An API key provider is recognized by its base URL; one the app does not know shows its initials. */
-export type ProviderMarkKind = ChatSubscriptionProviderKind | 'chatgpt-web' | { apiName: string; baseURL?: string }
+export type ProviderMarkKind = ChatSubscriptionProviderKind | { apiName: string; baseURL?: string }
 
 function glyphFor(kind: ProviderMarkKind): ProviderGlyphId | null {
   if (typeof kind === 'object') return kind.baseURL ? apiProviderGlyph(kind.baseURL) : null
-  // ChatGPT Web is ChatGPT itself; the globe badge tells it apart from the ChatGPT subscription.
-  if (kind === 'chatgpt-web') return 'openai'
   return subscriptionGlyph(kind)
 }
 
@@ -74,16 +72,6 @@ export function ProviderMark({
         />
       ) : (
         initials(typeof kind === 'object' ? kind.apiName : kind)
-      )}
-      {kind === 'chatgpt-web' && size !== 'sm' && (
-        <span
-          className={cn(
-            'absolute -right-1 -top-1 grid place-items-center rounded-full bg-popover text-muted-foreground ring-1 ring-border',
-            size === 'lg' ? 'size-4' : 'size-3.5'
-          )}
-        >
-          <Globe className={size === 'lg' ? 'size-3' : 'size-2.5'} />
-        </span>
       )}
       {dot && (
         <span

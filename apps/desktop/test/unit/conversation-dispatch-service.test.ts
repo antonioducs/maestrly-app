@@ -92,7 +92,6 @@ function harness(overrides: Partial<ConversationDispatchServiceDeps> = {}) {
     openConversation: vi.fn(),
     notifyChanged: vi.fn(),
     reportStartFailure: vi.fn(),
-    isReserved: vi.fn(() => false),
     isMigrating: vi.fn(() => false),
     text: (key, params) => `${key}:${JSON.stringify(params ?? {})}`,
     ...overrides,
@@ -584,17 +583,6 @@ describe('conversation dispatch service', () => {
     })
     expect(result.items[0]).toMatchObject({ status: 'failed', error: expect.stringMatching(/Could not record/) })
     expect(deps.createIsolated).not.toHaveBeenCalled()
-  })
-
-  it('honours source restrictions before creating anything', async () => {
-    const reserved = harness({ isReserved: vi.fn(() => true) })
-    const shared = await reserved.service.dispatchBatch({
-      grant: grant(),
-      batch: { tasks: [task('A')], placement: 'shared' },
-      assertCurrent: () => undefined,
-    })
-    expect(shared).toMatchObject({ ok: false, error: expect.stringMatching(/review loop/) })
-    expect(reserved.deps.createIsolated).not.toHaveBeenCalled()
   })
 
   it('prepares, discards and re-prepares a plan handoff without starting it', async () => {

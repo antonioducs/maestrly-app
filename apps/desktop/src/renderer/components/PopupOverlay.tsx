@@ -22,7 +22,6 @@ const TAB_TITLE_KEY: Record<FloatTab, string> = {
   plan: 'drawer.tabPlan',
   review: 'drawer.tabReview',
   notes: 'drawer.tabNotes',
-  chatgpt: 'drawer.tabChatGpt',
 }
 
 export function PopupOverlay({ convId }: { convId: string | null }) {

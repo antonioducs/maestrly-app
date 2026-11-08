@@ -74,16 +74,6 @@ describe('popup-manager — transfer to a floating window', () => {
 })
 
 describe('popup-manager — stack z-order', () => {
-  it('considers ChatGPT visible only at the top of the stack', () => {
-    init()
-    popupManager.openPopup('c1', 'chatgpt')
-
-    expect(popupManager.isChatGptVisible('c1')).toBe(true)
-
-    popupManager.openPopup('c1', 'notes')
-    expect(popupManager.isChatGptVisible('c1')).toBe(false)
-  })
-
   it('keeps only the top browser onscreen when opened above VS Code', () => {
     init()
     popupManager.openPopup('c1', 'vscode')

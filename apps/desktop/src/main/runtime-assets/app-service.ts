@@ -300,10 +300,6 @@ const DISPLAY: Record<RuntimeAssetId, Pick<RuntimeAssetInfo, 'displayName' | 're
     displayName: 'GitHub Copilot runtime',
     requiredBy: 'GitHub Copilot',
   },
-  'tunnel-client': {
-    displayName: 'Secure tunnel client',
-    requiredBy: 'ChatGPT Web',
-  },
   'local-ml-runtime': {
     displayName: 'Local ML runtime',
     requiredBy: 'Local AI features',
@@ -423,6 +419,9 @@ export function runtimeAssetProgressInfo(id: RuntimeAssetId): Promise<RuntimeAss
   return buildRuntimeAssetInfo(id, false)
 }
 
+/** Components no feature uses anymore; an install left from an older version is removed at startup. */
+const RETIRED_RUNTIME_ASSET_IDS = ['tunnel-client'] as const
+
 /** Startup recovery is intentionally cleanup-only: it never calls install(). */
 export async function cleanupOrphanRuntimeAssetTemps(): Promise<void> {
   const root = runtimeAssetService().root
@@ -434,10 +433,12 @@ export async function cleanupOrphanRuntimeAssetTemps(): Promise<void> {
   }
   await Promise.all(
     entries
-      .filter((entry) =>
-        /^\.tmp-(?:codex-runtime|claude-code-runtime|github-copilot-runtime|tunnel-client|local-ml-runtime|whisper-model|antigravity-acp-runtime)-/.test(
-          entry
-        )
+      .filter(
+        (entry) =>
+          (RETIRED_RUNTIME_ASSET_IDS as readonly string[]).includes(entry) ||
+          /^\.tmp-(?:codex-runtime|claude-code-runtime|github-copilot-runtime|tunnel-client|local-ml-runtime|whisper-model|antigravity-acp-runtime)-/.test(
+            entry
+          )
       )
       .map((entry) => rm(path.join(root, entry), { recursive: true, force: true }))
   )

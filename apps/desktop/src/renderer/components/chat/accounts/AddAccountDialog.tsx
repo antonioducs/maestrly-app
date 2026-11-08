@@ -48,7 +48,6 @@ export function AddAccountDialog({
   onClose,
   onChanged,
   onSubscriptionReady,
-  onChatGptWeb,
   onApiProviderAdded,
 }: {
   intent: AddAccountIntent | null
@@ -58,7 +57,6 @@ export function AddAccountDialog({
   onChanged: () => void
   /** The slot is ready for sign-in: select it and start signing in. */
   onSubscriptionReady: (providerId: string) => void
-  onChatGptWeb: () => void
   onApiProviderAdded: (providerId: string | null) => void
 }) {
   const { t } = useTranslation('chat')
@@ -221,17 +219,6 @@ export function AddAccountDialog({
                 </button>
               )
             })}
-            <button type="button" onClick={onChatGptWeb} className={cn(cardCls, 'border-border')}>
-              <ProviderMark kind="chatgpt-web" />
-              <span className="min-w-0">
-                <span className="block truncate text-[12px] font-medium text-foreground">
-                  {t('settings.accountProviderName_chatgpt-web')}
-                </span>
-                <span className="block truncate text-[11px] text-muted-foreground">
-                  {t('settings.addAccountChatGptWebHint')}
-                </span>
-              </span>
-            </button>
           </div>
 
           {groupTitle(t('settings.accountsApiKeysGroup'))}

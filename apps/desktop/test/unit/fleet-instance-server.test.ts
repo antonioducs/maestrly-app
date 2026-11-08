@@ -324,6 +324,12 @@ function fakeEnvironment() {
     removeAccount: vi.fn(async (_providerId: string) => {}),
     open: vi.fn(async (_target: FleetUiOpenRequest['target']) => {}),
     checkRuntimes: vi.fn(() => {}),
+    prepareBackup: vi.fn(async () => ({
+      snapshot: '.config/app/.maestrly-backup-staging/maestrly-agents.db',
+      database: '.config/app/maestrly-agents.db',
+      bytes: 10,
+    })) as InstanceEnvironment['prepareBackup'],
+    releaseBackup: vi.fn(async () => {}) as InstanceEnvironment['releaseBackup'],
   }
   const typed: InstanceEnvironment = environment
   const bot: InstanceBot = bots.get('alpha')!
@@ -489,6 +495,34 @@ describe('instance control HTTP', () => {
     })
   })
 
+  it('writes a copy of the database for a backup and removes it, where the environment can', async () => {
+    expect(INSTANCE_CAPABILITIES).toContain('environment-backup')
+    const { base, environment } = await setup()
+    const prepared = await send(base, 'POST', '/v1/environment/backup')
+    expect(prepared.status).toBe(200)
+    expect(await prepared.json()).toEqual({
+      snapshot: '.config/app/.maestrly-backup-staging/maestrly-agents.db',
+      database: '.config/app/maestrly-agents.db',
+      bytes: 10,
+    })
+    const released = await send(base, 'DELETE', '/v1/environment/backup')
+    expect(released.status).toBe(204)
+    expect(environment.prepareBackup).toHaveBeenCalledTimes(1)
+    expect(environment.releaseBackup).toHaveBeenCalledTimes(1)
+    const denied = await fetch(base + '/v1/environment/backup', {
+      method: 'POST',
+      headers: { [FLEET_PROTOCOL_HEADER]: '1' },
+    })
+    expect(denied.status).toBe(401)
+
+    const older = fakeEnvironment()
+    older.environment.prepareBackup = undefined
+    older.environment.releaseBackup = undefined
+    const { base: olderBase } = await setup(older)
+    expect((await send(olderBase, 'POST', '/v1/environment/backup')).status).toBe(404)
+    expect((await send(olderBase, 'DELETE', '/v1/environment/backup')).status).toBe(404)
+  })
+
   it('starts runtime checks in the background and answers at once', async () => {
     expect(INSTANCE_CAPABILITIES).toContain('runtime-updates')
     const { base, environment } = await setup()
@@ -536,6 +570,7 @@ describe('instance control HTTP', () => {
       'runner-jobs',
       'bot-own-skills',
       'environment-storage',
+      'environment-backup',
     ])
     const { base, environment } = await setup()
     const response = await send(base, 'GET', '/v1/environment/selections')

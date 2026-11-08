@@ -32,6 +32,14 @@ import {
   type FleetDictationTranscribeRequest,
   type FleetRoutineRunPatchRequest,
   type FleetRoutineRunSettings,
+  FLEET_BACKUPS_FEATURE,
+  fleetEnvironmentIdSchema,
+  fleetReaderWantsBackups,
+  type FleetBackupConnectRequest,
+  type FleetBackupProbeRequest,
+  type FleetBackupRestoreRequest,
+  type FleetBackupRunRequest,
+  type FleetBackupUpdateRequest,
 } from '@maestrly/bot-fleet-protocol'
 import { ownerMemoryRequestHash } from '../owner-memory.js'
 import { once } from 'node:events'
@@ -144,6 +152,18 @@ const PROVISIONING = new Set([
 function requireDictation(ctx: GatewayContext) {
   if (!ctx.dictation) throw new GatewayError('NOT_FOUND', 'Route not found')
   return ctx.dictation
+}
+function requireBackups(ctx: GatewayContext) {
+  if (!ctx.backups) throw new GatewayError('NOT_FOUND', 'Route not found')
+  return ctx.backups
+}
+/** The environment a list is limited to, when the request names one. */
+function optionalEnvironmentId(url: URL): string | undefined {
+  const value = url.searchParams.get('environmentId')
+  if (value === null) return undefined
+  const parsed = fleetEnvironmentIdSchema.safeParse(value)
+  if (!parsed.success) throw new GatewayError('INVALID_REQUEST', 'Invalid environment id')
+  return parsed.data
 }
 function requireBot(ctx: GatewayContext, id: string) {
   const bot = ctx.lifecycle.get(id)
@@ -528,6 +548,7 @@ export async function publicRoute(
             FLEET_OWNER_SEEN_FEATURE,
             FLEET_RUNNERS_FEATURE,
             FLEET_BOT_OWN_SKILLS_FEATURE,
+            FLEET_BACKUPS_FEATURE,
           ],
           botImage: ctx.config.botImage,
           botImageVersion: await ctx.host.botImageVersion(),
@@ -576,6 +597,38 @@ export async function publicRoute(
     }
     case 'dictationTranscribe':
       return { body: await requireDictation(ctx).transcribe(body as FleetDictationTranscribeRequest) }
+    case 'backupStatus':
+      return { body: requireBackups(ctx).status() }
+    case 'backupProbe':
+      return { body: await requireBackups(ctx).probe((body as FleetBackupProbeRequest).destination) }
+    case 'backupConnect':
+      return {
+        body: await requireBackups(ctx).connect(
+          body as FleetBackupConnectRequest,
+          ctx.auth.device(res.req?.headers.authorization).name
+        ),
+      }
+    case 'backupDisconnect':
+      return { body: await requireBackups(ctx).disconnect() }
+    case 'backupUpdate':
+      return { body: requireBackups(ctx).update(body as FleetBackupUpdateRequest) }
+    case 'backupRecoveryKey':
+      // The one response that carries the key; the log names the device that asked, never the key.
+      return {
+        body: { recoveryKey: requireBackups(ctx).recoveryKey(ctx.auth.device(res.req?.headers.authorization).name) },
+      }
+    case 'backupRunsList':
+      return { body: { runs: requireBackups(ctx).runs(optionalEnvironmentId(url)) } }
+    case 'backupRunsCreate':
+      return { body: requireBackups(ctx).runNow(body as FleetBackupRunRequest), status: 201 }
+    case 'backupRunCancel':
+      return { body: requireBackups(ctx).cancel(id) }
+    case 'backupSnapshots':
+      return { body: await requireBackups(ctx).snapshots() }
+    case 'backupRestorePreview':
+      return { body: await requireBackups(ctx).restorePreview((body as { snapshotId: string }).snapshotId) }
+    case 'backupRestore':
+      return { body: await requireBackups(ctx).restore(body as FleetBackupRestoreRequest), status: 202 }
     case 'devicesSelfDelete': {
       const device = ctx.auth.device(res.req?.headers.authorization)
       ctx.store.revokeDevice(device.id)
@@ -1145,6 +1198,7 @@ export async function publicRoute(
         routineRuns: fleetReaderWantsRoutineRuns(url.searchParams),
         peerThreads: fleetReaderWantsPeerThreads(url.searchParams),
         runners: fleetReaderWantsRunners(url.searchParams),
+        backups: fleetReaderWantsBackups(url.searchParams),
       })
       return { stream: true }
     default:

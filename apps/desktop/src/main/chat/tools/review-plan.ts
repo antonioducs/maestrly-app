@@ -14,7 +14,7 @@ const parameters = z.object({
   title: z.string().optional().describe('A short title for the plan.'),
 })
 
-export const reviewPlanTool = defineTool<typeof parameters, { staged: boolean; error?: string }>({
+export const reviewPlanTool = defineTool<typeof parameters, { staged: boolean }>({
   name: 'review_plan',
   description:
     'Submit your implementation plan to the user for review in the "Plan" tab of this app, then STOP — this ' +
@@ -24,14 +24,11 @@ export const reviewPlanTool = defineTool<typeof parameters, { staged: boolean; e
   parameters,
   execute: async (args, ctx) => {
     if (isBotMode() || !ctx.submitPlan) return { staged: false }
-    const accepted = ctx.submitPlan(args.plan, args.title)
-    return accepted ? { staged: true } : { staged: false, error: 'plan-origin-conflict' }
+    return { staged: ctx.submitPlan(args.plan, args.title) }
   },
   toModelText: (_args, result) =>
     result.staged
       ? 'Plan submitted to the user for review. This turn is over — do not continue. The user will decide in the ' +
         'Plan tab; approving it will start a new turn to implement it.'
-      : result.error === 'plan-origin-conflict'
-        ? 'Plan was not submitted because another plan origin is already awaiting review. Continue this turn without ending it; retry after that review is resolved.'
-        : 'Plan review is not available in this context.',
+      : 'Plan review is not available in this context.',
 })

@@ -67,11 +67,6 @@ export function applyLayout(): void {
           isActiveConv && visibleKind === 'vscode' && isViewAllowedDuringDialogSuppression(d.vscodeView)
         d.vscodeView.setBounds(round(showVscode ? placed! : OFFSCREEN))
       }
-      if (d.chatgptView && !isTabOutOfSlot(convId, 'chatgpt')) {
-        const showChatGpt =
-          isActiveConv && visibleKind === 'chatgpt' && isViewAllowedDuringDialogSuppression(d.chatgptView)
-        d.chatgptView.setBounds(round(showChatGpt ? placed! : OFFSCREEN))
-      }
       // Plan/review/notes/terminal panels share the same drawer slot.
       for (const t of PANEL_TABS) {
         const v = d.panelViews.get(t)
@@ -106,7 +101,6 @@ export async function captureSlotView(convId: string): Promise<string | null> {
   let view: WebContentsView | null | undefined
   if (kind === 'browser') view = d.browserTabs.find((t) => t.id === d.activeBrowserId)?.view
   else if (kind === 'vscode') view = d.vscodeView
-  else if (kind === 'chatgpt') view = d.chatgptView
   // The Computer tab of a remote conversation is drawn by the renderer, with no native view.
   else if (kind === 'computer') return null
   else view = d.panelViews.get(kind)

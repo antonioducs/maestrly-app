@@ -35,7 +35,6 @@ const TOOL_LABEL_KEY: Record<FloatTab, string> = {
   plan: 'drawer.tabPlan',
   review: 'drawer.tabReview',
   notes: 'drawer.tabNotes',
-  chatgpt: 'drawer.tabChatGpt',
 }
 
 export function ShortcutsSection({
@@ -51,7 +50,6 @@ export function ShortcutsSection({
   setCloseShortcutState,
   disableShortcut,
   resetShortcuts,
-  chatGptWebEnabled,
 }: {
   t: TFn
   shortcuts: EffectiveShortcuts
@@ -65,12 +63,10 @@ export function ShortcutsSection({
   setCloseShortcutState: (b: ShortcutBinding) => void
   disableShortcut: (tab: FloatTab) => void
   resetShortcuts: () => void
-  chatGptWebEnabled: boolean
 }) {
-  const visibleTabs = FLOAT_TABS.filter((tab) => chatGptWebEnabled || tab !== 'chatgpt')
-  const conflicts = conflictingTabs(chatGptWebEnabled ? shortcuts : { ...shortcuts, chatgpt: null })
+  const conflicts = conflictingTabs(shortcuts)
   const drawerConflictTabs = drawerShortcut
-    ? visibleTabs.filter((tab) => shortcuts[tab] && bindingKey(shortcuts[tab]!) === bindingKey(drawerShortcut))
+    ? FLOAT_TABS.filter((tab) => shortcuts[tab] && bindingKey(shortcuts[tab]!) === bindingKey(drawerShortcut))
     : []
   for (const tab of drawerConflictTabs) conflicts.add(tab)
   const drawerInConflict = drawerConflictTabs.length > 0
@@ -133,7 +129,7 @@ export function ShortcutsSection({
             </button>
           </div>
         )}
-        {visibleTabs.map((tab) => {
+        {FLOAT_TABS.map((tab) => {
           const binding = shortcuts[tab]
           const inConflict = conflicts.has(tab)
           const isRec = recording === tab

@@ -77,14 +77,14 @@ describe('resource governor', () => {
   })
 
   it('distinguishes an actually visible surface from an agent-only lease', () => {
-    registerThrottleTarget('chatgpt', 'conv-surface', undefined, target())
-    const release = acquireAgentActivity('chatgpt', 'conv-surface')
+    registerThrottleTarget('vscode', 'conv-surface', undefined, target())
+    const release = acquireAgentActivity('vscode', 'conv-surface')
 
-    expect(resourceHasVisibleSurface('chatgpt', 'conv-surface')).toBe(false)
-    setResourcePlacementActive('chatgpt', 'conv-surface', undefined, 'popup', true)
-    expect(resourceHasVisibleSurface('chatgpt', 'conv-surface')).toBe(true)
-    setResourcePlacementActive('chatgpt', 'conv-surface', undefined, 'popup', false)
-    expect(resourceHasVisibleSurface('chatgpt', 'conv-surface')).toBe(false)
+    expect(resourceHasVisibleSurface('vscode', 'conv-surface')).toBe(false)
+    setResourcePlacementActive('vscode', 'conv-surface', undefined, 'popup', true)
+    expect(resourceHasVisibleSurface('vscode', 'conv-surface')).toBe(true)
+    setResourcePlacementActive('vscode', 'conv-surface', undefined, 'popup', false)
+    expect(resourceHasVisibleSurface('vscode', 'conv-surface')).toBe(false)
 
     release()
   })
@@ -161,8 +161,8 @@ describe('resource governor', () => {
 
   it('reports and clears resources per conversation', () => {
     registerThrottleTarget('vscode', 'conv-a', undefined, target())
-    registerThrottleTarget('chatgpt', 'conv-b', undefined, target())
-    setResourceVisible('chatgpt', 'conv-b', undefined, true)
+    registerThrottleTarget('panel', 'conv-b', 'notes', target())
+    setResourceVisible('panel', 'conv-b', 'notes', true)
 
     expect(getResourceGovernorDiagnostics()).toMatchObject({
       total: 2,
@@ -170,7 +170,7 @@ describe('resource governor', () => {
       throttled: 1,
       byKind: {
         vscode: { total: 1, throttled: 1 },
-        chatgpt: { total: 1, fullSpeed: 1 },
+        panel: { total: 1, fullSpeed: 1 },
       },
     })
     // disposal is idempotent and must not leave the expiry timer alive

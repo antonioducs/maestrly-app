@@ -6,7 +6,6 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('../../src/main/performance/resource-governor', () => h)
-vi.mock('../../src/main/chat/chatgpt-web/companion-window', () => ({ noteChatGptSurfaceVisibility: vi.fn() }))
 
 import {
   drawers,

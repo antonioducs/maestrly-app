@@ -26,8 +26,8 @@ Trust installed tools and review permissions; prompts alone are not a sandbox.
 
 The primary application renderer uses context isolation and disables Node
 integration, but it and some trusted tool panels are not Electron-sandboxed.
-Application APIs validate input in the main process. OAuth and visual companion
-surfaces use separate sandboxed sessions.
+Application APIs validate input in the main process. OAuth surfaces use
+separate sandboxed sessions.
 
 Application-managed credentials use Electron `safeStorage`; persistence fails
 when operating-system encryption is unavailable. Local SQLite databases, notes,

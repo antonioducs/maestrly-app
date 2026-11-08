@@ -13,6 +13,7 @@ import {
   FLEET_ENVIRONMENT_LIMITS,
   FLEET_ENVIRONMENT_SETTINGS_FEATURE,
   FLEET_ENVIRONMENT_STORAGE_FEATURE,
+  FLEET_ENVIRONMENT_BACKUP_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_PORTS,
   FLEET_WORKSPACES_HOST_FEATURE,
@@ -45,8 +46,12 @@ import {
   type FleetResources,
   type FleetSelectionsResponse,
   type FleetTakeoverState,
+  type FleetBackupEligibility,
+  type FleetBackupRestoreProblem,
+  type FleetInstanceBackupSnapshot,
 } from '@maestrly/bot-fleet-protocol'
 import { token, sha256 } from './auth.js'
+import type { BackupSlice } from './backups/slice.js'
 import type { GatewayConfig } from './config.js'
 import {
   type CgroupMemory,
@@ -60,6 +65,7 @@ import { GatewayError } from './errors.js'
 import { findGatewayContainer, gatewayAlias } from './gateway-container.js'
 import { InstanceClient, InstanceUnreachableError, relayBotPackage } from './instance.js'
 import { Logger } from './logger.js'
+import { nextRun } from './routines.js'
 import type { EnvironmentChanges, Store, StoredBotMove, StoredEnvironment } from './store.js'
 
 const tints = ['#4978c6', '#9b65b6', '#d47754', '#4c9a87', '#c29a43', '#6379a5']
@@ -71,7 +77,7 @@ const workspacesRootLabel = 'org.maestrly.fleet.workspaces-root'
 /** The network a workspaces environment's container was created on; absent on those from before networks of their own. */
 const networkLabel = 'org.maestrly.fleet.network'
 /** Marks the short-lived containers the gateway runs for a task of its own: never an environment's. */
-const helperLabel = 'org.maestrly.fleet.helper'
+export const helperLabel = 'org.maestrly.fleet.helper'
 /** Set on a workspaces environment's container created with the token it publishes artifacts with. */
 const hostTokenLabel = 'org.maestrly.fleet.host-token'
 /** Shown on a workspaces environment whose container runs an image from before workspaces hosts. */
@@ -242,6 +248,8 @@ export class Lifecycle {
    * finished before its status drops it, so what is told of those conversations then must be told again now.
    */
   onTurnRunsChanged: (botId: string, runIds: string[]) => void = () => {}
+  /** An archived environment is about to be deleted for good: what reads its files (a backup) lets them go first. */
+  beforeEnvironmentPurge: (environmentId: string) => Promise<void> = async () => {}
   /** A chat of the workspaces host needs the owner (`chat.attention`). */
   onChatAttention?: (environmentId: string, conversationId: string, name: string, kind: FleetChatAttentionKind) => void
   constructor(
@@ -924,7 +932,7 @@ export class Lifecycle {
    * Creates a workspaces environment's own server folder, owned by uid 1000, through a short-lived container: the
    * gateway itself does not mount the server's workspaces folder. It never touches the shared folder.
    */
-  private async ensureHostFolder(environment: StoredEnvironment) {
+  private async ensureHostFolder(environment: Pick<StoredEnvironment, 'id' | 'hostFolder'>) {
     const root = this.config.workspacesRoot
     if (!root || environment.hostFolder !== 'own') return
     let code: number
@@ -1988,6 +1996,8 @@ export class Lifecycle {
     const linked = this.store.desktopLinksOfEnvironment(id).map((link) => link.botId)
     let removed: { botIds: string[]; ownerMemoriesDeleted: number }
     try {
+      // A backup reading its home volume ends first: Docker refuses to remove a volume a container mounts.
+      await this.beforeEnvironmentPurge(id)
       removed = await this.exclusive(id, async () => {
         // Files first: if this fails, the records remain and deleting again finishes the job.
         await this.removeFiles(environment, 'environment')
@@ -2035,6 +2045,190 @@ export class Lifecycle {
     this.instances.delete(id)
     this.applied.delete(id)
     this.lastUsed.delete(id)
+  }
+  /**
+   * What a backup of an environment reads, and whether it can now. A running environment copies its database for it,
+   * which needs the `environment-backup` capability; a stopped one is read as it is. One that still mounts the server's
+   * shared workspaces folder cannot be backed up: that folder holds other environments' projects too.
+   */
+  backupSource(environmentId: string): {
+    environment: StoredEnvironment
+    running: boolean
+    eligibility: FleetBackupEligibility
+    projects: string | null
+  } | null {
+    const environment = this.store.getEnvironment(environmentId)
+    if (!environment || this.deletingEnvironments.has(environmentId)) return null
+    const running = environment.lifecycle === 'running'
+    let eligibility: FleetBackupEligibility = 'ok'
+    if (environment.archivedAt) eligibility = 'archived'
+    else if (!running && environment.lifecycle !== 'stopped') eligibility = 'not-ready'
+    else if (environment.kind === 'workspaces' && environment.hostFolder === 'shared' && this.config.workspacesRoot)
+      eligibility = 'shared-folder'
+    // Until its first health check after a restart of the gateway, what a running environment can do is unknown.
+    else if (running && this.environmentCapable(environmentId) === null) eligibility = 'not-ready'
+    else if (running && !this.environmentCapabilities(environmentId).includes(FLEET_ENVIRONMENT_BACKUP_FEATURE))
+      eligibility = 'update-environment'
+    return { environment, running, eligibility, projects: this.hostFolderPath(environment) }
+  }
+  /** Whether a lifecycle change of the environment runs or waits now (update, membership, move): a due backup waits. */
+  backupDeferred(environmentId: string): boolean {
+    const environment = this.store.getEnvironment(environmentId)
+    return !!environment?.updateRequestedAt || this.locks.has(environmentId)
+  }
+  /** Has a running environment write a consistent copy of its database for a backup. */
+  prepareBackupSnapshot(environmentId: string): Promise<FleetInstanceBackupSnapshot> {
+    return this.client(environmentId).environmentBackupPrepare()
+  }
+  /** Lets the environment remove its copy; one it cannot remove now goes when it starts again. */
+  async releaseBackupSnapshot(environmentId: string): Promise<void> {
+    try {
+      await this.client(environmentId).environmentBackupRelease()
+    } catch (error) {
+      this.logger.warn('Backup copy not released', { environmentId, failure: failureCode(error) })
+    }
+  }
+  /** What keeps a backup from being restored here as it was: its ids, its projects' folder and this server's room. */
+  restoreProblems(slice: BackupSlice): {
+    problems: FleetBackupRestoreProblem[]
+    takenBots: string[]
+    projectsPath: string | null
+  } {
+    const id = slice.environment.id
+    const problems: FleetBackupRestoreProblem[] = []
+    if (this.store.getEnvironment(id)) problems.push('environment-taken')
+    const takenBots = slice.bots.map(({ bot }) => bot.id).filter((botId) => this.store.getBot(botId))
+    if (takenBots.length) problems.push('bot-taken')
+    let projectsPath: string | null = null
+    if (slice.environment.kind === 'workspaces') {
+      const root = this.config.workspacesRoot
+      if (slice.files.projects) {
+        if (!root) problems.push('workspaces-root-missing')
+        else if (root.replace(/\/+$/, '') + '/' + id !== slice.files.projects)
+          problems.push('workspaces-root-different')
+        else projectsPath = slice.files.projects
+      }
+      const active = this.store.listEnvironments().filter((environment) => environment.kind === 'workspaces')
+      if (active.length >= FLEET_ENVIRONMENT_LIMITS.workspacesMax) problems.push('workspaces-limit')
+    }
+    return { problems, takenBots, projectsPath }
+  }
+  /**
+   * The home volume a restore writes into, created empty, and the environment's own server folder when its projects
+   * come back too. A volume of that name left on the server is never written over.
+   */
+  async createRestoreTarget(
+    slice: BackupSlice,
+    withProjects: boolean
+  ): Promise<{ volumeName: string; projects: string | null }> {
+    const id = slice.environment.id
+    const volumeName = environmentVolumeName(id)
+    if (await this.docker.volumeExists(volumeName))
+      throw new GatewayError('CONFLICT', 'A home volume of that environment is still on this server')
+    await this.docker.volumeCreate(volumeName, { [managed]: 'true', [environmentLabel]: id })
+    const root = this.config.workspacesRoot
+    if (!withProjects || !slice.files.projects || !root) return { volumeName, projects: null }
+    try {
+      await this.ensureHostFolder({ id, hostFolder: 'own' })
+    } catch (error) {
+      await this.discardRestoreTarget(volumeName)
+      throw error
+    }
+    return { volumeName, projects: root.replace(/\/+$/, '') + '/' + id }
+  }
+  /** Removes the home volume of a restore that failed; the server folder stays, with whatever is in it. */
+  async discardRestoreTarget(volumeName: string): Promise<void> {
+    try {
+      await this.docker.volumeRemove(volumeName)
+    } catch (error) {
+      this.logger.warn('Restore volume not removed', { volumeName, failure: failureCode(error) })
+    }
+  }
+  /**
+   * Brings a restored environment in as new, with the ids, names and settings it had: its bots in their slots, their
+   * routines rescheduled from now, and its owner memories. It gets new tokens and keeps the keyring password its home
+   * volume was encrypted with; its container is created on the restored volume.
+   */
+  adoptRestoredEnvironment(slice: BackupSlice): FleetEnvironment {
+    const id = slice.environment.id
+    const at = now()
+    const peers = new Set<string>()
+    const memoriesChanged = this.store.transaction(() => {
+      if (slice.environment.kind === 'workspaces') this.requireWorkspacesRoom()
+      this.store.insertEnvironment(
+        {
+          ...slice.environment,
+          lifecycle: 'creating',
+          setup: environmentSetup('container'),
+          containerName: environmentContainerName(id),
+          volumeName: environmentVolumeName(id),
+          idleStopMinutes: slice.environment.kind === 'workspaces' ? slice.environment.idleStopMinutes : null,
+          hostFolder: slice.environment.kind === 'workspaces' ? 'own' : null,
+          updateRequestedAt: null,
+          updatedAt: at,
+          archivedAt: null,
+        },
+        { controlToken: token(), keyringPassword: slice.keyringPassword }
+      )
+      for (const { bot, slot } of [...slice.bots].sort((a, b) => a.slot - b.slot)) {
+        const gatewayToken = token()
+        this.store.insertBot(
+          {
+            ...bot,
+            lifecycle: 'creating',
+            setup: botSetup('container'),
+            status: 'starting',
+            move: null,
+            environmentId: id,
+            updatedAt: at,
+          },
+          { gatewayToken, gatewayTokenSha256: sha256(gatewayToken) },
+          { environmentId: id, slot }
+        )
+        if (bot.runSettings) this.store.saveRunSettings(bot.id, bot.runSettings)
+        if (bot.peerSettings) this.store.savePeerSettings(bot.id, bot.peerSettings)
+      }
+      // Peers on this server keep talking to the restored bots; those that are not here are dropped.
+      for (const { bot } of slice.bots) {
+        const talksTo = this.activePeers(this.store.getBot(bot.id)!)
+        this.update(bot.id, { talksTo })
+        this.syncPeers(bot.id, talksTo)
+        for (const peerId of talksTo) peers.add(peerId)
+      }
+      for (const routine of slice.routines) {
+        let nextRunAt: string | null = null
+        try {
+          nextRunAt = routine.enabled ? nextRun(routine.schedule, new Date()) : null
+        } catch {
+          // A time zone this server does not know leaves the routine waiting for a new schedule.
+        }
+        this.store.saveRoutine({ ...routine, nextRunAt })
+      }
+      // The server's global entries already here stay as they are; the environment's own come back.
+      const saved = slice.ownerMemories.filter(
+        (entry) => entry.environmentId === id || (entry.environmentId === null && !this.store.ownerMemoryById(entry.id))
+      )
+      const known = new Set(saved.map((entry) => entry.id))
+      const exists = (memoryId: string | null) =>
+        memoryId !== null && (known.has(memoryId) || !!this.store.ownerMemoryById(memoryId))
+      for (const entry of saved)
+        this.store.saveOwnerMemory({
+          ...entry,
+          replacesId: exists(entry.replacesId) ? entry.replacesId : null,
+          replacedById: exists(entry.replacedById) ? entry.replacedById : null,
+        })
+      if (saved.length) this.store.bumpOwnerMemoryRevision()
+      return saved.length > 0
+    })
+    for (const peerId of peers) if (!slice.bots.some(({ bot }) => bot.id === peerId)) this.emitBot(peerId)
+    if (memoriesChanged)
+      this.onEvent({ type: 'owner_memory.updated', at: now(), revision: this.store.ownerMemoryRevision() })
+    this.recordEnvironmentActivity(id, 'environment_restored')
+    this.emitEnvironment(id)
+    this.onEnvironmentChanged(id)
+    this.queueProvision(id, false)
+    this.armIdleChecks()
+    return this.environment(id)!
   }
   private activeEnvironment(id: string): string {
     const bot = this.store.getBot(id)

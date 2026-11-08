@@ -27,6 +27,7 @@ import { workspaceApi } from '../../src/preload/api-workspace'
 import { botApi } from '../../src/preload/api-bot'
 import { fleetApi } from '../../src/preload/api-fleet'
 import { fleetEnvironmentPlugins, fleetEnvironmentSettings } from '../../src/preload/api-fleet-environment-settings'
+import { fleetBackup } from '../../src/preload/api-fleet-backup'
 import { FLEET_SETTINGS_OPERATIONS } from '@maestrly/bot-fleet-protocol'
 import { fleetInstallerApi } from '../../src/preload/api-fleet-installer'
 import { runnerApi } from '../../src/preload/api-runner'
@@ -85,6 +86,7 @@ const apiSlices: Array<[string, Record<string, unknown>]> = [
   ['fleetApi', fleetApi],
   ['fleetEnvironmentSettings', { fleetEnvironmentSettings }],
   ['fleetEnvironmentPlugins', { fleetEnvironmentPlugins }],
+  ['fleetBackup', { fleetBackup }],
   ['fleetInstallerApi', fleetInstallerApi],
   ['runnerApi', runnerApi],
   ['hostsApi', hostsApi],
@@ -458,7 +460,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(721)
+    expect(keys).toHaveLength(698)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -640,6 +642,16 @@ describe('preload API — exposure', () => {
     expect(invokeSpy).toHaveBeenLastCalledWith('fleet:mcp-oauth:cancel', SERVER, 'env-1', 'mcp_1')
   })
 
+  it("reaches a server's backups through one channel per method, with the server first", () => {
+    expect(api.fleetBackup).toBe(fleetBackup)
+    for (const [name, method] of Object.entries(fleetBackup)) {
+      invokeSpy.mockClear()
+      ;(method as (...args: unknown[]) => unknown)(SERVER, 'argument')
+      expect(invokeSpy.mock.calls[0]?.[0]).toBe('fleet:backup:' + name)
+      expect(invokeSpy.mock.calls[0]?.[1]).toBe(SERVER)
+    }
+  })
+
   it('composes disjoint slices whose union equals the exposed API', () => {
     const apiKeys = Object.keys(api).sort()
     const ownerByKey = new Map<string, string[]>()
@@ -718,8 +730,8 @@ describe('preload API — channels and argument order (ipcRenderer.invoke)', () 
     expect(invokeSpy).toHaveBeenLastCalledWith('runtime-assets:list')
     api.runtimeAssetInstall('github-copilot-runtime')
     expect(invokeSpy).toHaveBeenLastCalledWith('runtime-assets:install', 'github-copilot-runtime')
-    api.runtimeAssetCancel('tunnel-client')
-    expect(invokeSpy).toHaveBeenLastCalledWith('runtime-assets:cancel', 'tunnel-client')
+    api.runtimeAssetCancel('whisper-model')
+    expect(invokeSpy).toHaveBeenLastCalledWith('runtime-assets:cancel', 'whisper-model')
     api.runtimeAssetRepair('codex-runtime')
     expect(invokeSpy).toHaveBeenLastCalledWith('runtime-assets:repair', 'codex-runtime')
     api.runtimeAssetRemove('local-ml-runtime')
@@ -1639,67 +1651,6 @@ describe('preload API — chat pagination (#559)', () => {
 
     api.chatSetFastMode('c1', false)
     expect(invokeSpy).toHaveBeenCalledWith('chat:set-fast-mode', 'c1', false)
-  })
-
-  it('exposes the manual ChatGPT Web companion lifecycle on dedicated channels', async () => {
-    api.chatGptWebCompanionStart('conv-web')
-    expect(invokeSpy).toHaveBeenLastCalledWith('chat:chatgpt-web:companion-start', {
-      conversationId: 'conv-web',
-    })
-
-    api.chatGptWebCompanionPrompt('conv-web')
-    expect(invokeSpy).toHaveBeenLastCalledWith('chat:chatgpt-web:companion-prompt', {
-      conversationId: 'conv-web',
-    })
-
-    // Main writes the clipboard; preload only relays the result and never receives the copied value.
-    invokeSpy.mockResolvedValueOnce({ ok: true })
-    await expect(api.chatGptWebCompanionCopyPrompt('conv-web')).resolves.toEqual({ ok: true })
-    expect(invokeSpy).toHaveBeenLastCalledWith('chat:chatgpt-web:companion-copy-prompt', {
-      conversationId: 'conv-web',
-    })
-
-    invokeSpy.mockResolvedValueOnce({ ok: false, error: 'session-not-found' })
-    await expect(api.chatGptWebCompanionCopySessionKey('conv-web')).resolves.toEqual({
-      ok: false,
-      error: 'session-not-found',
-    })
-    expect(invokeSpy).toHaveBeenLastCalledWith('chat:chatgpt-web:companion-copy-session-key', {
-      conversationId: 'conv-web',
-    })
-    expect(clipboardWriteSpy).not.toHaveBeenCalled()
-
-    api.chatGptWebCompanionOpen('conv-web')
-    expect(invokeSpy).toHaveBeenLastCalledWith('chat:chatgpt-web:companion-open', {
-      conversationId: 'conv-web',
-    })
-
-    api.chatGptWebCompanionEnd('conv-web')
-    expect(invokeSpy).toHaveBeenLastCalledWith('chat:chatgpt-web:companion-end', {
-      conversationId: 'conv-web',
-    })
-
-    api.chatGptWebBrowserReset()
-    expect(invokeSpy).toHaveBeenLastCalledWith('chat:chatgpt-web:browser-reset')
-  })
-
-  it('queries native ChatGPT visibility by conversation', () => {
-    api.isChatGptVisible('conv-visible')
-    expect(invokeSpy).toHaveBeenLastCalledWith('drawer:chatgpt-visible', 'conv-visible')
-  })
-
-  it('subscribes to Companion visual completion on its dedicated channel and removes the listener', () => {
-    const callback = vi.fn()
-    const off = api.onChatGptWebTurnCompleted(callback) as () => void
-    expect(onSpy).toHaveBeenCalledTimes(1)
-    const [channel, listener] = onSpy.mock.calls[0] as [string, (...args: unknown[]) => void]
-    expect(channel).toBe('chat:chatgpt-web:turn-completed')
-
-    listener({}, { conversationId: 'conv-completed' })
-    expect(callback).toHaveBeenCalledWith({ conversationId: 'conv-completed' })
-
-    off()
-    expect(removeListenerSpy).toHaveBeenCalledWith(channel, listener)
   })
 
   it('passes on only well-formed requests of a workspaces host to open an artifact', () => {

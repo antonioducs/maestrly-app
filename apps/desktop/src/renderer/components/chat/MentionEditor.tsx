@@ -15,6 +15,12 @@ import type { TFunction } from 'i18next'
 import { FileCode, Folder, Bot } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { findMentions } from '../../../shared/chat-mentions'
+import {
+  filterPeerMentionOptions,
+  findPeerMentions,
+  peerMentionMatchRange,
+  type PeerMentionOption,
+} from '../../../shared/chat-peer-mentions'
 import { validateStructuredAgentMentions, type StructuredAgentMentionDraft } from '../../../shared/chat-agent-mentions'
 import { normalizeSubagentProfileKey, type SubagentAgentDto } from '../../../shared/subagent-profiles'
 import type { ChatFileHit } from '../../../shared/chat'
@@ -32,6 +38,10 @@ export interface MentionEditorProps {
   structuredAgentMentions?: StructuredAgentMentionDraft[]
 
   agents: SubagentAgentDto[] | null
+  /** Other bots, in a bot's conversation: given, `@` lists them instead of files. */
+  peers?: PeerMentionOption[] | null
+  /** Whether a picked bot goes in as a chip; false leaves the typed `@text` as it was. */
+  onPickPeer?: (peer: PeerMentionOption) => boolean | Promise<boolean>
   disabled?: boolean
   placeholder?: string
   className?: string
@@ -101,6 +111,28 @@ function makeAgentChip(document: Document, t: TFunction<'chat'>, agent: Subagent
   return span
 }
 
+/** A bot mentioned in another bot's conversation; it goes out as `@Name`, which the bot resolves with its peer list. */
+function makePeerChip(
+  document: Document,
+  t: TFunction<'chat'>,
+  peer: Pick<PeerMentionOption, 'id' | 'name' | 'tint'>
+): HTMLSpanElement {
+  const span = document.createElement('span')
+  span.dataset.peerMention = peer.id
+  span.dataset.peerName = peer.name
+  span.contentEditable = 'false'
+  span.className =
+    'mx-0.5 inline-flex select-none items-center gap-1 rounded-md border border-white/[0.14] bg-white/[0.06] py-0.5 pl-0.5 pr-1.5 align-middle text-[13px] text-foreground'
+  span.title = t('composer.peerChipTitle', { name: peer.name })
+  span.innerHTML =
+    `<span aria-hidden="true" data-peer-avatar class="flex h-4 w-4 shrink-0 items-center justify-center rounded text-[9.5px] font-semibold text-white">${escapeHtml(peer.name.charAt(0).toUpperCase())}</span>` +
+    `<span class="max-w-[220px] truncate">${escapeHtml(peer.name)}</span>` +
+    `<span data-x title="${escapeHtml(t('composer.remove'))}" class="ml-0.5 cursor-pointer rounded px-0.5 text-muted-foreground hover:bg-white/[0.1] hover:text-foreground">×</span>`
+  const avatar = span.querySelector<HTMLElement>('[data-peer-avatar]')
+  if (avatar) avatar.style.background = peer.tint
+  return span
+}
+
 function insertChipAt(
   editor: HTMLElement,
   node: Text,
@@ -155,6 +187,8 @@ function serializeWithMentions(root: HTMLElement): { text: string; mentions: Str
         out += '#' + raw
         const name = normalizeSubagentProfileKey(raw)
         if (id && name) mentions.push({ id, name, start, end: out.length })
+      } else if (isHtmlElement(child) && child.dataset.peerMention != null) {
+        out += '@' + (child.dataset.peerName ?? '')
       } else if (isHtmlElement(child) && (child.nodeName === 'DIV' || child.nodeName === 'P')) {
         if (out && !out.endsWith('\n')) out += '\n'
         walk(child)
@@ -174,7 +208,8 @@ function renderValue(
   root: HTMLElement,
   text: string,
   agents: readonly SubagentAgentDto[] | null,
-  structured: readonly StructuredAgentMentionDraft[]
+  structured: readonly StructuredAgentMentionDraft[],
+  peers: readonly PeerMentionOption[] | null = null
 ): void {
   const document = root.ownerDocument
   root.replaceChildren()
@@ -185,6 +220,12 @@ function renderValue(
   const byIndex = new Map<number, { end: number; el: Node }>()
   for (const m of findMentions(text)) {
     byIndex.set(m.index, { end: m.index + m.raw.length, el: makeChip(document, t, m.path, m.startLine, m.endLine) })
+  }
+  // A bot's draft is kept as text: its `@Name` chips come back from the names of the bots it knows.
+  if (peers) {
+    for (const m of findPeerMentions(text, peers)) {
+      byIndex.set(m.index, { end: m.end, el: makePeerChip(document, t, m.peer) })
+    }
   }
   if (agents === null) {
     for (const m of structured) {
@@ -245,6 +286,8 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
     onMentionsChange,
     structuredAgentMentions = [],
     agents,
+    peers = null,
+    onPickPeer,
     disabled,
     placeholder,
     className,
@@ -262,14 +305,19 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
   const editorRef = useRef<HTMLDivElement>(null)
   const lastValueRef = useRef<string>('')
   const lastAgentsRef = useRef<string>('')
+  const lastPeersRef = useRef<string | null>(null)
   const composingRef = useRef(false) // IME composition is active.
+  const peerMenuRef = useRef<HTMLDivElement>(null)
 
   type ComposerMention =
     | { kind: 'file'; query: string; node: Text; atOffset: number }
     | { kind: 'agent'; query: string; node: Text; atOffset: number }
+    | { kind: 'peer'; query: string; node: Text; atOffset: number }
   const [mention, setMention] = useState<ComposerMention | null>(null)
   const [hits, setHits] = useState<ChatFileHit[]>([])
   const [activeIdx, setActiveIdx] = useState(0)
+  // Escape keeps the bot list closed until the text changes; the key release would otherwise reopen it.
+  const [peerDismissed, setPeerDismissed] = useState(false)
 
   useImperativeHandle(ref, () => ({
     serialize: () => {
@@ -304,9 +352,23 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
   }, [agentQuery, agents])
   const agentMenuOpen = mention?.kind === 'agent' && agentHits.length > 0
 
+  const peerQuery = mention?.kind === 'peer' ? mention.query : null
+  const peerHits = useMemo(
+    () => (peerQuery === null || !peers?.length ? [] : filterPeerMentionOptions(peers, peerQuery)),
+    [peerQuery, peers]
+  )
+  // Open even without a match, to say that no bot has that name.
+  const peerMenuOpen = peerQuery !== null && !!peers?.length && !peerDismissed
+  useEffect(() => setPeerDismissed(false), [value])
+
   // Keep structured agent mentions stable when chips rerender after save, clear, or toggle.
 
   const agentsKey = useMemo(() => (agents === null ? '\0loading' : agents.map((a) => a.name).join('\0')), [agents])
+  // Only what a chip shows: a bot allowed to talk meanwhile must not rebuild the draft under the caret.
+  const peersKey = useMemo(
+    () => (peers ? peers.map((peer) => `${peer.id}\u0001${peer.name}\u0001${peer.tint}`).join('\0') : ''),
+    [peers]
+  )
 
   const structuredMentions = useMemo(
     () => (Array.isArray(structuredAgentMentions) ? structuredAgentMentions : []),
@@ -316,10 +378,12 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
     const el = editorRef.current
     if (!el) return
     const document = el.ownerDocument
-    if (value === lastValueRef.current && agentsKey === lastAgentsRef.current) return
-    renderValue(t, el, value, agents, structuredMentions)
+    if (value === lastValueRef.current && agentsKey === lastAgentsRef.current && peersKey === lastPeersRef.current)
+      return
+    renderValue(t, el, value, agents, structuredMentions, peers)
     lastValueRef.current = value
     lastAgentsRef.current = agentsKey
+    lastPeersRef.current = peersKey
 
     if (agents !== null) {
       onMentionsChange?.(serializeWithMentions(el).mentions)
@@ -333,7 +397,7 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
       sel?.removeAllRanges()
       sel?.addRange(range)
     }
-  }, [value, t, agents, agentsKey, structuredMentions, onMentionsChange])
+  }, [value, t, agents, agentsKey, structuredMentions, onMentionsChange, peers, peersKey])
 
   const emitChange = () => {
     if (composingRef.current) return
@@ -361,6 +425,10 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
     }
     const before = (node.textContent ?? '').slice(0, sel.anchorOffset)
     const file = /(?:^|\s)@([^\s@]*)$/.exec(before)
+    if (file && peers) {
+      setMention({ kind: 'peer', query: file[1], node, atOffset: before.lastIndexOf('@') })
+      return
+    }
     if (file) {
       setMention({ kind: 'file', query: file[1], node, atOffset: before.lastIndexOf('@') })
       return
@@ -437,6 +505,43 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
     emitChange()
   }
 
+  // The owner of the editor may ask first (a bot not allowed to talk yet): the list closes meanwhile, and the chip
+  // replaces the `@text` only if it is still where it was.
+  const pickPeer = (peer: PeerMentionOption | undefined) => {
+    if (mention?.kind !== 'peer' || !peer) return
+    const target = mention
+    setMention(null)
+    const finish = (accepted: boolean) => {
+      const editor = editorRef.current
+      if (!editor) return
+      const { node, atOffset, query } = target
+      const inPlace = editor.contains(node) && (node.textContent ?? '')[atOffset] === '@'
+      if (accepted && inPlace) {
+        insertChipAt(editor, node, atOffset, '@', makePeerChip(editor.ownerDocument, t, peer))
+        emitChange()
+        return
+      }
+      if (!inPlace) {
+        focusEditorAtEnd(editor)
+        return
+      }
+      editor.focus()
+      const range = editor.ownerDocument.createRange()
+      range.setStart(node, Math.min(atOffset + 1 + query.length, node.length))
+      range.collapse(true)
+      const sel = editor.ownerDocument.getSelection()
+      sel?.removeAllRanges()
+      sel?.addRange(range)
+    }
+    const decision = onPickPeer ? onPickPeer(peer) : true
+    if (typeof decision === 'boolean') finish(decision)
+    else decision.then(finish, () => finish(false))
+  }
+  useEffect(() => {
+    if (!peerMenuOpen) return
+    peerMenuRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView?.({ block: 'nearest' })
+  }, [activeIdx, peerMenuOpen])
+
   const insertTextAtCaret = (text: string) => {
     const sel = editorRef.current?.ownerDocument.getSelection()
     if (!sel?.rangeCount) return
@@ -474,7 +579,7 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
 
   const onEditorClick = (e: MouseEvent) => {
     const target = e.target as HTMLElement
-    const chip = target.closest('[data-mention], [data-agent-mention]') as HTMLElement | null
+    const chip = target.closest('[data-mention], [data-agent-mention], [data-peer-mention]') as HTMLElement | null
     if (!chip) return
     e.preventDefault()
     if (target.closest('[data-x]')) {
@@ -554,6 +659,33 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
         setMention(null)
         return
       }
+    } else if (peerMenuOpen) {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setPeerDismissed(true)
+        return
+      }
+      // Without a match, Enter sends what was typed, like any other text.
+      if (peerHits.length) {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault()
+          setActiveIdx((i) => Math.min(i + 1, peerHits.length - 1))
+          return
+        }
+        if (e.key === 'ArrowUp') {
+          e.preventDefault()
+          setActiveIdx((i) => Math.max(i - 1, 0))
+          return
+        }
+        if (
+          (e.key === 'Enter' && !e.shiftKey) ||
+          (e.key === 'Tab' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey)
+        ) {
+          e.preventDefault()
+          pickPeer(peerHits[activeIdx])
+          return
+        }
+      }
     }
 
     if (onKeyDown?.(e) === true) return
@@ -630,6 +762,87 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
         </div>
       )}
 
+      {peerMenuOpen && (
+        <div
+          ref={peerMenuRef}
+          role="listbox"
+          aria-label={t('composer.peerMenuLabel')}
+          className="absolute bottom-full left-3 z-50 mb-1 max-h-72 w-96 max-w-[calc(100%-1.5rem)] overflow-auto rounded-lg border border-white/[0.1] bg-[#161618] p-1 shadow-2xl"
+        >
+          <div className="px-2 pb-1 pt-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            {t('composer.peerHeading')}
+          </div>
+          {peerHits.map((peer, i) => {
+            const match = peerMentionMatchRange(peer.name, peerQuery ?? '')
+            return (
+              <button
+                key={peer.id}
+                type="button"
+                role="option"
+                aria-selected={i === activeIdx}
+                onMouseEnter={() => setActiveIdx(i)}
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  pickPeer(peer)
+                }}
+                className={cn(
+                  'flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left',
+                  i === activeIdx ? 'bg-white/[0.06]' : 'hover:bg-white/[0.04]'
+                )}
+              >
+                <span
+                  aria-hidden="true"
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[12px] font-semibold text-white"
+                  style={{ background: peer.tint }}
+                >
+                  {peer.name.charAt(0).toUpperCase()}
+                </span>
+                <span className="flex min-w-0 flex-col">
+                  <span className="truncate text-[13px] text-foreground">
+                    {match ? (
+                      <>
+                        {peer.name.slice(0, match.start)}
+                        <mark className="rounded-[3px] bg-foreground/20 text-inherit">
+                          {peer.name.slice(match.start, match.end)}
+                        </mark>
+                        {peer.name.slice(match.end)}
+                      </>
+                    ) : (
+                      peer.name
+                    )}
+                  </span>
+                  <span
+                    className={cn(
+                      'flex items-center gap-1.5 text-[11px]',
+                      peer.enabled ? 'text-muted-foreground' : 'text-artifact-warn'
+                    )}
+                  >
+                    <span
+                      aria-hidden="true"
+                      className={cn(
+                        'h-1.5 w-1.5 shrink-0 rounded-full',
+                        peer.enabled ? 'bg-status-ready' : 'border border-artifact-warn'
+                      )}
+                    />
+                    {peer.enabled ? t('composer.peerEnabled') : t('composer.peerDisabled')}
+                  </span>
+                </span>
+                {peer.role && (
+                  <span className="ml-auto min-w-0 max-w-[45%] truncate text-[11px] text-muted-foreground">
+                    {peer.role}
+                  </span>
+                )}
+              </button>
+            )
+          })}
+          {peerHits.length === 0 && (
+            <p className="px-2 py-2 text-[12.5px] text-muted-foreground">
+              {t('composer.peerEmpty', { query: peerQuery ?? '' })}
+            </p>
+          )}
+        </div>
+      )}
+
       <div
         ref={editorRef}
         role="textbox"
@@ -644,7 +857,8 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
         onKeyUp={detectMention}
         onClick={onEditorClick}
         onMouseDown={(e) => {
-          if ((e.target as HTMLElement).closest('[data-mention], [data-agent-mention]')) e.preventDefault()
+          if ((e.target as HTMLElement).closest('[data-mention], [data-agent-mention], [data-peer-mention]'))
+            e.preventDefault()
         }}
         onCompositionStart={() => {
           composingRef.current = true

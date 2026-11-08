@@ -15,7 +15,7 @@ export class MemoryDisabledError extends Error {
 const events = new EventEmitter()
 events.setMaxListeners(50)
 
-/** Shared access gate for retrieval, tools, runners, Companion, watchers, and jobs. */
+/** Shared access gate for retrieval, tools, runners, watchers, and jobs. */
 export function isWorkspaceMemoryEnabled(workspaceId: string): boolean {
   try {
     return getMemoryEnabled(workspaceId)

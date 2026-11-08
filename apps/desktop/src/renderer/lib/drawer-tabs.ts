@@ -12,12 +12,7 @@ export const DEFAULT_MAIN_ORDER: DrawerTab[] = [
   'plan',
   'review',
   'notes',
-  'chatgpt',
 ]
-
-export function mainTabsForFeatures(order: DrawerTab[], chatGptWebEnabled: boolean): DrawerTab[] {
-  return chatGptWebEnabled ? order : order.filter((tab) => tab !== 'chatgpt')
-}
 
 /** The tools a conversation of any remote host shows on this computer. */
 const REMOTE_HOST_TABS: ReadonlySet<DrawerTab> = new Set(['terminal', 'files', 'plan', 'review', 'notes'])
@@ -41,7 +36,6 @@ const remoteHostOf = (conv: unknown): HostId | null => {
 export function tabAvailableInContext(
   tab: DrawerTab,
   conv: unknown,
-  chatGptWebEnabled = true,
   remoteTools: RemoteToolHosts = NO_REMOTE_TOOLS
 ): boolean {
   const remoteHost = remoteHostOf(conv)
@@ -54,17 +48,15 @@ export function tabAvailableInContext(
   // Files moves files to and from a host: a conversation of this computer has its files at hand.
   if (tab === 'files' && remoteHost === null) return false
   if (tab === 'review' && (conv as { scope?: string } | null)?.scope === 'standalone') return false
-  if (tab === 'chatgpt' && !chatGptWebEnabled) return false
   return tab !== 'notes' || Boolean(conv)
 }
 
 export function mainTabsForContext(
   order: DrawerTab[],
   conv: unknown,
-  chatGptWebEnabled = true,
   remoteTools: RemoteToolHosts = NO_REMOTE_TOOLS
 ): DrawerTab[] {
-  return order.filter((tab) => tabAvailableInContext(tab, conv, chatGptWebEnabled, remoteTools))
+  return order.filter((tab) => tabAvailableInContext(tab, conv, remoteTools))
 }
 
 export function reorderVisibleTabs(
@@ -88,7 +80,6 @@ export function reorderVisibleTabs(
 export function sanitizeOpenTabs(
   raw: unknown,
   conv: unknown,
-  chatGptWebEnabled = true,
   remoteTools: RemoteToolHosts = NO_REMOTE_TOOLS
 ): DrawerTab[] {
   const arr = Array.isArray(raw) ? (raw as unknown[]) : []
@@ -96,7 +87,7 @@ export function sanitizeOpenTabs(
   const out: DrawerTab[] = []
   for (const t of arr) {
     if (!DEFAULT_MAIN_ORDER.includes(t as DrawerTab) || seen.has(t as DrawerTab)) continue
-    if (!tabAvailableInContext(t as DrawerTab, conv, chatGptWebEnabled, remoteTools)) continue
+    if (!tabAvailableInContext(t as DrawerTab, conv, remoteTools)) continue
     seen.add(t as DrawerTab)
     out.push(t as DrawerTab)
   }

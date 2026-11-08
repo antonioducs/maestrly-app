@@ -120,7 +120,6 @@ conversation-scoped filters and tests.
 | GitHub Copilot | Catalog in the system message + `use_skill` | SDK custom tools, deferred | `enableSkills: false`, config discovery off. |
 | Cursor | Catalog in the harness envelope + `use_skill` | `customTools` (`mcp` kind) | No deferral. |
 | Google AI (Antigravity ACP) | Catalog in the first prompt + `use_skill` | Loopback MCP per session; schemas pasted into the first prompt | MCP images are described, not passed through. |
-| ChatGPT web | `read_skill` + list in `get_context` | `search_mcp_tools`, `call_mcp_read_tool`, `call_mcp_write_tool` | Per-conversation server scope (`off`, `read`, `write`; default `read`). |
 
 Ask mode loads no skills for any provider, and ordinary subagents get no skills. Both are unchanged.
 
@@ -378,8 +377,8 @@ Identifiers:
   - A stdio plugin server is active only when its launch digest is in `consent.stdio`.
   - `buildMcpTools` requires `conversationId`, so every provider forwards it.
   - Call sites that switch MCP off by listing every id use the runtime list, so plugin servers cannot leak into
-    contexts that forbid MCP: `bot/native-host.ts`, `platform/project-chat-worker.ts`, `platform/desktop-executor.ts`,
-    and ChatGPT web.
+    contexts that forbid MCP: `bot/native-host.ts`, `platform/project-chat-worker.ts`, and
+    `platform/desktop-executor.ts`.
   - The MCP mutation handlers refuse `plg_` ids.
 - **Tool names:** when an advertised MCP tool name would collide, the second tool gets the hashed name, instead of the
   silent overwrite the legacy names allow today.
@@ -531,8 +530,7 @@ model.
   those switched off in it (`chat.tools.mcpAccountsDisabled`, `<serverId>#<accountId>`). With several, cached wrappers
   require `mcp_account` (an enum of labels) and `mcp_call` takes `account`; with one, calls use it; a server whose
   accounts all fall outside the conversation is left out. Connections are pooled per account
-  (`mcpConnectionKey`), so circuits and needs-auth marks are per account. The ChatGPT-web gateway lists `accounts` in
-  `list_external_capabilities` and routes `account` the same way.
+  (`mcpConnectionKey`), so circuits and needs-auth marks are per account.
 - **Bot environments.** `mcpOAuthStatuses` returns summaries; `mcpOAuthDescriptor` became a main-only POST;
   `setMcpOAuth` takes a target; `removeMcpOAuth` takes an optional account; `patchMcpOAuthAccount` renames and
   `setMcpOAuthClient` sets the own client. An environment's accounts are always global and have no per-conversation
@@ -563,8 +561,6 @@ model.
     `UserPromptSubmit` before the prompt is stored, as hidden parts; a block returns `blocked-by-hook`. `Stop` can keep
     the agent going with an internal turn, at most 8 times in a row. Steering waits for its own turn when prompt hooks
     exist.
-  - The ChatGPT Web companion runs tool hooks around its tools and refuses to start (`companion-hooks-unsupported`)
-    when session, prompt or Stop hooks apply.
   - Hook notices are a `hook-notice` stream event, shown above the composer and never stored.
 - **After merging main (2026-10-15):** each workspaces environment of a server is its own plugin host; the phone lists
   plugin servers by scope and each account as a switch (`<serverId>#<accountId>`), and fails a blocked message with

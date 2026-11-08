@@ -20,28 +20,28 @@ describe('drawer visibility state', () => {
     setSuppressed(false)
   })
 
-  it('considers ChatGPT outside the slot when another tool has a popup', () => {
+  it('considers the editor outside the slot when another tool has a popup', () => {
     const drawer = getDrawer('c1')
-    drawer.chatgptView = {} as never
+    drawer.vscodeView = {} as never
     setActiveConvId('c1')
-    setVisibleKind('chatgpt')
+    setVisibleKind('vscode')
     setSlot({ x: 0, y: 0, width: 100, height: 100 })
 
-    expect(isTabVisibleInSlot('c1', 'chatgpt')).toBe(true)
+    expect(isTabVisibleInSlot('c1', 'vscode')).toBe(true)
 
     placementByConv.set('c1', new Map([['notes', 'popup']]))
 
-    expect(isTabVisibleInSlot('c1', 'chatgpt')).toBe(false)
+    expect(isTabVisibleInSlot('c1', 'vscode')).toBe(false)
   })
 
-  it('considers ChatGPT outside the slot while a modal suppresses native views', () => {
+  it('considers the editor outside the slot while a modal suppresses native views', () => {
     const drawer = getDrawer('c1')
-    drawer.chatgptView = {} as never
+    drawer.vscodeView = {} as never
     setActiveConvId('c1')
-    setVisibleKind('chatgpt')
+    setVisibleKind('vscode')
     setSlot({ x: 0, y: 0, width: 100, height: 100 })
     setSuppressed(true)
 
-    expect(isTabVisibleInSlot('c1', 'chatgpt')).toBe(false)
+    expect(isTabVisibleInSlot('c1', 'vscode')).toBe(false)
   })
 })

@@ -75,9 +75,7 @@ function ids(raw: string | null): string[] {
 function invalidateSettingsRevisions(key: string, previous: string | null, value: string): void {
   if (key.startsWith('fleet.settings.')) return
   const resources = new Set<string>()
-  if (
-    ['chat.providers', 'chat.subscriptionAccounts', 'chat.subscriptionDefaultLabels', 'chat.chatgptWeb'].includes(key)
-  ) {
+  if (['chat.providers', 'chat.subscriptionAccounts', 'chat.subscriptionDefaultLabels'].includes(key)) {
     resources.add('accounts')
     for (const id of [...ids(previous), ...ids(value)]) resources.add('models:' + id)
   }

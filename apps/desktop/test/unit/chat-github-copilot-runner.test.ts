@@ -1181,7 +1181,6 @@ describe('GitHub Copilot official runner', () => {
     const mainBefore = structuredClone(getGitHubCopilotSessionBinding(conversation.id))
     const executionId = 'exec-copilot-1'
     const messageMeta = {
-      source: 'chatgpt-web-review-loop' as const,
       internal: true as const,
       executionScope: {
         kind: 'review-loop' as const,

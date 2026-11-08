@@ -44,21 +44,7 @@ export interface PlanDecisionResult {
   feedbackText?: string
   /** Version whose next submission should release the review's source reservation. */
   revisionVersion?: number
-  /** External routing frozen with the decided version; absent means legacy Maestrly Chat flow. */
-  route?: ChatGptWebPlanOrigin
 }
-
-export interface MaestrlyChatPlanOrigin {
-  kind: 'maestrly-chat'
-}
-
-export interface ChatGptWebPlanOrigin {
-  kind: 'chatgpt-web'
-  reviewId: string
-}
-
-export type PlanOrigin = MaestrlyChatPlanOrigin | ChatGptWebPlanOrigin
-export type PlanLifecycleOutcome = 'superseded' | 'cancelled'
 
 export interface PlanSubmitInput {
   agentId: string
@@ -67,16 +53,7 @@ export interface PlanSubmitInput {
   sessionId?: string
   planFilePath?: string
   title?: string
-  /** Omission preserves historical Maestrly Chat behavior. */
-  origin?: PlanOrigin
-  /**
-   * Generic sink closes external channels on supersession/clear without coupling the broker to
-   * Companion.
-   */
-  onLifecycle?: (outcome: PlanLifecycleOutcome) => void
 }
-
-export type PlanSubmitResult = { ok: true } | { ok: false; error: 'plan-origin-conflict' }
 
 /** Renderer payload when a plan arrives for review. */
 export interface PlanReceived {
@@ -90,7 +67,6 @@ export interface PlanReceived {
 }
 
 interface Pending extends PlanSubmitInput {
-  origin: PlanOrigin
   version: number
   done: boolean
   /** Previous plan for revision diff, frozen at submission to reconstruct PlanReceived. */
@@ -121,24 +97,15 @@ function record(write: (target: PlanRecorder) => void): void {
 }
 
 interface RevisionReservation {
-  originKind: PlanOrigin['kind']
   version: number
 }
 
 // Notify through a callback when a new plan arrives so an alert can play without coupling to AgentRegistry.
 let onPlanReceived: ((agentId: string) => void) | null = null
 const pending = new Map<string, Pending>() // agentId to plan awaiting a decision
-const lastPlan = new Map<string, { plan: string; version: number; originKind: PlanOrigin['kind'] }>() // p/ versionar (diff)
+const lastPlan = new Map<string, { plan: string; version: number }>() // p/ versionar (diff)
 /** Reserve the source between revise and the next version, independently of visible pending plans. */
 const revisionReservations = new Map<string, RevisionReservation>()
-
-function notifyLifecycle(entry: Pending, outcome: PlanLifecycleOutcome): void {
-  try {
-    entry.onLifecycle?.(outcome)
-  } catch {
-    // A broken external sink must not prevent plan replacement or clearing.
-  }
-}
 
 function emitPlanEvent(agentId: string, channel: string, payload: unknown): void {
   emitChatHost(agentId,channel,payload)
@@ -157,39 +124,22 @@ export function initPlanBroker(onReceived?: (agentId: string) => void): void {
 }
 
 /** Stage a plan, replacing a still-pending earlier version. */
-function registerPlan(input: PlanSubmitInput): PlanSubmitResult {
+function registerPlan(input: PlanSubmitInput): void {
   if(autonomousPolicy(input.agentId))throw new AutonomousInteractionError()
-  const origin: PlanOrigin = input.origin ?? { kind: 'maestrly-chat' }
-  const reservation = revisionReservations.get(input.agentId)
-  if (reservation && reservation.originKind !== origin.kind) {
-    // The review cycle remains owned by the source that received revise, even without a visible pending
-    // plan.
-    return { ok: false, error: 'plan-origin-conflict' }
-  }
   const old = pending.get(input.agentId)
-  if (old && !old.done && old.origin.kind !== origin.kind) {
-    // Channels share the visual surface but own separate decision cycles. Rejecting here preserves the
-    // original pending plan and lets the caller return a recoverable error.
-    return { ok: false, error: 'plan-origin-conflict' }
-  }
-
-  const previousCycle = lastPlan.get(input.agentId)
-  const prev = previousCycle?.originKind === origin.kind ? previousCycle : undefined
+  const prev = lastPlan.get(input.agentId)
   const version = (prev?.version ?? 0) + 1
 
   // Resubmission before the previous decision cancels the old version.
-  if (old && !old.done) {
-    old.done = true
-    notifyLifecycle(old, 'superseded')
-  }
+  if (old && !old.done) old.done = true
 
   const previousPlan = prev?.plan ?? null
-  const entry: Pending = { ...input, origin, version, done: false, previousPlan }
+  const entry: Pending = { ...input, version, done: false, previousPlan }
   pending.set(input.agentId, entry)
-  lastPlan.set(input.agentId, { plan: input.plan, version, originKind: origin.kind })
+  lastPlan.set(input.agentId, { plan: input.plan, version })
   record((target) => target.staged(input.agentId, { version, title: input.title, content: input.plan }))
-  // The next accepted version from the reserved source resumes the cycle and consumes the reservation.
-  if (reservation?.originKind === origin.kind) revisionReservations.delete(input.agentId)
+  // The next accepted version resumes the cycle and consumes the reservation.
+  revisionReservations.delete(input.agentId)
   const payload: PlanReceived = {
     agentId: input.agentId,
     cwd: input.cwd,
@@ -202,7 +152,6 @@ function registerPlan(input: PlanSubmitInput): PlanSubmitResult {
   // Broadcast to mainWindow for App indicators/drawer opening and to the docked/floating plan panel.
   emitPlanEvent(input.agentId, 'plan:received', payload)
   onPlanReceived?.(input.agentId) // alert respects sound settings and registry deduplication
-  return { ok: true }
 }
 
 /**
@@ -210,8 +159,8 @@ function registerPlan(input: PlanSubmitInput): PlanSubmitResult {
  * user's decision starts a new turn with current model/mode through decidePlan and plan-ipc. No
  * pending Promise or timeout is held here.
  */
-export function stagePlan(input: PlanSubmitInput): PlanSubmitResult {
-  return registerPlan({ ...input, plan: stripProposedPlanTag(input.plan) })
+export function stagePlan(input: PlanSubmitInput): void {
+  registerPlan({ ...input, plan: stripProposedPlanTag(input.plan) })
 }
 
 export { stripProposedPlanTag }
@@ -242,7 +191,6 @@ export function decidePlan(
 ): PlanDecisionResult | null {
   const entry = pending.get(agentId)
   if (!entry || entry.done) return null
-  const route = entry.origin.kind === 'chatgpt-web' ? { route: entry.origin } : {}
   const result =
     decision.action === 'approve'
       ? {
@@ -250,24 +198,21 @@ export function decidePlan(
           approvedPlan: finalApprovedPlan(entry, decision),
           version: entry.version,
           ...(entry.title ? { title: entry.title } : {}),
-          ...route,
         }
       : decision.action === 'revise'
         ? {
             action: 'revise' as const,
             feedbackText: buildFeedback(entry, decision),
             revisionVersion: entry.version,
-            ...route,
           }
-        : { action: 'discard' as const, ...route }
+        : { action: 'discard' as const }
   entry.approvedPlan = result.action === 'approve' ? result.approvedPlan : undefined
   if (!options?.deferCommit) commitPlanDecision(agentId, decision.action)
   return result
 }
 
 /**
- * Finalize a prepared decision after the web Companion confirms it, preserving pending state and
- * lifecycle callbacks if the external channel is unavailable.
+ * Finalize a prepared decision once the handoff it starts is ready, so a failed handoff leaves the plan pending.
  */
 export function commitPlanDecision(agentId: string, action: PlanDecision['action']): boolean {
   const entry = pending.get(agentId)
@@ -278,7 +223,7 @@ export function commitPlanDecision(agentId: string, action: PlanDecision['action
   record((target) => target.decided(agentId, { action, content }))
   if (action === 'revise') {
     // Clear pending state while retaining source ownership until the next accepted version.
-    revisionReservations.set(agentId, { originKind: entry.origin.kind, version: entry.version })
+    revisionReservations.set(agentId, { version: entry.version })
   } else {
     // Approval/discard ends the cycle; reset versions so a later unrelated plan starts without a stale
     // diff.
@@ -289,19 +234,10 @@ export function commitPlanDecision(agentId: string, action: PlanDecision['action
   return true
 }
 
-/** Release a failed/canceled revision before its next version, only for the owning source. */
-export function releasePlanRevision(
-  agentId: string,
-  originKind: PlanOrigin['kind'],
-  expectedVersion?: number
-): boolean {
+/** Release a failed/canceled revision before its next version. */
+export function releasePlanRevision(agentId: string, expectedVersion?: number): boolean {
   const reservation = revisionReservations.get(agentId)
-  if (
-    !reservation ||
-    reservation.originKind !== originKind ||
-    (expectedVersion !== undefined && reservation.version !== expectedVersion)
-  )
-    return false
+  if (!reservation || (expectedVersion !== undefined && reservation.version !== expectedVersion)) return false
   revisionReservations.delete(agentId)
   lastPlan.delete(agentId)
   return true
@@ -310,10 +246,7 @@ export function releasePlanRevision(
 /** Clear the staged plan when the conversation closes, archives, or is deleted. */
 export function clearPlan(agentId: string): void {
   const entry = pending.get(agentId)
-  if (entry && !entry.done) {
-    entry.done = true
-    notifyLifecycle(entry, 'cancelled')
-  }
+  if (entry && !entry.done) entry.done = true
   pending.delete(agentId)
   revisionReservations.delete(agentId)
   lastPlan.delete(agentId)

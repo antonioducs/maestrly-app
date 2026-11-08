@@ -293,7 +293,6 @@ describe('composer context observations', () => {
   it.each<Partial<ChatMessage>>([
     { internal: true },
     { executionScope: { kind: 'host', executionId: 'subagent-execution' } },
-    { source: 'chatgpt-web-review-loop' },
     { source: 'maestrly-review' },
     { reviewLoop: { loopId: 'loop', executionId: 'exec', iteration: 1, maxIterations: 2 } },
     { executionScope: { kind: 'review-loop', loopId: 'loop', executionId: 'exec', iteration: 1, maxIterations: 2 } },

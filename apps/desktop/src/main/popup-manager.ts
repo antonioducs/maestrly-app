@@ -230,8 +230,7 @@ export function openPopup(convId: string, tab: FloatTab): void {
     focusPopupTab(convId, tab) // reopening raises and focuses for immediate interaction
     return
   }
-  // ChatGPT Web is materialized only by the explicit companion session start. Other tools retain their
-  // historical lazy creation; mocked/legacy callers returning undefined are treated as success.
+  // Tools are created lazily; mocked/legacy callers returning undefined are treated as success.
   if (ensureViewFor(convId, tab) === false) return
   setPlacement(convId, tab, 'popup') // release layout ownership and suppress the conversation slot
   stack.push(tab)
@@ -367,13 +366,6 @@ export function bringTabToTopIfPopup(convId: string, tab: FloatTab): void {
 // --- consultas p/ o handler de hotkeys (index.ts injeta) ---
 export function hasPopup(convId: string): boolean {
   return (stacks.get(convId)?.length ?? 0) > 0
-}
-
-/** ChatGPT counts as visible only when it is the top of the displayed stack. */
-export function isChatGptVisible(convId: string): boolean {
-  if (!win || convId !== visibleConvId || isSuppressed()) return false
-  const stack = stacks.get(convId)
-  return stack?.[stack.length - 1] === 'chatgpt'
 }
 
 export function getVisibleConvId(): string | null {

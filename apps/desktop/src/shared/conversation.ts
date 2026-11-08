@@ -1,6 +1,6 @@
 import type { FloatTab } from './tool-tabs'
 import type { SubagentProfileRulesV1 } from './subagent-profiles'
-import type { ChatGptWebCapabilities, ChatMode, ChatSkillSelection } from './chat'
+import type { ChatMode, ChatSkillSelection } from './chat'
 import type { ConversationExperience } from './conversation-experience'
 import type { MaestroConfigV1 } from './maestro'
 import type { AppToolGroup } from './app-tool-groups'
@@ -38,14 +38,6 @@ export interface ConvUiPrefs {
   browserTabs?: { url: string; title?: string }[]
   /** Active browser-tab index within browserTabs. */
   browserActive?: number
-  /** Last Companion ChatGPT conversation, resumable with a new MCP session. */
-  chatGptWebUrl?: string
-  /** Nonsecret MCP capability salt persists across resumes and rotates when Companion data is cleared. */
-  chatGptWebSessionScope?: string
-  /** Capability policy selected for this conversation's ChatGPT Web companion. */
-  chatGptWebCapabilities?: ChatGptWebCapabilities
-  /** Fingerprint of the policy/config used by the remote conversation's latest pairing. */
-  chatGptWebPairedCapabilityFingerprint?: string
   /**
    * Per-detached-tab window bounds. Missing values are tolerated and patches merge for older database
    * compatibility.

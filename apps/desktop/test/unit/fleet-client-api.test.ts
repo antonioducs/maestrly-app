@@ -73,10 +73,10 @@ beforeEach(async () => {
         .writeHead(200, { 'Content-Type': 'application/json' })
         .end(JSON.stringify({ deviceId: 'device', token: 'valid' }))
     } else if (
-      req.url === '/v1/events?reasoning=1&routineRuns=1&peerThreads=1' ||
-      req.url === '/v1/events?reasoning=1&routineRuns=1&peerThreads=1&desktopBridge=1' ||
-      req.url === '/v1/events?reasoning=1&routineRuns=1&peerThreads=1&runners=1' ||
-      req.url === '/v1/events?reasoning=1&routineRuns=1&peerThreads=1&desktopBridge=1&runners=1'
+      req.url === '/v1/events?reasoning=1&routineRuns=1&peerThreads=1&backups=1' ||
+      req.url === '/v1/events?reasoning=1&routineRuns=1&peerThreads=1&backups=1&desktopBridge=1' ||
+      req.url === '/v1/events?reasoning=1&routineRuns=1&peerThreads=1&backups=1&runners=1' ||
+      req.url === '/v1/events?reasoning=1&routineRuns=1&peerThreads=1&backups=1&desktopBridge=1&runners=1'
     ) {
       // Only the stream that asks for `reasoning` transcript items and routine runs is served: the app must always ask.
       res.writeHead(200, { 'Content-Type': 'text/event-stream' })
@@ -271,7 +271,7 @@ describe('fleet API and events', () => {
     await vi.waitFor(() => expect(seen).toContain('hello'))
     events.stop()
     expect(
-      requests.some((request) => request.url === '/v1/events?reasoning=1&routineRuns=1&peerThreads=1&desktopBridge=1')
+      requests.some((request) => request.url === '/v1/events?reasoning=1&routineRuns=1&peerThreads=1&backups=1&desktopBridge=1')
     ).toBe(true)
   })
 
@@ -295,11 +295,11 @@ describe('fleet API and events', () => {
       events.stop()
       return requests.slice(before).find((request) => request.url.startsWith('/v1/events'))?.url
     }
-    expect(await stream(undefined)).toBe('/v1/events?reasoning=1&routineRuns=1&peerThreads=1')
-    expect(await stream({ runners: false })).toBe('/v1/events?reasoning=1&routineRuns=1&peerThreads=1')
-    expect(await stream({ runners: true })).toBe('/v1/events?reasoning=1&routineRuns=1&peerThreads=1&runners=1')
+    expect(await stream(undefined)).toBe('/v1/events?reasoning=1&routineRuns=1&peerThreads=1&backups=1')
+    expect(await stream({ runners: false })).toBe('/v1/events?reasoning=1&routineRuns=1&peerThreads=1&backups=1')
+    expect(await stream({ runners: true })).toBe('/v1/events?reasoning=1&routineRuns=1&peerThreads=1&backups=1&runners=1')
     expect(await stream({ desktopBridge: true, runners: true })).toBe(
-      '/v1/events?reasoning=1&routineRuns=1&peerThreads=1&desktopBridge=1&runners=1'
+      '/v1/events?reasoning=1&routineRuns=1&peerThreads=1&backups=1&desktopBridge=1&runners=1'
     )
   }, 30_000)
 

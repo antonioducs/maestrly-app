@@ -49,7 +49,6 @@ export function requestVSCodeForDebug(convId: string): void {
 /** WebContentsViews forming a tab, reparented together on detach. */
 function tabViews(d: ConvDrawer, tab: FloatTab): WebContentsView[] {
   if (tab === 'vscode') return d.vscodeView ? [d.vscodeView] : []
-  if (tab === 'chatgpt') return d.chatgptView ? [d.chatgptView] : []
   if (tab === 'computer') return d.remoteComputerView ? [d.remoteComputerView] : []
   if (tab === 'browser' && d.remoteBrowserView) return [d.remoteBrowserView]
   if (tab === 'browser') {
@@ -74,10 +73,6 @@ export function floatView(convId: string, tab: FloatTab, floatWin: BrowserWindow
   else if (tab === 'browser') {
     ensureBrowser(convId)
     ensureBrowserChrome(d, convId)
-  } else if (tab === 'chatgpt') {
-    // A ChatGPT view is materialized only by an active companion session.
-    // A direct detach request must not create a remote view by itself.
-    if (!d.chatgptView) return false
   } else if (tab === 'computer') {
     // Only a remote conversation has a computer: it floats as a panel watching its screen.
     if (!isRemoteConversation(convId)) return false
@@ -113,11 +108,9 @@ export function focusFloatingContent(convId: string, tab: FloatTab): void {
       ? (d.remoteBrowserView ?? d.browserTabs.find((t) => t.id === d.activeBrowserId)?.view)
       : tab === 'vscode'
         ? d.vscodeView
-        : tab === 'chatgpt'
-          ? d.chatgptView
-          : tab === 'computer'
-            ? d.remoteComputerView
-            : d.panelViews.get(tab as PanelTab)
+        : tab === 'computer'
+          ? d.remoteComputerView
+          : d.panelViews.get(tab as PanelTab)
   primary?.webContents.focus()
 }
 

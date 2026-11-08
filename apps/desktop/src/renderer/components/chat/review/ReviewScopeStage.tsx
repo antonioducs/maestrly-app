@@ -1,12 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ClipboardList, Clock, FileCode, Loader2, Lock, Route, UserRound } from 'lucide-react'
-import {
-  CHATGPT_WEB_PROVIDER_ID,
-  type ChatModelMeta,
-  type ChatModelRef,
-  type ChatReasoningEffort,
-} from '../../../../shared/chat'
+import type { ChatModelMeta, ChatModelRef, ChatReasoningEffort } from '../../../../shared/chat'
 import type { ReviewModelChoice, ReviewPrepareResult, ReviewTarget } from '../../../../shared/review'
 import { Button } from '@/components/ui/button'
 import { ChatModelChip } from '@/components/chat/ChatModelChip'
@@ -19,9 +14,6 @@ import { LANE_STYLE } from './review-style'
 
 const selectionKey = (selection: ChatModelRef | null): string =>
   selection ? `${selection.providerId}\0${selection.modelId}` : ''
-
-// ChatGPT Web runs in the browser and cannot run reviewers.
-const reviewerProvider = (providerId: string): boolean => providerId !== CHATGPT_WEB_PROVIDER_ID
 
 function Card({ icon: Icon, title, children }: { icon: typeof FileCode; title: string; children: ReactNode }) {
   return (
@@ -313,7 +305,6 @@ export function ReviewScopeStage({
                   <ChatModelChip
                     value={selection}
                     avoidOverflow
-                    providerFilter={reviewerProvider}
                     onSelect={(next) => {
                       setSelection(next)
                       setMeta(null)

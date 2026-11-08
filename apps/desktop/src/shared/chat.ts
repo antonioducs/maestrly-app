@@ -955,8 +955,8 @@ export interface ChatSkillSearchHit {
 
 /**
  * Where a message belongs. Only `conversation` (or no scope) is part of the model's context.
- * `review-loop` is an isolated internal execution (ChatGPT Web project-environment jobs); the persisted kind keeps
- * its historical name. `review-summary` only exists in older conversations. `review-report` holds a code review,
+ * `review-loop` is an isolated internal execution; nothing starts one anymore, but older conversations keep their
+ * rounds out of the context. `review-summary` only exists in older conversations. `review-report` holds a code review,
  * which reaches the model attached to the person's next message instead.
  */
 export type ChatExecutionScope =
@@ -984,12 +984,7 @@ export interface ChatReviewLoopMeta {
  * `conversation-dispatch`: first message of a conversation started from another conversation (host-generated).
  * `conversation-message`: a message, report or result sent by the agent of another conversation (see `peer`).
  */
-export type ChatMessageSource =
-  | 'chatgpt-web'
-  | 'chatgpt-web-review-loop'
-  | 'maestrly-review'
-  | 'conversation-dispatch'
-  | 'conversation-message'
+export type ChatMessageSource = 'maestrly-review' | 'conversation-dispatch' | 'conversation-message'
 
 /** Sender of a message that came from another conversation; the name is captured when it was delivered. */
 export interface ChatMessagePeerOrigin {
@@ -1324,107 +1319,6 @@ export const CHAT_SUBSCRIPTION_PROVIDER_KINDS: readonly ChatSubscriptionProvider
 
 export function isChatSubscriptionProviderKind(kind: string | null | undefined): kind is ChatSubscriptionProviderKind {
   return kind != null && (CHAT_SUBSCRIPTION_PROVIDER_KINDS as readonly string[]).includes(kind)
-}
-
-// ----------------------------------------------------------------------------
-
-// ----------------------------------------------------------------------------
-
-export const CHATGPT_WEB_PROVIDER_ID = 'builtin_chatgpt_web'
-
-/** Access policy owned by one Maestrly conversation. External credentials remain in the main process. */
-export type ChatGptWebCapabilityScope = 'off' | 'read' | 'write'
-export type ChatGptWebBrowserCapability = 'off' | 'inspect' | 'interact'
-
-export interface ChatGptWebCapabilities {
-  git: 'off' | 'read'
-  gh: 'off' | 'read'
-  /** Read-only access to the visible main Maestrly conversation. Missing values fail closed to off. */
-  conversation: 'off' | 'read'
-  /** Local durable memory requires explicit Read; shared knowledge remains repository-jailed. */
-  memory: 'off' | 'read'
-  /** Profile-local personal memory. Missing values deny access; independent of project memory. */
-  personalMemory?: ChatGptWebCapabilityScope
-  /** Browser access is fail-closed and may target an isolated preview or an attached embedded local tab. */
-  browser: ChatGptWebBrowserCapability
-  mcp: Record<string, ChatGptWebCapabilityScope>
-}
-
-/** Sanitized server entry used by the companion access UI. */
-export interface ChatGptWebMcpCapabilityInfo {
-  id: string
-  name: string
-  enabled: boolean
-  scope: ChatGptWebCapabilityScope
-}
-
-export interface ChatGptWebCapabilitiesInfo {
-  /** Desktop scope restricts the access editor; the main process independently enforces it. */
-  conversationScope?: 'project' | 'standalone'
-  capabilities: ChatGptWebCapabilities
-  mcpServers: ChatGptWebMcpCapabilityInfo[]
-  editable: boolean
-  fingerprint: string
-}
-
-/** `arming` waits for the first routed tool; `live` confirms manual pairing. */
-export type ChatGptWebSessionState = 'arming' | 'live' | 'ended' | 'error'
-
-export type ChatGptWebTunnelState = 'stopped' | 'starting' | 'ready' | 'error'
-
-export interface ChatGptWebSessionDiagnostic {
-  bridge: {
-    lastEvent: string | null
-    lastToolCallAt: number | null
-    toolCalls: number
-    deliveries: number
-  }
-}
-
-export interface ChatGptWebSessionInfo {
-  state: ChatGptWebSessionState
-
-  pairingRequired: boolean
-
-  conversationId: string
-  cwd: string
-  startedAt: number
-  lastActivityAt: number | null
-  toolCalls: number
-  deliveries: number
-
-  capabilities?: {
-    fingerprint: string
-    gitRead: boolean
-    ghRead: boolean
-    conversation: 'off' | 'read'
-    memory: 'off' | 'read'
-    personalMemory?: ChatGptWebCapabilityScope
-    browser: ChatGptWebBrowserCapability
-    mcpRead: number
-    mcpWrite: number
-  }
-
-  diagnostic?: ChatGptWebSessionDiagnostic
-
-  error?: string
-}
-
-export interface ChatGptWebStatus {
-  binaryAvailable: boolean
-
-  configured: boolean
-  tunnelId: string | null
-  apiKeyPresent: boolean
-  appName: string
-  tunnelState: ChatGptWebTunnelState
-  tunnelError?: string
-
-  probeActive: boolean
-
-  appRefreshRequired: boolean
-
-  sessions: ChatGptWebSessionInfo[]
 }
 
 // ----------------------------------------------------------------------------

@@ -119,7 +119,6 @@ import { BackgroundCompactionStatus } from './BackgroundCompactionStatus'
 import { contextMeterReading, sameContextModel, selectContextObservation } from './context-observation'
 import { ChatMicButton } from './ChatMicButton'
 import { appendDictation } from '@/lib/dictation'
-import { ChatGptWebSessionBanner } from './ChatGptWebSessionBanner'
 import { addHookNotice, BLOCKED_BY_HOOK, HOOK_NOTICE_INFO_MS, type HookNoticeItem, HookNotices } from './HookNotices'
 import { ConversationDispatchBanner } from './ConversationDispatchBanner'
 import { ReviewRoom } from './review/ReviewRoom'
@@ -287,7 +286,6 @@ export function ChatView({
   const [maestroLive, setMaestroLive] = useState<MaestroLiveState | null>(null)
   const [maestroSendTarget, setMaestroSendTarget] = useState<'current' | 'next'>('current')
   const [maestroPostPending, setMaestroPostPending] = useState(0)
-  const [companionStarting, setCompanionStarting] = useState(false)
 
   const [failoverNotice, setFailoverNotice] = useState<string | null>(null)
   const [hookNotices, setHookNotices] = useState<HookNoticeItem[]>([])
@@ -471,7 +469,6 @@ export function ChatView({
     !maestroPostPending &&
     pending.length === 0 &&
     editingId === null &&
-    !companionStarting &&
     !compacting &&
     pendingQuestion === null &&
     status !== 'asking'
@@ -538,11 +535,6 @@ export function ChatView({
     anchoredRef.current = false
     refreshStats()
   }, [api, conversationId, normalizeHistoryWindow, refreshStats, workspaceId])
-
-  useEffect(
-    () => api.onChatGptWebDelivery(conversationId, () => void reloadLatestPage()),
-    [api, conversationId, reloadLatestPage]
-  )
 
   // Load older messages on demand and return the number prepended.
 
@@ -2435,7 +2427,6 @@ export function ChatView({
                 </div>
               )}
 
-              <ChatGptWebSessionBanner conversationId={conversationId} starting={companionStarting} />
               <ConversationDispatchBanner conversationId={conversationId} />
               {reviewNotice && (
                 <div className="mx-auto mb-1.5 w-full max-w-3xl px-1">
@@ -2588,7 +2579,6 @@ export function ChatView({
                         onAddFiles={addFiles}
                         fontScale={fontScale}
                         onFontScale={setFontScale}
-                        onCompanionStarting={setCompanionStarting}
                       />
                       <ChatSkillsMenu conversationId={conversationId} onChanged={reloadCommands} />
                       {isMaestro ? (

@@ -19,6 +19,7 @@ import {
   type FleetBotMcpServers,
   type FleetBotSkills,
   type FleetImportResults,
+  type FleetInstanceBackupSnapshot,
   type FleetInstanceBotFreeze,
   type FleetInstanceBotImport,
   type FleetInstanceBotInstall,
@@ -48,7 +49,10 @@ import {
   renameSubscriptionAccount,
 } from '../../chat/catalog'
 import { getHiddenChatModelsFor } from '../../store/settings'
-import { createEnvironmentSettingsService, environmentMcpChanged } from './settings/service'
+import { getDb } from '../../store/db'
+import { DATABASE_FILENAME } from '../../store/database-path-migration'
+import { prepareBackupSnapshot, releaseBackupSnapshot } from './backup-snapshot'
+import { createEnvironmentSettingsService } from './settings/service'
 import { ensureRuntimeAsset } from '../../runtime-assets/app-service'
 import { getAntigravitySubscriptionManager } from '../../chat/antigravity-subscription/manager'
 import { getClaudeSubscriptionManager } from '../../chat/claude-agent-sdk/manager'
@@ -355,6 +359,8 @@ export class EnvironmentRuntime {
     if (current && current !== this) throw new Error('Another environment runtime is running.')
     await adoptLegacyBot({ userData: this.deps.userData })
     await sweepBotMoveStaging(this.roots).catch((error: unknown) => log('error', errorMessage(error)))
+    // A copy of the database a backup left behind when the environment stopped is of no use anymore.
+    await releaseBackupSnapshot(this.deps.userData).catch((error: unknown) => log('error', errorMessage(error)))
     current = this
     this.wireBrokers()
     for (const member of readInstalledBots()) {
@@ -454,6 +460,18 @@ export class EnvironmentRuntime {
   /** The latest disk figures with `folder` measured too; old figures start a new measurement (`StorageMeter`). */
   measureStorage(folder: string | null): FleetInstanceStorage {
     return this.storageMeter.read(folder)
+  }
+  /** A consistent copy of the environment's database for a backup (`environment-backup`). */
+  prepareBackup(): Promise<FleetInstanceBackupSnapshot> {
+    return prepareBackupSnapshot({
+      db: getDb(),
+      databasePath: path.join(this.deps.userData, DATABASE_FILENAME),
+      userData: this.deps.userData,
+      home: this.deps.home,
+    })
+  }
+  releaseBackup(): Promise<void> {
+    return releaseBackupSnapshot(this.deps.userData)
   }
   private async storageTargets(folder: string | null): Promise<StorageTargets> {
     const bots = await Promise.all(
@@ -958,13 +976,10 @@ export class EnvironmentRuntime {
     return listBotMcpServers()
   }
   async importMcpServers(request: FleetMcpImportRequest): Promise<FleetImportResults> {
-    const result = importBotMcpServers(request.servers)
-    if (result.results.some((item) => item.outcome === 'added' || item.outcome === 'updated')) environmentMcpChanged()
-    return result
+    return importBotMcpServers(request.servers)
   }
   async removeMcpServer(id: string): Promise<void> {
     removeBotMcpServer(id)
-    environmentMcpChanged()
   }
   async addApiKeyAccount(value: FleetAddApiKeyAccountRequest): Promise<FleetAddApiKeyAccountResponse> {
     if (apiKeyStorageMode() !== 'secure')

@@ -42,7 +42,6 @@ import { getAppFlag, getAppSetting, setAppSetting } from '../../src/main/store'
 import { addMcpServer, listMcpServers, removeMcpServer, updateMcpServer } from '../../src/main/chat/mcp'
 import {
   defaultProviderKind,
-  CHATGPT_WEB_PROVIDER_ID,
   effectiveProviderKind,
   isOfficialOpenAIProvider,
   toolOutputImages,
@@ -108,7 +107,7 @@ describe('chat-store (chat_messages)', () => {
       error: 'Sign in again.',
       errorCode: 'claude-authentication-required',
       responseDurationMs: 12_345,
-      source: 'chatgpt-web',
+      source: 'conversation-message',
       createdAt: 2,
     }
     upsertChatMessage(u)
@@ -118,7 +117,7 @@ describe('chat-store (chat_messages)', () => {
     expect(rows[1].model).toEqual({ providerId: 'mimo', modelId: 'mimo-v2.5-pro' })
     expect(rows[1].responseDurationMs).toBe(12_345)
     expect(rows[1].errorCode).toBe('claude-authentication-required')
-    expect(rows[1].source).toBe('chatgpt-web')
+    expect(rows[1].source).toBe('conversation-message')
     expect(rows[0].parts).toEqual([{ type: 'text', id: 't', text: 'hi' }])
   })
 
@@ -512,7 +511,6 @@ describe('PermissionBroker (port of permission.ts)', () => {
 describe('provider format defaults and explicit overrides', () => {
   it('keeps ChatGPT and Copilot virtual rather than persisted BYOK', () => {
     const available = listAvailableChatProviders()
-    expect(available.some((provider) => provider.id === CHATGPT_WEB_PROVIDER_ID)).toBe(false)
     expect(available.slice(0, 2).map((provider) => provider.id)).toEqual([
       CODEX_SUBSCRIPTION_PROVIDER_ID,
       GITHUB_COPILOT_SUBSCRIPTION_PROVIDER_ID,
@@ -533,8 +531,9 @@ describe('provider format defaults and explicit overrides', () => {
     ).toThrow(/reserved/i)
   })
 
-  it('treats companions as managed providers', () => {
-    expect(isManagedProvider(CHATGPT_WEB_PROVIDER_ID)).toBe(true)
+  it('treats subscription providers as managed providers', () => {
+    expect(isManagedProvider(CODEX_SUBSCRIPTION_PROVIDER_ID)).toBe(true)
+    expect(isManagedProvider(GITHUB_COPILOT_SUBSCRIPTION_PROVIDER_ID)).toBe(true)
     expect(isManagedProvider('prov_usuario')).toBe(false)
   })
 

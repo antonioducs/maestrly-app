@@ -14,6 +14,21 @@ import {
   fleetDictationTranscribeRequestSchema,
   fleetDictationTranscribeResponseSchema,
 } from './dictation.js'
+import {
+  fleetBackupConnectRequestSchema,
+  fleetBackupConnectResponseSchema,
+  fleetBackupProbeRequestSchema,
+  fleetBackupProbeResponseSchema,
+  fleetBackupRecoveryKeyResponseSchema,
+  fleetBackupRestorePreviewRequestSchema,
+  fleetBackupRestorePreviewSchema,
+  fleetBackupRestoreRequestSchema,
+  fleetBackupRunRequestSchema,
+  fleetBackupRunsResponseSchema,
+  fleetBackupSnapshotsResponseSchema,
+  fleetBackupUpdateRequestSchema,
+  fleetInstanceBackupSnapshotSchema,
+} from './backups.js'
 import { fleetBridgeOrigin } from './helpers.js'
 import {
   fleetChatAttentionKindSchema,
@@ -51,6 +66,8 @@ import {
   FLEET_RUNNER_LIMITS,
 } from './constants.js'
 import {
+  fleetBackupRunSchema,
+  fleetBackupStatusSchema,
   fleetOwnerMemoryOriginSchema,
   fleetOwnerMemorySchema,
   fleetOwnerMemoryEntrySchema,
@@ -2116,6 +2133,59 @@ export const FLEET_GATEWAY_ROUTES = {
     body: fleetDictationTranscribeRequestSchema,
     response: fleetDictationTranscribeResponseSchema,
   },
+  // Backups of the server's environments to storage the owner chooses, and their restores (`backups`).
+  backupStatus: { method: 'GET', path: '/v1/backup', body: null, response: fleetBackupStatusSchema },
+  backupProbe: {
+    method: 'POST',
+    path: '/v1/backup/probe',
+    body: fleetBackupProbeRequestSchema,
+    response: fleetBackupProbeResponseSchema,
+  },
+  backupConnect: {
+    method: 'PUT',
+    path: '/v1/backup/destination',
+    body: fleetBackupConnectRequestSchema,
+    response: fleetBackupConnectResponseSchema,
+  },
+  backupDisconnect: { method: 'DELETE', path: '/v1/backup/destination', body: null, response: fleetBackupStatusSchema },
+  backupUpdate: {
+    method: 'PATCH',
+    path: '/v1/backup',
+    body: fleetBackupUpdateRequestSchema,
+    response: fleetBackupStatusSchema,
+  },
+  backupRecoveryKey: {
+    method: 'POST',
+    path: '/v1/backup/recovery-key',
+    body: null,
+    response: fleetBackupRecoveryKeyResponseSchema,
+  },
+  backupRunsList: { method: 'GET', path: '/v1/backup/runs', body: null, response: fleetBackupRunsResponseSchema },
+  backupRunsCreate: {
+    method: 'POST',
+    path: '/v1/backup/runs',
+    body: fleetBackupRunRequestSchema,
+    response: fleetBackupRunSchema,
+  },
+  backupRunCancel: { method: 'POST', path: '/v1/backup/runs/:id/cancel', body: null, response: fleetBackupRunSchema },
+  backupSnapshots: {
+    method: 'GET',
+    path: '/v1/backup/snapshots',
+    body: null,
+    response: fleetBackupSnapshotsResponseSchema,
+  },
+  backupRestorePreview: {
+    method: 'POST',
+    path: '/v1/backup/restore/preview',
+    body: fleetBackupRestorePreviewRequestSchema,
+    response: fleetBackupRestorePreviewSchema,
+  },
+  backupRestore: {
+    method: 'POST',
+    path: '/v1/backup/restore',
+    body: fleetBackupRestoreRequestSchema,
+    response: fleetBackupRunSchema,
+  },
   environmentBridgeTicket: {
     method: 'POST',
     path: '/v1/environments/:eid/bridge-tickets',
@@ -2928,6 +2998,18 @@ export const FLEET_INSTANCE_ROUTES = {
     body: null,
     response: fleetInstanceStorageSchema,
   },
+  /**
+   * Capability `environment-backup`: writes a consistent copy of the environment's database for a backup, replacing
+   * any copy from before; its paths are relative to the home folder the gateway's helper mounts.
+   */
+  environmentBackupPrepare: {
+    method: 'POST',
+    path: '/v1/environment/backup',
+    body: null,
+    response: fleetInstanceBackupSnapshotSchema,
+  },
+  /** Capability `environment-backup`: removes the copy once the backup read it. */
+  environmentBackupRelease: { method: 'DELETE', path: '/v1/environment/backup', body: null, response: null },
   /** Capability `environment-compaction`: the model options of the environment's accounts; `current` is null. */
   environmentSelections: {
     method: 'GET',

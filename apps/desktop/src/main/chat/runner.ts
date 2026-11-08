@@ -751,9 +751,9 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     askQuestion: (questions) =>
       questionBroker.ask({ conversationId, messageId: assistantId, toolCallId, questions, signal: toolSignal }),
     submitPlan: (plan: string, title?: string) => {
-      const result = stagePlan({ agentId: conversationId, cwd, plan, title })
-      planSubmitted = result.ok
-      return result.ok
+      stagePlan({ agentId: conversationId, cwd, plan, title })
+      planSubmitted = true
+      return true
     },
     emitGeneratedImage: (image: GeneratedImageEmission) =>
       emitGeneratedImagePart(apply, assistantId, toolCallId, image),

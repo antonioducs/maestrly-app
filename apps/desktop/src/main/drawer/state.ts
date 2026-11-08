@@ -47,8 +47,6 @@ export interface BrowserTab {
 export interface ConvDrawer {
   browserTabs: BrowserTab[]
   activeBrowserId: string | null
-  /** Per-conversation ChatGPT Companion view, created only when a manual session starts. */
-  chatgptView: WebContentsView | null
   vscodeView: WebContentsView | null
   vscodeRequestedUrl: string
   /**
@@ -74,9 +72,8 @@ export interface ConvDrawer {
    */
   remoteComputerView: WebContentsView | null
   /**
-   * OAuth windows opened by this conversation's embedded browser. ChatGPT Companion owns its popups
-   * separately so resetting one session cannot close another tab's login. Close these windows on
-   * conversation disposal; each unregisters on closed. They are native windows outside slot layout.
+   * OAuth windows opened by this conversation's embedded browser. Close these windows on conversation disposal;
+   * each unregisters on closed. They are native windows outside slot layout.
    */
   oauthWindows: Set<BrowserWindow>
 }
@@ -167,7 +164,6 @@ export function getDrawer(convId: string): ConvDrawer {
     d = {
       browserTabs: [],
       activeBrowserId: null,
-      chatgptView: null,
       vscodeView: null,
       vscodeRequestedUrl: '',
       vscodePendingUrl: null,
@@ -229,7 +225,6 @@ function viewForTab(drawer: ConvDrawer, tab: FloatTab): WebContentsView | null |
   if (tab === 'browser')
     return drawer.remoteBrowserView ?? drawer.browserTabs.find((item) => item.id === drawer.activeBrowserId)?.view
   if (tab === 'vscode') return drawer.vscodeView
-  if (tab === 'chatgpt') return drawer.chatgptView
   if (tab === 'computer') return drawer.remoteComputerView
   return drawer.panelViews.get(tab as PanelTab)
 }
@@ -260,8 +255,7 @@ export function isTabVisibleInSlot(convId: string, tab: FloatTab): boolean {
     !!slot &&
     isTabAllowedDuringDialogSuppression(convId, tab) &&
     !convHasPopup(convId) &&
-    getPlacement(convId, tab) === 'slot' &&
-    (tab !== 'chatgpt' || drawer.chatgptView !== null)
+    getPlacement(convId, tab) === 'slot'
   )
 }
 

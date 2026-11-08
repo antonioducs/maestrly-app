@@ -94,13 +94,35 @@ describe('shared contenteditable MentionEditor contract', () => {
     )
     const agentMenu = normalizedEditorSource.slice(
       normalizedEditorSource.indexOf('} else if (agentMenuOpen)'),
+      normalizedEditorSource.indexOf('} else if (peerMenuOpen)')
+    )
+    const peerMenu = normalizedEditorSource.slice(
+      normalizedEditorSource.indexOf('} else if (peerMenuOpen)'),
       normalizedEditorSource.indexOf('if (onKeyDown?.(e) === true) return')
     )
     const tabWithoutModifiers = /e\.key === 'Tab' && !e\.shiftKey && !e\.ctrlKey && !e\.metaKey && !e\.altKey/
 
     expect(fileMenu).toMatch(tabWithoutModifiers)
     expect(agentMenu).toMatch(tabWithoutModifiers)
-    expect(normalizedEditorSource.match(new RegExp(tabWithoutModifiers.source, 'g'))).toHaveLength(2)
+    expect(peerMenu).toMatch(tabWithoutModifiers)
+    expect(normalizedEditorSource.match(new RegExp(tabWithoutModifiers.source, 'g'))).toHaveLength(3)
+  })
+
+  it('lists bots on @ in a bot conversation and keeps them as @Name chips', () => {
+    // Only a conversation that gives bots turns @ into a bot mention; elsewhere @ still searches files.
+    expect(editorCoreSource).toContain('peers?: PeerMentionOption[] | null')
+    expect(editorCoreSource).toMatch(/if \(file && peers\) \{\s*setMention\(\{ kind: 'peer'/)
+    // The chip serializes as @Name and comes back from the draft text by the names of known bots.
+    expect(editorCoreSource).toContain("out += '@' + (child.dataset.peerName ?? '')")
+    expect(editorCoreSource).toContain('findPeerMentions(text, peers)')
+    expect(editorCoreSource).toContain('peersKey')
+    // The owner may refuse a bot: the chip goes in only on true and only where the @ still is.
+    expect(editorCoreSource).toContain('onPickPeer?: (peer: PeerMentionOption) => boolean | Promise<boolean>')
+    expect(editorCoreSource).toContain('if (accepted && inPlace)')
+    // The × of a bot chip removes it like any other chip.
+    expect(editorCoreSource).toContain("closest('[data-mention], [data-agent-mention], [data-peer-mention]')")
+    expect(composerSource).toContain('peers={peers}')
+    expect(composerSource).toContain('onPickPeer={onPickPeer}')
   })
 
   it('preserves mention metadata while catalogs are loading', () => {

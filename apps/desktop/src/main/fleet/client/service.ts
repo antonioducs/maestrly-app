@@ -8,6 +8,7 @@ import {
   fleetMetaFeatures,
   isAllowedFleetUrl,
   type FleetActivityEntry,
+  type FleetBackupRun,
   type FleetBot,
   type FleetEnvironment,
   type FleetFilesDeleted,
@@ -119,6 +120,8 @@ export class FleetClientService {
   onSideConversation:
     | ((event: Extract<FleetGatewayEvent, { type: 'routine_run.updated' | 'peer_thread.updated' }>) => void)
     | null = null
+  /** Hears each change of a backup or restore run; set by the main process, which notifies failed scheduled backups. */
+  onBackupRun: ((run: FleetBackupRun) => void) | null = null
   /** Hears that the server is reachable again and this computer read it anew, after what it may have missed. */
   onResynced: (() => void) | null = null
   /** Tells the owner a bot file finished saving or failed; set by the main process, which shows the notice. */
@@ -543,6 +546,13 @@ export class FleetClientService {
           this.onSideConversation?.(event)
         } catch {
           /* Nor a mark's. */
+        }
+        break
+      case 'backup_run.updated':
+        try {
+          this.onBackupRun?.(event.run)
+        } catch {
+          /* Nor a backup's notification. */
         }
         break
     }

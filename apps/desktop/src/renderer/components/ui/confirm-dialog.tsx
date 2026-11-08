@@ -9,6 +9,7 @@ export function ConfirmDialog({
   message,
   warning,
   confirmLabel,
+  cancelLabel,
   busy,
   destructive,
   error,
@@ -20,6 +21,8 @@ export function ConfirmDialog({
   /** A consequence to weigh before confirming, shown apart from the message. */
   warning?: string | null
   confirmLabel: string
+  /** Defaults to "Cancel"; a yes-or-no question answers "No". */
+  cancelLabel?: string
   busy?: boolean
   destructive?: boolean
   /** Why the last confirmation failed; the dialog stays open so it can be tried again. */
@@ -74,7 +77,7 @@ export function ConfirmDialog({
             disabled={busy}
             className="rounded-md px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
           >
-            {t('common.cancel')}
+            {cancelLabel ?? t('common.cancel')}
           </button>
           <button
             ref={confirmRef}

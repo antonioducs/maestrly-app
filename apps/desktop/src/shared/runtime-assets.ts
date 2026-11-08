@@ -3,7 +3,6 @@ export const RUNTIME_ASSET_IDS = [
   // Managed only inside bots; the desktop app keeps using the system Claude Code.
   'claude-code-runtime',
   'github-copilot-runtime',
-  'tunnel-client',
   'local-ml-runtime',
   'whisper-model',
   // Google's official Antigravity ACP server, installed on demand for the Google AI subscription provider.

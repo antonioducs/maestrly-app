@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto'
 import { listPackage } from '@electron/asar'
 import { missingWorkspaceBuilds } from './verify-packaged-workspaces.mjs'
 
-export const FORBIDDEN_RESOURCE_DIRECTORIES = ['codex', 'github-copilot', 'tunnel-client', 'local-ml-runtime']
+export const FORBIDDEN_RESOURCE_DIRECTORIES = ['codex', 'github-copilot', 'local-ml-runtime']
 export const REQUIRED_LEGAL_RESOURCES = [
   'LICENSE.txt',
   'THIRD_PARTY_NOTICES.md',

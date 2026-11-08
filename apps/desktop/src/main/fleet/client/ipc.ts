@@ -10,6 +10,7 @@ import {
   sendBotMessage,
 } from './bot-actions'
 import { registerFleetProvisioningIpc } from './provisioning/ipc'
+import { defaultFleetBackupIpcDeps, registerFleetBackupIpc } from './backup-ipc'
 import { z } from 'zod'
 import {
   FLEET_BOT_MOVE_FEATURE,
@@ -175,6 +176,7 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
   const scoped = fleetScopedRegistrar(reg)
   registerFleetProvisioningIpc(reg, scoped)
   registerFleetEnvironmentSettingsIpc(scoped)
+  registerFleetBackupIpc(scoped, defaultFleetBackupIpcDeps(app.isPackaged))
   if (!isHeadlessInstance()) {
     fleetServers.start()
     app.once('will-quit', () => fleetServers.stop())

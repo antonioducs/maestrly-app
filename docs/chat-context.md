@@ -108,9 +108,8 @@ A review takes over the conversation and moves through five stages:
 1. **Scope** shows what will be reviewed (the changed files with their line
    counts, or the plan's steps) and asks who reviews: the conversation's own
    model, reasoning effort and Fast setting, or another model with its own
-   effort and Fast setting. ChatGPT Web cannot run reviewers. The choice is
-   remembered for the next review and stored in the local database. Nothing runs
-   until you choose **Start review**.
+   effort and Fast setting. The choice is remembered for the next review and
+   stored in the local database. Nothing runs until you choose **Start review**.
 2. **Investigate**: reviewers work in parallel, three for code (logic,
    integration, and security and tests) and two for plans (feasibility and
    completeness). Each one has a column with what it reads and searches as it
@@ -531,10 +530,10 @@ Starting conversations is available in Agent/Design mode in local standalone
 and project chats. It is unavailable in Plan and Maestro modes,
 bot conversations, archived
 conversations, conversations with an unfinished migration and multi-repository
-conversations, and the app gives the reason. A running ChatGPT Web
-project-environment job blocks only the **Same checkout** option. Missing or unknown workspace IDs, invalid or existing
-branch names, unresolved base branches, and targets combined with **Same
-checkout** are reported as errors rather than silently choosing another target.
+conversations, and the app gives the reason. Missing or unknown workspace IDs,
+invalid or existing branch names, unresolved base branches, and targets combined
+with **Same checkout** are reported as errors rather than silently choosing
+another target.
 Results identify the destination workspace and resolved base revision.
 Card contents come from whatever the agent can
 already read, such as a connected MCP server or text you paste; no Jira
@@ -709,8 +708,7 @@ Claude, GitHub Copilot and Grok subscriptions also compact during a turn that
 reaches it; Codex additionally sends the limit to its runtime when the model
 allows a configurable window. Cursor and Google AI run each turn on their own,
 so the limit compacts their conversations only between turns, and a long turn
-can go past it; the limit popover says so. ChatGPT Web keeps its context inside
-ChatGPT and has no limit.
+can go past it; the limit popover says so.
 
 ### Model fallback
 
@@ -896,17 +894,6 @@ model selection. Turning off recall leaves the core and tools available.
 Turning off personal memory stops new assistant reads, writes, context injection
 and background extraction, while manual management remains available. Invalid
 or unreadable personal settings disable assistant access until corrected.
-
-ChatGPT Web/Companion requires its own **Personal memory** permission: Off,
-Read, or Write. It defaults to Off; project-memory permission does not grant
-personal access. Read permits retrieval, and Write additionally permits changes
-subject to the session's mode and permission policy. Changing or revoking the
-capability invalidates the corresponding session access.
-
-Companion background saving additionally requires Write and Agent/Design mode.
-It processes only user messages already persisted in the local conversation;
-it does not scrape the browser's ChatGPT history. Ending the session or revoking
-access cancels pending extraction and discards late results.
 
 ## Automatic recall
 

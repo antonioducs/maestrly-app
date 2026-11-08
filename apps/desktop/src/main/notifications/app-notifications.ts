@@ -5,6 +5,7 @@ import type { NotificationTarget } from '../../shared/notifications'
 import type { SoundEvent } from '../../shared/sound'
 import type { ChatWindowManager } from '../chat-window-manager'
 import { AppBadge, type AppBadgeDeps } from './app-badge'
+import { FleetBackupNotices } from './backup-notices'
 import { FleetBotAttention, type FleetBotAttentionDeps } from './bot-attention'
 import { FleetBotNotices } from './bot-notices'
 import { ConversationNotices } from './conversation-notices'
@@ -36,6 +37,7 @@ export class AppNotifications {
   readonly hosts: HostConversationAlerts
   readonly botAttention: FleetBotAttention
   readonly bots: FleetBotNotices
+  readonly backups: FleetBackupNotices
   readonly badge: AppBadge
 
   constructor(private readonly deps: AppNotificationsDeps) {
@@ -58,6 +60,11 @@ export class AppNotifications {
       attention: this.botAttention,
       sees: (serverId, botId) => this.presence.seesBot(serverId, botId),
       botName: deps.botName,
+      serverName: deps.serverName,
+      open: (target) => this.open(target),
+    })
+    this.backups = new FleetBackupNotices({
+      notices: this.notices,
       serverName: deps.serverName,
       open: (target) => this.open(target),
     })
@@ -86,6 +93,12 @@ export class AppNotifications {
    * bot's run or thread still opens in it, since that window shows the main window's view of the bot.
    */
   open(target: NotificationTarget): void {
+    // A server's backups show in Settings, in the main window.
+    if (target.kind === 'backups') {
+      this.deps.focusMainWindow()
+      this.deps.sendToMainWindow('notification:open', target)
+      return
+    }
     const key =
       target.kind === 'conversation'
         ? chatWindowKey({ kind: 'conversation', id: target.conversationId })

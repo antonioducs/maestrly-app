@@ -6,6 +6,7 @@ import {
   FLEET_ROUTINE_RUNS_QUERY,
   FLEET_PEER_THREADS_QUERY,
   FLEET_RUNNERS_QUERY,
+  FLEET_BACKUPS_QUERY,
   FLEET_RUNNER_PROTOCOL_VERSION,
   FLEET_UPDATE_BUSY_STATUSES,
 } from './constants.js'
@@ -236,6 +237,14 @@ export function fleetReaderWantsRunners(search: URLSearchParams): boolean {
 }
 export function isFleetRunnerEvent(event: Pick<FleetGatewayEvent, 'type'>): boolean {
   return event.type.startsWith('runner.') || event.type.startsWith('runner_')
+}
+/** Whether a reader of events asked for backups' events; an older reader would fail on them. */
+export function fleetReaderWantsBackups(search: URLSearchParams): boolean {
+  return search.get(FLEET_BACKUPS_QUERY) === '1'
+}
+/** Whether a gateway event is about backups, sent only to readers that asked for them. */
+export function isFleetBackupEvent(event: Pick<FleetGatewayEvent, 'type'>): boolean {
+  return event.type === 'backup.updated' || event.type === 'backup_run.updated'
 }
 /** Whether a runner, by its report, can take a job with these requirements; a job with an image needs a container. */
 export function fleetRunnerMeets(

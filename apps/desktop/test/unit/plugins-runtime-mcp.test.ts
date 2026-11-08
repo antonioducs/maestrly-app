@@ -2,8 +2,6 @@ import { mkdtempSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { resolveChatGptWebCapabilities } from '../../src/main/chat/chatgpt-web/capability-policy'
-import { createChatGptWebMcpGateway } from '../../src/main/chat/chatgpt-web/mcp-gateway'
 import {
   addMcpServer,
   allRuntimeMcpServerIds,
@@ -12,8 +10,6 @@ import {
   listRuntimeMcpServers,
   removeMcpServer,
   updateMcpServer,
-  type McpConnection,
-  type McpServer,
 } from '../../src/main/chat/mcp'
 import { writeMcpCatalog } from '../../src/main/chat/mcp-catalog'
 import { setAppPluginLayoutForTests } from '../../src/main/plugins/app-layout'
@@ -282,29 +278,5 @@ describe('plugin MCP servers at runtime', () => {
     })
     expect(() => updateMcpServer(record.servers.api.id, { enabled: false })).toThrow('managed-by-plugin')
     expect(() => removeMcpServer(record.servers.api.id)).toThrow('managed-by-plugin')
-  })
-
-  it('reaches ChatGPT web with the default read scope', async () => {
-    const conversation = makeStandaloneConversation()
-    await installFixturePlugin(layout, {
-      name: 'demo',
-      files: codexDemoPlugin('demo', {}, { api: { url: 'https://api.example.com/mcp' } }),
-    })
-    const servers = listRuntimeMcpServers({ conversationId: conversation.id })
-    const capabilities = resolveChatGptWebCapabilities(undefined, servers, 'standalone')
-    expect(capabilities.mcp[servers[0].id]).toBe('read')
-    const gateway = createChatGptWebMcpGateway({
-      servers,
-      scopes: capabilities.mcp,
-      connect: async (server: McpServer): Promise<McpConnection> => ({
-        listTools: async () => [{ name: 'lookup', annotations: { readOnlyHint: true } }],
-        callTool: async () => ({ content: [{ type: 'text', text: server.id }] }),
-        close: async () => {},
-      }),
-    })
-    const found = await gateway.searchTools({ limit: 20 })
-    expect(found.tools.map((tool) => [tool.serverId, tool.toolName, tool.access])).toEqual([
-      [servers[0].id, 'lookup', 'read'],
-    ])
   })
 })

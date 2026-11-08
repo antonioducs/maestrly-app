@@ -47,6 +47,8 @@ function setup(
     removeAccount: vi.fn(async () => undefined),
     checkRuntimes: vi.fn(),
     measureStorage: vi.fn((_folder: string | null) => ({ environment: null, bots: [] })),
+    prepareBackup: vi.fn(async () => ({ snapshot: 'a/.maestrly-backup-staging/db', database: 'a/db', bytes: 1 })),
+    releaseBackup: vi.fn(async () => undefined),
     settings: { accounts: vi.fn() },
   }
   const state = { busy }
@@ -76,6 +78,18 @@ describe('workspaces host environment', () => {
     expect(runtime.measureStorage).toHaveBeenLastCalledWith('/srv/maestrly/workspaces')
     environment.storage?.(false)
     expect(runtime.measureStorage).toHaveBeenLastCalledWith(null)
+  })
+
+  it("copies its database for a backup with the environment runtime's code", async () => {
+    const { environment, runtime } = setup()
+    await expect(environment.prepareBackup?.()).resolves.toEqual({
+      snapshot: 'a/.maestrly-backup-staging/db',
+      database: 'a/db',
+      bytes: 1,
+    })
+    await environment.releaseBackup?.()
+    expect(runtime.prepareBackup).toHaveBeenCalledTimes(1)
+    expect(runtime.releaseBackup).toHaveBeenCalledTimes(1)
   })
 
   it('tells the gateway it hosts workspaces and whether chats are running', () => {

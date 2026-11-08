@@ -31,27 +31,23 @@ describe('ChatMessageList renderPart exhaustiveness', () => {
   })
 })
 
-describe('interrupted review-round error rendering', () => {
+describe('message error rendering', () => {
   it('prefers public error codes over raw internal codes', () => {
     // Translate public codes before falling back to raw errors.
-    const interruptedBranch = messageListSource.indexOf("message.errorCode === 'review-loop-process-interrupted'")
+    const interruptedBranch = messageListSource.indexOf("message.errorCode === 'process-interrupted'")
     expect(interruptedBranch).toBeGreaterThanOrEqual(0)
     const rawFallback = messageListSource.indexOf(': message.error}')
     expect(rawFallback).toBeGreaterThan(interruptedBranch)
     // Localized text belongs in the same code branch before raw fallback.
-    const localized = messageListSource.indexOf("t('chatgptWeb.reviewLoopProcessInterruptedError')")
+    const localized = messageListSource.indexOf("t('messages.processInterruptedError')")
     expect(localized).toBeGreaterThan(interruptedBranch)
     expect(localized).toBeLessThan(rawFallback)
   })
 
-  it('classifies the round as interrupted, never failed, and uses translated status', () => {
-    // Public codes precede generic message-error gates.
-    const interruptedStatus = messageListSource.indexOf("message.errorCode === 'review-loop-process-interrupted'")
-    const errorStatus = messageListSource.indexOf('if (message.error) return')
-    expect(interruptedStatus).toBeGreaterThanOrEqual(0)
-    expect(interruptedStatus).toBeLessThan(errorStatus)
-    expect(messageListSource).toContain("'reviewLoopStatusInterrupted'")
-    expect(messageListSource).toContain("'interrupted'")
+  it('renders messages of a retired review loop as ordinary messages, without round chrome', () => {
+    expect(messageListSource).not.toContain('ReviewLoopRoundChrome')
+    expect(messageListSource).not.toContain('review-loop')
+    expect(messageListSource).not.toContain('chatgptWeb')
   })
 })
 

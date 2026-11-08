@@ -68,7 +68,6 @@ export default {
     review: 'Review',
     notes: 'Notes',
     files: 'Files',
-    chatgpt: 'ChatGPT',
 
     pin: 'Keep open when switching conversations',
     unpin: 'Unpin',
@@ -136,8 +135,6 @@ export default {
     remoteFailedTitle: 'Couldn’t start VS Code on the server',
     remoteFailedSub:
       'The server could not download or start the editor. Check its internet connection and open the Code tab again to retry.',
-    chatgptRestoringTitle: 'Restoring ChatGPT…',
-    chatgptRestoringSub: 'Reloading the last conversation. Your login and session stay intact.',
   },
   peer: {
     pairingNotice: {
@@ -162,6 +159,26 @@ export default {
       needsYou: 'Needs you',
       threadPaused: 'Paused a conversation with another bot',
     },
+    backup: {
+      failedTitle: 'Backup of {{environment}} failed',
+      unreachable: 'The server could not reach the backup storage.',
+      denied: 'The backup storage refused the credentials.',
+      'not-found': 'The backup bucket or folder is gone.',
+      'wrong-key': 'The recovery key no longer opens the backups.',
+      locked: 'Another operation was using the backups.',
+      'storage-full': 'The backup storage is full.',
+      'environment-unavailable': 'The environment was not ready.',
+      'update-environment': 'Update the environment to back it up while it runs.',
+      busy: 'The environment stayed busy updating.',
+      interrupted: 'The server restarted during the backup.',
+      timeout: 'The backup took too long.',
+      cancelled: 'The backup was cancelled.',
+      failed: 'Open Settings to see why.',
+    },
+  },
+  fleetBackup: {
+    keyFile:
+      'Maestrly recovery key\n\nServer: {{server}}\nBackups: {{destination}}\nRecovery key: {{key}}\n\nYou need this key to restore these backups on another server. Keep it somewhere safe: Maestrly cannot recover it for you.',
   },
   chatProviderError: {
     http: '{{provider}} returned HTTP {{status}}: {{detail}}',

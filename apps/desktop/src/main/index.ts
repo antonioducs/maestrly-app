@@ -1,4 +1,5 @@
 import { disposeMemoryExtraction } from './memory/extraction/scheduler'
+import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { validateStandaloneConversationDirectory } from './standalone-conversation-service'
@@ -190,13 +191,6 @@ import {
   type FloatTab,
 } from './store'
 import {
-  invalidateMcpConfiguration,
-  projectEnvironmentLockFor,
-  resolvePlanReview as resolveChatGptWebPlanReview,
-  restoreCompanionWindow as restoreChatGptWebCompanionWindow,
-  status as getChatGptWebStatus,
-} from './chat/chatgpt-web/manager'
-import {
   activeChatRunCount,
   disposeChat,
   getGlobalMaestroOrchestratorProfile,
@@ -209,7 +203,6 @@ import {
 } from './chat/service'
 import { setConversationMaestroConfig } from './chat/maestro-config'
 import { resolveMaestroStrategyProfile, setLastUsedMaestroStrategyProfile } from './chat/maestro-strategy-profiles'
-import { isChatGptWebEnabled } from './chat/catalog'
 import { registerUsageIpc } from './usage/usage-service'
 import type { IpcRegistrar } from './ipc-registrar'
 
@@ -225,7 +218,7 @@ import {
   sweepOrphanMcpOAuth,
 } from './chat/mcp-oauth'
 import { type McpOAuthStoreResult, registerMcpOAuthIpc } from './chat/mcp-oauth-ipc'
-import { onPluginMcpSurfaceChanged, reconcilePluginsOnStartup } from './plugins/service'
+import { reconcilePluginsOnStartup } from './plugins/service'
 
 import { registerPlanIpc } from './plan-ipc'
 import { getConversationDispatchService } from './conversation-dispatch-service'
@@ -552,73 +545,15 @@ async function stopAllLiveWork(): Promise<void> {
   ])
 }
 
-function hasActiveChatGptWebSession(convId: string): boolean {
-  return getChatGptWebStatus().sessions.some(
-    (session) => session.conversationId === convId && session.state !== 'ended'
-  )
-}
-
-function openChatGptWebFallback(convId: string): void {
-  focusMainWindow()
-  safeWindowSend(mainWindow, 'chat:chatgpt-web:open', convId)
-}
-
-/** A cold load can fail after the user moves the restoring view between popup and floating placements. */
-function cleanupFailedChatGptShortcutRestore(convId: string): void {
-  popupManager.closePopup(convId, 'chatgpt')
-  floatingManager.reattach(convId, 'chatgpt')
-}
-
 function openPopupGuarded(convId: string, tab: FloatTab): boolean {
   // A shortcut never opens a tool the conversation does not have.
   if (popupManager.isSuppressed() || !conversationTabAllowed(convId, tab)) return false
-  if (tab === 'chatgpt') {
-    if (!isChatGptWebEnabled()) return false
-    if (!hasActiveChatGptWebSession(convId)) {
-      openChatGptWebFallback(convId)
-      return true
-    }
-    if (ensureViewFor(convId, tab) === false) {
-      // `restoreCompanionWindow` materializes the WebContentsView synchronously before awaiting the remote
-      // load. Show it immediately so the shortcut displays the local restoring state.
-
-      const restoration = restoreChatGptWebCompanionWindow(convId)
-      if (ensureViewFor(convId, tab) === false) return false
-      popupManager.openPopup(convId, tab)
-      void restoration
-        .then((result) => {
-          if (!result.ok) cleanupFailedChatGptShortcutRestore(convId)
-        })
-        .catch(() => cleanupFailedChatGptShortcutRestore(convId))
-      return true
-    }
-  }
   popupManager.openPopup(convId, tab)
   return true
 }
 
 function openFloatingGuarded(convId: string, tab: FloatTab): boolean {
   if (popupManager.isSuppressed() || !conversationTabAllowed(convId, tab)) return false
-  if (tab === 'chatgpt') {
-    if (!isChatGptWebEnabled()) return false
-    if (!hasActiveChatGptWebSession(convId)) {
-      openChatGptWebFallback(convId)
-      return true
-    }
-    if (ensureViewFor(convId, tab) === false) {
-      // Same cold-restore path as popup mode, but the loading view is re-parented into the native floating
-      // window. A failed load tears down that container instead of leaving a blank strip behind.
-      const restoration = restoreChatGptWebCompanionWindow(convId)
-      if (ensureViewFor(convId, tab) === false) return false
-      floatingManager.detach(convId, tab)
-      void restoration
-        .then((result) => {
-          if (!result.ok) cleanupFailedChatGptShortcutRestore(convId)
-        })
-        .catch(() => cleanupFailedChatGptShortcutRestore(convId))
-      return true
-    }
-  }
   if (ensureViewFor(convId, tab) === false) return false
   if (tab === 'vscode') void loadVSCodeForConv(convId)
   floatingManager.detach(convId, tab)
@@ -1022,10 +957,8 @@ function registerIpc(): void {
   registerPtyIpc(reg)
   registerPlanIpc(reg, {
     sendToWindow,
-    resolveChatGptWebPlanReview,
     createMaestroSibling: (sourceConversationId, options) => createSiblingConversation(sourceConversationId, options),
     deleteConversation,
-    isConversationReserved: (conversationId) => !!projectEnvironmentLockFor(conversationId),
     applyMaestroStrategyProfile: async (conversationId, profileId) => {
       const profile = resolveMaestroStrategyProfile(profileId, getGlobalMaestroOrchestratorProfile())
       if (!profile) return { ok: false, error: 'maestro-strategy-profile-not-found' }
@@ -1130,21 +1063,8 @@ function registerIpc(): void {
       else if (status === 'waiting') registry.markWaiting(conversationId)
       else broadcastStatus({ agentId: conversationId, status })
     },
-
-    notifyChatGptWebTurnCompleted: (conversationId) => {
-      try {
-        registry.playReadySound(conversationId)
-      } catch {
-        /* A sound failure must not prevent the response or visual alert. */
-      }
-      sendToWindow('chat:chatgpt-web:turn-completed', { conversationId })
-    },
   })
   registerPluginIpc(reg)
-  // ChatGPT web sessions froze their MCP servers when they started: a plugin change ends them, as an MCP edit does.
-  onPluginMcpSurfaceChanged(() => {
-    void invalidateMcpConfiguration().catch(() => undefined)
-  })
   registerMcpOAuthIpc(reg, {
     // Sign-in for a remote host's server: this computer runs the browser part and the host keeps the result.
     remoteHostCalls: (sender, hostId) => {
@@ -1186,7 +1106,6 @@ function registerIpc(): void {
   registerDrawerIpc(reg, {
     loadVSCodeFolder,
     openPopup: openPopupGuarded,
-    restoreChatGptView: async (convId) => (await restoreChatGptWebCompanionWindow(convId)).ok,
     openConversation: (convId) => {
       const conversation = getConversation(convId)
       if (!conversation) return
@@ -1214,6 +1133,7 @@ function registerIpc(): void {
     client.onAlert = (botId, alert) => registry.playBotAlert(fleetKey(client.serverId, botId), alert)
     client.onLiveEvent = (entry) => appNotifications?.bots.live(client.serverId, entry)
     client.onSideConversation = (event) => appNotifications?.bots.sideConversation(client.serverId, event)
+    client.onBackupRun = (run) => appNotifications?.backups.run(client.serverId, run)
     // Runs and threads seen on another device while this computer was away or off no longer mark their bots.
     client.onResynced = () => {
       if (!client.hasFeature(FLEET_OWNER_SEEN_FEATURE)) return
@@ -1386,6 +1306,10 @@ app.whenReady().then(async () => {
 
   // Startup reads the local profile directly; it does not depend on an account or a hosted service.
   initStore()
+  // The retired ChatGPT Web companion kept the chatgpt.com sign-in in its own browser partition.
+  void fs
+    .rm(path.join(app.getPath('userData'), 'Partitions', 'chatgpt-web'), { recursive: true, force: true })
+    .catch(() => undefined)
   // Each conversation's temporary directory, and the removal of those whose conversation is gone. An E2E run keeps the
   // system temporary folder: its throwaway profile would leave a root behind on every run.
   if (!isE2E()) {

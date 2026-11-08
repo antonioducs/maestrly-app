@@ -2,6 +2,7 @@ import { artifactRoute } from './artifact-routes.js'
 import { isArtifactViewerRequest, viewerUnavailable } from './artifact-viewer-proxy.js'
 import { OwnerMemory, ownerMemoryRequestHash } from './owner-memory.js'
 import http, { type IncomingMessage, type ServerResponse } from 'node:http'
+import os from 'node:os'
 import { FleetNetwork } from './network.js'
 import {
   type FleetGatewayEvent,
@@ -32,6 +33,8 @@ import { publicRoute } from './routes/public.js'
 import { Peers } from './peers.js'
 import { PeerThreads } from './peer-threads.js'
 import { Routines } from './routines.js'
+import { BackupHelper } from './backups/helper.js'
+import { Backups } from './backups/service.js'
 import { ScreenProxy } from './screen.js'
 import { BridgeProxy, lifecycleBridgeDeps } from './bridge.js'
 import { HostFilesProxy, isHostFileRoute, lifecycleHostFilesDeps } from './host-files.js'
@@ -100,6 +103,17 @@ export function createGatewayServers(ctx: GatewayContext) {
   const peerThreads = ctx.peerThreads ?? new PeerThreads(ctx.store, ctx.lifecycle)
   const peers = ctx.peers ?? new Peers(ctx.store, ctx.lifecycle, Date.now, peerThreads)
   const routines = ctx.routines ?? new Routines(ctx.store, ctx.lifecycle)
+  const backups =
+    ctx.backups ??
+    new Backups({
+      store: ctx.store,
+      lifecycle: ctx.lifecycle,
+      helper: new BackupHelper(ctx.lifecycle.docker, ctx.config),
+      config: ctx.config,
+      emit: (event) => ctx.events.emit(event),
+      gatewayVersion: ctx.host.gatewayVersion,
+      serverName: () => ctx.config.displayName ?? os.hostname(),
+    })
   const screen = ctx.screen ?? new ScreenProxy(ctx.lifecycle)
   const network =
     ctx.network ?? new FleetNetwork(ctx.lifecycle.docker, ctx.config.network, () => ctx.lifecycle.isolatedNetworks())
@@ -184,6 +198,7 @@ export function createGatewayServers(ctx: GatewayContext) {
     ...ctx,
     push,
     dictation,
+    backups,
     ownerMemory,
     peers,
     peerThreads,
@@ -458,6 +473,7 @@ export function createGatewayServers(ctx: GatewayContext) {
     publicServer,
     internalServer,
     routines,
+    backups,
     peers,
     peerThreads,
     screen,
@@ -491,6 +507,7 @@ export function createGatewayServers(ctx: GatewayContext) {
       runners.close()
       await ctx.artifacts?.close()
       routines.stop()
+      backups.stop()
       peerThreads.stop()
       screen.close()
       bridge.close()

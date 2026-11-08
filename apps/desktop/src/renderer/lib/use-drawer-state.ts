@@ -15,7 +15,6 @@ import {
   DEFAULT_MAIN_ORDER,
   closeTabInList,
   mainTabsForContext,
-  mainTabsForFeatures,
   moveOpenTab,
   openTabInList,
   reorderVisibleTabs,
@@ -56,9 +55,6 @@ export function useDrawerState({ active, mainRef, setMountedConvs }: UseDrawerSt
       .catch(() => undefined)
     return window.api.onShortcutsChanged(apply)
   }, [shortcutOs])
-  const [chatGptWebEnabled, setChatGptWebEnabled] = useState(false)
-  const chatGptWebEnabledRef = useRef(false)
-  chatGptWebEnabledRef.current = chatGptWebEnabled
   // A remote host that streams its browser or serves its editor offers that tab for its conversations.
   const hosts = useHosts()
   const remoteTools = useMemo<RemoteToolHosts>(() => {
@@ -69,21 +65,6 @@ export function useDrawerState({ active, mainRef, setMountedConvs }: UseDrawerSt
   }, [hosts])
   const remoteToolsRef = useRef(remoteTools)
   remoteToolsRef.current = remoteTools
-  useEffect(() => {
-    let alive = true
-    const apply = (status: { enabled: boolean }) => {
-      if (alive) setChatGptWebEnabled(status.enabled)
-    }
-    void api
-      .chatGptWebStatus()
-      .then(apply)
-      .catch(() => setChatGptWebEnabled(false))
-    const off = api.onChatGptWebStatus(apply)
-    return () => {
-      alive = false
-      off()
-    }
-  }, [api])
 
   const [drawerOpenByConv, setDrawerOpenByConv] = useState<Record<string, boolean>>({})
   const drawerOpen = active ? (drawerOpenByConv[active.id] ?? false) : false
@@ -117,7 +98,7 @@ export function useDrawerState({ active, mainRef, setMountedConvs }: UseDrawerSt
   const openDrawerTab = useCallback(
     (id: string, t: DrawerTab) => {
       const conv = activeRef.current?.id === id ? activeRef.current : { id }
-      if (!tabAvailableInContext(t, conv, chatGptWebEnabledRef.current, remoteToolsRef.current)) return
+      if (!tabAvailableInContext(t, conv, remoteToolsRef.current)) return
       const list = openTabInList(openTabsRef.current[id] ?? [], t)
       if (list !== openTabsRef.current[id]) {
         openTabsRef.current = { ...openTabsRef.current, [id]: list }
@@ -181,7 +162,7 @@ export function useDrawerState({ active, mainRef, setMountedConvs }: UseDrawerSt
       let activeNext = drawerTabRef.current
       for (const { conv, openTabs, activeTab } of entries) {
         if (tabsNext[conv.id]) continue
-        const list = sanitizeOpenTabs(openTabs, conv, chatGptWebEnabledRef.current, remoteToolsRef.current)
+        const list = sanitizeOpenTabs(openTabs, conv, remoteToolsRef.current)
         if (list.length === 0) continue
         if (tabsNext === openTabsRef.current) tabsNext = { ...tabsNext }
         tabsNext[conv.id] = list
@@ -204,10 +185,10 @@ export function useDrawerState({ active, mainRef, setMountedConvs }: UseDrawerSt
 
   const [mainTabOrderByConv, setMainTabOrderByConv] = useState<Record<string, DrawerTab[]>>({})
   const mainTabOrder = active
-    ? mainTabsForContext(mainTabOrderByConv[active.id] ?? DEFAULT_MAIN_ORDER, active, chatGptWebEnabled, remoteTools)
-    : mainTabsForFeatures(DEFAULT_MAIN_ORDER, chatGptWebEnabled)
+    ? mainTabsForContext(mainTabOrderByConv[active.id] ?? DEFAULT_MAIN_ORDER, active, remoteTools)
+    : DEFAULT_MAIN_ORDER
   const openTabs: DrawerTab[] = active
-    ? (openTabsByConv[active.id] ?? []).filter((t) => tabAvailableInContext(t, active, chatGptWebEnabled, remoteTools))
+    ? (openTabsByConv[active.id] ?? []).filter((t) => tabAvailableInContext(t, active, remoteTools))
     : []
   const requestedDrawerTab = active ? drawerTabByConv[active.id] : undefined
   const drawerTab: DrawerTab | null =
@@ -219,7 +200,7 @@ export function useDrawerState({ active, mainRef, setMountedConvs }: UseDrawerSt
     const id = activeRef.current?.id
     if (!id) return
     const full = mainTabOrderRef.current[id] ?? DEFAULT_MAIN_ORDER
-    const visible = mainTabsForContext(full, activeRef.current, chatGptWebEnabledRef.current, remoteToolsRef.current)
+    const visible = mainTabsForContext(full, activeRef.current, remoteToolsRef.current)
     const next = reorderVisibleTabs(full, visible, from, to)
     if (next === full) return
     const target = hostTarget(id)
@@ -278,13 +259,6 @@ export function useDrawerState({ active, mainRef, setMountedConvs }: UseDrawerSt
     return api.onDrawerBrowserFocus(({ convId }) => {
       setDrawerOpenByConv((prev) => (prev[convId] ? prev : { ...prev, [convId]: true }))
       openDrawerTab(convId, 'browser')
-    })
-  }, [openDrawerTab, api])
-
-  useEffect(() => {
-    return api.onChatGptWebOpen((convId) => {
-      setDrawerOpenByConv((prev) => (prev[convId] ? prev : { ...prev, [convId]: true }))
-      openDrawerTab(convId, 'chatgpt')
     })
   }, [openDrawerTab, api])
 
@@ -366,7 +340,6 @@ export function useDrawerState({ active, mainRef, setMountedConvs }: UseDrawerSt
     toggleDrawerFull,
     fullActive,
     dragging,
-    chatGptWebEnabled,
     drawerShortcutLabel,
   }
 }

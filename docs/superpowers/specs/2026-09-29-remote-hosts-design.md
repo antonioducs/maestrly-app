@@ -164,8 +164,7 @@ Electron's `ipcRenderer`.
   environment id, gateway URL). `isServerMode()` and `isHeadlessInstance()` (bot or server mode) drive the shared
   headless behavior: hidden window, no app menu, hide on close, no updater, no automatic fleet client or installer.
 - The hidden window loads the renderer with `platformInfo.serverMode`, which renders a small **server status page**
-  instead of the desktop app. It stays the parent of native views (the agent's browser tabs, companion views) on the
-  container display.
+  instead of the desktop app. It stays the parent of native views (the agent's browser tabs) on the container display.
 - **UI targets** (`window-ipc.ts`): a registry of remote UI targets next to the main window and panel targets. A remote
   `main` origin receives what the main window receives; a remote `panel` origin receives what a panel with its
   conversation and panel kind receives. `isTrustedSender` accepts registered remote targets. Remote targets are never
@@ -276,8 +275,7 @@ Electron's `ipcRenderer`.
    `Input.dispatch*`/`insertText`, and uses the native browser chrome fed by the host's browser state. VS Code: gateway
    and control-server passthrough to the host's `serve-web`, plus a loopback proxy on this computer per host so the
    editor view loads `http://127.0.0.1:<port>/` at its own origin. The host forwards `shell.openExternal` to connected
-   computers, and subscription sign-ins from host settings use the existing callback relay. ChatGPT Web companion views
-   stream the same way.
+   computers, and subscription sign-ins from host settings use the existing callback relay.
 3. **Files**: a Files drawer tab and host file browser (list, preview of the first lines, rename, delete, disk usage,
    upload by drag from Finder using `webUtils.getPathForFile`), and a transfer queue on this computer (ranges of 64 MiB,
    4–8 in parallel, zstd when the file compresses, `.part` files and a SQLite queue that resume after sleep or restart,

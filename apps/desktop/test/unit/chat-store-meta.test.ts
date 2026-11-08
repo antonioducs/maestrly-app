@@ -5,12 +5,15 @@ import {
   chatHistoryStats,
   getExecutionAssistantMessage,
   lastConversationContextMessage,
+  latestVisibleConversationSeq,
   listChatMessages,
   listChatMessagesPage,
   listConversationContextMessages,
   listExecutionContextMessages,
   listInterruptedExecutionAssistantMessages,
   listPublicChatMessagesPage,
+  listVisibleConversationMessagePage,
+  listVisibleConversationMessages,
   runnerContextHistory,
   toPublicChatHistoryStats,
   toPublicChatMessage,
@@ -239,7 +242,7 @@ describe('chat-store public message projection', () => {
       error: 'boom',
       responseDurationMs: 123,
       internal: true,
-      source: 'chatgpt-web',
+      source: 'maestrly-review',
       responseStartedAt: 99,
     })
     const pub = toPublicChatMessage(stored)
@@ -249,7 +252,7 @@ describe('chat-store public message projection', () => {
       role: 'assistant',
       parts: stored.parts,
       model: { providerId: 'deepseek', modelId: 'deepseek-v4-pro' },
-      source: 'chatgpt-web',
+      source: 'maestrly-review',
       createdAt: 1000,
       finishReason: 'stop',
       usage: { usageVersion: 2, input: 10, output: 20 },
@@ -405,7 +408,7 @@ describe('chat-store public and internal compile-time contracts', () => {
   })
 })
 
-describe('chat-store: source + executionScope/reviewLoop (review-loop)', () => {
+describe('chat-store: source + executionScope/reviewLoop', () => {
   const executionScope = {
     kind: 'review-loop' as const,
     executionId: 'exec-1',
@@ -414,7 +417,7 @@ describe('chat-store: source + executionScope/reviewLoop (review-loop)', () => {
     maxIterations: 5,
   }
 
-  it('source chatgpt-web-review-loop + executionScope sobrevivem round-trip SQLite', () => {
+  it('executionScope survives a SQLite round-trip and derives the review-loop meta', () => {
     const conv = chatConv()
     upsertChatMessage({
       id: 'r1',
@@ -422,12 +425,11 @@ describe('chat-store: source + executionScope/reviewLoop (review-loop)', () => {
       role: 'assistant',
       parts: [{ type: 'text', id: 't', text: 'fix' }],
       model: { providerId: 'p', modelId: 'm' },
-      source: 'chatgpt-web-review-loop',
       executionScope,
       createdAt: 1000,
     })
     const [loaded] = listChatMessages(conv.id)
-    expect(loaded.source).toBe('chatgpt-web-review-loop')
+    expect(loaded.source).toBeUndefined()
     expect(loaded.executionScope).toEqual(executionScope)
     expect(loaded.reviewLoop).toEqual({
       loopId: 'rl_1',
@@ -437,6 +439,48 @@ describe('chat-store: source + executionScope/reviewLoop (review-loop)', () => {
     })
   })
 
+  it.each(['maestrly-review', 'conversation-dispatch', 'conversation-message'] as const)(
+    'source %s survives a SQLite round-trip',
+    (source) => {
+      const conv = chatConv()
+      upsertChatMessage({
+        id: 'src-1',
+        conversationId: conv.id,
+        role: 'assistant',
+        parts: [{ type: 'text', id: 't', text: 'report' }],
+        source,
+        createdAt: 1000,
+      })
+      const [loaded] = listChatMessages(conv.id)
+      expect(loaded.source).toBe(source)
+      expect(toPublicChatMessage(loaded).source).toBe(source)
+    }
+  )
+
+  it.each(['chatgpt-web', 'chatgpt-web-review-loop', 'something-unknown'])(
+    'a legacy row stored with source %s reads back without a source',
+    (legacySource) => {
+      const conv = chatConv()
+      insertRaw(conv.id, 'legacy-src', JSON.stringify({ source: legacySource }))
+      const [loaded] = listChatMessages(conv.id)
+      expect(loaded.id).toBe('legacy-src')
+      expect(loaded.source).toBeUndefined()
+      expect(toPublicChatMessage(loaded).source).toBeUndefined()
+    }
+  )
+
+  it('a legacy review-loop row keeps its execution scope but loses the retired source', () => {
+    const conv = chatConv()
+    insertRaw(conv.id, 'legacy-loop', JSON.stringify({ source: 'chatgpt-web-review-loop', executionScope }))
+    const [loaded] = listChatMessages(conv.id)
+    expect(loaded.source).toBeUndefined()
+    expect(loaded.executionScope).toEqual(executionScope)
+    expect(loaded.reviewLoop).toEqual({ loopId: 'rl_1', executionId: 'exec-1', iteration: 2, maxIterations: 5 })
+    // Still isolated from the main context.
+    expect(listConversationContextMessages(conv.id)).toEqual([])
+    expect(listExecutionContextMessages(conv.id, 'exec-1').map((m) => m.id)).toEqual(['legacy-loop'])
+  })
+
   it('derives execution scope from legacy review metadata', () => {
     const conv = chatConv()
     upsertChatMessage({
@@ -444,7 +488,6 @@ describe('chat-store: source + executionScope/reviewLoop (review-loop)', () => {
       conversationId: conv.id,
       role: 'assistant',
       parts: [{ type: 'text', id: 't', text: 'fix' }],
-      source: 'chatgpt-web-review-loop',
       reviewLoop: {
         loopId: 'rl_9',
         executionId: 'exec-9',
@@ -471,7 +514,6 @@ describe('chat-store: source + executionScope/reviewLoop (review-loop)', () => {
 
   it('preserves public review provenance without fingerprints', () => {
     const stored = storedWithFingerprint({
-      source: 'chatgpt-web-review-loop',
       executionScope,
       reviewLoop: {
         loopId: 'rl_1',
@@ -482,7 +524,7 @@ describe('chat-store: source + executionScope/reviewLoop (review-loop)', () => {
     })
     const pub = toPublicChatMessage(stored)
     expect(pub).not.toHaveProperty('providerFingerprint')
-    expect(pub.source).toBe('chatgpt-web-review-loop')
+    expect(pub.source).toBeUndefined()
     expect(pub.executionScope).toEqual(executionScope)
     expect(pub.reviewLoop).toEqual({
       loopId: 'rl_1',
@@ -498,12 +540,11 @@ describe('chat-store: source + executionScope/reviewLoop (review-loop)', () => {
       conv.id,
       'bad-scope',
       JSON.stringify({
-        source: 'chatgpt-web-review-loop',
         executionScope: { kind: 'review-loop', executionId: '', loopId: 'rl', iteration: 0, maxIterations: 5 },
       })
     )
     const [loaded] = listChatMessages(conv.id)
-    expect(loaded.source).toBe('chatgpt-web-review-loop')
+    expect(loaded.source).toBeUndefined()
     expect(loaded.executionScope).toBeUndefined()
     expect(loaded.reviewLoop).toBeUndefined()
   })
@@ -559,13 +600,96 @@ describe('chat-store executionScope predicates with invalid JSON', () => {
       role: 'user',
       parts: [{ type: 'text', id: 't', text: 'findings' }],
       internal: true,
-      source: 'chatgpt-web-review-loop',
       executionScope: { kind: 'review-loop', executionId: 'exec-a', loopId: 'rl', iteration: 1, maxIterations: 5 },
       createdAt: 1,
     })
     expect(listConversationContextMessages(conv.id).map((m) => m.id)).toEqual(['corrupt-mid'])
     expect(listExecutionContextMessages(conv.id, 'exec-a').map((m) => m.id)).toEqual(['round-user'])
     expect(listChatMessages(conv.id).map((m) => m.id)).toEqual(['corrupt-mid', 'round-user'])
+  })
+})
+
+describe('chat-store visible conversation rows', () => {
+  function seedVisibleAndHidden(conversationId: string): void {
+    const text = (id: string) => [{ type: 'text' as const, id: `t-${id}`, text: id }]
+    upsertChatMessage({ id: 'u1', conversationId, role: 'user', parts: text('u1'), createdAt: 1 })
+    upsertChatMessage({
+      id: 'hidden-internal',
+      conversationId,
+      role: 'user',
+      parts: text('hidden-internal'),
+      internal: true,
+      createdAt: 2,
+    })
+    upsertChatMessage({
+      id: 'hidden-round',
+      conversationId,
+      role: 'assistant',
+      parts: text('hidden-round'),
+      executionScope: { kind: 'review-loop', executionId: 'exec-1', loopId: 'rl_1', iteration: 1, maxIterations: 3 },
+      createdAt: 3,
+    })
+    upsertChatMessage({
+      id: 'hidden-summary',
+      conversationId,
+      role: 'assistant',
+      parts: text('hidden-summary'),
+      executionScope: { kind: 'review-summary', loopId: 'rl_1' },
+      createdAt: 4,
+    })
+    upsertChatMessage({
+      id: 'a1',
+      conversationId,
+      role: 'assistant',
+      parts: text('a1'),
+      model: { providerId: 'p', modelId: 'm' },
+      executionScope: { kind: 'conversation' },
+      createdAt: 5,
+    })
+  }
+
+  it('lists only the visible conversation in order, with its per-conversation seq', () => {
+    const conv = chatConv()
+    seedVisibleAndHidden(conv.id)
+
+    const rows = listVisibleConversationMessages(conv.id)
+    expect(rows.map((row) => row.message.id)).toEqual(['u1', 'a1'])
+    expect(rows[0]!.seq).toBeLessThan(rows[1]!.seq)
+    expect(latestVisibleConversationSeq(conv.id)).toBe(rows[1]!.seq)
+    expect(latestVisibleConversationSeq(chatConv().id)).toBe(-1)
+  })
+
+  it('fails closed on malformed metadata but keeps legacy rows without metadata', () => {
+    const conv = chatConv()
+    seedVisibleAndHidden(conv.id)
+    insertRaw(conv.id, 'legacy-empty', '')
+    insertRaw(conv.id, 'corrupt', '{corrompido')
+
+    const ids = listVisibleConversationMessages(conv.id).map((row) => row.message.id)
+    expect(ids).toContain('legacy-empty')
+    expect(ids).toContain('u1')
+    expect(ids).toContain('a1')
+    expect(ids).not.toContain('corrupt')
+    expect(ids).not.toContain('hidden-internal')
+    expect(ids).not.toContain('hidden-round')
+    expect(ids).not.toContain('hidden-summary')
+  })
+
+  it('pages the visible rows between two seq bounds', () => {
+    const conv = chatConv()
+    seedVisibleAndHidden(conv.id)
+    const all = listVisibleConversationMessages(conv.id)
+    const through = latestVisibleConversationSeq(conv.id)
+
+    expect(listVisibleConversationMessagePage(conv.id, -1, through, 10).map((row) => row.message.id)).toEqual([
+      'u1',
+      'a1',
+    ])
+    expect(listVisibleConversationMessagePage(conv.id, -1, through, 1).map((row) => row.message.id)).toEqual(['u1'])
+    expect(listVisibleConversationMessagePage(conv.id, all[0]!.seq, through, 10).map((row) => row.message.id)).toEqual([
+      'a1',
+    ])
+    expect(listVisibleConversationMessagePage(conv.id, through, through, 10)).toEqual([])
   })
 })
 
@@ -588,7 +712,6 @@ describe('chat-store: final review-loop summary stays outside the main context',
       parts: [{ type: 'text', id: 'review-loop-summary:rl_1:text', text: '## Review encerrado' }],
       model: { providerId: 'q', modelId: 'sum' },
       usage: { input: 1_234, output: 56, contextInput: 100 },
-      source: 'chatgpt-web-review-loop',
       executionScope: { kind: 'review-summary', loopId: 'rl_1' },
       createdAt: 2,
     })
@@ -612,9 +735,9 @@ describe('chat-store: final review-loop summary stays outside the main context',
     expect(stats.lastModel).toEqual({ providerId: 'p', modelId: 'm' })
     expect(stats.lastUsage).toMatchObject({ input: 40_000, contextInput: 40_000 })
     expect(stats.perModel.find((p) => p.modelId === 'sum')).toMatchObject({ input: 1_234 })
-    // Public projection preserves source and scope without internal identity.
+    // Public projection preserves the scope without internal identity.
     const pub = toPublicChatMessage(loaded[1]!)
-    expect(pub.source).toBe('chatgpt-web-review-loop')
+    expect(pub.source).toBeUndefined()
     expect(pub.executionScope).toEqual({ kind: 'review-summary', loopId: 'rl_1' })
     expect(pub.reviewLoop).toBeUndefined()
     expect('providerFingerprint' in pub).toBe(false)

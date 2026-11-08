@@ -6,7 +6,6 @@ const h = vi.hoisted(() => ({
   sendToConversation: vi.fn(),
   getLocale: vi.fn(() => 'en'),
   getConversation: vi.fn(),
-  resolvePlanReview: vi.fn(),
   runApprovedPlan: vi.fn(),
   runPlanRevision: vi.fn(),
   setChatMode: vi.fn(),
@@ -52,39 +51,27 @@ describe('plan IPC with a real broker', () => {
     h.getConversation.mockReturnValue({ cli: 'chat' })
     h.stopChatAndWait.mockResolvedValue(true)
     h.botSharesConversation.mockReturnValue(false)
-    h.resolvePlanReview.mockReturnValue({ ok: false, error: 'plan-review-unavailable' })
   })
 
   afterEach(() => {
-    clearPlan('conv-web-real')
+    clearPlan('conv-chat-real')
     clearPlan('conv-maestro-real')
     clearPlan('conv-standard-real')
   })
 
-  it('keeps the Web plan visible after external resolution fails and clears it only after an accepted retry', async () => {
-    stagePlan({
-      agentId: 'conv-web-real',
-      cwd: '/tmp/project',
-      plan: '# Web plan',
-      origin: { kind: 'chatgpt-web', reviewId: 'pr_real' },
-    })
+  it('clears the plan once a revision is accepted and resubmits it as the next version', async () => {
+    stagePlan({ agentId: 'conv-chat-real', cwd: '/tmp/project', plan: '# Plan' })
     const { reg, mhandles } = createTestRegistrar()
-    registerPlanIpc(reg, {
-      sendToWindow: vi.fn(),
-      resolveChatGptWebPlanReview: h.resolvePlanReview,
-    })
+    registerPlanIpc(reg, { sendToWindow: vi.fn() })
 
     const decide = mhandles.get('plan:decide')!
-    expect(await decide({} as never, 'conv-web-real', { action: 'revise', feedback: 'retry' })).toEqual({
-      ok: false,
-      error: 'plan-review-unavailable',
-    })
-    expect(getPending('conv-web-real')).toMatchObject({ plan: '# Web plan', version: 1 })
-    expect(h.sendToConversation.mock.calls.some(([, channel]) => channel === 'plan:cleared')).toBe(false)
+    expect(await decide({} as never, 'conv-chat-real', { action: 'revise', feedback: 'retry' })).toBeUndefined()
+    expect(getPending('conv-chat-real')).toBeNull()
+    expect(h.sendToConversation.mock.calls.some(([, channel]) => channel === 'plan:cleared')).toBe(true)
+    expect(h.runPlanRevision).toHaveBeenCalledExactlyOnceWith('conv-chat-real', expect.stringContaining('retry'), 1)
 
-    h.resolvePlanReview.mockReturnValue({ ok: true })
-    expect(await decide({} as never, 'conv-web-real', { action: 'revise', feedback: 'retry' })).toEqual({ ok: true })
-    expect(getPending('conv-web-real')).toBeNull()
+    stagePlan({ agentId: 'conv-chat-real', cwd: '/tmp/project', plan: '# Plan v2' })
+    expect(getPending('conv-chat-real')).toMatchObject({ plan: '# Plan v2', version: 2, previousPlan: '# Plan' })
   })
 
   it('keeps the local plan visible when the Maestro conversation cannot be created', async () => {

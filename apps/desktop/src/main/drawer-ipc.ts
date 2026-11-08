@@ -22,8 +22,6 @@ import {
   ensureBrowser,
   ensurePanelTab,
   getBrowserState,
-  isTabVisibleInSlot,
-  applyLayout,
   captureSlotView,
   navigateBrowser,
   outOfSlotTabsOf,
@@ -68,20 +66,9 @@ const EMPTY_OMNIBOX_RESULT: OmniboxQueryResult = { history: [], tabs: [], search
 export interface DrawerIpcDeps {
   loadVSCodeFolder: (convId: string, folder: string) => Promise<void>
   openPopup: (convId: string, tab: FloatTab) => void
-  /** Recreates a cold-evicted ChatGPT view only when the conversation still owns an active session. */
-  restoreChatGptView?: (convId: string) => Promise<boolean>
   openConversation?: (convId: string) => void
   /** Restarts a remote host's editor and reloads this computer's views of it (drawer/remote-vscode). */
   restartRemoteVSCode?: (convId: string) => Promise<void>
-}
-
-/** Canonical source for deciding whether a Companion completion is visible to the user. */
-export function isChatGptVisible(convId: string): boolean {
-  return (
-    isTabVisibleInSlot(convId, 'chatgpt') ||
-    popupManager.isChatGptVisible(convId) ||
-    floatingManager.isChatGptVisible(convId)
-  )
 }
 
 export function registerDrawerIpc(reg: IpcRegistrar, deps: DrawerIpcDeps): void {
@@ -95,22 +82,6 @@ export function registerDrawerIpc(reg: IpcRegistrar, deps: DrawerIpcDeps): void 
       payload = { ...payload, visibleKind: null }
     }
     setLayout(payload)
-    if (!payload.convId || payload.visibleKind !== 'chatgpt' || !deps.restoreChatGptView) return
-    // Memory reclaim keeps the MCP session but closes the remote renderer. Once the current slot asks
-    // for ChatGPT again, restore it and lay out against CURRENT global state. Reusing `payload` here
-    // would race a slow chatgpt.com load with a later tab/conversation switch.
-    const restoration = deps.restoreChatGptView(payload.convId)
-    // Production restoration materializes the local loading view synchronously. Re-layout now so it is
-    // painted and unthrottled while chatgpt.com hydrates; the completion layout still guards later state
-    // changes (another selected tab/conversation) and handles asynchronous test/alternate implementations.
-    applyLayout()
-    void restoration
-      .then((restored) => {
-        if (restored) applyLayout()
-      })
-      .catch(() => {
-        /* a failed remote load remains retryable on the next visibility signal */
-      })
   })
   // Frozen frame of the docked native view, shown by the renderer under DOM overlays (tool palette).
   reg.handle('drawer:capture-slot', (_e, convId: string) => captureSlotView(convId))
@@ -255,7 +226,6 @@ export function registerDrawerIpc(reg: IpcRegistrar, deps: DrawerIpcDeps): void 
     floating: floatingManager.listFloating(convId),
     visible: floatingManager.visibleFloatingTabsOf(convId),
   }))
-  reg.handle('drawer:chatgpt-visible', (_e, convId: string) => isChatGptVisible(convId))
   // The tabs a conversation has out of the drawer slot; drawer:placement follows each change.
   reg.handle('drawer:placement-get', (_e, convId: string) => ({ convId, outOfSlot: outOfSlotTabsOf(convId) }))
   // App reports the visible conversation (null for project notes/settings), controlling floating windows and

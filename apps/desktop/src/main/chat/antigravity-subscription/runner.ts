@@ -335,9 +335,9 @@ export async function runAntigravitySubscriptionChat(
           signal,
         }),
       submitPlan: (plan, title) => {
-        const result = stagePlan({ agentId: args.conversationId, cwd: args.cwd, plan, title })
-        planSubmitted = result.ok
-        return result.ok
+        stagePlan({ agentId: args.conversationId, cwd: args.cwd, plan, title })
+        planSubmitted = true
+        return true
       },
       emitGeneratedImage: (image: GeneratedImageEmission) => emitGeneratedImage(toolCallId, image),
       onGeneratedImageUsage,

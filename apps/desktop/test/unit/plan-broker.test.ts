@@ -16,13 +16,13 @@ vi.mock('../../src/main/store', () => ({
 
 import {
   clearPlan,
+  commitPlanDecision,
   decidePlan,
   getPending,
   releasePlanRevision,
   stagePlan,
   stripProposedPlanTag,
 } from '../../src/main/plan-broker'
-import { createChatGptWebSession } from '../../src/main/chat/chatgpt-web/session'
 
 describe('plan-broker', () => {
   beforeEach(() => {
@@ -104,12 +104,11 @@ describe('plan-broker', () => {
     expect(decidePlan('missing', { action: 'approve' })).toBeNull()
   })
 
-  it('freezes Web origin and combines general feedback, line comments, and manual edits', () => {
+  it('combines general feedback, line comments, and manual edits into the revision feedback', () => {
     stagePlan({
       agentId: 'conv-chat',
       cwd: '/tmp/project',
       plan: '## Original\n- step one\n- step two',
-      origin: { kind: 'chatgpt-web', reviewId: 'pr_web_v1' },
     })
 
     const result = decidePlan('conv-chat', {
@@ -119,10 +118,8 @@ describe('plan-broker', () => {
       editedPlan: '## Edited\n- revised step',
     })
 
-    expect(result).toMatchObject({
-      action: 'revise',
-      route: { kind: 'chatgpt-web', reviewId: 'pr_web_v1' },
-    })
+    expect(result).toMatchObject({ action: 'revise', revisionVersion: 1 })
+    expect(result).not.toHaveProperty('route')
     expect(result?.feedbackText).toContain('Include validation')
     expect(result?.feedbackText).toContain('step one')
     expect(result?.feedbackText).toContain('Expand this step')
@@ -130,19 +127,9 @@ describe('plan-broker', () => {
   })
 
   it('revise preserves previousPlan/version; approve and discard restart the cycle', () => {
-    stagePlan({
-      agentId: 'conv-chat',
-      cwd: '/tmp/project',
-      plan: '# v1',
-      origin: { kind: 'chatgpt-web', reviewId: 'pr_v1' },
-    })
+    stagePlan({ agentId: 'conv-chat', cwd: '/tmp/project', plan: '# v1' })
     decidePlan('conv-chat', { action: 'revise', feedback: 'redo' })
-    stagePlan({
-      agentId: 'conv-chat',
-      cwd: '/tmp/project',
-      plan: '# v2',
-      origin: { kind: 'chatgpt-web', reviewId: 'pr_v2' },
-    })
+    stagePlan({ agentId: 'conv-chat', cwd: '/tmp/project', plan: '# v2' })
     expect(getPending('conv-chat')).toMatchObject({ version: 2, previousPlan: '# v1' })
 
     decidePlan('conv-chat', { action: 'approve' })
@@ -153,228 +140,101 @@ describe('plan-broker', () => {
     expect(getPending('conv-chat')).toMatchObject({ version: 1, previousPlan: null })
   })
 
-  it('rejects Maestrly over pending Web while allowing same-origin supersession', () => {
-    const firstLifecycle = vi.fn()
-    stagePlan({
-      agentId: 'conv-chat',
-      cwd: '/tmp/project',
-      plan: '# web',
-      origin: { kind: 'chatgpt-web', reviewId: 'pr_old' },
-      onLifecycle: firstLifecycle,
-    })
-    expect(stagePlan({ agentId: 'conv-chat', cwd: '/tmp/project', plan: '# maestrly' })).toEqual({
-      ok: false,
-      error: 'plan-origin-conflict',
-    })
-    expect(firstLifecycle).not.toHaveBeenCalled()
-    expect(getPending('conv-chat')).toMatchObject({ plan: '# web', version: 1, previousPlan: null })
+  it('a resubmission before the decision supersedes the pending plan and versions the diff', () => {
+    stagePlan({ agentId: 'conv-chat', cwd: '/tmp/project', plan: '# first' })
+    stagePlan({ agentId: 'conv-chat', cwd: '/tmp/project', plan: '# second' })
 
-    expect(
-      stagePlan({
-        agentId: 'conv-chat',
-        cwd: '/tmp/project',
-        plan: '# new web',
-        origin: { kind: 'chatgpt-web', reviewId: 'pr_new' },
-        onLifecycle: firstLifecycle,
-      })
-    ).toEqual({ ok: true })
-    expect(firstLifecycle).toHaveBeenCalledExactlyOnceWith('superseded')
-    expect(getPending('conv-chat')).toMatchObject({ plan: '# new web', version: 2, previousPlan: '# web' })
+    expect(getPending('conv-chat')).toMatchObject({ plan: '# second', version: 2, previousPlan: '# first' })
+    const received = h.sendToConversation.mock.calls.filter(([, channel]) => channel === 'plan:received')
+    expect(received).toHaveLength(2)
+    expect(received[1][2]).toMatchObject({ version: 2, previousPlan: '# first' })
+    // Only the latest version is decidable, and the decision consumes it.
+    expect(decidePlan('conv-chat', { action: 'approve' })).toMatchObject({ approvedPlan: '# second', version: 2 })
+    expect(getPending('conv-chat')).toBeNull()
   })
 
-  it('rejects Web over pending Maestrly without destroying it', () => {
-    const webLifecycle = vi.fn()
-    stagePlan({ agentId: 'conv-chat', cwd: '/tmp/project', plan: '# maestrly' })
-    expect(
-      stagePlan({
-        agentId: 'conv-chat',
-        cwd: '/tmp/project',
-        plan: '# web',
-        origin: { kind: 'chatgpt-web', reviewId: 'pr_web' },
-        onLifecycle: webLifecycle,
-      })
-    ).toEqual({ ok: false, error: 'plan-origin-conflict' })
-    expect(webLifecycle).not.toHaveBeenCalled()
-    expect(getPending('conv-chat')).toMatchObject({ plan: '# maestrly', version: 1, previousPlan: null })
-  })
-
-  it('preserves the Web reservation between revision and v2, then consumes it when Web v2 arrives', () => {
-    stagePlan({
-      agentId: 'conv-chat',
-      cwd: '/tmp/project',
-      plan: '# web v1',
-      origin: { kind: 'chatgpt-web', reviewId: 'pr_web_v1' },
-    })
-    decidePlan('conv-chat', { action: 'revise', feedback: 'redo' })
-
-    expect(stagePlan({ agentId: 'conv-chat', cwd: '/tmp/project', plan: '# maestrly' })).toEqual({
-      ok: false,
-      error: 'plan-origin-conflict',
-    })
-    expect(
-      stagePlan({
-        agentId: 'conv-chat',
-        cwd: '/tmp/project',
-        plan: '# web v2',
-        origin: { kind: 'chatgpt-web', reviewId: 'pr_web_v2' },
-      })
-    ).toEqual({ ok: true })
-    expect(getPending('conv-chat')).toMatchObject({ version: 2, previousPlan: '# web v1' })
-  })
-
-  it('preserves the Maestrly reservation between revision and v2, then consumes it when Maestrly v2 arrives', () => {
-    stagePlan({ agentId: 'conv-chat', cwd: '/tmp/project', plan: '# maestrly v1' })
+  it('keeps the revision reservation between revise and v2, then consumes it when v2 arrives', () => {
+    stagePlan({ agentId: 'conv-chat', cwd: '/tmp/project', plan: '# v1' })
     const decision = decidePlan('conv-chat', { action: 'revise', feedback: 'redo' })
     expect(decision).toMatchObject({ action: 'revise', revisionVersion: 1 })
+    expect(getPending('conv-chat')).toBeNull()
 
-    expect(
-      stagePlan({
-        agentId: 'conv-chat',
-        cwd: '/tmp/project',
-        plan: '# web',
-        origin: { kind: 'chatgpt-web', reviewId: 'pr_web_during_revision' },
-      })
-    ).toEqual({ ok: false, error: 'plan-origin-conflict' })
-    expect(stagePlan({ agentId: 'conv-chat', cwd: '/tmp/project', plan: '# maestrly v2' })).toEqual({ ok: true })
-    expect(getPending('conv-chat')).toMatchObject({ version: 2, previousPlan: '# maestrly v1' })
+    stagePlan({ agentId: 'conv-chat', cwd: '/tmp/project', plan: '# v2' })
+    expect(getPending('conv-chat')).toMatchObject({ version: 2, previousPlan: '# v1' })
+    // v2 consumed the reservation: there is nothing left to release.
+    expect(releasePlanRevision('conv-chat', 1)).toBe(false)
+    expect(releasePlanRevision('conv-chat')).toBe(false)
+    expect(getPending('conv-chat')).toMatchObject({ version: 2 })
   })
 
-  it('releases the versioned reservation on failure without clearing a later revision reservation', () => {
+  it('releases a failed revision so the next plan starts a fresh cycle', () => {
     stagePlan({ agentId: 'conv-chat', cwd: '/tmp/project', plan: '# v1' })
     const first = decidePlan('conv-chat', { action: 'revise' })
-    expect(releasePlanRevision('conv-chat', 'maestrly-chat', first?.revisionVersion)).toBe(true)
-    stagePlan({
-      agentId: 'conv-chat',
-      cwd: '/tmp/project',
-      plan: '# web v1',
-      origin: { kind: 'chatgpt-web', reviewId: 'pr_web_v1' },
-    })
-    decidePlan('conv-chat', { action: 'revise' })
-    stagePlan({
-      agentId: 'conv-chat',
-      cwd: '/tmp/project',
-      plan: '# web v2',
-      origin: { kind: 'chatgpt-web', reviewId: 'pr_web_v2' },
-    })
-    decidePlan('conv-chat', { action: 'revise' })
-    expect(releasePlanRevision('conv-chat', 'chatgpt-web', 1)).toBe(false)
-    expect(stagePlan({ agentId: 'conv-chat', cwd: '/tmp/project', plan: '# maestrly' })).toEqual({
-      ok: false,
-      error: 'plan-origin-conflict',
-    })
-    expect(releasePlanRevision('conv-chat', 'chatgpt-web', 2)).toBe(true)
-    expect(stagePlan({ agentId: 'conv-chat', cwd: '/tmp/project', plan: '# maestrly' })).toEqual({ ok: true })
+
+    expect(releasePlanRevision('conv-chat', first?.revisionVersion)).toBe(true)
+    // Already released: a second release is a no-op.
+    expect(releasePlanRevision('conv-chat', first?.revisionVersion)).toBe(false)
+    stagePlan({ agentId: 'conv-chat', cwd: '/tmp/project', plan: '# unrelated' })
+    expect(getPending('conv-chat')).toMatchObject({ plan: '# unrelated', version: 1, previousPlan: null })
   })
 
-  it('origin-scoped release preserves the opposite reservation', () => {
-    stagePlan({
-      agentId: 'conv-chat',
-      cwd: '/tmp/project',
-      plan: '# web v1',
-      origin: { kind: 'chatgpt-web', reviewId: 'pr_web_cleanup' },
-    })
-    const webRevision = decidePlan('conv-chat', { action: 'revise' })
+  it('does not release a revision reservation that belongs to another version', () => {
+    stagePlan({ agentId: 'conv-chat', cwd: '/tmp/project', plan: '# v1' })
+    decidePlan('conv-chat', { action: 'revise' })
+    stagePlan({ agentId: 'conv-chat', cwd: '/tmp/project', plan: '# v2' })
+    const second = decidePlan('conv-chat', { action: 'revise' })
+    expect(second?.revisionVersion).toBe(2)
 
-    expect(releasePlanRevision('conv-chat', 'maestrly-chat', webRevision?.revisionVersion)).toBe(false)
-    expect(stagePlan({ agentId: 'conv-chat', cwd: '/tmp/project', plan: '# maestrly' })).toEqual({
-      ok: false,
-      error: 'plan-origin-conflict',
-    })
-    expect(releasePlanRevision('conv-chat', 'chatgpt-web', webRevision?.revisionVersion)).toBe(true)
-    expect(stagePlan({ agentId: 'conv-chat', cwd: '/tmp/project', plan: '# maestrly' })).toEqual({ ok: true })
-
-    const maestrlyRevision = decidePlan('conv-chat', { action: 'revise' })
-    expect(releasePlanRevision('conv-chat', 'chatgpt-web', maestrlyRevision?.revisionVersion)).toBe(false)
-    expect(stagePlan({
-      agentId: 'conv-chat',
-      cwd: '/tmp/project',
-      plan: '# web during Maestrly cleanup',
-      origin: { kind: 'chatgpt-web', reviewId: 'pr_web_during_maestrly' },
-    })).toEqual({
-      ok: false,
-      error: 'plan-origin-conflict',
-    })
-    expect(releasePlanRevision('conv-chat', 'maestrly-chat', maestrlyRevision?.revisionVersion)).toBe(true)
-    expect(stagePlan({
-      agentId: 'conv-chat',
-      cwd: '/tmp/project',
-      plan: '# web after Maestrly cleanup',
-      origin: { kind: 'chatgpt-web', reviewId: 'pr_web_after_maestrly' },
-    })).toEqual({ ok: true })
+    // A stale cleanup from the first revision must not clear the later reservation.
+    expect(releasePlanRevision('conv-chat', 1)).toBe(false)
+    expect(releasePlanRevision('conv-chat', 2)).toBe(true)
+    stagePlan({ agentId: 'conv-chat', cwd: '/tmp/project', plan: '# restart' })
+    expect(getPending('conv-chat')).toMatchObject({ version: 1, previousPlan: null })
   })
 
-  it('Web turnCompleted releases an abandoned Web reservation but preserves a Maestrly reservation', async () => {
-    stagePlan({
-      agentId: 'conv-chat',
-      cwd: '/tmp/project',
-      plan: '# web abandonado',
-      origin: { kind: 'chatgpt-web', reviewId: 'pr_web_abandoned' },
-    })
+  it('releasePlanRevision without an expected version releases the current reservation', () => {
+    expect(releasePlanRevision('conv-chat')).toBe(false)
+    stagePlan({ agentId: 'conv-chat', cwd: '/tmp/project', plan: '# v1' })
     decidePlan('conv-chat', { action: 'revise' })
-    const webSession = createChatGptWebSession({
-      conversationId: 'conv-chat',
-      cwd: '/tmp/project',
-      onTurnCompleted: () => releasePlanRevision('conv-chat', 'chatgpt-web'),
-    })
-    try {
-      await webSession.bridge.callTool('notify_turn_complete', { idempotency_key: 'web-abandoned-turn' })
-      expect(stagePlan({ agentId: 'conv-chat', cwd: '/tmp/project', plan: '# maestrly desbloqueado' })).toEqual({
-        ok: true,
-      })
-    } finally {
-      webSession.end()
-    }
 
-    decidePlan('conv-chat', { action: 'revise' })
-    expect(getPending('conv-chat')).toBeNull()
-    const secondWebSession = createChatGptWebSession({
-      conversationId: 'conv-chat',
-      cwd: '/tmp/project',
-      onTurnCompleted: () => releasePlanRevision('conv-chat', 'chatgpt-web'),
-    })
-    try {
-      await secondWebSession.bridge.callTool('notify_turn_complete', { idempotency_key: 'web-during-maestrly' })
-      expect(stagePlan({
-        agentId: 'conv-chat',
-        cwd: '/tmp/project',
-        plan: '# Web blocked by Maestrly reservation',
-        origin: { kind: 'chatgpt-web', reviewId: 'pr_web_during_maestrly' },
-      })).toEqual({
-        ok: false,
-        error: 'plan-origin-conflict',
-      })
-    } finally {
-      secondWebSession.end()
-    }
+    expect(releasePlanRevision('conv-chat')).toBe(true)
+    stagePlan({ agentId: 'conv-chat', cwd: '/tmp/project', plan: '# v1 again' })
+    expect(getPending('conv-chat')).toMatchObject({ version: 1, previousPlan: null })
   })
 
-  it('clear closes the matching Web waiter', () => {
-    const lifecycle = vi.fn()
-    stagePlan({
-      agentId: 'conv-chat',
-      cwd: '/tmp/project',
-      plan: '# web',
-      origin: { kind: 'chatgpt-web', reviewId: 'pr_new' },
-      onLifecycle: lifecycle,
-    })
+  it('clearPlan drops the pending plan, the reservation and the version history', () => {
+    stagePlan({ agentId: 'conv-chat', cwd: '/tmp/project', plan: '# v1' })
     clearPlan('conv-chat')
-    expect(lifecycle).toHaveBeenCalledExactlyOnceWith('cancelled')
+    expect(getPending('conv-chat')).toBeNull()
+    expect(decidePlan('conv-chat', { action: 'approve' })).toBeNull()
+
+    stagePlan({ agentId: 'conv-chat', cwd: '/tmp/project', plan: '# v1' })
+    decidePlan('conv-chat', { action: 'revise' })
+    clearPlan('conv-chat')
+    expect(releasePlanRevision('conv-chat')).toBe(false)
+    stagePlan({ agentId: 'conv-chat', cwd: '/tmp/project', plan: '# fresh' })
+    expect(getPending('conv-chat')).toMatchObject({ version: 1, previousPlan: null })
   })
 
-  it('deferred decisions remain pending until external confirmation', () => {
-    stagePlan({
-      agentId: 'conv-chat',
-      cwd: '/tmp/project',
-      plan: '# web',
-      origin: { kind: 'chatgpt-web', reviewId: 'pr_deferred' },
-    })
+  it('deferred decisions remain pending until they are committed', () => {
+    stagePlan({ agentId: 'conv-chat', cwd: '/tmp/project', plan: '# plan' })
 
     expect(decidePlan('conv-chat', { action: 'revise', feedback: 'retry' }, { deferCommit: true })).toMatchObject({
       action: 'revise',
-      route: { kind: 'chatgpt-web', reviewId: 'pr_deferred' },
     })
-    expect(getPending('conv-chat')).toMatchObject({ plan: '# web' })
-    expect(decidePlan('conv-chat', { action: 'discard' })).toBeTruthy()
+    expect(getPending('conv-chat')).toMatchObject({ plan: '# plan' })
+    h.sendToConversation.mockClear()
+
+    expect(decidePlan('conv-chat', { action: 'discard' }, { deferCommit: true })).toEqual({ action: 'discard' })
+    expect(getPending('conv-chat')).toMatchObject({ plan: '# plan' })
+    expect(h.sendToConversation).not.toHaveBeenCalled()
+
+    expect(commitPlanDecision('conv-chat', 'discard')).toBe(true)
     expect(getPending('conv-chat')).toBeNull()
+    expect(h.sendToConversation).toHaveBeenCalledWith('conv-chat', 'plan:cleared', { agentId: 'conv-chat' }, {
+      panel: 'plan',
+    })
+    // A second commit has nothing left to finalize.
+    expect(commitPlanDecision('conv-chat', 'discard')).toBe(false)
   })
 })

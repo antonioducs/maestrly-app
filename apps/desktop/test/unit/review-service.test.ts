@@ -380,16 +380,13 @@ describe('review service', () => {
   })
 
   it("runs on the conversation's model unless the person chose another reviewer, and refuses bad reviewers", async () => {
-    const { deps: d } = deps({ reviewerProviderSupported: (providerId) => providerId !== 'builtin_chatgpt_web' })
+    const { deps: d } = deps()
     const service = createReviewService(d)
     const reviewer = { providerId: 'provider-2', modelId: 'm', reasoning: 'off', fastMode: false }
     expect(await service.start('conv', { target: 'code', reviewer: { ...reviewer, fastMode: 'yes' } })).toEqual({
       ok: false,
       error: 'invalid-reviewer',
     })
-    expect(
-      await service.start('conv', { target: 'plan', reviewer: { ...reviewer, providerId: 'builtin_chatgpt_web' } })
-    ).toEqual({ ok: false, error: 'reviewer-unsupported' })
     expect(d.resolveProfile).not.toHaveBeenCalled()
     await service.start('conv', { target: 'code', reviewer })
     expect(d.resolveProfile).toHaveBeenLastCalledWith(reviewer, { chosen: true })

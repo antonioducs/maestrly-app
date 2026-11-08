@@ -179,12 +179,6 @@ vi.mock('../../src/main/chat/github-copilot', () => ({
     dispose: vi.fn(),
   }),
 }))
-const environmentLocks = vi.hoisted(() => new Map<string, string>())
-vi.mock('../../src/main/chat/chatgpt-web/manager', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../src/main/chat/chatgpt-web/manager')>()),
-  // An isolated internal turn is admitted only for the project-environment job that owns the conversation.
-  projectEnvironmentLockFor: (conversationId: string) => environmentLocks.get(conversationId) ?? null,
-}))
 vi.mock('../../src/main/chat/runner', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/main/chat/runner')>()
   return { ...actual, runChat: (args: unknown) => h.runGeneric(args) }
@@ -206,8 +200,6 @@ import {
   registerChatIpc,
   resolveFrozenChatSelection,
   revalidateFrozenChatSelection,
-  startInternalChatTurn,
-  stopChat,
   stopChatAndWait,
   type ChatIpcDeps,
 } from '../../src/main/chat/service'
@@ -361,57 +353,6 @@ describe('Claude physical account service ownership', () => {
     closeDb()
   })
 
-  it.each(['complete', 'cancel', 'close', 'identity-change'])(
-    'accepts an ephemeral review-loop session without persistence and guards %s',
-    async (ending) => {
-      const conv = conversation()
-      register()
-      const frozen = await resolveFrozenChatSelection(conv.id)
-      if (!frozen.ok) throw new Error(frozen.error)
-      const loopId = `claude-loop-${conv.id}`
-      environmentLocks.set(conv.id, loopId)
-      const finished = deferred<any>()
-      h.runClaude.mockImplementationOnce(() => finished.promise)
-      const controller = new AbortController()
-      const result = await startInternalChatTurn({
-        conversationId: conv.id,
-        prompt: 'Apply review findings.',
-        selection: frozen.selection,
-        loopId,
-        iteration: 1,
-        maxIterations: 3,
-        signal: controller.signal,
-      })
-      let closing: Promise<void> | undefined
-      try {
-        if (!result.ok) throw new Error(result.error)
-        await vi.waitFor(() => expect(h.runClaude).toHaveBeenCalledOnce())
-        const args = (h.runClaude.mock.calls as any)[0][0]
-        expect(args.ephemeralSession).toBe(true)
-        expect(args.executionScope).toMatchObject({ kind: 'review-loop', loopId })
-        expect(args.canPersistSession()).toBe(false)
-        expect(args.onSessionReady('ephemeral-session')).toBe(true)
-        if (ending === 'cancel') controller.abort()
-        if (ending === 'close') {
-          closing = stopChat(conv.id)
-          await vi.waitFor(() => expect(args.signal.aborted).toBe(true))
-        }
-        if (ending === 'identity-change') {
-          h.manager.assertAccountIdentity.mockImplementation(() => {
-            throw new Error('account changed')
-          })
-        }
-        expect(args.onSessionReady('late-session')).toBe(ending === 'complete')
-        expect(args.canPersistSession()).toBe(false)
-      } finally {
-        finished.resolve({ planSubmitted: false, sessionId: 'ephemeral-session' })
-        if (result.ok) await result.handle.done
-        await closing
-        environmentLocks.clear()
-      }
-    }
-  )
-
   it('freezes the fallback route with the identity of each signed-in account', async () => {
     const fallback = slot()
     const conv = conversation()
@@ -449,52 +390,6 @@ describe('Claude physical account service ownership', () => {
       ok: false,
       error: 'executor-unavailable',
     })
-  })
-
-  it.each([
-    ['frozen route', true],
-    ['route enabled after the loop started', false],
-  ] as const)('runs a review-loop round on the %s', async (_case, routeAtFreeze) => {
-    const fallback = slot()
-    const conv = conversation()
-    register()
-    if (!routeAtFreeze) {
-      setAccountPool({ kind: 'claude-subscription', enabled: false })
-    }
-    const frozen = await resolveFrozenChatSelection(conv.id)
-    if (!frozen.ok) throw new Error(frozen.error)
-    setAccountPool({ kind: 'claude-subscription', enabled: true })
-    if (routeAtFreeze) exhaust(CLAUDE_SUBSCRIPTION_PROVIDER_ID)
-    const loopId = `claude-route-loop-${conv.id}`
-    environmentLocks.set(conv.id, loopId)
-    try {
-      const result = await startInternalChatTurn({
-        conversationId: conv.id,
-        prompt: 'Apply review findings.',
-        selection: frozen.selection,
-        loopId,
-        iteration: 1,
-        maxIterations: 3,
-        signal: new AbortController().signal,
-      })
-      if (!result.ok) throw new Error(result.error)
-      await vi.waitFor(() => expect(h.runClaude).toHaveBeenCalledOnce())
-      const args = (h.runClaude.mock.calls as any)[0][0]
-      expect(args).toMatchObject({ ephemeralSession: true, frozenResolvedModelId: 'claude-sonnet-5' })
-      if (routeAtFreeze) {
-        expect(args.failoverChain).toEqual([CLAUDE_SUBSCRIPTION_PROVIDER_ID, fallback.providerId])
-        expect(args.initialTarget).toMatchObject({ providerId: fallback.providerId, runtimeModelId: 'claude-sonnet-5' })
-        expect(args.manager).toBe(fallback.manager)
-        expect(args.resolveNextTarget).toEqual(expect.any(Function))
-      } else {
-        expect(args.failoverChain).toEqual([CLAUDE_SUBSCRIPTION_PROVIDER_ID])
-        expect(args.manager).toBe(h.manager)
-        expect(args.resolveNextTarget).toBeUndefined()
-      }
-      await result.handle.done
-    } finally {
-      environmentLocks.clear()
-    }
   })
 
   it.each(['quota', 'signed-out'])(

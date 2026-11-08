@@ -710,7 +710,6 @@ describe('Claude subscription service integration', () => {
       role: 'user',
       parts: [{ type: 'text', id: 'round-user-text', text: 'round findings' }],
       internal: true,
-      source: 'chatgpt-web-review-loop',
       executionScope: scope,
       createdAt: 1,
     })
@@ -720,7 +719,6 @@ describe('Claude subscription service integration', () => {
       role: 'assistant',
       parts: [{ type: 'text', id: 'round-asst-text', text: 'work in progress' }],
       model: { providerId: CLAUDE_SUBSCRIPTION_PROVIDER_ID, modelId: 'sonnet' },
-      source: 'chatgpt-web-review-loop',
       executionScope: scope,
       createdAt: 2,
     })
@@ -781,7 +779,6 @@ describe('Claude subscription service integration', () => {
       role: 'user',
       parts: [{ type: 'text', id: 'round-user-text', text: 'round findings' }],
       internal: true,
-      source: 'chatgpt-web-review-loop',
       executionScope: scope,
       createdAt: 1,
     })
@@ -791,7 +788,6 @@ describe('Claude subscription service integration', () => {
       role: 'assistant',
       parts: [{ type: 'text', id: 'round-asst-text', text: 'work in progress' }],
       model: { providerId: CLAUDE_SUBSCRIPTION_PROVIDER_ID, modelId: 'sonnet' },
-      source: 'chatgpt-web-review-loop',
       executionScope: scope,
       createdAt: 2,
     })
@@ -833,7 +829,6 @@ describe('Claude subscription service integration', () => {
       role: 'user',
       parts: [{ type: 'text', id: 'round-fable-user-text', text: 'Keep the rejected approach.' }],
       internal: true,
-      source: 'chatgpt-web-review-loop',
       executionScope: scope,
       createdAt: 1,
     })
@@ -843,7 +838,6 @@ describe('Claude subscription service integration', () => {
       role: 'assistant',
       parts: [{ type: 'text', id: 'round-fable-assistant-text', text: 'Attempt A was rejected.' }],
       model: { providerId: CLAUDE_SUBSCRIPTION_PROVIDER_ID, modelId: 'fable' },
-      source: 'chatgpt-web-review-loop',
       executionScope: scope,
       createdAt: 2,
     })
