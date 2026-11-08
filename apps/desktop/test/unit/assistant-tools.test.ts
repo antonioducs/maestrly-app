@@ -94,7 +94,7 @@ afterEach(() => {
 
 describe('assistant tool surface', () => {
   it('is an opt-in, parent-only, read-only built-in that unattended turns never get', () => {
-    expect(ASSISTANT_TOOL_NAMES).toEqual(['maestrly_overview'])
+    expect(ASSISTANT_TOOL_NAMES).toEqual(['maestrly_overview', 'bot_read', 'bot_send'])
     for (const name of ASSISTANT_TOOL_NAMES) {
       expect(ALL_TOOL_NAMES).toContain(name)
       expect(isOptInToolName(name)).toBe(true)
@@ -124,14 +124,14 @@ describe('assistant tool surface', () => {
     const assistant = new Set<string>()
     enableConversationLinkTools(assistant, 'assistant', 'agent')
     expect(enableAssistantTools(assistant, 'assistant', 'agent')).toBeDefined()
-    expect([...assistant].sort()).toEqual([...before, 'maestrly_overview'].sort())
+    expect([...assistant].sort()).toEqual([...before, ...ASSISTANT_TOOL_NAMES].sort())
   })
 
   it('keeps the names but gives no runtime to a turn the person did not type, nor in Plan', () => {
     linkedTurn('assistant')
     const names = new Set<string>()
     expect(enableAssistantTools(names, 'assistant', 'agent')).toBeUndefined()
-    expect(names.has('maestrly_overview')).toBe(true)
+    for (const name of ASSISTANT_TOOL_NAMES) expect(names.has(name)).toBe(true)
     expect(assistantRuntimeFor('assistant', 'agent')).toBeUndefined()
 
     humanTurn('assistant')

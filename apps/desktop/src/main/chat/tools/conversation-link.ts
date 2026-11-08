@@ -219,7 +219,7 @@ function overviewTarget(conversationId: string, ctx: ToolContext): OverviewTarge
   if (ref?.kind === 'bot')
     return {
       kind: 'refused',
-      error: { ok: false, code: 'not-found', error: 'That ref names a bot, not a conversation.' },
+      error: { ok: false, code: 'not-found', error: 'That ref names a bot: use bot_read or bot_send.' },
     }
   if (ref?.kind === 'local' && ref.conversationId !== conversationId)
     return { kind: 'local', conversationId: ref.conversationId }

@@ -132,6 +132,25 @@ function botPending(item: FleetInboxItem): OverviewPending {
   }
 }
 
+/** A bot of a paired server as the overview shows it, with the requests of its that wait for the person. */
+export function toOverviewBot(
+  serverId: string,
+  serverName: string,
+  bot: FleetBot,
+  inbox: readonly FleetInboxItem[]
+): OverviewBot {
+  return {
+    ref: botRef(serverId, bot.id),
+    name: bot.name,
+    role: bot.role || null,
+    place: { kind: 'bot-server', serverId, serverName },
+    status: bot.status,
+    activity: describeBotActivity(bot.activity),
+    pending: inbox.filter((item) => item.botId === bot.id).map(botPending),
+    runningRoutine: bot.runningRun?.title ?? null,
+  }
+}
+
 export function createOverviewService(deps: OverviewServiceDeps) {
   function local(exclude: string | null) {
     const conversations: OverviewConversation[] = []
@@ -224,16 +243,7 @@ export function createOverviewService(deps: OverviewServiceDeps) {
       for (const item of snapshot.inbox) inbox.set(item.botId, [...(inbox.get(item.botId) ?? []), item])
       for (const bot of snapshot.bots) {
         if (bot.lifecycle === 'archived') continue
-        out.push({
-          ref: botRef(client.serverId, bot.id),
-          name: bot.name,
-          role: bot.role || null,
-          place,
-          status: bot.status,
-          activity: describeBotActivity(bot.activity),
-          pending: (inbox.get(bot.id) ?? []).map(botPending),
-          runningRoutine: bot.runningRun?.title ?? null,
-        })
+        out.push(toOverviewBot(client.serverId, client.serverName, bot, inbox.get(bot.id) ?? []))
       }
     }
     return { bots: out, hosts }

@@ -18,7 +18,13 @@ import {
   currentConversationTurnProvenance,
 } from '../conversation-link-authorization'
 import { isAssistantRoleConversation } from '../harness/assistant-role'
-import { HOST_MAESTRLY_OVERVIEW_GUIDANCE } from '../harness/host-contracts'
+import {
+  HOST_BOT_READ_GUIDANCE,
+  HOST_BOT_SEND_GUIDANCE,
+  HOST_MAESTRLY_OVERVIEW_GUIDANCE,
+} from '../harness/host-contracts'
+import { FLEET_MESSAGE_TEXT_MAX } from '@maestrly/bot-fleet-protocol'
+import type { BotReadResult } from '../../assistant/bot-tools'
 import { ASSISTANT_TOOL_NAMES } from '../tool-policy'
 import { conversationLinkToolsOffered } from './conversation-link'
 import { defineTool } from './util'
@@ -33,6 +39,38 @@ export const maestrlyOverviewInputSchema = z
   })
   .strict()
 export type MaestrlyOverviewInput = z.infer<typeof maestrlyOverviewInputSchema>
+
+/** Room left in a bot message for the line that marks it as the assistant's. */
+export const BOT_SEND_MAX = FLEET_MESSAGE_TEXT_MAX - 200
+
+const botRef = z
+  .string()
+  .trim()
+  .min(1)
+  .max(300)
+  .describe('The bot ref from maestrly_overview (bot:<serverId>:<botId>).')
+
+export const botReadInputSchema = z
+  .object({
+    ref: botRef,
+    runId: z.string().min(1).max(256).optional().describe("A routine run's runId: read that run instead."),
+    messages: z.number().int().min(1).max(20).optional().describe('Recent messages to return (default 6).'),
+  })
+  .strict()
+export type BotReadInput = z.infer<typeof botReadInputSchema>
+
+export const botSendInputSchema = z
+  .object({
+    ref: botRef,
+    message: z
+      .string()
+      .trim()
+      .min(1)
+      .max(BOT_SEND_MAX)
+      .describe('Self-contained message: what you need, the context it needs, and what to answer.'),
+  })
+  .strict()
+export type BotSendInput = z.infer<typeof botSendInputSchema>
 
 type AskQuestion = (questions: ChatQuestion[]) => Promise<string[][]>
 
@@ -50,6 +88,8 @@ export interface AssistantToolRuntime {
     input: { message: string; reportBack?: boolean },
     askQuestion: AskQuestion
   ): Promise<ConversationSendResult>
+  botRead(input: BotReadInput): Promise<BotReadResult | ConversationLinkError>
+  botSend(input: BotSendInput, askQuestion: AskQuestion): Promise<ConversationSendResult>
 }
 
 /** Whether the conversation's turns get the assistant tool names at all. */
@@ -88,6 +128,17 @@ export function assistantRuntimeFor(conversationId: string, mode: ChatBehavior):
       viaLine: () => tMain('main')('assistant.viaLine'),
     }
   }
+  const botDeps = async () => {
+    const [{ assistantBotServer }, { tMain }] = await Promise.all([
+      import('../../assistant/assistant-context'),
+      import('../../i18n'),
+    ])
+    return {
+      server: assistantBotServer,
+      viaLine: () => tMain('main')('assistant.viaLine'),
+      now: () => Date.now(),
+    }
+  }
   return {
     async overview(input) {
       const refusal = ended()
@@ -114,6 +165,28 @@ export function assistantRuntimeFor(conversationId: string, mode: ChatBehavior):
         return admitAssistantAction(askQuestion, originKey, target.conversationId, {
           kind: 'send',
           targetName: target.workspaceName ? `${target.name} (${target.workspaceName})` : target.name,
+          preview,
+        })
+      })
+    },
+    async botRead(input) {
+      const refusal = ended()
+      if (refusal) return turnEnded(refusal)
+      const { readBot } = await import('../../assistant/bot-tools')
+      return readBot(await botDeps(), input)
+    },
+    async botSend(input, askQuestion) {
+      const refusal = ended()
+      if (refusal) return turnEnded(refusal)
+      const [{ sendBot }, { admitAssistantAction }] = await Promise.all([
+        import('../../assistant/bot-tools'),
+        import('../../assistant/action-budget'),
+      ])
+      return sendBot(await botDeps(), input, (target, preview) => {
+        if (ended()) return Promise.resolve(false)
+        return admitAssistantAction(askQuestion, originKey, target.ref, {
+          kind: 'bot-send',
+          targetName: target.name,
           preview,
         })
       })
@@ -152,6 +225,44 @@ export const maestrlyOverviewTool = defineTool<typeof maestrlyOverviewInputSchem
       return 'error' in result ? result : compactOverview(result, Date.now())
     } catch (error) {
       return { error: errorText(error) }
+    }
+  },
+  toModelText: (_args, result) => JSON.stringify(result),
+})
+
+const unavailableLink = (): ConversationLinkError => ({
+  ok: false,
+  code: 'unavailable',
+  error: ASSISTANT_TOOLS_UNAVAILABLE,
+})
+
+export const botReadTool = defineTool<typeof botReadInputSchema, BotReadResult | ConversationLinkError>({
+  name: 'bot_read',
+  description: HOST_BOT_READ_GUIDANCE,
+  parameters: botReadInputSchema,
+  metadata: { readOnly: true, parallelSafe: true },
+  execute: async (args, ctx) => {
+    if (!ctx.assistant) return unavailableLink()
+    try {
+      return await ctx.assistant.botRead(args)
+    } catch (error) {
+      return { ok: false, code: 'unavailable', error: errorText(error) }
+    }
+  },
+  toModelText: (_args, result) => JSON.stringify(result),
+})
+
+export const botSendTool = defineTool<typeof botSendInputSchema, ConversationSendResult>({
+  name: 'bot_send',
+  description: HOST_BOT_SEND_GUIDANCE,
+  parameters: botSendInputSchema,
+  metadata: { readOnly: false, parallelSafe: false },
+  execute: async (args, ctx) => {
+    if (!ctx.assistant) return unavailableLink()
+    try {
+      return await ctx.assistant.botSend(args, ctx.askQuestion)
+    } catch (error) {
+      return { ok: false, code: 'delivery-failed', error: errorText(error) }
     }
   },
   toModelText: (_args, result) => JSON.stringify(result),

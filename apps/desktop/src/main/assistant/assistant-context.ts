@@ -1,4 +1,5 @@
 import type { AssistantOverview } from '../../shared/assistant-overview'
+import type { FleetServerId } from '../../shared/fleet-servers'
 import type { HostId } from '../../shared/host-key'
 import type { HostInvoker } from '../remote-host/host-invoker'
 
@@ -30,6 +31,20 @@ function serverName(connection: { hostname: string | null; url: string | null },
     }
   }
   return fallback
+}
+
+/** A paired bot server, as the assistant's bot tools reach it; null when none has this id. */
+export async function assistantBotServer(serverId: string): Promise<import('./bot-tools').BotToolServer | null> {
+  const { fleetServers } = await import('../fleet/client/servers')
+  const client = fleetServers.get(serverId as FleetServerId)
+  if (!client) return null
+  const connection = client.getConnection()
+  return {
+    fleet: client,
+    name: serverName(connection, client.serverId),
+    connected: connection.state === 'connected',
+    snapshot: () => client.getSnapshot(),
+  }
 }
 
 /** The overview across this computer, its remote hosts and its bot servers, without `exclude`. */

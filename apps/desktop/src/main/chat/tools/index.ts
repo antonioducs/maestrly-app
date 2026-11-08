@@ -32,7 +32,7 @@ import {
   sendToConversationTool,
   waitConversationTool,
 } from './conversation-link'
-import { maestrlyOverviewTool } from './assistant'
+import { botReadTool, botSendTool, maestrlyOverviewTool } from './assistant'
 import { boundText, type ToolContext, type ToolDef } from './util'
 import { chatToolOutputToAiSdkOutput, modelOutputToChatToolOutput } from '../tool-output'
 import type { ChatBehavior } from '../../../shared/conversation-experience'
@@ -72,6 +72,8 @@ export const ALL_TOOLS: ToolDef<any, any>[] = [
   sendToConversationTool,
   reportToSourceTool,
   maestrlyOverviewTool,
+  botReadTool,
+  botSendTool,
 ]
 export const ALL_TOOL_NAMES = ALL_TOOLS.map((t) => t.name)
 

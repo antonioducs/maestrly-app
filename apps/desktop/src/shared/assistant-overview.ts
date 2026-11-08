@@ -214,6 +214,11 @@ function compactBot(b: OverviewBot) {
   }
 }
 
+/** One bot as the assistant's tools return it, without empty fields. */
+export function compactOverviewBot(bot: OverviewBot): Record<string, unknown> {
+  return prune(compactBot(bot)) as Record<string, unknown>
+}
+
 const isBotItem = (item: OverviewConversation | OverviewBot): item is OverviewBot => item.ref.startsWith('bot:')
 
 /** The overview as the assistant's tools return it: compact JSON with relative times and no empty fields. */

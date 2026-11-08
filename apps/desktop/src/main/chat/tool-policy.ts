@@ -342,7 +342,7 @@ export const CONVERSATION_LINK_TOOL_NAMES = [
  * Built-in, parent-only tools only the Maestrly assistant conversation gets: the overview across hosts and bots, and
  * the actions on them. Runners add them in that conversation, for a turn the person typed (see tools/assistant).
  */
-export const ASSISTANT_TOOL_NAMES = ['maestrly_overview'] as const
+export const ASSISTANT_TOOL_NAMES = ['maestrly_overview', 'bot_read', 'bot_send'] as const
 
 /** Every tool that starts, reads or messages other conversations; children never receive them. */
 export const PARENT_ONLY_CONVERSATION_TOOL_NAMES = [
