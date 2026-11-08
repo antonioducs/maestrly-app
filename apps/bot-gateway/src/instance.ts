@@ -36,6 +36,7 @@ import {
   type FleetInstanceInput,
   type FleetInstanceStatus,
   type FleetInstanceStorage,
+  type FleetInstanceBackupSnapshot,
   type FleetInstanceProfile,
   type FleetInteractionResolution,
   type FleetAddApiKeyAccountRequest,
@@ -64,6 +65,8 @@ type Routes = typeof FLEET_INSTANCE_ROUTES
 const RUNNER_LOG_READ_MS = 10_000
 /** How long freezing a bot, or packing it before its first byte streams, may take. */
 const BOT_MOVE_STEP_MS = 10 * 60_000
+/** How long an environment may take to copy its database for a backup. */
+const BACKUP_PREPARE_MS = 10 * 60_000
 /**
  * Node's `fetch` gives up on an answer whose headers take longer than this, whatever its signal allows: a call that may
  * wait longer (freezing a bot hashes all its files) goes through `node:http`, which waits as long as the signal does.
@@ -538,6 +541,17 @@ export class InstanceClient {
   /** Capability `environment-storage`: its latest disk figures; `folder` also measures a workspaces host's own folder. */
   environmentStorage(folder: boolean): Promise<FleetInstanceStorage> {
     return this.call('environmentStorage', {}, folder ? { folder: 1 } : undefined)
+  }
+  /**
+   * Capability `environment-backup`: the environment writes a consistent copy of its database for a backup. A large
+   * database takes minutes to copy while the environment goes on running.
+   */
+  environmentBackupPrepare(): Promise<FleetInstanceBackupSnapshot> {
+    return this.call('environmentBackupPrepare', {}, undefined, undefined, BACKUP_PREPARE_MS)
+  }
+  /** Capability `environment-backup`: removes the copy once the backup read it. */
+  environmentBackupRelease(): Promise<void> {
+    return this.call('environmentBackupRelease', {}, undefined, undefined, 30_000)
   }
   /** Starts the environment's runtime checks; they run in the background there. */
   runtimesCheck(): Promise<{ ok: true }> {

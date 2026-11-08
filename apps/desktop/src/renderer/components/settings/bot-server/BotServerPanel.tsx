@@ -15,6 +15,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { panelState } from '@/lib/fleet/installer'
 import { FLEET_DEVICES_FEATURE, FLEET_PHONES_FEATURE } from '@maestrly/bot-fleet-protocol'
+import { BackupsSection } from './BackupsSection'
 import { DevicesSection } from './DevicesSection'
 import { PairPhoneDialog } from './PairPhoneDialog'
 import { PrivateNetworkSwitch } from './PrivateNetworkSwitch'
@@ -177,6 +178,7 @@ export function BotServerPanel({
         )}
       </div>
       {canListDevices && <DevicesSection revision={devicesRevision} />}
+      {connection.state === 'connected' && <BackupsSection />}
       {pairPhone && (
         <PairPhoneDialog
           serverUrl={connection.url}

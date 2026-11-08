@@ -28,6 +28,7 @@ import {
   FLEET_FILES_MANAGE_FEATURE,
   FLEET_ENVIRONMENT_COMPACTION_FEATURE,
   FLEET_ENVIRONMENT_STORAGE_FEATURE,
+  FLEET_ENVIRONMENT_BACKUP_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_INSTANCE_BRIDGE_PATH,
   FLEET_INSTANCE_ROUTES,
@@ -96,6 +97,7 @@ import {
   type FleetInstanceRunDeleted,
   type FleetInstanceStatus,
   type FleetInstanceStorage,
+  type FleetInstanceBackupSnapshot,
   type FleetInteractionResolution,
   type FleetLoginAttempt,
   type FleetLoginCallbackRequest,
@@ -142,8 +144,9 @@ export type { HostFilesRoutes } from './host-files-http'
  * says why an MCP connection test failed, runs routines in conversations of their own when the gateway asks,
  * routes the tasks of a bot that delegates to the models its owner allows, and lets the owner list, delete and size
  * the files its bots shared, keeps the files of the jobs its bots send to runners (their manifests, blobs, logs and
- * outputs), lets the owner review, edit and revert the skills each bot keeps for itself, and measures the disk the
- * environment and each of its bots take. Its health and every status advertise them.
+ * outputs), lets the owner review, edit and revert the skills each bot keeps for itself, measures the disk the
+ * environment and each of its bots take, and writes a consistent copy of its database for a backup. Its health and
+ * every status advertise them.
  */
 export const INSTANCE_CAPABILITIES: readonly string[] = [
   FLEET_FILES_FEATURE,
@@ -169,6 +172,7 @@ export const INSTANCE_CAPABILITIES: readonly string[] = [
   FLEET_RUNNER_JOBS_CAPABILITY,
   FLEET_BOT_OWN_SKILLS_FEATURE,
   FLEET_ENVIRONMENT_STORAGE_FEATURE,
+  FLEET_ENVIRONMENT_BACKUP_FEATURE,
 ]
 
 type MemoryStatus = 'active' | 'archived' | 'superseded' | 'all'
@@ -241,6 +245,9 @@ export interface InstanceEnvironment {
   environmentStatus(): Promise<FleetInstanceEnvironmentStatus>
   /** The latest disk figures (`environment-storage`); `folder`: a workspaces host's own folder too. */
   storage?(folder: boolean): FleetInstanceStorage
+  /** A consistent copy of the database for a backup (`environment-backup`), and its removal once read. */
+  prepareBackup?(): Promise<FleetInstanceBackupSnapshot>
+  releaseBackup?(): Promise<void>
   /** The models of the environment's accounts, freshly read; `current` is null, an environment has no selection. */
   selections(): Promise<{ options: FleetSelectionOption[]; current: null }>
   /** The installed bot, or a NOT_FOUND error. */
@@ -682,6 +689,14 @@ export function createInstanceControlServer(
     environmentStorage: ({ url }) => {
       if (!environment.storage) throw new InstanceHttpError(404, 'NOT_FOUND', 'Route not found.')
       return environment.storage(parseFlag(url, 'folder'))
+    },
+    environmentBackupPrepare: () => {
+      if (!environment.prepareBackup) throw new InstanceHttpError(404, 'NOT_FOUND', 'Route not found.')
+      return environment.prepareBackup()
+    },
+    environmentBackupRelease: () => {
+      if (!environment.releaseBackup) throw new InstanceHttpError(404, 'NOT_FOUND', 'Route not found.')
+      return environment.releaseBackup()
     },
     runtimesCheck: () => {
       environment.checkRuntimes()

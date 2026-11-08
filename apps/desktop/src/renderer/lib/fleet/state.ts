@@ -454,6 +454,9 @@ export function fleetReducer(state: FleetState, action: FleetAction): FleetState
         case 'runner.cancel':
         case 'runner_link.updated':
         case 'runner_job.updated':
+        // Backups are read by the Backups section of the bot server's settings, which follows them by itself.
+        case 'backup.updated':
+        case 'backup_run.updated':
           return state
         case 'owner_memory.updated':
           return { ...state, ownerMemoryRevision: event.revision }

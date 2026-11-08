@@ -28,6 +28,7 @@ import {
   FLEET_PEER_THREAD_LIMITS,
   FLEET_DELEGATION_LIMITS,
   FLEET_RUNNER_LIMITS,
+  FLEET_BACKUP_LIMITS,
 } from './constants.js'
 
 export const fleetIdSchema = z.string().min(1)
@@ -1102,6 +1103,111 @@ export const fleetRoutineScheduleSchema = z.discriminatedUnion('kind', [
 ])
 export type FleetRoutineSchedule = z.infer<typeof fleetRoutineScheduleSchema>
 
+export const fleetBackupProviderSchema = z.enum(['s3', 'gcs', 'drive'])
+export type FleetBackupProvider = z.infer<typeof fleetBackupProviderSchema>
+export const fleetBackupScheduleSchema = z.discriminatedUnion('kind', [
+  fleetWeeklyScheduleSchema,
+  z.object({
+    kind: z.literal('interval'),
+    everyMinutes: z
+      .number()
+      .int()
+      .min(FLEET_BACKUP_LIMITS.intervalMinMinutes)
+      .max(FLEET_BACKUP_LIMITS.intervalMaxMinutes),
+  }),
+])
+export type FleetBackupSchedule = z.infer<typeof fleetBackupScheduleSchema>
+export const fleetBackupRetentionSchema = z
+  .object({
+    daily: z.number().int().min(0).max(FLEET_BACKUP_LIMITS.keepDailyMax),
+    weekly: z.number().int().min(0).max(FLEET_BACKUP_LIMITS.keepWeeklyMax),
+    monthly: z.number().int().min(0).max(FLEET_BACKUP_LIMITS.keepMonthlyMax),
+  })
+  .strict()
+  .refine((value) => value.daily + value.weekly + value.monthly > 0, 'keep at least one backup')
+export type FleetBackupRetention = z.infer<typeof fleetBackupRetentionSchema>
+/** Every active environment, those created later too, or only the ones listed. */
+export const fleetBackupSelectionSchema = z.discriminatedUnion('mode', [
+  z.object({ mode: z.literal('all') }).strict(),
+  z.object({ mode: z.literal('selected'), environments: z.array(fleetEnvironmentIdSchema).max(64) }).strict(),
+])
+export type FleetBackupSelection = z.infer<typeof fleetBackupSelectionSchema>
+export const fleetBackupErrorCodeSchema = z.enum([
+  'unreachable',
+  'denied',
+  'not-found',
+  'wrong-key',
+  'locked',
+  'storage-full',
+  'environment-unavailable',
+  'update-environment',
+  'busy',
+  'interrupted',
+  'timeout',
+  'cancelled',
+  'failed',
+])
+export type FleetBackupErrorCode = z.infer<typeof fleetBackupErrorCodeSchema>
+export const fleetBackupErrorSchema = z.object({ code: fleetBackupErrorCodeSchema, message: z.string().max(500) })
+export type FleetBackupError = z.infer<typeof fleetBackupErrorSchema>
+export const fleetBackupEligibilitySchema = z.enum([
+  'ok',
+  'update-environment',
+  'shared-folder',
+  'archived',
+  'not-ready',
+])
+export type FleetBackupEligibility = z.infer<typeof fleetBackupEligibilitySchema>
+export const fleetBackupRunSchema = z.object({
+  id: fleetIdSchema,
+  kind: z.enum(['backup', 'restore']),
+  environmentId: fleetEnvironmentIdSchema,
+  environmentName: z.string().max(200),
+  trigger: z.enum(['schedule', 'manual']),
+  state: z.enum(['queued', 'running', 'succeeded', 'partial', 'failed', 'cancelled']),
+  phase: z.enum(['queued', 'snapshot', 'upload', 'retention', 'download', 'finish']),
+  progress: z.number().min(0).max(1).nullable(),
+  snapshotId: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/)
+    .nullable(),
+  bytesAdded: z.number().int().nonnegative().nullable(),
+  bytesTotal: z.number().int().nonnegative().nullable(),
+  error: fleetBackupErrorSchema.nullable(),
+  startedAt: fleetTimestampSchema,
+  finishedAt: fleetTimestampSchema.nullable(),
+})
+export type FleetBackupRun = z.infer<typeof fleetBackupRunSchema>
+export const fleetBackupDestinationViewSchema = z.object({
+  provider: fleetBackupProviderSchema,
+  label: z.string().max(400),
+  /** Who the destination is reached as: a key hint, a service account or a Google account; never a secret. */
+  account: z.string().max(320).nullable(),
+  /** The repository's size as restic last measured it; null before the first backup. */
+  repositoryBytes: z.number().int().nonnegative().nullable(),
+})
+export type FleetBackupDestinationView = z.infer<typeof fleetBackupDestinationViewSchema>
+export const fleetBackupEnvironmentStatusSchema = z.object({
+  environmentId: fleetEnvironmentIdSchema,
+  included: z.boolean(),
+  eligibility: fleetBackupEligibilitySchema,
+  nextRunAt: fleetTimestampSchema.nullable(),
+  lastRun: fleetBackupRunSchema.nullable(),
+  lastSuccessAt: fleetTimestampSchema.nullable(),
+})
+export type FleetBackupEnvironmentStatus = z.infer<typeof fleetBackupEnvironmentStatusSchema>
+export const fleetBackupStatusSchema = z.object({
+  destination: fleetBackupDestinationViewSchema.nullable(),
+  enabled: z.boolean(),
+  schedule: fleetBackupScheduleSchema.nullable(),
+  retention: fleetBackupRetentionSchema,
+  selection: fleetBackupSelectionSchema,
+  environments: z.array(fleetBackupEnvironmentStatusSchema),
+  /** Queued and running backups and restores, oldest first. */
+  active: z.array(fleetBackupRunSchema),
+})
+export type FleetBackupStatus = z.infer<typeof fleetBackupStatusSchema>
+
 export const fleetRoutineSchema = z.object({
   id: fleetIdSchema,
   botId: fleetBotIdSchema,
@@ -1634,5 +1740,8 @@ export const fleetGatewayEventSchema = z.discriminatedUnion('type', [
     botId: fleetBotIdSchema,
     threadId: fleetIdSchema,
   }),
+  // Backups (`backups`): sent only to the streams that asked for them (`backups=1`).
+  z.object({ type: z.literal('backup.updated'), at: fleetTimestampSchema, status: fleetBackupStatusSchema }),
+  z.object({ type: z.literal('backup_run.updated'), at: fleetTimestampSchema, run: fleetBackupRunSchema }),
 ])
 export type FleetGatewayEvent = z.infer<typeof fleetGatewayEventSchema>

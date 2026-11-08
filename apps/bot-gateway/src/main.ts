@@ -110,7 +110,10 @@ export async function run(
   const servers = createGatewayServers({ auth, config, events, host, lifecycle, store, network, artifacts })
   await lifecycle.reconcile()
   await servers.peers.retry()
+  // A backup reading an environment's volume ends before the environment is deleted for good.
+  lifecycle.beforeEnvironmentPurge = (id) => servers.backups.beforePurge(id)
   servers.routines.start()
+  await servers.backups.start()
   servers.peerThreads.start()
   await servers.listen()
   logger.info('Gateway listening', { publicPort: config.publicPort, internalPort: config.internalPort })

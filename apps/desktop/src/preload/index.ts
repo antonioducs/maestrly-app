@@ -1,4 +1,5 @@
 import { fleetEnvironmentPlugins, fleetEnvironmentSettings } from './api-fleet-environment-settings'
+import { fleetBackup } from './api-fleet-backup'
 import './floating-strip'
 import { contextBridge } from 'electron'
 import { appApi } from './api-app'
@@ -126,6 +127,7 @@ export type * from './api-sound'
 export type * from './api-update'
 export type * from './api-workspace'
 export type * from './api-fleet'
+export type * from './api-fleet-backup'
 export type * from './api-fleet-installer'
 export type * from './api-runner'
 export type * from './api-hosts'
@@ -148,6 +150,7 @@ const localApi = {
   ...fleetApi,
   fleetEnvironmentSettings,
   fleetEnvironmentPlugins,
+  fleetBackup,
   ...fleetInstallerApi,
   ...runnerApi,
   ...hostsApi,

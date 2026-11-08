@@ -557,3 +557,31 @@ export const FLEET_DICTATION_FEATURE = 'dictation'
  * in its environment restarts its environment, as before.
  */
 export const FLEET_BOT_RESTART_FEATURE = 'bot-restart'
+
+/**
+ * Gateway feature (`moreFeatures` of `/v1/meta`): the server backs up environments to storage the owner chooses and
+ * restores them as new environments.
+ */
+export const FLEET_BACKUPS_FEATURE = 'backups'
+/** Instance capability: the environment writes a consistent copy of its database for a backup (`POST /v1/environment/backup`). */
+export const FLEET_ENVIRONMENT_BACKUP_FEATURE = 'environment-backup'
+/** A reader of events with this query set to 1 also gets `backup.updated` and `backup_run.updated`. */
+export const FLEET_BACKUPS_QUERY = 'backups'
+export const FLEET_BACKUP_LIMITS = {
+  intervalMinMinutes: 60,
+  intervalMaxMinutes: 1440,
+  keepDailyMax: 90,
+  keepWeeklyMax: 52,
+  keepMonthlyMax: 60,
+  runsKeptPerEnvironment: 50,
+  /** How long a due backup waits for an environment that is updating or changing its bots. */
+  deferMaxMs: 6 * 60 * 60_000,
+  /** The longest a helper may run: a first backup of a large environment over a slow link. */
+  helperTimeoutMs: 24 * 60 * 60_000,
+  /** Checking, creating or listing a repository, or reading one file of it. */
+  quickTimeoutMs: 2 * 60_000,
+  pruneEveryMs: 7 * 24 * 60 * 60_000,
+  /** The format of the gateway's part of a backup that this protocol writes. */
+  sliceFormat: 1,
+} as const
+export const FLEET_BACKUP_RETENTION_DEFAULT = { daily: 7, weekly: 4, monthly: 6 } as const

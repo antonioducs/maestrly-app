@@ -34,6 +34,8 @@ jobs:
       - name: Check release build configuration
         env:
           MAIN_VITE_GITHUB_COPILOT_CLIENT_ID: ${{ vars.MAESTRLY_GITHUB_COPILOT_CLIENT_ID }}
+          MAIN_VITE_GOOGLE_DRIVE_CLIENT_ID: ${{ vars.MAESTRLY_GOOGLE_DRIVE_CLIENT_ID }}
+          MAIN_VITE_GOOGLE_DRIVE_CLIENT_SECRET: ${{ vars.MAESTRLY_GOOGLE_DRIVE_CLIENT_SECRET }}
         run: node scripts/check-release-build-config.mjs
       - name: Validate tag, version, and release state
         id: release
@@ -93,6 +95,8 @@ jobs:
     timeout-minutes: 75
     env:
       MAIN_VITE_GITHUB_COPILOT_CLIENT_ID: ${{ vars.MAESTRLY_GITHUB_COPILOT_CLIENT_ID }}
+      MAIN_VITE_GOOGLE_DRIVE_CLIENT_ID: ${{ vars.MAESTRLY_GOOGLE_DRIVE_CLIENT_ID }}
+      MAIN_VITE_GOOGLE_DRIVE_CLIENT_SECRET: ${{ vars.MAESTRLY_GOOGLE_DRIVE_CLIENT_SECRET }}
     steps:
       - name: Check out tagged source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -129,6 +133,8 @@ jobs:
     timeout-minutes: 75
     env:
       MAIN_VITE_GITHUB_COPILOT_CLIENT_ID: ${{ vars.MAESTRLY_GITHUB_COPILOT_CLIENT_ID }}
+      MAIN_VITE_GOOGLE_DRIVE_CLIENT_ID: ${{ vars.MAESTRLY_GOOGLE_DRIVE_CLIENT_ID }}
+      MAIN_VITE_GOOGLE_DRIVE_CLIENT_SECRET: ${{ vars.MAESTRLY_GOOGLE_DRIVE_CLIENT_SECRET }}
     steps:
       - name: Check out tagged source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -164,6 +170,8 @@ jobs:
     environment: release
     env:
       MAIN_VITE_GITHUB_COPILOT_CLIENT_ID: ${{ vars.MAESTRLY_GITHUB_COPILOT_CLIENT_ID }}
+      MAIN_VITE_GOOGLE_DRIVE_CLIENT_ID: ${{ vars.MAESTRLY_GOOGLE_DRIVE_CLIENT_ID }}
+      MAIN_VITE_GOOGLE_DRIVE_CLIENT_SECRET: ${{ vars.MAESTRLY_GOOGLE_DRIVE_CLIENT_SECRET }}
     steps:
       - name: Check out tagged source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

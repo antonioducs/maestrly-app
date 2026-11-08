@@ -30,6 +30,13 @@ session without one. `artifacts.publishServer` records the server chosen in **Se
 the window keeps the server the **Bots** tab shows in its local storage. **Disconnect** removes a server's record, its
 installation id, and its token.
 
+`fleet.backup.recoveryKeys` keeps the recovery keys of the [backup destinations](bot-fleet.md#back-up-environments)
+this computer connected a server to, by destination label (such as `s3://my-bucket/maestrly-backups` or
+`drive://Maestrly backups`), encrypted through the keyring; without one, this computer keeps no copy and says so. No
+action removes it on its own, not disconnecting backups nor removing the server: it restores backups on a new server.
+Google Drive sign-ins for setting up backups stay in the main process's memory for 15 minutes and are never written
+here.
+
 ## Bot server installation
 
 When the desktop app installs a bot server, `fleet.installer` in
@@ -331,6 +338,21 @@ start tries again; the adoption can run again safely. It copies no secrets: the
 bot gets its gateway token again when the gateway installs it, and the
 environment keeps the control token and keyring password the container already
 had.
+
+### Environment backups
+
+The gateway keeps [backups](bot-fleet.md#back-up-environments) in three tables of its database (schema 24):
+`backup_settings`, with the destination, its credentials and the recovery key in plaintext, the schedule, the retention,
+which environments are backed up, and when the repository was last pruned and measured; `backup_environments`, with
+each backed-up environment's next backup; and `backup_runs`, with the last 50 backups and restores of each environment,
+their progress, snapshot, size and error. Forgetting the destination clears `backup_settings`; deleting an environment
+forever removes its `backup_environments` row.
+
+For each backup of a running environment, its Maestrly writes a copy of its database into the
+`.maestrly-backup-staging` folder of its profile and removes it once the backup read it; a copy left by an interrupted
+backup is removed when the environment starts again. A restore puts that copy in place of the database and removes
+the folder. restic keeps its cache, which saves downloading the repository's index on each backup, in the Docker volume
+`<MAESTRLY_GATEWAY_NETWORK>-backup-cache`; removing it only makes the next backup slower.
 
 ## Voice model
 
