@@ -72,3 +72,17 @@ paths = [
 ]
 regexTarget = "line"
 regexes = ['''idempotencyKey: '8e0f3c5a-2b6d-4c1e-9f7a-3d5b1c2e4f60',''']
+
+[[allowlists]]
+description = "Exact synthetic credentials of the backup tests: an S3 secret key for a disposable local server and a fake recovery key"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = [
+  '''^scripts/test-bot-fleet-backup\.mjs$''',
+  '''^apps/desktop/test/unit/fleet-backup-ipc\.test\.ts$''',
+]
+regexTarget = "line"
+regexes = [
+  '''const s3Secret = 'e2e-secret-key-0123456789'$''',
+  '''const KEY = 'ABCD-EFGH-IJKL-MNOP-QRST-UVWX-YZ23-4567'$''',
+]
