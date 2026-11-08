@@ -89,14 +89,9 @@ export type {
   CodexSubscriptionAuthState,
   CodexSubscriptionAuthStatus,
   CodexSubscriptionLoginResult,
-  ChatGptWebStatus,
-  ChatGptWebSessionInfo,
-  ChatGptWebSessionState,
-  ChatGptWebTunnelState,
   McpServerInfo,
   PermissionReply,
 } from '../shared/chat'
-export type { ChatGptWebStatusPayload } from './api-chat'
 
 export type { UnifiedUsageStats, UsageModelRow, UsageSource } from '../shared/usage'
 export type * from '../shared/local-conversation'

@@ -25,13 +25,7 @@ import {
 import { DEFAULT_SOUND_SETTINGS, type SoundEvent, type SoundSettings, type SoundVoice } from '../../shared/sound'
 import { Button } from '@/components/ui/button'
 import { useReorder } from '@/lib/use-reorder'
-import {
-  DEFAULT_MAIN_ORDER,
-  mainTabsForFeatures,
-  reorderVisibleTabs,
-  sanitizeMainOrder,
-  type DrawerTab,
-} from '@/lib/drawer-tabs'
+import { DEFAULT_MAIN_ORDER, moveOpenTab, sanitizeMainOrder, type DrawerTab } from '@/lib/drawer-tabs'
 import { cn } from '@/lib/utils'
 import { SETTINGS_NAV, type SettingsSection } from '@/components/settings/nav'
 import { MaestrlyChatSection } from '@/components/settings/MaestrlyChatSection'
@@ -119,7 +113,6 @@ export function SettingsView({
   const [openMode, setOpenModeState] = useState<ShortcutOpenMode>('popup')
 
   const [recording, setRecording] = useState<FloatTab | 'drawer' | null>(null)
-  const [chatGptWebEnabled, setChatGptWebEnabled] = useState(false)
 
   const [tabOrder, setTabOrder] = useState<DrawerTab[]>(DEFAULT_MAIN_ORDER)
 
@@ -192,24 +185,6 @@ export function SettingsView({
       setOpenModeState(s.openMode)
     })
   }, [])
-
-  useEffect(() => {
-    let alive = true
-    const apply = (status: { enabled: boolean }) => {
-      if (!alive) return
-      setChatGptWebEnabled(status.enabled)
-      if (!status.enabled) setRecording((current) => (current === 'chatgpt' ? null : current))
-    }
-    void api
-      .chatGptWebStatus()
-      .then(apply)
-      .catch(() => setChatGptWebEnabled(false))
-    const off = api.onChatGptWebStatus(apply)
-    return () => {
-      alive = false
-      off()
-    }
-  }, [api])
 
   const persistShortcuts = (next: EffectiveShortcuts) => {
     setShortcutsState(next)
@@ -325,10 +300,9 @@ export function SettingsView({
   const previewEventVolume = (event: SoundEvent, v: number) =>
     window.api.previewSound(sound.events[event], sound.volume * v)
 
-  const visibleTabOrder = mainTabsForFeatures(tabOrder, chatGptWebEnabled)
   const reorderTab = (from: number, to: number) =>
     setTabOrder((cur) => {
-      const next = reorderVisibleTabs(cur, mainTabsForFeatures(cur, chatGptWebEnabled), from, to)
+      const next = moveOpenTab(cur, from, to)
       if (next === cur) return cur
       window.api.setDefaultMainTabOrder(next)
       return next
@@ -422,7 +396,7 @@ export function SettingsView({
             {section === 'tools' && (
               <TabOrderSection
                 t={t}
-                tabOrder={visibleTabOrder}
+                tabOrder={tabOrder}
                 tabDragProps={tabDragProps}
                 tabOverIndex={tabOverIndex}
                 resetTabOrder={resetTabOrder}
@@ -487,7 +461,6 @@ export function SettingsView({
                 setCloseShortcutState={setCloseShortcutState}
                 disableShortcut={disableShortcut}
                 resetShortcuts={resetShortcuts}
-                chatGptWebEnabled={chatGptWebEnabled}
               />
             )}
 

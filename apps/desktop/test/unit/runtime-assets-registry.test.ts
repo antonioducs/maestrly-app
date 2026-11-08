@@ -20,7 +20,6 @@ describe('runtime asset registry', () => {
       'codex-runtime',
       'claude-code-runtime',
       'github-copilot-runtime',
-      'tunnel-client',
       'local-ml-runtime',
       'whisper-model',
       'antigravity-acp-runtime',
@@ -37,8 +36,8 @@ describe('runtime asset registry', () => {
     ])
   })
 
-  it('pins all six targets for the three fetched runtimes', () => {
-    for (const id of ['codex-runtime', 'github-copilot-runtime', 'tunnel-client'] as const) {
+  it('pins all six targets for the two fetched runtimes', () => {
+    for (const id of ['codex-runtime', 'github-copilot-runtime'] as const) {
       expect(Object.keys(RUNTIME_ASSET_REGISTRY[id].targets).sort()).toEqual([...RUNTIME_TARGET_IDS].sort())
       for (const target of Object.values(RUNTIME_ASSET_REGISTRY[id].targets)) {
         expect(target?.url).toMatch(/^https:\/\//)
@@ -82,11 +81,7 @@ describe('runtime asset registry', () => {
       'cYxzGcRRoBrncyHlR8ed4yXwcoVJZC1pipGULSyJkGFKXJw/Uu57BklvzayuAptjJIipamnOk32CfUkk1F0bLw=='
     )
     expect(RUNTIME_ASSET_REGISTRY['github-copilot-runtime']).toMatchObject({ version: '1.0.71' })
-    expect(RUNTIME_ASSET_REGISTRY['tunnel-client']).toMatchObject({ version: '0.0.10' })
     expect(RUNTIME_ASSET_REGISTRY['local-ml-runtime']).toMatchObject({ version: '2.17.2-3' })
-    expect(RUNTIME_ASSET_REGISTRY['tunnel-client'].targets['win-x64']?.hash.digest).toBe(
-      '5e64a056f1d96786da0a6f8db1da5f5f4a03fd19a90d951a25cf2ca8d9093d00'
-    )
   })
 
   it('accepts the real archive size of every fetched target', () => {
@@ -107,14 +102,6 @@ describe('runtime asset registry', () => {
         'linux-x64': 142_982_140,
         'win-arm64': 131_060_040,
         'win-x64': 130_154_451,
-      },
-      'tunnel-client': {
-        'mac-arm64': 7_100_022,
-        'mac-x64': 7_672_583,
-        'linux-arm64': 6_789_903,
-        'linux-x64': 7_508_561,
-        'win-arm64': 6_839_760,
-        'win-x64': 7_658_615,
       },
     }
     for (const [id, sizes] of Object.entries(measured))

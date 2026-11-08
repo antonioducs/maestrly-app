@@ -504,8 +504,7 @@ async function prepareRuntime(
         signal: toolSignal,
       }),
     submitPlan: (plan, title) => {
-      const result = stagePlan({ agentId: args.conversationId, cwd: args.cwd, plan, title })
-      if (!result.ok) return false
+      stagePlan({ agentId: args.conversationId, cwd: args.cwd, plan, title })
       activateTerminalStep()
       return true
     },

@@ -13,7 +13,6 @@ import {
 import { applyLayout } from './layout'
 import { disposeBrowserTabEviction, persistTimers, scheduleColdBrowserEviction } from './browser'
 import { disposePanelEviction, scheduleColdPanelEviction } from './panels'
-import { closeChatGptWebView, disposeChatGptWebViews } from '../chat/chatgpt-web/companion-window'
 import { closeVSCodeView } from './vscode'
 import { disposeStreamWindow } from './stream-window'
 import { disposeConversationResources, disposeResourceGovernor } from '../performance/resource-governor'
@@ -37,11 +36,6 @@ function destroyDrawer(convId: string, d: ConvDrawer): void {
   for (const t of d.browserTabs) closeView(t.view)
   d.browserTabs.length = 0
   d.activeBrowserId = null
-  // The companion owns its popup registry and persisted URL cache. Close through that lifecycle
-  // before the generic view cleanup so a conversation cannot leave OAuth children behind.
-  if (d.chatgptView) closeChatGptWebView(convId)
-  closeView(d.chatgptView)
-  d.chatgptView = null
   closeVSCodeView(convId)
   closeView(d.vscodeView)
   d.vscodeView = null
@@ -88,7 +82,6 @@ export function disposeConversation(convId: string): void {
 export function disposeDrawer(): void {
   disposeBrowserTabEviction()
   disposePanelEviction()
-  disposeChatGptWebViews()
   for (const [convId, d] of drawers) destroyDrawer(convId, d)
   drawers.clear()
   omniboxOverlays.clear()

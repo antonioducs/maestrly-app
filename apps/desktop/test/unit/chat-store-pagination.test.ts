@@ -782,7 +782,6 @@ describe('review-loop context isolation and billing in the store', () => {
       role: 'user',
       parts: [{ type: 'text', id: 't-r1u', text: 'findings r1' }],
       internal: true,
-      source: 'chatgpt-web-review-loop',
       executionScope: scope('exec-a', 1),
       createdAt: 4,
     })
@@ -792,7 +791,6 @@ describe('review-loop context isolation and billing in the store', () => {
       role: 'assistant',
       parts: [{ type: 'text', id: 't-r1a', text: 'fix r1' }],
       model: { providerId: 'p', modelId: 'round-model' },
-      source: 'chatgpt-web-review-loop',
       executionScope: scope('exec-a', 1),
       usage: {
         usageVersion: 2,
@@ -809,7 +807,6 @@ describe('review-loop context isolation and billing in the store', () => {
       role: 'user',
       parts: [{ type: 'text', id: 't-r2u', text: 'findings r2' }],
       internal: true,
-      source: 'chatgpt-web-review-loop',
       executionScope: scope('exec-b', 2),
       createdAt: 6,
     })
@@ -819,7 +816,6 @@ describe('review-loop context isolation and billing in the store', () => {
       role: 'assistant',
       parts: [{ type: 'text', id: 't-r2a', text: 'fix r2' }],
       model: { providerId: 'p', modelId: 'round-model' },
-      source: 'chatgpt-web-review-loop',
       executionScope: scope('exec-b', 2),
       usage: { usageVersion: 2, input: 30, output: 5, contextInput: 25, runtimeEstimatedCostUsd: 0 },
       createdAt: 7,
@@ -850,10 +846,8 @@ describe('review-loop context isolation and billing in the store', () => {
     const conv = chatConv()
     seedMainAndRounds(conv.id)
     const full = listChatMessages(conv.id)
-    expect(full.filter((m) => m.source === 'chatgpt-web-review-loop')).toHaveLength(4)
     expect(full.filter((m) => m.executionScope?.kind === 'review-loop')).toHaveLength(4)
     const main = listConversationContextMessages(conv.id)
-    expect(main.every((m) => m.source !== 'chatgpt-web-review-loop')).toBe(true)
     expect(main.every((m) => m.executionScope?.kind !== 'review-loop')).toBe(true)
   })
 
@@ -943,7 +937,6 @@ describe('review-loop context isolation and billing in the store', () => {
       role: 'assistant',
       parts: [{ type: 'compaction', id: 'c', text: 'summary isolated…' }],
       model: { providerId: 'p', modelId: 'm' },
-      source: 'chatgpt-web-review-loop',
       executionScope: scope('exec-x', 1),
       usage: { usageVersion: 2, input: 500, output: 80, billingOnly: true },
       createdAt: 2,
@@ -995,7 +988,6 @@ describe('review-loop context isolation and billing in the store', () => {
       role: 'user',
       parts: [{ type: 'text', id: 't-cu', text: 'findings crash' }],
       internal: true,
-      source: 'chatgpt-web-review-loop',
       executionScope: scopeExec(1),
       createdAt: 2,
     })
@@ -1005,7 +997,6 @@ describe('review-loop context isolation and billing in the store', () => {
       role: 'assistant',
       parts: [{ type: 'text', id: 't-ca', text: 'work in progress' }],
       model: { providerId: 'p', modelId: 'round-model' },
-      source: 'chatgpt-web-review-loop',
       executionScope: scopeExec(1),
       usage: { usageVersion: 2, input: 50, output: 10, contextInput: 40, runtimeEstimatedCostUsd: 0.01 },
       createdAt: 3,
@@ -1150,7 +1141,6 @@ describe('review-loop context isolation and billing in the store', () => {
       conversationId: conv.id,
       role: 'assistant',
       parts: [{ type: 'tool', id: 'r', toolCallId: 'r', toolName: 'bash', input: {}, state: { status: 'running' } }],
-      source: 'chatgpt-web-review-loop',
       executionScope: { kind: 'review-loop', executionId: 'exec-r', loopId: 'rl', iteration: 1, maxIterations: 5 },
       createdAt: 1,
     })
@@ -1168,7 +1158,6 @@ describe('review-loop context isolation and billing in the store', () => {
     // Normal turns share runner seed and inference history sources.
     const normal = runnerContextHistory(conv.id, {})
     expect(normal.map((m) => m.id)).toEqual(['legacy-user', 'legacy-asst', 'main-user'])
-    expect(normal.every((m) => m.source !== 'chatgpt-web-review-loop')).toBe(true)
     // Isolated rounds receive only their own execution history.
     expect(
       runnerContextHistory(conv.id, { ephemeralSession: true, executionScope: scope('exec-a', 1) }).map((m) => m.id)

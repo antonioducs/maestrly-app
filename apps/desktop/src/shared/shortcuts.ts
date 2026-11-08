@@ -43,7 +43,6 @@ const DEFAULT_KEYS: Record<FloatTab, string | null> = {
   plan: 'p',
   review: 'r',
   notes: 'n',
-  chatgpt: 'g',
 }
 
 function defaultMods(os: ShortcutOs): ShortcutMod[] {

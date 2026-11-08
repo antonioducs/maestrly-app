@@ -20,7 +20,6 @@ vi.mock('../../src/main/chat/catalog', () => ({
       : id === 'anthropic-api'
         ? { id, baseURL: 'https://api.anthropic.com/v1', kind: 'anthropic' }
         : undefined,
-  isChatGptWebProvider: () => false,
   isSubscriptionProvider: () => false,
   getProviderKind: (provider?: { kind?: string }) => provider?.kind ?? 'openai',
   subscriptionAccountId: () => null,

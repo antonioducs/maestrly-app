@@ -36,8 +36,7 @@ and tools together as you plan, build, and review.
   adding a project, choosing a folder, or creating a Git repository. See
   [desktop chats](docs/chat-context.md#chats-and-projects).
 - **Chat and providers:** API-key providers plus user-enabled Codex, Claude,
-  GitHub Copilot, Cursor, Grok, Google AI (Antigravity), and ChatGPT Web
-  integrations.
+  GitHub Copilot, Cursor, Grok, and Google AI (Antigravity) integrations.
 - **Maestro:** coordinated workers, specialist profiles, subagents, plans,
   permissions, and usage accounting.
 - **Code and plan reviews:** an independent, read-only review of a

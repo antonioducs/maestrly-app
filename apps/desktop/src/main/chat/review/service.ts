@@ -89,8 +89,6 @@ export interface ReviewServiceDeps {
    * any explicit subagent profile, instead of being inherited from the conversation.
    */
   resolveProfile(selection: ReviewSelection, options: { chosen: boolean }): Promise<SubagentExecutionSnapshotV1>
-  /** Whether a provider can run reviewers at all; ChatGPT Web, for one, cannot. */
-  reviewerProviderSupported?(providerId: string): boolean
   /** User-visible conversation excerpt used to understand intent. */
   conversationContext(conversationId: string): string
   locale(): string
@@ -495,9 +493,6 @@ export function createReviewService(deps: ReviewServiceDeps) {
     const rawReviewer = record(input)?.reviewer
     const reviewer = rawReviewer === undefined ? null : parseReviewModelChoice(rawReviewer)
     if (rawReviewer !== undefined && !reviewer) return { ok: false, error: 'invalid-reviewer' }
-    if (reviewer && deps.reviewerProviderSupported?.(reviewer.providerId) === false) {
-      return { ok: false, error: 'reviewer-unsupported' }
-    }
     const conversation = deps.getConversation(conversationId)
     const blocked = blocker(conversationId, conversation)
     if (blocked) return { ok: false, error: blocked }

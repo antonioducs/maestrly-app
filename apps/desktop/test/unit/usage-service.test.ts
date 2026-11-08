@@ -170,7 +170,6 @@ describe('getUnifiedUsage', () => {
       role: 'assistant',
       parts: [{ type: 'text', id: 't', text: 'fix' }],
       model: { providerId: 'anthropic', modelId: 'claude-sonnet-4-5' },
-      source: 'chatgpt-web-review-loop',
       executionScope: {
         kind: 'review-loop',
         executionId: 'exec-1',
@@ -228,7 +227,6 @@ describe('getUnifiedUsage', () => {
       role: 'assistant',
       parts: [],
       model: { providerId: 'anthropic', modelId: 'claude-sonnet-4-5' },
-      source: 'chatgpt-web-review-loop',
       executionScope: {
         kind: 'review-loop',
         executionId: 'exec-z',

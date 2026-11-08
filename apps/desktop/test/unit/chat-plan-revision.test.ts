@@ -12,12 +12,9 @@ const h = vi.hoisted(() => ({
 
   listConversationContextMessages: vi.fn(() => []),
   runChat: vi.fn(),
-  setChatGptWebHooks: vi.fn(),
   stagePlan: vi.fn(),
   releasePlanRevision: vi.fn(),
-  isChatGptWebProvider: vi.fn((_providerId?: string) => false),
   patchConvUiPrefs: vi.fn(),
-  resolvePlanReview: vi.fn(() => ({ ok: true })),
 }))
 
 vi.mock('../../src/main/window-ipc', () => ({
@@ -51,11 +48,7 @@ vi.mock('../../src/main/chat/catalog', () => ({
   isCodexSubscriptionProvider: vi.fn(() => false),
   isGitHubCopilotSubscriptionProvider: vi.fn(() => false),
   isSubscriptionProvider: vi.fn(() => false),
-  isChatGptWebProvider: h.isChatGptWebProvider,
-  isChatGptWebEnabled: vi.fn(() => false),
-  setChatGptWebEnabled: vi.fn(),
   isManagedProvider: vi.fn(() => false),
-  CHATGPT_WEB_PROVIDER_ID: 'builtin_chatgpt_web',
   subscriptionAccountId: vi.fn(() => null),
   subscriptionProviderIdFor: vi.fn(() => 'builtin'),
   getSubscriptionAccount: vi.fn(() => undefined),
@@ -84,16 +77,6 @@ vi.mock('../../src/main/chat/chat-store', () => ({
 vi.mock('../../src/main/chat/runner', () => ({
   normalizeAiUsage: vi.fn(() => ({ input: 0, output: 0, totalInput: 0, cacheRead: 0, cacheCreate: 0 })),
   runChat: h.runChat,
-}))
-
-vi.mock('../../src/main/chat/chatgpt-web/manager', () => ({
-  onChatGptWebChange: vi.fn(() => vi.fn()),
-  setChatGptWebHooks: h.setChatGptWebHooks,
-  projectEnvironmentLockFor: vi.fn(() => null),
-  transportConfigurationHasActiveResources: vi.fn(() => false),
-  withTransportConfigurationMutation: vi.fn((operation: () => Promise<unknown>) => operation()),
-  resolvePlanReview: h.resolvePlanReview,
-  discardPlanReviews: vi.fn(),
 }))
 
 vi.mock('../../src/main/plan-broker', () => ({
@@ -148,7 +131,6 @@ function deps(): ChatIpcDeps {
 describe('runPlanRevision', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    h.stagePlan.mockReturnValue({ ok: true })
     h.releasePlanRevision.mockReset()
     __resetCwdActivityForTests()
     h.getMainWebContents.mockReturnValue(wc)
@@ -162,7 +144,6 @@ describe('runPlanRevision', () => {
     h.getAppFlag.mockImplementation((_key: string, fallback: boolean) => fallback)
     h.getAppSetting.mockReturnValue(null)
     h.runChat.mockResolvedValue({ planSubmitted: false })
-    h.isChatGptWebProvider.mockImplementation((providerId?: string) => providerId === 'builtin_chatgpt_web')
   })
 
   it('starts a local chat turn without a Maestrly account gate', async () => {
@@ -177,31 +158,6 @@ describe('runPlanRevision', () => {
       handlers.get('chat:send')?.({ sender: wc }, { conversationId: 'conv-chat', text: 'start the local turn' })
     ).resolves.toEqual({ ok: true })
     expect(h.runChat).toHaveBeenCalledOnce()
-  })
-
-  it('rejects new legacy-provider selections and migrates existing preferences', async () => {
-    const handlers = new Map<string, (...args: any[]) => unknown>()
-    registerChatIpc({
-      mhandle: (channel, fn) => void handlers.set(channel, fn),
-      mon: vi.fn(),
-      emitStatus: vi.fn(),
-    })
-
-    await expect(
-      handlers.get('chat:set-selection')?.({}, 'conv-chat', {
-        providerId: 'builtin_chatgpt_web',
-        modelId: 'chatgpt-web',
-      })
-    ).resolves.toEqual({ ok: false, error: 'unknown-provider' })
-
-    h.getConvUiPrefs.mockReturnValue({
-      chat: { providerId: 'builtin_chatgpt_web', modelId: 'chatgpt-web', mode: 'agent' },
-    })
-    expect(handlers.get('chat:get-selection')?.({}, 'conv-chat')).toEqual({
-      providerId: 'provider-1',
-      modelId: '',
-    })
-    expect(h.patchConvUiPrefs).toHaveBeenCalled()
   })
 
   it('blocks turns during exclusive Git transitions', async () => {
@@ -239,7 +195,7 @@ describe('runPlanRevision', () => {
 
     await runPlanRevision('conv-chat', 'Adjust the plan', 7)
 
-    await vi.waitFor(() => expect(h.releasePlanRevision).toHaveBeenCalledWith('conv-chat', 'maestrly-chat', 7))
+    await vi.waitFor(() => expect(h.releasePlanRevision).toHaveBeenCalledWith('conv-chat', 7))
   })
 
   it('sends approved plans inline without claiming worktree files', async () => {
@@ -266,70 +222,6 @@ describe('runPlanRevision', () => {
     expect(persisted.parts[0].text).toContain('Não procure nem tente abrir approved-plan.md')
     expect(persisted.parts).not.toContainEqual(expect.objectContaining({ type: 'file' }))
     expect(h.runChat).toHaveBeenCalledOnce()
-  })
-
-  it('delivers companion chat with provenance and renderer notification', async () => {
-    registerChatIpc(deps())
-    const hooks = h.setChatGptWebHooks.mock.calls.at(-1)?.[0]
-
-    await hooks.deliverChat('conv-chat', '# Resultado', 'Summary')
-
-    expect(h.upsertChatMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        conversationId: 'conv-chat',
-        role: 'assistant',
-        source: 'chatgpt-web',
-        parts: [expect.objectContaining({ type: 'text', text: '## Summary\n\n# Resultado' })],
-      })
-    )
-    expect(wc.send).toHaveBeenCalledWith(
-      'chat:chatgpt-web:delivery:conv-chat',
-      expect.objectContaining({ messageId: expect.any(String) })
-    )
-  })
-
-  it('delivers a companion plan through stagePlan without inserting a chat message', async () => {
-    registerChatIpc(deps())
-    const hooks = h.setChatGptWebHooks.mock.calls.at(-1)?.[0]
-    h.upsertChatMessage.mockClear()
-
-    await hooks.deliverPlan('conv-chat', '# Plan', 'pr_service_v1', 'ChatGPT plan')
-
-    expect(h.stagePlan).toHaveBeenCalledWith({
-      agentId: 'conv-chat',
-      cwd: '/tmp/project',
-      plan: '# Plan',
-      title: 'ChatGPT plan',
-      origin: { kind: 'chatgpt-web', reviewId: 'pr_service_v1' },
-      onLifecycle: expect.any(Function),
-    })
-    expect(h.upsertChatMessage).not.toHaveBeenCalled()
-  })
-
-  it('propagates origin conflicts without accepting Web deliveries', async () => {
-    registerChatIpc(deps())
-    const hooks = h.setChatGptWebHooks.mock.calls.at(-1)?.[0]
-    h.stagePlan.mockReturnValue({ ok: false, error: 'plan-origin-conflict' })
-
-    expect(() => hooks.deliverPlan('conv-chat', '# Plan', 'pr_service_conflict')).toThrow('plan-origin-conflict')
-    expect(h.upsertChatMessage).not.toHaveBeenCalled()
-  })
-
-  it('routes supersession and clear to matching plan reviews', async () => {
-    registerChatIpc(deps())
-    const hooks = h.setChatGptWebHooks.mock.calls.at(-1)?.[0]
-    await hooks.deliverPlan('conv-chat', '# Plan', 'pr_service_lifecycle')
-    const staged = h.stagePlan.mock.calls.at(-1)?.[0]
-
-    staged.onLifecycle('superseded')
-    staged.onLifecycle('cancelled')
-
-    expect(h.resolvePlanReview).toHaveBeenNthCalledWith(1, 'conv-chat', 'pr_service_lifecycle', {
-      status: 'superseded',
-    })
-    expect(h.resolvePlanReview).toHaveBeenNthCalledWith(2, 'conv-chat', 'pr_service_lifecycle', {
-      status: 'cancelled',
-    })
   })
 
   it('persists duration on runner setup failure', async () => {

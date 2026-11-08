@@ -234,12 +234,12 @@ describe('chat tools', () => {
     expect(reviewPlanTool.toModelText({ plan: '## Plan' }, res)).toContain('This turn is over')
   })
 
-  it('does not fake plan submission or end turns on origin conflict', async () => {
+  it('does not fake plan submission or end the turn when the context does not stage the plan', async () => {
     const submitPlan = vi.fn(() => false)
     const res = await reviewPlanTool.execute({ plan: '## Plan' }, { ...ctx(dir), submitPlan })
 
-    expect(res).toEqual({ staged: false, error: 'plan-origin-conflict' })
-    expect(reviewPlanTool.toModelText({ plan: '## Plan' }, res)).toContain('another plan origin')
+    expect(res).toEqual({ staged: false })
+    expect(reviewPlanTool.toModelText({ plan: '## Plan' }, res)).toContain('not available')
     expect(reviewPlanTool.toModelText({ plan: '## Plan' }, res)).not.toContain('This turn is over')
   })
 

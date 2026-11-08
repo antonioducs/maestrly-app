@@ -8,7 +8,6 @@ export function isMainMessage(message: ChatMessage): boolean {
   return (
     !message.internal &&
     !message.reviewLoop &&
-    message.source !== 'chatgpt-web-review-loop' &&
     message.source !== 'maestrly-review' &&
     (!message.executionScope || message.executionScope.kind === 'conversation')
   )

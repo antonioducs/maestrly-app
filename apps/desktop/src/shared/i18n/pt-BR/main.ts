@@ -69,7 +69,6 @@ export default {
     review: 'Review',
     notes: 'Notas',
     files: 'Arquivos',
-    chatgpt: 'ChatGPT',
     // pin da tira da janela flutuante (fixada permanece visível ao trocar de conversa)
     pin: 'Manter aberta ao trocar de conversa',
     unpin: 'Deixar de fixar',
@@ -136,8 +135,6 @@ export default {
     remoteFailedTitle: 'Não foi possível iniciar o VS Code no servidor',
     remoteFailedSub:
       'O servidor não conseguiu baixar ou iniciar o editor. Verifique a conexão dele com a internet e abra a aba Código novamente para tentar de novo.',
-    chatgptRestoringTitle: 'Restaurando ChatGPT…',
-    chatgptRestoringSub: 'Recarregando a última conversa. Login e sessão permanecem intactos.',
   },
   peer: {
     pairingNotice: {

@@ -151,9 +151,6 @@ every model.
 - **Other senders.** Messages from a bot, from the [mobile app](mobile.md), or from the agent of another conversation
   are prompts too: `UserPromptSubmit` hooks see them and can block them. The phone shows that a plugin hook blocked
   the message; another conversation's agent is told it could not be delivered, with the hook's reason.
-- **ChatGPT companion.** The ChatGPT Web companion runs tool hooks around its tools. Its turns run in ChatGPT, where
-  Maestrly cannot run `SessionStart`, `UserPromptSubmit`, or `Stop` hooks, so it does not start in an Agent
-  conversation with a plugin that has them. Switch that plugin's hooks off, or limit where the plugin applies.
 
 ### MCP servers and sign-in
 

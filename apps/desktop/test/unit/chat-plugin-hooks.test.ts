@@ -27,11 +27,9 @@ vi.mock('../../src/main/chat/chat-store', async (original) => ({
 }))
 
 const {
-  companionHooksRefusal,
   hasToolHooks,
   hookSessionBoundary,
   hooksActive,
-  pluginsWithTurnHooks,
   removeHookTranscript,
   runPostToolUse,
   runPreToolUse,
@@ -157,19 +155,12 @@ describe('plugin hooks', () => {
     expect(await runStop(ctx('maestro'), false)).toEqual({})
   })
 
-  it('tells tool hooks from the hooks only a Maestrly-run turn has', () => {
+  it('tells tool hooks from the other hooks', () => {
     hooks.list = [hook('PostToolUse', `process.exit(0)`)]
     expect(hasToolHooks('conv-1', 'agent')).toBe(true)
     expect(hasToolHooks('conv-1', 'plan')).toBe(false)
-    expect(pluginsWithTurnHooks('conv-1')).toEqual([])
     hooks.list = [hook('SessionStart', `process.exit(0)`), hook('Stop', `process.exit(0)`)]
     expect(hasToolHooks('conv-1', 'agent')).toBe(false)
-    expect(pluginsWithTurnHooks('conv-1')).toEqual(['Guard'])
-    // A ChatGPT web companion cannot run them, so it does not start in Agent; Ask runs no hooks at all.
-    expect(companionHooksRefusal('conv-1', 'agent')).toBe('companion-hooks-unsupported: Guard')
-    expect(companionHooksRefusal('conv-1', 'ask')).toBeNull()
-    hooks.list = [hook('PreToolUse', `process.exit(0)`)]
-    expect(companionHooksRefusal('conv-1', 'agent')).toBeNull()
   })
 
   it('writes an owner-only transcript of the conversation text and removes it', () => {

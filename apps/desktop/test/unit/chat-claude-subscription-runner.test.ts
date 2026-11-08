@@ -3474,7 +3474,6 @@ describe('Claude official chat runner', () => {
     const mainBefore = structuredClone(getClaudeSessionBinding(conversation.id))
     const executionId = 'exec-claude-1'
     const messageMeta = {
-      source: 'chatgpt-web-review-loop' as const,
       internal: true as const,
       executionScope: {
         kind: 'review-loop' as const,
@@ -3696,7 +3695,6 @@ describe('Claude account rotation', () => {
     for (const manager of [run.a.manager, run.b.manager])
       Object.assign(manager, { resolveModelId: vi.fn(async () => 'claude-sonnet') })
     const messageMeta = {
-      source: 'chatgpt-web-review-loop' as const,
       internal: true as const,
       executionScope: {
         kind: 'review-loop' as const,

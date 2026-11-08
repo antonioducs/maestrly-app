@@ -2,9 +2,11 @@ import { DatabaseSync } from 'node:sqlite'
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { closeStore, deleteWorkspace, getConversation, getDb, initStore } from '../../src/main/store'
+import { closeDb, freshDb, restartDb } from '../helpers/db'
+import { makeConversation, makeWorkspace } from '../helpers/factories'
 
 const LEGACY_MANAGEMENT_TABLES = [
   'cloud_published_card_bindings',
@@ -306,14 +308,6 @@ describe('legacy project-management schema migration', () => {
       browserActive: 2,
       mainTabOrder: ['browser', 'terminal'],
       floating: { terminal: { x: 5, y: 6, width: 700, height: 500 } },
-      chatGptWebCapabilities: {
-        git: 'read',
-        gh: 'read',
-        conversation: 'read',
-        memory: 'read',
-        browser: 'inspect',
-        mcp: {},
-      },
     })
     expect(getDb().prepare('SELECT id FROM chat_messages ORDER BY id').all()).toEqual([{ id: 'message-regular' }])
     expect(getDb().prepare('SELECT message_id FROM chat_usage_ledger ORDER BY message_id').all()).toEqual([
@@ -434,5 +428,139 @@ describe('legacy project-management schema migration', () => {
     expect(getDb().prepare('SELECT message_id FROM chat_usage_ledger ORDER BY message_id').all()).toEqual([
       { message_id: 'message-regular' },
     ])
+  })
+})
+
+describe('retired ChatGPT Web companion purge', () => {
+  beforeEach(freshDb)
+  afterEach(closeDb)
+
+  function setting(key: string): string | undefined {
+    return (getDb().prepare('SELECT value FROM app_settings WHERE key = ?').get(key) as { value: string } | undefined)
+      ?.value
+  }
+
+  function seedSetting(key: string, value: string): void {
+    getDb().prepare('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)').run(key, value)
+  }
+
+  function seedPrefs(conversationId: string, prefs: unknown): void {
+    getDb()
+      .prepare('UPDATE conversations SET ui_prefs = ? WHERE id = ?')
+      .run(typeof prefs === 'string' ? prefs : JSON.stringify(prefs), conversationId)
+  }
+
+  function prefsOf(conversationId: string): unknown {
+    const row = getDb().prepare('SELECT ui_prefs FROM conversations WHERE id = ?').get(conversationId) as {
+      ui_prefs: string
+    }
+    return JSON.parse(row.ui_prefs)
+  }
+
+  it('deletes the companion settings and its provider key but keeps every other setting', () => {
+    seedSetting('chat.chatgptWeb', 'true')
+    seedSetting('chat.chatgptWebTunnelId', 'tunnel-1')
+    seedSetting('chat.chatgptWebAppName', 'Maestrly')
+    seedSetting('chat.apiKey.builtin_chatgpt_web', 'encrypted-platform-key')
+    seedSetting('chat.apiKey.builtin_codex_subscription', 'other-provider-key')
+    seedSetting('chat.defaultProvider', 'builtin_codex_subscription')
+    seedSetting('keep.setting', 'yes')
+
+    restartDb()
+
+    expect(setting('chat.chatgptWeb')).toBeUndefined()
+    expect(setting('chat.chatgptWebTunnelId')).toBeUndefined()
+    expect(setting('chat.chatgptWebAppName')).toBeUndefined()
+    expect(setting('chat.apiKey.builtin_chatgpt_web')).toBeUndefined()
+    expect(setting('chat.apiKey.builtin_codex_subscription')).toBe('other-provider-key')
+    expect(setting('chat.defaultProvider')).toBe('builtin_codex_subscription')
+    expect(setting('keep.setting')).toBe('yes')
+  })
+
+  it('strips the ChatGPT tab and shortcut from the stored tab order and shortcuts', () => {
+    seedSetting('defaultMainTabOrder', JSON.stringify(['terminal', 'chatgpt', 'notes']))
+    seedSetting(
+      'shortcuts.config',
+      JSON.stringify({
+        chatgpt: { key: 'g', mods: ['meta'] },
+        terminal: { key: 'j', mods: ['meta', 'control'] },
+      })
+    )
+
+    restartDb()
+
+    expect(JSON.parse(setting('defaultMainTabOrder')!)).toEqual(['terminal', 'notes'])
+    expect(JSON.parse(setting('shortcuts.config')!)).toEqual({ terminal: { key: 'j', mods: ['meta', 'control'] } })
+  })
+
+  it('leaves tab order and shortcuts untouched when they hold nothing from the companion or are unreadable', () => {
+    seedSetting('defaultMainTabOrder', 'not json')
+    seedSetting('shortcuts.config', JSON.stringify({ terminal: { key: 'j', mods: ['meta'] } }))
+
+    restartDb()
+
+    expect(setting('defaultMainTabOrder')).toBe('not json')
+    expect(JSON.parse(setting('shortcuts.config')!)).toEqual({ terminal: { key: 'j', mods: ['meta'] } })
+  })
+
+  it('removes the per-conversation companion state from ui_prefs and keeps the rest', () => {
+    const workspace = makeWorkspace()
+    const withCompanion = makeConversation(workspace.id)
+    const unrelated = makeConversation(workspace.id)
+    const unreadable = makeConversation(workspace.id)
+    seedPrefs(withCompanion.id, {
+      chatGptWebUrl: 'https://chatgpt.com/c/abc',
+      chatGptWebSessionScope: 'project',
+      chatGptWebCapabilities: { git: 'read', gh: 'off', mcp: {} },
+      chatGptWebPairedCapabilityFingerprint: 'fingerprint',
+      mainTabOrder: ['chatgpt', 'browser', 'terminal'],
+      openTabs: ['terminal', 'chatgpt'],
+      activeTab: 'chatgpt',
+      floating: {
+        chatgpt: { x: 1, y: 2, width: 300, height: 400 },
+        terminal: { x: 5, y: 6, width: 700, height: 500 },
+      },
+      browserActive: 2,
+      chat: { providerId: 'builtin_codex_subscription', modelId: 'gpt-test' },
+    })
+    const untouched = {
+      mainTabOrder: ['browser', 'terminal'],
+      openTabs: ['terminal'],
+      activeTab: 'terminal',
+      floating: { terminal: { x: 5, y: 6, width: 700, height: 500 } },
+      browserActive: 1,
+    }
+    seedPrefs(unrelated.id, untouched)
+    // Corrupt JSON that still mentions the companion is skipped rather than failing the whole startup.
+    seedPrefs(unreadable.id, '{"chatGptWebUrl": ')
+
+    restartDb()
+
+    expect(prefsOf(withCompanion.id)).toEqual({
+      mainTabOrder: ['browser', 'terminal'],
+      openTabs: ['terminal'],
+      floating: { terminal: { x: 5, y: 6, width: 700, height: 500 } },
+      browserActive: 2,
+      chat: { providerId: 'builtin_codex_subscription', modelId: 'gpt-test' },
+    })
+    expect(prefsOf(unrelated.id)).toEqual(untouched)
+    expect(
+      (getDb().prepare('SELECT ui_prefs FROM conversations WHERE id = ?').get(unreadable.id) as { ui_prefs: string })
+        .ui_prefs
+    ).toBe('{"chatGptWebUrl": ')
+  })
+
+  it('is idempotent across restarts', () => {
+    const conversation = makeConversation(makeWorkspace().id)
+    seedSetting('chat.chatgptWeb', 'true')
+    seedPrefs(conversation.id, { chatGptWebUrl: 'https://chatgpt.com/', mainTabOrder: ['chatgpt', 'terminal'] })
+
+    restartDb()
+    const afterFirst = prefsOf(conversation.id)
+    restartDb()
+
+    expect(afterFirst).toEqual({ mainTabOrder: ['terminal'] })
+    expect(prefsOf(conversation.id)).toEqual(afterFirst)
+    expect(setting('chat.chatgptWeb')).toBeUndefined()
   })
 })

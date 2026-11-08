@@ -16,10 +16,6 @@ const subscriptionAccount = readFileSync(
   new URL('../../src/renderer/components/chat/accounts/SubscriptionAccount.tsx', import.meta.url),
   'utf8'
 )
-const webSettings = readFileSync(
-  new URL('../../src/renderer/components/chat/ChatGptWebSettings.tsx', import.meta.url),
-  'utf8'
-)
 const componentSettings = readFileSync(
   new URL('../../src/renderer/components/chat/RuntimeComponentsSettings.tsx', import.meta.url),
   'utf8'
@@ -145,12 +141,5 @@ describe('managed runtime renderer contract', () => {
       expect(catalog.componentLatestVersion).toEqual(expect.any(String))
       expect(catalog.componentSizesEstimate).toContain('~{{download}}')
     }
-  })
-
-  it('requires an explicit tunnel-client install before tunnel creation', () => {
-    expect(webSettings).toContain("runtimeAssetStatus('tunnel-client')")
-    expect(webSettings).toContain("runtimeAssetInstall('tunnel-client')")
-    expect(webSettings).toContain("runtimeAssetRepair('tunnel-client')")
-    expect(webSettings).toContain("tunnelAsset?.status.state !== 'ready'")
   })
 })

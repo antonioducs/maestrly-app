@@ -43,7 +43,6 @@ describe('choosing who reviews', () => {
 
   it('explains refused reviewers', () => {
     const t = tFor('en', 'chat') as never
-    expect(reviewErrorText(t, 'reviewer-unsupported')).toBe('ChatGPT Web cannot run reviewers; choose another model.')
     expect(reviewErrorText(t, 'Provider “x” is not authenticated.')).toBe('Provider “x” is not authenticated.')
   })
 })

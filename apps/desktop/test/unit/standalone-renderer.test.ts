@@ -11,7 +11,6 @@ describe('standalone renderer scope', () => {
       'terminal',
       'plan',
       'notes',
-      'chatgpt',
     ])
     // The Files and Computer tabs are for conversations of a remote host only.
     expect(mainTabsForContext(DEFAULT_MAIN_ORDER, { scope: 'project' })).toEqual(

@@ -6,7 +6,6 @@ directories:
 files:
   - out/**
   - resources/**
-  - "!resources/tunnel-client/**"
   - "!resources/sounds/**"
   - "!resources/licenses/**"
   - "!resources/codex/**"

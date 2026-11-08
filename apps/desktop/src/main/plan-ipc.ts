@@ -27,17 +27,11 @@ export interface PlanIpcDeps {
     options: { experience: 'maestro'; name: string }
   ) => Promise<Conversation>
   deleteConversation?: (conversationId: string) => Promise<void>
-  isConversationReserved?: (conversationId: string) => boolean
   applyMaestroStrategyProfile?: (
     conversationId: string,
     profileId: string
   ) => Promise<{ ok: true } | { ok: false; error: string }>
   markMaestroStrategyProfileUsed?: (profileId: string) => void
-  resolveChatGptWebPlanReview?: (
-    conversationId: string,
-    reviewId: string,
-    outcome: { status: 'revise'; feedbackText: string } | { status: 'approved' } | { status: 'discarded' }
-  ) => { ok: boolean; error?: string }
   /** Journal and create (never start) the Standard destination with validated settings. */
   prepareStandardPlanHandoff?: (input: {
     sourceConversationId: string
@@ -113,9 +107,8 @@ export function registerPlanIpc(reg: IpcRegistrar, deps: PlanIpcDeps): void {
     }
     // The plan is being reviewed: it is decided from the review's hand-off, once the review lets go.
     if (isConversationUnderReview(agentId)) return { ok: false, error: 'review-active' }
-    // Prepare the decision, then commit immediately for local Chat or after external confirmation for Web.
-    // Failed external confirmation preserves the visible pending plan for retry. Start a new turn when
-    // applicable.
+    // Prepare the decision and commit it once any handoff is ready, so a failed handoff keeps the plan pending for
+    // retry. Start a new turn when applicable.
     const result = decidePlan(agentId, decision, { deferCommit: true })
     if (!result) return
     const sourceConversation = getConversation(agentId)
@@ -131,24 +124,12 @@ export function registerPlanIpc(reg: IpcRegistrar, deps: PlanIpcDeps): void {
       if (!botSharesConversation(agentId)) pauseBotForHuman(agentId)
       if (!(await stopChatAndWait(agentId))) return { ok: false, error: 'The bot turn is still stopping.' }
     }
-    const webRoute = result.route?.kind === 'chatgpt-web' ? result.route : null
-    const resolveWeb = (
-      outcome: { status: 'revise'; feedbackText: string } | { status: 'approved' } | { status: 'discarded' }
-    ) =>
-      deps.resolveChatGptWebPlanReview?.(agentId, webRoute!.reviewId, outcome) ?? {
-        ok: false,
-        error: 'plan-review-unavailable',
-      }
-
     if (result.action === 'approve' && result.approvedPlan && decision.implementationTarget === 'maestro') {
       if (sourceConversation.scope === 'standalone') return { ok: false, error: 'project-required' }
       const approvedPlan = result.approvedPlan
       return (async () => {
         if (sourceConversation.experience !== 'standard') {
           return { ok: false, error: 'plan-maestro-source-must-be-standard' }
-        }
-        if (deps.isConversationReserved?.(agentId)) {
-          return { ok: false, error: 'plan-maestro-source-reserved' }
         }
         if (!deps.createMaestroSibling || !deps.deleteConversation || !deps.applyMaestroStrategyProfile) {
           return { ok: false, error: 'plan-maestro-handoff-unavailable' }
@@ -170,14 +151,6 @@ export function registerPlanIpc(reg: IpcRegistrar, deps: PlanIpcDeps): void {
         if (!profileApplied.ok) {
           const rollbackError = await discardUnstartedSibling(deps, maestroConversation.id)
           return { ok: false, error: rollbackError ?? profileApplied.error }
-        }
-
-        if (webRoute) {
-          const reviewResolution = resolveWeb({ status: 'approved' })
-          if (!reviewResolution.ok) {
-            const rollbackError = await discardUnstartedSibling(deps, maestroConversation.id)
-            return rollbackError ? { ok: false, error: rollbackError } : reviewResolution
-          }
         }
 
         if (!commitPlanDecision(agentId, result.action)) {
@@ -203,8 +176,8 @@ export function registerPlanIpc(reg: IpcRegistrar, deps: PlanIpcDeps): void {
       const approvedPlan = result.approvedPlan
       const handoff = standardHandoff
       try {
-        // Order matters: validate and create the destination, confirm any external review, then consume the
-        // pending plan. Until the commit, a failure leaves the plan pending and removes only the new destination.
+        // Order matters: validate and create the destination, then consume the pending plan. Until the commit, a
+        // failure leaves the plan pending and removes only the new destination.
         const prepared = await deps.prepareStandardPlanHandoff({
           sourceConversationId: agentId,
           planKey: planHandoffKey(result.version, approvedPlan),
@@ -221,10 +194,6 @@ export function registerPlanIpc(reg: IpcRegistrar, deps: PlanIpcDeps): void {
             return { ok: false, error: `plan-standard-rollback-failed: ${errorText(rollbackError)}` }
           }
         }
-        if (webRoute) {
-          const reviewResolution = resolveWeb({ status: 'approved' })
-          if (!reviewResolution.ok) return rollback(reviewResolution.error ?? 'plan-review-unavailable')
-        }
         if (!commitPlanDecision(agentId, result.action)) return rollback('plan-decision-stale')
         // The source keeps its own mode and settings; only the new conversation implements the plan.
         void deps.startStandardPlanHandoff(prepared.dispatchId)
@@ -232,17 +201,6 @@ export function registerPlanIpc(reg: IpcRegistrar, deps: PlanIpcDeps): void {
       } finally {
         standardHandoffsInFlight.delete(agentId)
       }
-    }
-
-    let reviewResolution: { ok: boolean; error?: string } | undefined
-    if (webRoute) {
-      reviewResolution =
-        result.action === 'approve'
-          ? resolveWeb({ status: 'approved' })
-          : result.action === 'revise' && result.feedbackText
-            ? resolveWeb({ status: 'revise', feedbackText: result.feedbackText })
-            : resolveWeb({ status: 'discarded' })
-      if (!reviewResolution.ok) return reviewResolution
     }
 
     if (!commitPlanDecision(agentId, result.action)) {
@@ -253,13 +211,12 @@ export function registerPlanIpc(reg: IpcRegistrar, deps: PlanIpcDeps): void {
       setChatMode(agentId, 'agent')
       deps.sendToWindow(`chat:mode:${agentId}`, 'agent')
       void runApprovedPlan(agentId, result.approvedPlan)
-    } else if (result.action === 'revise' && result.feedbackText && !webRoute) {
+    } else if (result.action === 'revise' && result.feedbackText) {
       // Revision starts a feedback turn so the model revises and resubmits through review_plan.
       if (result.revisionVersion === undefined) void runPlanRevision(agentId, result.feedbackText)
       else void runPlanRevision(agentId, result.feedbackText, result.revisionVersion)
     }
     // Discard needs no further action; pending state is already cleared.
-    return reviewResolution
   })
   // Hydrate the plan panel on mount after plan:received may already have broadcast.
   reg.handle('plan:get', (_e, convId: string) => getPendingPlan(convId))

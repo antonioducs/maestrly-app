@@ -52,7 +52,7 @@ import { getHiddenChatModelsFor } from '../../store/settings'
 import { getDb } from '../../store/db'
 import { DATABASE_FILENAME } from '../../store/database-path-migration'
 import { prepareBackupSnapshot, releaseBackupSnapshot } from './backup-snapshot'
-import { createEnvironmentSettingsService, environmentMcpChanged } from './settings/service'
+import { createEnvironmentSettingsService } from './settings/service'
 import { ensureRuntimeAsset } from '../../runtime-assets/app-service'
 import { getAntigravitySubscriptionManager } from '../../chat/antigravity-subscription/manager'
 import { getClaudeSubscriptionManager } from '../../chat/claude-agent-sdk/manager'
@@ -976,13 +976,10 @@ export class EnvironmentRuntime {
     return listBotMcpServers()
   }
   async importMcpServers(request: FleetMcpImportRequest): Promise<FleetImportResults> {
-    const result = importBotMcpServers(request.servers)
-    if (result.results.some((item) => item.outcome === 'added' || item.outcome === 'updated')) environmentMcpChanged()
-    return result
+    return importBotMcpServers(request.servers)
   }
   async removeMcpServer(id: string): Promise<void> {
     removeBotMcpServer(id)
-    environmentMcpChanged()
   }
   async addApiKeyAccount(value: FleetAddApiKeyAccountRequest): Promise<FleetAddApiKeyAccountResponse> {
     if (apiKeyStorageMode() !== 'secure')

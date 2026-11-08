@@ -93,33 +93,6 @@ function withPluginMutation<T>(fn: () => Promise<T>): Promise<T> {
   return run
 }
 
-const mcpSurfaceListeners = new Set<() => void>()
-/**
- * Calls `listener` after a change that adds, removes or changes plugin MCP servers: an install, update, enablement,
- * scope, server or settings change, or an uninstall. Sessions that froze the MCP surface (ChatGPT web) end on it.
- */
-export function onPluginMcpSurfaceChanged(listener: () => void): () => void {
-  mcpSurfaceListeners.add(listener)
-  return () => mcpSurfaceListeners.delete(listener)
-}
-function mcpSurfaceChanged(): void {
-  for (const listener of mcpSurfaceListeners) {
-    try {
-      listener()
-    } catch {
-      // A listener's failure never undoes a change that is already saved.
-    }
-  }
-}
-/** A mutation that can change plugin MCP servers: reported to listeners when it succeeds. */
-function changingMcp<T extends { ok: boolean }>(fn: () => Promise<T>): Promise<T> {
-  return withPluginMutation(async () => {
-    const result = await fn()
-    if (result.ok) mcpSurfaceChanged()
-    return result
-  })
-}
-
 interface CatalogData {
   commit: string
   market: ParsedMarketplace
@@ -508,16 +481,10 @@ export function removeMarketplace(input: { id: string; uninstall: boolean }): Pr
     if (!record) return fail('unknown-marketplace')
     const installed = Object.values(listInstalled()).filter((item) => item.marketplaceId === input.id)
     if (installed.length && !input.uninstall) return fail('busy', `${installed.length} installed plugins`)
-    let removed = 0
     for (const item of installed) {
       const result = await uninstallPlugin(item.key, { deleteData: false }, installerDeps())
-      if (!result.ok) {
-        if (removed) mcpSurfaceChanged()
-        return result
-      }
-      removed += 1
+      if (!result.ok) return result
     }
-    if (removed) mcpSurfaceChanged()
     removeMarketplaceRecord(input.id)
     catalogs.delete(input.id)
     await fsp.rm(appPluginLayout().source(input.id), { recursive: true, force: true }).catch(() => undefined)
@@ -720,7 +687,7 @@ interface InstallInput {
 export function install(
   input: { marketplaceId: string; name: string } & InstallInput
 ): Promise<PluginOpResult<InstalledPluginDto>> {
-  return changingMcp(async () => {
+  return withPluginMutation(async () => {
     const record = findMarketplace(input.marketplaceId)
     if (!record) return fail('unknown-marketplace')
     try {
@@ -764,7 +731,7 @@ export function installPinned(input: {
   enabled: boolean
   inputs?: Record<string, string>
 }): Promise<PluginOpResult<InstalledPluginDto>> {
-  return changingMcp(async () => {
+  return withPluginMutation(async () => {
     const added = await addMarketplaceUnlocked(input.source)
     if (!added.ok) return added
     const record = findMarketplace(added.value.id)
@@ -809,7 +776,7 @@ export function update(input: {
   key: string
   consent?: PluginConsentInput
 }): Promise<PluginOpResult<InstalledPluginDto>> {
-  return changingMcp(async () => {
+  return withPluginMutation(async () => {
     const installed = listInstalled()[input.key]
     if (!installed) return fail('unknown-plugin')
     const record = findMarketplace(installed.marketplaceId)
@@ -849,7 +816,7 @@ function invalidateServers(record: InstalledPluginRecord): void {
 }
 
 export function setEnabled(input: { key: string; enabled: boolean }): Promise<PluginOpResult> {
-  return changingMcp(async () => {
+  return withPluginMutation(async () => {
     const result = updateRecord(input.key, (record) => {
       record.enabled = input.enabled
     })
@@ -879,7 +846,7 @@ export async function setHooks(input: { key: string; enabled: boolean; consent?:
 }
 
 export function setScope(input: { key: string; scope: PluginScope }): Promise<PluginOpResult> {
-  return changingMcp(async () =>
+  return withPluginMutation(async () =>
     updateRecord(input.key, (record) => {
       record.scope =
         input.scope.kind === 'global'
@@ -895,7 +862,7 @@ export function setServer(input: {
   enabled: boolean
   consent?: boolean
 }): Promise<PluginOpResult> {
-  return changingMcp(async () => {
+  return withPluginMutation(async () => {
     const result = updateRecord(input.key, (record) => {
       const state = record.servers[input.serverKey]
       const spec = (record.mcpServers ?? []).find((server) => server.key === input.serverKey)
@@ -916,7 +883,7 @@ export function setServer(input: {
 }
 
 export function setInputs(input: { key: string; values: Record<string, string | null> }): Promise<PluginOpResult> {
-  return changingMcp(async () => {
+  return withPluginMutation(async () => {
     const record = listInstalled()[input.key]
     if (!record || record.status !== 'ready') return fail('unknown-plugin')
     const known = new Set((record.inputs ?? []).map((item) => item.id))
@@ -938,7 +905,7 @@ export function setInputs(input: { key: string; values: Record<string, string | 
 }
 
 export function uninstall(input: { key: string; deleteData: boolean }): Promise<PluginOpResult> {
-  return changingMcp(async () => {
+  return withPluginMutation(async () => {
     const result = await uninstallPlugin(input.key, { deleteData: input.deleteData }, installerDeps())
     invalidatePluginRuntimeCache()
     return result
@@ -992,7 +959,6 @@ async function refreshInstalled(): Promise<void> {
     }
   })
   invalidatePluginRuntimeCache()
-  mcpSurfaceChanged()
 }
 
 /** Test seam: forget cached catalogs. */

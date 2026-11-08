@@ -5,7 +5,6 @@ import {
 } from '../../../../shared/chat'
 import type {
   ChatConfig,
-  ChatGptWebStatus,
   ChatProviderInfo,
   ChatSubscriptionAuthStatus,
   ChatSubscriptionProviderKind,
@@ -13,8 +12,6 @@ import type {
 } from '../../../../shared/chat'
 import type { RuntimeAssetInfo } from '../../../../shared/runtime-assets'
 import { subscriptionUsageTone } from '../subscription-usage-presentation'
-
-export const CHATGPT_WEB_ENTRY_KEY = 'chatgpt-web'
 
 export interface SubscriptionAccountEntry {
   type: 'subscription'
@@ -27,20 +24,15 @@ export interface SubscriptionAccountEntry {
   accountLabel?: string
 }
 
-export interface ChatGptWebAccountEntry {
-  type: 'chatgpt-web'
-  key: typeof CHATGPT_WEB_ENTRY_KEY
-}
-
 export interface ApiKeyAccountEntry {
   type: 'api-key'
   key: string
   provider: ChatProviderInfo
 }
 
-export type AccountEntry = SubscriptionAccountEntry | ChatGptWebAccountEntry | ApiKeyAccountEntry
+export type AccountEntry = SubscriptionAccountEntry | ApiKeyAccountEntry
 
-export type AccountGroupId = ChatSubscriptionProviderKind | 'chatgpt-web' | 'api-keys'
+export type AccountGroupId = ChatSubscriptionProviderKind | 'api-keys'
 
 export interface AccountGroup {
   id: AccountGroupId
@@ -51,7 +43,7 @@ export function defaultSubscriptionProviderId(kind: ChatSubscriptionProviderKind
   return `builtin_${kind.replaceAll('-', '_')}`
 }
 
-/** Every account slot in display order: subscriptions by provider, ChatGPT Web after ChatGPT, then API keys. */
+/** Every account slot in display order: subscriptions by provider, then API keys. */
 export function accountGroups(config: Pick<ChatConfig, 'providers'>): AccountGroup[] {
   const groups: AccountGroup[] = []
   for (const kind of CHAT_SUBSCRIPTION_PROVIDER_KINDS) {
@@ -82,9 +74,6 @@ export function accountGroups(config: Pick<ChatConfig, 'providers'>): AccountGro
           ),
       ],
     })
-    if (kind === 'codex-subscription') {
-      groups.push({ id: 'chatgpt-web', entries: [{ type: 'chatgpt-web', key: CHATGPT_WEB_ENTRY_KEY }] })
-    }
   }
   groups.push({
     id: 'api-keys',
@@ -101,13 +90,7 @@ export interface SubscriptionAccountSnapshot {
   runtime: RuntimeAssetInfo | null
 }
 
-export interface ChatGptWebAccountSnapshot {
-  status: (ChatGptWebStatus & { enabled: boolean }) | null
-  /** Whether the secure tunnel client is installed; null while it is being read. */
-  tunnelReady: boolean | null
-}
-
-export type AccountSnapshot = SubscriptionAccountSnapshot | ChatGptWebAccountSnapshot
+export type AccountSnapshot = SubscriptionAccountSnapshot
 
 /**
  * ok: usable. pending: loading or waiting for sign-in. attention: the user has something to fix.
@@ -187,42 +170,6 @@ export function subscriptionAccountSummary(
   return { health: entry.accountId ? 'attention' : 'idle', connected: false, ...NO_USAGE }
 }
 
-export type ChatGptWebPhase =
-  | 'loading'
-  | 'off'
-  | 'component'
-  | 'key'
-  | 'tunnel'
-  | 'refresh'
-  | 'error'
-  | 'sessions'
-  | 'ready'
-
-export function chatGptWebPhase(snapshot: ChatGptWebAccountSnapshot | undefined): ChatGptWebPhase {
-  const status = snapshot?.status
-  if (!status) return 'loading'
-  if (!status.enabled) return 'off'
-  if (snapshot.tunnelReady === false) return 'component'
-  if (!status.apiKeyPresent) return 'key'
-  if (!status.tunnelId) return 'tunnel'
-  if (status.tunnelState === 'error' || status.sessions.some((session) => session.state === 'error')) return 'error'
-  if (status.appRefreshRequired) return 'refresh'
-  return status.sessions.some((session) => session.state !== 'ended') ? 'sessions' : 'ready'
-}
-
-export function chatGptWebSummary(snapshot: ChatGptWebAccountSnapshot | undefined): AccountSummary {
-  const phase = chatGptWebPhase(snapshot)
-  const health: AccountHealth =
-    phase === 'ready' || phase === 'sessions'
-      ? 'ok'
-      : phase === 'error'
-        ? 'error'
-        : phase === 'loading' || phase === 'off'
-          ? 'idle'
-          : 'attention'
-  return { health, connected: health === 'ok', ...NO_USAGE }
-}
-
 export function apiKeyAccountSummary(entry: ApiKeyAccountEntry): AccountSummary {
   const keyed = entry.provider.connected ?? entry.provider.apiKeyPresent
   // A key the provider refused is saved but unusable: it needs a new key, so it does not count as connected.
@@ -231,10 +178,7 @@ export function apiKeyAccountSummary(entry: ApiKeyAccountEntry): AccountSummary 
 }
 
 export function accountSummary(entry: AccountEntry, snapshot: AccountSnapshot | undefined): AccountSummary {
-  if (entry.type === 'subscription') {
-    return subscriptionAccountSummary(entry, snapshot as SubscriptionAccountSnapshot | undefined)
-  }
-  if (entry.type === 'chatgpt-web') return chatGptWebSummary(snapshot as ChatGptWebAccountSnapshot | undefined)
+  if (entry.type === 'subscription') return subscriptionAccountSummary(entry, snapshot)
   return apiKeyAccountSummary(entry)
 }
 
@@ -245,10 +189,9 @@ export function accountSummary(entry: AccountEntry, snapshot: AccountSnapshot | 
 export function isAccountListed(
   entry: AccountEntry,
   summary: AccountSummary,
-  context: { selected: boolean; group: AccountGroup; chatGptWebEnabled: boolean }
+  context: { selected: boolean; group: AccountGroup }
 ): boolean {
   if (context.selected || entry.type === 'api-key') return true
-  if (entry.type === 'chatgpt-web') return context.chatGptWebEnabled
   if (entry.accountId) return true
   return summary.health !== 'idle' || context.group.entries.length > 1
 }

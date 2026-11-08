@@ -27,7 +27,6 @@ vi.mock('../../src/main/floating-manager', () => ({
   setFloatBounds: vi.fn(),
   setPinned: vi.fn(),
   listFloating: vi.fn(),
-  isChatGptVisible: vi.fn(() => false),
   visibleFloatingTabsOf: vi.fn(() => []),
   showFor: vi.fn(),
 }))
@@ -40,7 +39,6 @@ vi.mock('../../src/main/popup-manager', () => ({
   setSuppressedByDialog: vi.fn(),
   setDialogSuppressionOwners: vi.fn(),
   setSuppressedByOverlay: vi.fn(),
-  isChatGptVisible: vi.fn(() => false),
   showFor: vi.fn(),
   stateFor: vi.fn(),
 }))
@@ -106,10 +104,8 @@ import { createShellTerminal } from '../../src/main/terminal-manager'
 import * as floatingManager from '../../src/main/floating-manager'
 import * as popupManager from '../../src/main/popup-manager'
 import {
-  applyLayout,
   disposeConversation,
   ensurePanelTab,
-  isTabVisibleInSlot,
   navigateBrowser,
   queryOmnibox,
   removeBrowserHistoryEntry,
@@ -133,8 +129,6 @@ describe('registerDrawerIpc', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(getConversation).mockReset()
-    vi.mocked(floatingManager.isChatGptVisible).mockReturnValue(false)
-    vi.mocked(popupManager.isChatGptVisible).mockReturnValue(false)
   })
 
   it('sanitizes forged standalone review layouts and blocks panel, popup, and float requests', () => {
@@ -185,7 +179,6 @@ describe('registerDrawerIpc', () => {
     expect([...handles.keys()].sort()).toEqual([
       'drawer:browser-state-get',
       'drawer:capture-slot',
-      'drawer:chatgpt-visible',
       'drawer:floating-state-get',
       'drawer:placement-get',
       'drawer:read-terminal',
@@ -343,8 +336,7 @@ describe('registerDrawerIpc', () => {
       mons.get('drawer:detach')!({} as never, remote, 'browser')
       mons.get('popup:open')!({} as never, remote, 'files')
       mons.get('popup:open-floating')!({} as never, remote, 'notes')
-      // Nor its companion, nor an editor its host does not serve.
-      mons.get('drawer:detach')!({} as never, remote, 'chatgpt')
+      // Nor an editor its host does not serve.
       mons.get('popup:open')!({} as never, remote, 'vscode')
     } finally {
       setRemoteToolHosts(() => false)
@@ -408,39 +400,6 @@ describe('registerDrawerIpc', () => {
     expect(floatingManager.detach).not.toHaveBeenCalled()
   })
 
-  it('restores a cold ChatGPT view when showing its slot and reapplies the current layout', async () => {
-    const { reg, mons } = createTestRegistrar()
-    let finishRestore!: (restored: boolean) => void
-    const restoreChatGptView = vi.fn(
-      () =>
-        new Promise<boolean>((resolve) => {
-          finishRestore = resolve
-        })
-    )
-    registerDrawerIpc(reg, {
-      loadVSCodeFolder: vi.fn(),
-      openPopup: vi.fn(),
-      restoreChatGptView,
-    })
-    const payload = {
-      convId: 'companion-cold',
-      visibleKind: 'chatgpt' as const,
-      bounds: { x: 10, y: 20, width: 800, height: 600 },
-    }
-
-    mons.get('drawer:layout')!({} as never, payload)
-
-    expect(setLayout).toHaveBeenCalledWith(payload)
-    expect(restoreChatGptView).toHaveBeenCalledWith('companion-cold')
-    expect(applyLayout).toHaveBeenCalledOnce()
-
-    finishRestore(true)
-    await Promise.resolve()
-
-    expect(applyLayout).toHaveBeenCalledTimes(2)
-    expect(setLayout).toHaveBeenCalledOnce()
-  })
-
   it('drawer:create-terminal delegates admission to the terminal manager', () => {
     const { reg, mons } = createTestRegistrar()
     registerDrawerIpc(reg, {
@@ -452,34 +411,6 @@ describe('registerDrawerIpc', () => {
     vi.mocked(getConversation).mockReturnValue({ id: 'c1', cwd: '/tmp/conv' } as never)
     createTerminal({} as never, 'c1')
     expect(createShellTerminal).toHaveBeenCalledWith('c1', '/tmp/conv')
-  })
-
-  it('ignores slots suppressed by other popups but includes ChatGPT atop the central popup', () => {
-    const { reg, handles } = createTestRegistrar()
-    registerDrawerIpc(reg, {
-      loadVSCodeFolder: vi.fn(),
-      openPopup: vi.fn(),
-    })
-
-    // Another tool popup makes the slot view effectively offscreen.
-    vi.mocked(isTabVisibleInSlot).mockReturnValue(false)
-    expect(handles.get('drawer:chatgpt-visible')!({} as never, 'background-conv')).toBe(false)
-
-    // Popup-manager owns stacking order; ChatGPT is visible when on top.
-    vi.mocked(popupManager.isChatGptVisible).mockReturnValue(true)
-
-    expect(handles.get('drawer:chatgpt-visible')!({} as never, 'background-conv')).toBe(true)
-  })
-
-  it('considers ChatGPT visible in a pinned floating window for a background conversation', () => {
-    const { reg, handles } = createTestRegistrar()
-    registerDrawerIpc(reg, {
-      loadVSCodeFolder: vi.fn(),
-      openPopup: vi.fn(),
-    })
-    vi.mocked(floatingManager.isChatGptVisible).mockReturnValue(true)
-
-    expect(handles.get('drawer:chatgpt-visible')!({} as never, 'background-conv')).toBe(true)
   })
 
   it('forwards address-bar navigation as typed only when the renderer says so', () => {

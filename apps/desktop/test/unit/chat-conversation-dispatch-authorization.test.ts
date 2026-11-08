@@ -141,7 +141,6 @@ describe('isHumanTurnAdmission', () => {
 
   it.each([
     ['approved plan / revision / guard continuation', { internal: true }],
-    ['review loop', { internalLoop: {} }],
     ['bot command', { botAdmission: {} }],
     ['remote bot chat', { remoteAdmission: true }],
     ['unattended executor', { runnerAdmission: () => undefined, runnerSignal: new AbortController().signal }],

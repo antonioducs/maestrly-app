@@ -67,12 +67,6 @@ const h = vi.hoisted(() => {
   }
 })
 
-const environmentLocks = vi.hoisted(() => new Map<string, string>())
-vi.mock('../../src/main/chat/chatgpt-web/manager', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../src/main/chat/chatgpt-web/manager')>()),
-  // An isolated internal turn is admitted only for the project-environment job that owns the conversation.
-  projectEnvironmentLockFor: (conversationId: string) => environmentLocks.get(conversationId) ?? null,
-}))
 vi.mock('../../src/main/chat/runner', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/main/chat/runner')>()
   return { ...actual, runChat: (args: unknown) => h.runChat(args) }
@@ -120,12 +114,7 @@ vi.mock('../../src/main/window-ipc', async (importOriginal) => ({
 }))
 
 import type { ChatIpcDeps } from '../../src/main/chat/service'
-import {
-  disposeChat,
-  registerChatIpc,
-  resolveFrozenChatSelection,
-  startInternalChatTurn,
-} from '../../src/main/chat/service'
+import { disposeChat, registerChatIpc, resolveFrozenChatSelection } from '../../src/main/chat/service'
 import {
   addSubscriptionAccount,
   CODEX_SUBSCRIPTION_PROVIDER_ID,
@@ -290,9 +279,9 @@ describe('Codex logical vs physical provider identity', () => {
   })
 
   it.each([
-    ['frozen route', true],
-    ['route enabled after the loop started', false],
-  ] as const)('runs a review-loop round on the %s', async (_case, routeAtFreeze) => {
+    ['the account pool is enabled', true],
+    ['the account pool is disabled', false],
+  ] as const)('freezes the failover route only when %s at freeze time', async (_case, poolEnabled) => {
     register()
     const workspace = makeWorkspace()
     const conversation = makeConversation(workspace.id, { cwd: '/repo' })
@@ -306,51 +295,20 @@ describe('Codex logical vs physical provider identity', () => {
       memberProviderIds: [CODEX_SUBSCRIPTION_PROVIDER_ID, slotProviderId],
       activeProviderId: CODEX_SUBSCRIPTION_PROVIDER_ID,
       policy: 'prefer-active',
-      enabled: routeAtFreeze,
+      enabled: poolEnabled,
     })
+
     const frozen = await resolveFrozenChatSelection(conversation.id)
     if (!frozen.ok) throw new Error(frozen.error)
+
     expect(frozen.selection.failoverRoute?.map((account) => account.providerId)).toEqual(
-      routeAtFreeze ? [CODEX_SUBSCRIPTION_PROVIDER_ID, slotProviderId] : undefined
+      poolEnabled ? [CODEX_SUBSCRIPTION_PROVIDER_ID, slotProviderId] : undefined
     )
+    // Enabling the pool afterwards does not rewrite what was already frozen.
     setAccountPool({ kind: 'codex-subscription', enabled: true })
-    h.resolveCodexRuntimeTarget.mockResolvedValue(defaultTarget({ providerId: slotProviderId, accountId: slot.id }))
-    const loopId = `codex-route-loop-${conversation.id}`
-    environmentLocks.set(conversation.id, loopId)
-    try {
-      const result = await startInternalChatTurn({
-        conversationId: conversation.id,
-        prompt: 'Apply review findings.',
-        selection: frozen.selection,
-        loopId,
-        iteration: 1,
-        maxIterations: 3,
-        signal: new AbortController().signal,
-      })
-      if (!result.ok) throw new Error(result.error)
-      await vi.waitFor(() => expect(h.runCodex).toHaveBeenCalledTimes(1))
-      const args = h.runCodex.mock.calls[0][0]
-      expect(args).toMatchObject({ ephemeralSession: true, executionScope: { kind: 'review-loop', loopId } })
-      if (routeAtFreeze) {
-        expect(h.resolveCodexRuntimeTarget).toHaveBeenCalledWith(
-          expect.objectContaining({ chain: [CODEX_SUBSCRIPTION_PROVIDER_ID, slotProviderId], fastMode: false })
-        )
-        expect(args).toMatchObject({
-          effectiveProviderId: slotProviderId,
-          initialAccountId: slot.id,
-          failoverChain: [CODEX_SUBSCRIPTION_PROVIDER_ID, slotProviderId],
-          resolveNextTarget: expect.any(Function),
-        })
-      } else {
-        expect(h.resolveCodexRuntimeTarget).not.toHaveBeenCalled()
-        expect(args.effectiveProviderId).toBe(CODEX_SUBSCRIPTION_PROVIDER_ID)
-        expect(args.failoverChain).toBeUndefined()
-        expect(args.resolveNextTarget).toBeUndefined()
-      }
-      await result.handle.done
-    } finally {
-      environmentLocks.clear()
-    }
+    expect(frozen.selection.failoverRoute?.map((account) => account.providerId)).toEqual(
+      poolEnabled ? [CODEX_SUBSCRIPTION_PROVIDER_ID, slotProviderId] : undefined
+    )
   })
 
   it('preflights against smaller physical fallback windows', async () => {

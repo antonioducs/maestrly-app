@@ -197,12 +197,6 @@ vi.mock('../../src/main/chat/github-copilot', () => ({
     dispose: vi.fn(),
   }),
 }))
-const environmentLocks = vi.hoisted(() => new Map<string, string>())
-vi.mock('../../src/main/chat/chatgpt-web/manager', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../src/main/chat/chatgpt-web/manager')>()),
-  // An isolated internal turn is admitted only for the project-environment job that owns the conversation.
-  projectEnvironmentLockFor: (conversationId: string) => environmentLocks.get(conversationId) ?? null,
-}))
 vi.mock('../../src/main/chat/runner', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/main/chat/runner')>()
   return { ...actual, runChat: (args: unknown) => h.runGeneric(args) }

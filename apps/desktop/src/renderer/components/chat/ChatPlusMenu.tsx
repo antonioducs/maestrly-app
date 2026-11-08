@@ -1,27 +1,14 @@
 import { useChatDocument } from '@/lib/chat-window-context'
 import { useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import {
-  Plus,
-  ImageIcon,
-  Bot,
-  ExternalLink,
-  Loader2,
-  ArrowLeft,
-  Shield,
-  SlidersHorizontal,
-  ChevronRight,
-  Puzzle,
-} from 'lucide-react'
+import { Plus, ImageIcon, Bot, SlidersHorizontal, ChevronRight, Puzzle } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { ChatConfig, ChatConvTools, ChatGptWebCapabilitiesInfo, ChatMode } from '../../../shared/chat'
+import type { ChatConfig, ChatConvTools, ChatMode } from '../../../shared/chat'
 import { APP_TOOL_GROUPS, type AppToolGroup, type AppToolGroupState } from '../../../shared/app-tool-groups'
 import { ConversationSubagentProfiles } from './subagent-profiles/ConversationSubagentProfiles'
 import { notifySubagentProfilesChanged } from '@/lib/subagent-catalog-events'
-import { companionStartError, startChatGptWebCompanion } from '@/lib/chatgpt-web'
 import { useHostApi, useHostId } from '@/lib/hosts/host-context'
 import { useSettings } from '@/lib/use-settings'
-import { ChatGptWebAccessEditor } from './ChatGptWebAccessEditor'
 import { localChatComposerSource, type ChatComposerSource } from './chat-composer-source'
 
 function Toggle({
@@ -62,7 +49,6 @@ export function ChatPlusMenu({
   onAddFiles,
   fontScale,
   onFontScale,
-  onCompanionStarting,
   source: providedSource,
   manageMcpLabel,
 }: {
@@ -71,7 +57,6 @@ export function ChatPlusMenu({
   onAddFiles: (files: File[]) => void
   fontScale: number
   onFontScale: (n: number) => void
-  onCompanionStarting?: (starting: boolean) => void
   source?: ChatComposerSource
   manageMcpLabel?: string
 }) {
@@ -82,7 +67,7 @@ export function ChatPlusMenu({
   const hostId = useHostId()
   const { openSettings } = useSettings()
   const source = providedSource ?? localChatComposerSource(api, conversationId)
-  const [activePanel, setActivePanel] = useState<'menu' | 'subagents' | 'companion' | null>(null)
+  const [activePanel, setActivePanel] = useState<'menu' | 'subagents' | null>(null)
   const [config, setConfig] = useState<Pick<ChatConfig, 'mcpServers' | 'appToolsEnabled' | 'imageGenEnabled'> | null>(
     null
   )
@@ -97,10 +82,6 @@ export function ChatPlusMenu({
   const [mcpAccountsDisabled, setMcpAccountsDisabled] = useState<string[]>([])
   const [subagentProfilesEnabled, setSubagentProfilesEnabled] = useState(true)
   const [subagentsEnabled, setSubagentsEnabled] = useState(true)
-  const [companionBusy, setCompanionBusy] = useState(false)
-  const [companionError, setCompanionError] = useState<string | null>(null)
-  const [chatGptWebEnabled, setChatGptWebEnabled] = useState(false)
-  const [companionCapabilities, setCompanionCapabilities] = useState<ChatGptWebCapabilitiesInfo | null>(null)
   const ref = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -122,10 +103,6 @@ export function ChatPlusMenu({
       setMcpAccounts(t.mcpAccounts ?? [])
       setMcpAccountsDisabled(t.mcpAccountsDisabled ?? [])
     })
-    if (!source.bot)
-      api.chatGptWebCapabilities(targetConversationId).then((value) => {
-        if (conversationIdRef.current === targetConversationId) setCompanionCapabilities(value)
-      })
     const profilesRevision = subagentProfilesRevisionRef.current
     const subagentsRevision = subagentsRevisionRef.current
     source.chatSubagentProfilesGetConversation().then((payload) => {
@@ -165,25 +142,6 @@ export function ChatPlusMenu({
     setActivePanel(null)
     setAppGroupsOpen(false)
   }, [conversationId])
-
-  useEffect(() => {
-    let alive = true
-    const apply = (status: { enabled: boolean }) => {
-      if (!alive) return
-      setChatGptWebEnabled(status.enabled)
-      if (!status.enabled) setCompanionError(null)
-    }
-    if (source.bot) return
-    void api
-      .chatGptWebStatus()
-      .then(apply)
-      .catch(() => setChatGptWebEnabled(false))
-    const off = api.onChatGptWebStatus(apply)
-    return () => {
-      alive = false
-      off()
-    }
-  }, [api])
 
   const toggleApp = () => {
     const next = !app
@@ -249,38 +207,6 @@ export function ChatPlusMenu({
     })
   }
 
-  const startChatGptCompanion = async () => {
-    setCompanionBusy(true)
-    onCompanionStarting?.(true)
-    setCompanionError(null)
-    try {
-      if (companionCapabilities?.editable) {
-        const saved = await api.chatGptWebSetCapabilities(conversationId, companionCapabilities.capabilities)
-        setCompanionCapabilities(saved)
-      }
-      await startChatGptWebCompanion(conversationId, api)
-      setActivePanel(null)
-    } catch (cause) {
-      setCompanionError(companionStartError(cause instanceof Error ? cause.message : String(cause), t))
-    } finally {
-      setCompanionBusy(false)
-      onCompanionStarting?.(false)
-    }
-  }
-
-  const saveCompanionCapabilities = async () => {
-    if (!companionCapabilities?.editable) return
-    setCompanionBusy(true)
-    setCompanionError(null)
-    try {
-      setCompanionCapabilities(await api.chatGptWebSetCapabilities(conversationId, companionCapabilities.capabilities))
-    } catch (cause) {
-      setCompanionError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      setCompanionBusy(false)
-    }
-  }
-
   // A plugin's servers appear only in the conversations the plugin serves (its scope).
   const servers = (config?.mcpServers ?? []).filter(
     (server) => !server.plugin || !pluginMcpServers || pluginMcpServers.includes(server.id)
@@ -327,31 +253,6 @@ export function ChatPlusMenu({
             <ImageIcon className="h-4 w-4 text-muted-foreground" />
             {t('plusMenu.imageFile')}
           </button>
-          {!source.bot && chatGptWebEnabled && (
-            <button
-              type="button"
-              disabled={companionBusy}
-              onClick={() => setActivePanel('companion')}
-              className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-[13px] text-foreground hover:bg-white/[0.05] disabled:opacity-50"
-            >
-              {companionBusy ? (
-                <Loader2 className="h-4 w-4 animate-spin text-violet-300" />
-              ) : (
-                <ExternalLink className="h-4 w-4 text-violet-300" />
-              )}
-              <span className="min-w-0">
-                <span className="block">{t('plusMenu.chatgptCompanion')}</span>
-                <span className="block truncate text-[11px] text-muted-foreground">
-                  {t('plusMenu.chatgptCompanionDesc')}
-                </span>
-              </span>
-            </button>
-          )}
-          {!source.bot && chatGptWebEnabled && companionError && (
-            <div className="mx-2.5 mb-1 rounded border border-amber-500/25 bg-amber-500/[0.07] px-2 py-1 text-[11px] text-amber-200">
-              {t('plusMenu.chatgptCompanionError', { error: companionError })}
-            </div>
-          )}
           <div className="flex items-center justify-between gap-2 rounded-md px-2.5 py-2 hover:bg-white/[0.05]">
             <div className="flex min-w-0 items-center gap-2">
               <Bot className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -573,60 +474,6 @@ export function ChatPlusMenu({
           returnFocusRef={triggerRef}
           onClose={() => setActivePanel(null)}
         />
-      )}
-      {activePanel === 'companion' && (
-        <div className="absolute bottom-full left-0 z-50 mb-1 max-h-[min(80vh,42rem)] w-96 overflow-y-auto rounded-lg border border-white/[0.1] bg-[#161618] p-2 shadow-2xl">
-          <div className="mb-2 flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setActivePanel('menu')}
-              className="rounded p-1 text-muted-foreground hover:bg-white/[0.06] hover:text-foreground"
-              aria-label={t('plusMenu.companionBack')}
-            >
-              <ArrowLeft className="h-4 w-4" />
-            </button>
-            <Shield className="h-4 w-4 text-violet-300" />
-            <div className="text-[13px] font-medium text-foreground">{t('plusMenu.companionAccess')}</div>
-          </div>
-          {!companionCapabilities ? (
-            <div className="flex items-center gap-2 px-2 py-4 text-[12px] text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" /> {t('plusMenu.companionLoading')}
-            </div>
-          ) : (
-            <>
-              <ChatGptWebAccessEditor
-                info={companionCapabilities}
-                capabilities={companionCapabilities.capabilities}
-                editable={companionCapabilities.editable}
-                disabled={companionBusy}
-                onChange={(capabilities) =>
-                  setCompanionCapabilities((current) => (current ? { ...current, capabilities } : current))
-                }
-                variant="compact"
-              />
-              {companionError && <div className="mt-2 text-[11px] text-amber-300">{companionError}</div>}
-              <div className="mt-2 flex justify-end gap-2">
-                <button
-                  type="button"
-                  disabled={companionBusy || !companionCapabilities.editable}
-                  onClick={() => void saveCompanionCapabilities()}
-                  className="rounded border border-white/15 px-2.5 py-1 text-[11px] text-foreground hover:bg-white/[0.05] disabled:opacity-40"
-                >
-                  {t('plusMenu.companionSave')}
-                </button>
-                <button
-                  type="button"
-                  disabled={companionBusy}
-                  onClick={() => void startChatGptCompanion()}
-                  className="inline-flex items-center gap-1 rounded bg-violet-600 px-2.5 py-1 text-[11px] text-white hover:bg-violet-500 disabled:opacity-50"
-                >
-                  {companionBusy && <Loader2 className="h-3 w-3 animate-spin" />}
-                  {t('plusMenu.companionStart')}
-                </button>
-              </div>
-            </>
-          )}
-        </div>
       )}
     </div>
   )

@@ -2,10 +2,10 @@
 
 Use npm and the repository lockfile. `postinstall.mjs` ensures Electron is installed
 and rebuilds native application dependencies. It does not fetch optional provider
-runtimes. Fetch those explicitly with `fetch-codex-runtime.mjs`,
-`fetch-github-copilot-runtime.mjs`, or `fetch-tunnel-client.mjs`; each tool
-supports target selection and pins its upstream version and integrity. Provider
-setup inside the application is also available.
+runtimes. Fetch those explicitly with `fetch-codex-runtime.mjs` or
+`fetch-github-copilot-runtime.mjs`; each tool supports target selection and pins
+its upstream version and integrity. Provider setup inside the application is
+also available.
 
 ## Packaging
 

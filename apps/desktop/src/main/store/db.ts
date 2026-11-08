@@ -93,10 +93,6 @@ function purgeLegacyConversationPreferences(): void {
       delete prefs.floating.card
       changed = true
     }
-    if (isJsonObject(prefs.chatGptWebCapabilities) && Object.hasOwn(prefs.chatGptWebCapabilities, 'board')) {
-      delete prefs.chatGptWebCapabilities.board
-      changed = true
-    }
     if (changed) update.run(JSON.stringify(prefs), row.id)
   }
 }
@@ -188,6 +184,78 @@ function purgeRetiredPlatformSchema(): void {
   db.exec("DELETE FROM app_settings WHERE key LIKE 'platform.%';")
 }
 
+/**
+ * Remove the retired ChatGPT Web companion: its settings, the encrypted Platform API key it kept as a provider key,
+ * its drawer tab and the per-conversation state it stored in ui_prefs. The main entry point removes its browser
+ * partition once the store is open.
+ */
+function purgeRetiredChatGptWeb(): void {
+  if (tableExists('app_settings')) {
+    db.exec("DELETE FROM app_settings WHERE key LIKE 'chat.chatgptWeb%' OR key = 'chat.apiKey.builtin_chatgpt_web';")
+    const rows = db
+      .prepare("SELECT key, value FROM app_settings WHERE key IN ('defaultMainTabOrder', 'shortcuts.config')")
+      .all() as Array<{ key: string; value: string }>
+    const update = db.prepare('UPDATE app_settings SET value = ? WHERE key = ?')
+    for (const row of rows) {
+      let value: unknown
+      try {
+        value = JSON.parse(row.value)
+      } catch {
+        continue
+      }
+      if (row.key === 'defaultMainTabOrder' && Array.isArray(value)) {
+        const sanitized = value.filter((tab) => tab !== 'chatgpt')
+        if (sanitized.length !== value.length) update.run(JSON.stringify(sanitized), row.key)
+      } else if (row.key === 'shortcuts.config' && isJsonObject(value) && Object.hasOwn(value, 'chatgpt')) {
+        delete value.chatgpt
+        update.run(JSON.stringify(value), row.key)
+      }
+    }
+  }
+  if (!tableExists('conversations') || !tableHasColumn('conversations', 'ui_prefs')) return
+  const rows = db
+    .prepare("SELECT id, ui_prefs FROM conversations WHERE ui_prefs LIKE '%chatGptWeb%' OR ui_prefs LIKE '%chatgpt%'")
+    .all() as Array<{ id: string; ui_prefs: string }>
+  const update = db.prepare('UPDATE conversations SET ui_prefs = ? WHERE id = ?')
+  for (const row of rows) {
+    let prefs: unknown
+    try {
+      prefs = JSON.parse(row.ui_prefs)
+    } catch {
+      continue
+    }
+    if (!isJsonObject(prefs)) continue
+    let changed = false
+    for (const key of [
+      'chatGptWebUrl',
+      'chatGptWebSessionScope',
+      'chatGptWebCapabilities',
+      'chatGptWebPairedCapabilityFingerprint',
+    ]) {
+      if (!Object.hasOwn(prefs, key)) continue
+      delete prefs[key]
+      changed = true
+    }
+    for (const key of ['mainTabOrder', 'openTabs']) {
+      const tabs = prefs[key]
+      if (!Array.isArray(tabs)) continue
+      const sanitized = tabs.filter((tab) => tab !== 'chatgpt')
+      if (sanitized.length === tabs.length) continue
+      prefs[key] = sanitized
+      changed = true
+    }
+    if (prefs.activeTab === 'chatgpt') {
+      delete prefs.activeTab
+      changed = true
+    }
+    if (isJsonObject(prefs.floating) && Object.hasOwn(prefs.floating, 'chatgpt')) {
+      delete prefs.floating.chatgpt
+      changed = true
+    }
+    if (changed) update.run(JSON.stringify(prefs), row.id)
+  }
+}
+
 /** The executor registered an OS login item; with its setting gone nothing else could ever remove it. */
 function retireExecutorLoginItem(): void {
   const row = db.prepare("SELECT value FROM app_settings WHERE key = 'platform.desktop-executor.v1'").get() as
@@ -248,6 +316,7 @@ function initializeSchema(): void {
   purgeLegacyProjectManagementSchema()
   purgeRetiredExternalAgentSchema()
   purgeRetiredPlatformSchema()
+  purgeRetiredChatGptWeb()
   const usageLedgerCols = db.prepare('PRAGMA table_info(chat_usage_ledger)').all() as Array<{ name: string }>
   if (usageLedgerCols.length > 0 && !usageLedgerCols.some((column) => column.name === 'conversation_id')) {
     // The ledger deliberately has no FK: this optional owner key keeps per-conversation billing history after

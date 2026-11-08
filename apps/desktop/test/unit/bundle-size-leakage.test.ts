@@ -70,12 +70,6 @@ describe('lean core leakage gate', () => {
     writeFileSync(path.join(leaked, 'package.json'), '{}')
     expect((await findLeanCoreLeaks(unpacked, 'mac', 'arm64')).join('\n')).toMatch(/onnxruntime-node/)
   })
-
-  it('rejects a tunnel-client payload from packaged resources', async () => {
-    const resources = await resourcesWith([])
-    mkdirSync(path.join(resources, 'tunnel-client'), { recursive: true })
-    expect(await findLeanCoreLeaks(resources, 'mac', 'arm64')).toContain('Resources/tunnel-client')
-  })
 })
 
 describe('macOS architecture gate', () => {

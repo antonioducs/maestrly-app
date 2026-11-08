@@ -298,13 +298,6 @@ runtimes. Their Apache 2.0 license and attribution are recorded in
 and
 [`apps/desktop/resources/licenses/openai-codex-runtime-apache-2.0.txt`](apps/desktop/resources/licenses/openai-codex-runtime-apache-2.0.txt).
 
-## OpenAI tunnel-client
-
-The optional ChatGPT Web integration downloads OpenAI's unmodified
-[`tunnel-client`](https://github.com/openai/tunnel-client) 0.0.10 directly from
-OpenAI when the user enables it. The lean application package does not contain
-the executable. The upstream project is licensed under Apache 2.0.
-
 ## GitHub Copilot
 
 Maestrly integrates `@github/copilot-sdk` 1.0.7 and supports the optional

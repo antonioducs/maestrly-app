@@ -132,7 +132,7 @@ describe('runtime asset IPC', () => {
     await expect(reads.get('runtime-assets:status')?.({}, 'codex-runtime')).resolves.toMatchObject({
       id: 'codex-runtime',
     })
-    await expect(reads.get('runtime-assets:list')?.({})).resolves.toHaveLength(6)
+    await expect(reads.get('runtime-assets:list')?.({})).resolves.toHaveLength(5)
     expect(mocks.service.install).not.toHaveBeenCalled()
     expect(mocks.service.repair).not.toHaveBeenCalled()
     expect(mocks.updates.installInitial).not.toHaveBeenCalled()
@@ -164,12 +164,12 @@ describe('runtime asset IPC', () => {
   )
 
   it('runs explicit mutations and emits the resulting renderer-safe status', async () => {
-    await expect(mutations.get('runtime-assets:install')?.({}, 'tunnel-client')).resolves.toMatchObject({
-      id: 'tunnel-client',
+    await expect(mutations.get('runtime-assets:install')?.({}, 'github-copilot-runtime')).resolves.toMatchObject({
+      id: 'github-copilot-runtime',
       status: { state: 'ready' },
     })
-    expect(mocks.service.install).toHaveBeenCalledWith('tunnel-client')
-    expect(emitChanged).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'tunnel-client' }))
+    expect(mocks.service.install).toHaveBeenCalledWith('github-copilot-runtime')
+    expect(emitChanged).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'github-copilot-runtime' }))
   })
 
   it('routes Codex first installs through the release controller only', async () => {
@@ -195,8 +195,8 @@ describe('runtime asset IPC', () => {
     'accepts only updatable assets for %s',
     async (operation) => {
       await expect(
-        Promise.resolve().then(() => mutations.get(`runtime-assets:${operation}`)?.({}, 'tunnel-client', true))
-      ).rejects.toThrow(/not supported for tunnel-client/)
+        Promise.resolve().then(() => mutations.get(`runtime-assets:${operation}`)?.({}, 'github-copilot-runtime', true))
+      ).rejects.toThrow(/not supported for github-copilot-runtime/)
       expect(Object.values(mocks.updates).some((fn) => fn.mock.calls.length > 0)).toBe(false)
       expect(mocks.runtimeUpdates).not.toHaveBeenCalled()
     }
@@ -227,20 +227,20 @@ describe('runtime asset IPC', () => {
     expect(mocks.updates.cancel).toHaveBeenCalled()
     await mutations.get('runtime-assets:remove')?.({}, 'codex-runtime')
     expect(mocks.updates.prune).toHaveBeenCalled()
-    await mutations.get('runtime-assets:cancel')?.({}, 'tunnel-client')
+    await mutations.get('runtime-assets:cancel')?.({}, 'github-copilot-runtime')
     expect(mocks.updates.cancel).toHaveBeenCalledTimes(1)
   })
 
   it('wires internal service progress through the central renderer emitter', async () => {
     expect(mocks.setEmitter).toHaveBeenCalledWith(expect.any(Function))
     const progress = {
-      id: 'tunnel-client' as const,
-      displayName: 'tunnel-client',
+      id: 'github-copilot-runtime' as const,
+      displayName: 'github-copilot-runtime',
       requiredBy: 'test',
       availableVersion: '1',
       downloadBytes: 1,
       unpackedBytes: 1,
-      status: { id: 'tunnel-client' as const, state: 'downloading' as const, diskUsageBytes: 0 },
+      status: { id: 'github-copilot-runtime' as const, state: 'downloading' as const, diskUsageBytes: 0 },
     }
     mocks.changedEmitter()?.(progress)
     expect(emitChanged).toHaveBeenCalledWith(progress)

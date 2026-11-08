@@ -86,9 +86,6 @@ export const HOST_DESKTOP_EFFECT_CHANNELS: ReadonlySet<string> = new Set([
   'data:reset',
   'workspace:pick',
   'project-setup:pick-directory',
-  // The host's main process writes to the clipboard of its own desktop.
-  'chat:chatgpt-web:companion-copy-prompt',
-  'chat:chatgpt-web:companion-copy-session-key',
   'project-setup:projects-directory-pick',
 ])
 

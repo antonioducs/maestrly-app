@@ -1,6 +1,6 @@
 import { MEMORY_SETTINGS_KEY, parseMemorySettings, readMemorySettings } from '../memory/settings'
 import { scheduleMemoryExtraction } from '../memory/extraction/scheduler'
-import { isMemoryContextPart, prepareTurnMemory } from '../memory/turn-memory'
+import { prepareTurnMemory } from '../memory/turn-memory'
 import { conversationPermissionScope } from '../../shared/conversation-scope'
 import { resolveConversationExecutionContext } from '../conversation-context'
 import { ensureStandaloneConversationDirectory } from '../standalone-conversation-service'
@@ -41,7 +41,7 @@ import {
  * `chat:permission:<convId>`. API keys NEVER cross into the renderer (only presence + mode).
  */
 import type { IpcMainInvokeEvent, IpcMainEvent, WebContents } from 'electron'
-import { app, clipboard, net, shell, systemPreferences } from 'electron'
+import { app, net, shell, systemPreferences } from 'electron'
 import { ensureRuntimeAsset } from '../runtime-assets/app-service'
 import {
   addProvider,
@@ -52,8 +52,6 @@ import {
   getProvider,
   getProviderKind,
   getSubscriptionAccount,
-  isChatGptWebEnabled,
-  isChatGptWebProvider,
   isClaudeSubscriptionProvider,
   isCursorSubscriptionProvider,
   isAntigravitySubscriptionProvider,
@@ -63,7 +61,6 @@ import {
   isManagedProvider,
   isSubscriptionProvider,
   listAvailableChatProviders,
-  setChatGptWebEnabled,
   PROVIDER_PRESETS,
   removeProvider,
   removeSubscriptionAccount,
@@ -172,8 +169,6 @@ import {
   type Ruleset,
 } from './permission'
 import { applyFastModeServiceTier, normalizeAiUsage, runChat, type NormalizedAiUsage } from './runner'
-import * as chatGptWeb from './chatgpt-web/manager'
-import { getChecksConfig, listChecks as listChatGptWebChecks, setChecksConfig } from './chatgpt-web/checks'
 import {
   deleteAllManagedCodexThreads,
   deleteCodexThreadForConversation,
@@ -285,11 +280,7 @@ import { CODEX_TRANSFER_MAX_CHARACTERS, codexTransferCharacters } from './native
 import { redactClaudeCredentials } from './claude-agent-sdk/errors'
 import { startClaudeDesktopLogin, type ClaudeDesktopLogin } from './claude-agent-sdk/desktop-login'
 import { redactTokens } from '../pii-scrub'
-import {
-  getCompanionConversationContext,
-  readCompanionConversation,
-  searchCompanionConversation,
-} from './chatgpt-web/conversation-context'
+import { conversationBrief } from './review/conversation-brief'
 import { buildAgentMentionParts, type StructuredAgentMentionDraft } from '../../shared/chat-agent-mentions'
 import {
   parseReviewerPreference,
@@ -390,7 +381,6 @@ import {
   setAppFlag,
   setAppSetting,
   setHiddenChatModels,
-  touchConversation,
   transaction,
   updateConversationExperience,
   updateConversationStatus,
@@ -408,7 +398,6 @@ import { listUserPrompts, addUserPrompt, updateUserPrompt, removeUserPrompt, lis
 import {
   createSkill,
   parseSkillInvocation,
-  readSkillBody,
   removeSkillDir,
   renderSkillContext,
   writeSkillFromPrompt,
@@ -432,7 +421,7 @@ import {
 } from './skill-state'
 import { forgetInstalledSkill, installSkillFromSlug, searchSkillLibrary } from './skills-registry'
 import { buildProjectContext } from './project-context'
-import { releasePlanRevision, stagePlan, getPending as getPendingPlan } from '../plan-broker'
+import { releasePlanRevision, getPending as getPendingPlan } from '../plan-broker'
 import {
   catalogProviderForBaseURL,
   filterChatModels,
@@ -477,7 +466,6 @@ import type {
   ChatConfig,
   ChatConvTools,
   ChatConvToolsPatch,
-  ChatGptWebStatus,
   ChatMessage,
   ChatModelMeta,
   ChatModelRef,
@@ -493,7 +481,6 @@ import type {
   ChatSubscriptionAccountPoolPatch,
   ChatSkillSelection,
   CodexSubscriptionAuthStatus,
-  ChatExecutionScope,
   FrozenChatSelection,
   FrozenFailoverAccount,
   InternalTurnHandle,
@@ -516,7 +503,7 @@ import { isChatMode, normalizeChatMode } from '../../shared/chat-mode'
 import type { MaestroOrchestratorProfileV1, MaestroTurnSnapshotV1 } from '../../shared/maestro'
 import { tFor, tMain } from '../i18n'
 import { getMainWebContents, sendToConversation } from '../window-ipc'
-import { hasRemoteMains, sendToRemoteMains } from '../remote-ui-targets'
+import { sendToRemoteMains } from '../remote-ui-targets'
 import { registerSubagentProfileIpc } from './subagent-profile-ipc'
 import { registerMaestroIpc } from './maestro-ipc'
 import { registerMaestroConfiguratorIpc } from './maestro-configurator-ipc'
@@ -929,8 +916,6 @@ export interface ChatIpcDeps {
   mhandle: (channel: string, fn: (event: IpcMainInvokeEvent, ...args: any[]) => unknown) => void
   mon: (channel: string, fn: (event: IpcMainEvent, ...args: any[]) => void) => void
   emitStatus: (conversationId: string, status: ConversationStatus, opts?: { silent?: boolean }) => void
-  /** Dedicated Companion alert: must bypass the status/lifecycle state machine. */
-  notifyChatGptWebTurnCompleted?: (conversationId: string) => void
 }
 
 const active = new Map<string, ActiveRun>()
@@ -986,18 +971,6 @@ setClaudeAttemptOwner((attempt) => {
 let broker: PermissionBroker | null = null
 let questionBroker: QuestionBroker | null = null
 let chatDisposePromise: Promise<void> | null = null
-
-/**
- * Internal isolated turns (executionId → record): handle cancellation must abort the
- * run EVEN before admission (cancelRequested), independently of `active` (prevents races).
- */
-interface InternalTurnEntry {
-  run: ActiveRun | null
-  cancelRequested: boolean
-  cancel: () => void
-  resolveHandle: (handle: InternalTurnHandle) => void
-}
-const internalTurns = new Map<string, InternalTurnEntry>()
 
 const CHAT_DEFAULT_PROVIDER_KEY = 'chat.defaultProvider'
 const CHAT_DEFAULT_MODEL_KEY = 'chat.defaultModel'
@@ -1374,19 +1347,7 @@ function scheduleCodexConfigRefresh(previous: CodexSubscriptionAuthStatus): void
   codexConfigRefreshPromise = promise
 }
 
-/** Companion integration status with the experimental flag (the renderer displays the toggle). */
-function chatGptWebStatusPayload(): ChatGptWebStatus & { enabled: boolean } {
-  return { ...chatGptWeb.status(), enabled: isChatGptWebEnabled() }
-}
-
-let chatGptWebUnsubscribe: (() => void) | null = null
 let subagentSessionUnsubscribe: (() => void) | null = null
-
-/** Whether a profile event would reach anyone: this app's main window, or the main renderer of a connected computer. */
-function hasMainRenderer(): boolean {
-  const wc = getMainWebContents()
-  return (!!wc && !wc.isDestroyed()) || hasRemoteMains()
-}
 
 /**
  * Profile events the main window shows (accounts, reviews, chat settings): this app's window and, on a host,
@@ -1402,11 +1363,6 @@ function sendToMainRenderers(channel: string, ...args: unknown[]): void {
     }
   }
   sendToRemoteMains(channel, args[0])
-}
-
-function broadcastChatGptWebStatus(): void {
-  if (!hasMainRenderer()) return
-  sendToMainRenderers('chat:chatgpt-web:changed', chatGptWebStatusPayload())
 }
 
 function broadcastCodexAuth(status: CodexSubscriptionAuthStatus): void {
@@ -2060,7 +2016,6 @@ function defaultSelection(): ChatModelRef | null {
   if (providers.length === 0) return null
   const configured = configuredDefaultSelection(providers)
   if (configured) return configured
-  const savedP = getAppSetting(CHAT_DEFAULT_PROVIDER_KEY)
   const savedM = getAppSetting(CHAT_DEFAULT_MODEL_KEY)
   // Fallback: first provider with a key (or any first provider); empty modelId = user picks in the chip / auto-pick on send.
   const provider =
@@ -2079,12 +2034,7 @@ function defaultSelection(): ChatModelRef | null {
                   ? antigravityAuth.status(subscriptionAccountId(p.id)).authenticated
                   : hasApiKey(p.id)
     ) ?? providers[0]
-  const modelId = isChatGptWebProvider(savedP) ? '' : (savedM ?? '')
-  if (isChatGptWebProvider(savedP)) {
-    setAppSetting(CHAT_DEFAULT_PROVIDER_KEY, provider.id)
-    setAppSetting(CHAT_DEFAULT_MODEL_KEY, '')
-  }
-  return { providerId: provider.id, modelId }
+  return { providerId: provider.id, modelId: savedM ?? '' }
 }
 
 /** A saved provider is still selectable: an existing account, or the active account of an existing provider. */
@@ -2108,7 +2058,7 @@ function inheritedSelection(): ChatModelRef | null {
   const configured = configuredDefaultSelection(providers)
   if (configured) return configured
   const last = rememberedChatSelection()
-  if (last && !isChatGptWebProvider(last.providerId) && selectableProviderExists(providers, last.providerId)) return last
+  if (last && selectableProviderExists(providers, last.providerId)) return last
   return defaultSelection()
 }
 
@@ -2132,11 +2082,6 @@ function choicesCarryToNewChats(conversationId: string): boolean {
 /** Effective conversation selection: conversation prefs (if the provider still exists) → inherited selection. */
 function selectionFor(conversationId: string): ChatModelRef | null {
   const prefs = getConvUiPrefs(conversationId).chat
-  if (isChatGptWebProvider(prefs?.providerId)) {
-    const fallback = inheritedSelection()
-    if (fallback) patchConvChat(conversationId, { providerId: fallback.providerId, modelId: fallback.modelId })
-    return fallback
-  }
   if (prefs?.providerId && getProvider(prefs.providerId)) {
     return { providerId: prefs.providerId, modelId: prefs.modelId ?? '' }
   }
@@ -2269,7 +2214,7 @@ function mcpAuthField(server: McpServer): Pick<McpServerInfo, 'oauth'> {
   return oauth ? { oauth } : {}
 }
 
-/** The saved key's last check, for API-key accounts only; companions manage their own credential. */
+/** The saved key's last check, for API-key accounts only. */
 function apiKeyCheckField(providerId: string): Pick<ChatProviderInfo, 'keyCheck'> {
   if (isManagedProvider(providerId)) return {}
   const keyCheck = currentApiKeyCheck(providerId)
@@ -2729,16 +2674,9 @@ export function chatRuntimeState(conversationId: string): ChatRuntimeState {
 
 /** Connects the broker to active conversations (asked → prompt + awaiting; resolved → dismiss + transition). */
 function wireBroker(b: PermissionBroker): void {
-  const companionRequests = new Set<string>()
   b.on('asked', (req: PermissionRequest) => {
     const run = active.get(req.conversationId)
-    if (!run) {
-      if (chatGptWeb.sessionForConversation(req.conversationId)) {
-        companionRequests.add(req.id)
-        sendToConversation(req.conversationId, `chat:permission:${req.conversationId}`, toRequestPayload(req))
-      }
-      return
-    }
+    if (!run) return
     run.send(`chat:permission:${req.conversationId}`, toRequestPayload(req))
     // The turn waits for the person: the conversation says so wherever it is listed, as a pending question does.
     savedDeps?.emitStatus(req.conversationId, 'waiting')
@@ -2756,16 +2694,12 @@ function wireBroker(b: PermissionBroker): void {
     'resolved',
     (ev: { conversationId: string; toolCallId?: string; requestId: string; decision: 'allow' | 'deny' }) => {
       const run = active.get(ev.conversationId)
-      const companionRequest = companionRequests.delete(ev.requestId)
+      if (!run) return
       const resolved: ChatPermissionEvent = {
         kind: 'resolved',
         requestId: ev.requestId,
         toolCallId: ev.toolCallId,
         decision: ev.decision,
-      }
-      if (!run) {
-        if (companionRequest) sendToConversation(ev.conversationId, `chat:permission:${ev.conversationId}`, resolved)
-        return
       }
       run.send(`chat:permission:${ev.conversationId}`, resolved)
       // The request may still be listed while it resolves; the turn waits as long as another one is. A stopped turn
@@ -3785,41 +3719,6 @@ function pruneToolOutputsBeforeCompaction(
   return outcome
 }
 
-/** ISOLATED internal-turn preflight: frozen model window + pending + harness reserve
- * (execution history starts empty). Never compacts or inspects/retires the conversation binding. */
-async function preflightIsolatedContext(
-  conversationId: string,
-  selection: FrozenChatSelection,
-  pendingParts: readonly MessagePart[],
-  signal: AbortSignal
-): Promise<ContextPreflightResult> {
-  const { meta } = await effectiveModelMeta(selection.modelId, selection.providerId, signal)
-  const window = meta?.contextWindow
-  if (!window) return { ok: true, compacted: false }
-  const pending = estimatePortablePartsTokens(pendingParts) + 16
-  // Isolated round: load = 0 (own history still empty) + pending + full harness reserve.
-  const load = preflightContextLoad(window, 0, pending, 'portable-transcript', AUTO_COMPACT_RATIO)
-  if (load.overflow) {
-    chatDiag({
-      kind: 'preflight-isolated-overflow',
-      conv: conversationId,
-      provider: selection.providerId,
-      model: selection.modelId,
-      effectiveWindow: window,
-      usedTokens: 0,
-      pendingTokens: pending,
-      reserveTokens: load.reserveTokens,
-      requiredTokens: load.requiredTokens,
-      ratio: load.ratio,
-      source: 'portable-transcript',
-      overflow: true,
-      admitted: false,
-    })
-    return { ok: false, compacted: false, error: 'context-overflow' }
-  }
-  return { ok: true, compacted: false }
-}
-
 /** Stats recognize an opaque marker only when the same identity will actually be used in the next request.
  * INTERNAL to main: `lastUsage` may contain `contextIdentity`. Project through `toPublicChatHistoryStats` for IPC. */
 async function currentChatHistoryStats(
@@ -4103,25 +4002,6 @@ interface StartSendOpts {
   hiddenParts?: MessagePart[]
   /** Reservation already acquired by a compound operation (e.g. resend/server-side selection). */
   operation?: PendingConversationOperation
-  /**
-   * Internal isolated turn (ChatGPT Web project-environment job): frozen selection + conversation lock + handle
-   * created at admission. `loopId` is the owning job id.
-   */
-  internalLoop?: {
-    executionId: string
-    loopId: string
-    iteration: number
-    maxIterations: number
-    cwdActivityOwner?: string
-    selectionOverride: FrozenChatSelection
-    /** Execution-isolated context (does not use/compose the main transcript). */
-    contextPolicy: 'isolated'
-    /** Ephemeral provider-native session (does not resume/persist the conversation binding). */
-    providerSessionPolicy: 'ephemeral'
-    /** JOB abort (Stop): the admission barrier rejects a turn aborted during preflight. */
-    signal: AbortSignal
-    onAdmitted: (run: ActiveRun) => void
-  }
   /** Review-turn callback; releases the reservation if no v2 is accepted. */
   onComplete?: (result: { planSubmitted: boolean; outcome: 'success' | 'error' | 'cancelled' }) => void
   /** First turn of a conversation started from another conversation; host-generated, never a human origin. */
@@ -4154,9 +4034,9 @@ function emitModelFallbackEvent(wc: WebContents, conversationId: string, event: 
   sendChatEvent(wc, `chat:subscription-failover:${conversationId}`, event)
 }
 
-/** Frozen, isolated and bot executions keep their selection: their contract is fail-closed. */
+/** Bot executions keep their selection: their contract is fail-closed. */
 function modelFallbackIsStrict(opts: StartSendOpts | undefined): boolean {
-  return Boolean(opts?.internalLoop || opts?.botAdmission)
+  return Boolean(opts?.botAdmission)
 }
 
 /** Fallback candidate axes of the turn being admitted or running, keyed by conversation (one turn at a time). */
@@ -4304,8 +4184,6 @@ async function startSendAttempt(
   // Freeze persisted ownership for every provider, retry and delegated execution in this turn.
   const executionContext = Object.freeze(resolveConversationExecutionContext(conv))
 
-  // COMPANION AUTOMATION LOCK (central guard): while review/bootstrap is active, only its owning internal turn
-  // passes. Covers chat:send, resend, plans, and server-side starts — all enter here.
   if (opts?.runnerSignal?.aborted) return { ok: false, error: 'cancelled' }
   if (opts?.botAdmission) {
     try {
@@ -4319,57 +4197,35 @@ async function startSendAttempt(
   }
   if (autonomousPolicy(conversationId) && !opts?.runnerAdmission && !opts?.internal)
     return { ok: false, error: 'executor-active' }
-  const internalLoop = opts?.internalLoop
-  const turnBehavior: ChatBehavior = internalLoop ? 'agent' : behaviorFor(conversationId)
+  const turnBehavior: ChatBehavior = behaviorFor(conversationId)
   const maestroTurn = turnBehavior === 'maestro' ? freezeMaestroTurn(conversationId) : undefined
-  const environmentLock = chatGptWeb.projectEnvironmentLockFor(conversationId)
-  if (environmentLock) {
-    if (!internalLoop || internalLoop.loopId !== environmentLock) {
-      return { ok: false, error: 'project-environment-active' }
-    }
-  } else if (internalLoop) {
-    // The job owning this internal turn was cancelled/ended before admission.
-    return { ok: false, error: 'internal-turn-inactive' }
-  }
   // A review (or a check of the fixes it asked for) holds the conversation until it is handed off or ends.
   if (reviewService?.lockFor(conversationId)) return { ok: false, error: 'review-active' }
 
   // Resolve provider/model. BYOK requires a key; the built-in provider requires a valid ChatGPT session in the
   // official runtime. If no model is chosen, both auto-select the default/first and persist it in the conversation.
-  // Internal isolated turn: FROZEN selection, without auto-selection or persistence (no fallback).
   // A model fallback candidate runs this attempt without becoming the conversation's selection.
   const fallbackOverride = fallbackSelectionOverride(opts?.modelFallback)
-  let selection = internalLoop
-    ? { providerId: internalLoop.selectionOverride.providerId, modelId: internalLoop.selectionOverride.modelId }
-    : opts?.botAdmission
-      ? { providerId: opts.botAdmission.providerId, modelId: opts.botAdmission.modelId }
-      : (fallbackOverride ?? selectionFor(conversationId))
+  let selection = opts?.botAdmission
+    ? { providerId: opts.botAdmission.providerId, modelId: opts.botAdmission.modelId }
+    : (fallbackOverride ?? selectionFor(conversationId))
   if (!selection?.providerId) return { ok: false, error: 'no-provider' }
-  if (internalLoop && !selection.modelId) return { ok: false, error: 'no-model' }
   // The active-account selection runs on the account its pool points to now; the conversation keeps the virtual id.
   const storedProviderId = selection.providerId
   if (isActiveAccountProviderId(storedProviderId)) {
     selection = { ...selection, providerId: resolveAccountPoolProviderId(storedProviderId) }
   }
-  const turnAccountPoolProviderId = isActiveAccountProviderId(storedProviderId)
-    ? storedProviderId
-    : internalLoop?.selectionOverride.accountPoolProviderId
+  const turnAccountPoolProviderId = isActiveAccountProviderId(storedProviderId) ? storedProviderId : undefined
   const operation = reserveConversationOperation(conversationId, selection.providerId, opts?.operation)
   if (!operation) return { ok: false, error: 'busy' }
   // Compound operations may reserve the slot before switching provider/model.
   // From here, the label must reflect the provider that will actually start for account boundaries.
   operation.providerId = selection.providerId
   // An inherited model follows the last one picked anywhere; once a turn runs on it, the conversation keeps it.
-  if (
-    !internalLoop &&
-    !opts?.botAdmission &&
-    !fallbackOverride &&
-    selection.modelId &&
-    !getConvUiPrefs(conversationId).chat?.modelId
-  ) {
+  if (!opts?.botAdmission && !fallbackOverride && selection.modelId && !getConvUiPrefs(conversationId).chat?.modelId) {
     patchConvChat(conversationId, { providerId: storedProviderId, modelId: selection.modelId })
   }
-  if (!opts?.internal && !internalLoop) {
+  if (!opts?.internal) {
     operation.pendingMessage = {
       id: opts?.botAdmission ? `bot-${opts.botAdmission.commandId}` : randomUUID(),
       conversationId,
@@ -4384,17 +4240,11 @@ async function startSendAttempt(
   let githubCopilotModelAtAdmission: GitHubCopilotModelInfo | undefined
   let claudeIdentityAtAdmission: ClaudeSubscriptionAccountIdentity | undefined
   let claudeModelAtAdmission: ClaudeModelInfo | undefined
-  // A loop round runs on the fallback route frozen with its profile (its own account when it had none). It never
-  // reads the live route: a route edited mid-loop must not add accounts the loop did not start with.
-  const loopFailoverChain = internalLoop ? frozenFailoverChain(internalLoop.selectionOverride) : null
-  const loopRouted = (loopFailoverChain?.length ?? 0) > 1
   const claudeFailoverChain = isClaudeSubscriptionProvider(selection.providerId)
-    ? (loopFailoverChain ?? freezeFailoverChain(storedProviderId))
+    ? freezeFailoverChain(storedProviderId)
     : []
-  const claudeRequestedEffort = internalLoop?.selectionOverride.reasoning ?? turnChatReasoning(conversationId)
-  const claudeRequestedFast = internalLoop
-    ? internalLoop.selectionOverride.fastMode === true
-    : turnChatFastMode(conversationId)
+  const claudeRequestedEffort = turnChatReasoning(conversationId)
+  const claudeRequestedFast = turnChatFastMode(conversationId)
   let claudeRuntimeTarget: ClaudeRuntimeTarget | undefined
   let claudeRuntimeLeaseTransferred = false
   const settleClaudeRuntimeLeaseIfUnowned = (): void => {
@@ -4476,7 +4326,7 @@ async function startSendAttempt(
       )
         return { ok: false, error: 'busy' }
       // With a failover chain, the logical account may be unavailable; resolveCodexRuntimeTarget decides.
-      const earlyChain = loopFailoverChain ?? freezeFailoverChain(storedProviderId)
+      const earlyChain = freezeFailoverChain(storedProviderId)
       if (!status.authenticated && earlyChain.length <= 1) return { ok: false, error: 'no-key' }
     } else if (useGitHubCopilot) {
       if (!selectionAccountId && (githubCopilotLoginPending || githubCopilotIdentityTransitionPromise)) {
@@ -4570,7 +4420,7 @@ async function startSendAttempt(
           epoch: status.accountEpoch,
         }
         manager.assertAccountIdentity(claudeIdentityAtAdmission)
-        const models = await manager.listModels(operation.controller.signal, Boolean(internalLoop))
+        const models = await manager.listModels(operation.controller.signal)
         if (
           !conversationOperationIsCurrent(conversationId, operation) ||
           (!selectionAccountId && (claudeLoginPending || !!claudeIdentityTransitionPromise))
@@ -4724,7 +4574,7 @@ async function startSendAttempt(
       if (antigravityAuth.busy(selectionAccountId)) return { ok: false, error: 'busy' }
       getAntigravitySubscriptionManager(selectionAccountId).assertAccountIdentity(antigravityIdentityAtAdmission)
     }
-    releaseCwdActivity = tryAcquireCwdActivity(conv.cwd, 'chat', internalLoop?.cwdActivityOwner)
+    releaseCwdActivity = tryAcquireCwdActivity(conv.cwd, 'chat')
     if (!releaseCwdActivity) return { ok: false, error: 'cwd-locked' }
     turnSnapshot = beginTurnSnapshot({ conversation: conv, botTurn: !!opts?.botAdmission })
 
@@ -4768,15 +4618,9 @@ async function startSendAttempt(
 
     // Freeze all runtime-selection inputs for this admission. Revalidation may change only the physical
     // account selected from this chain; it must not observe a concurrent model/effort preference change.
-    const codexFastMode =
-      useCodexSubscription &&
-      (internalLoop ? internalLoop.selectionOverride.fastMode === true : turnChatFastMode(conversationId))
-    const codexRequestedEffort = useCodexSubscription
-      ? (internalLoop?.selectionOverride.reasoning ?? turnChatReasoning(conversationId))
-      : undefined
-    const frozenCodexChain = useCodexSubscription
-      ? (loopFailoverChain ?? freezeFailoverChain(storedProviderId))
-      : null
+    const codexFastMode = useCodexSubscription && turnChatFastMode(conversationId)
+    const codexRequestedEffort = useCodexSubscription ? turnChatReasoning(conversationId) : undefined
+    const frozenCodexChain = useCodexSubscription ? freezeFailoverChain(storedProviderId) : null
     try {
       parts.push(
         ...(await admitChatAttachments({
@@ -4801,26 +4645,13 @@ async function startSendAttempt(
       const p = await readMentionPart(conv.cwd, m)
       if (p) parts.push(p)
     }
-    const companionPersonalMemory =
-      conv.scope === 'standalone' && isChatGptWebProvider(selection.providerId)
-        ? (chatGptWeb.capabilitiesForConversation(conversationId).capabilities.personalMemory ?? 'off')
-        : null
-    for (const part of hiddenParts) {
-      if (companionPersonalMemory !== 'off' || !isMemoryContextPart(part)) parts.push(part)
-    }
+    for (const part of hiddenParts) parts.push(part)
     // A code review the person sent to the agent reaches the model with their message, once, whatever runs it.
     const reviewDeliveries =
-      !opts?.internal && !internalLoop && !opts?.dispatchSeed && !opts?.peerMessage
-        ? listUndeliveredReviewReports(conversationId)
-        : []
+      !opts?.internal && !opts?.dispatchSeed && !opts?.peerMessage ? listUndeliveredReviewReports(conversationId) : []
     for (const message of reviewDeliveries) if (message.review) parts.push(reviewReportPart(message.review))
     const turnMemory =
-      opts?.internal ||
-      internalLoop ||
-      opts?.dispatchSeed ||
-      opts?.peerMessage ||
-      opts?.skipMemory ||
-      companionPersonalMemory === 'off'
+      opts?.internal || opts?.dispatchSeed || opts?.peerMessage || opts?.skipMemory
         ? null
         : await prepareTurnMemory({
             conversationId,
@@ -4840,7 +4671,7 @@ async function startSendAttempt(
         signal,
         emit: (event) => hookSend(`chat:delta:${conversationId}`, event),
       })
-    const hookTurn = !internalLoop && hooksActive({ conversationId, mode: turnBehavior })
+    const hookTurn = hooksActive({ conversationId, mode: turnBehavior })
     let hookSessionToRecord: string | null = null
     if (hookTurn) {
       const ctx = hookContext(operation.controller.signal)
@@ -4874,59 +4705,23 @@ async function startSendAttempt(
     if (operation.pendingMessage) operation.pendingMessage.parts = parts
     const preflightParts: MessagePart[] = parts
 
-    // Isolated = internal turn with its own context (does not touch main conversation transcript/bindings).
-    const isolated =
-      !!internalLoop && internalLoop.contextPolicy === 'isolated' && internalLoop.providerSessionPolicy === 'ephemeral'
-    const frozenProfile = internalLoop?.selectionOverride
     const behaviorRequestedModelId = selection.modelId
     // Flags captured once per admission; no execution helper rereads live preferences afterwards.
     const harnessFlagsAtAdmission = captureHarnessFlags()
-    const frozenHarnessOptions =
-      isolated && frozenProfile != null
-        ? { frozen: true as const, frozenBehaviorProfileId: frozenProfile.behaviorProfileId ?? null }
-        : {}
     const admittedHarnessFor = (providerKind: ChatProviderKind, resolvedModelId?: string | null): ResolvedHarness => {
       const resolution = resolveHarnessContract(providerKind, behaviorRequestedModelId, {
         resolvedModelId,
         flags: harnessFlagsAtAdmission,
-        ...frozenHarnessOptions,
       })
       if (!resolution.ok) throw new Error('executor-unavailable')
       return resolution.harness
     }
-    const executionScope: ChatExecutionScope | undefined =
-      isolated && internalLoop
-        ? {
-            kind: 'review-loop',
-            executionId: internalLoop.executionId,
-            loopId: internalLoop.loopId,
-            iteration: internalLoop.iteration,
-            maxIterations: internalLoop.maxIterations,
-          }
-        : undefined
-    // The prompt (user) becomes internal via opts.internal; the round's assistant bubble is NOT internal
-    // (UX/audit with source + reviewLoop). messageMeta does not pass internal to the runner.
-    const reviewLoopMessageMeta = executionScope
-      ? {
-          source: 'chatgpt-web-review-loop' as const,
-          executionScope,
-          reviewLoop: {
-            loopId: executionScope.loopId,
-            executionId: executionScope.executionId,
-            iteration: executionScope.iteration,
-            maxIterations: executionScope.maxIterations,
-          },
-        }
-      : undefined
-    const runnerMessageMeta = reviewLoopMessageMeta
 
     // IMAGE INTERPRETER: model without vision + configured interpreter → a vision model describes
     // attachments NOW and caches the description on the part (once per image). Deliberately precedes
     // preflight: the description becomes text that counts toward turn context.
     let imagesDescribed = 0
-    const imagesGate = isolated
-      ? !!getImageInterpreter() && parts.some((p) => p.type === 'file' && p.kind === 'image' && !p.description)
-      : !!getImageInterpreter() && hasImagesToDescribe(conversationId, parts)
+    const imagesGate = !!getImageInterpreter() && hasImagesToDescribe(conversationId, parts)
     if (imagesGate) {
       const { meta: visionMeta } = await effectiveModelMeta(selection.modelId, selection.providerId).catch(() => ({
         meta: null,
@@ -4947,12 +4742,10 @@ async function startSendAttempt(
           cwd: conv.cwd,
           pendingParts: parts,
           signal: operation.controller.signal,
-          ...(isolated ? { pendingOnly: true } : {}),
         })
         imagesDescribed = described.described
         if (!conversationOperationIsCurrent(conversationId, operation)) return { ok: false, error: 'busy' }
-        // Isolated: NEVER retires conversation subscription state (even if historyChanged — pendingOnly prevents it).
-        if (!isolated && described.historyChanged) {
+        if (described.historyChanged) {
           // ALREADY-persisted messages were rewritten with descriptions → native thread/session resume
           // would reuse remote context WITHOUT them (upsert does not change lastMessageId, so the binding would remain
           // "valid"). Retire bindings: the next turn reseeds the full transcript, including descriptions.
@@ -4963,17 +4756,14 @@ async function startSendAttempt(
     }
 
     const initialClaudeAxes = claudeModelAtAdmission
-      ? claudeRuntimeAxes(conversationId, claudeModelAtAdmission, claudeRequestedEffort, claudeRequestedFast, isolated)
+      ? claudeRuntimeAxes(conversationId, claudeModelAtAdmission, claudeRequestedEffort, claudeRequestedFast)
       : undefined
     const preflightClaudeTurn: PreflightClaudeTurn = {
       mode: turnBehavior,
       ...(maestroTurn ? { maestro: maestroTurn } : {}),
     }
     const claudeRuntimeContract =
-      internalLoop?.selectionOverride.resolvedModelId ??
-      claudeRuntimeTarget?.runtimeModelId ??
-      claudeModelAtAdmission?.resolvedModel ??
-      claudeModelAtAdmission?.value
+      claudeRuntimeTarget?.runtimeModelId ?? claudeModelAtAdmission?.resolvedModel ?? claudeModelAtAdmission?.value
     const resolveClaudeTargetForStart = async (admit: boolean) => {
       const resolved = await resolveClaudeRuntimeTarget({
         logicalProviderId: selection!.providerId,
@@ -5008,7 +4798,7 @@ async function startSendAttempt(
     }
     let smallestClaudeWindow: number | null | undefined
     let preflightedClaudeProviderId: string | undefined
-    if (useClaudeSubscription && !isolated) {
+    if (useClaudeSubscription) {
       const capability = await resolveClaudeTargetForStart(false)
       if (!capability.ok) return capability
       smallestClaudeWindow = capability.target.contextWindow
@@ -5074,9 +4864,7 @@ async function startSendAttempt(
 
     // Resolve only the physical capability before preflight. It must not hold a half-open lease because the
     // portable summarizer may itself use the same failover admission.
-    const capabilityResolution = isolated
-      ? ({ ok: true } as { ok: true; target?: CodexRuntimeTarget })
-      : await resolveCodexTargetForStart(false)
+    const capabilityResolution = await resolveCodexTargetForStart(false)
     if (!capabilityResolution.ok) return capabilityResolution
     const contextWindowForCodexTarget = (target?: CodexRuntimeTarget): number | undefined => {
       const window = target?.effectiveContextWindow ?? target?.contextWindow ?? target?.model.contextWindow
@@ -5087,21 +4875,18 @@ async function startSendAttempt(
       ? contextWindowForCodexTarget(capabilityResolution.target)
       : undefined
     const codexPreflightContextWindow = smallestPreflightedCodexWindow
-    let preflight =
-      isolated && frozenProfile
-        ? await preflightIsolatedContext(conversationId, frozenProfile, preflightParts, operation.controller.signal)
-        : await preflightContext(
-            conversationId,
-            selection,
-            preflightParts,
-            operation,
-            operation.controller.signal,
-            useClaudeSubscription ? smallestClaudeWindow : codexPreflightContextWindow,
-            useClaudeSubscription ? claudeFailoverChain : undefined,
-            preflightedClaudeProviderId,
-            initialClaudeAxes,
-            preflightClaudeTurn
-          )
+    let preflight = await preflightContext(
+      conversationId,
+      selection,
+      preflightParts,
+      operation,
+      operation.controller.signal,
+      useClaudeSubscription ? smallestClaudeWindow : codexPreflightContextWindow,
+      useClaudeSubscription ? claudeFailoverChain : undefined,
+      preflightedClaudeProviderId,
+      initialClaudeAxes,
+      preflightClaudeTurn
+    )
     if (!preflight.ok) return { ok: false, error: preflight.error }
 
     const preflightAtNarrowerCodexWindow = async (contextWindow: number): Promise<ContextPreflightResult> => {
@@ -5122,7 +4907,7 @@ async function startSendAttempt(
 
     // Recheck the lease-free capability immediately before admission. If another account became the eligible
     // target while compaction ran and its known window is smaller, repeat the guard with that smaller ceiling.
-    if (useCodexSubscription && !isolated) {
+    if (useCodexSubscription) {
       const refreshedCapability = await resolveCodexTargetForStart(false)
       if (!refreshedCapability.ok) return refreshedCapability
       const refreshedWindow = contextWindowForCodexTarget(refreshedCapability.target)
@@ -5134,22 +4919,8 @@ async function startSendAttempt(
         if (!narrowerPreflight.ok) return { ok: false, error: narrowerPreflight.error }
       }
     }
-    // Isolated: NEVER inspects/retires the owning conversation's Claude binding or calls retireIncompatible on it.
-    if (!isolated) {
-      await retireIncompatibleSubscriptionState(conversationId, selection.providerId, operation.controller.signal)
-    }
+    await retireIncompatibleSubscriptionState(conversationId, selection.providerId, operation.controller.signal)
     if (!conversationOperationIsCurrent(conversationId, operation)) return { ok: false, error: 'busy' }
-
-    // ADMISSION BARRIER (after preflight): the job may have been cancelled during authentication,
-    // model resolution, or compaction. Revalidate the lock AND job signal before persisting
-    // the message/admitting the runner — no execution starts after Stop.
-    if (internalLoop) {
-      const ownsEnvironment = chatGptWeb.projectEnvironmentLockFor(conversationId) === internalLoop.loopId
-      if (internalLoop.signal.aborted || !ownsEnvironment) {
-        releaseCwdActivityOnce()
-        return { ok: false, error: internalLoop.signal.aborted ? 'cancelled' : 'internal-turn-inactive' }
-      }
-    }
 
     // Codex: acquire the physical account only after preflight/portable compaction (logical selection remains).
     // The final admission is itself a TOCTOU boundary: another operation may consume the target observed by the
@@ -5157,8 +4928,7 @@ async function startSendAttempt(
     // the lease before compacting, lower the validated ceiling monotonically, and admit again. The frozen chain
     // bounds churn; no half-open lease is held while compactReserved/preflightContext runs.
     let admittedCodexTarget: CodexRuntimeTarget | undefined
-    // An isolated round has no preflighted window, so its routed admission takes the first eligible target.
-    if (useCodexSubscription && (!isolated || loopRouted)) {
+    if (useCodexSubscription) {
       const maxAdmissionAttempts = Math.max(2, (frozenCodexChain?.length ?? 1) + 1)
       for (let attempt = 0; attempt < maxAdmissionAttempts; attempt += 1) {
         const admissionResolution = await resolveCodexTargetForStart(true)
@@ -5185,17 +4955,11 @@ async function startSendAttempt(
       // Failing closed is safer than starting with a target whose context ceiling was never validated.
       if (!admittedCodexTarget) return { ok: false, error: 'unavailable' }
     }
-    if (useCodexSubscription && (!isolated || loopRouted) && !admittedCodexTarget) {
+    if (useCodexSubscription && !admittedCodexTarget) {
       throw new Error('Codex runtime target was not resolved before start')
     }
 
-    if (useClaudeSubscription && isolated && loopRouted) {
-      // The isolated preflight never compacts, so there is no window to re-check: admit the first eligible target.
-      const result = await resolveClaudeTargetForStart(true)
-      if (!result.ok) return result
-      claudeIdentityAtAdmission = result.target.accountIdentity
-      claudeModelAtAdmission = result.target.model
-    } else if (useClaudeSubscription && !isolated) {
+    if (useClaudeSubscription) {
       let admitted = false
       for (let attempt = 0; attempt < Math.max(2, claudeFailoverChain.length + 1); attempt++) {
         const result = await resolveClaudeTargetForStart(true)
@@ -5240,14 +5004,13 @@ async function startSendAttempt(
     const controller = new AbortController()
     const assistantMessageId = useOfficialSubscription ? '' : randomUUID()
     const assistantCreatedAt = Date.now()
-    const maestroLive =
-      maestroTurn && !internalLoop
-        ? createMaestroLiveRunPort({
-            conversationId,
-            assistantMessageId: assistantMessageId || null,
-            emit: (event) => send(`chat:maestro-live:${conversationId}`, event),
-          })
-        : undefined
+    const maestroLive = maestroTurn
+      ? createMaestroLiveRunPort({
+          conversationId,
+          assistantMessageId: assistantMessageId || null,
+          emit: (event) => send(`chat:maestro-live:${conversationId}`, event),
+        })
+      : undefined
     let settleDone!: () => void
     const done = new Promise<void>((resolve) => {
       settleDone = resolve
@@ -5276,16 +5039,14 @@ async function startSendAttempt(
       ...(githubCopilotIdentityAtAdmission ? { githubCopilotIdentity: githubCopilotIdentityAtAdmission } : {}),
       ...(claudeIdentityAtAdmission ? { claudeIdentity: claudeIdentityAtAdmission } : {}),
       ...(cursorIdentityAtAdmission ? { cursorIdentity: cursorIdentityAtAdmission } : {}),
-      allowCursorPersistence: !isolated,
+      allowCursorPersistence: true,
       ...(antigravityIdentityAtAdmission ? { antigravityIdentity: antigravityIdentityAtAdmission } : {}),
-      allowAntigravityPersistence: !isolated,
+      allowAntigravityPersistence: true,
       ...(grokIdentityAtAdmission ? { grokIdentity: grokIdentityAtAdmission } : {}),
-      // Ephemeral/isolated: persist messages, but do NOT resume/write the main conversation's native binding.
-      // Lifecycle remains allowed: the ephemeral thread must execute but must not become a binding.
       allowCodexThreadLifecycle: true,
-      allowCodexPersistence: !isolated,
-      allowGitHubCopilotPersistence: !isolated,
-      allowClaudePersistence: !isolated,
+      allowCodexPersistence: true,
+      allowGitHubCopilotPersistence: true,
+      allowClaudePersistence: true,
       done,
       settleDone,
       outcome,
@@ -5299,22 +5060,19 @@ async function startSendAttempt(
       ...(maestroLive ? { maestroLive } : {}),
     }
     if (admittedCodexTarget) acquireActiveProvider(run, admittedCodexTarget.providerId)
-    else if (useCodexSubscription && isolated) acquireActiveProvider(run, selection.providerId)
     admittedRun = run
     active.set(conversationId, run)
     if (maestroLive) {
       send(`chat:maestro-live:${conversationId}`, { kind: 'run-updated', run: maestroLive.state().run })
     }
-    // Create the internal turn handle HERE (same tick as admission) — never via `active.get` after start.
     if (opts?.botAdmission) {
       assertBotTurnAdmission(conversationId, opts.botAdmission)
       if (storedProviderId !== opts.botAdmission.providerId || selection.modelId !== opts.botAdmission.modelId)
         throw new Error('The requested bot account or model is no longer available.')
-    } else if (!opts?.internal && !internalLoop && botBlocksManualSend(conversationId)) {
+    } else if (!opts?.internal && botBlocksManualSend(conversationId)) {
       // The release was withdrawn while this message was still in preflight; it never starts.
       throw new Error('This chat is no longer released for your own messages.')
     }
-    internalLoop?.onAdmitted(run)
     opts?.runnerAdmission?.(run)
     if (opts?.onOutcome) {
       const onOutcome = opts.onOutcome
@@ -5338,13 +5096,9 @@ async function startSendAttempt(
         model: selection,
         createdAt: assistantCreatedAt,
         responseStartedAt,
-        ...(reviewLoopMessageMeta
-          ? { source: reviewLoopMessageMeta.source, reviewLoop: reviewLoopMessageMeta.reviewLoop }
-          : {}),
       } satisfies ChatStreamEvent)
     }
     // Persist the user message BEFORE running (include it in the next turn's history).
-    // Isolated: centralize source + executionScope here (runners receive messageMeta and cannot omit them).
     const userMessageId = operation.pendingMessage?.id ?? randomUUID()
     upsertChatMessage({
       id: userMessageId,
@@ -5352,7 +5106,7 @@ async function startSendAttempt(
       role: 'user',
       parts,
       ...(opts?.botAdmission ? { botName: opts.botAdmission.botName } : {}),
-      ...(opts?.internal || reviewLoopMessageMeta ? { internal: true } : {}),
+      ...(opts?.internal ? { internal: true } : {}),
       ...(opts?.dispatchSeed ? { source: 'conversation-dispatch' as const } : {}),
       ...(opts?.peerMessage
         ? {
@@ -5365,7 +5119,6 @@ async function startSendAttempt(
             },
           }
         : {}),
-      ...(reviewLoopMessageMeta ?? {}),
       ...(turnMemory?.memoryContext ? { memoryContext: turnMemory.memoryContext } : {}),
       createdAt: Date.now(),
     })
@@ -5403,7 +5156,6 @@ async function startSendAttempt(
       conv.scope === 'standalone' &&
       !opts?.internal &&
       !opts?.peerMessage &&
-      !reviewLoopMessageMeta &&
       nameStandaloneConversationFromText(conversationId, text)
     ) {
       send('conversation:open', { conversation: getConversation(conversationId), focus: false })
@@ -5415,7 +5167,6 @@ async function startSendAttempt(
         role: 'assistant',
         parts: [],
         model: selection,
-        ...(runnerMessageMeta ?? {}),
         createdAt: assistantCreatedAt,
       })
     }
@@ -5436,13 +5187,7 @@ async function startSendAttempt(
     // pin it here (undefined → default) to honor Settings. Do not pin default 'off'
     // (keeps ui_prefs clean; no runner reasoning has the same effect). User picker overrides always win.
     const dr = defaultReasoningEffort()
-    // Internal isolated turn: selection (including reasoning) is FROZEN — never pin/persist it here.
-    if (
-      !internalLoop &&
-      !fallbackOverride &&
-      dr !== 'off' &&
-      getConvUiPrefs(conversationId).chat?.reasoning === undefined
-    ) {
+    if (!fallbackOverride && dr !== 'off' && getConvUiPrefs(conversationId).chat?.reasoning === undefined) {
       patchConvChat(conversationId, { reasoning: dr })
     }
 
@@ -5543,7 +5288,7 @@ async function startSendAttempt(
         ? admittedCodexContextWindow != null && smallestPreflightedCodexWindow != null
           ? Math.min(admittedCodexContextWindow, smallestPreflightedCodexWindow)
           : (admittedCodexContextWindow ?? smallestPreflightedCodexWindow)
-        : useClaudeSubscription && !isolated
+        : useClaudeSubscription
           ? (claudeWindowWithManualLimit(selection, smallestClaudeWindow ?? claudeRuntimeTarget?.contextWindow) ??
             undefined)
           : (await effectiveModelMeta(selection.modelId, selection.providerId).catch(() => null))?.meta?.contextWindow
@@ -5554,9 +5299,7 @@ async function startSendAttempt(
       turnContextWindow = turnContextWindow && turnContextWindow > 0 ? Math.min(turnContextWindow, next) : next
     }
     const admittedBehaviorResolvedModelId = useClaudeSubscription
-      ? isolated && frozenProfile?.resolvedModelId
-        ? frozenProfile.resolvedModelId
-        : (claudeModelAtAdmission?.resolvedModel ?? claudeModelAtAdmission?.value)
+      ? (claudeModelAtAdmission?.resolvedModel ?? claudeModelAtAdmission?.value)
       : useGitHubCopilot
         ? githubCopilotModelAtAdmission?.id
         : undefined
@@ -5585,7 +5328,7 @@ async function startSendAttempt(
       const window = claudeTarget?.contextWindow
         ? Math.min(turnContextWindow ?? claudeTarget.contextWindow, claudeTarget.contextWindow)
         : turnContextWindow
-      if (!isolated && selection && window && !controller.signal.aborted) {
+      if (selection && window && !controller.signal.aborted) {
         try {
           const prepared = await activateBackgroundCompactionCandidate(conversationId, selection, [], window)
           if (prepared) return prepared
@@ -5598,7 +5341,7 @@ async function startSendAttempt(
         signal: controller.signal,
         persist: false,
         // The runners reload a committed boundary like a prepared one, keeping recent steps verbatim.
-        positional: !isolated,
+        positional: true,
         // Ending the turn because the summarizer failed loses more than continuing on a mechanical digest.
         fallback: true,
         onProgress,
@@ -5611,13 +5354,6 @@ async function startSendAttempt(
         ...(useClaudeSubscription ? { claudeFailoverChain, claudeExecutionAxes: initialClaudeAxes } : {}),
         harness: admittedHarness,
         ...(admittedBehaviorResolvedModelId ? { resolvedModelId: admittedBehaviorResolvedModelId } : {}),
-        ...(isolated && internalLoop && frozenProfile
-          ? {
-              executionId: internalLoop.executionId,
-              selectionOverride: frozenProfile,
-              skipRetireBinding: true,
-            }
-          : {}),
       }).then((result) => {
         if (result.billedModel && (result.usage || result.runtimeEstimatedCostUsd != null)) {
           recordChatUsageAttempt({
@@ -5634,7 +5370,7 @@ async function startSendAttempt(
             runtimeEstimatedCostUsd: result.billedModel ? undefined : result.runtimeEstimatedCostUsd,
           })
         }
-        if (result.ok && result.summary && !isolated) backgroundCoordinator?.manualCompaction(conversationId)
+        if (result.ok && result.summary) backgroundCoordinator?.manualCompaction(conversationId)
         return result.ok && result.summary
           ? {
               summary: result.summary,
@@ -5649,151 +5385,22 @@ async function startSendAttempt(
       })
     }
 
-    const backgroundPrefixHook = !isolated
-      ? {
-          onBackgroundCompactionPrefix: (boundary: { messageId: string; partId: string }) => {
-            if (controller.signal.aborted) return
-            void maybeScheduleBackgroundCompaction(conversationId, boundary, turnContextWindow)
-          },
-        }
-      : {}
+    const backgroundPrefixHook = {
+      onBackgroundCompactionPrefix: (boundary: { messageId: string; partId: string }) => {
+        if (controller.signal.aborted) return
+        void maybeScheduleBackgroundCompaction(conversationId, boundary, turnContextWindow)
+      },
+    }
     let turnPromise: Promise<{ planSubmitted: boolean }>
     let maestroGuardContinuation: { prompt: string } | null = null
     let stopHookContinuation: { prompt: string; count: number } | null = null
     let planGuardContinuation: { prompt: string } | null = null
-    // A routed loop round takes the admitted-target branch below, which reproduces the frozen axes on each account.
-    if (useCodexSubscription && isolated && !loopRouted) {
-      const selectedModelId = selection!.modelId
-      const logicalProviderId = selection!.providerId
-      turnPromise = (async () => {
-        const manager = getCodexSubscriptionManager(selectionAccountId)
-        const [client, preferredFastTier, models] = await Promise.all([
-          manager.getClient(),
-          manager.preferredServiceTier(selectedModelId, isolated),
-          manager.listModels(isolated),
-        ])
-        const fastMode = frozenProfile?.fastMode === true
-        const liveServiceTier = fastMode && preferredFastTier ? preferredFastTier : 'default'
-        const effectiveFastMode = fastMode && preferredFastTier != null
-        if (frozenProfile?.serviceTier && liveServiceTier !== frozenProfile.serviceTier) {
-          throw new Error('executor-unavailable')
-        }
-        if (frozenProfile?.fastMode === true && !preferredFastTier) {
-          throw new Error('executor-unavailable')
-        }
-        const serviceTier = frozenProfile?.serviceTier ? frozenProfile.serviceTier : liveServiceTier
-        const requestedEffort = turnReasoning(conversationId, frozenProfile)
-        const codexModel = models.find((model) => model.id === selectedModelId || model.model === selectedModelId)
-        const manualContextLimit = getContextLimit(logicalProviderId, selectedModelId)
-        const initialContext = resolveCodexContextWindow({ model: codexModel, userLimit: manualContextLimit })
-        const observedContext =
-          initialContext.requestedNominal != null
-            ? manager.getObservedModelContextWindowObservation?.(selectedModelId, initialContext.requestedNominal)
-            : undefined
-        const resolvedContext = resolveCodexContextWindow({
-          model: codexModel,
-          userLimit: manualContextLimit,
-          sameRequestObservation: observedContext,
-        })
-        if (resolvedContext.effectiveEstimate != null)
-          turnContextWindow = limitConversationContextWindow(conversationId, resolvedContext.effectiveEstimate)
-        const supportedEfforts = codexSerializableReasoningEfforts(
-          codexModel?.model ?? selectedModelId,
-          codexModel?.supportedReasoningEfforts.map((option) => option.reasoningEffort) ?? []
-        )
-        const resolved = resolveNativeReasoningEffort({
-          requestedEffort,
-          supportedEfforts,
-          defaultEffort: codexModel?.defaultReasoningEffort || undefined,
-          strict: !!frozenProfile,
-        })
-        if (!resolved.ok) throw new Error('executor-unavailable')
-        if (frozenProfile && resolved.reasoningEffort !== frozenProfile.reasoningEffort) {
-          throw new Error('executor-unavailable')
-        }
-        run.effectiveProviderId = logicalProviderId
-        run.codexThreadProviderId = logicalProviderId
-        run.codexThreadAccountId = selectionAccountId
-        return runCodexSubscriptionChat({
-          ...modelFallbackFailureHook,
-          conversationId,
-          projectId: executionContext.workspaceId,
-          permissionScope: executionContext.permissionScope,
-          cwd: executionContext.cwd,
-          selection,
-          mode: turnBehavior,
-          maestro: maestroTurn,
-          maestroLive: run.maestroLive,
-          permMode: permModeFor(conversationId),
-          reasoningEffort: resolved.reasoningEffort,
-          maestrlyUltra: resolved.maestrlyUltra,
-          fastMode: effectiveFastMode,
-          serviceTier,
-          // A catalog that LISTS modalities without 'image' means the model rejects attachments; send the
-          // interpreter description (or note) instead. Missing/empty list = unknown → send the image (as before).
-          dropImages: !supportsChatToolImages({
-            modelVision:
-              codexModel && Array.isArray(codexModel.inputModalities) && codexModel.inputModalities.length > 0
-                ? codexModel.inputModalities.includes('image')
-                : undefined,
-            runtimeImageUnsupported: getConvUiPrefs(conversationId).chat?.imagesUnsupported === true,
-          }),
-          client,
-          runtimeModel: codexModel,
-          eligibleChatGptSession: manager.getStatusSnapshot()?.account?.type === 'chatgpt',
-          broker: getBroker(),
-          questionBroker: getQuestionBroker(),
-          emit,
-          ...backgroundPrefixHook,
-          signal: controller.signal,
-          responseStartedAt,
-          contextWindow: turnContextWindow,
-          ...(runnerMessageMeta ? { messageMeta: runnerMessageMeta } : {}),
-          ...(resolvedContext.requestedNominal != null
-            ? { requestedContextWindow: resolvedContext.requestedNominal }
-            : {}),
-          compactHistory: (onProgress) => compactActiveHistory(undefined, onProgress),
-          initialAccountId: selectionAccountId,
-          effectiveProviderId: logicalProviderId,
-          onModelContextWindow: (contextWindow, requestedNominal) => {
-            observeTurnContextWindow(contextWindow)
-            manager.observeModelContextWindow(
-              selectedModelId,
-              contextWindow,
-              requestedNominal === undefined ? resolvedContext.requestedNominal : requestedNominal
-            )
-          },
-          onThreadReady: (threadId) => {
-            if (
-              !run.allowCodexThreadLifecycle ||
-              (selectionAccountId == null &&
-                (codexIdentityTransitionPending || run.codexAccountEpoch !== codexAccountUpdateEpoch))
-            )
-              return false
-            run.codexThreadId = threadId
-            run.codexThreadProviderId = logicalProviderId
-            run.codexThreadAccountId = selectionAccountId
-            return true
-          },
-          canPersistThread: () =>
-            run.allowCodexPersistence &&
-            (selectionAccountId != null ||
-              (!codexIdentityTransitionPending && run.codexAccountEpoch === codexAccountUpdateEpoch)),
-          onTurnControl: applyCodexTurnControl,
-          ...(reviewLoopMessageMeta
-            ? {
-                ephemeralSession: true as const,
-                executionScope: reviewLoopMessageMeta.executionScope,
-              }
-            : {}),
-        })
-      })()
-    } else if (useCodexSubscription && admittedCodexTarget && codexFailoverChain) {
+    if (useCodexSubscription && admittedCodexTarget && codexFailoverChain) {
       const target = admittedCodexTarget
       const chain = codexFailoverChain
       const selectedModelId = selection.modelId
-      const fastMode = isolated ? frozenProfile?.fastMode === true : codexFastMode
-      const requestedEffort = turnReasoning(conversationId, frozenProfile)
+      const fastMode = codexFastMode
+      const requestedEffort = turnChatReasoning(conversationId)
       const supportedEfforts = codexSerializableReasoningEfforts(
         target.runtimeModelId,
         target.model.supportedReasoningEfforts.map((option) => option.reasoningEffort)
@@ -5802,25 +5409,13 @@ async function startSendAttempt(
         requestedEffort,
         supportedEfforts,
         defaultEffort: target.model.defaultReasoningEffort || undefined,
-        strict: isolated && !!frozenProfile,
+        strict: false,
       })
       if (!resolved.ok) throw new Error('executor-unavailable')
-      if (isolated && frozenProfile && resolved.reasoningEffort !== frozenProfile.reasoningEffort) {
-        throw new Error('executor-unavailable')
-      }
       const liveServiceTier = target.serviceTier ?? 'default'
       const effectiveFastMode = fastMode && liveServiceTier !== 'default'
-      if (isolated && frozenProfile?.serviceTier && liveServiceTier !== frozenProfile.serviceTier) {
-        throw new Error('executor-unavailable')
-      }
-      if (isolated && frozenProfile?.fastMode === true && liveServiceTier === 'default') {
-        throw new Error('executor-unavailable')
-      }
-      const serviceTier = isolated && frozenProfile?.serviceTier ? frozenProfile.serviceTier : liveServiceTier
-      const reasoningEffort =
-        isolated && frozenProfile?.reasoningEffort
-          ? frozenProfile.reasoningEffort
-          : (target.reasoningEffort ?? resolved.reasoningEffort)
+      const serviceTier = liveServiceTier
+      const reasoningEffort = target.reasoningEffort ?? resolved.reasoningEffort
       const maestrlyUltra = resolved.maestrlyUltra
       try {
         turnPromise = runCodexSubscriptionChat({
@@ -5849,7 +5444,6 @@ async function startSendAttempt(
           signal: controller.signal,
           responseStartedAt,
           contextWindow: turnContextWindow,
-          ...(runnerMessageMeta ? { messageMeta: runnerMessageMeta } : {}),
           ...(target.requestedContextWindow != null ? { requestedContextWindow: target.requestedContextWindow } : {}),
           compactHistory: (onProgress) => compactActiveHistory(undefined, onProgress),
           initialAccountId: target.accountId,
@@ -5946,12 +5540,6 @@ async function startSendAttempt(
                 (!codexIdentityTransitionPending && run.codexAccountEpoch === codexAccountUpdateEpoch))
             )
           },
-          ...(isolated && reviewLoopMessageMeta
-            ? {
-                ephemeralSession: true as const,
-                executionScope: reviewLoopMessageMeta.executionScope,
-              }
-            : {}),
         })
         codexRuntimeLeaseTransferred = true
       } catch (error) {
@@ -5968,19 +5556,14 @@ async function startSendAttempt(
         manager.assertAccountIdentity(admittedIdentity)
         const supportedEfforts = copilotModel?.supportedReasoningEfforts ?? []
         const supportedEffortNames = supportedEfforts as readonly string[]
-        const requestedEffort = turnReasoning(conversationId, frozenProfile)
+        const requestedEffort = turnChatReasoning(conversationId)
         const resolved = resolveNativeReasoningEffort({
           requestedEffort,
           supportedEfforts: supportedEffortNames,
           defaultEffort: copilotModel?.defaultReasoningEffort,
-          strict: isolated && !!frozenProfile,
+          strict: false,
         })
-        // Loop fail-closed: frozen effort must be reproduced EXACTLY — same effective value as at
-        // freeze (never default/omission; Ultra with a changed list resolves differently → fail).
         if (!resolved.ok) throw new Error('executor-unavailable')
-        if (isolated && frozenProfile && resolved.reasoningEffort !== frozenProfile.reasoningEffort) {
-          throw new Error('executor-unavailable')
-        }
         const reasoningEffort = resolved.reasoningEffort
         const maestrlyUltra = resolved.maestrlyUltra
         return runGitHubCopilotChat({
@@ -6010,7 +5593,6 @@ async function startSendAttempt(
           signal: controller.signal,
           responseStartedAt,
           contextWindow: turnContextWindow,
-          ...(runnerMessageMeta ? { messageMeta: runnerMessageMeta } : {}),
           compactHistory: compactActiveHistory,
           onSessionReady: (sessionId) => {
             if (!run.allowGitHubCopilotPersistence || (!selectionAccountId && githubCopilotIdentityTransitionPromise))
@@ -6033,12 +5615,6 @@ async function startSendAttempt(
               return false
             }
           },
-          ...(isolated && reviewLoopMessageMeta
-            ? {
-                ephemeralSession: true as const,
-                executionScope: reviewLoopMessageMeta.executionScope,
-              }
-            : {}),
         })
       })()
     } else if (useClaudeSubscription && claudeIdentityAtAdmission && claudeModelAtAdmission) {
@@ -6050,29 +5626,9 @@ async function startSendAttempt(
         const manager = claudeRuntimeTarget?.manager ?? getClaudeSubscriptionManager(selectionAccountId)
         manager.assertAccountIdentity(admittedIdentity)
         const claudeAxes =
-          !isolated && initialClaudeAxes
-            ? initialClaudeAxes
-            : claudeRuntimeAxes(
-                conversationId,
-                claudeModel,
-                turnReasoning(conversationId, frozenProfile),
-                isolated ? frozenProfile?.fastMode === true : undefined,
-                isolated && !!frozenProfile
-              )
-        // Loop fail-closed: frozen axes must be reproduced exactly — same effective values as at
-        // freeze (never degrade to default; Ultra with a changed list resolves differently → fail).
-        if (
-          isolated &&
-          frozenProfile &&
-          (!claudeAxes.frozenReproducible || claudeAxes.reasoningEffort !== frozenProfile.reasoningEffort)
-        ) {
-          throw new Error('executor-unavailable')
-        }
+          initialClaudeAxes ?? claudeRuntimeAxes(conversationId, claudeModel, turnChatReasoning(conversationId))
         const { reasoningEffort, fastMode, maestrlyUltra } = claudeAxes
-        const resolvedClaudeModelId =
-          isolated && frozenProfile?.resolvedModelId
-            ? frozenProfile.resolvedModelId
-            : (claudeModel.resolvedModel ?? claudeModel.value)
+        const resolvedClaudeModelId = claudeModel.resolvedModel ?? claudeModel.value
         let effectiveTarget = claudeRuntimeTarget
         const hasCurrentSessionIdentity = (target = effectiveTarget): boolean => {
           if (claudePhysicalIdentityIsChanging(target?.providerId ?? selectedClaudeProviderId)) return false
@@ -6092,7 +5648,6 @@ async function startSendAttempt(
             return false
           }
         }
-        // Isolated rounds own an ephemeral session without owning the conversation binding.
         const canPersist = (target = effectiveTarget): boolean =>
           run.allowClaudePersistence && hasCurrentSessionIdentity(target)
         const initialTarget = claudeRuntimeTarget
@@ -6100,29 +5655,25 @@ async function startSendAttempt(
           ...modelFallbackFailureHook,
           ...(claudeRuntimeTarget ? { initialTarget: claudeRuntimeTarget } : {}),
           failoverChain: claudeFailoverChain,
-          ...(!isolated || loopRouted
-            ? {
-                resolveNextTarget: async (input: { attemptedProviderIds: ReadonlySet<string>; admit?: boolean }) => {
-                  const resolved = await resolveClaudeRuntimeTarget({
-                    logicalProviderId: selectedClaudeProviderId,
-                    modelId: selectedClaudeModelId,
-                    runtimeModelId: resolvedClaudeModelId,
-                    reasoningEffort,
-                    fastMode,
-                    chain: claudeFailoverChain,
-                    ...input,
-                    attemptedProviderIds: new Set([
-                      ...input.attemptedProviderIds,
-                      ...claudeFailoverChain.filter(claudePhysicalIdentityIsChanging),
-                    ]),
-                    signal: controller.signal,
-                  })
-                  return resolved.ok ? { ...resolved, target: { ...resolved.target, maestrlyUltra } } : resolved
-                },
-              }
-            : {}),
+          resolveNextTarget: async (input: { attemptedProviderIds: ReadonlySet<string>; admit?: boolean }) => {
+            const resolved = await resolveClaudeRuntimeTarget({
+              logicalProviderId: selectedClaudeProviderId,
+              modelId: selectedClaudeModelId,
+              runtimeModelId: resolvedClaudeModelId,
+              reasoningEffort,
+              fastMode,
+              chain: claudeFailoverChain,
+              ...input,
+              attemptedProviderIds: new Set([
+                ...input.attemptedProviderIds,
+                ...claudeFailoverChain.filter(claudePhysicalIdentityIsChanging),
+              ]),
+              signal: controller.signal,
+            })
+            return resolved.ok ? { ...resolved, target: { ...resolved.target, maestrlyUltra } } : resolved
+          },
           onEffectiveTargetChanged: (target) => {
-            if (controller.signal.aborted || (!run.allowClaudePersistence && !isolated)) return
+            if (controller.signal.aborted || !run.allowClaudePersistence) return
             effectiveTarget = target
             run.effectiveProviderId = target.providerId
             run.claudeSessionProviderId = target.providerId
@@ -6146,9 +5697,6 @@ async function startSendAttempt(
           selection,
           resolvedModelId: resolvedClaudeModelId,
           harness: admittedHarness,
-          ...(isolated && frozenProfile?.resolvedModelId
-            ? { frozenResolvedModelId: frozenProfile.resolvedModelId }
-            : {}),
           mode: turnBehavior,
           maestro: maestroTurn,
           maestroLive: run.maestroLive,
@@ -6169,21 +5717,16 @@ async function startSendAttempt(
           signal: controller.signal,
           responseStartedAt,
           contextWindow: turnContextWindow,
-          ...(runnerMessageMeta ? { messageMeta: runnerMessageMeta } : {}),
           compactHistory: compactActiveHistory,
           onModelContextWindow: (contextWindow, target = effectiveTarget) => {
-            if (target && !canPersist(target) && !isolated) return
+            if (target && !canPersist(target)) return
             observeTurnContextWindow(contextWindow)
             const owner = target?.manager ?? manager
             owner.observeModelContextWindow(selectedClaudeModelId, contextWindow)
             owner.observeModelContextWindow(target?.runtimeModelId ?? resolvedClaudeModelId, contextWindow)
           },
           onSessionReady: (sessionId, target = effectiveTarget) => {
-            if (
-              controller.signal.aborted ||
-              (!isolated && !run.allowClaudePersistence) ||
-              !hasCurrentSessionIdentity(target)
-            )
+            if (controller.signal.aborted || !run.allowClaudePersistence || !hasCurrentSessionIdentity(target))
               return false
             run.claudeSessionId = sessionId
             run.claudeSessionProviderId = target?.providerId ?? selectedClaudeProviderId
@@ -6191,12 +5734,6 @@ async function startSendAttempt(
             return true
           },
           canPersistSession: canPersist,
-          ...(isolated && reviewLoopMessageMeta
-            ? {
-                ephemeralSession: true as const,
-                executionScope: reviewLoopMessageMeta.executionScope,
-              }
-            : {}),
         })
         claudeRuntimeLeaseTransferred = true
         return promise.finally(() => {
@@ -6219,19 +5756,16 @@ async function startSendAttempt(
       turnPromise = (async () => {
         const manager = getCursorSubscriptionManager(selectionAccountId)
         manager.assertAccountIdentity(admittedIdentity)
-        const fastMode = isolated ? frozenProfile?.fastMode === true : turnChatFastMode(conversationId)
-        const cursorModel = (await manager.listModels(isolated)).find((model) => model.id === selectedCursorModelId)
+        const fastMode = turnChatFastMode(conversationId)
+        const cursorModel = (await manager.listModels()).find((model) => model.id === selectedCursorModelId)
         if (!cursorModel) throw new Error('no-model')
         const resolved = resolveNativeReasoningEffort({
-          requestedEffort: turnReasoning(conversationId, frozenProfile),
+          requestedEffort: turnChatReasoning(conversationId),
           supportedEfforts: cursorReasoningEfforts(cursorModel),
           defaultEffort: undefined,
-          strict: isolated && !!frozenProfile,
+          strict: false,
         })
         if (!resolved.ok) throw new Error('executor-unavailable')
-        if (isolated && frozenProfile && resolved.reasoningEffort !== frozenProfile.reasoningEffort) {
-          throw new Error('executor-unavailable')
-        }
         return runCursorSubscriptionChat({
           conversationId,
           projectId: executionContext.workspaceId,
@@ -6260,10 +5794,6 @@ async function startSendAttempt(
           signal: controller.signal,
           responseStartedAt,
           contextWindow: turnContextWindow,
-          ...(runnerMessageMeta ? { messageMeta: runnerMessageMeta } : {}),
-          ...(isolated && frozenProfile?.cursorModelSelection
-            ? { frozenModelSelection: frozenProfile.cursorModelSelection }
-            : {}),
           canPersistSession: () => {
             if (!run.allowCursorPersistence || cursorAuth.busy(selectionAccountId)) return false
             try {
@@ -6273,12 +5803,6 @@ async function startSendAttempt(
               return false
             }
           },
-          ...(isolated && reviewLoopMessageMeta
-            ? {
-                ephemeralSession: true as const,
-                executionScope: reviewLoopMessageMeta.executionScope,
-              }
-            : {}),
         })
       })()
     } else if (useAntigravitySubscription && antigravityIdentityAtAdmission) {
@@ -6287,18 +5811,15 @@ async function startSendAttempt(
       turnPromise = (async () => {
         const manager = getAntigravitySubscriptionManager(selectionAccountId)
         manager.assertAccountIdentity(admittedIdentity)
-        const entry = (await manager.listModels(isolated)).find((model) => model.id === selectedModelId)
+        const entry = (await manager.listModels()).find((model) => model.id === selectedModelId)
         if (!entry) throw new Error('no-model')
         const resolved = resolveNativeReasoningEffort({
-          requestedEffort: turnReasoning(conversationId, frozenProfile),
+          requestedEffort: turnChatReasoning(conversationId),
           supportedEfforts: antigravityModelEfforts(entry),
           defaultEffort: entry.defaultEffort,
-          strict: isolated && !!frozenProfile,
+          strict: false,
         })
         if (!resolved.ok) throw new Error('executor-unavailable')
-        if (isolated && frozenProfile && resolved.reasoningEffort !== frozenProfile.reasoningEffort) {
-          throw new Error('executor-unavailable')
-        }
         return runAntigravitySubscriptionChat({
           conversationId,
           projectId: executionContext.workspaceId,
@@ -6325,7 +5846,6 @@ async function startSendAttempt(
           signal: controller.signal,
           responseStartedAt,
           contextWindow: turnContextWindow,
-          ...(runnerMessageMeta ? { messageMeta: runnerMessageMeta } : {}),
           compactHistory: (onProgress) => compactActiveHistory(undefined, onProgress),
           canPersistSession: () => {
             if (!run.allowAntigravityPersistence || antigravityAuth.busy(selectionAccountId)) return false
@@ -6336,12 +5856,6 @@ async function startSendAttempt(
               return false
             }
           },
-          ...(isolated && reviewLoopMessageMeta
-            ? {
-                ephemeralSession: true as const,
-                executionScope: reviewLoopMessageMeta.executionScope,
-              }
-            : {}),
         })
       })()
     } else {
@@ -6355,9 +5869,6 @@ async function startSendAttempt(
         cwd: executionContext.cwd,
         selection,
         harnessFlags: harnessFlagsAtAdmission,
-        ...(isolated && frozenProfile != null
-          ? { frozenBehaviorProfileId: frozenProfile.behaviorProfileId ?? null }
-          : {}),
         broker: getBroker(),
         questionBroker: getQuestionBroker(),
         emit,
@@ -6368,28 +5879,13 @@ async function startSendAttempt(
         assistantCreatedAt,
         responseStartedAt,
         contextWindow: turnContextWindow,
-        ...(runnerMessageMeta ? { messageMeta: runnerMessageMeta } : {}),
         // Mid-turn compaction produces only summary+usage; the runner persists the milestone inside the live bubble.
         compactHistory: (liveSummary) => compactActiveHistory(undefined, undefined, liveSummary),
-        ...(internalLoop
-          ? {
-              // ALWAYS freeze the axis: explicit 'off' when the freeze lacks reasoning (older profiles).
-              reasoningOverride: frozenProfile?.reasoning ?? 'off',
-              // Frozen EFFECT (after resolving Ultra): the runner requires equality with live resolution.
-              frozenReasoningEffort: frozenProfile?.reasoningEffort,
-              ...(typeof frozenProfile?.fastMode === 'boolean' ? { fastModeOverride: frozenProfile.fastMode } : {}),
-            }
-          : fallbackTurnAxes
-            ? { reasoningOverride: fallbackTurnAxes.reasoning ?? 'off', fastModeOverride: fallbackTurnAxes.fastMode }
-            : {}),
+        ...(fallbackTurnAxes
+          ? { reasoningOverride: fallbackTurnAxes.reasoning ?? 'off', fastModeOverride: fallbackTurnAxes.fastMode }
+          : {}),
         ...modelFallbackRunnerHooks,
         ...(maestroTurn ? { maestro: maestroTurn, maestroLive: run.maestroLive } : {}),
-        ...(isolated && reviewLoopMessageMeta
-          ? {
-              ephemeralSession: true as const,
-              executionScope: reviewLoopMessageMeta.executionScope,
-            }
-          : {}),
       })
     }
 
@@ -6606,10 +6102,10 @@ async function startSendAttempt(
         clearLinkedTurnOrigin(conversationId, run)
         turnSnapshot?.end(run.messageId || null)
         releaseCwdActivityOnce()
-        if (!isolated && !controller.signal.aborted && !isChatGptWebProvider(selection?.providerId)) {
+        if (!controller.signal.aborted) {
           scheduleMemoryExtraction(conversationId)
+          void maybeScheduleBackgroundCompaction(conversationId)
         }
-        if (!isolated && !controller.signal.aborted) void maybeScheduleBackgroundCompaction(conversationId)
         if (hookTurn) removeHookTranscript(conversationId)
         // Host continuations (Maestro's reconciliation guard, the Plan guard, a Stop hook asking for more) run as an
         // internal turn that settles this one when it ends; the latter two keep the authority this turn was admitted
@@ -6794,7 +6290,7 @@ export async function runPlanRevision(
   feedbackText: string,
   expectedRevisionVersion?: number
 ): Promise<void> {
-  const releaseFailedRevision = () => releasePlanRevision(conversationId, 'maestrly-chat', expectedRevisionVersion)
+  const releaseFailedRevision = () => releasePlanRevision(conversationId, expectedRevisionVersion)
   if (!savedDeps) {
     releaseFailedRevision()
     return
@@ -6870,7 +6366,7 @@ export function reportConversationDispatchStartFailure(conversationId: string, r
 }
 
 function stop(conversationId: string): void {
-  releasePlanRevision(conversationId, 'maestrly-chat')
+  releasePlanRevision(conversationId)
   cancelBackgroundJob(conversationId, true)
   const run = active.get(conversationId)
   if (run) {
@@ -6996,10 +6492,6 @@ export async function stopChat(conversationId: string): Promise<void> {
     stop(conversationId)
     if (run) await waitForRuns([run])
   }
-  // Archive/delete/CLI switch are external boundaries: dormant web sessions must also leave the
-  // router, or the tunnel and read-only cwd access survive after the conversation disappears.
-  await chatGptWeb.endSession(conversationId)
-  chatGptWeb.discardPlanReviews(conversationId)
   // An open review or a running check ends with the conversation; nothing is handed off.
   await reviewService?.close(conversationId)
 }
@@ -7011,10 +6503,7 @@ export async function stopChatAndWait(conversationId: string, timeoutMs = 10_000
   const operation = pendingConversationOperations.get(conversationId)
   stop(conversationId)
   operation?.controller.abort(new Error('Conversation is being migrated'))
-  const stopped = await waitForChatShutdown(conversationId, run, operation, timeoutMs)
-  await chatGptWeb.endSession(conversationId)
-  chatGptWeb.discardPlanReviews(conversationId)
-  return stopped
+  return waitForChatShutdown(conversationId, run, operation, timeoutMs)
 }
 
 /** Account changes never abort BYOK providers; stop and await only official-runtime turns.
@@ -9397,34 +8886,12 @@ export function resumeBackgroundCompaction(conversationId: string): void {
   void maybeScheduleBackgroundCompaction(conversationId)
 }
 
-// Dependencies captured at registration for internal turns outside the normal IPC flow.
+// Dependencies captured at registration for turns started outside the normal IPC flow.
 let savedDeps: ChatIpcDeps | null = null
 
 // ----------------------------------------------------------------------------
-// Isolated internal turns (ChatGPT Web project-environment jobs) and frozen selections.
-// Internal automated-turn API: create the handle at ActiveRun ADMISSION (never via `active.get`
-// after start — race), freeze selection (no auto-fallback), and return a structured outcome.
+// Frozen selections.
 // ----------------------------------------------------------------------------
-
-/** Validates internal-turn boundaries: project chat, no active turn/operation, no pending plan. */
-export async function validateInternalTurnStart(
-  conversationId: string
-): Promise<{ ok: true } | { ok: false; error: string }> {
-  const conv = getConversation(conversationId)
-  if (!conv) return { ok: false, error: 'invalid-conversation' }
-  if (conv.scope === 'standalone') return { ok: false, error: 'project-required' }
-  // Internal turns are intentionally forced to Agent. A Maestro conversation can never cross that path
-  // because its parent capability boundary is structural, not a mutable chat-mode preference.
-  if (conv.experience === 'maestro') return { ok: false, error: 'maestro-experience' }
-  if (chatGptWeb.projectEnvironmentLockFor(conversationId)) {
-    return { ok: false, error: 'no-turn-or-operation' }
-  }
-  if (active.has(conversationId) || pendingConversationOperations.has(conversationId)) {
-    return { ok: false, error: 'no-turn-or-operation' }
-  }
-  if (getPendingPlan(conversationId)) return { ok: false, error: 'pending-plan' }
-  return { ok: true }
-}
 
 type LiveRouteAccountIdentity = { authenticated: false } | { authenticated: true; fingerprint: string; epoch?: number }
 
@@ -9730,21 +9197,8 @@ export async function resolveFrozenChatSelection(
 }
 
 /**
- * Effective turn reasoning effort. With a frozen profile (loop), the frozen value ALWAYS wins —
- * including 'off'/default (older profiles without the field = 'off'); NEVER reread live ui_prefs. Without a profile,
- * reread prefs (normal behavior). SINGLE source for native runtimes — the BYOK runner receives the same
- * contract via `reasoningOverride` (service.ts) and `resolveTurnReasoning` (runner.ts).
- */
-export function turnReasoning(
-  conversationId: string,
-  frozenProfile: FrozenChatSelection | undefined
-): string | undefined {
-  return frozenProfile ? (frozenProfile.reasoning ?? 'off') : turnChatReasoning(conversationId)
-}
-
-/**
  * Resolves effective native-runtime effort (Codex/Copilot) with the SAME semantics as the turn.
- * `strict` (isolated internal execution): reproduce the frozen profile EXACTLY —
+ * `strict` (frozen selection): reproduce the frozen profile EXACTLY —
  * ok:false for unsupported levels / ultra without known levels, instead of substituting
  * `defaultEffort` (fail-closed). Manual turns remain permissive (default fallback).
  */
@@ -10074,123 +9528,6 @@ async function revalidateFrozenAccount(
   return { ok: true }
 }
 
-/**
- * Starts an automated INTERNAL turn (one isolated job round). Create the handle in the SAME tick as
- * ActiveRun admission; cancellation before admission aborts the run as soon as it exists.
- */
-export async function startInternalChatTurn(input: {
-  conversationId: string
-  prompt: string
-  hiddenParts?: MessagePart[]
-  selection: FrozenChatSelection
-  loopId: string
-  iteration: number
-  maxIterations: number
-  signal: AbortSignal
-}): Promise<{ ok: true; handle: InternalTurnHandle } | { ok: false; error: string }> {
-  if (!savedDeps) return { ok: false, error: 'Chat service not initialized' }
-  if (getConversation(input.conversationId)?.scope === 'standalone') return { ok: false, error: 'project-required' }
-  if (getConversation(input.conversationId)?.experience === 'maestro') {
-    return { ok: false, error: 'maestro-experience' }
-  }
-  const wc = getMainWebContents()
-  if (!wc) return { ok: false, error: 'Window unavailable' }
-  if (input.signal?.aborted) return { ok: false, error: 'cancelled' }
-  const executionId = randomUUID()
-  let admitted = false
-  let resolveHandle!: (handle: InternalTurnHandle) => void
-  const handlePromise = new Promise<InternalTurnHandle>((resolve) => {
-    resolveHandle = resolve
-  })
-  const entry: InternalTurnEntry = {
-    run: null,
-    cancelRequested: false,
-    cancel: () => {
-      if (entry.cancelRequested) return
-      entry.cancelRequested = true
-      if (entry.run) {
-        entry.run.controller.abort()
-        getBroker().rejectConversation(input.conversationId)
-        getQuestionBroker().rejectConversation(input.conversationId)
-      }
-    },
-    resolveHandle,
-  }
-  internalTurns.set(executionId, entry)
-  // Connect external cancellation (job Stop) to the entry BEFORE preflight: abort the run if admitted;
-  // if still in preflight, startSend's admission barrier sees the aborted signal and rejects the turn.
-  const onExternalAbort = () => entry.cancel()
-  input.signal.addEventListener('abort', onExternalAbort, { once: true })
-  const result = await startSend(savedDeps, wc, input.conversationId, input.prompt, undefined, {
-    internal: true,
-    hiddenParts: input.hiddenParts ?? [],
-    internalLoop: {
-      executionId,
-      loopId: input.loopId,
-      iteration: input.iteration,
-      maxIterations: input.maxIterations,
-      selectionOverride: input.selection,
-      contextPolicy: 'isolated',
-      providerSessionPolicy: 'ephemeral',
-      signal: input.signal,
-      onAdmitted: (run) => {
-        admitted = true
-        entry.run = run
-        if (entry.cancelRequested) run.controller.abort()
-        resolveHandle({
-          executionId,
-          conversationId: input.conversationId,
-          assistantMessageId: () => run.messageId || null,
-          done: run.outcome,
-          cancel: () => entry.cancel(),
-        })
-        // The entry is TRANSIENT: remove it on terminal outcome (success/error/cancelled), along with the
-        // external abort listener. Compare by identity: never delete a replacement entry.
-        void run.outcome.finally(() => {
-          invalidateUnifiedUsageCache()
-          if (internalTurns.get(executionId) === entry) internalTurns.delete(executionId)
-          input.signal.removeEventListener('abort', onExternalAbort)
-        })
-      },
-    },
-  })
-  if (!result.ok) {
-    input.signal.removeEventListener('abort', onExternalAbort)
-    // Never leave the handle promise pending (teardown/retry): resolve with an inert handle.
-    if (!admitted) {
-      resolveHandle({
-        executionId,
-        conversationId: input.conversationId,
-        assistantMessageId: () => null,
-        done: Promise.resolve({ status: 'cancelled', assistantMessageId: null }),
-        cancel: () => undefined,
-      })
-    }
-    internalTurns.delete(executionId)
-    return { ok: false as const, error: result.error ?? 'unknown-error' }
-  }
-  return { ok: true, handle: await handlePromise }
-}
-
-/** Cancels an internal turn by executionId (job Stop / session shutdown). */
-export function cancelInternalChatTurn(executionId: string): void {
-  internalTurns.get(executionId)?.cancel()
-}
-
-/** Diagnostics (tests): internal turns still awaiting a terminal outcome. */
-export function pendingInternalTurnsCount(): number {
-  return internalTurns.size
-}
-
-/** Forces Agent mode for an internal job's turns (they never run in Plan) and notifies the renderer. */
-export function forceInternalTurnAgentMode(conversationId: string): void {
-  if (getConversation(conversationId)?.experience === 'maestro') return
-  if (modeFor(conversationId) !== 'agent') {
-    setChatMode(conversationId, 'agent')
-    sendToMainRenderers(`chat:mode:${conversationId}`, 'agent')
-  }
-}
-
 // ----------------------------------------------------------------------------
 // Code and plan reviews: parallel read-only reviewers and a verifier, followed live (see ./review).
 // ----------------------------------------------------------------------------
@@ -10209,11 +9546,11 @@ const REVIEWER_RULESET: Ruleset = [
 let reviewService: ReviewService | null = null
 let reviewerBroker: PermissionBroker | null = null
 
-/** The conversation's own model, effort and Fast setting; ChatGPT Web cannot run reviewers, so it uses the default. */
+/** The conversation's own model, effort and Fast setting; without a usable one, the default. */
 function conversationReviewSelection(conversationId: string): ReviewModelChoice | null {
   const prefs = getConvUiPrefs(conversationId).chat
   const chosen =
-    prefs?.providerId && getProvider(prefs.providerId) && !isChatGptWebProvider(prefs.providerId)
+    prefs?.providerId && getProvider(prefs.providerId)
       ? { providerId: prefs.providerId, modelId: prefs.modelId ?? '' }
       : inheritedSelection()
   if (!chosen?.providerId || !chosen.modelId) return null
@@ -10292,8 +9629,7 @@ function reviews(): ReviewService {
         },
         parentFastMode: selection.fastMode,
       }),
-    reviewerProviderSupported: (providerId) => !isChatGptWebProvider(providerId),
-    conversationContext: (conversationId) => JSON.stringify(getCompanionConversationContext(conversationId).messages),
+    conversationContext: (conversationId) => JSON.stringify(conversationBrief(conversationId)),
     locale: () => getLocale(),
     runReviewer: async ({ conversation, profile, task, tools, signal, recorder }) => {
       reviewerBroker ??= new PermissionBroker({ rulesetFor: () => REVIEWER_RULESET })
@@ -11639,8 +10975,6 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
   })
   deps.mhandle('chat:context-limit:set', (_e, providerId: string, modelId: string, value: number | null) => {
     if (typeof providerId !== 'string' || typeof modelId !== 'string' || !providerId || !modelId) return { ok: false }
-    // Every other provider compacts through Maestrly; the web companion keeps its context inside ChatGPT.
-    if (isChatGptWebProvider(providerId)) return { ok: false, error: 'unsupported' }
     setContextLimit(providerId, modelId, typeof value === 'number' ? value : null)
     // The person's limit prevails over one an overflow error taught: it no longer caps this model.
     forgetLearnedContextWindow(providerId, modelId)
@@ -11869,324 +11203,6 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
     return { ok: true }
   })
 
-  // ---- "ChatGPT Web" Companion (EXPERIMENTAL): project tools + explicit delivery via Secure MCP Tunnel.
-  if (!chatGptWebUnsubscribe) {
-    chatGptWebUnsubscribe = chatGptWeb.onChatGptWebChange(broadcastChatGptWebStatus)
-  }
-  // Bridge hooks bind explicit deliveries and personal-memory permission requests to the originating chat.
-  chatGptWeb.setChatGptWebHooks({
-    authorizePersonalMemoryWrite: async (conversationId, toolName, signal) => {
-      const conversation = getConversation(conversationId)
-      if (conversation?.scope !== 'standalone' || conversation.botOrigin || isBotMode()) {
-        throw new Error('personal-memory-unavailable')
-      }
-      const mode = modeFor(conversationId)
-      if (mode !== 'agent' && mode !== 'design') throw new Error('personal-memory-mode-denied')
-      await getBroker().assert({
-        conversationId,
-        projectId: null,
-        permissionScope: conversationPermissionScope(conversation),
-        action: 'mcp',
-        resources: [toolName],
-        toolName,
-        signal,
-      })
-    },
-    turnCompleted: (conversationId) => {
-      if (!getConversation(conversationId)) return
-      touchConversation(conversationId, Date.now())
-      deps.notifyChatGptWebTurnCompleted?.(conversationId)
-    },
-    deliverChat: (conversationId, markdown, title) => {
-      if (!getConversation(conversationId)) throw new Error('invalid-conversation')
-      const body = title ? `## ${title}\n\n${markdown}` : markdown
-      const messageId = randomUUID()
-      upsertChatMessage({
-        id: messageId,
-        conversationId,
-        role: 'assistant',
-        parts: [{ type: 'text', id: randomUUID(), text: body }],
-        source: 'chatgpt-web',
-        createdAt: Date.now(),
-      })
-      sendToMainRenderers(`chat:chatgpt-web:delivery:${conversationId}`, { messageId })
-    },
-    deliverPlan: (conversationId, plan, reviewId, title) => {
-      const conv = getConversation(conversationId)
-      if (!conv) throw new Error('invalid-conversation')
-      const staged = stagePlan({
-        agentId: conversationId,
-        cwd: conv.cwd,
-        plan,
-        ...(title ? { title } : {}),
-        origin: { kind: 'chatgpt-web', reviewId },
-        onLifecycle: (outcome) => {
-          const resolution = chatGptWeb.resolvePlanReview(conversationId, reviewId, { status: outcome })
-          if (!resolution.ok) {
-            deps.emitStatus(conversationId, 'error')
-          }
-        },
-      })
-      if (!staged.ok) throw new Error(staged.error)
-    },
-    projectContext: (conversationId, cwd) => {
-      const conv = getConversation(conversationId)
-      return buildProjectContext(conv?.workspaceId ?? null, cwd)
-    },
-    listSkills: async (cwd, conversationId) =>
-      (await effectiveSkills(cwd, conversationId)).map((skill) => ({
-        name: skill.name,
-        description: skill.description || skill.name,
-      })),
-    readSkill: (cwd, name, conversationId) =>
-      conversationId && getConversation(conversationId)?.scope === 'standalone'
-        ? findEffectiveSkill(cwd, conversationId, name).then((skill) => skill?.body ?? null)
-        : readSkillBody(cwd, name),
-    getConversationContext: (conversationId, signal) => {
-      if (signal?.aborted) throw new Error('session-ended')
-      if (!getConversation(conversationId)) throw new Error('invalid-conversation')
-      return getCompanionConversationContext(conversationId)
-    },
-    searchConversation: (conversationId, input, signal) => {
-      if (signal?.aborted) throw new Error('session-ended')
-      if (!getConversation(conversationId)) throw new Error('invalid-conversation')
-      return searchCompanionConversation(conversationId, input)
-    },
-    readConversation: (conversationId, input, signal) => {
-      if (signal?.aborted) throw new Error('session-ended')
-      if (!getConversation(conversationId)) throw new Error('invalid-conversation')
-      return readCompanionConversation(conversationId, input)
-    },
-    // Project-environment jobs: the bridge starts/awaits/ends isolated internal turns. Explicit start in
-    // ChatGPT provides consent; the job NEVER enters the Plan tab or requests per-turn approval.
-    internalTurns: {
-      validateStart: (conversationId) => validateInternalTurnStart(conversationId),
-      resolveSelection: (conversationId) => resolveFrozenChatSelection(conversationId),
-      startInternalTurn: ({
-        conversationId,
-        prompt,
-        hiddenParts,
-        selection,
-        loopId,
-        iteration,
-        maxIterations,
-        signal,
-      }) =>
-        startInternalChatTurn({
-          conversationId,
-          prompt,
-          hiddenParts,
-          selection,
-          loopId,
-          iteration,
-          maxIterations,
-          signal,
-        }),
-      cancelInternalTurn: (executionId) => cancelInternalChatTurn(executionId),
-      forceAgentMode: (conversationId) => forceInternalTurnAgentMode(conversationId),
-    },
-  })
-  deps.mhandle('chat:chatgpt-web:status', async () => ({
-    ...(await chatGptWeb.refreshRuntimeAssetStatus()),
-    enabled: isChatGptWebEnabled(),
-  }))
-  deps.mhandle('chat:chatgpt-web:capabilities:get', (_e, conversationId: string) => {
-    if (typeof conversationId !== 'string' || !getConversation(conversationId)) {
-      throw new Error('invalid-conversation')
-    }
-    return chatGptWeb.capabilitiesForConversation(conversationId)
-  })
-  deps.mhandle('chat:chatgpt-web:capabilities:set', (_e, conversationId: string, input: unknown) => {
-    if (typeof conversationId !== 'string' || !getConversation(conversationId)) {
-      throw new Error('invalid-conversation')
-    }
-    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('invalid-capabilities')
-    const value = input as {
-      git?: unknown
-      gh?: unknown
-      conversation?: unknown
-      memory?: unknown
-      personalMemory?: unknown
-      browser?: unknown
-      mcp?: unknown
-    }
-    if ((value.git !== 'off' && value.git !== 'read') || (value.gh !== 'off' && value.gh !== 'read')) {
-      throw new Error('invalid-capabilities')
-    }
-    if (value.browser !== 'off' && value.browser !== 'inspect' && value.browser !== 'interact') {
-      throw new Error('invalid-capabilities')
-    }
-    if (value.conversation !== 'off' && value.conversation !== 'read') {
-      throw new Error('invalid-capabilities')
-    }
-    if (value.memory !== 'off' && value.memory !== 'read') {
-      throw new Error('invalid-capabilities')
-    }
-    if (
-      value.personalMemory !== undefined &&
-      value.personalMemory !== 'off' &&
-      value.personalMemory !== 'read' &&
-      value.personalMemory !== 'write'
-    ) {
-      throw new Error('invalid-capabilities')
-    }
-    if (!value.mcp || typeof value.mcp !== 'object' || Array.isArray(value.mcp)) {
-      throw new Error('invalid-capabilities')
-    }
-    for (const scope of Object.values(value.mcp as Record<string, unknown>)) {
-      if (scope !== 'off' && scope !== 'read' && scope !== 'write') throw new Error('invalid-capabilities')
-    }
-    return chatGptWeb.setCapabilitiesForConversation(conversationId, {
-      git: value.git,
-      gh: value.gh,
-      conversation: value.conversation,
-      memory: value.memory,
-      personalMemory: value.personalMemory ?? 'off',
-      browser: value.browser,
-      mcp: value.mcp as Record<string, 'off' | 'read' | 'write'>,
-    })
-  })
-  deps.mhandle(
-    'chat:chatgpt-web:configure',
-    async (_e, input: { apiKey?: string; tunnelId?: string; appName?: string; enabled?: boolean }) => {
-      return chatGptWeb.withTransportConfigurationMutation(async () => {
-        const changesTransport =
-          typeof input?.apiKey === 'string' ||
-          (typeof input?.tunnelId === 'string' && input.tunnelId.trim() !== chatGptWeb.getTunnelId())
-        if (changesTransport && chatGptWeb.transportConfigurationHasActiveResources()) {
-          throw new Error('End ChatGPT Web sessions and the probe before changing the credential or tunnel.')
-        }
-        // Disabling the feature also revokes web-app access to the local bridge.
-        if (input?.enabled === false) {
-          for (const session of chatGptWeb.listSessions()) await chatGptWeb.endSession(session.conversationId)
-          await chatGptWeb.stopTunnelProbe()
-        }
-        if (chatGptWeb.transportConfigurationHasActiveResources()) {
-          throw new Error('Configuration was closed while the change was in progress.')
-        }
-        if (typeof input?.apiKey === 'string') {
-          if (input.apiKey.trim()) chatGptWeb.setPlatformApiKey(input.apiKey)
-          else chatGptWeb.clearPlatformApiKey()
-        }
-        if (typeof input?.tunnelId === 'string') chatGptWeb.setTunnelId(input.tunnelId)
-        if (typeof input?.appName === 'string') chatGptWeb.setAppName(input.appName)
-        if (typeof input?.enabled === 'boolean') setChatGptWebEnabled(input.enabled)
-        broadcastChatGptWebStatus()
-        return chatGptWebStatusPayload()
-      })
-    }
-  )
-  deps.mhandle('chat:chatgpt-web:principals', async (_e, apiKey?: string) => {
-    const result = await chatGptWeb.listTunnelPrincipals(typeof apiKey === 'string' && apiKey ? apiKey : undefined)
-    return result.ok ? { ok: true, ...result.data } : { ok: false, error: result.error, status: result.status }
-  })
-  deps.mhandle('chat:chatgpt-web:tunnels', async (_e, apiKey?: string) => {
-    const result = await chatGptWeb.listTunnels(typeof apiKey === 'string' && apiKey ? apiKey : undefined)
-    if (!result.ok) return { ok: false, error: result.error, status: result.status }
-    const tunnels = result.data.data ?? result.data.tunnels ?? []
-    return { ok: true, tunnels }
-  })
-  deps.mhandle('chat:chatgpt-web:create-tunnel', async (_e, input: { name?: string; description?: string }) => {
-    return chatGptWeb.withTransportConfigurationMutation(async () => {
-      if (chatGptWeb.transportConfigurationHasActiveResources()) {
-        return {
-          ok: false,
-          error: 'End ChatGPT Web sessions and the probe before creating another tunnel.',
-        }
-      }
-      const name = (input?.name ?? '').trim() || 'Maestrly'
-      // The API requires `description` (400 without it) — prevent the user from encountering that.
-      const description = (input?.description ?? '').trim() || 'Maestrly ChatGPT Web bridge (Secure MCP Tunnel)'
-      const result = await chatGptWeb.createTunnel({ name, description })
-      if (!result.ok) return { ok: false, error: result.error, status: result.status }
-      // Shutdown/reset/start must not have crossed the network call and left a new ID persisted.
-      if (chatGptWeb.transportConfigurationHasActiveResources()) {
-        return { ok: false, error: 'Configuration changed while the tunnel was being created; try again.' }
-      }
-      if (result.data.id) chatGptWeb.setTunnelId(result.data.id)
-      broadcastChatGptWebStatus()
-      return { ok: true, tunnelId: result.data.id }
-    })
-  })
-  deps.mhandle('chat:chatgpt-web:companion-start', async (_e, input?: { conversationId?: string }) => {
-    const conversationId = input?.conversationId
-    if (typeof conversationId !== 'string' || !conversationId) return { ok: false, error: 'invalid-input' }
-    const conv = getConversation(conversationId)
-    if (!conv) return { ok: false, error: 'invalid-conversation' }
-    const started = await chatGptWeb.startSession({ conversationId, cwd: conv.cwd })
-    if (!started.ok) return started
-    broadcastChatGptWebStatus()
-    return {
-      ok: true,
-      kickoff: chatGptWeb.companionPrompt(conversationId),
-      pairingRequired: chatGptWeb.sessionForConversation(conversationId)?.info().pairingRequired ?? true,
-    }
-  })
-  deps.mhandle('chat:chatgpt-web:companion-end', async (_e, input?: { conversationId?: string }) => {
-    const conversationId = typeof input?.conversationId === 'string' ? input.conversationId : ''
-    if (!conversationId) return { ok: false, error: 'invalid-input' }
-    await chatGptWeb.endSession(conversationId)
-    broadcastChatGptWebStatus()
-    return { ok: true }
-  })
-  // Probe: keeps the tunnel up while the user creates/updates the app on chatgpt.com (the MCP handshake
-  // happens during creation; without a running client, OpenAI's UI returns "Error creating connector").
-  deps.mhandle('chat:chatgpt-web:probe-start', async () => {
-    const result = await chatGptWeb.startTunnelProbe()
-    broadcastChatGptWebStatus()
-    return result
-  })
-  deps.mhandle('chat:chatgpt-web:probe-stop', async () => {
-    await chatGptWeb.stopTunnelProbe()
-    broadcastChatGptWebStatus()
-    return { ok: true }
-  })
-  deps.mhandle('chat:chatgpt-web:companion-prompt', (_e, input?: { conversationId?: string }) => {
-    const conversationId = typeof input?.conversationId === 'string' ? input.conversationId : ''
-    if (!conversationId) return { ok: false, kickoff: null }
-    return { ok: true, kickoff: chatGptWeb.companionPrompt(conversationId) }
-  })
-  // Copy in main so neither the prompt nor the session key crosses to the renderer; errors keep `{ ok, error }`.
-  const copyCompanionText = async (text: string | null): Promise<{ ok: boolean; error?: string }> => {
-    if (!text) return { ok: false, error: 'session-not-found' }
-    try {
-      await clipboard.writeText(text)
-      return { ok: true }
-    } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : String(error) }
-    }
-  }
-  deps.mhandle('chat:chatgpt-web:companion-copy-prompt', (_e, input?: { conversationId?: string }) => {
-    const conversationId = typeof input?.conversationId === 'string' ? input.conversationId : ''
-    return copyCompanionText(conversationId ? chatGptWeb.companionPrompt(conversationId) : null)
-  })
-  deps.mhandle('chat:chatgpt-web:companion-copy-session-key', (_e, input?: { conversationId?: string }) => {
-    const conversationId = typeof input?.conversationId === 'string' ? input.conversationId : ''
-    return copyCompanionText(conversationId ? chatGptWeb.companionSessionKey(conversationId) : null)
-  })
-  deps.mhandle('chat:chatgpt-web:companion-open', async (_e, input?: { conversationId?: string }) => {
-    const conversationId = typeof input?.conversationId === 'string' ? input.conversationId : ''
-    if (!conversationId) return { ok: false, error: 'invalid-input' }
-    return chatGptWeb.openCompanionWindow(conversationId)
-  })
-  deps.mhandle('chat:chatgpt-web:browser-reset', async () => {
-    await chatGptWeb.resetCompanionStorage()
-    return { ok: true }
-  })
-  deps.mhandle('chat:chatgpt-web:checks', (_e, conversationId?: string) => {
-    const conv = typeof conversationId === 'string' ? getConversation(conversationId) : null
-    return {
-      raw: getChecksConfig(),
-      detected: conv ? listChatGptWebChecks(conv.cwd).map((check) => check.name) : [],
-    }
-  })
-  deps.mhandle('chat:chatgpt-web:set-checks', (_e, raw: string) => {
-    setChecksConfig(typeof raw === 'string' ? raw : '')
-    broadcastChatGptWebStatus()
-    return { ok: true }
-  })
-  deps.mhandle('chat:chatgpt-web:logs', () => chatGptWeb.tunnelLogs())
-
   // Additional subscription-provider ACCOUNT management (multiple accounts).
   deps.mhandle('chat:subscription-account:add', (_e, input: { kind: string; label: string }) => {
     try {
@@ -12260,7 +11276,6 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) }
     }
-    await chatGptWeb.invalidateMcpConfiguration()
     return { ok: true }
   })
   deps.mhandle('chat:mcp-remove', async (_e, id: string) => {
@@ -12269,7 +11284,6 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) }
     }
-    await chatGptWeb.invalidateMcpConfiguration()
     return { ok: true }
   })
   // Native app tools (drawer) — toggle (in-process, no HTTP/token).
@@ -12390,7 +11404,6 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
       const validated = await validateGrokModelSelection(sel.modelId, subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId)))
       if (!validated.ok) return validated
     }
-    if (isChatGptWebProvider(sel?.providerId)) return { ok: false, error: 'unknown-provider' }
     if (sel?.providerId) setAppSetting(CHAT_DEFAULT_PROVIDER_KEY, sel.providerId)
     if (sel?.modelId) setAppSetting(CHAT_DEFAULT_MODEL_KEY, sel.modelId)
     // reasoning is OPTIONAL in the payload; when present, persist the default for new conversations ('off' = none).
@@ -12402,7 +11415,6 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
   })
   deps.mhandle('chat:set-selection', async (_e, conversationId: string, sel: ChatModelRef) => {
     if (typeof conversationId === 'string' && sel?.providerId && sel?.modelId) {
-      if (isChatGptWebProvider(sel.providerId)) return { ok: false, error: 'unknown-provider' }
       if (isGitHubCopilotSubscriptionProvider(sel.providerId)) {
         const validated = await validateGitHubCopilotModelSelection(sel.modelId, subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId)))
         if (!validated.ok) return validated
@@ -12586,7 +11598,6 @@ export function disposeChat(): Promise<void> {
     for (const attempt of claudeAttempts) attempt.abort(new Error('Chat service is shutting down'))
     // A sign-in ends only when its CLI exits; the identity transition awaited below waits for it.
     for (const manager of listClaudeSubscriptionManagers()) manager.cancelLogin()
-    for (const entry of internalTurns.values()) entry.cancel()
     const snapshot = [...active.entries()]
     const ids = new Set(snapshot.map(([id]) => id))
     for (const [, run] of snapshot) run.controller.abort()
@@ -12614,12 +11625,9 @@ export function disposeChat(): Promise<void> {
     claudeAuthenticationRequiredUnsubscribe = null
     grokAuthUpdatedUnsubscribe?.()
     grokAuthUpdatedUnsubscribe = null
-    chatGptWebUnsubscribe?.()
-    chatGptWebUnsubscribe = null
     subagentSessionUnsubscribe?.()
     subagentSessionUnsubscribe = null
     reviewService = null
-    await chatGptWeb.disposeChatGptWeb().catch(() => undefined)
     await codexExternalAccountRefreshPromise
     await githubCopilotIdentityTransitionPromise
     await claudeIdentityTransitionPromise

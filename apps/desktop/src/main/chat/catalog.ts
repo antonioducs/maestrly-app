@@ -18,7 +18,6 @@ import {
   accountPoolBaseProviderId,
   activeAccountProviderId,
   isActiveAccountProviderId,
-  CHATGPT_WEB_PROVIDER_ID,
   effectiveProviderKind,
   isChatSubscriptionProviderKind,
   subscriptionAccountId,
@@ -160,26 +159,9 @@ export function isSubscriptionProvider(providerId: string | null | undefined): b
   )
 }
 
-/** Experimental companion integration; retain the ID for configuration, credentials, and migration. */
-export { CHATGPT_WEB_PROVIDER_ID }
-/** Experimental integration flag (manual setup, opt-in). */
-const CHATGPT_WEB_FLAG = 'chat.chatgptWeb'
-
-export function isChatGptWebProvider(providerId: string | null | undefined): boolean {
-  return providerId === CHATGPT_WEB_PROVIDER_ID
-}
-
-export function isChatGptWebEnabled(): boolean {
-  return getAppFlag(CHATGPT_WEB_FLAG, false)
-}
-
-export function setChatGptWebEnabled(enabled: boolean): void {
-  setAppFlag(CHATGPT_WEB_FLAG, enabled)
-}
-
 /** App-managed providers: users can never edit/remove them. */
 export function isManagedProvider(providerId: string | null | undefined): boolean {
-  return isSubscriptionProvider(providerId) || isChatGptWebProvider(providerId)
+  return isSubscriptionProvider(providerId)
 }
 
 // ----------------------------------------------------------------------------

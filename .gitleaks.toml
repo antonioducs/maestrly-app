@@ -2,7 +2,7 @@
 useDefault = true
 
 [[allowlists]]
-description = "Non-secret idempotency fixtures in bridge/router tests"
+description = "Non-secret idempotency fixtures in the removed ChatGPT Web bridge/router tests; they remain in history"
 targetRules = ["generic-api-key"]
 condition = "AND"
 paths = ['''^test/unit/chat-chatgpt-web-(?:bridge|router)\.test\.ts$''']

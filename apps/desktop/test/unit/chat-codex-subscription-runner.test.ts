@@ -7118,7 +7118,6 @@ describe('Codex subscription runner', () => {
     const mainBefore = structuredClone(getCodexThreadBinding(conversation.id))
     const executionId = 'exec-codex-1'
     const messageMeta = {
-      source: 'chatgpt-web-review-loop' as const,
       internal: true as const,
       executionScope: {
         kind: 'review-loop' as const,
@@ -10140,7 +10139,6 @@ describe('Codex subscription runner', () => {
         role: 'user',
         parts: [{ type: 'text', id: `${executionId}-u`, text: userText }],
         internal: true,
-        source: 'chatgpt-web-review-loop',
         executionScope: scope,
         createdAt: at,
       })
@@ -10150,7 +10148,6 @@ describe('Codex subscription runner', () => {
         role: 'assistant',
         parts: [{ type: 'text', id: `${executionId}-a`, text: asstText }],
         model: { providerId: 'builtin_codex_subscription', modelId: 'gpt-5.6-mini' },
-        source: 'chatgpt-web-review-loop',
         executionScope: scope,
         createdAt: at + 1,
       })
