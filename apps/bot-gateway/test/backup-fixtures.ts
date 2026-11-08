@@ -3,6 +3,8 @@ import {
   type FleetBackupDestination,
   type FleetBackupRun,
   type FleetBot,
+  type FleetOwnerMemoryEntry,
+  type FleetRoutine,
   FLEET_PEER_THREAD_SETTINGS_DEFAULT,
   FLEET_ROUTINE_RUN_SETTINGS_DEFAULT,
 } from '@maestrly/bot-fleet-protocol'
@@ -114,6 +116,37 @@ export function backupSettings(overrides: Partial<StoredBackupSettings> = {}): S
     updatedAt: at(1),
     updatedBy: 'Synthetic computer',
     ...overrides,
+  }
+}
+export function routineRecord(id: string, botId: string, overrides: Partial<FleetRoutine> = {}): FleetRoutine {
+  return {
+    id,
+    botId,
+    title: 'Synthetic routine ' + id,
+    prompt: 'Check the synthetic prices',
+    schedule: { kind: 'weekly', days: [], time: '09:00', timezone: 'UTC' },
+    enabled: true,
+    nextRunAt: at(1, 9),
+    lastRunAt: null,
+    lastOutcome: null,
+    createdBy: 'owner',
+    createdAt: at(1),
+    updatedAt: at(1),
+    ...overrides,
+  }
+}
+export function memoryRecord(id: string, environmentId: string | null): FleetOwnerMemoryEntry {
+  return {
+    id,
+    content: 'Synthetic memory ' + id,
+    status: 'active',
+    author: { kind: 'owner' },
+    origin: null,
+    replacesId: null,
+    replacedById: null,
+    environmentId,
+    createdAt: at(1),
+    updatedAt: at(1),
   }
 }
 export function backupRun(id: string, overrides: Partial<StoredBackupRun> = {}): StoredBackupRun {
