@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto'
+import path from 'node:path'
 import {
   FLEET_BACKUP_LIMITS,
   FLEET_BACKUP_RETENTION_DEFAULT,
@@ -10,6 +11,10 @@ import {
   type FleetBackupEnvironmentStatus,
   type FleetBackupError,
   type FleetBackupProbeResponse,
+  type FleetBackupRestorePreview,
+  type FleetBackupRestoreRequest,
+  type FleetBackupSnapshotGroup,
+  type FleetBackupSnapshotsResponse,
   type FleetBackupRun,
   type FleetBackupRunRequest,
   type FleetBackupStatus,
@@ -20,7 +25,7 @@ import {
 } from '@maestrly/bot-fleet-protocol'
 import { sha256 } from '../auth.js'
 import type { GatewayConfig } from '../config.js'
-import type { HelperResult } from '../docker.js'
+import type { HelperMount, HelperResult } from '../docker.js'
 import { GatewayError } from '../errors.js'
 import { helperLabel, type Lifecycle } from '../lifecycle.js'
 import { Logger } from '../logger.js'
@@ -31,20 +36,24 @@ import {
   BACKUP_HOME,
   BACKUP_SLICE_ENTRY,
   BACKUP_SLICE_PATH,
+  BACKUP_STAGING_NAME,
+  type ParsedSnapshot,
   backupArgs,
   backupExcludes,
   forgetArgs,
   formatRecoveryKey,
   newRecoveryKey,
   normalizeRecoveryKey,
+  parseSnapshots,
   redact,
   resticBackupSummary,
   resticFailure,
   resticProgress,
   resticStatsBytes,
+  restoreArgs,
   snapshotTags,
 } from './restic.js'
-import { type BackupSlice, buildBackupSlice } from './slice.js'
+import { type BackupSlice, buildBackupSlice, readBackupSlice } from './slice.js'
 
 export type BackupsDeps = {
   store: Store
@@ -74,6 +83,18 @@ const INELIGIBLE: Record<Exclude<FleetBackupEligibility, 'ok'>, string> = {
 /** What a restore restores: the gateway's part of the snapshot, read again when it was asked for. */
 export type RestoreJob = { snapshotId: string; slice: BackupSlice; withProjects: boolean }
 type QueueItem = { run: StoredBackupRun; notBefore: number; restore?: RestoreJob }
+/** What restic may print when it lists snapshots or reads the gateway's part of one. */
+const LISTING_LIMIT_BYTES = 16 * 1024 * 1024
+/** A restore that failed in a way the run reports as it is. */
+class RestoreFailure extends Error {
+  constructor(readonly failure: FleetBackupError) {
+    super(failure.message)
+  }
+}
+/** A failure of the destination, for a request that waited for it: its code travels in the details. */
+function backupError(failure: FleetBackupError): GatewayError {
+  return new GatewayError('CONFLICT', failure.message || 'The backup storage failed.', { backupError: failure.code })
+}
 
 /** A Google service account key as the app pasted it: its account, and the key that must never show. */
 function serviceAccount(json: string): { clientEmail: string; privateKey: string } {
@@ -125,6 +146,8 @@ export class Backups {
   protected readonly random: (size: number) => Buffer
   /** Connections in progress, by idempotency key: the same request sent twice waits for the first. */
   private readonly connecting = new Map<string, Promise<FleetBackupConnectResponse>>()
+  /** Restores being queued, by idempotency key. */
+  private readonly restoring = new Map<string, Promise<FleetBackupRun>>()
   constructor(protected readonly deps: BackupsDeps) {
     this.store = deps.store
     this.lifecycle = deps.lifecycle
@@ -584,7 +607,7 @@ export class Backups {
     const settings = this.store.backupSettings()
     if (!settings) return void this.finish(run, 'cancelled', { code: 'cancelled', message: 'Cancelled.' })
     const source = this.lifecycle.backupSource(run.environmentId)
-    if (!source || source.eligibility !== 'ok')
+    if (source?.eligibility !== 'ok')
       return void this.finish(
         run,
         'failed',
@@ -706,9 +729,250 @@ export class Backups {
     else if (bytes === null) this.logger.warn('Backup repository not measured', { environmentId })
     return null
   }
-  /** A restore (Task 10). */
-  protected async runRestore(item: QueueItem, _signal: AbortSignal): Promise<void> {
-    this.finish(item.run, 'failed', { code: 'failed', message: 'Restores are not available.' })
+  /** The environments backed up at the destination, from this server and others, newest backup first. */
+  async snapshots(): Promise<FleetBackupSnapshotsResponse> {
+    const settings = this.requireSettings()
+    const listed = await this.listSnapshots(settings, [])
+    const serverId = this.store.serverId()
+    const groups = new Map<string, FleetBackupSnapshotGroup>()
+    for (const snapshot of listed.sort((a, b) => b.at.localeCompare(a.at))) {
+      const key = snapshot.environmentId + '\u0000' + snapshot.host
+      let group = groups.get(key)
+      if (!group) {
+        group = {
+          environmentId: snapshot.environmentId,
+          name: snapshot.name,
+          kind: snapshot.kind,
+          serverId: snapshot.host.slice(0, 200),
+          serverName: snapshot.serverName,
+          thisServer: snapshot.host === serverId,
+          taken: !!this.store.getEnvironment(snapshot.environmentId),
+          snapshots: [],
+        }
+        groups.set(key, group)
+      }
+      group.snapshots.push({ id: snapshot.id, at: snapshot.at, format: snapshot.format })
+    }
+    return { environments: [...groups.values()] }
+  }
+  private async listSnapshots(settings: StoredBackupSettings, ids: string[]): Promise<ParsedSnapshot[]> {
+    const result = await this.helper.restic({
+      destination: settings.destination,
+      password: settings.recoveryKey,
+      args: ['snapshots', '--json', '--tag', 'maestrly', ...ids],
+      timeoutMs: FLEET_BACKUP_LIMITS.quickTimeoutMs,
+      stdoutLimitBytes: LISTING_LIMIT_BYTES,
+    })
+    if (result.exitCode !== 0 || result.ending !== 'exited')
+      throw backupError(resticFailure(result, this.secrets(settings)))
+    return parseSnapshots(result.stdout)
+  }
+  /** What a snapshot would restore, as its own records say; read from the destination each time. */
+  private async inspect(
+    snapshotId: string
+  ): Promise<{ preview: FleetBackupRestorePreview; slice: BackupSlice | null }> {
+    const settings = this.requireSettings()
+    const [snapshot] = await this.listSnapshots(settings, [snapshotId])
+    if (snapshot?.id !== snapshotId) throw new GatewayError('NOT_FOUND', 'Backup not found')
+    const newer = (): { preview: FleetBackupRestorePreview; slice: null } => ({
+      preview: {
+        snapshotId,
+        at: snapshot.at,
+        environment: { id: snapshot.environmentId, name: snapshot.name, kind: snapshot.kind },
+        bots: [],
+        projects: null,
+        problems: ['format-newer'],
+      },
+      slice: null,
+    })
+    if (snapshot.format > FLEET_BACKUP_LIMITS.sliceFormat) return newer()
+    const dumped = await this.helper.restic({
+      destination: settings.destination,
+      password: settings.recoveryKey,
+      args: ['dump', snapshotId, BACKUP_SLICE_PATH],
+      timeoutMs: FLEET_BACKUP_LIMITS.quickTimeoutMs,
+      stdoutLimitBytes: LISTING_LIMIT_BYTES,
+    })
+    if (dumped.exitCode !== 0 || dumped.ending !== 'exited')
+      throw backupError(resticFailure(dumped, this.secrets(settings)))
+    const read = readBackupSlice(dumped.stdout)
+    if (!read.ok) {
+      if (read.problem === 'format-newer') return newer()
+      throw backupError({ code: 'failed', message: 'This backup cannot be read.' })
+    }
+    const { slice } = read
+    const { problems, takenBots, projectsPath } = this.lifecycle.restoreProblems(slice)
+    const projects = slice.files.projects
+      ? {
+          path: slice.files.projects,
+          state: projectsPath ? await this.projectsFolderState(slice.environment.id) : ('absent' as const),
+        }
+      : null
+    return {
+      preview: {
+        snapshotId,
+        at: snapshot.at,
+        environment: { id: slice.environment.id, name: slice.environment.name, kind: slice.environment.kind },
+        bots: slice.bots.map(({ bot }) => ({ id: bot.id, name: bot.name, taken: takenBots.includes(bot.id) })),
+        projects,
+        problems,
+      },
+      slice,
+    }
+  }
+  /**
+   * Whether the environment's own server folder exists and has files: restoring the projects into one with files of
+   * its own needs the owner's choice to keep them. A folder that cannot be read counts as one with files.
+   */
+  private async projectsFolderState(environmentId: string): Promise<'absent' | 'empty' | 'not-empty'> {
+    const root = this.deps.config.workspacesRoot
+    if (!root) return 'absent'
+    const result = await this.helper.command({
+      command: ['find', '/mnt/root/' + environmentId, '-mindepth', '1', '-maxdepth', '1', '-print', '-quit'],
+      mounts: [{ type: 'bind', source: root, target: '/mnt/root', readOnly: true }],
+      timeoutMs: FLEET_BACKUP_LIMITS.quickTimeoutMs,
+    })
+    if (result.ending === 'exited' && result.exitCode !== 0 && /No such file/i.test(result.stderr)) return 'absent'
+    if (result.ending === 'exited' && result.exitCode === 0 && !result.stdout.trim()) return 'empty'
+    return 'not-empty'
+  }
+  async restorePreview(snapshotId: string): Promise<FleetBackupRestorePreview> {
+    return (await this.inspect(snapshotId)).preview
+  }
+  /**
+   * Restores a snapshot as a new environment with its ids, once nothing on this server takes them. Its projects come
+   * back into the environment's own server folder unless the owner chose to keep the files already there.
+   */
+  restore(request: FleetBackupRestoreRequest): Promise<FleetBackupRun> {
+    this.requireSettings()
+    const hash = sha256(JSON.stringify(request))
+    const prior = this.store.priorIdempotency<FleetBackupRun>('backupRestore', request.idempotencyKey, hash)
+    if (prior) return Promise.resolve(prior.response)
+    const pending = this.restoring.get(request.idempotencyKey)
+    if (pending) return pending
+    const work = this.queueRestore(request, hash).finally(() => this.restoring.delete(request.idempotencyKey))
+    this.restoring.set(request.idempotencyKey, work)
+    return work
+  }
+  private async queueRestore(request: FleetBackupRestoreRequest, hash: string): Promise<FleetBackupRun> {
+    const { preview, slice } = await this.inspect(request.snapshotId)
+    if (!slice || preview.problems.length)
+      throw new GatewayError('CONFLICT', 'This backup cannot be restored here: ' + preview.problems.join(', '), {
+        problems: preview.problems,
+      })
+    const keep = preview.projects?.state === 'not-empty'
+    if (keep && !request.keepExistingProjects)
+      throw new GatewayError('CONFLICT', "The environment's server folder is not empty")
+    if (this.activeRun(slice.environment.id))
+      throw new GatewayError('CONFLICT', 'This environment is being restored already')
+    const run = publicRun(
+      this.enqueue(slice.environment.id, 'manual', {
+        snapshotId: request.snapshotId,
+        slice,
+        withProjects: !!slice.files.projects && !keep,
+      })
+    )
+    this.store.saveIdempotency('backupRestore', request.idempotencyKey, hash, run, 202)
+    return run
+  }
+  /**
+   * Restores the snapshot into a new home volume (and the projects into the environment's own folder), puts the
+   * database copy in place of the live database, then adopts the environment. On failure only the volume it created
+   * goes; the server folder keeps whatever it has.
+   */
+  protected async runRestore(item: QueueItem, signal: AbortSignal): Promise<void> {
+    const { run } = item
+    const { slice, snapshotId, withProjects } = item.restore!
+    const settings = this.store.backupSettings()
+    if (!settings) return void this.finish(run, 'cancelled', { code: 'cancelled', message: 'Cancelled.' })
+    const secrets = this.secrets(settings)
+    this.change(run, { state: 'running', phase: 'download', progress: 0 })
+    if (this.lifecycle.restoreProblems(slice).problems.length)
+      return void this.finish(run, 'failed', {
+        code: 'failed',
+        message: 'This backup cannot be restored here anymore.',
+      })
+    let target: { volumeName: string; projects: string | null }
+    try {
+      target = await this.lifecycle.createRestoreTarget(slice, withProjects)
+    } catch (error) {
+      return void this.finish(run, 'failed', { code: 'failed', message: (error as Error).message.slice(0, 500) })
+    }
+    this.change(run, { volumeName: target.volumeName })
+    const home = { type: 'volume' as const, source: target.volumeName, target: BACKUP_HOME, readOnly: false }
+    const restic = (path: string, mounts: HelperMount[]) =>
+      this.helper.restic({
+        destination: settings.destination,
+        password: settings.recoveryKey,
+        args: restoreArgs(snapshotId, path),
+        mounts,
+        timeoutMs: FLEET_BACKUP_LIMITS.helperTimeoutMs,
+        signal,
+        onStdoutLine: this.progress(run),
+      })
+    try {
+      const restored = await restic(BACKUP_HOME, [home])
+      if (restored.exitCode !== 0 || restored.ending !== 'exited')
+        throw new RestoreFailure(resticFailure(restored, secrets))
+      const projects = slice.files.projects
+      if (withProjects && target.projects && projects) {
+        const folder = await restic(projects, [
+          { type: 'bind', source: target.projects, target: projects, readOnly: false },
+        ])
+        if (folder.exitCode !== 0 || folder.ending !== 'exited')
+          throw new RestoreFailure(resticFailure(folder, secrets))
+      }
+      if (slice.files.database) await this.placeDatabase(target.volumeName, slice.files.database)
+      if (signal.aborted) throw new RestoreFailure({ code: 'cancelled', message: 'Cancelled.' })
+      this.change(run, { phase: 'finish', progress: 1 })
+      this.lifecycle.adoptRestoredEnvironment(slice)
+    } catch (error) {
+      await this.lifecycle.discardRestoreTarget(target.volumeName)
+      const failure =
+        error instanceof RestoreFailure
+          ? error.failure
+          : { code: 'failed' as const, message: redact((error as Error).message, secrets).slice(0, 500) }
+      return void this.finish(run, failure.code === 'cancelled' ? 'cancelled' : 'failed', failure)
+    }
+    try {
+      // A selection of environments takes the restored one in; `all` includes it already.
+      const current = this.store.backupSettings()
+      if (current?.selection.mode === 'selected' && !current.selection.environments.includes(slice.environment.id)) {
+        this.store.saveBackupSettings({
+          ...current,
+          selection: { mode: 'selected', environments: [...current.selection.environments, slice.environment.id] },
+        })
+      }
+      this.syncSchedule(false)
+    } catch (error) {
+      this.logger.warn('Restored environment not scheduled', {
+        environmentId: slice.environment.id,
+        failure: (error as Error).message,
+      })
+    }
+    this.finish(run, 'succeeded', null)
+  }
+  /** Moves the database copy the backup holds over the live database, with nothing of the live one left behind. */
+  private async placeDatabase(volumeName: string, database: { snapshot: string; live: string }) {
+    const folder = path.posix.dirname(database.snapshot)
+    if (path.posix.basename(folder) !== BACKUP_STAGING_NAME)
+      throw new RestoreFailure({ code: 'failed', message: 'The backup keeps its database copy in an unknown folder.' })
+    const moved = await this.helper.command({
+      command: [
+        'sh',
+        '-c',
+        'mv -f -- "$1" "$2" && rm -f -- "$2-wal" "$2-shm" && rm -rf -- "$3"',
+        'sh',
+        BACKUP_HOME + '/' + database.snapshot,
+        BACKUP_HOME + '/' + database.live,
+        BACKUP_HOME + '/' + folder,
+      ],
+      mounts: [{ type: 'volume', source: volumeName, target: BACKUP_HOME, readOnly: false }],
+      user: '1000',
+      timeoutMs: FLEET_BACKUP_LIMITS.quickTimeoutMs,
+    })
+    if (moved.exitCode !== 0 || moved.ending !== 'exited')
+      throw new RestoreFailure({ code: 'failed', message: 'The restored database could not be put in place.' })
   }
 
   /** The recovery key, formatted, for the owner to keep. */
