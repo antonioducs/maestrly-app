@@ -5,23 +5,9 @@ body,
   height: 100%;
 }
 
-.spike-panel {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font: 13px/1.3 system-ui, sans-serif;
-}
-
-.spike-panel button {
-  padding: 6px 10px;
-  border-radius: 8px;
-  border: 1px solid #6965db;
-  background: #6965db;
-  color: #fff;
-  cursor: pointer;
-}
-
-.spike-panel output {
-  max-width: 280px;
+.problem {
+  margin: 0;
+  padding: 24px;
+  font: 14px/1.4 system-ui, sans-serif;
   color: #555;
 }

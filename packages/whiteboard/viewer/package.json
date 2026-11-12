@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
-    "serve": "node serve.mjs",
-    "check": "node check.mjs"
+    "test": "vitest run",
+    "e2e": "node test/e2e.mjs"
   },
   "dependencies": {
     "@excalidraw/excalidraw": "0.18.1",
@@ -18,7 +18,8 @@
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "4.7.0",
-    "vite": "7.3.7"
+    "vite": "7.3.7",
+    "vitest": "5.0.4"
   },
   "overrides": {
     "@excalidraw/mermaid-to-excalidraw": "file:./stubs/mermaid-to-excalidraw",
