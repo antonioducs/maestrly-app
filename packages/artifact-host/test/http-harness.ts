@@ -2,12 +2,15 @@ import http from 'node:http'
 import path from 'node:path'
 import { vi } from 'vitest'
 import { type ArtifactAdmin, createArtifactAdmin } from '../src/admin.js'
+import { createBoardService } from '../src/boards.js'
 import { createPublicServer, type PublicServer } from '../src/http/server.js'
 import { createActivityRecorder } from '../src/sharing-admin.js'
 import { ArtifactStore } from '../src/store/artifact-store.js'
 import { BlobStore } from '../src/store/blobs.js'
+import { BoardStore } from '../src/store/board-store.js'
 import { openDatabase } from '../src/store/db.js'
 import { SharingStore } from '../src/store/sharing-store.js'
+import type { WhiteboardViewer } from '../src/whiteboard-viewer.js'
 import { tempDir, testClock, utf8 } from './helpers.js'
 
 export interface Reply {
@@ -43,8 +46,8 @@ export interface Harness {
   /** An artifact with `index.html` (a paragraph) published as version 1. */
   id: string
   browser(): Browser
-  /** A browser holding an owner session for `id`. */
-  owner(): Promise<Browser>
+  /** A browser holding an owner session for `id`, or for another artifact. */
+  owner(artifactId?: string): Promise<Browser>
   createArtifact(title?: string): Promise<string>
   close(): Promise<void>
 }
@@ -52,7 +55,13 @@ export interface Harness {
 export const PAGE = '<html><head></head><body><p id="p">The quick brown fox jumps over the lazy dog.</p></body></html>'
 
 export async function startHarness(
-  options: { ownerName?: string; publicOrigins?: string[]; maxResponses?: number } = {}
+  options: {
+    ownerName?: string
+    publicOrigins?: string[]
+    maxResponses?: number
+    whiteboardViewer?: WhiteboardViewer
+    boardPollMs?: number
+  } = {}
 ): Promise<Harness> {
   const temp = tempDir()
   const store = new ArtifactStore(openDatabase(path.join(temp.dir, 'artifacts.sqlite')))
@@ -61,7 +70,10 @@ export async function startHarness(
   const clock = testClock()
   const onActivity = vi.fn()
   const ownerName = options.ownerName ?? 'Antonio'
+  const boards = createBoardService({ store: new BoardStore(store.db) })
   const admin = createArtifactAdmin({
+    boards,
+    whiteboardViewer: options.whiteboardViewer,
     store,
     blobs,
     clock: clock.now,
@@ -81,6 +93,9 @@ export async function startHarness(
     ownerName,
     recordActivity: createActivityRecorder({ sharing, clock: clock.now, onActivity }),
     maxResponses: options.maxResponses,
+    boards,
+    whiteboardViewer: options.whiteboardViewer,
+    boardPollMs: options.boardPollMs,
   })
   const port = await server.listen()
   const origin = `http://127.0.0.1:${port}`
@@ -172,10 +187,10 @@ export async function startHarness(
     id,
     browser,
     createArtifact,
-    async owner() {
+    async owner(artifactId = id) {
       const mine = browser()
-      const { ticket } = await admin.mintOwnerTicket(id)
-      const reply = await mine.send('POST', `/a/${id}/api/session/owner`, { ticket })
+      const { ticket } = await admin.mintOwnerTicket(artifactId)
+      const reply = await mine.send('POST', `/a/${artifactId}/api/session/owner`, { ticket })
       if (reply.status !== 204) throw new Error(`owner session failed: ${reply.status}`)
       return mine
     },

@@ -12,6 +12,7 @@ import { BlobStore } from './store/blobs.js'
 import { BoardStore } from './store/board-store.js'
 import { openDatabase } from './store/db.js'
 import { type ArtifactEventKind, SharingStore } from './store/sharing-store.js'
+import { openWhiteboardViewer, type WhiteboardViewer } from './whiteboard-viewer.js'
 
 export interface ArtifactHostConfig {
   dataDir: string
@@ -23,6 +24,8 @@ export interface ArtifactHostConfig {
   publicOrigins?: string[]
   /** The owner's display name, shown to the people an artifact is shared with. */
   ownerName?: string
+  /** The built whiteboard viewer; without it, the host cannot create whiteboards. */
+  whiteboardViewerDir?: string
 }
 
 export type ArtifactHostEvent =
@@ -44,6 +47,7 @@ const configSchema = z.object({
   quotaBytes: z.number().int().positive(),
   publicOrigins: z.array(z.url()).max(8).default([]),
   ownerName: z.string().trim().max(MAX_NAME_CHARS).default(''),
+  whiteboardViewerDir: z.string().min(1).optional(),
 })
 
 /**
@@ -58,10 +62,8 @@ export async function openArtifactHost(
     allowConnection?: (remoteAddress: string | undefined) => boolean
   } = {}
 ): Promise<ArtifactHost> {
-  const { dataDir, port, host, anyLoopbackPort, quotaBytes, publicOrigins, ownerName } = parseInput(
-    configSchema,
-    config
-  )
+  const { dataDir, port, host, anyLoopbackPort, quotaBytes, publicOrigins, ownerName, whiteboardViewerDir } =
+    parseInput(configSchema, config)
   const clock = options.clock ?? Date.now
   mkdirSync(dataDir, { recursive: true, mode: 0o700 })
   if (process.platform !== 'win32') chmodSync(dataDir, 0o700)
@@ -80,6 +82,15 @@ export async function openArtifactHost(
     const onChange = (artifactId: string) => options.onEvent?.({ type: 'changed', artifactId })
     const onActivity = (artifactId: string, kind: ArtifactEventKind) =>
       options.onEvent?.({ type: 'activity', artifactId, kind })
+    let whiteboardViewer: WhiteboardViewer | null = null
+    if (whiteboardViewerDir) {
+      try {
+        whiteboardViewer = await openWhiteboardViewer(whiteboardViewerDir)
+      } catch (error) {
+        // Pages keep working; only creating a whiteboard is refused, with a reason the agent sees.
+        console.error('[artifact-host] whiteboards are unavailable:', error instanceof Error ? error.message : error)
+      }
+    }
     // One service for the admin and the viewers, so an agent's edit reaches the canvases waiting for it.
     const boardStore = new BoardStore(store.db)
     const boards = createBoardService({
@@ -96,6 +107,7 @@ export async function openArtifactHost(
       onActivity,
       ownerName,
       boards,
+      whiteboardViewer,
     })
     const server = createPublicServer({
       store,
@@ -111,6 +123,8 @@ export async function openArtifactHost(
       ownerName,
       recordActivity: createActivityRecorder({ sharing, clock, onChange, onActivity }),
       onChange,
+      boards,
+      whiteboardViewer,
     })
     const boundPort = await server.listen()
     let closed = false

@@ -124,6 +124,8 @@ export interface CommentPage {
 
 /** A response's size as UTF-8 JSON, and how deep its values may nest. */
 export const MAX_RESPONSE_BYTES = 32 * 1024
+/** The elements one canvas sends at a time, as JSON: under the 1 MiB a gateway proxy accepts in one request. */
+export const MAX_BOARD_PUSH_BYTES = 900 * 1024
 export const MAX_RESPONSE_DEPTH = 16
 
 export type ResponseValue = string | number | boolean | null | ResponseValue[] | { [key: string]: ResponseValue }
