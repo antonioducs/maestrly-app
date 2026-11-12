@@ -60,6 +60,16 @@ updates:
       - dependency-name: "react-native-webview"
       - dependency-name: "@react-native-async-storage/async-storage"
 
+  # The whiteboard viewer keeps its own lockfile, outside the workspaces.
+  - package-ecosystem: npm
+    directory: /packages/whiteboard/viewer
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    ignore:
+      # The viewer's build patches Excalidraw's font fallback, which must be redone for every version.
+      - dependency-name: "@excalidraw/excalidraw"
+
   - package-ecosystem: github-actions
     directory: /
     schedule:
