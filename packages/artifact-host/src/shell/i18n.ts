@@ -10,6 +10,8 @@ const en = {
   leftDetail: 'This device no longer has access to the page.',
   pageError: 'The page reported an error: {message}',
   pageFailed: 'The page could not be loaded.',
+  boardLost: 'You can no longer see this whiteboard',
+  boardLostDetail: 'Ask its owner to share it with you again.',
   retry: 'Try again',
   theOwner: 'the owner',
   stored:
@@ -217,6 +219,8 @@ const ptBR: Record<ShellKey, string> = {
   leftDetail: 'Este dispositivo não tem mais acesso à página.',
   pageError: 'A página informou um erro: {message}',
   pageFailed: 'Não foi possível carregar a página.',
+  boardLost: 'Você não tem mais acesso a este quadro',
+  boardLostDetail: 'Peça ao dono para compartilhá-lo com você de novo.',
   retry: 'Tentar de novo',
   theOwner: 'o dono',
   stored:

@@ -51,6 +51,12 @@ describe('embedded shell assets', () => {
     expect(BRIDGE_SCRIPT).toContain('maestrly-bridge')
   })
 
+  it('give whiteboards their board, and let a page keep its own shortcuts', () => {
+    expect(BRIDGE_SCRIPT).toContain('board-load')
+    expect(BRIDGE_SCRIPT).toContain('board-push')
+    expect(BRIDGE_SCRIPT).toContain('maestrlyShortcuts')
+  })
+
   it('give pages a way to save and read their visitor’s response', () => {
     expect(BRIDGE_SCRIPT).toContain('response-submit')
     expect(BRIDGE_SCRIPT).toContain('response-get')
@@ -204,5 +210,30 @@ describe('parseBridgeMessage responses', () => {
         requestId: 'r2',
         data: null,
       })
+  })
+})
+
+describe('parseBridgeMessage boards', () => {
+  const message = (fields: Record<string, unknown>) => parseBridgeMessage({ source: 'maestrly-bridge', ...fields })
+
+  it('accepts a request for the board and a batch of elements to send', () => {
+    expect(message({ type: 'board-load', requestId: 'r1' })).toEqual({ type: 'board-load', requestId: 'r1' })
+    expect(message({ type: 'board-push', requestId: 'r1', elements: [{ id: 'a' }] })).toEqual({
+      type: 'board-push',
+      requestId: 'r1',
+      elements: [{ id: 'a' }],
+    })
+  })
+
+  it('refuses batches above the push limits and requests without a valid ID', () => {
+    const many = Array.from({ length: 1001 }, (_, i) => ({ id: `e${i}` }))
+    expect(message({ type: 'board-push', requestId: 'r1', elements: many })).toBeNull()
+    const big = [{ id: 'a', text: 'x'.repeat(950 * 1024) }]
+    expect(message({ type: 'board-push', requestId: 'r1', elements: big })).toBeNull()
+    expect(message({ type: 'board-push', requestId: 'r1', elements: 'a' })).toBeNull()
+    for (const requestId of ['', 'x'.repeat(33), 'a b', undefined]) {
+      expect(message({ type: 'board-load', requestId })).toBeNull()
+      expect(message({ type: 'board-push', requestId, elements: [] })).toBeNull()
+    }
   })
 })

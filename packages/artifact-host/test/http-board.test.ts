@@ -119,6 +119,17 @@ describe('whiteboard API', () => {
       expect((await owner.get(`${api()}/board/changes?since=${since}`)).status).toBe(400)
   })
 
+  it('tells the viewer what the artifact is and who may draw on it', async () => {
+    const owner = await h.owner(id)
+    const state = (await owner.get(`${api()}/state`)).json
+    expect(state.artifact.kind).toBe('whiteboard')
+    expect(state.can.edit).toBe(true)
+    expect((await (await guest()).get(`${api()}/state`)).json.can.edit).toBe(false)
+    const page = (await (await h.owner()).get(`/a/${h.id}/api/state`)).json
+    expect(page.artifact.kind).toBe('page')
+    expect(page.can.edit).toBe(false)
+  })
+
   it('shows a guest the board and keeps it read-only while only the owner may edit', async () => {
     const visitor = await guest()
     const reply = await visitor.get(`${api()}/board`)

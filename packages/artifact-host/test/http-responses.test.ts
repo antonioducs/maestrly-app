@@ -106,7 +106,7 @@ describe('response routes', () => {
   it('takes no responses while they are turned off, and says so in the state', async () => {
     await put(maria, { version: 1, data: { answer: 'a' } })
     await h.admin.setSharing(id, { responsesEnabled: false })
-    expect((await maria.get(`${api}/state`)).json.can).toEqual({ comment: true, resolve: false, respond: false })
+    expect((await maria.get(`${api}/state`)).json.can).toEqual({ comment: true, resolve: false, respond: false, edit: false })
     const refused = await put(maria, { version: 1, data: { answer: 'b' } })
     expect(refused.status).toBe(403)
     expect(refused.json).toEqual({ error: 'responses_closed' })

@@ -25,6 +25,8 @@ export interface ViewerVersion {
 }
 
 export type ViewerVisibility = 'private' | 'people' | 'link'
+/** A page is the files of its versions; a whiteboard is one board that people and agents edit in place. */
+export type ArtifactKind = 'page' | 'whiteboard'
 
 /** Who can open the page, for the owner only: read here, changed only in Maestrly. */
 export interface ViewerSharing {
@@ -41,12 +43,12 @@ export interface ViewerSharing {
 }
 
 export interface ViewerState {
-  artifact: { id: string; title: string; currentVersion: number; versions: ViewerVersion[] }
+  artifact: { id: string; kind: ArtifactKind; title: string; currentVersion: number; versions: ViewerVersion[] }
   identity: ViewerIdentity
   /** The owner's display name, or an empty string when they did not set one. */
   ownerName: string
-  /** `respond`: the page may save the response of the person viewing it. */
-  can: { comment: boolean; resolve: boolean; respond: boolean }
+  /** `respond`: the page may save the response of the person viewing it. `edit`: they may draw on the whiteboard. */
+  can: { comment: boolean; resolve: boolean; respond: boolean; edit: boolean }
   /** Present for the owner only. */
   sharing?: ViewerSharing
 }
@@ -152,6 +154,20 @@ export const RESPONSE_ERRORS = [
 ] as const
 export type ResponseError = (typeof RESPONSE_ERRORS)[number]
 
+/** Why a whiteboard could not be read or a canvas's change saved, as the canvas learns it. */
+export const BOARD_ERRORS = [
+  'read_only',
+  'invalid',
+  'too_large',
+  'full',
+  'rate_limited',
+  'unavailable',
+  'failed',
+] as const
+export type BoardError = (typeof BOARD_ERRORS)[number]
+/** The elements a canvas sends at once; the host checks each one again. */
+export const MAX_BOARD_PUSH_ELEMENTS = 1000
+
 const isRecord = (value: unknown): value is Record<string, unknown> => {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
   const proto = Object.getPrototypeOf(value)
@@ -216,6 +232,10 @@ export type BridgeMessage =
   | { type: 'response-get'; requestId: string }
   /** The page saves the response of the person viewing it; `data` is null when it is not a valid response. */
   | { type: 'response-submit'; requestId: string; data: ResponseData | null }
+  /** A whiteboard's canvas asks for its board. */
+  | { type: 'board-load'; requestId: string }
+  /** A whiteboard's canvas sends what the person changed; the host validates every element. */
+  | { type: 'board-push'; requestId: string; elements: unknown[] }
 
 /** An anchor as the page receives it: the page's own text or a place in it, never names or comment text. */
 export type ShellAnchor = { id: string } & Pick<CommentAnchor, 'quote' | 'point'>
@@ -232,6 +252,12 @@ export type ShellMessage =
   | { type: 'clear-selection' }
   | { type: 'response-result'; requestId: string; ok: true; response: ResponseSnapshot | null }
   | { type: 'response-result'; requestId: string; ok: false; error: ResponseError }
+  | { type: 'board-loaded'; requestId: string; ok: true; revision: number; elements: unknown[]; canEdit: boolean }
+  | { type: 'board-loaded'; requestId: string; ok: false; error: BoardError }
+  | { type: 'board-pushed'; requestId: string; ok: true; revision: number; kept: unknown[] }
+  | { type: 'board-pushed'; requestId: string; ok: false; error: BoardError }
+  /** What others changed on the board: elements as they are now, deleted ones as tombstones. */
+  | { type: 'board-changes'; revision: number; elements: unknown[] }
 
 const ANCHOR_ID = /^[A-Za-z0-9_-]{22}$/
 /** Chosen by the page to match the shell's answer to its request. */
@@ -298,6 +324,16 @@ function parsePicked(value: unknown): PickedAnchor | null {
   return point ? { point } : null
 }
 
+/** A batch a canvas may send: few enough elements, and small enough to cross a gateway proxy in one request. */
+function isBoardBatch(value: unknown): value is unknown[] {
+  if (!Array.isArray(value) || value.length > MAX_BOARD_PUSH_ELEMENTS) return false
+  try {
+    return new TextEncoder().encode(JSON.stringify(value)).byteLength <= MAX_BOARD_PUSH_BYTES
+  } catch {
+    return false
+  }
+}
+
 /**
  * Messages come from untrusted page code: accept only known shapes and cap every string. What they say is a hint for
  * the interface, never an instruction: the shell shows a selection as text and decides by itself what to do with it.
@@ -336,6 +372,12 @@ export function parseBridgeMessage(value: unknown): BridgeMessage | null {
       // An invalid response is kept as null, so the shell answers it instead of leaving the page waiting.
       if (!isRequestId(v.requestId)) return null
       return { type: 'response-submit', requestId: v.requestId, data: isResponseData(v.data) ? v.data : null }
+    case 'board-load':
+      return isRequestId(v.requestId) ? { type: 'board-load', requestId: v.requestId } : null
+    case 'board-push':
+      return isRequestId(v.requestId) && isBoardBatch(v.elements)
+        ? { type: 'board-push', requestId: v.requestId, elements: v.elements }
+        : null
     default:
       return null
   }

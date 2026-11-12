@@ -1,6 +1,6 @@
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { gateFor, resolveAccess } from '../access.js'
+import { canEditBoard, gateFor, resolveAccess } from '../access.js'
 import { type BoardService, createBoardService } from '../boards.js'
 import { isHtmlPath, normalizeBundlePath } from '../bundle-paths.js'
 import { createCommentService } from '../comments.js'
@@ -273,6 +273,7 @@ export function createPublicServer(deps: PublicServerDeps): PublicServer {
         const state: ViewerState = {
           artifact: {
             id: artifact.id,
+            kind: artifact.kind,
             title: artifact.title,
             currentVersion: artifact.currentVersion,
             versions: store.listVersions(artifact.id).map((version) => ({
@@ -287,6 +288,7 @@ export function createPublicServer(deps: PublicServerDeps): PublicServer {
             comment: ctx.sharing.commentsEnabled,
             resolve: ctx.access?.kind === 'owner',
             respond: ctx.sharing.responsesEnabled,
+            edit: artifact.kind === 'whiteboard' && canEditBoard(ctx.sharing, ctx.access),
           },
           ...(ctx.access?.kind === 'owner' ? { sharing: sharingSummary(ctx) } : {}),
         }
@@ -388,7 +390,8 @@ export function createPublicServer(deps: PublicServerDeps): PublicServer {
   const boardRoutes = createBoardRoutes({ store, boards, pollMs: deps.boardPollMs ?? BOARD_POLL_MS })
   route('GET', 'board', boardRoutes.board, true, { scope: 'board' })
   route('GET', 'board/changes', boardRoutes.changes, true, { scope: 'board' })
-  route('POST', 'board/elements', boardRoutes.push, false, { scope: 'board', bodyBytes: MAX_BOARD_PUSH_BYTES })
+  // The elements a canvas sends at once, and room for the object around them.
+  route('POST', 'board/elements', boardRoutes.push, false, { scope: 'board', bodyBytes: MAX_BOARD_PUSH_BYTES + 1024 })
 
   async function handleApi(
     req: http.IncomingMessage,

@@ -2,6 +2,7 @@
 // the DOM as text; nothing coming from the API or the frame is parsed as HTML.
 import { type ArtifactApi, createApi } from './api.js'
 import { createBar, type Viewport } from './bar.js'
+import { createBoardSync } from './board.js'
 import { type CommentsController, createComments } from './comments.js'
 import {
   type BridgeMessage,
@@ -39,6 +40,8 @@ function renderViewer(api: ArtifactApi, state: ViewerState, initialVersion: numb
   let viewport: Viewport = 'desktop'
   let full = false
   let comments: CommentsController | null = null
+  // A whiteboard's canvas fills the frame: comments are about the whole board, never a spot in it.
+  const whiteboard = artifact.kind === 'whiteboard'
   document.title = artifact.title
 
   const frame = h('iframe', {
@@ -79,7 +82,7 @@ function renderViewer(api: ArtifactApi, state: ViewerState, initialVersion: numb
       stage.dataset.viewport = next
       sync()
     },
-    onToggleCommenting: () => comments?.setCommenting(!comments.commenting),
+    onToggleCommenting: () => toggleCommenting(),
     onToggleList: () => comments?.setList(!comments.listOpen),
     onReload: () => void load(version),
     onFullScreen: () => setFull(true),
@@ -164,13 +167,22 @@ function renderViewer(api: ArtifactApi, state: ViewerState, initialVersion: numb
     })
 
   const responses = createResponses({ api, t, state, frame, preview, version: () => version, onIdentity: sync })
+  const board = whiteboard
+    ? createBoardSync({ api, frame, preview, onLost: () => showMessage(t('boardLost'), t('boardLostDetail')) })
+    : null
+
+  function toggleCommenting(): void {
+    if (!comments) return
+    if (whiteboard) comments.setList(!comments.listOpen)
+    else comments.setCommenting(!comments.commenting)
+  }
 
   function onKey(key: string): void {
     if (key === 'Escape') {
       if (popoverOpen()) closePopover()
       else if (comments?.escape()) return
       else if (full) setFull(false)
-    } else if (key === 'c') comments?.setCommenting(!comments.commenting)
+    } else if (key === 'c') toggleCommenting()
     else if (key === 'f') setFull(!full)
   }
 
@@ -178,6 +190,8 @@ function renderViewer(api: ArtifactApi, state: ViewerState, initialVersion: numb
     if (message.type === 'error') toast(t('pageError', { message: message.message }))
     else if (message.type === 'key') onKey(message.key)
     else if (message.type === 'response-get' || message.type === 'response-submit') responses.handle(message)
+    else if (message.type === 'board-load' || message.type === 'board-push') board?.handle(message)
+    else if (whiteboard && (message.type === 'selection' || message.type === 'pick')) return
     else {
       if (message.type === 'pointer') closePopover(false)
       comments?.handle(message)

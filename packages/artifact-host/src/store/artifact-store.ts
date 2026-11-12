@@ -1,12 +1,12 @@
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite'
 import { ArtifactHostError } from '../errors.js'
+import type { ArtifactKind } from '../shell/contract.js'
 import { transaction } from './db.js'
 
 export type OwnerKind = 'local' | 'device' | 'bot'
 export type Visibility = 'private' | 'people' | 'link'
 export type VersionAuthor = 'agent' | 'owner'
-/** A page is the files of its versions; a whiteboard is one board that people and agents edit in place. */
-export type ArtifactKind = 'page' | 'whiteboard'
+export type { ArtifactKind }
 
 export interface ArtifactRecord {
   id: string
