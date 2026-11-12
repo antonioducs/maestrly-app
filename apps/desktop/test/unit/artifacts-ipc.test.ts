@@ -198,6 +198,7 @@ describe('artifacts IPC', () => {
       ['artifacts:responses-export', 'nope', 'csv'],
       ['artifacts:responses-export', id, 'xlsx'],
       ['artifacts:sharing-set', id, { responsesEnabled: 'yes' }],
+      ['artifacts:sharing-set', id, { boardEditors: 'everyone' }],
     ]
     for (const [channel, ...args] of refused) await expect(call(channel, ...args), channel).rejects.toThrow()
     for (const method of Object.values(service)) expect(method).not.toHaveBeenCalled()
@@ -208,6 +209,8 @@ describe('artifacts IPC', () => {
     expect(service.deleteResponse).toHaveBeenCalledWith(id, person)
     await call('artifacts:sharing-set', id, { responsesEnabled: false })
     expect(service.setSharing).toHaveBeenCalledWith(id, { responsesEnabled: false })
+    await call('artifacts:sharing-set', id, { boardEditors: 'people' })
+    expect(service.setSharing).toHaveBeenCalledWith(id, { boardEditors: 'people' })
   })
 
   it('exports the responses where the owner chose, and nothing when they cancel', async () => {

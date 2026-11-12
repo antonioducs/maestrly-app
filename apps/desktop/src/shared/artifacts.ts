@@ -6,9 +6,15 @@ export const MAX_ACCESS_CODE_CHARS = 64
 export const MAX_LINK_EXPIRY_DAYS = 365
 
 export type ArtifactVisibility = 'private' | 'people' | 'link'
+/** A page is the files of its versions; a whiteboard is one board that people and agents edit in place. */
+export type ArtifactKind = 'page' | 'whiteboard'
+/** Who may draw on a whiteboard besides the agent: its owner only, or the people it is shared with too. */
+export type ArtifactBoardEditors = 'owner' | 'people'
 
 export interface ArtifactListItem {
   id: string
+  /** Absent from servers older than whiteboards, where everything is a page. */
+  kind?: ArtifactKind
   title: string
   description: string
   currentVersion: number
@@ -105,6 +111,8 @@ export interface ArtifactSharingView {
   commentsEnabled: boolean
   /** Whether the page may save the responses of the people who open it. */
   responsesEnabled: boolean
+  /** Whiteboards only, on servers that have them. */
+  boardEditors?: ArtifactBoardEditors
   people: ArtifactPersonView[]
   requests: ArtifactAccessRequestView[]
   /** The configured public address, or null when links only work on this computer. */
@@ -120,6 +128,7 @@ export interface ArtifactSharingPatch {
   accessCode?: string | null
   commentsEnabled?: boolean
   responsesEnabled?: boolean
+  boardEditors?: ArtifactBoardEditors
 }
 
 export type ArtifactEventKind =

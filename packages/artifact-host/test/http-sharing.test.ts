@@ -414,3 +414,55 @@ describe('request limits', () => {
     expect((await maria.get(`${api}/state`)).status).toBe(200)
   })
 })
+
+describe('who may draw on a whiteboard', () => {
+  let board: Harness
+  let boardId: string
+  let boardApi: string
+  beforeEach(async () => {
+    board = await startHarness({ whiteboardViewer: { file: async () => null } })
+    const created = await board.admin.createBoard({
+      title: 'Board',
+      owner: { kind: 'local', id: 'local' },
+      origin: { workspaceId: null, conversationId: null, conversationTitle: null },
+      ops: [{ op: 'card', id: 'a', text: 'A' }],
+    })
+    boardId = created.detail.id
+    boardApi = `/a/${boardId}/api`
+    await board.admin.setSharing(boardId, { visibility: 'link' })
+  })
+  afterEach(() => board.close())
+
+  const push = async (browser: Browser) => {
+    const card = (await browser.get(`${boardApi}/board`)).json.elements.find((element: any) => element.id === 'a')
+    return browser.send('POST', `${boardApi}/board/elements`, {
+      elements: [{ ...card, x: card.x + 10, version: card.version + 1, versionNonce: card.versionNonce + 1 }],
+    })
+  }
+
+  it('follows the owner’s choice at every request', async () => {
+    const guest = board.browser()
+    expect((await guest.send('POST', `${boardApi}/session/code`, {})).status).toBe(204)
+    expect((await guest.get(`${boardApi}/state`)).json.can.edit).toBe(false)
+    expect((await push(guest)).status).toBe(403)
+
+    await board.admin.setSharing(boardId, { boardEditors: 'people' })
+    expect((await guest.get(`${boardApi}/state`)).json.can.edit).toBe(true)
+    expect((await guest.get(`${boardApi}/board`)).json.canEdit).toBe(true)
+    expect((await push(guest)).status).toBe(200)
+    expect((await board.admin.readBoard(boardId)).outline.cards[0]?.by).toBe('person')
+
+    await board.admin.setSharing(boardId, { boardEditors: 'owner' })
+    expect((await push(guest)).status).toBe(403)
+    expect((await guest.get(`${boardApi}/state`)).json.can.edit).toBe(false)
+  })
+
+  it('stops a person who may edit as soon as they lose access', async () => {
+    await board.admin.setSharing(boardId, { boardEditors: 'people' })
+    const guest = board.browser()
+    expect((await guest.send('POST', `${boardApi}/session/code`, {})).status).toBe(204)
+    expect((await push(guest)).status).toBe(200)
+    await board.admin.setSharing(boardId, { visibility: 'private' })
+    expect((await guest.send('POST', `${boardApi}/board/elements`, { elements: [] })).status).toBe(404)
+  })
+})

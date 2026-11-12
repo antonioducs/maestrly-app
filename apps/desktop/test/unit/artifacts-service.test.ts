@@ -103,7 +103,16 @@ async function errorOf(promise: Promise<unknown>): Promise<ArtifactHostError> {
 beforeEach(async () => {
   freshDb()
   root = mkdtempSync(path.join(os.tmpdir(), 'artifacts-service-'))
-  host = await openArtifactHost({ dataDir: path.join(root, 'artifacts'), port: 0, quotaBytes: 1024 * 1024 })
+  // Whiteboards need a viewer to serve; an empty page stands in for the canvas.
+  const viewer = path.join(root, 'viewer')
+  mkdirSync(viewer)
+  writeFileSync(path.join(viewer, 'index.html'), '<!doctype html><title>Board</title>')
+  host = await openArtifactHost({
+    dataDir: path.join(root, 'artifacts'),
+    port: 0,
+    quotaBytes: 1024 * 1024,
+    whiteboardViewerDir: viewer,
+  })
   publicAddress = null
   serverReady = true
   deps = makeDeps()
@@ -470,6 +479,26 @@ describe('ArtifactsService', () => {
     expect((await service.responses(id)).map((item) => item.author.name)).toEqual(['Ana'])
     expect(await service.setSharing(id, { responsesEnabled: false })).toMatchObject({ responsesEnabled: false })
     await respondAsGuest(id, 'Late', { answer: 'maybe' }, 403)
+  })
+
+  it('tells a whiteboard from a page, and lets the owner choose who draws on it', async () => {
+    const conversation = makeConversation(makeWorkspace().id)
+    const { detail: pageDetail } = await service.create(conversation.id, { title: 'Page', files: page })
+    const { detail } = await host.admin.createBoard({
+      title: 'Board',
+      owner: { kind: 'device', id: 'device-1' },
+      origin: { workspaceId: conversation.workspaceId, conversationId: conversation.id, conversationTitle: null },
+    })
+    const kinds = new Map((await service.listAll()).map((item) => [item.id, item.kind]))
+    expect(kinds.get(detail.id)).toBe('whiteboard')
+    expect(kinds.get(pageDetail.id)).toBe('page')
+    expect((await service.detail(detail.id))?.kind).toBe('whiteboard')
+
+    expect((await service.sharing(detail.id)).boardEditors).toBe('owner')
+    expect((await service.setSharing(detail.id, { boardEditors: 'people' })).boardEditors).toBe('people')
+    expect((await host.admin.readBoard(detail.id)).editors).toBe('people')
+    expect((await service.sharing(pageDetail.id)).boardEditors).toBeUndefined()
+    expect((await errorOf(service.setSharing(pageDetail.id, { boardEditors: 'people' }))).code).toBe('invalid_input')
   })
 
   it('lets agents read, answer and resolve comments within their scope', async () => {

@@ -444,6 +444,10 @@ export default {
       allow: 'Responses',
       allowHint: 'The page can save one response from each person who opens it. Only you see them.',
     },
+    whiteboard: {
+      allow: 'People with access can edit',
+      allowHint: 'They draw on the whiteboard with you and the agent. Otherwise they can only look at it.',
+    },
     events: {
       title: 'Recent activity',
       someone: 'Someone',

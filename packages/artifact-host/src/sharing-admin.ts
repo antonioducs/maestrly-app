@@ -105,6 +105,7 @@ export function createSharingAdmin(deps: SharingAdminDeps): SharingAdmin {
       hasAccessCode: current.accessCodeHash !== null,
       commentsEnabled: current.commentsEnabled,
       responsesEnabled: current.responsesEnabled,
+      ...(store.getArtifact(id)?.kind === 'whiteboard' ? { boardEditors: current.boardEditors } : {}),
       people,
       requests,
     }
@@ -136,6 +137,11 @@ export function createSharingAdmin(deps: SharingAdminDeps): SharingAdmin {
       if (patch.linkExpiresAt !== undefined) next.linkExpiresAt = patch.linkExpiresAt
       if (patch.commentsEnabled !== undefined) next.commentsEnabled = patch.commentsEnabled
       if (patch.responsesEnabled !== undefined) next.responsesEnabled = patch.responsesEnabled
+      if (patch.boardEditors !== undefined) {
+        if (store.getArtifact(id)?.kind !== 'whiteboard')
+          throw new ArtifactHostError('invalid_input', 'boardEditors: Only a whiteboard has people who draw on it')
+        next.boardEditors = patch.boardEditors
+      }
       if (patch.accessCode !== undefined) {
         next.accessCodeHash = patch.accessCode === null ? null : hashAccessCode(patch.accessCode)
         // Whoever entered with the previous code, or without one, enters again with the new one.

@@ -341,6 +341,7 @@ export class ArtifactsService {
       localConversation && artifact.conversationId ? this.deps.getConversation(artifact.conversationId) : undefined
     return {
       id: artifact.id,
+      kind: artifact.kind ?? 'page',
       title: artifact.title,
       description: artifact.description,
       currentVersion: artifact.currentVersion,
@@ -465,6 +466,7 @@ export class ArtifactsService {
       hasAccessCode: sharing.hasAccessCode,
       commentsEnabled: sharing.commentsEnabled,
       responsesEnabled: sharing.responsesEnabled,
+      ...(sharing.boardEditors ? { boardEditors: sharing.boardEditors } : {}),
       people: sharing.people.map((person) => ({
         id: person.id,
         kind: person.kind,

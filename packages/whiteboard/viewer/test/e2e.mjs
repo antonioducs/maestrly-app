@@ -11,8 +11,6 @@ import { openArtifactHost } from '../../../artifact-host/dist/index.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const viewerDir = path.resolve(here, '../../build/viewer')
-/** Scenarios that need what a later change adds; empty once everything is in. */
-const SKIP = new Set(['6'])
 
 const problems = []
 const cdn = []
@@ -199,30 +197,29 @@ try {
   check('the host refuses a guest’s change', refused === 403, String(refused))
 
   // 6. Once the owner lets the people it is shared with edit, the guest's drag reaches the owner's canvas.
-  if (SKIP.has('6')) console.log('skip - 6: the people a whiteboard is shared with edit it')
-  else {
-    await host.admin.setSharing(id, { boardEditors: 'people' })
-    await guest.reload()
-    const editable = await canvasOf(guest)
-    check('the guest may draw now', await editable.evaluate(() => window.__whiteboard.canEdit()))
-    const from = await xOf(ownerCanvas, 'c')
-    await drag(guest, editable, 'c', 200)
-    const dropped = await until(
-      () => xOf(editable, 'c'),
-      (x) => x > from + 50,
-      2000
-    )
-    const seen = await until(
-      () => xOf(ownerCanvas, 'c'),
-      (x) => Math.abs(x - dropped) <= 1,
-      3000
-    )
-    check(
-      'the guest’s drag reaches the owner’s canvas',
-      Math.abs(seen - dropped) <= 1 && dropped > from + 50,
-      `${from} -> ${dropped}, owner sees ${seen}`
-    )
-  }
+  await host.admin.setSharing(id, { boardEditors: 'people' })
+  await guest.reload()
+  const editable = await canvasOf(guest)
+  check('the guest may draw now', await editable.evaluate(() => window.__whiteboard.canEdit()))
+  const startX = await xOf(ownerCanvas, 'c')
+  await drag(guest, editable, 'c', 200)
+  const droppedX = await until(
+    () => xOf(editable, 'c'),
+    (x) => x > startX + 50,
+    2000
+  )
+  const seen = await until(
+    () => xOf(ownerCanvas, 'c'),
+    (x) => Math.abs(x - droppedX) <= 1,
+    3000
+  )
+  check(
+    'the guest’s drag reaches the owner’s canvas',
+    Math.abs(seen - droppedX) <= 1 && droppedX > startX + 50,
+    `${startX} -> ${droppedX}, owner sees ${seen}`
+  )
+  const guestCard = (await host.admin.readBoard(id)).outline.cards.find((card) => card.id === 'c')
+  check('the host has the guest’s drag as a person’s', guestCard?.by === 'person', JSON.stringify(guestCard))
 
   // 7. Through all of it, nothing broke and nothing came from a CDN.
   check('no page errors', problems.length === 0, problems.slice(0, 3).join(' | '))
