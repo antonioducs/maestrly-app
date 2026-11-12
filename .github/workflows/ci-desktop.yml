@@ -119,4 +119,4 @@ jobs:
         run: npm run test:unit:codex --workspace @maestrly/desktop
       - name: Test the other workspaces and repository policies
         if: matrix.shard == 2
-        run: npm test --workspace @maestrly/protocol --workspace @maestrly/bot-fleet-protocol --workspace @maestrly/artifact-host --workspace @maestrly/bot-gateway --workspace @maestrly/mobile && npm run test:policy
+        run: npm test --workspace @maestrly/protocol --workspace @maestrly/bot-fleet-protocol --workspace @maestrly/artifact-host --workspace @maestrly/whiteboard --workspace @maestrly/bot-gateway --workspace @maestrly/mobile && npm run test:policy
