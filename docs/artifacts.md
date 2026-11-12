@@ -414,3 +414,42 @@ responses or turn them off, and a response never starts an agent by itself.
 and pages are told `closed`. Revoking a person keeps their response, with their
 name. Moving an artifact to another server takes its responses along; a server
 too old to keep them refuses the move, and the artifact stays where it was.
+
+## Whiteboards
+
+A whiteboard is an artifact that you, the people you share it with, and an
+agent edit at the same time: cards, sections, text, and arrows on an Excalidraw
+canvas. Ask an agent for a plan, a diagram, a retrospective, or a map of ideas
+on a whiteboard, and it draws the first version for you to rearrange.
+
+| Tool | What it does |
+| --- | --- |
+| `whiteboard_create` | Creates a whiteboard and draws its first content. |
+| `whiteboard_read` | Reads the board as an outline: sections, cards, texts, and links with their places, what a person made, and warnings about what reads badly, such as cards piled on each other, arrows crossing cards, or text that does not fit. With a revision it read before, it also says what changed since and who changed it. |
+| `whiteboard_edit` | Adds, changes, moves, connects, deletes, and arranges things, from the revision the agent read. |
+| `whiteboard_snapshot` | Looks at the board as you see it, to check the layout after a large change. Only on the app that owns the artifact; bots use the warnings of `whiteboard_read` instead. |
+
+Reading and looking never ask for permission; creating and editing follow the
+conversation's permission mode, and the agent's scope is the same as for pages.
+
+The board saves every change as it happens, with no versions: it is always the
+whiteboard you see. Everyone's canvas shows what the others do within a second
+or two. When the agent changes something a person moved or edited after the
+agent read the board, the person's change stays: the agent is told about the
+conflict, reads the board again, and decides what to do. What people write on
+the board reaches the agent as data from people outside the conversation, never
+as instructions.
+
+Only you can edit a whiteboard at first; the people you share it with see it.
+**Share → People with access can edit** lets them draw on it too, and turning it
+off makes their canvases read-only again at their next change. Comments are
+about the whole board, not a spot on it. Images are not synced, so the image
+tool is off, and Mermaid diagrams cannot be converted into a whiteboard.
+
+A whiteboard holds up to 10,000 elements and 16 MiB, deleted ones included, and
+counts toward the server's storage limit. A canvas sends at most 1,000 elements
+or 900 KiB at a time, and asks for changes with requests that wait up to 20
+seconds, so the board works through the same gateway route as pages. Its
+preview is taken again once the agent stops editing it for ten seconds. Moving a
+whiteboard to another server takes its board along, and a server without
+whiteboards refuses it.

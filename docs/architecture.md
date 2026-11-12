@@ -41,6 +41,7 @@ separate Linux gateway and desktop containers used by remote bots, see the
 | `apps/desktop/runtime-assets/` | Package/runtime tooling | Optional Local ML runtime manifests, archives, and model preparation |
 | `resources/` | Packaged assets | Icons, sounds, notices, and target-specific staged resources |
 | `packages/artifact-host/` | Artifact host package | Artifact storage, versions, HTTP server, and viewer shell; desktop utility process or embedded gateway host |
+| `packages/whiteboard/` | Whiteboard package | Headless board model (agent ops, merge of people's changes, outline, layout checks) used by the artifact host, and the Excalidraw canvas in `viewer/`, built outside the npm workspaces with its own lockfile |
 
 Shared modules must not import Electron, React, or Node-only APIs. Renderer code
 does not receive raw database handles, arbitrary IPC channels, process handles,

@@ -12,6 +12,15 @@ COPY packages/artifact-host packages/artifact-host
 COPY apps/bot-gateway apps/bot-gateway
 RUN npm run build:fleet-protocol && npm run build:bot-gateway
 
+# The whiteboard canvas: a static bundle with a lockfile of its own, outside the npm workspaces.
+FROM node:24.21.0-bookworm-slim AS whiteboard-viewer
+WORKDIR /app/packages/whiteboard/viewer
+COPY packages/whiteboard/viewer/package.json packages/whiteboard/viewer/package-lock.json ./
+COPY packages/whiteboard/viewer/stubs stubs
+RUN npm ci --ignore-scripts
+COPY packages/whiteboard/viewer ./
+RUN npm run build
+
 FROM node:24.21.0-bookworm-slim AS dependencies
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -25,7 +34,7 @@ FROM node:24.21.0-bookworm-slim
 ARG MAESTRLY_VERSION
 RUN apt-get update && apt-get install -y --no-install-recommends gosu curl && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-ENV NODE_ENV=production MAESTRLY_GATEWAY_DATA_DIR=/data
+ENV NODE_ENV=production MAESTRLY_GATEWAY_DATA_DIR=/data MAESTRLY_WHITEBOARD_VIEWER_DIR=/app/whiteboard-viewer
 ENV MAESTRLY_GATEWAY_VERSION=$MAESTRLY_VERSION
 COPY --from=dependencies /app/node_modules ./node_modules
 COPY --from=dependencies /app/apps/bot-gateway apps/bot-gateway
@@ -36,6 +45,7 @@ COPY --from=build /app/apps/bot-gateway/dist apps/bot-gateway/dist
 COPY --from=build /app/packages/bot-fleet-protocol/dist packages/bot-fleet-protocol/dist
 COPY --from=build /app/packages/artifact-host/dist packages/artifact-host/dist
 COPY --from=build /app/packages/whiteboard/dist packages/whiteboard/dist
+COPY --from=whiteboard-viewer /app/packages/whiteboard/build/viewer /app/whiteboard-viewer
 COPY deploy/bot-fleet/gateway-entrypoint.sh /usr/local/bin/gateway-entrypoint
 COPY deploy/bot-fleet/gateway-cli.sh /usr/local/bin/maestrly-bot-gateway
 COPY deploy/bot-fleet/seccomp-bot.json /etc/maestrly-bot/seccomp-bot.json

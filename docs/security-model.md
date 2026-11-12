@@ -324,6 +324,18 @@ device token. Sharing an origin with the viewer gives artifact pages no access t
 it: they run with an opaque origin, and the bot API uses bearer tokens, not
 cookies.
 
+A whiteboard's canvas is code of the host, built from a pinned Excalidraw
+release and served from the gateway image, never from the artifact's files or a
+CDN. It runs in the same sandboxed frame with an opaque origin and the same
+content policy as a page, and reaches its board only through the viewer shell,
+which reads and writes with the viewer's own session. The host validates every
+element a canvas sends against the whiteboard schema and size limits, and
+accepts it only from someone who may edit: the owner, or the people it is shared
+with when the owner allows it (`canEditBoard`), checked on every request. Text
+people put on a board is untrusted data for the agent: `whiteboard_read` returns
+it after a notice, inside an envelope whose JSON escapes every `<`, and the
+results of edits name elements only by ID.
+
 Paired devices use authenticated `/v1/artifacts/admin` and
 `/v1/artifacts/upload` RPC endpoints to manage server artifacts. New desktop
 publications are stamped with the authenticated device's owner ID. Bots use
