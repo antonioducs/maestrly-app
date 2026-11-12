@@ -122,7 +122,7 @@ export async function artifactRoute(
       guard: (method, args) => {
         if (!('deviceId' in caller)) return agentArgs(admin, agentOwner(caller), method, args)
         // A device creates and moves in artifacts only under its own name.
-        if (method === 'create' || method === 'importArtifact')
+        if (method === 'create' || method === 'createBoard' || method === 'importArtifact')
           return [{ ...object(args[0]), owner: { kind: 'device', id: caller.deviceId } }]
         return args
       },

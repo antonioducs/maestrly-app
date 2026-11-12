@@ -1,3 +1,12 @@
+import {
+  type Author,
+  type BoardElement,
+  type Conflict,
+  ELEMENT_ID,
+  type Outline,
+  opsSchema,
+  type Warning,
+} from '@maestrly/whiteboard'
 import { z } from 'zod'
 import { ArtifactHostError } from './errors.js'
 import { ARTIFACT_ID_PATTERN } from './ids.js'
@@ -14,9 +23,9 @@ import {
   MIN_ACCESS_CODE_CHARS,
 } from './limits.js'
 import type { CommentAnchor, CommentAuthorKind, ResponseData } from './shell/contract.js'
-import type { ArtifactRecord, VersionAuthor, Visibility } from './store/artifact-store.js'
+import type { ArtifactKind, ArtifactRecord, VersionAuthor, Visibility } from './store/artifact-store.js'
 import type { ResponseAuthorKind } from './store/response-store.js'
-import type { ArtifactEventKind, EventData, PrincipalKind } from './store/sharing-store.js'
+import type { ArtifactEventKind, BoardEditors, EventData, PrincipalKind } from './store/sharing-store.js'
 
 export type BundleFile = { path: string; bytes: Uint8Array }
 
@@ -75,6 +84,61 @@ export const updateArtifactInput = z.object({
     z.object({ kind: z.literal('replace'), files: z.array(bundleFile).min(1).max(MAX_FILES_PER_VERSION) }),
   ]),
 })
+
+/** A whiteboard the agent starts, with the ops that draw it first. */
+export const createBoardInput = z.object({
+  title: z.string().trim().min(1).max(MAX_TITLE_CHARS),
+  description: z.string().trim().max(MAX_DESCRIPTION_CHARS).default(''),
+  owner: z.object({ kind: z.enum(['local', 'device', 'bot']), id: ref }),
+  origin: z.object({
+    workspaceId: ref.nullable(),
+    conversationId: ref.nullable(),
+    conversationTitle,
+  }),
+  ops: opsSchema.optional(),
+})
+
+export const applyBoardInput = z.object({
+  id: artifactId,
+  baseRevision: z.number().int().min(0),
+  ops: opsSchema,
+})
+
+export const readBoardOptions = z
+  .object({
+    since: z.number().int().min(0).optional(),
+    section: z.string().regex(ELEMENT_ID).optional(),
+  })
+  .strict()
+
+export type CreateBoardInput = z.input<typeof createBoardInput>
+export type ApplyBoardInput = z.input<typeof applyBoardInput>
+export type ReadBoardOptions = z.input<typeof readBoardOptions>
+
+/** A whiteboard as the agent reads it: an outline of what is on it, and what looks wrong. */
+export interface BoardRead {
+  id: string
+  title: string
+  revision: number
+  editors: BoardEditors
+  outline: Outline
+  warnings: Warning[]
+}
+
+export interface BoardApply {
+  revision: number
+  applied: number[]
+  conflicts: Conflict[]
+  created: string[]
+  warnings: Warning[]
+}
+
+export interface BoardCreated {
+  detail: ArtifactDetail
+  revision: number
+  created: string[]
+  warnings: Warning[]
+}
 
 export const artifactListFilter = z
   .object({
@@ -206,6 +270,10 @@ export interface HostStatusInfo {
  */
 export interface ArtifactExport {
   id: string
+  /** Absent in exports from hosts older than whiteboards, which only had pages. */
+  kind?: ArtifactKind
+  /** A whiteboard's board, deleted elements included; its versions carry no files. */
+  board?: { revision: number; elements: { element: BoardElement; rev: number; by: Author }[] }
   title: string
   description: string
   workspaceId: string | null
@@ -262,17 +330,19 @@ function canonical(value: unknown): string {
 
 /** What `sameContent` compares: an export, or a manifest whose sizes and types were not derived from its files yet. */
 export interface ArtifactContent
-  extends Omit<ArtifactExport, 'versions' | 'thumbnails' | 'updatedAt' | 'responses' | 'responsesEnabled'> {
+  extends Omit<ArtifactExport, 'versions' | 'thumbnails' | 'updatedAt' | 'responses' | 'responsesEnabled' | 'board'> {
   versions: (Omit<ArtifactExport['versions'][number], 'files'> & { files: { path: string; sha256: string }[] })[]
   thumbnails: { version: number; sha256: string }[]
   /** Absent in exports from hosts older than responses. */
   responses?: ArtifactExport['responses']
   /** Absent in exports from hosts older than responses. */
   responsesEnabled?: boolean
+  /** In a manifest, elements are not validated yet. */
+  board?: { revision: number; elements: { element: unknown; rev: number; by: Author }[] }
 }
 
 /**
- * Whether two exports hold the same artifact: the same content, history, comments and responses. Sizes and types are
+ * Whether two exports hold the same artifact: the same kind, content, history, board, comments and responses. Sizes and types are
  * derived from the files, and `updatedAt` from the history, so neither is compared. A host older than responses
  * exports none and keeps them on: a copy there of an artifact with responses, or with them off, is not the same.
  */
@@ -311,6 +381,18 @@ export function sameContent(a: ArtifactContent, b: ArtifactContent): boolean {
         comment.status,
         comment.createdAt,
       ]),
+      value.kind ?? 'page',
+      value.board
+        ? [
+            value.board.revision,
+            value.board.elements
+              .map((stored) => [stored.rev, stored.by, stored.element] as const)
+              .sort(([, , x], [, , y]) => {
+                const [a, b] = [canonical(x), canonical(y)]
+                return a < b ? -1 : a > b ? 1 : 0
+              }),
+          ]
+        : null,
       value.responsesEnabled ?? true,
       (value.responses ?? []).map((response) => [
         response.id,

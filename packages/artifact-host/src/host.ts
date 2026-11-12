@@ -2,12 +2,14 @@ import { chmodSync, mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { z } from 'zod'
 import { type ArtifactAdmin, createArtifactAdmin } from './admin.js'
+import { createBoardService } from './boards.js'
 import { createPublicServer } from './http/server.js'
 import { MAX_NAME_CHARS } from './limits.js'
 import { parseInput } from './schemas.js'
 import { createActivityRecorder } from './sharing-admin.js'
 import { ArtifactStore } from './store/artifact-store.js'
 import { BlobStore } from './store/blobs.js'
+import { BoardStore } from './store/board-store.js'
 import { openDatabase } from './store/db.js'
 import { type ArtifactEventKind, SharingStore } from './store/sharing-store.js'
 
@@ -78,7 +80,23 @@ export async function openArtifactHost(
     const onChange = (artifactId: string) => options.onEvent?.({ type: 'changed', artifactId })
     const onActivity = (artifactId: string, kind: ArtifactEventKind) =>
       options.onEvent?.({ type: 'activity', artifactId, kind })
-    const admin = createArtifactAdmin({ store, blobs, clock, quotaBytes, sharing, onChange, onActivity, ownerName })
+    // One service for the admin and the viewers, so an agent's edit reaches the canvases waiting for it.
+    const boardStore = new BoardStore(store.db)
+    const boards = createBoardService({
+      store: boardStore,
+      fits: (extra) => blobs.totalBytes() + boardStore.totalBytes() + extra <= quotaBytes,
+    })
+    const admin = createArtifactAdmin({
+      store,
+      blobs,
+      clock,
+      quotaBytes,
+      sharing,
+      onChange,
+      onActivity,
+      ownerName,
+      boards,
+    })
     const server = createPublicServer({
       store,
       blobs,
@@ -102,6 +120,7 @@ export async function openArtifactHost(
       async close() {
         if (closed) return
         closed = true
+        boards.close()
         await server.close()
         store.close()
       },

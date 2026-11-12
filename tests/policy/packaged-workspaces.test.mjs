@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { missingWorkspaceBuilds } from '../../scripts/verify-packaged-workspaces.mjs'
 
-const names = ['protocol', 'bot-fleet-protocol', 'artifact-host']
+const names = ['protocol', 'bot-fleet-protocol', 'whiteboard', 'artifact-host']
 const entries = names.flatMap((name) => [
   `/node_modules/@maestrly/${name}/package.json`,
   `/node_modules/@maestrly/${name}/dist/index.js`,

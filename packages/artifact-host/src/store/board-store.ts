@@ -29,19 +29,23 @@ export class BoardStore {
   /** Upserts the given elements and sets the revision, in one transaction. */
   save(artifactId: string, board: Board, changedIds: readonly string[], now: number): void {
     transaction(this.db, () => {
-      const upsert = this.db.prepare(
-        `INSERT INTO board_elements (artifact_id, id, rev, by, element_json) VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(artifact_id, id) DO UPDATE SET rev = excluded.rev, by = excluded.by,
-           element_json = excluded.element_json`
-      )
-      for (const id of changedIds) {
-        const stored = board.elements.get(id)
-        if (stored) upsert.run(artifactId, id, stored.rev, stored.by, JSON.stringify(stored.element))
-      }
-      this.db
-        .prepare('UPDATE artifacts SET board_revision = ?, updated_at = ? WHERE id = ?')
-        .run(board.revision, now, artifactId)
+      this.write(artifactId, board, changedIds)
+      this.db.prepare('UPDATE artifacts SET updated_at = ? WHERE id = ?').run(now, artifactId)
     })
+  }
+
+  /** `save` within the caller's transaction, such as an import's, leaving the artifact's update time alone. */
+  write(artifactId: string, board: Board, changedIds: readonly string[]): void {
+    const upsert = this.db.prepare(
+      `INSERT INTO board_elements (artifact_id, id, rev, by, element_json) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(artifact_id, id) DO UPDATE SET rev = excluded.rev, by = excluded.by,
+         element_json = excluded.element_json`
+    )
+    for (const id of changedIds) {
+      const stored = board.elements.get(id)
+      if (stored) upsert.run(artifactId, id, stored.rev, stored.by, JSON.stringify(stored.element))
+    }
+    this.db.prepare('UPDATE artifacts SET board_revision = ? WHERE id = ?').run(board.revision, artifactId)
   }
 
   bytes(artifactId: string): number {
