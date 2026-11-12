@@ -5,6 +5,8 @@ import { type SessionRecord, toSession, type Visibility } from './artifact-store
 import { transaction } from './db.js'
 
 export type PrincipalKind = 'invited' | 'approved' | 'guest'
+/** Who may edit a whiteboard: its owner alone, or also the people it is shared with. */
+export type BoardEditors = 'owner' | 'people'
 
 /** Someone other than the owner who can reach one artifact. */
 export interface PrincipalRecord {
@@ -57,6 +59,7 @@ export interface SharingFields {
   commentsEnabled: boolean
   /** Whether the page may save the responses of the people who open it. */
   responsesEnabled: boolean
+  boardEditors: BoardEditors
 }
 
 type Row = Record<string, unknown>
@@ -67,6 +70,7 @@ const SHARING_COLUMNS: Record<keyof SharingFields, string> = {
   accessCodeHash: 'access_code_hash',
   commentsEnabled: 'comments_enabled',
   responsesEnabled: 'responses_enabled',
+  boardEditors: 'board_editors',
 }
 
 const toPrincipal = (row: Row): PrincipalRecord => ({
@@ -120,8 +124,8 @@ export class SharingStore {
   getSharing(artifactId: string): SharingFields | null {
     const row = this.db
       .prepare(
-        `SELECT visibility, link_expires_at, access_code_hash, comments_enabled, responses_enabled FROM artifacts
-         WHERE id = ?`
+        `SELECT visibility, link_expires_at, access_code_hash, comments_enabled, responses_enabled, board_editors
+         FROM artifacts WHERE id = ?`
       )
       .get(artifactId) as Row | undefined
     if (!row) return null
@@ -131,6 +135,7 @@ export class SharingStore {
       accessCodeHash: (row.access_code_hash as string | null) ?? null,
       commentsEnabled: row.comments_enabled === 1,
       responsesEnabled: row.responses_enabled === 1,
+      boardEditors: row.board_editors as BoardEditors,
     }
   }
 

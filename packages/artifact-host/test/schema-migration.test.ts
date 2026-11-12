@@ -24,6 +24,20 @@ INSERT INTO artifacts (id, title, owner_kind, owner_id, current_version, created
   VALUES ('AAAAAAAAAAAAAAAAAAAAAA', 'Old', 'local', 'local', 1, 1, 1);
 INSERT INTO events VALUES ('E1', 'AAAAAAAAAAAAAAAAAAAAAA', 'comment_added', '{"name":"Maria"}', 10, NULL);`
 
+/** The artifacts table exactly as version 2 created it, with one row. */
+const V2 = `
+CREATE TABLE host_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+INSERT INTO host_meta VALUES ('schema_version', '2'), ('capability_key', 'a2V5');
+CREATE TABLE artifacts (
+  id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+  owner_kind TEXT NOT NULL CHECK (owner_kind IN ('local', 'device', 'bot')), owner_id TEXT NOT NULL,
+  workspace_id TEXT, conversation_id TEXT, conversation_title TEXT, current_version INTEGER NOT NULL,
+  visibility TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('private', 'people', 'link')),
+  link_expires_at INTEGER, access_code_hash TEXT, comments_enabled INTEGER NOT NULL DEFAULT 1,
+  responses_enabled INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+INSERT INTO artifacts (id, title, owner_kind, owner_id, current_version, created_at, updated_at)
+  VALUES ('AAAAAAAAAAAAAAAAAAAAAA', 'Old', 'local', 'local', 1, 1, 1);`
+
 let cleanup = () => {}
 afterEach(() => cleanup())
 const fileIn = () => {
@@ -59,7 +73,7 @@ describe('host schema', () => {
     old.exec(V1)
     old.close()
     const db = openDatabase(file)
-    expect(meta(db, 'schema_version')).toBe('2')
+    expect(meta(db, 'schema_version')).toBe(String(SCHEMA_VERSION))
     expect(meta(db, 'capability_key')).toBe('a2V5')
     expect({ ...(db.prepare('SELECT responses_enabled FROM artifacts').get() as object) }).toEqual({
       responses_enabled: 1,
@@ -74,6 +88,36 @@ describe('host schema', () => {
     expect(() => addEvent(db, 'E3', 'unknown')).toThrow()
     expect(db.prepare(`SELECT 1 AS ok FROM sqlite_master WHERE name = 'events_unseen'`).get()).toBeDefined()
     expect(db.prepare(`SELECT 1 AS ok FROM sqlite_master WHERE name = 'responses'`).get()).toBeDefined()
+    db.close()
+  })
+
+  it('migrates a version 2 database to whiteboards and keeps its artifacts as pages', () => {
+    const file = fileIn()
+    const old = new DatabaseSync(file)
+    old.exec(V2)
+    old.close()
+    const db = openDatabase(file)
+    expect(meta(db, 'schema_version')).toBe('3')
+    expect({
+      ...(db.prepare('SELECT kind, board_editors, board_revision FROM artifacts').get() as object),
+    }).toEqual({ kind: 'page', board_editors: 'owner', board_revision: 0 })
+    expect(() => db.prepare(`UPDATE artifacts SET kind = 'slides'`).run()).toThrow()
+    expect(() => db.prepare(`UPDATE artifacts SET board_editors = 'anyone'`).run()).toThrow()
+    expect(db.prepare(`SELECT 1 AS ok FROM sqlite_master WHERE name = 'board_elements_rev'`).get()).toBeDefined()
+
+    const other = tempDir()
+    const fresh = openDatabase(path.join(other.dir, 'artifacts.sqlite'))
+    // Added columns come last in a migrated table, so positions differ; names, types and defaults may not.
+    const columns = (target: DatabaseSync, table: string) =>
+      target
+        .prepare(`PRAGMA table_info(${table})`)
+        .all()
+        .map(({ cid: _, ...row }) => row)
+        .sort((a, b) => String(a.name).localeCompare(String(b.name)))
+    expect(columns(db, 'artifacts')).toEqual(columns(fresh, 'artifacts'))
+    expect(columns(db, 'board_elements')).toEqual(columns(fresh, 'board_elements'))
+    fresh.close()
+    other.cleanup()
     db.close()
   })
 
