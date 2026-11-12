@@ -23,6 +23,9 @@ export const AGENT_ADMIN_METHODS = [
   'addComment',
   'setCommentResolved',
   'listResponses',
+  'createBoard',
+  'readBoard',
+  'applyBoard',
 ] as const satisfies readonly AdminMethod[]
 export const AGENT_UPLOAD_METHODS = ['create', 'update'] as const satisfies readonly AdminMethod[]
 const invalid = () => new ArtifactHostError('invalid_input', 'Invalid artifact arguments')
@@ -50,10 +53,11 @@ async function agentArgs(
   args: unknown[]
 ): Promise<unknown[]> {
   const projects = owner.kind === 'device'
-  if (method === 'create') {
+  if (method === 'create' || method === 'createBoard') {
     const input = object(args[0])
     const origin = object(input.origin)
-    return [{ ...input, owner, origin: projects ? origin : { ...origin, workspaceId: null }, createdBy: 'agent' }]
+    const forced = { ...input, owner, origin: projects ? origin : { ...origin, workspaceId: null } }
+    return [method === 'create' ? { ...forced, createdBy: 'agent' } : forced]
   }
   if (method === 'list') {
     const filter = args[0] === undefined ? {} : object(args[0])
@@ -66,7 +70,7 @@ async function agentArgs(
       },
     ]
   }
-  const id = method === 'update' ? object(args[0]).id : args[0]
+  const id = method === 'update' || method === 'applyBoard' ? object(args[0]).id : args[0]
   if (typeof id !== 'string') throw invalid()
   const artifact = await admin.get(id)
   if (!artifact || artifact.ownerKind !== owner.kind || artifact.ownerId !== owner.id)

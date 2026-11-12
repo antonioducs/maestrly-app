@@ -11,6 +11,9 @@ import {
   type ArtifactFileInfo,
   ArtifactHostError,
   type ArtifactSummary,
+  type BoardApply,
+  type BoardCreated,
+  type BoardRead,
   type BundleFile,
   type CommentView,
   isTextPath,
@@ -18,9 +21,11 @@ import {
   MAX_TEXT_READ_BYTES,
   RESPONSES_PAGE_SIZE,
   readBundleDirectory,
+  type ReadBoardOptions,
   type ResponseView,
   type TextEdit,
 } from '@maestrly/artifact-host'
+import type { Op } from '@maestrly/whiteboard'
 import type {
   ArtifactCommentView,
   ArtifactDetailView,
@@ -75,9 +80,17 @@ export interface ArtifactsServiceDeps {
    * the artifact through its own connection to the server. The drawer is used when absent.
    */
   openOnViewer?: (convId: string, request: ArtifactOpenRequest) => void
-  /** Asks for a preview image of a version; the capture runs later and may not happen. */
-  requestThumbnail?: (id: string, version: number) => void
+  /**
+   * Asks for a preview image of a version; the capture runs later and may not happen. `again` asks for a new one of a
+   * version that changed in place, as a whiteboard does.
+   */
+  requestThumbnail?: (id: string, version: number, options?: { again?: boolean }) => void
+  /** Renders an owner view offscreen into a JPEG, as the thumbnails are; absent where the app cannot render one. */
+  captureSnapshot?: (url: string) => Promise<Uint8Array>
 }
+
+/** A whiteboard's preview is taken again once the agent stops editing it for this long. */
+export const BOARD_THUMBNAIL_DELAY_MS = 10_000
 
 /** Pages of 200 comments: more than an artifact's 2,000 comments need. */
 const MAX_COMMENT_PAGES = 20
@@ -116,6 +129,7 @@ const onThisComputer = () =>
 export class ArtifactsService {
   private readonly sources: ArtifactSources
   private readonly locations = new Map<string, ArtifactSource>()
+  private readonly boardThumbnails = new Map<string, ReturnType<typeof setTimeout>>()
   constructor(private readonly deps: ArtifactsServiceDeps) {
     this.sources = deps.sources
   }
@@ -244,6 +258,70 @@ export class ArtifactsService {
     })
     if (source.viewerBase()) this.deps.requestThumbnail?.(detail.id, detail.currentVersion)
     return { detail, skipped }
+  }
+
+  /** A whiteboard drawn by the agent's ops, published where the conversation's pages are. */
+  async createBoard(convId: string, input: { title: string; description?: string; ops?: Op[] }): Promise<BoardCreated> {
+    const conversation = this.conversation(convId)
+    await this.refreshSources()
+    const source = this.sources.publishTarget(conversation)
+    const admin = await source.admin()
+    const created = await admin.createBoard({
+      title: input.title,
+      description: input.description,
+      ...(input.ops ? { ops: input.ops } : {}),
+      owner: source.owner,
+      origin: {
+        workspaceId: conversation.scope === 'project' ? conversation.workspaceId : null,
+        conversationId: conversation.id,
+        conversationTitle: conversation.name,
+      },
+    })
+    this.locations.set(created.detail.id, source)
+    if (source.viewerBase()) this.deps.requestThumbnail?.(created.detail.id, 1)
+    return created
+  }
+
+  /**
+   * A whiteboard's outline, for an agent. The caller hands it to the model as untrusted data: people outside the
+   * conversation write on the board too.
+   */
+  async readBoardForConversation(convId: string, id: string, options: ReadBoardOptions = {}): Promise<BoardRead> {
+    const { admin } = await this.scoped(this.conversation(convId), id)
+    return admin.readBoard(id, options)
+  }
+
+  async applyBoardForConversation(
+    convId: string,
+    input: { id: string; baseRevision: number; ops: Op[] }
+  ): Promise<BoardApply & { title: string }> {
+    const { admin, artifact, source } = await this.scoped(this.conversation(convId), input.id)
+    const result = await admin.applyBoard(input)
+    if (source.viewerBase() && result.applied.length) this.boardThumbnailSoon(input.id)
+    return { ...result, title: artifact.title }
+  }
+
+  /** What the whiteboard looks like, rendered in the owner view as its thumbnail is, at its revision then or later. */
+  async boardSnapshotForConversation(convId: string, id: string): Promise<{ revision: number; image: Uint8Array }> {
+    const capture = this.deps.captureSnapshot
+    if (!capture) throw serverUnavailable('no_viewer')
+    const { source, admin, artifact } = await this.scoped(this.conversation(convId), id)
+    if (artifact.kind !== 'whiteboard')
+      throw new ArtifactHostError('unsupported_type', 'This artifact is a page, not a whiteboard')
+    const { revision } = await admin.readBoard(id)
+    return { revision, image: await capture(await this.ownerUrl(source, admin, id, 1, true)) }
+  }
+
+  /** A whiteboard changes in place: its preview is taken again once the agent pauses, not after every edit. */
+  private boardThumbnailSoon(id: string): void {
+    if (!this.deps.requestThumbnail) return
+    clearTimeout(this.boardThumbnails.get(id))
+    const timer = setTimeout(() => {
+      this.boardThumbnails.delete(id)
+      this.deps.requestThumbnail?.(id, 1, { again: true })
+    }, BOARD_THUMBNAIL_DELAY_MS)
+    timer.unref?.()
+    this.boardThumbnails.set(id, timer)
   }
 
   async getForConversation(convId: string, id: string): Promise<ArtifactDetail> {

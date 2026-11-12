@@ -146,6 +146,8 @@ describe('whiteboards through the admin', () => {
   it('needs the whiteboard viewer on this host', async () => {
     const error = await errorOf(makeAdmin({ whiteboardViewer: null }).createBoard(input()))
     expect(error.code).toBe('unsupported_type')
+    // The desktop tells the agent the server needs an update, not that a file type is wrong.
+    expect(error.details).toEqual({ reason: 'no_whiteboards' })
   })
 
   it('counts whiteboards in the storage of the host and forgets them when deleted', async () => {

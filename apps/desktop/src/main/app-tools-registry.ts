@@ -13,6 +13,7 @@ import { registerServerModeTools } from './mcp/tools/server-computer'
 import { registerArtifactTools } from './mcp/tools/artifacts'
 import { registerArtifactCommentTools } from './mcp/tools/artifact-comments'
 import { registerArtifactResponseTools } from './mcp/tools/artifact-responses'
+import { registerWhiteboardTools } from './mcp/tools/whiteboard'
 import { botRuntimeForConversation } from './fleet/instance'
 import { isBotMode } from './fleet/instance/config'
 import { registerInterfaceTools } from './mcp/tools/interfaces'
@@ -51,10 +52,13 @@ export function buildAppToolsServer(conversationId: string, workerScope?: Maestr
     registerArtifactTools(ctx)
     registerArtifactCommentTools(ctx)
     registerArtifactResponseTools(ctx)
+    registerWhiteboardTools(ctx)
   } else if (botRuntimeForConversation(conversationId)?.artifactsEnabled) {
     registerArtifactTools(ctx, undefined, { open: false })
     registerArtifactCommentTools(ctx)
     registerArtifactResponseTools(ctx)
+    // A bot cannot open the viewer: the host refuses connections from inside the fleet.
+    registerWhiteboardTools(ctx, undefined, { snapshot: false })
   }
   registerBotModeTools(ctx)
   registerServerModeTools(ctx)

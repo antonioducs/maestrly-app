@@ -162,6 +162,10 @@ export const APP_TOOL_POLICY = {
   artifact_comment_reply: policy(true, false, false),
   artifact_comment_resolve: policy(true, false, false),
   artifact_responses: policy(true, true, true),
+  whiteboard_create: policy(true, false, false),
+  whiteboard_read: policy(true, true, true),
+  whiteboard_edit: policy(true, false, false),
+  whiteboard_snapshot: policy(true, true, true),
 } as const satisfies Record<string, AppToolPolicy>
 
 export type AppToolName = keyof typeof APP_TOOL_POLICY

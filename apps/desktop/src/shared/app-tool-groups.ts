@@ -26,7 +26,7 @@ export const APP_TOOL_GROUP_PATTERNS: Record<AppToolGroup, string> = {
   memory: 'memory_*',
   history: 'history_*/plan_read',
   debug: 'debug_*',
-  artifacts: 'artifact_*',
+  artifacts: 'artifact_*/whiteboard_*',
 }
 
 const PREFIXES: ReadonlyArray<readonly [string, AppToolGroup]> = [
@@ -39,6 +39,7 @@ const PREFIXES: ReadonlyArray<readonly [string, AppToolGroup]> = [
   ['plan_', 'history'],
   ['debug_', 'debug'],
   ['artifact_', 'artifacts'],
+  ['whiteboard_', 'artifacts'],
 ]
 
 export function appToolGroupOf(name: string): AppToolGroup | null {

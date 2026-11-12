@@ -41,7 +41,7 @@ import { runTitle } from '@/lib/fleet/runs'
 import { AgentActivity } from '@/components/chat/AgentActivity'
 import { useAgentActivityMode } from '@/lib/agent-activity-preference'
 import { ArtifactCard } from '../artifacts/ArtifactCard'
-import { parseArtifactToolResult } from '../../../shared/artifacts'
+import { ARTIFACT_CARD_TOOLS, parseArtifactToolResult } from '../../../shared/artifacts'
 import { baseToolName, fleetActivitySegments, type FleetActivitySegment } from '@/lib/agent-activity'
 import { ChatSearchBar } from '@/components/chat/ChatSearchBar'
 import { findCaseInsensitiveRanges } from '@/lib/markdown-search-highlight'
@@ -446,7 +446,7 @@ export function TranscriptRow({
   // A task the bot started: a row of its own, with its difficulty, model and result. Older instances send no task.
   if (item.kind === 'tool' && item.task)
     return <BotTaskItem item={{ ...item, task: item.task }} bot={bot} imageCache={imageCache} />
-  if (item.kind === 'tool' && ['artifact_create', 'artifact_update'].includes(baseToolName(item.name))) {
+  if (item.kind === 'tool' && ARTIFACT_CARD_TOOLS.includes(baseToolName(item.name))) {
     const result = parseArtifactToolResult(item.output ?? '')
     if (result)
       return (

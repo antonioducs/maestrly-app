@@ -24,9 +24,12 @@ export class ThumbnailQueue {
 
   constructor(private readonly deps: ThumbnailQueueDeps) {}
 
-  request(id: string, version: number): void {
+  /** `again`: the version changed in place, as a whiteboard does, so a capture it already has is out of date. */
+  request(id: string, version: number, options: { again?: boolean } = {}): void {
     const key = `${id}:${version}`
-    if (this.disposed || this.done.has(key) || this.active === key) return
+    if (this.disposed) return
+    if (options.again) this.done.delete(key)
+    else if (this.done.has(key) || this.active === key) return
     const failed = this.failedAt.get(key)
     if (failed !== undefined && this.now() - failed < THUMBNAIL_RETRY_MS) return
     if (this.pending.some((item) => item.id === id && item.version >= version)) return

@@ -54,7 +54,10 @@ export function createBoardAdmin(deps: {
   return {
     async createBoard(raw) {
       const input = parseInput(createBoardInput, raw)
-      if (!deps.viewer) throw new ArtifactHostError('unsupported_type', 'This server cannot host whiteboards yet')
+      if (!deps.viewer)
+        throw new ArtifactHostError('unsupported_type', 'This server cannot host whiteboards yet', {
+          reason: 'no_whiteboards',
+        })
       return deps.exclusive(async () => {
         const id = newArtifactId()
         const now = clock()

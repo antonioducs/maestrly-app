@@ -630,7 +630,7 @@ export function createArtifactAdmin(deps: ArtifactAdminDeps): ArtifactAdmin {
         const artifact = store.getArtifact(input.id)
         if (!artifact) throw notFound()
         if (artifact.kind === 'whiteboard')
-          throw new ArtifactHostError('unsupported_type', 'Whiteboards change through applyBoard')
+          throw new ArtifactHostError('unsupported_type', 'This artifact is a whiteboard: it changes through its board')
         if (artifact.currentVersion !== input.baseVersion)
           throw new ArtifactHostError('version_conflict', `Version ${artifact.currentVersion} is the current version`, {
             currentVersion: artifact.currentVersion,

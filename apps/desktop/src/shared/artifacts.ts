@@ -177,7 +177,15 @@ export interface ArtifactDetailView extends ArtifactListItem {
   versions: ArtifactVersionView[]
 }
 
-/** What the chat card needs from an `artifact_create` or `artifact_update` result. */
+/** The tools whose result the chat shows as an artifact card: what the agent published or changed. */
+export const ARTIFACT_CARD_TOOLS: readonly string[] = [
+  'artifact_create',
+  'artifact_update',
+  'whiteboard_create',
+  'whiteboard_edit',
+]
+
+/** What the chat card needs from the result of one of `ARTIFACT_CARD_TOOLS`. */
 export interface ArtifactToolResult {
   id: string
   title: string
