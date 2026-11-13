@@ -131,6 +131,7 @@ function fakeSdk(options: {
             usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 0 },
             runs: [],
           }) as never,
+        summarize: vi.fn(),
       })),
       resume: vi.fn(async (agentId) => ({
         agentId,
@@ -146,6 +147,7 @@ function fakeSdk(options: {
             usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 0 },
             runs: [],
           }) as never,
+        summarize: vi.fn(),
       })),
     },
     Cursor: {

@@ -5,33 +5,33 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, wri
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { gunzipSync } from 'node:zlib'
-export const CURSOR_SDK_VERSION = '1.0.34'
-// npm dist.integrity, checked against downloaded bytes 2026-09-30. Upgrades require deliberate repinning.
+export const CURSOR_SDK_VERSION = '1.3.1'
+// npm dist.integrity, checked against downloaded bytes 2026-11-13. Upgrades require deliberate repinning.
 export const TARGETS = [
   {
     id: 'mac-arm64',
     npmSuffix: 'darwin-arm64',
-    integrity: 'sha512-V8ocCa606x3It1Be/2qSOxL3iXow9dgNiOX71cQORAQt7c8i6g+/hFw4KpOz/cUn4RZ8zv1S87ZyLy+c+AJ9eQ==',
+    integrity: 'sha512-5JXgVJYeFPxXjDqnu1ha/rAmH+ATFh4abdx199x8E/RcYYM++9b55oJXO3GYv1/9/4Qa9RsE5JkHRY6FYc5vQw==',
   },
   {
     id: 'mac-x64',
     npmSuffix: 'darwin-x64',
-    integrity: 'sha512-luq4CjDveDFoIo5pcP9Vrwp+yCMM4sMr2AVO7UqHpDskKUaQEX6iHOHjqYP6jkUMzFbf1fXkEYyBJlhKCGmdxg==',
+    integrity: 'sha512-yHzIRER8IpOpIH/CUigquuwqvcjCEe62xV6OiJHzRfgApdnzxCjC8JMhLZP2M08/dofyZu9xeo7yr43H6oSRTA==',
   },
   {
     id: 'linux-arm64',
     npmSuffix: 'linux-arm64',
-    integrity: 'sha512-o0/EOyl5WadSqg7oFx7bfsnYh6XLaw3g6BeNqYav2Al85Qzk/AgLZHbjs1unBPBpQos54+goEbgrfZuST1mzyA==',
+    integrity: 'sha512-8wI7DUSQtJ7Rkyj5AhNONeR0M+5bjhR0qo8GJEEmRs6isi072sNPsFXwfhlzX7bhbtsX/FCtvsTG/vpam48ObA==',
   },
   {
     id: 'linux-x64',
     npmSuffix: 'linux-x64',
-    integrity: 'sha512-5i2g8OCSnjiTQfhwV42y5Xpa4sAzwWEIs+oO47iG4QUXWuymrjnjZcQynAtsNkpZ7bzBaYT/0/geW08IJ7zuLg==',
+    integrity: 'sha512-jIwzTr3KhMtU4aJc8x0i1RlcBKttqcVYhor9FI/h1qJQm03yTgSwhyZjsMvfBHPQ5KoYDFVdu47S1dIhwaSWZA==',
   },
   {
     id: 'win-x64',
     npmSuffix: 'win32-x64',
-    integrity: 'sha512-yn3V3ueSqbQWj+uaJp/lRFHaVmMgpJqQdI4MLv416Jgm5kfffrVTo7/ffjFu/CGhVUTvkPaifMXvI+zFhx3oOw==',
+    integrity: 'sha512-hqYllGgY27eaq+w035PebKdoc/JswcrvOSNCniqq/nicLXgWdK5zdKiAs5MyWUr73HGGL1sK0aiE7WdxbIKKVw==',
   },
 ]
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
