@@ -408,11 +408,14 @@ listens or reads stops it. Choose the voice in **Settings → Assistant → Voic
   with your OpenAI key (the one of dictation, else a provider of yours that
   talks to `api.openai.com`), and bills it to you. Its speed goes up to 1.5×;
   the system voice's goes up to 2×.
-- **Realtime (OpenAI API)** is a voice call: an OpenAI Realtime model
-  (`gpt-realtime-2.1-mini`, or `gpt-realtime-2.1`) talks with you and hands what
-  you ask to the assistant conversation as your own words, so the same rules
-  apply. It is billed per minute of audio to your OpenAI key, and the call ends
-  after two minutes without anyone talking.
+- **Realtime (OpenAI API)** is a full-duplex voice call: an OpenAI Realtime
+  model (`gpt-realtime-2.1-mini`, or `gpt-realtime-2.1`) talks with you and
+  hands what you ask to the assistant conversation as your own words, so the
+  same rules apply. The microphone stays open during the call so you can pause
+  mid-sentence or interrupt the voice by speaking; tap the microphone button to
+  mute or unmute, and use the hang-up button or `Esc` to end the call. It is
+  billed to your OpenAI key for what you say and what it answers (silence is not
+  billed), and the call ends after two minutes without anyone talking.
 
 Simple confirmations can be answered by voice. Permission approvals never can:
 the assistant asks you to confirm them on the card. With a subscription, local
