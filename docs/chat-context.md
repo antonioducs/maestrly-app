@@ -420,6 +420,19 @@ Whisper and the system voice, talking to the assistant costs nothing beyond the
 subscription. The window shows why a voice step failed, for example a missing or
 rejected key or an unavailable microphone, and the answer stays in the chat.
 
+#### Open by voice
+
+Turn on **Open by voice** in **Settings → Assistant → Voice** to open the
+assistant hands-free by saying your wake phrase (**Oi Maestro** in Portuguese,
+**Hey Maestro** in English, or a phrase you choose). Enabling it requires a
+one-time download of a local wake-word model (about 57 MB) after you confirm it.
+Wake-phrase detection runs entirely on this computer using Silero VAD and
+whisper.cpp; audio leaves the computer only after the wake phrase opens the
+assistant. Because the microphone stays open while listening for the phrase, the
+operating system's microphone indicator remains on. Listening pauses automatically
+while the screen is locked, while the computer sleeps, and during an active
+voice session or Realtime call.
+
 ## Starting other conversations
 
 A project conversation can start new Standard conversations that keep working on

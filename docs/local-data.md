@@ -360,7 +360,9 @@ Voice dictation uses a speech model installed only after you confirm its
 download from the microphone or in **Settings › Maestrly Chat › Components**. It
 lives in the profile at `runtime-assets/whisper-model` (547 MB, verified
 against a pinned SHA-256 before use) and can be removed from Components; the
-next dictation offers to download it again. The speech engine and its
+next dictation offers to download it again. **Open by voice** uses a smaller
+wake-word model at `runtime-assets/wake-model` (about 57 MB, `ggml-base-q5_1.bin`,
+also installed only on explicit confirmation and verified by SHA-256). The speech engine and its
 voice-activity model are part of the local ML runtime under
 `runtime-assets/local-ml-runtime`.
 
