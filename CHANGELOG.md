@@ -5,6 +5,33 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.36.0] - 2026-11-13
+
+### Added
+
+- **Open by voice** for the Maestrly assistant (opt-in, off by default in
+  **Settings → Assistant → Voice**): say **Oi Maestro** (Portuguese), **Hey
+  Maestro** (English), or a phrase you choose (2–40 characters, with at least
+  one letter or number) to open the assistant already listening. Wake-phrase
+  detection runs entirely on your computer using Silero VAD and a local
+  whisper.cpp base model (`wake-model`, ~57 MB, downloaded only on confirmation
+  along with the local ML runtime when missing); audio leaves the computer only
+  after the phrase opens the assistant. While enabled, the operating system's
+  microphone indicator remains on, and listening pauses automatically during
+  voice sessions and Realtime calls, while the computer sleeps, and while the
+  screen is locked on macOS and Windows. See
+  [Open by voice](docs/chat-context.md#open-by-voice).
+
+### Changed
+
+- **Full-duplex Realtime voice calls** in the Maestrly assistant: the microphone
+  now stays open during the call (with echo cancellation, noise suppression,
+  and auto gain) so mid-sentence pauses are not cut off and you can interrupt
+  the assistant by talking over it (`semantic_vad`). Tapping the microphone
+  button mutes or unmutes it (or interrupts the voice while speaking), and the
+  hang-up button or `Esc` ends the call. The two-minute idle timeout is
+  unchanged, and silence is not billed.
+
 ## [0.35.0] - 2026-11-13
 
 ### Added
