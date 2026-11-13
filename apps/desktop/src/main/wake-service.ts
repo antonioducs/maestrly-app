@@ -21,6 +21,7 @@ export interface WakeServiceDeps {
   sendState(state: WakeState): void
   now?: () => number
   setTimer?: (fn: () => void, ms: number) => { cancel(): void }
+  logTranscripts?: boolean
 }
 
 export const WAKE_COOLDOWN_MS = 3000
@@ -167,8 +168,12 @@ export function createWakeService(deps: WakeServiceDeps) {
       const result = await worker.detect(audio, language)
       if (!result) return
       const score = wakeScore(result.text, phrase)
-      console.log(`[wake] ${result.ms} ms score=${score.toFixed(2)} ${JSON.stringify(result.text)}`)
-      if (matchesWakePhrase(result.text, phrase)) {
+      const matched = matchesWakePhrase(result.text, phrase)
+      const parts = [`[wake] ${result.ms} ms score=${score.toFixed(2)}`]
+      if (matched) parts.push('match')
+      if (deps.logTranscripts) parts.push(JSON.stringify(result.text))
+      console.log(parts.join(' '))
+      if (matched) {
         cooldownUntil = now() + WAKE_COOLDOWN_MS
         deps.onWake()
       }

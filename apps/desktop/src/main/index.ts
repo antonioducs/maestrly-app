@@ -365,6 +365,7 @@ function wake(): ReturnType<typeof createWakeService> | null {
       if (state.listening) void assistant()?.warm()
       assistantWindow?.send('assistant:wake-state', state)
     },
+    logTranscripts: !app.isPackaged,
   })
   return wakeService
 }

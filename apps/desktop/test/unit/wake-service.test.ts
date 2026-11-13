@@ -12,6 +12,7 @@ function harness(opts: {
   modelReady?: boolean
   transcript?: string
   exitDuringStart?: boolean
+  logTranscripts?: boolean
 } = {}) {
   let settings: AssistantSettings = assistantSettingsSchema.parse({
     enabled: opts.enabled ?? true,
@@ -61,6 +62,7 @@ function harness(opts: {
     sendState,
     now: () => nowMs,
     setTimer,
+    ...(opts.logTranscripts !== undefined ? { logTranscripts: opts.logTranscripts } : {}),
   }
   const service = createWakeService(deps)
   return {
@@ -269,5 +271,29 @@ describe('wake word service', () => {
     await h.service.apply()
     expect(h.workers[0].stop).toHaveBeenCalledTimes(1)
     expect(h.service.state()).toEqual({ listening: false })
+  })
+
+  it('omits room transcripts from logs unless logTranscripts is true', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      const h1 = harness({ wakeWord: true, transcript: 'Secret room chatter' })
+      await h1.service.apply()
+      await h1.service.burst(burstOf())
+      expect(logSpy).toHaveBeenCalledWith('[wake] 80 ms score=0.25')
+      expect(logSpy.mock.calls.flat().join(' ')).not.toContain('Secret room chatter')
+
+      logSpy.mockClear()
+      h1.setTranscript('Oi, Maestro.')
+      await h1.service.burst(burstOf())
+      expect(logSpy).toHaveBeenCalledWith('[wake] 80 ms score=1.00 match')
+
+      logSpy.mockClear()
+      const h2 = harness({ wakeWord: true, transcript: 'Oi, Maestro.', logTranscripts: true })
+      await h2.service.apply()
+      await h2.service.burst(burstOf())
+      expect(logSpy).toHaveBeenCalledWith('[wake] 80 ms score=1.00 match "Oi, Maestro."')
+    } finally {
+      logSpy.mockRestore()
+    }
   })
 })
