@@ -431,8 +431,8 @@ Wake-phrase detection runs entirely on this computer using Silero VAD and
 whisper.cpp; audio leaves the computer only after the wake phrase opens the
 assistant. Because the microphone stays open while listening for the phrase, the
 operating system's microphone indicator remains on. Listening pauses automatically
-while the screen is locked, while the computer sleeps, and during an active
-voice session or Realtime call.
+while the screen is locked on macOS and Windows, while the computer sleeps, and
+during an active voice session or Realtime call.
 
 ## Starting other conversations
 
