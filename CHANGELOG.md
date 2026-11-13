@@ -5,6 +5,53 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.35.0] - 2026-11-13
+
+### Added
+
+- Live whiteboards, collaborative Excalidraw canvases that you, the people you
+  share an artifact with, and an agent can edit at the same time
+  (`whiteboard_create`, `whiteboard_read`, `whiteboard_edit`, and
+  `whiteboard_snapshot`). Only you can edit a whiteboard at first; **Share →
+  People with access can edit** lets shared viewers draw on it too, and turning
+  it off returns their canvases to read-only on their next change. If an agent
+  edits something a person changed after it last read the board, the person's
+  change stays and the agent is told about the conflict. Comments apply to the
+  whole board, images are not synced, Mermaid diagrams cannot be converted into
+  a whiteboard, and each board holds up to 10,000 elements and 16 MiB (counted
+  toward server storage). Whiteboards require a bot server on this version (the
+  gateway image bundles the offline Excalidraw viewer, about 18 MB, and the
+  artifact database moves to schema 3; back up the gateway volume before
+  updating if you might downgrade, and a server without whiteboards refuses a
+  whiteboard move). See [Whiteboards](docs/artifacts.md#whiteboards).
+- The Maestro **Configuration assistant** can now check your recent usage and
+  subscription quotas (`read_usage_summary`), and research models online
+  (`web_search` when Web search is enabled in Settings, plus `webfetch`) when
+  recommending Pool models or strategies. The usage summary reports per-provider
+  and per-model tokens, turns, and estimated cost over a recent window (default
+  30 days, matching **Settings → Usage**, with subscription costs shown as
+  API-price equivalents) along with remaining five-hour and weekly quotas for
+  connected Claude, Codex, and Google AI subscriptions and which account each
+  "Active account" entry uses. Web pages remain untrusted data, and the live
+  catalog stays the only source of runnable providers, models, effort levels,
+  and Fast mode.
+
+### Fixed
+
+- Models without configurable reasoning levels can now be selected and saved in
+  Maestro subagent execution profiles (defaulting to `off`, matching background
+  task, fallback, and Maestro selectors) and `.md` agent frontmatter (`effort:
+  off`).
+- Stopping a turn in an Antigravity conversation now keeps the session bound
+  when the runtime acknowledges the cancellation within 5 seconds, so the next
+  turn resumes it instead of replaying the conversation history and triggering
+  premature compaction. Without an acknowledgement in that grace period, the
+  next turn starts a new session as before.
+- Updated `@cursor/sdk` (`1.0.34` → `1.3.1`), Expo SDK 58 packages (`expo`
+  `58.0.14` → `58.0.25` and related modules), `node-forge` (`1.4.2` → `1.4.3`),
+  `@hono/node-server` (`2.1.5` → `2.1.8`), and `hono` (`4.13.13` → `4.13.18`) to
+  clear dependency advisories.
+
 ## [0.34.0] - 2026-11-08
 
 ### Added
