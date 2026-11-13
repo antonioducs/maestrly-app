@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { assistantSettingsSchema, type AssistantSettings } from '../../src/shared/assistant'
-import { createWakeService, type WakeServiceDeps } from '../../src/main/wake-service'
+import { createWakeService, WAKE_RESTART_DELAY_MS, type WakeServiceDeps } from '../../src/main/wake-service'
 import type { WakeWorker } from '../../src/main/wake-worker-host'
 
 function harness(opts: {
@@ -11,6 +11,7 @@ function harness(opts: {
   supported?: boolean
   modelReady?: boolean
   transcript?: string
+  exitDuringStart?: boolean
 } = {}) {
   let settings: AssistantSettings = assistantSettingsSchema.parse({
     enabled: opts.enabled ?? true,
@@ -21,10 +22,22 @@ function harness(opts: {
   let ready = opts.modelReady ?? true
   let locale = opts.locale ?? 'pt-BR'
   let transcript = opts.transcript ?? 'Oi, Maestro.'
+  let exitDuringStart = opts.exitDuringStart ?? false
   const exitCallbacks: Array<() => void> = []
   const workers: Array<{ detect: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn> }> = []
   const onWake = vi.fn()
   const sendState = vi.fn()
+  let timerSeq = 0
+  const timers = new Map<number, { fn: () => void; at: number }>()
+  const setTimer = vi.fn((fn: () => void, ms: number) => {
+    const id = ++timerSeq
+    timers.set(id, { fn, at: nowMs + ms })
+    return {
+      cancel: () => {
+        timers.delete(id)
+      },
+    }
+  })
   const startWorker = vi.fn(async (onExit: () => void): Promise<WakeWorker | null> => {
     const w = {
       detect: vi.fn(async () => ({ text: transcript, silent: false, ms: 80 })),
@@ -32,6 +45,10 @@ function harness(opts: {
     }
     workers.push(w)
     exitCallbacks.push(onExit)
+    if (exitDuringStart) {
+      exitDuringStart = false
+      onExit()
+    }
     return w
   })
   const deps: WakeServiceDeps = {
@@ -43,6 +60,7 @@ function harness(opts: {
     onWake,
     sendState,
     now: () => nowMs,
+    setTimer,
   }
   const service = createWakeService(deps)
   return {
@@ -52,9 +70,21 @@ function harness(opts: {
     onWake,
     sendState,
     workers,
+    setTimer,
+    pendingTimers: () => timers.size,
     exitLast: () => exitCallbacks.at(-1)?.(),
     advance: (ms: number) => {
       nowMs += ms
+    },
+    tick: async (ms: number) => {
+      nowMs += ms
+      for (const [id, entry] of [...timers.entries()]) {
+        if (entry.at <= nowMs) {
+          timers.delete(id)
+          entry.fn()
+        }
+      }
+      for (let i = 0; i < 10; i++) await Promise.resolve()
     },
     setSettings: (patch: { enabled?: boolean; wakeWord?: boolean; wakePhrase?: string | null }) => {
       settings = assistantSettingsSchema.parse({
@@ -161,17 +191,33 @@ describe('wake word service', () => {
     expect(h.workers[0].detect).toHaveBeenCalledTimes(1)
   })
 
+  it('restarts the worker automatically after an unexpected exit', async () => {
+    const h = harness({ wakeWord: true })
+    await h.service.apply()
+    expect(h.startWorker).toHaveBeenCalledTimes(1)
+
+    h.exitLast()
+    expect(h.service.state()).toEqual({ listening: false })
+    expect(h.sendState).toHaveBeenLastCalledWith({ listening: false })
+    expect(h.pendingTimers()).toBe(1)
+
+    await h.tick(WAKE_RESTART_DELAY_MS)
+    expect(h.startWorker).toHaveBeenCalledTimes(2)
+    expect(h.service.state()).toEqual({ listening: true })
+    expect(h.sendState).toHaveBeenLastCalledWith({ listening: true })
+  })
+
   it('stops after three exits within 60 s and resets when toggled off and on', async () => {
     const h = harness({ wakeWord: true })
     await h.service.apply()
     h.exitLast()
-    h.advance(10_000)
-    await h.service.apply()
+    await h.tick(10_000)
     h.exitLast()
-    h.advance(10_000)
-    await h.service.apply()
+    await h.tick(10_000)
     h.exitLast()
 
+    expect(h.startWorker).toHaveBeenCalledTimes(3)
+    expect(h.pendingTimers()).toBe(0)
     expect(h.service.status()).toEqual({ listening: false, error: 'worker' })
     await h.service.apply()
     expect(h.startWorker).toHaveBeenCalledTimes(3)
@@ -182,6 +228,31 @@ describe('wake word service', () => {
     await h.service.apply()
     expect(h.startWorker).toHaveBeenCalledTimes(4)
     expect(h.service.status()).toEqual({ listening: true, error: null })
+  })
+
+  it('cancels a pending restart when stopped', async () => {
+    const h = harness({ wakeWord: true })
+    await h.service.apply()
+    h.exitLast()
+    expect(h.pendingTimers()).toBe(1)
+
+    h.service.stop()
+    expect(h.pendingTimers()).toBe(0)
+    await h.tick(WAKE_RESTART_DELAY_MS)
+    expect(h.startWorker).toHaveBeenCalledTimes(1)
+  })
+
+  it('discards a worker that exits during startup and restarts it after the delay', async () => {
+    const h = harness({ wakeWord: true, exitDuringStart: true })
+    await h.service.apply()
+    expect(h.startWorker).toHaveBeenCalledTimes(1)
+    expect(h.workers[0].stop).toHaveBeenCalledTimes(1)
+    expect(h.service.state()).toEqual({ listening: false })
+    expect(h.pendingTimers()).toBe(1)
+
+    await h.tick(WAKE_RESTART_DELAY_MS)
+    expect(h.startWorker).toHaveBeenCalledTimes(2)
+    expect(h.service.state()).toEqual({ listening: true })
   })
 
   it('records mic failure in status', async () => {
