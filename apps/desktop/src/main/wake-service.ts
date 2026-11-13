@@ -134,6 +134,9 @@ export function createWakeService(deps: WakeServiceDeps) {
           ref.value = started
           worker = started
           clearRestart()
+        } else if (!started && wanted()) {
+          // A failed start (warm-up error or timeout, fork or lease failure) retries like an exit, on the same budget.
+          recordExit()
         } else {
           started?.stop()
         }

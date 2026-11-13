@@ -13,6 +13,8 @@ function harness(opts: {
   transcript?: string
   exitDuringStart?: boolean
   logTranscripts?: boolean
+  /** How many starts fail (resolve null) before they succeed. */
+  failStarts?: number
 } = {}) {
   let settings: AssistantSettings = assistantSettingsSchema.parse({
     enabled: opts.enabled ?? true,
@@ -24,6 +26,7 @@ function harness(opts: {
   let locale = opts.locale ?? 'pt-BR'
   let transcript = opts.transcript ?? 'Oi, Maestro.'
   let exitDuringStart = opts.exitDuringStart ?? false
+  let failStarts = opts.failStarts ?? 0
   const exitCallbacks: Array<() => void> = []
   const workers: Array<{ detect: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn> }> = []
   const onWake = vi.fn()
@@ -40,6 +43,10 @@ function harness(opts: {
     }
   })
   const startWorker = vi.fn(async (onExit: () => void): Promise<WakeWorker | null> => {
+    if (failStarts > 0) {
+      failStarts--
+      return null
+    }
     const w = {
       detect: vi.fn(async () => ({ text: transcript, silent: false, ms: 80 })),
       stop: vi.fn(),
@@ -255,6 +262,28 @@ describe('wake word service', () => {
     await h.tick(WAKE_RESTART_DELAY_MS)
     expect(h.startWorker).toHaveBeenCalledTimes(2)
     expect(h.service.state()).toEqual({ listening: true })
+  })
+
+  it('retries a worker that fails to start', async () => {
+    const h = harness({ wakeWord: true, failStarts: 1 })
+    await h.service.apply()
+    expect(h.service.status()).toEqual({ listening: false, error: null })
+    expect(h.pendingTimers()).toBe(1)
+
+    await h.tick(WAKE_RESTART_DELAY_MS)
+    expect(h.startWorker).toHaveBeenCalledTimes(2)
+    expect(h.service.state()).toEqual({ listening: true })
+  })
+
+  it('reports the worker error after three failed starts within 60 s', async () => {
+    const h = harness({ wakeWord: true, failStarts: 3 })
+    await h.service.apply()
+    await h.tick(WAKE_RESTART_DELAY_MS)
+    await h.tick(WAKE_RESTART_DELAY_MS)
+
+    expect(h.startWorker).toHaveBeenCalledTimes(3)
+    expect(h.pendingTimers()).toBe(0)
+    expect(h.service.status()).toEqual({ listening: false, error: 'worker' })
   })
 
   it('records mic failure in status', async () => {
