@@ -1087,7 +1087,7 @@ export default {
         realtimeMini: 'gpt-realtime-2.1-mini (mais rápido e barato)',
         realtimeFull: 'gpt-realtime-2.1',
         realtimeCost:
-          'O Realtime responde em cerca de meio segundo e é cobrado por minuto de áudio na sua chave OpenAI. A chamada termina depois de dois minutos sem ninguém falar.',
+          'O Realtime responde em cerca de meio segundo e é cobrado na sua chave OpenAI pelo que você fala e pelo que ele responde; o silêncio não é cobrado. O microfone fica aberto durante a chamada, que termina depois de dois minutos sem ninguém falar.',
         engine: 'Motor de fala',
         engineSystem: 'Voz do sistema (grátis)',
         engineOpenai: 'OpenAI (natural, pago por uso)',
@@ -2392,6 +2392,13 @@ export default {
       confirmInCard: '{{question}} Confirme no card.',
       answerInCard: '{{question}} Responda no card.',
       realtimeTimer: 'Tempo da chamada Realtime',
+      hangUp: 'Encerrar a chamada (Esc)',
+      call: {
+        listening: 'Na chamada, ouvindo. Toque para silenciar',
+        muted: 'Microfone silenciado. Toque para voltar a ouvir',
+        thinking: 'Trabalhando nisso. Toque para silenciar',
+        speaking: 'Falando. Fale ou toque para interromper',
+      },
       notUnderstood: 'Não entendi. Toque numa opção.',
       dismiss: 'Dispensar',
       notice: {

@@ -27,15 +27,21 @@ import {
 
 const NOTICE_MS = 6000
 
+/** The voice's state as the window shows it; `muted` only happens during a Realtime call. */
+export type VoiceSessionState = VoiceState | 'muted'
+
 export interface VoiceSession {
-  state: VoiceState
+  state: VoiceSessionState
   /** The microphone's loudness while listening (RMS, 0–1). */
   level: number
   /** When the open Realtime call started; null without one. */
   realtimeStartedAt: number | null
   /** A notice code for `assistant.voice.notice.*`, shown until dismissed or for a few seconds. */
   notice: string | null
+  /** Starts or stops the voice; during a Realtime call, mutes or unmutes it, or interrupts it while it talks. */
   tap(): void
+  /** Ends the Realtime call. */
+  hangUp(): void
   /** Stops listening and reading; false when there was nothing to stop. */
   escape(): boolean
   dismissNotice(): void
@@ -265,7 +271,6 @@ export function useVoiceSession(opts: {
         .then((started) => {
           realtime.current = started
           setRealtimeStartedAt(started.startedAt)
-          started.listen()
         })
         .catch((error: unknown) => {
           setRealtimeState(null)
@@ -276,9 +281,8 @@ export function useVoiceSession(opts: {
         })
       return
     }
-    if (realtimeState === 'listening') client.stopListening()
-    else if (realtimeState === 'speaking') client.interrupt()
-    else client.listen()
+    if (realtimeState === 'speaking') client.interrupt()
+    else client.setMuted(!client.muted)
   }, [realtimeState, showNotice])
   useEffect(() => closeRealtime, [closeRealtime, conversationId])
   // Leaving Realtime mode in Settings ends the call.
@@ -286,8 +290,9 @@ export function useVoiceSession(opts: {
     if (voice?.mode !== 'realtime') closeRealtime()
   }, [voice?.mode, closeRealtime])
   const realtimeMode = voice?.mode === 'realtime'
-  const shownState: VoiceState =
-    realtimeMode && realtimeState ? (realtimeState === 'connecting' ? 'thinking' : realtimeState) : state
+  const inCall = realtimeMode && realtimeState !== null
+  const shownState: VoiceSessionState =
+    inCall && realtimeState ? (realtimeState === 'connecting' ? 'thinking' : realtimeState) : state
 
   useEffect(
     () => () => {
@@ -298,11 +303,11 @@ export function useVoiceSession(opts: {
     []
   )
 
-  // The window stays up while it listens or reads, even when it loses focus.
+  // The window stays up while it listens or reads, even when it loses focus; a call keeps it up until it ends.
   useEffect(() => {
-    window.api.assistantHold('listening', shownState === 'listening' || shownState === 'transcribing')
+    window.api.assistantHold('listening', inCall || shownState === 'listening' || shownState === 'transcribing')
     window.api.assistantHold('speaking', shownState === 'speaking')
-  }, [shownState])
+  }, [inCall, shownState])
 
   const tapRef = useRef(tapRealtime)
   tapRef.current = tapRealtime
@@ -317,6 +322,7 @@ export function useVoiceSession(opts: {
       if (realtimeModeRef.current) tapRef.current()
       else dispatchRef.current({ type: 'tap' })
     }, []),
+    hangUp: closeRealtime,
     escape: useCallback(() => {
       if (realtime.current) {
         closeRealtime()

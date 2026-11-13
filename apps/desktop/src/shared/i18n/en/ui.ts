@@ -1081,7 +1081,7 @@ export default {
         realtimeMini: 'gpt-realtime-2.1-mini (faster, cheaper)',
         realtimeFull: 'gpt-realtime-2.1',
         realtimeCost:
-          'Realtime answers in about half a second and is billed per minute of audio to your OpenAI key. The call ends after two minutes without anyone talking.',
+          'Realtime answers in about half a second and is billed to your OpenAI key for what you say and what it answers; silence is not billed. The microphone stays open during the call, which ends after two minutes without anyone talking.',
         engine: 'Speech engine',
         engineSystem: 'System voice (free)',
         engineOpenai: 'OpenAI (natural, paid per use)',
@@ -2366,6 +2366,13 @@ export default {
       confirmInCard: '{{question}} Confirm it in the card.',
       answerInCard: '{{question}} Answer it in the card.',
       realtimeTimer: 'Realtime call time',
+      hangUp: 'End the call (Esc)',
+      call: {
+        listening: 'On the call, listening. Tap to mute',
+        muted: 'Microphone muted. Tap to unmute',
+        thinking: 'Working on it. Tap to mute',
+        speaking: 'Speaking. Talk or tap to interrupt',
+      },
       notUnderstood: "I didn't catch that. Tap an option.",
       dismiss: 'Dismiss',
       notice: {

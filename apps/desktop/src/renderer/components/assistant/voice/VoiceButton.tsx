@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Loader2, Mic, MicOff, Square, Volume2 } from 'lucide-react'
+import { Loader2, Mic, MicOff, PhoneOff, Square, Volume2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { VoiceSession } from './use-voice-session'
 
-/** The composer's voice button in the assistant window: tap to talk, tap again to stop listening or reading. */
+/**
+ * The composer's voice button in the assistant window: tap to talk, tap again to stop listening or reading. During a
+ * Realtime call the microphone stays open: a tap mutes or unmutes it, or interrupts the voice, and a button ends it.
+ */
 export function VoiceButton({
   session,
   submitText,
@@ -24,8 +27,9 @@ export function VoiceButton({
     return () => setSubmit(null)
   }, [setSubmit])
 
-  const label = t(`assistant.voice.${state}`)
   const elapsed = useElapsed(session.realtimeStartedAt)
+  const inCall = elapsed !== null
+  const label = t(inCall ? `assistant.voice.call.${state}` : `assistant.voice.${state}`)
   const listening = state === 'listening'
   // The ring grows with the voice: quiet rooms sit near 0.01, speech around 0.05–0.2.
   const ring = listening ? Math.min(1, level * 8) : 0
@@ -36,12 +40,13 @@ export function VoiceButton({
       disabled={disabled && state === 'idle'}
       title={label}
       aria-label={label}
-      aria-pressed={state !== 'idle' && state !== 'error'}
+      aria-pressed={state !== 'idle' && state !== 'error' && state !== 'muted'}
       data-voice-state={state}
       className={cn(
         'flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-white/[0.06] hover:text-foreground disabled:opacity-40',
         listening && 'bg-red-500/15 text-red-400 hover:bg-red-500/20 hover:text-red-300',
         state === 'speaking' && 'bg-primary/15 text-primary hover:bg-primary/20',
+        state === 'muted' && 'bg-white/[0.06]',
         state === 'error' && 'text-destructive'
       )}
       style={listening ? { boxShadow: `0 0 0 ${2 + ring * 6}px rgb(248 113 113 / ${0.12 + ring * 0.2})` } : undefined}
@@ -50,16 +55,16 @@ export function VoiceButton({
         <Loader2 className="size-4 animate-spin" />
       ) : state === 'speaking' ? (
         <Volume2 className="size-4" />
-      ) : listening ? (
+      ) : listening && !inCall ? (
         <Square className="size-3.5 fill-current" />
-      ) : state === 'error' ? (
+      ) : state === 'error' || state === 'muted' ? (
         <MicOff className="size-4" />
       ) : (
         <Mic className="size-4" />
       )}
     </button>
   )
-  if (elapsed === null) return button
+  if (!inCall) return button
   return (
     <div className="flex items-center gap-1.5">
       <span
@@ -69,6 +74,15 @@ export function VoiceButton({
       >
         {elapsed}
       </span>
+      <button
+        type="button"
+        onClick={session.hangUp}
+        title={t('assistant.voice.hangUp')}
+        aria-label={t('assistant.voice.hangUp')}
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-red-500/15 hover:text-red-400"
+      >
+        <PhoneOff className="size-4" />
+      </button>
       {button}
     </div>
   )

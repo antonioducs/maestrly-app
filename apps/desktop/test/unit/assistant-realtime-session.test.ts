@@ -54,7 +54,7 @@ describe('Realtime calls', () => {
       audio: {
         input: {
           transcription: { model: 'gpt-transcribe', language: 'pt' },
-          turn_detection: { type: 'semantic_vad', create_response: true },
+          turn_detection: { type: 'semantic_vad', create_response: true, interrupt_response: true },
         },
         // Realtime speaks at most 1.5×.
         output: { voice: 'marin', speed: 1.5 },

@@ -1,18 +1,18 @@
 /**
  * The Realtime voice of the assistant window: a WebRTC call with OpenAI, set up through the main process (which holds
- * the key). Tap to talk: the microphone track is on only while the person talks, and the server's turn detection
- * ends it. Tool calls go to the main process, which hands the person's words to the assistant conversation.
+ * the key). Full duplex: the microphone stays open for the whole call and the server's turn detection takes the
+ * turns, so the person talks over the voice to interrupt it. Tool calls go to the main process, which hands the
+ * person's words to the assistant conversation.
  */
 import { openMicStream } from '@/lib/mic-recorder'
 
-export type RealtimeState = 'connecting' | 'listening' | 'thinking' | 'speaking' | 'idle'
+export type RealtimeState = 'connecting' | 'listening' | 'thinking' | 'speaking' | 'muted'
 
 export interface RealtimeClient {
   readonly startedAt: number
-  /** Opens the microphone for the person's turn; interrupts the voice if it is talking. */
-  listen(): void
-  /** Closes the microphone; the server ends the turn on the silence. */
-  stopListening(): void
+  readonly muted: boolean
+  /** Mutes or unmutes the microphone; the call goes on. */
+  setMuted(muted: boolean): void
   /** Stops the voice at once. */
   interrupt(): void
   close(): void
@@ -30,6 +30,8 @@ export const REALTIME_IDLE_CLOSE_MS = 120_000
 const INTERRUPT_GRACE_MS = 300
 /** The person's words are transcribed after their turn; a tool call waits this long for them. */
 const TRANSCRIPT_WAIT_MS = 4000
+/** The voice plays through the speakers while the microphone is open: without echo cancellation it hears itself. */
+const CALL_AUDIO: MediaTrackConstraints = { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
 
 interface ServerEvent {
   type: string
@@ -48,7 +50,7 @@ export async function startRealtimeClient(opts: {
   onClosed(): void
 }): Promise<RealtimeClient> {
   opts.onState('connecting')
-  const stream = await openMicStream(opts.deviceId).catch(() => {
+  const stream = await openMicStream(opts.deviceId, CALL_AUDIO).catch(() => {
     throw new RealtimeStartError('mic')
   })
   const [track] = stream.getAudioTracks()
@@ -56,7 +58,6 @@ export async function startRealtimeClient(opts: {
     for (const t of stream.getTracks()) t.stop()
     throw new RealtimeStartError('mic')
   }
-  track.enabled = false
   const peer = new RTCPeerConnection()
   const audio = new Audio()
   audio.autoplay = true
@@ -68,7 +69,13 @@ export async function startRealtimeClient(opts: {
   const channel = peer.createDataChannel('oai-events')
 
   let closed = false
+  let connected = false
   let state: RealtimeState = 'connecting'
+  let muted = false
+  /** The server hears the person talking (between speech_started and speech_stopped). */
+  let personSpeaking = false
+  /** A response is on its way: from the end of the person's turn, or its creation, until it is done. */
+  let responding = false
   let speaking = false
   let tools = 0
   let lastActivity = Date.now()
@@ -77,15 +84,22 @@ export async function startRealtimeClient(opts: {
   const transcribing = new Set<string>()
   const settled: Array<() => void> = []
 
-  const set = (next: RealtimeState) => {
-    if (closed || next === state) return
+  const current = (): RealtimeState => {
+    if (personSpeaking && !muted) return 'listening'
+    if (speaking) return 'speaking'
+    if (muted) return 'muted'
+    return tools > 0 || responding ? 'thinking' : 'listening'
+  }
+  const refresh = () => {
+    if (closed || !connected) return
+    const next = current()
+    if (next === state) return
     state = next
     opts.onState(next)
   }
   const send = (event: Record<string, unknown>) => {
     if (channel.readyState === 'open') channel.send(JSON.stringify(event))
   }
-  const restingState = (): RealtimeState => (track.enabled ? 'listening' : tools > 0 ? 'thinking' : 'idle')
   const transcriptDone = (itemId: string | undefined) => {
     if (itemId) transcribing.delete(itemId)
     if (!transcribing.size) for (const resolve of settled.splice(0)) resolve()
@@ -118,7 +132,7 @@ export async function startRealtimeClient(opts: {
 
   const runTool = async (event: ServerEvent) => {
     tools++
-    set('thinking')
+    refresh()
     await transcriptsSettled()
     if (closed) return
     const name = event.name ?? ''
@@ -135,7 +149,7 @@ export async function startRealtimeClient(opts: {
     lastActivity = Date.now()
     send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: event.call_id, output } })
     send({ type: 'response.create' })
-    set(restingState())
+    refresh()
   }
 
   channel.addEventListener('message', ({ data }) => {
@@ -147,13 +161,15 @@ export async function startRealtimeClient(opts: {
     }
     switch (event.type) {
       case 'input_audio_buffer.speech_started':
+        // Talking over the voice interrupts it: the server cancels the response and clears its audio.
+        personSpeaking = true
         lastActivity = Date.now()
-        set('listening')
         break
       case 'input_audio_buffer.speech_stopped':
-        // The person's turn ended: the microphone waits for the next tap.
-        track.enabled = false
-        set('thinking')
+        // The person's turn ended; the server answers it.
+        personSpeaking = false
+        responding = true
+        lastActivity = Date.now()
         break
       case 'input_audio_buffer.committed':
         if (event.item_id) transcribing.add(event.item_id)
@@ -165,10 +181,16 @@ export async function startRealtimeClient(opts: {
       case 'conversation.item.input_audio_transcription.failed':
         transcriptDone(event.item_id)
         break
+      case 'response.created':
+        responding = true
+        break
+      case 'response.done':
+        responding = false
+        lastActivity = Date.now()
+        break
       case 'output_audio_buffer.started':
         speaking = true
         lastActivity = Date.now()
-        set('speaking')
         break
       case 'output_audio_buffer.stopped':
       case 'output_audio_buffer.cleared':
@@ -176,15 +198,16 @@ export async function startRealtimeClient(opts: {
         lastActivity = Date.now()
         if (interruptTimer) clearTimeout(interruptTimer)
         interruptTimer = null
-        set(restingState())
         break
       case 'response.function_call_arguments.done':
         void runTool(event)
         break
       case 'error':
+        responding = false
         opts.onError(event.error?.code ?? 'error')
         break
     }
+    refresh()
   })
   peer.addEventListener('connectionstatechange', () => {
     if (peer.connectionState === 'failed') {
@@ -194,7 +217,7 @@ export async function startRealtimeClient(opts: {
   })
 
   const idleTimer = setInterval(() => {
-    if (!speaking && !tools && !track.enabled && Date.now() - lastActivity > REALTIME_IDLE_CLOSE_MS) close()
+    if (!speaking && !tools && !personSpeaking && Date.now() - lastActivity > REALTIME_IDLE_CLOSE_MS) close()
   }, 5000)
 
   try {
@@ -207,7 +230,9 @@ export async function startRealtimeClient(opts: {
     close()
     throw error instanceof RealtimeStartError ? error : new RealtimeStartError('network')
   }
-  set('idle')
+  connected = true
+  lastActivity = Date.now()
+  refresh()
 
   const interrupt = () => {
     send({ type: 'response.cancel' })
@@ -220,16 +245,16 @@ export async function startRealtimeClient(opts: {
 
   return {
     startedAt: Date.now(),
-    listen() {
-      if (closed) return
-      if (speaking) interrupt()
-      track.enabled = true
-      lastActivity = Date.now()
-      set('listening')
+    get muted() {
+      return muted
     },
-    stopListening() {
-      track.enabled = false
-      set(restingState())
+    setMuted(next) {
+      if (closed || next === muted) return
+      muted = next
+      // A muted track sends silence: the server's turn detection ends any turn in progress.
+      track.enabled = !next
+      lastActivity = Date.now()
+      refresh()
     },
     interrupt,
     close,
