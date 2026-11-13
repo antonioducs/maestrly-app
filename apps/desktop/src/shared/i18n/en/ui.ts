@@ -1103,7 +1103,7 @@ export default {
         wakeWordDesc:
           'Say the phrase to open the assistant listening. It is detected on this computer, and audio leaves it only after the phrase. The system microphone indicator stays on while this is on.',
         wakePhrase: 'Phrase',
-        wakePhraseInvalid: 'Use 2 to 40 characters.',
+        wakePhraseInvalid: 'Use 2 to 40 characters, with at least one letter or number.',
         wakeModelDesc: 'Needs a one-time {{size}} download; detection runs on this computer.',
         wakeModelDownload: 'Download',
         wakeModelCancel: 'Cancel',

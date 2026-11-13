@@ -36,7 +36,7 @@ import type { AsrSupport } from '../../../shared/asr'
 import { LOCAL_HOST_ID } from '../../../shared/host-key'
 import type { SupportedLocale } from '../../../shared/locale'
 import type { RuntimeAssetInfo } from '../../../shared/runtime-assets'
-import { defaultWakePhrase, WAKE_PHRASE_MAX, WAKE_PHRASE_MIN } from '../../../shared/wake-phrase'
+import { defaultWakePhrase, normalizeSpeech, WAKE_PHRASE_MAX, WAKE_PHRASE_MIN } from '../../../shared/wake-phrase'
 import { cn } from '@/lib/utils'
 import type { TFn } from './shared'
 
@@ -445,7 +445,11 @@ function VoiceSettings({
                   if (voice.wakePhrase !== null) setVoice({ wakePhrase: null })
                   return
                 }
-                if (trimmed.length < WAKE_PHRASE_MIN || trimmed.length > WAKE_PHRASE_MAX) {
+                if (
+                  trimmed.length < WAKE_PHRASE_MIN ||
+                  trimmed.length > WAKE_PHRASE_MAX ||
+                  normalizeSpeech(trimmed).length === 0
+                ) {
                   setPhraseInvalid(true)
                   return
                 }

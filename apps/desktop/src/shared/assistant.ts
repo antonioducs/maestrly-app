@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import type { ShortcutBinding, ShortcutOs } from './shortcuts'
-import { WAKE_PHRASE_MAX, WAKE_PHRASE_MIN } from './wake-phrase'
+import { normalizeSpeech, WAKE_PHRASE_MAX, WAKE_PHRASE_MIN } from './wake-phrase'
 
 /** The conversation that plays the assistant role. Written only by the main process. */
 export const ASSISTANT_CONVERSATION_SETTING = 'assistant.conversationId'
@@ -52,7 +52,14 @@ export const assistantVoiceSchema = z
     /** Open the assistant by saying `wakePhrase`; detected on this computer. */
     wakeWord: z.boolean().default(false),
     /** The phrase that opens the assistant; null for the app language's default. */
-    wakePhrase: z.string().trim().min(WAKE_PHRASE_MIN).max(WAKE_PHRASE_MAX).nullable().default(null),
+    wakePhrase: z
+      .string()
+      .trim()
+      .min(WAKE_PHRASE_MIN)
+      .max(WAKE_PHRASE_MAX)
+      .refine((p) => normalizeSpeech(p).length > 0)
+      .nullable()
+      .default(null),
     // gpt-realtime and gpt-realtime-mini shut down on 2027-01-20; a stored one falls back to the default.
     realtimeModel: z.enum(['gpt-realtime-2.1-mini', 'gpt-realtime-2.1']).default('gpt-realtime-2.1-mini'),
     realtimeVoice: z.enum(ASSISTANT_OPENAI_VOICES).default('marin'),
