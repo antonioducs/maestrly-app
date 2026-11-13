@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const h = vi.hoisted(() => {
   class FakeWorker {
@@ -23,12 +23,22 @@ const h = vi.hoisted(() => {
     emit(event: string, ...args: unknown[]): void {
       for (const listener of this.listeners.get(event) ?? []) listener(...(args as never[]))
     }
+
+    request(type: string): { id: string } {
+      for (let i = this.postMessage.mock.calls.length - 1; i >= 0; i--) {
+        const message = this.postMessage.mock.calls[i]?.[0]
+        if (message?.type === type && message.id) return message as { id: string }
+      }
+      throw new Error(`request ${type} not found`)
+    }
   }
 
   const workers: FakeWorker[] = []
+  const leases = new Map<string, ReturnType<typeof vi.fn>>()
   return {
     FakeWorker,
     workers,
+    leases,
     fork: vi.fn(() => {
       const worker = new FakeWorker(workers.length + 100)
       workers.push(worker)
@@ -36,11 +46,11 @@ const h = vi.hoisted(() => {
     }),
     ensureRuntimeAsset: vi.fn(async () => ({ state: 'ready', path: '/runtime' })),
     readyRuntimeAsset: vi.fn(async (id: string) => ({ state: 'ready', path: `/${id}` })),
-    acquireRuntimeAssetLease: vi.fn(async (id: string) => ({
-      id,
-      path: `/${id}`,
-      release: vi.fn(),
-    })),
+    acquireRuntimeAssetLease: vi.fn(async (id: string) => {
+      const release = vi.fn()
+      leases.set(id, release)
+      return { id, path: `/${id}`, release }
+    }),
     registerOwnedProcess: vi.fn(),
     unregisterOwnedProcess: vi.fn(),
   }
@@ -64,11 +74,25 @@ vi.mock('../../src/main/runtime-assets/app-service', () => ({
 
 import { startWakeWorker, wakeAssetsReady } from '../../src/main/wake-worker-host'
 
+async function waitForWorker(): Promise<InstanceType<typeof h.FakeWorker>> {
+  for (let i = 0; i < 12; i++) {
+    const worker = h.workers.at(-1)
+    if (worker?.postMessage.mock.calls.some(([msg]) => msg?.type === 'warm')) return worker
+    await Promise.resolve()
+  }
+  throw new Error('wake worker did not send warm')
+}
+
 describe('wake worker host', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     h.workers.length = 0
+    h.leases.clear()
     h.readyRuntimeAsset.mockImplementation(async (id: string) => ({ state: 'ready', path: `/${id}` }))
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   it('reports wakeAssetsReady true only when both local-ml-runtime and wake-model are ready', async () => {
@@ -97,11 +121,59 @@ describe('wake worker host', () => {
     expect(h.fork).not.toHaveBeenCalled()
 
     h.readyRuntimeAsset.mockImplementation(async (id: string) => ({ state: 'ready', path: `/${id}` }))
-    const worker = await startWakeWorker(vi.fn())
-    expect(worker).not.toBeNull()
+    const pending = startWakeWorker(vi.fn())
+    const worker = await waitForWorker()
+    worker.emit('message', { type: 'warm:done', id: worker.request('warm').id })
+    const started = await pending
+    expect(started).not.toBeNull()
     expect(h.ensureRuntimeAsset).not.toHaveBeenCalled()
     expect(h.readyRuntimeAsset).toHaveBeenCalledWith('local-ml-runtime')
     expect(h.readyRuntimeAsset).toHaveBeenCalledWith('wake-model')
-    worker?.stop()
+    started?.stop()
+  })
+
+  it('posts init then warm and resolves only after warm:done', async () => {
+    let resolved = false
+    const pending = startWakeWorker(vi.fn()).then((w) => {
+      resolved = true
+      return w
+    })
+    const worker = await waitForWorker()
+    expect(worker.postMessage.mock.calls.map(([msg]) => msg?.type)).toEqual(['init', 'warm'])
+    await Promise.resolve()
+    expect(resolved).toBe(false)
+
+    worker.emit('message', { type: 'warm:done', id: worker.request('warm').id })
+    const started = await pending
+    expect(resolved).toBe(true)
+    expect(started).not.toBeNull()
+    started?.stop()
+  })
+
+  it('resolves null, kills the process and releases both leases on warm:error', async () => {
+    const onExit = vi.fn()
+    const pending = startWakeWorker(onExit)
+    const worker = await waitForWorker()
+
+    worker.emit('message', { type: 'warm:error', id: worker.request('warm').id, error: 'shader fail' })
+    await expect(pending).resolves.toBeNull()
+    expect(worker.kill).toHaveBeenCalledTimes(1)
+    expect(h.leases.get('local-ml-runtime')).toHaveBeenCalledTimes(1)
+    expect(h.leases.get('wake-model')).toHaveBeenCalledTimes(1)
+    expect(h.unregisterOwnedProcess).toHaveBeenCalledWith('wake')
+    worker.emit('exit', 1)
+    expect(onExit).not.toHaveBeenCalled()
+  })
+
+  it('resolves null, kills the process and releases both leases when warm times out', async () => {
+    vi.useFakeTimers()
+    const pending = startWakeWorker(vi.fn())
+    const worker = await waitForWorker()
+
+    await vi.advanceTimersByTimeAsync(60_000)
+    await expect(pending).resolves.toBeNull()
+    expect(worker.kill).toHaveBeenCalledTimes(1)
+    expect(h.leases.get('local-ml-runtime')).toHaveBeenCalledTimes(1)
+    expect(h.leases.get('wake-model')).toHaveBeenCalledTimes(1)
   })
 })

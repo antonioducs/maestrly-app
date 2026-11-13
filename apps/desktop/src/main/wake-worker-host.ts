@@ -18,6 +18,7 @@ export interface WakeWorker {
 }
 
 const REQUEST_TIMEOUT_MS = 5000
+const WARM_TIMEOUT_MS = 60_000
 
 export async function wakeAssetsReady(): Promise<boolean> {
   try {
@@ -43,6 +44,7 @@ export async function startWakeWorker(onExit: () => void): Promise<WakeWorker | 
       string,
       { resolve: (r: WakeDetectResult | null) => void; timer: ReturnType<typeof setTimeout> }
     >()
+    let warmWaiter: { id: string; resolve: (ok: boolean) => void; timer: ReturnType<typeof setTimeout> } | null = null
     let seq = 0
     let stopped = false
 
@@ -54,12 +56,21 @@ export async function startWakeWorker(onExit: () => void): Promise<WakeWorker | 
       entry.resolve(result)
     }
 
+    const settleWarm = (ok: boolean): void => {
+      if (!warmWaiter) return
+      const current = warmWaiter
+      warmWaiter = null
+      clearTimeout(current.timer)
+      current.resolve(ok)
+    }
+
     const cleanup = (): void => {
       lease?.release()
       lease = null
       modelLease?.release()
       modelLease = null
       unregisterOwnedProcess('wake')
+      settleWarm(false)
       for (const id of [...pending.keys()]) settle(id, null)
     }
 
@@ -67,7 +78,12 @@ export async function startWakeWorker(onExit: () => void): Promise<WakeWorker | 
     w.stderr?.on('data', (d) => console.error('[wake-worker]', String(d).trim()))
     w.on('message', (msg: { type?: string; id?: string; text?: string; silent?: boolean; ms?: number; error?: string }) => {
       if (stopped || !msg?.id) return
-      if (msg.type === 'detect:result') {
+      if (msg.type === 'warm:done' && warmWaiter?.id === msg.id) {
+        settleWarm(true)
+      } else if (msg.type === 'warm:error' && warmWaiter?.id === msg.id) {
+        console.error('[wake] worker warm error:', msg.error)
+        settleWarm(false)
+      } else if (msg.type === 'detect:result') {
         settle(msg.id, { text: msg.text ?? '', silent: !!msg.silent, ms: msg.ms ?? 0 })
       } else if (msg.type === 'detect:error') {
         console.error('[wake] worker error:', msg.error)
@@ -93,9 +109,34 @@ export async function startWakeWorker(onExit: () => void): Promise<WakeWorker | 
       key: 'wake',
       kind: 'asr',
       pid: () => (stopped ? null : (w.pid ?? null)),
-      state: () => (pending.size > 0 ? 'busy' : 'idle'),
+      state: () => (pending.size > 0 || warmWaiter ? 'busy' : 'idle'),
       extra: () => ({ pending: pending.size }),
     })
+
+    const warmId = String(++seq)
+    const warmed = await new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => {
+        console.error('[wake] worker warm timed out')
+        settleWarm(false)
+      }, WARM_TIMEOUT_MS)
+      warmWaiter = { id: warmId, resolve, timer }
+      try {
+        w.postMessage({ type: 'warm', id: warmId })
+      } catch (e) {
+        console.error('[wake] failed to send warm to wake-worker:', (e as Error)?.message ?? e)
+        settleWarm(false)
+      }
+    })
+    if (!warmed || stopped) {
+      stopped = true
+      cleanup()
+      try {
+        w.kill()
+      } catch {
+        // ignore kill failures if already dead
+      }
+      return null
+    }
 
     return {
       detect(audio, language) {
