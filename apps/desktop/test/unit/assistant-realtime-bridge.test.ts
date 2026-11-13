@@ -201,6 +201,7 @@ describe('the voice tools', () => {
       applySettings: () => null,
       shortcutError: () => null,
       wayland: false,
+      wake: { burst: async () => undefined, micFailed: () => {}, state: () => ({ listening: false }), status: () => ({ listening: false, error: null }) },
     })
     const call = (sender: unknown, input: unknown) =>
       Promise.resolve().then(() => handlers.get('assistant:realtime-tool')?.({ sender }, input))

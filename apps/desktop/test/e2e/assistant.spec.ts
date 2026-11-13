@@ -140,10 +140,10 @@ test('the assistant registers its shortcut, follows its settings and keeps the a
   await page.getByRole('button', { name: 'Set the key', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Transcription', exact: true })).toBeInViewport()
 
-  // Realtime: billed per minute, with its own model.
+  // Realtime: billed for speech, not silence, with its own model.
   await page.getByRole('combobox', { name: 'Mode' }).click()
   await page.getByRole('option', { name: 'Realtime (OpenAI API)' }).click()
-  await expect(page.getByText(/billed per minute of audio/)).toBeVisible()
+  await expect(page.getByText(/silence is not billed/)).toBeVisible()
   await expect(page.getByRole('combobox', { name: 'Realtime model' })).toContainText('gpt-realtime-2.1-mini')
   await expect.poll(async () => (await api(page, 'assistantSettings')).settings.voice.mode).toBe('realtime')
 })

@@ -5,6 +5,7 @@ export const RUNTIME_ASSET_IDS = [
   'github-copilot-runtime',
   'local-ml-runtime',
   'whisper-model',
+  'wake-model',
   // Google's official Antigravity ACP server, installed on demand for the Google AI subscription provider.
   'antigravity-acp-runtime',
 ] as const

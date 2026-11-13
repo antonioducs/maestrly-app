@@ -35,13 +35,20 @@ export async function decodeTo16kMono(buf: ArrayBuffer): Promise<Float32Array> {
   return rendered.getChannelData(0).slice()
 }
 
-/** Asks the system for the microphone, then opens the chosen device, or the default one when it is gone. */
-export async function openMicStream(deviceId?: string | null): Promise<MediaStream> {
+/**
+ * Asks the system for the microphone, then opens the chosen device, or the default one when it is gone. `processing`
+ * asks for the browser's audio processing (echo cancellation and the like) on either.
+ */
+export async function openMicStream(
+  deviceId?: string | null,
+  processing?: MediaTrackConstraints
+): Promise<MediaStream> {
   await window.api.chatEnsureMicAccess().catch(() => {})
-  const wanted = deviceId ? { deviceId: { exact: deviceId } } : true
+  const fallback: MediaTrackConstraints | true = processing ?? true
+  const wanted = deviceId ? { ...processing, deviceId: { exact: deviceId } } : fallback
   return navigator.mediaDevices
     .getUserMedia({ audio: wanted })
-    .catch(() => navigator.mediaDevices.getUserMedia({ audio: true }))
+    .catch(() => navigator.mediaDevices.getUserMedia({ audio: fallback }))
 }
 
 export interface MicRecording {

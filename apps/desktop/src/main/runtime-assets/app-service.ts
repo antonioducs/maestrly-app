@@ -308,6 +308,10 @@ const DISPLAY: Record<RuntimeAssetId, Pick<RuntimeAssetInfo, 'displayName' | 're
     displayName: 'Voice model',
     requiredBy: 'Voice dictation',
   },
+  'wake-model': {
+    displayName: 'Wake word model',
+    requiredBy: 'Open by voice',
+  },
   'antigravity-acp-runtime': {
     displayName: 'Google Antigravity ACP server',
     requiredBy: 'Google AI subscription',
@@ -436,7 +440,7 @@ export async function cleanupOrphanRuntimeAssetTemps(): Promise<void> {
       .filter(
         (entry) =>
           (RETIRED_RUNTIME_ASSET_IDS as readonly string[]).includes(entry) ||
-          /^\.tmp-(?:codex-runtime|claude-code-runtime|github-copilot-runtime|tunnel-client|local-ml-runtime|whisper-model|antigravity-acp-runtime)-/.test(
+          /^\.tmp-(?:codex-runtime|claude-code-runtime|github-copilot-runtime|tunnel-client|local-ml-runtime|whisper-model|wake-model|antigravity-acp-runtime)-/.test(
             entry
           )
       )

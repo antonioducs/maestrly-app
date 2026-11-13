@@ -55,4 +55,14 @@ export const assistantApi = {
     ipcRenderer.on('assistant:open-settings', listener)
     return () => ipcRenderer.removeListener('assistant:open-settings', listener)
   },
+  assistantWakeBurst: (pcm: Float32Array): void => ipcRenderer.send('assistant:wake-burst', pcm),
+  assistantWakeMicFailed: (): void => ipcRenderer.send('assistant:wake-mic-failed'),
+  assistantWakeState: (): Promise<{ listening: boolean }> => ipcRenderer.invoke('assistant:wake-state'),
+  onAssistantWakeState: (cb: (state: { listening: boolean }) => void): (() => void) => {
+    const listener = (_event: unknown, state: { listening: boolean }) => cb(state)
+    ipcRenderer.on('assistant:wake-state', listener)
+    return () => ipcRenderer.removeListener('assistant:wake-state', listener)
+  },
+  assistantWakeStatus: (): Promise<{ listening: boolean; error: 'mic' | 'worker' | null }> =>
+    ipcRenderer.invoke('assistant:wake-status'),
 }

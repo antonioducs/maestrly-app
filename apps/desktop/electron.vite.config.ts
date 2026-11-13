@@ -17,6 +17,7 @@ export default defineConfig({
           index: resolve(__dirname, 'src/main/index.ts'),
           'ml-worker': resolve(__dirname, 'src/main/ml-worker.ts'),
           'asr-worker': resolve(__dirname, 'src/main/asr-worker.ts'),
+          'wake-worker': resolve(__dirname, 'src/main/wake-worker.ts'),
           // Untrusted PDF parsing for chat attachments runs in a short-lived utility process per document.
           'pdf-worker': resolve(__dirname, 'src/main/pdf-worker.ts'),
           // The artifact host serves agent-generated pages over HTTP; keep it out of the main process.

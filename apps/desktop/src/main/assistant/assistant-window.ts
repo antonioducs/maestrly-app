@@ -154,6 +154,10 @@ export class AssistantWindow {
     return win && !win.isDestroyed() ? win.webContents : null
   }
 
+  async warm(): Promise<void> {
+    if (!this.disposed) await this.window()
+  }
+
   async show(opts: { listen?: boolean } = {}): Promise<void> {
     if (this.disposed) return
     const existed = !!this.win && !this.win.isDestroyed()

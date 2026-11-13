@@ -9,6 +9,8 @@ import { hostApi } from '@/lib/hosts/host-context'
 import { LOCAL_HOST_ID } from '../../../shared/host-key'
 import { useVoiceSession } from './voice/use-voice-session'
 import { VoiceButton } from './voice/VoiceButton'
+import { shouldListen, startWakeListener } from './voice/wake-listener'
+import { MIC_DEVICE_KEY } from '@/lib/dictation'
 
 /** Statuses that wait for the person: the window stays up while it loses focus, so the card can be answered. */
 const NEEDS_PERSON = new Set(['asking', 'waiting'])
@@ -22,6 +24,37 @@ export function AssistantApp() {
   const locale = (i18n.resolvedLanguage ?? i18n.language).toLowerCase().startsWith('pt') ? 'pt-BR' : 'en'
   const voice = useVoiceSession({ conversationId: info?.conversationId ?? null, voice: voiceSettings, locale })
   const { tap: voiceTap, escape: voiceEscape } = voice
+  const [wake, setWake] = useState({ listening: false })
+
+  useEffect(() => {
+    void window.api
+      .assistantWakeState()
+      .then(setWake)
+      .catch(() => {})
+    return window.api.onAssistantWakeState(setWake)
+  }, [])
+
+  const listen = shouldListen(wake, voice.state)
+  useEffect(() => {
+    if (!listen) return
+    let stopped = false
+    let listener: { stop(): void } | null = null
+    void startWakeListener({
+      deviceId: localStorage.getItem(MIC_DEVICE_KEY),
+      onBurst: (pcm) => window.api.assistantWakeBurst(pcm),
+    })
+      .then((started) => {
+        if (stopped) started.stop()
+        else listener = started
+      })
+      .catch(() => {
+        if (!stopped) window.api.assistantWakeMicFailed()
+      })
+    return () => {
+      stopped = true
+      listener?.stop()
+    }
+  }, [listen])
 
   // Settings change in the main window: read them again each time the window comes back.
   const loadVoiceSettings = useCallback(() => {

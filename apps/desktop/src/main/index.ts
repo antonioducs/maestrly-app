@@ -100,7 +100,9 @@ import {
   flushPendingEmbeddingWrites as flushPendingMemoryWrites,
   hasPendingEmbeddingWrites as hasPendingMemoryWrites,
 } from './local-ml/embedding-service'
-import { stopAsrWorker } from './asr-service'
+import { currentAsrSupport, stopAsrWorker } from './asr-service'
+import { createWakeService } from './wake-service'
+import { startWakeWorker, wakeAssetsReady } from './wake-worker-host'
 import { fixPathForGuiApp } from './fix-path'
 import { applyChannelIdentity, getChannelInfo, getInstanceId } from './channel'
 import { captureProcessExit } from './crash-reporter'
@@ -346,6 +348,27 @@ function assistant(): AssistantWindow | null {
   assistantWindow ??= createDesktopAssistantWindow()
   return assistantWindow
 }
+let wakeService: ReturnType<typeof createWakeService> | null = null
+function wake(): ReturnType<typeof createWakeService> | null {
+  if (isHeadlessInstance()) return null
+  wakeService ??= createWakeService({
+    settings: getAssistantSettings,
+    locale: getMainLocale,
+    supported: () => currentAsrSupport().supported,
+    modelReady: wakeAssetsReady,
+    startWorker: startWakeWorker,
+    onWake: () => {
+      playSound('tink')
+      void assistant()?.show({ listen: true })
+    },
+    sendState: (state) => {
+      if (state.listening) void assistant()?.warm()
+      assistantWindow?.send('assistant:wake-state', state)
+    },
+    logTranscripts: !app.isPackaged,
+  })
+  return wakeService
+}
 /** Reaches a remote host's handlers from this process, under the main window's origin. */
 const hostInvoker = createHostInvoker({
   registry: () => hostRegistry(),
@@ -389,6 +412,7 @@ function applyAssistantSettings(settings: AssistantSettings): 'conflict' | 'unsu
   assistantShortcutError = result.ok ? null : result.reason
   if (!settings.enabled) assistantWindow?.hide()
   rebuildTrayMenu()
+  void wake()?.apply()
   return assistantShortcutError
 }
 
@@ -1041,6 +1065,7 @@ function registerIpc(): void {
       applySettings: applyAssistantSettings,
       shortcutError: () => assistantShortcutError,
       wayland: process.platform === 'linux' && process.env.XDG_SESSION_TYPE === 'wayland',
+      wake: wake()!,
     })
   }
   registerLocalConversationIpc(reg)
@@ -1127,7 +1152,12 @@ function registerIpc(): void {
   })
   registerPerformanceIpc(reg)
   registerSoundIpc(reg)
-  registerRuntimeAssetIpc(reg, { emitChanged: (info) => broadcast('runtime-assets:changed', info) })
+  registerRuntimeAssetIpc(reg, {
+    emitChanged: (info) => {
+      broadcast('runtime-assets:changed', info)
+      if (info.id === 'wake-model' || info.id === 'local-ml-runtime') void wake()?.apply()
+    },
+  })
   registerBotIpc(reg)
   // Set before the client starts, so that the first live event already sounds.
   fleetServers.setupClients((client) => {
@@ -1427,6 +1457,10 @@ app.whenReady().then(async () => {
     rebuildTrayMenu()
   }
   if (!isHeadlessInstance()) {
+    powerMonitor.on('lock-screen', () => wake()?.setPause('locked', true))
+    powerMonitor.on('unlock-screen', () => wake()?.setPause('locked', false))
+    powerMonitor.on('suspend', () => wake()?.setPause('suspended', true))
+    powerMonitor.on('resume', () => wake()?.setPause('suspended', false))
     applyAssistantSettings(getAssistantSettings())
     if (parseAssistantArgv(process.argv).toggleAssistant && getAssistantSettings().enabled) void assistant()?.show()
   }
@@ -1841,6 +1875,7 @@ app.on('before-quit', (e) => {
   }
   stopMlWorker()
   stopAsrWorker()
+  wakeService?.stop()
 
   // Last step: every runner, chat and memory teardown already ran, so swapping the binary is safe.
   shutdownComplete = true

@@ -54,7 +54,7 @@ describe('Realtime calls', () => {
       audio: {
         input: {
           transcription: { model: 'gpt-transcribe', language: 'pt' },
-          turn_detection: { type: 'semantic_vad', create_response: true },
+          turn_detection: { type: 'semantic_vad', create_response: true, interrupt_response: true },
         },
         // Realtime speaks at most 1.5×.
         output: { voice: 'marin', speed: 1.5 },
@@ -144,6 +144,7 @@ describe('the Realtime channel', () => {
       applySettings: () => null,
       shortcutError: () => null,
       wayland: false,
+      wake: { burst: async () => undefined, micFailed: () => {}, state: () => ({ listening: false }), status: () => ({ listening: false, error: null }) },
     })
     return { handlers, assistant }
   }

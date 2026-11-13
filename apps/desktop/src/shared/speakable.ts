@@ -9,7 +9,8 @@ import type { SupportedLocale } from './locale'
 const FENCE = /^\s*(`{3,}|~{3,})\s*([\w-]*)/
 const TABLE_SEPARATOR = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/
 const EMOJI = /\p{Extended_Pictographic}|[\u{1F1E6}-\u{1F1FF}]|[\u{1F3FB}-\u{1F3FF}]|\u200D|\uFE0E|\uFE0F|\u20E3/gu
-const URL = /\bhttps?:\/\/[^\s)<>]*[^\s)<>.,;:!?'"]/gi
+// Not named URL: the bundler injects `new URL(...)` for asset imports, and a module-level `URL` would shadow it.
+const URL_PATTERN = /\bhttps?:\/\/[^\s)<>]*[^\s)<>.,;:!?'"]/gi
 
 function inline(text: string, link: string): string {
   return (
@@ -18,7 +19,7 @@ function inline(text: string, link: string): string {
       .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
       .replace(/\[([^\]]+)\]\((?:[^()]|\([^)]*\))*\)/g, '$1')
       .replace(/<(https?:\/\/[^>]+)>/g, '$1')
-      .replace(URL, link)
+      .replace(URL_PATTERN, link)
       .replace(/`([^`]+)`/g, '$1')
       .replace(/(\*\*|__)(?=\S)([\s\S]*?\S)\1/g, '$2')
       .replace(/(^|[^\w*])\*(?=\S)([^*]*?\S)\*(?![\w*])/g, '$1$2')

@@ -66,7 +66,8 @@ export function realtimeSessionConfig(opts: RealtimeCallOptions) {
     audio: {
       input: {
         transcription: { model: REALTIME_TRANSCRIPTION_MODEL, language: opts.locale.slice(0, 2).toLowerCase() },
-        turn_detection: { type: 'semantic_vad', create_response: true },
+        // Full duplex: the microphone stays open, so the person talking over the voice cancels its answer.
+        turn_detection: { type: 'semantic_vad', create_response: true, interrupt_response: true },
       },
       output: { voice: opts.voice, speed: Math.min(1.5, Math.max(0.25, opts.speed ?? 1)) },
     },
