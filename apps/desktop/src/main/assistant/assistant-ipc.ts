@@ -14,6 +14,7 @@ import { getAssistantSettings, setAssistantSettings } from './assistant-settings
 import type { AssistantWindow } from './assistant-window'
 import { hangUpRealtimeCall, REALTIME_TOOLS, type RealtimeStartResult, startRealtimeCall } from './realtime/session'
 import { assistantRealtimeBridgeDeps, createRealtimeToolBridge } from './realtime/tool-bridge'
+import type { WakeStatus } from '../wake-service'
 import {
   createSpeechRequests,
   OPENAI_SPEECH_MAX_CHARS,
@@ -34,6 +35,12 @@ export interface AssistantIpcDeps {
   applySettings(settings: AssistantSettings): 'conflict' | 'unsupported' | null
   shortcutError(): 'conflict' | 'unsupported' | null
   wayland: boolean
+  wake: {
+    burst(audio: unknown): Promise<void>
+    micFailed(): void
+    state(): { listening: boolean }
+    status(): WakeStatus
+  }
 }
 
 /** Only the assistant window itself may drive its window, voice and realtime channels. */
@@ -213,4 +220,14 @@ export function registerAssistantIpc(reg: IpcRegistrar, deps: AssistantIpcDeps):
     const parsed = z.enum(['question', 'listening', 'speaking']).safeParse(reason)
     if (parsed.success) deps.window()?.setHold(parsed.data, held === true)
   })
+  reg.mon('assistant:wake-burst', (event, pcm: unknown) => {
+    if (isAssistantSender(deps, event)) void deps.wake.burst(pcm)
+  })
+  reg.mon('assistant:wake-mic-failed', (event) => {
+    if (isAssistantSender(deps, event)) deps.wake.micFailed()
+  })
+  reg.mhandle('assistant:wake-state', (event) =>
+    isAssistantSender(deps, event) ? deps.wake.state() : { listening: false }
+  )
+  reg.mhandle('assistant:wake-status', () => deps.wake.status())
 }

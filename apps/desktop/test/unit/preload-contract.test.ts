@@ -460,7 +460,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(698)
+    expect(keys).toHaveLength(703)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -500,6 +500,18 @@ describe('preload API — exposure', () => {
     })
     await api.assistantTestVoice({ text: 'Oi.', voice: 'cedar', speed: 1.2 })
     expect(invokeSpy).toHaveBeenLastCalledWith('assistant:test-voice', { text: 'Oi.', voice: 'cedar', speed: 1.2 })
+    const pcm = new Float32Array(4000)
+    api.assistantWakeBurst(pcm)
+    expect(sendSpy).toHaveBeenLastCalledWith('assistant:wake-burst', pcm)
+    api.assistantWakeMicFailed()
+    expect(sendSpy).toHaveBeenLastCalledWith('assistant:wake-mic-failed')
+    await api.assistantWakeState()
+    expect(invokeSpy).toHaveBeenLastCalledWith('assistant:wake-state')
+    await api.assistantWakeStatus()
+    expect(invokeSpy).toHaveBeenLastCalledWith('assistant:wake-status')
+    const offWake = api.onAssistantWakeState(vi.fn()) as () => void
+    expect(onSpy).toHaveBeenLastCalledWith('assistant:wake-state', expect.any(Function))
+    offWake()
   })
 
   it('forwards an active-account pool patch unchanged', async () => {

@@ -331,6 +331,7 @@ describe('the speech channel', () => {
       applySettings: () => null,
       shortcutError: () => null,
       wayland: false,
+      wake: { burst: async () => undefined, micFailed: () => {}, state: () => ({ listening: false }), status: () => ({ listening: false, error: null }) },
     })
     return { handlers, assistant }
   }
