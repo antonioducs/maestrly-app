@@ -102,7 +102,7 @@ import {
 } from './local-ml/embedding-service'
 import { currentAsrSupport, stopAsrWorker } from './asr-service'
 import { createWakeService } from './wake-service'
-import { startWakeWorker, wakeModelReady } from './wake-worker-host'
+import { startWakeWorker, wakeAssetsReady } from './wake-worker-host'
 import { fixPathForGuiApp } from './fix-path'
 import { applyChannelIdentity, getChannelInfo, getInstanceId } from './channel'
 import { captureProcessExit } from './crash-reporter'
@@ -355,7 +355,7 @@ function wake(): ReturnType<typeof createWakeService> | null {
     settings: getAssistantSettings,
     locale: getMainLocale,
     supported: () => currentAsrSupport().supported,
-    modelReady: wakeModelReady,
+    modelReady: wakeAssetsReady,
     startWorker: startWakeWorker,
     onWake: () => {
       playSound('tink')

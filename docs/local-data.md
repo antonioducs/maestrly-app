@@ -362,9 +362,10 @@ lives in the profile at `runtime-assets/whisper-model` (547 MB, verified
 against a pinned SHA-256 before use) and can be removed from Components; the
 next dictation offers to download it again. **Open by voice** uses a smaller
 wake-word model at `runtime-assets/wake-model` (about 57 MB, `ggml-base-q5_1.bin`,
-also installed only on explicit confirmation and verified by SHA-256). The speech engine and its
-voice-activity model are part of the local ML runtime under
-`runtime-assets/local-ml-runtime`.
+also installed only on explicit confirmation and verified by SHA-256) together
+with the local ML runtime under `runtime-assets/local-ml-runtime` (downloaded
+only when not already installed and confirmed), which holds the speech engine
+and its voice-activity model.
 
 Recordings and transcriptions are not stored separately: audio is kept in memory
 only until it is transcribed, and a sent transcription is an ordinary user

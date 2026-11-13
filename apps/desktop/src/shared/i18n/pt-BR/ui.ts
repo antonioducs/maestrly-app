@@ -1110,7 +1110,7 @@ export default {
           'Diga a frase para abrir o assistente já ouvindo. A detecção roda neste computador, e o áudio só sai dele depois da frase. O indicador de microfone do sistema fica aceso enquanto isso estiver ligado.',
         wakePhrase: 'Frase',
         wakePhraseInvalid: 'Use de 2 a 40 caracteres.',
-        wakeModelDesc: 'Precisa de um modelo de voz de {{size}} que roda neste computador.',
+        wakeModelDesc: 'Precisa de um download único de {{size}}; a detecção roda neste computador.',
         wakeModelDownload: 'Baixar',
         wakeModelCancel: 'Cancelar',
         wakeModelRetry: 'Tentar de novo',

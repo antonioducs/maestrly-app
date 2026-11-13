@@ -141,7 +141,10 @@ function VoiceSettings({
   const systemVoices = useSystemVoices()
   const dictation = useRef<HTMLDivElement>(null)
   const [asrSupport, setAsrSupport] = useState<AsrSupport | null>(null)
-  const [wakeModel, setWakeModel] = useState<RuntimeAssetInfo | null>(null)
+  const [wakeAssets, setWakeAssets] = useState<{
+    'local-ml-runtime': RuntimeAssetInfo | null
+    'wake-model': RuntimeAssetInfo | null
+  }>({ 'local-ml-runtime': null, 'wake-model': null })
   const [modelBusy, setModelBusy] = useState(false)
   const [wakeStatus, setWakeStatus] = useState<{ listening: boolean; error: 'mic' | 'worker' | null } | null>(null)
   const [phraseInput, setPhraseInput] = useState(voice.wakePhrase ?? '')
@@ -158,12 +161,19 @@ function VoiceSettings({
       .chatAsrSupport()
       .then((next) => alive && setAsrSupport(next))
       .catch(() => {})
-    void localApi
-      .runtimeAssetStatus('wake-model')
-      .then((next) => alive && setWakeModel(next))
+    void Promise.all([
+      localApi.runtimeAssetStatus('local-ml-runtime'),
+      localApi.runtimeAssetStatus('wake-model'),
+    ])
+      .then(([runtime, model]) => {
+        if (!alive) return
+        setWakeAssets({ 'local-ml-runtime': runtime, 'wake-model': model })
+      })
       .catch(() => {})
     const off = localApi.onRuntimeAssetChanged((info) => {
-      if (info.id === 'wake-model') setWakeModel(info)
+      if (info.id === 'local-ml-runtime' || info.id === 'wake-model') {
+        setWakeAssets((current) => ({ ...current, [info.id]: info }))
+      }
     })
     return () => {
       alive = false
@@ -458,16 +468,44 @@ function VoiceSettings({
               {t('settings.assistant.voice.wakePhraseInvalid')}
             </p>
           )}
-          {wakeModel && wakeModel.status.state !== 'ready' && (() => {
-            const cancelled = wakeModel.status.state === 'failed' && /cancel/i.test(wakeModel.status.error ?? '')
-            const modelState = cancelled ? 'not-installed' : wakeModel.status.state
-            const size = formatBytes(wakeModel.downloadBytes)
-            const progress = assetProgress(wakeModel)
-            const runModelOp = (op: () => Promise<RuntimeAssetInfo | boolean>) => {
+          {(() => {
+            const runtimeAsset = wakeAssets['local-ml-runtime']
+            const wakeModel = wakeAssets['wake-model']
+            if (!runtimeAsset || !wakeModel) return null
+            const missing = [runtimeAsset, wakeModel].filter((a) => a.status.state !== 'ready')
+            if (missing.length === 0) return null
+
+            const isCancelled = (a: RuntimeAssetInfo) =>
+              a.status.state === 'failed' && /cancel/i.test(a.status.error ?? '')
+            const activeAsset =
+              missing.find((a) => ['downloading', 'verifying', 'installing', 'removing'].includes(a.status.state)) ??
+              missing.find((a) => (a.status.state === 'failed' && !isCancelled(a)) || a.status.state === 'corrupt') ??
+              missing[0]
+            const modelState = isCancelled(activeAsset) ? 'not-installed' : activeAsset.status.state
+            const size = formatBytes(missing.reduce((sum, a) => sum + a.downloadBytes, 0))
+            const progress = assetProgress(activeAsset)
+            const installMissing = () => {
               setModelBusy(true)
-              void op()
+              void (async () => {
+                let currentRuntime = runtimeAsset
+                if (currentRuntime.status.state !== 'ready') {
+                  currentRuntime = await localApi.runtimeAssetInstall('local-ml-runtime')
+                  setWakeAssets((current) => ({ ...current, 'local-ml-runtime': currentRuntime }))
+                }
+                if (currentRuntime.status.state === 'ready' && wakeModel.status.state !== 'ready') {
+                  const nextModel = await localApi.runtimeAssetInstall('wake-model')
+                  setWakeAssets((current) => ({ ...current, 'wake-model': nextModel }))
+                }
+              })()
+                .catch((err: unknown) => console.error('[wake] model operation failed', err))
+                .finally(() => setModelBusy(false))
+            }
+            const repairActive = () => {
+              setModelBusy(true)
+              void localApi
+                .runtimeAssetRepair(activeAsset.id)
                 .then((res) => {
-                  if (typeof res !== 'boolean') setWakeModel(res)
+                  setWakeAssets((current) => ({ ...current, [res.id]: res }))
                 })
                 .catch((err: unknown) => console.error('[wake] model operation failed', err))
                 .finally(() => setModelBusy(false))
@@ -485,17 +523,20 @@ function VoiceSettings({
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-[12px] text-muted-foreground">
                         {tChat('mic.modelDownloading', {
-                          done: wakeModel.status.bytesDownloaded
-                            ? formatBytes(wakeModel.status.bytesDownloaded)
+                          done: activeAsset.status.bytesDownloaded
+                            ? formatBytes(activeAsset.status.bytesDownloaded)
                             : '0 B',
-                          total: formatBytes(wakeModel.status.totalBytes || wakeModel.downloadBytes),
+                          total: formatBytes(activeAsset.status.totalBytes || activeAsset.downloadBytes),
                         })}
                       </span>
                       <Button
                         variant="outline"
                         size="sm"
-                        disabled={modelBusy}
-                        onClick={() => runModelOp(() => localApi.runtimeAssetCancel('wake-model'))}
+                        onClick={() =>
+                          void localApi
+                            .runtimeAssetCancel(activeAsset.id)
+                            .catch((err: unknown) => console.error('[wake] model cancel failed', err))
+                        }
                       >
                         {t('settings.assistant.voice.wakeModelCancel')}
                       </Button>
@@ -513,34 +554,22 @@ function VoiceSettings({
                 ) : modelState === 'failed' ? (
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-[12px] text-destructive">
-                      {wakeModel.status.error || tChat('mic.modelFailed')}
+                      {activeAsset.status.error || tChat('mic.modelFailed')}
                     </span>
-                    <Button
-                      size="sm"
-                      disabled={modelBusy}
-                      onClick={() => runModelOp(() => localApi.runtimeAssetInstall('wake-model'))}
-                    >
+                    <Button size="sm" disabled={modelBusy} onClick={installMissing}>
                       {t('settings.assistant.voice.wakeModelRetry')}
                     </Button>
                   </div>
                 ) : modelState === 'corrupt' ? (
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-[12px] text-destructive">{tChat('settings.componentState_corrupt')}</span>
-                    <Button
-                      size="sm"
-                      disabled={modelBusy}
-                      onClick={() => runModelOp(() => localApi.runtimeAssetRepair('wake-model'))}
-                    >
+                    <Button size="sm" disabled={modelBusy} onClick={repairActive}>
                       {t('settings.assistant.voice.wakeModelRetry')}
                     </Button>
                   </div>
                 ) : (
                   <div className="flex justify-end">
-                    <Button
-                      size="sm"
-                      disabled={modelBusy}
-                      onClick={() => runModelOp(() => localApi.runtimeAssetInstall('wake-model'))}
-                    >
+                    <Button size="sm" disabled={modelBusy} onClick={installMissing}>
                       {t('settings.assistant.voice.wakeModelDownload')}
                     </Button>
                   </div>

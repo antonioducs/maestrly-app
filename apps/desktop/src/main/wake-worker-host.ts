@@ -3,7 +3,7 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { RuntimeAssetLease } from '../shared/runtime-assets'
 import { registerOwnedProcess, unregisterOwnedProcess } from './performance/owned-processes'
-import { acquireRuntimeAssetLease, ensureRuntimeAsset, readyRuntimeAsset } from './runtime-assets/app-service'
+import { acquireRuntimeAssetLease, readyRuntimeAsset } from './runtime-assets/app-service'
 import { WAKE_MODEL_FILE } from './runtime-assets/registry'
 
 export interface WakeDetectResult {
@@ -19,9 +19,9 @@ export interface WakeWorker {
 
 const REQUEST_TIMEOUT_MS = 5000
 
-export async function wakeModelReady(): Promise<boolean> {
+export async function wakeAssetsReady(): Promise<boolean> {
   try {
-    await readyRuntimeAsset('wake-model')
+    await Promise.all([readyRuntimeAsset('local-ml-runtime'), readyRuntimeAsset('wake-model')])
     return true
   } catch {
     return false
@@ -32,7 +32,7 @@ export async function startWakeWorker(onExit: () => void): Promise<WakeWorker | 
   let lease: RuntimeAssetLease | null = null
   let modelLease: RuntimeAssetLease | null = null
   try {
-    await ensureRuntimeAsset('local-ml-runtime')
+    await readyRuntimeAsset('local-ml-runtime')
     const model = await readyRuntimeAsset('wake-model')
     lease = await acquireRuntimeAssetLease('local-ml-runtime')
     modelLease = await acquireRuntimeAssetLease('wake-model', model.path)
