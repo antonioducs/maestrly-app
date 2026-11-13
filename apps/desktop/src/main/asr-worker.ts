@@ -8,23 +8,8 @@
  */
 
 import { availableParallelism } from 'node:os'
-import { cleanTranscript, floatToPcm16, isSilentPcm, speechSpan, type SpeechSegment } from './asr-audio'
-
-interface WhisperContextLike {
-  transcribeData(
-    audio: ArrayBuffer,
-    options?: { language?: string; maxThreads?: number }
-  ): { promise: Promise<{ result: string }> }
-  release(): Promise<void>
-}
-interface VadContextLike {
-  detectSpeechData(audio: ArrayBuffer): Promise<SpeechSegment[]>
-  release(): Promise<void>
-}
-interface WhisperAddon {
-  WhisperContext: new (o: { filePath: string; useGpu?: boolean; useFlashAttn?: boolean }) => WhisperContextLike
-  WhisperVadContext: new (o: { filePath: string; useGpu?: boolean; nThreads?: number }) => VadContextLike
-}
+import { cleanTranscript, floatToPcm16, isSilentPcm, speechSpan } from './asr-audio'
+import type { VadContextLike, WhisperAddon, WhisperContextLike } from './whisper-addon'
 
 let config = { moduleUrl: '', modelPath: '', useGpu: false }
 let engine: Promise<{ whisper: WhisperContextLike; vad: VadContextLike }> | null = null
