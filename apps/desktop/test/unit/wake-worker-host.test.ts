@@ -74,10 +74,12 @@ vi.mock('../../src/main/runtime-assets/app-service', () => ({
 
 import { startWakeWorker, wakeAssetsReady } from '../../src/main/wake-worker-host'
 
-async function waitForWorker(): Promise<InstanceType<typeof h.FakeWorker>> {
+async function waitForWorker(previous?: InstanceType<typeof h.FakeWorker>): Promise<InstanceType<typeof h.FakeWorker>> {
   for (let i = 0; i < 12; i++) {
     const worker = h.workers.at(-1)
-    if (worker?.postMessage.mock.calls.some(([msg]) => msg?.type === 'warm')) return worker
+    if (worker && worker !== previous && worker.postMessage.mock.calls.some(([msg]) => msg?.type === 'warm')) {
+      return worker
+    }
     await Promise.resolve()
   }
   throw new Error('wake worker did not send warm')
@@ -175,5 +177,29 @@ describe('wake worker host', () => {
     expect(worker.kill).toHaveBeenCalledTimes(1)
     expect(h.leases.get('local-ml-runtime')).toHaveBeenCalledTimes(1)
     expect(h.leases.get('wake-model')).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the newest worker registered when an earlier worker exits late', async () => {
+    const pendingA = startWakeWorker(vi.fn())
+    const fakeA = await waitForWorker()
+    fakeA.emit('message', { type: 'warm:done', id: fakeA.request('warm').id })
+    const workerA = await pendingA
+    expect(workerA).not.toBeNull()
+    workerA?.stop()
+
+    const pendingB = startWakeWorker(vi.fn())
+    const fakeB = await waitForWorker(fakeA)
+    fakeB.emit('message', { type: 'warm:done', id: fakeB.request('warm').id })
+    const workerB = await pendingB
+    expect(workerB).not.toBeNull()
+    expect(h.registerOwnedProcess).toHaveBeenCalledTimes(2)
+
+    h.unregisterOwnedProcess.mockClear()
+    fakeA.emit('exit', 0)
+    expect(h.unregisterOwnedProcess).not.toHaveBeenCalled()
+
+    workerB?.stop()
+    expect(h.unregisterOwnedProcess).toHaveBeenCalledTimes(1)
+    expect(h.unregisterOwnedProcess).toHaveBeenCalledWith('wake')
   })
 })

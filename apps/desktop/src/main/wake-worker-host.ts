@@ -19,6 +19,7 @@ export interface WakeWorker {
 
 const REQUEST_TIMEOUT_MS = 5000
 const WARM_TIMEOUT_MS = 60_000
+let registeredOwnerToken: symbol | null = null
 
 export async function wakeAssetsReady(): Promise<boolean> {
   try {
@@ -47,6 +48,7 @@ export async function startWakeWorker(onExit: () => void): Promise<WakeWorker | 
     let warmWaiter: { id: string; resolve: (ok: boolean) => void; timer: ReturnType<typeof setTimeout> } | null = null
     let seq = 0
     let stopped = false
+    const ownerToken = Symbol('wake-worker')
 
     const settle = (id: string, result: WakeDetectResult | null): void => {
       const entry = pending.get(id)
@@ -69,7 +71,10 @@ export async function startWakeWorker(onExit: () => void): Promise<WakeWorker | 
       lease = null
       modelLease?.release()
       modelLease = null
-      unregisterOwnedProcess('wake')
+      if (registeredOwnerToken === ownerToken) {
+        registeredOwnerToken = null
+        unregisterOwnedProcess('wake')
+      }
       settleWarm(false)
       for (const id of [...pending.keys()]) settle(id, null)
     }
@@ -105,6 +110,7 @@ export async function startWakeWorker(onExit: () => void): Promise<WakeWorker | 
       useGpu: process.platform === 'darwin',
     })
 
+    registeredOwnerToken = ownerToken
     registerOwnedProcess({
       key: 'wake',
       kind: 'asr',
