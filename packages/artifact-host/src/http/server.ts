@@ -1,6 +1,7 @@
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { gateFor, resolveAccess } from '../access.js'
+import { canEditBoard, gateFor, resolveAccess } from '../access.js'
+import { type BoardService, createBoardService } from '../boards.js'
 import { isHtmlPath, normalizeBundlePath } from '../bundle-paths.js'
 import { createCommentService } from '../comments.js'
 import { createResponseService } from '../responses.js'
@@ -8,8 +9,10 @@ import { ArtifactHostError } from '../errors.js'
 import { BRIDGE_SCRIPT, SHELL_FILES, SHELL_VERSION } from '../generated/shell-assets.js'
 import { digest, newSecretToken, randomId } from '../ids.js'
 import {
+  BOARD_POLL_MS,
   CAPABILITY_TTL_MS,
   GUEST_SESSION_TTL_MS,
+  MAX_BOARD_PUSH_BYTES,
   OWNER_SESSION_TTL_MS,
   PERSON_SESSION_TTL_MS,
   SESSION_TOUCH_INTERVAL_MS,
@@ -26,9 +29,12 @@ import {
 } from '../shell/contract.js'
 import type { ArtifactStore, SessionRecord } from '../store/artifact-store.js'
 import type { BlobStore } from '../store/blobs.js'
+import { BoardStore } from '../store/board-store.js'
 import { CommentStore } from '../store/comment-store.js'
 import { ResponseStore } from '../store/response-store.js'
 import { type PrincipalRecord, type SharingFields, SharingStore } from '../store/sharing-store.js'
+import type { WhiteboardViewer } from '../whiteboard-viewer.js'
+import { createBoardRoutes } from './board-routes.js'
 import { signCapability, verifyCapability } from './capability.js'
 import { createCommentRoutes } from './comment-routes.js'
 import { deviceInfo } from './device-info.js'
@@ -74,6 +80,12 @@ export interface PublicServerDeps {
   onChange?: (artifactId: string) => void
   maxComments?: number
   maxResponses?: number
+  /** Shared with the admin, so the agent's edits reach the canvases waiting for them. */
+  boards?: BoardService
+  /** The canvas served for whiteboards in place of a version's files. */
+  whiteboardViewer?: WhiteboardViewer | null
+  /** How long a request for a whiteboard's changes waits; shorter in tests. */
+  boardPollMs?: number
 }
 
 export interface PublicServer {
@@ -133,6 +145,10 @@ interface Route {
   method: Method
   /** A read that changes something: it must come from the viewer's own script, like a write. */
   viewerOnly?: boolean
+  /** The largest body the route reads; the API's default when not given. */
+  bodyBytes?: number
+  /** Whiteboard routes count against their own request budget. */
+  scope?: 'board'
   handle: (ctx: ApiContext) => void
 }
 
@@ -148,6 +164,7 @@ export function createPublicServer(deps: PublicServerDeps): PublicServer {
   const onChange = deps.onChange ?? (() => {})
   const record = deps.recordActivity ?? createActivityRecorder({ sharing, clock, onChange })
   const limiter = createRateLimiter(clock)
+  const boards = deps.boards ?? createBoardService({ store: new BoardStore(store.db) })
   let port = deps.port
 
   function currentSession(req: http.IncomingMessage, id: string, now: number): SessionRecord | null {
@@ -232,8 +249,14 @@ export function createPublicServer(deps: PublicServerDeps): PublicServer {
   }
 
   const routes = new Map<string, Route>()
-  const route = (method: Method, action: string, handle: Route['handle'], viewerOnly = false): void => {
-    routes.set(routeKey(method, action), { method, viewerOnly, handle })
+  const route = (
+    method: Method,
+    action: string,
+    handle: Route['handle'],
+    viewerOnly = false,
+    options: { bodyBytes?: number; scope?: 'board' } = {}
+  ): void => {
+    routes.set(routeKey(method, action), { method, viewerOnly, handle, ...options })
   }
 
   const core: Record<string, Route> = {
@@ -250,6 +273,7 @@ export function createPublicServer(deps: PublicServerDeps): PublicServer {
         const state: ViewerState = {
           artifact: {
             id: artifact.id,
+            kind: artifact.kind,
             title: artifact.title,
             currentVersion: artifact.currentVersion,
             versions: store.listVersions(artifact.id).map((version) => ({
@@ -264,6 +288,7 @@ export function createPublicServer(deps: PublicServerDeps): PublicServer {
             comment: ctx.sharing.commentsEnabled,
             resolve: ctx.access?.kind === 'owner',
             respond: ctx.sharing.responsesEnabled,
+            edit: artifact.kind === 'whiteboard' && canEditBoard(ctx.sharing, ctx.access),
           },
           ...(ctx.access?.kind === 'owner' ? { sharing: sharingSummary(ctx) } : {}),
         }
@@ -362,6 +387,12 @@ export function createPublicServer(deps: PublicServerDeps): PublicServer {
   route('GET', 'responses/mine', responseRoutes.mine, true)
   route('PUT', 'responses/mine', responseRoutes.save)
 
+  const boardRoutes = createBoardRoutes({ store, boards, pollMs: deps.boardPollMs ?? BOARD_POLL_MS })
+  route('GET', 'board', boardRoutes.board, true, { scope: 'board' })
+  route('GET', 'board/changes', boardRoutes.changes, true, { scope: 'board' })
+  // The elements a canvas sends at once, and room for the object around them.
+  route('POST', 'board/elements', boardRoutes.push, false, { scope: 'board', bodyBytes: MAX_BOARD_PUSH_BYTES + 1024 })
+
   async function handleApi(
     req: http.IncomingMessage,
     res: http.ServerResponse,
@@ -380,11 +411,12 @@ export function createPublicServer(deps: PublicServerDeps): PublicServer {
       if (req.headers.origin !== origin || !fromViewer) return apiForbidden(res)
       if (method !== 'DELETE' && !isJsonContent(req.headers['content-type'])) return apiForbidden(res)
     } else if (found.viewerOnly && !fromViewer) return apiForbidden(res)
-    if (!limiter.allow('host', '')) return json(res, 429, { error: 'rate_limited' })
+    const board = found.scope === 'board'
+    if (!limiter.allow(board ? 'boardHost' : 'host', '')) return json(res, 429, { error: 'rate_limited' })
 
     let body: Record<string, unknown> = {}
     if (method === 'POST' || method === 'PUT') {
-      const parsed = await readJson(req)
+      const parsed = await readJson(req, found.bodyBytes)
       if (!parsed.ok) return json(res, parsed.status, { error: parsed.status === 413 ? 'too_large' : 'invalid_json' })
       if (typeof parsed.value !== 'object' || parsed.value === null) return json(res, 400, { error: 'invalid_json' })
       body = parsed.value as Record<string, unknown>
@@ -394,10 +426,12 @@ export function createPublicServer(deps: PublicServerDeps): PublicServer {
     const artifact = store.getArtifact(id)
     const fields = artifact ? sharing.getSharing(artifact.id) : null
     if (!artifact || !fields) return apiNotFound(res)
-    if (!limiter.allow('artifact', artifact.id)) return json(res, 429, { error: 'rate_limited' })
+    if (!limiter.allow(board ? 'boardArtifact' : 'artifact', artifact.id))
+      return json(res, 429, { error: 'rate_limited' })
 
     const session = currentSession(req, artifact.id, now)
-    if (session && !limiter.allow('session', session.id)) return json(res, 429, { error: 'rate_limited' })
+    if (session && !limiter.allow(board ? 'boardSession' : 'session', session.id))
+      return json(res, 429, { error: 'rate_limited' })
     const principal = session?.principalId ? sharing.getPrincipal(session.principalId) : null
     const access = resolveAccess(fields, session, principal, now)
     if (access && now - access.session.lastSeenAt > SESSION_TOUCH_INTERVAL_MS)
@@ -453,6 +487,15 @@ export function createPublicServer(deps: PublicServerDeps): PublicServer {
       filePath = normalizeBundlePath(filePath)
     } catch {
       return notFound(res)
+    }
+    // Every whiteboard shows the same canvas, served by the host; the board itself comes through the viewer.
+    if (store.getArtifact(grant.a)?.kind === 'whiteboard') {
+      const asset = deps.whiteboardViewer ? await deps.whiteboardViewer.file(filePath) : null
+      if (!asset) return notFound(res)
+      const body = isHtmlPath(filePath)
+        ? Buffer.from(injectBridge(new TextDecoder().decode(asset.bytes), `${capabilityPath}/${BRIDGE_PATH}`))
+        : Buffer.from(asset.bytes.buffer, asset.bytes.byteOffset, asset.bytes.byteLength)
+      return send(res, 200, { ...headers, 'content-type': asset.contentType }, body)
     }
     const file = store.getFile(grant.a, grant.v, filePath)
     const bytes = file ? await blobs.read(file.sha256) : null
@@ -560,6 +603,8 @@ export function createPublicServer(deps: PublicServerDeps): PublicServer {
       })
     },
     close() {
+      // Long polls answer now, so closing never waits for them.
+      boards.close()
       return new Promise((resolve) => {
         if (!server.listening) return resolve()
         server.close(() => resolve())

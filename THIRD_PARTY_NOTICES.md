@@ -140,6 +140,25 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
+## Excalidraw
+
+The bot gateway image includes the whiteboard viewer, built from the npm package
+[`@excalidraw/excalidraw`](https://www.npmjs.com/package/@excalidraw/excalidraw)
+0.18.1 from [Excalidraw](https://github.com/excalidraw/excalidraw). It is
+licensed under the MIT License.
+
+Copyright (c) 2020 Excalidraw
+
+The viewer also ships the fonts of that package unmodified: Excalifont, Virgil,
+Xiaolai, Nunito, Lilita One, Assistant, Cascadia Code, and Liberation Sans under
+the SIL Open Font License 1.1, and Comic Shanns under the MIT License. The
+Excalidraw license and a list of each font family with its license and upstream
+project are distributed in the `licenses/` directory of the viewer, inside the
+gateway image, from
+[`packages/whiteboard/viewer/licenses/`](packages/whiteboard/viewer/licenses/).
+Maestrly replaces the package's Mermaid conversion with a stub, so no Mermaid
+code ships with the viewer.
+
 ## ws
 
 The bot gateway and the desktop app include [ws](https://github.com/websockets/ws)

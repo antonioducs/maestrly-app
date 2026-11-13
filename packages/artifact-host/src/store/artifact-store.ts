@@ -1,13 +1,16 @@
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite'
 import { ArtifactHostError } from '../errors.js'
+import type { ArtifactKind } from '../shell/contract.js'
 import { transaction } from './db.js'
 
 export type OwnerKind = 'local' | 'device' | 'bot'
 export type Visibility = 'private' | 'people' | 'link'
 export type VersionAuthor = 'agent' | 'owner'
+export type { ArtifactKind }
 
 export interface ArtifactRecord {
   id: string
+  kind: ArtifactKind
   title: string
   description: string
   ownerKind: OwnerKind
@@ -20,7 +23,10 @@ export interface ArtifactRecord {
   visibility: Visibility
   createdAt: number
   updatedAt: number
-  /** Bytes of the distinct files and thumbnails of every version; blobs shared with other artifacts count here too. */
+  /**
+   * Bytes of the distinct files and thumbnails of every version, and of a whiteboard's elements; blobs shared with
+   * other artifacts count here too.
+   */
   storageBytes: number
   /** The newest version with a thumbnail, or null when no version has one. */
   thumbnailVersion: number | null
@@ -42,7 +48,7 @@ export type NewArtifact = Pick<
   | 'conversationId'
   | 'conversationTitle'
   | 'createdAt'
->
+> & { kind?: ArtifactKind }
 
 export interface FileRecord {
   path: string
@@ -117,7 +123,8 @@ const ARTIFACT_COLUMNS = `a.*,
   (SELECT COALESCE(SUM(u.bytes), 0) FROM (
     SELECT sha256, bytes FROM version_files WHERE artifact_id = a.id
     UNION SELECT sha256, bytes FROM thumbnails WHERE artifact_id = a.id
-  ) u) AS storage_bytes,
+  ) u) + (SELECT COALESCE(SUM(LENGTH(CAST(b.element_json AS BLOB))), 0) FROM board_elements b WHERE b.artifact_id = a.id)
+    AS storage_bytes,
   (SELECT MAX(t.version) FROM thumbnails t WHERE t.artifact_id = a.id) AS thumbnail_version,
   (SELECT COUNT(*) FROM events e WHERE e.artifact_id = a.id AND e.seen_at IS NULL) AS unseen_events,
   (SELECT COUNT(*) FROM access_requests r WHERE r.artifact_id = a.id AND r.status = 'pending') AS pending_requests,
@@ -132,6 +139,7 @@ const FILTER_COLUMNS: Record<keyof ArtifactListFilter, string> = {
 
 const toArtifact = (row: Row): ArtifactRecord => ({
   id: row.id as string,
+  kind: row.kind as ArtifactKind,
   title: row.title as string,
   description: row.description as string,
   ownerKind: row.owner_kind as OwnerKind,
@@ -189,12 +197,13 @@ export class ArtifactStore {
     transaction(this.db, () => {
       this.db
         .prepare(
-          `INSERT INTO artifacts (id, title, description, owner_kind, owner_id, workspace_id, conversation_id,
+          `INSERT INTO artifacts (id, kind, title, description, owner_kind, owner_id, workspace_id, conversation_id,
              conversation_title, current_version, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`
         )
         .run(
           artifact.id,
+          artifact.kind ?? 'page',
           artifact.title,
           artifact.description,
           artifact.ownerKind,
@@ -218,13 +227,14 @@ export class ArtifactStore {
     transaction(this.db, () => {
       this.db
         .prepare(
-          `INSERT INTO artifacts (id, title, description, owner_kind, owner_id, workspace_id, conversation_id,
+          `INSERT INTO artifacts (id, kind, title, description, owner_kind, owner_id, workspace_id, conversation_id,
              conversation_title, current_version, visibility, comments_enabled, responses_enabled, created_at,
              updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'private', ?, ?, ?, ?)`
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'private', ?, ?, ?, ?)`
         )
         .run(
           artifact.id,
+          artifact.kind ?? 'page',
           artifact.title,
           artifact.description,
           artifact.ownerKind,

@@ -9,6 +9,9 @@
 // It also gives the page `window.maestrly`: `submit(data)` saves a JSON object as the response of the person viewing
 // the page, replacing the one they sent before, and `getResponse()` returns it, or null. Both reject with an error
 // whose `code` is one of `closed`, `unavailable`, `cancelled`, `invalid`, `too_large`, `full`, `rate_limited`, `failed`.
+// On a whiteboard, `maestrly.board` is its canvas's link to the board: `load()`, `push(elements)` and
+// `subscribe(listener)`; they reject with `read_only`, `invalid`, `too_large`, `full`, `rate_limited`, `unavailable`
+// or `failed`. A page whose root element has `data-maestrly-shortcuts="none"` keeps every key but Escape for itself.
 ;(() => {
   const MAX_QUOTE_CHARS = 500
   const MAX_CONTEXT_CHARS = 64
@@ -337,6 +340,8 @@
   )
   window.addEventListener('keydown', (event) => {
     if (event.metaKey || event.ctrlKey || event.altKey) return
+    // A canvas such as the whiteboard's uses single keys as its own tools.
+    if (document.documentElement.dataset.maestrlyShortcuts === 'none' && event.key !== 'Escape') return
     const typing =
       event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable]') !== null
     if (event.key === 'Escape' || (!typing && (event.key === 'c' || event.key === 'f')))
@@ -347,11 +352,17 @@
   // person viewing it. The page never learns who that is, and gets back only what that person saved.
 
   const MAX_RESPONSE_BYTES = 32 * 1024
+  const MAX_BOARD_PUSH_ELEMENTS = 1000
+  const MAX_BOARD_PUSH_BYTES = 900 * 1024
+  const boardListeners = new Set<(change: unknown) => void>()
   let nextRequest = 0
   const pending = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void }>()
   const failure = (code: string) => Object.assign(new Error(`maestrly: ${code}`), { code })
 
-  function ask(type: 'response-get' | 'response-submit', extra: Record<string, unknown>): Promise<unknown> {
+  function ask(
+    type: 'response-get' | 'response-submit' | 'board-load' | 'board-push',
+    extra: Record<string, unknown>
+  ): Promise<unknown> {
     // Opened outside the viewer, nobody can save anything.
     if (window.parent === window) return Promise.reject(failure('unavailable'))
     const requestId = `r${++nextRequest}`
@@ -379,6 +390,35 @@
     getResponse(): Promise<unknown> {
       return ask('response-get', {})
     },
+    board: Object.freeze({
+      /** The whiteboard as { revision, elements, canEdit }. */
+      load(): Promise<unknown> {
+        return ask('board-load', {})
+      },
+      /** Sends elements the person changed; resolves to { revision, kept }, the board's copy of those it refused. */
+      push(elements: unknown): Promise<unknown> {
+        let copy: unknown
+        try {
+          copy = JSON.parse(JSON.stringify(elements))
+        } catch {
+          return Promise.reject(failure('invalid'))
+        }
+        if (!Array.isArray(copy)) return Promise.reject(failure('invalid'))
+        if (
+          copy.length > MAX_BOARD_PUSH_ELEMENTS ||
+          new TextEncoder().encode(JSON.stringify(copy)).byteLength > MAX_BOARD_PUSH_BYTES
+        )
+          return Promise.reject(failure('too_large'))
+        return ask('board-push', { elements: copy })
+      },
+      /** Calls `listener` with { revision, elements } whenever others change the board. Returns the unsubscribe. */
+      subscribe(listener: unknown): () => void {
+        if (typeof listener !== 'function') throw failure('invalid')
+        const call = listener as (change: unknown) => void
+        boardListeners.add(call)
+        return () => boardListeners.delete(call)
+      },
+    }),
   })
   if (!('maestrly' in window)) Object.defineProperty(window, 'maestrly', { value: api, configurable: true })
 
@@ -441,6 +481,23 @@
       pending.delete(data.requestId)
       if (data.ok === true) request.resolve(data.response ?? null)
       else request.reject(failure(typeof data.error === 'string' ? data.error : 'failed'))
+    } else if ((data.type === 'board-loaded' || data.type === 'board-pushed') && typeof data.requestId === 'string') {
+      const request = pending.get(data.requestId)
+      if (!request) return
+      pending.delete(data.requestId)
+      if (data.ok !== true) request.reject(failure(typeof data.error === 'string' ? data.error : 'failed'))
+      else if (data.type === 'board-loaded')
+        request.resolve({ revision: data.revision, elements: data.elements, canEdit: data.canEdit === true })
+      else request.resolve({ revision: data.revision, kept: data.kept })
+    } else if (data.type === 'board-changes') {
+      const change = { revision: data.revision, elements: data.elements }
+      for (const listener of boardListeners) {
+        try {
+          listener(change)
+        } catch (error) {
+          post({ type: 'error', message: String((error as Error)?.message ?? error).slice(0, 300) })
+        }
+      }
     }
   })
 

@@ -131,6 +131,9 @@ export class ArtifactHosting {
           quotaBytes: this.value.quotaGb * 1024 ** 3,
           publicOrigins: this.value.publicAddress ? [this.value.publicAddress] : [],
           ownerName: this.value.ownerName,
+          ...(this.deps.config.whiteboardViewerDir
+            ? { whiteboardViewerDir: this.deps.config.whiteboardViewerDir }
+            : {}),
         },
         {
           clock: this.deps.clock,

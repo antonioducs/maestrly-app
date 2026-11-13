@@ -75,15 +75,15 @@ export const isJsonContent = (value: string | undefined): boolean => /^applicati
 
 type Body = { ok: true; value: unknown } | { ok: false; status: 400 | 413 }
 
-export function readJson(req: http.IncomingMessage): Promise<Body> {
+export function readJson(req: http.IncomingMessage, maxBytes = MAX_API_BODY_BYTES): Promise<Body> {
   return new Promise((resolve) => {
     const chunks: Buffer[] = []
     let size = 0
     let tooLarge = false
     req.on('data', (chunk: Buffer) => {
       size += chunk.length
-      if (size > MAX_API_BODY_BYTES) tooLarge = true
-      if (size > MAX_DRAIN_BYTES) req.destroy()
+      if (size > maxBytes) tooLarge = true
+      if (size > Math.max(MAX_DRAIN_BYTES, maxBytes)) req.destroy()
       if (!tooLarge) chunks.push(chunk)
     })
     req.on('end', () => {

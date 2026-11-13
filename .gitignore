@@ -5,6 +5,7 @@ apps/desktop/out/
 apps/desktop/dist/
 packages/*/dist/
 packages/artifact-host/build/
+packages/whiteboard/build/
 packages/artifact-host/src/generated/
 coverage/
 test-results/

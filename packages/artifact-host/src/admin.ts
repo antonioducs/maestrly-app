@@ -1,4 +1,13 @@
+import {
+  type Board,
+  MAX_BATCH_ELEMENTS,
+  MAX_BOARD_ELEMENTS,
+  parseIncoming,
+  type StoredElement,
+} from '@maestrly/whiteboard'
 import { z } from 'zod'
+import { type BoardAdmin, createBoardAdmin } from './board-admin.js'
+import { type BoardService, createBoardService } from './boards.js'
 import { contentTypeFor, isTextPath, normalizeBundlePath, validateBundle } from './bundle-paths.js'
 import {
   type CommentAnchor,
@@ -54,12 +63,14 @@ import {
 import { createSharingAdmin, type SharingAdmin } from './sharing-admin.js'
 import type { ArtifactStore, FileRecord, ImportedArtifact } from './store/artifact-store.js'
 import { BlobStore } from './store/blobs.js'
+import { BoardStore } from './store/board-store.js'
 import { type CommentRecord, CommentStore } from './store/comment-store.js'
 import { type ResponseRecord, ResponseStore } from './store/response-store.js'
 import { type ArtifactEventKind, SharingStore } from './store/sharing-store.js'
+import type { WhiteboardViewer } from './whiteboard-viewer.js'
 
 /** The owner's interface to a host: used in-process, or across a process boundary through `rpc.ts`. */
-export interface ArtifactAdmin extends SharingAdmin {
+export interface ArtifactAdmin extends SharingAdmin, BoardAdmin {
   status(): Promise<HostStatusInfo>
   create(input: CreateArtifactInput): Promise<ArtifactDetail>
   update(input: UpdateArtifactInput): Promise<ArtifactDetail>
@@ -118,6 +129,10 @@ export interface ArtifactAdminDeps {
   /** The owner's display name, stored with the comments the owner and their agents write. */
   ownerName?: string
   maxComments?: number
+  /** The boards of the host's whiteboards; opened on the store's database when not given. */
+  boards?: BoardService
+  /** The canvas served for whiteboards; without it, this host cannot create them. */
+  whiteboardViewer?: WhiteboardViewer | null
 }
 
 const adminComment = z
@@ -141,8 +156,18 @@ const importedName = z
   .max(MAX_NAME_CHARS)
   .regex(/^\P{Cc}*$/u, 'Use a single line of text')
 /** Sizes and types in a manifest are not trusted: they are taken from the stored files and their paths. */
+const storedElement = z.object({
+  element: z.unknown(),
+  rev: z.number().int().min(1),
+  by: z.enum(['agent', 'person']),
+})
 const importInput = z.object({
   id: recordId,
+  // Hosts older than whiteboards export pages without a kind.
+  kind: z.enum(['page', 'whiteboard']).default('page'),
+  board: z
+    .object({ revision: z.number().int().min(0), elements: z.array(storedElement).max(MAX_BOARD_ELEMENTS) })
+    .optional(),
   owner: z.object({ kind: z.enum(['local', 'device', 'bot']), id: ref }),
   title: z.string().trim().min(1).max(MAX_TITLE_CHARS),
   description: z.string().trim().max(MAX_DESCRIPTION_CHARS),
@@ -165,10 +190,8 @@ const importInput = z.object({
         summary: z.string().trim().max(MAX_SUMMARY_CHARS),
         createdBy: z.enum(['agent', 'owner']),
         createdAt: timestamp,
-        files: z
-          .array(z.object({ path: z.string().min(1).max(MAX_PATH_CHARS), sha256 }))
-          .min(1)
-          .max(MAX_FILES_PER_VERSION),
+        // A page's versions have files, a whiteboard's none: `importRecord` checks which.
+        files: z.array(z.object({ path: z.string().min(1).max(MAX_PATH_CHARS), sha256 })).max(MAX_FILES_PER_VERSION),
       })
     )
     .min(1)
@@ -242,6 +265,11 @@ export function createArtifactAdmin(deps: ArtifactAdminDeps): ArtifactAdmin {
   const responseStore = new ResponseStore(store.db)
   const responses = createResponseService({ store, responses: responseStore, clock, onChange: deps.onChange })
   const ownerName = (deps.ownerName ?? '').trim().slice(0, MAX_NAME_CHARS)
+  const boardStore = new BoardStore(store.db)
+  /** What the host stores: files and thumbnails, and the elements of its whiteboards. */
+  const used = (): number => blobs.totalBytes() + boards.totalBytes()
+  const boards: BoardService =
+    deps.boards ?? createBoardService({ store: boardStore, fits: (extra) => used() + extra <= deps.quotaBytes })
 
   // Writes run one at a time, so deleting unreferenced blobs never races a version that is about to reference them.
   let queue: Promise<unknown> = Promise.resolve()
@@ -282,7 +310,7 @@ export function createArtifactAdmin(deps: ArtifactAdminDeps): ArtifactAdmin {
       if (!blobs.has(shas[i]!)) fresh.set(shas[i]!, f.bytes.byteLength)
     })
     const incoming = [...fresh.values()].reduce((sum, bytes) => sum + bytes, 0)
-    if (blobs.totalBytes() + incoming > deps.quotaBytes)
+    if (used() + incoming > deps.quotaBytes)
       throw new ArtifactHostError('quota_exceeded', 'The artifact storage limit was reached')
     const written: string[] = []
     try {
@@ -311,8 +339,11 @@ export function createArtifactAdmin(deps: ArtifactAdminDeps): ArtifactAdmin {
   function exportOf(id: string): ArtifactExport {
     const artifact = store.getArtifact(id)
     if (!artifact) throw notFound()
+    const board = artifact.kind === 'whiteboard' ? boards.board(id) : null
     return {
       id: artifact.id,
+      kind: artifact.kind,
+      ...(board ? { board: { revision: board.revision, elements: [...board.elements.values()] } } : {}),
       title: artifact.title,
       description: artifact.description,
       workspaceId: artifact.workspaceId,
@@ -364,9 +395,12 @@ export function createArtifactAdmin(deps: ArtifactAdminDeps): ArtifactAdmin {
   }
 
   /** Turns a validated manifest into rows, checking it as the host checks what it creates itself. */
-  async function importRecord(
-    input: z.output<typeof importInput>
-  ): Promise<{ record: ImportedArtifact; comments: CommentRecord[]; responses: ResponseRecord[] }> {
+  async function importRecord(input: z.output<typeof importInput>): Promise<{
+    record: ImportedArtifact
+    comments: CommentRecord[]
+    responses: ResponseRecord[]
+    board: Board | null
+  }> {
     const sizeOf = (sha: string): number => {
       const size = blobs.size(sha)
       if (size === null) throw missingBlob(sha)
@@ -374,17 +408,23 @@ export function createArtifactAdmin(deps: ArtifactAdminDeps): ArtifactAdmin {
     }
     const versions = input.versions.map((version, index) => {
       if (version.number !== index + 1) throw invalidImport('versions: Expected versions numbered from 1')
+      if (input.kind === 'whiteboard' && version.files.length)
+        throw invalidImport('versions: A whiteboard version has no files')
+      if (input.kind === 'page' && !version.files.length)
+        throw invalidImport('versions: A version of a page has at least one file')
       const files: FileRecord[] = version.files.map((file) => {
         const path = normalizeBundlePath(file.path)
         if (path !== file.path) throw invalidImport(`Invalid file path "${file.path}"`)
         return { path, sha256: file.sha256, bytes: sizeOf(file.sha256), contentType: contentTypeFor(path)! }
       })
-      validateBundle(
-        files.map((file) => ({ path: file.path, bytes: { byteLength: file.bytes } })),
-        version.entry
-      )
+      if (input.kind === 'page')
+        validateBundle(
+          files.map((file) => ({ path: file.path, bytes: { byteLength: file.bytes } })),
+          version.entry
+        )
       return { ...version, files }
     })
+    const board = importedBoard(input)
     const numbers = new Set(versions.map((version) => version.number))
     const thumbnails = []
     for (const thumbnail of input.thumbnails) {
@@ -457,6 +497,7 @@ export function createArtifactAdmin(deps: ArtifactAdminDeps): ArtifactAdmin {
           workspaceId: input.workspaceId,
           conversationId: input.conversationId,
           conversationTitle: input.conversationTitle,
+          kind: input.kind,
           commentsEnabled: input.commentsEnabled,
           responsesEnabled: input.responsesEnabled,
           createdAt: input.createdAt,
@@ -474,7 +515,31 @@ export function createArtifactAdmin(deps: ArtifactAdminDeps): ArtifactAdmin {
       },
       comments: imported,
       responses: importedResponses,
+      board,
     }
+  }
+
+  /** A whiteboard's board from another host, checked as the host checks what canvases send. */
+  function importedBoard(input: z.output<typeof importInput>): Board | null {
+    if (input.kind !== 'whiteboard') {
+      if (input.board) throw invalidImport('board: Only a whiteboard has a board')
+      return null
+    }
+    if (!input.board) throw invalidImport('board: A whiteboard needs its board')
+    const { revision } = input.board
+    const elements = new Map<string, StoredElement>()
+    for (let from = 0; from < input.board.elements.length; from += MAX_BATCH_ELEMENTS) {
+      const batch = input.board.elements.slice(from, from + MAX_BATCH_ELEMENTS)
+      const parsed = parseIncoming(batch.map((stored) => stored.element))
+      if (!parsed.ok) throw invalidImport('board: An element is not valid')
+      parsed.elements.forEach((element, index) => {
+        const { rev, by } = batch[index]!
+        if (rev > revision) throw invalidImport('board: An element is newer than the board')
+        if (elements.has(element.id)) throw invalidImport('board: One element per ID')
+        elements.set(element.id, { element, rev, by })
+      })
+    }
+    return { revision, elements }
   }
 
   async function loadVersion(id: string, version: number): Promise<Map<string, Uint8Array>> {
@@ -489,6 +554,16 @@ export function createArtifactAdmin(deps: ArtifactAdminDeps): ArtifactAdmin {
 
   return {
     ...createSharingAdmin({ store, sharing, clock, onChange: deps.onChange }),
+    ...createBoardAdmin({
+      store,
+      sharing,
+      boards,
+      clock,
+      viewer: deps.whiteboardViewer ?? null,
+      detail,
+      exclusive,
+      onChange: deps.onChange,
+    }),
 
     async listComments(id, filter) {
       return comments.list(id, filter)
@@ -516,7 +591,7 @@ export function createArtifactAdmin(deps: ArtifactAdminDeps): ArtifactAdmin {
     },
 
     async status() {
-      return { artifactCount: store.countArtifacts(), storageBytes: blobs.totalBytes(), quotaBytes: deps.quotaBytes }
+      return { artifactCount: store.countArtifacts(), storageBytes: used(), quotaBytes: deps.quotaBytes }
     },
 
     async create(raw) {
@@ -554,6 +629,8 @@ export function createArtifactAdmin(deps: ArtifactAdminDeps): ArtifactAdmin {
       return exclusive(async () => {
         const artifact = store.getArtifact(input.id)
         if (!artifact) throw notFound()
+        if (artifact.kind === 'whiteboard')
+          throw new ArtifactHostError('unsupported_type', 'This artifact is a whiteboard: it changes through its board')
         if (artifact.currentVersion !== input.baseVersion)
           throw new ArtifactHostError('version_conflict', `Version ${artifact.currentVersion} is the current version`, {
             currentVersion: artifact.currentVersion,
@@ -637,6 +714,7 @@ export function createArtifactAdmin(deps: ArtifactAdminDeps): ArtifactAdmin {
         if (!isArtifactId(id)) return false
         const shas = store.blobsOf(id)
         if (!store.deleteArtifact(id)) return false
+        boards.forget(id)
         await discard(shas)
         deps.onChange?.(id)
         return true
@@ -654,7 +732,7 @@ export function createArtifactAdmin(deps: ArtifactAdminDeps): ArtifactAdmin {
         if (!contentType)
           throw new ArtifactHostError('unsupported_type', 'A thumbnail must be a PNG, JPEG or WebP image')
         const sha = BlobStore.sha256(image)
-        if (!blobs.has(sha) && blobs.totalBytes() + image.byteLength > deps.quotaBytes)
+        if (!blobs.has(sha) && used() + image.byteLength > deps.quotaBytes)
           throw new ArtifactHostError('quota_exceeded', 'The artifact storage limit was reached')
         const fresh = !blobs.has(sha)
         await blobs.put(image)
@@ -713,7 +791,7 @@ export function createArtifactAdmin(deps: ArtifactAdminDeps): ArtifactAdmin {
         if (total > MAX_VERSION_BYTES)
           throw new ArtifactHostError('bundle_too_large', 'One call cannot carry more than 50 MiB')
         const incoming = [...fresh.values()].reduce((sum, bytes) => sum + bytes, 0)
-        if (blobs.totalBytes() + incoming > deps.quotaBytes)
+        if (used() + incoming > deps.quotaBytes)
           throw new ArtifactHostError('quota_exceeded', 'The artifact storage limit was reached')
         // Until an import references them, these blobs are unreferenced: a restart of the host removes them.
         const sha256: string[] = []
@@ -735,11 +813,21 @@ export function createArtifactAdmin(deps: ArtifactAdminDeps): ArtifactAdmin {
             return detail(input.id)!
           throw new ArtifactHostError('already_exists', 'An artifact with this ID already exists')
         }
-        const { record, comments: imported, responses: importedResponses } = await importRecord(input)
+        const { record, comments: imported, responses: importedResponses, board } = await importRecord(input)
+        if (board) {
+          const bytes = [...board.elements.values()].reduce(
+            (sum, stored) => sum + Buffer.byteLength(JSON.stringify(stored.element)),
+            0
+          )
+          if (used() + bytes > deps.quotaBytes)
+            throw new ArtifactHostError('quota_exceeded', 'The artifact storage limit was reached')
+        }
         store.importArtifact(record, () => {
           commentStore.importComments(imported)
           responseStore.importResponses(importedResponses)
+          if (board) boardStore.write(input.id, board, [...board.elements.keys()])
         })
+        boards.forget(input.id)
         deps.onChange?.(input.id)
         return detail(input.id)!
       })

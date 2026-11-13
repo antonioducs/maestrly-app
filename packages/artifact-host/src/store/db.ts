@@ -4,6 +4,18 @@ import { DatabaseSync } from 'node:sqlite'
 
 const EVENT_KINDS = "'device_added', 'access_requested', 'invite_declined', 'comment_added', 'response_submitted'"
 
+/** One row per element of a whiteboard, deleted ones included: a tombstone keeps a late copy from reviving it. */
+const BOARD_ELEMENTS = `
+CREATE TABLE IF NOT EXISTS board_elements (
+  artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
+  id TEXT NOT NULL,
+  rev INTEGER NOT NULL,
+  by TEXT NOT NULL CHECK (by IN ('agent', 'person')),
+  element_json TEXT NOT NULL,
+  PRIMARY KEY (artifact_id, id)
+);
+CREATE INDEX IF NOT EXISTS board_elements_rev ON board_elements (artifact_id, rev);`
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS host_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS artifacts (
@@ -22,7 +34,10 @@ CREATE TABLE IF NOT EXISTS artifacts (
   comments_enabled INTEGER NOT NULL DEFAULT 1,
   responses_enabled INTEGER NOT NULL DEFAULT 1,
   created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
+  updated_at INTEGER NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'page' CHECK (kind IN ('page', 'whiteboard')),
+  board_revision INTEGER NOT NULL DEFAULT 0,
+  board_editors TEXT NOT NULL DEFAULT 'owner' CHECK (board_editors IN ('owner', 'people'))
 );
 CREATE INDEX IF NOT EXISTS artifacts_workspace ON artifacts (workspace_id, updated_at);
 CREATE INDEX IF NOT EXISTS artifacts_conversation ON artifacts (conversation_id, updated_at);
@@ -135,10 +150,11 @@ CREATE TABLE IF NOT EXISTS owner_tickets (
   token_hash TEXT PRIMARY KEY,
   artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
   expires_at INTEGER NOT NULL
-);`
+);
+${BOARD_ELEMENTS}`
 
 /** Bumped with every change that tables created by an earlier build need applied through `MIGRATIONS`. */
-export const SCHEMA_VERSION = 2
+export const SCHEMA_VERSION = 3
 
 /** What brings tables created at version N - 1 to N. A new database is created current by `SCHEMA`. */
 const MIGRATIONS: Record<number, string> = {
@@ -158,6 +174,12 @@ INSERT INTO events_next (id, artifact_id, kind, data_json, created_at, seen_at)
 DROP TABLE events;
 ALTER TABLE events_next RENAME TO events;
 CREATE INDEX IF NOT EXISTS events_unseen ON events (artifact_id, seen_at);`,
+  // Whiteboards: an artifact's kind, its board's revision, and whether the people it is shared with may edit it.
+  3: `
+ALTER TABLE artifacts ADD COLUMN kind TEXT NOT NULL DEFAULT 'page' CHECK (kind IN ('page', 'whiteboard'));
+ALTER TABLE artifacts ADD COLUMN board_revision INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE artifacts ADD COLUMN board_editors TEXT NOT NULL DEFAULT 'owner' CHECK (board_editors IN ('owner', 'people'));
+${BOARD_ELEMENTS}`,
 }
 
 export function transaction<T>(db: DatabaseSync, fn: () => T): T {

@@ -440,3 +440,39 @@ test('bots can neither export, store blobs, nor import', async () => {
     ).toMatchObject({ ok: false, error: { code: 'invalid_input' } })
   expect(await h.artifacts.admin()!.get('BotImport_000000000001')).toBeNull()
 })
+
+test('a bot creates whiteboards under its own name and edits only its own', async () => {
+  const h = await harness()
+  await h.artifacts.update({ enabled: true })
+  await h.lifecycle.patch(h.bot.id, { publishArtifacts: true })
+  const admin = h.artifacts.admin()!
+  const created = vi.spyOn(admin, 'createBoard').mockImplementation(async () => ({}) as never)
+  const board = {
+    title: 'Board',
+    owner: { kind: 'device', id: 'spoof' },
+    origin: { workspaceId: 'spoof', conversationId: 'conversation', conversationTitle: 'Test' },
+    ops: [{ op: 'card', id: 'a', text: 'A' }],
+  }
+  const reply = await (
+    await h.request('POST', '/internal/v1/artifacts/admin', call('createBoard', [board]), true)
+  ).json()
+  expect(reply.ok).toBe(true)
+  expect(created).toHaveBeenCalledWith({
+    ...board,
+    owner: { kind: 'bot', id: h.bot.id },
+    origin: { ...board.origin, workspaceId: null },
+  })
+
+  const device = await (await h.request('POST', '/v1/artifacts/upload', call('create', [bundle()]))).json()
+  const applied = vi.spyOn(admin, 'applyBoard')
+  for (const [method, args] of [
+    ['applyBoard', [{ id: device.value.id, baseRevision: 0, ops: [{ op: 'delete', id: 'a' }] }]],
+    ['readBoard', [device.value.id]],
+  ] as const) {
+    const refused = await (
+      await h.request('POST', '/internal/v1/artifacts/admin', call(method, [...args]), true)
+    ).json()
+    expect(refused, method).toMatchObject({ ok: false, error: { code: 'not_found' } })
+  }
+  expect(applied).not.toHaveBeenCalled()
+})

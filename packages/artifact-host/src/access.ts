@@ -29,6 +29,12 @@ export function resolveAccess(
   return { kind: 'person', session, principal }
 }
 
+/** The owner may always edit a whiteboard; the people it is shared with, when the owner lets them. */
+export function canEditBoard(sharing: SharingFields, access: Access | null): boolean {
+  if (!access) return false
+  return access.kind === 'owner' || sharing.boardEditors === 'people'
+}
+
 export interface Gate {
   /** The visitor may ask the owner for access. */
   request: boolean

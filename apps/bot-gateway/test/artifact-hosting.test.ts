@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
@@ -164,4 +164,41 @@ test('the viewer follows the running host: unavailable while off, then each reop
   expect((await viewer(`/a/${id}`)).status).toBe(200)
   await hosting.close()
   expect((await viewer(`/a/${id}`)).status).toBe(503)
+})
+
+test('hosts whiteboards only with the viewer the image ships', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'gateway-whiteboards-'))
+  const viewer = path.join(dir, 'whiteboard-viewer')
+  mkdirSync(viewer)
+  writeFileSync(path.join(viewer, 'index.html'), '<!doctype html><title>Board</title>')
+  expect(loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: dir }).whiteboardViewerDir).toBeNull()
+  expect(
+    loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: dir, MAESTRLY_WHITEBOARD_VIEWER_DIR: ` ${viewer} ` }).whiteboardViewerDir
+  ).toBe(viewer)
+  expect(() =>
+    loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: dir, MAESTRLY_WHITEBOARD_VIEWER_DIR: 'relative/viewer' })
+  ).toThrow('Expected an absolute path')
+  cleanups.push(async () => rmSync(dir, { recursive: true, force: true }))
+  const board = {
+    title: 'Board',
+    owner: { kind: 'device' as const, id: 'device' },
+    origin: { workspaceId: null, conversationId: null, conversationTitle: null },
+  }
+  for (const whiteboardViewerDir of [viewer, null]) {
+    const data = mkdtempSync(path.join(dir, 'data-'))
+    const config = { ...loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: data }), artifactsPort: 0, whiteboardViewerDir }
+    const store = new Store(data)
+    const network = new FleetNetwork(new FakeDockerDriver(), config.network)
+    await network.refresh()
+    const hosting = new ArtifactHosting({ store, config, network, emit: () => {} })
+    try {
+      await hosting.update({ enabled: true })
+      const created = hosting.admin()!.createBoard(board)
+      if (whiteboardViewerDir) expect((await created).detail.kind).toBe('whiteboard')
+      else await expect(created).rejects.toMatchObject({ code: 'unsupported_type' })
+    } finally {
+      await hosting.close()
+      store.close()
+    }
+  }
 })

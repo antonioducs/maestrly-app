@@ -171,6 +171,10 @@ const EXPECTED_TOOL_NAMES = [
   'artifact_comment_reply',
   'artifact_comment_resolve',
   'artifact_responses',
+  'whiteboard_create',
+  'whiteboard_read',
+  'whiteboard_edit',
+  'whiteboard_snapshot',
   'preview_interface',
 ] as const
 
@@ -273,6 +277,10 @@ const EXPECTED_SHAPES: ToolShape[] = [
   shape('artifact_comment_reply', ['body', 'commentId', 'id'], ['body', 'commentId', 'id']),
   shape('artifact_comment_resolve', ['commentId', 'id'], ['commentId', 'id']),
   shape('artifact_responses', ['cursor', 'id', 'limit'], ['id']),
+  shape('whiteboard_create', ['description', 'ops', 'title'], ['title']),
+  shape('whiteboard_read', ['id', 'section', 'since'], ['id']),
+  shape('whiteboard_edit', ['baseRevision', 'id', 'ops'], ['baseRevision', 'id', 'ops']),
+  shape('whiteboard_snapshot', ['id'], ['id']),
   shape('preview_interface', ['html', 'width'], ['html']),
 ]
 
@@ -367,6 +375,11 @@ describe('MCP app tools inventory', () => {
         : []
     )
     expect(names).not.toContain('artifact_open')
+    // A bot cannot open the viewer, so it has no snapshot of a whiteboard.
+    const boards = (await listToolInventory(convId))
+      .map((tool) => tool.name)
+      .filter((name) => name.startsWith('whiteboard_'))
+    expect(boards).toEqual(enabled ? ['whiteboard_create', 'whiteboard_read', 'whiteboard_edit'] : [])
   })
 
   it('omits desktop-only app tools from bot catalogs and rejects their calls', async () => {
@@ -468,7 +481,7 @@ describe('MCP app tools inventory', () => {
   it('classifies every registered app-tool exactly once with no orphan policy entries', async () => {
     const registered = (await listToolInventory(convId)).map((tool) => tool.name).sort()
     const classified = Object.keys(APP_TOOL_POLICY).sort()
-    expect(registered).toHaveLength(88)
+    expect(registered).toHaveLength(92)
     expect(classified).toEqual([...registered, ...LINKED_BOARD_TOOL_NAMES, ...BOT_INSTANCE_TOOL_NAMES].sort())
   })
 
@@ -594,5 +607,10 @@ describe('MCP app tools inventory', () => {
     expect(appToolAllowed('plan', 'artifact_comment_reply')).toBe(true)
     expect(appToolAllowed('maestro', 'artifact_comment_reply')).toBe(false)
     expect(appToolAllowed('maestro', 'artifact_comment_resolve')).toBe(false)
+    expect(appToolAllowed('ask', 'whiteboard_read')).toBe(true)
+    expect(appToolAllowed('maestro', 'whiteboard_read')).toBe(true)
+    expect(appToolAllowed('plan', 'whiteboard_edit')).toBe(true)
+    expect(appToolAllowed('maestro', 'whiteboard_edit')).toBe(false)
+    expect(appToolAllowed('maestro', 'whiteboard_create')).toBe(false)
   })
 })

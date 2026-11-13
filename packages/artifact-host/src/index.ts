@@ -26,6 +26,7 @@ export type { ResponseAuthorKind, ResponseData, ResponseListInput, ResponseView 
 export { ARTIFACT_HEADER, isResponseData } from './shell/contract.js'
 export { sameContent } from './schemas.js'
 export type {
+  ApplyBoardInput,
   ArtifactContent,
   ArtifactExport,
   ArtifactDetail,
@@ -33,8 +34,13 @@ export type {
   ArtifactListFilter,
   ArtifactSummary,
   ArtifactVersionInfo,
+  BoardApply,
+  BoardCreated,
+  BoardRead,
   BundleFile,
   CreateArtifactInput,
+  CreateBoardInput,
+  ReadBoardOptions,
   AccessRequestView,
   ArtifactEventView,
   DeviceView,
@@ -46,10 +52,11 @@ export type {
   UpdateArtifactInput,
 } from './schemas.js'
 export type { SharingAdmin } from './sharing-admin.js'
-export type { OwnerKind, VersionAuthor, Visibility } from './store/artifact-store.js'
+export type { ArtifactKind, OwnerKind, VersionAuthor, Visibility } from './store/artifact-store.js'
 export {
   ARTIFACT_EVENT_KINDS,
   type ArtifactEventKind,
+  type BoardEditors,
   type EventData,
   type PrincipalKind,
 } from './store/sharing-store.js'

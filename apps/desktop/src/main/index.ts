@@ -511,7 +511,8 @@ function initArtifacts(): void {
     vault,
     getConversation,
     workspaceName: (id) => getWorkspace(id)?.name,
-    requestThumbnail: (id, version) => thumbnails?.request(id, version),
+    requestThumbnail: (id, version, options) => thumbnails?.request(id, version, options),
+    captureSnapshot: captureArtifactThumbnail,
     resolveDirectory: async (conversation, relative) =>
       (await (await createConversationFileScope(conversation)).resolveBridgePath(relative)).target,
     openExternal: (url) => shell.openExternal(url),

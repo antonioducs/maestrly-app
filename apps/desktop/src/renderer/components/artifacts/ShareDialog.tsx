@@ -492,6 +492,21 @@ export function ShareDialog({
               </section>
             )}
 
+            {item.kind === 'whiteboard' && sharing.visibility !== 'private' && sharing.boardEditors !== undefined && (
+              <section className="flex items-start justify-between gap-3 py-4 hairline-t">
+                <div className="min-w-0">
+                  <h3 className="text-xs font-semibold text-foreground/85">{t('artifacts.whiteboard.allow')}</h3>
+                  <p className="mt-0.5 text-xs text-muted-foreground">{t('artifacts.whiteboard.allowHint')}</p>
+                </div>
+                <SettingsSwitch
+                  checked={sharing.boardEditors === 'people'}
+                  label={t('artifacts.whiteboard.allow')}
+                  disabled={busy}
+                  onChange={() => void patch({ boardEditors: sharing.boardEditors === 'people' ? 'owner' : 'people' })}
+                />
+              </section>
+            )}
+
             <section className="py-3 hairline-t">
               {confirmAll ? (
                 <InlineConfirm

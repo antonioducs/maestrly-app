@@ -15,6 +15,12 @@ export const MAX_DESCRIPTION_CHARS = 500
 export const MAX_SUMMARY_CHARS = 500
 export const MAX_EDITS = 100
 export const MAX_TEXT_READ_BYTES = 200 * 1024
+/** A whiteboard's elements as stored JSON, deleted ones included. */
+export const MAX_BOARD_BYTES = 16 * MiB
+export { MAX_BOARD_PUSH_BYTES } from './shell/contract.js'
+/** How long a canvas's request for changes waits for one: below the 30 s a gateway proxy keeps an idle request. */
+export const BOARD_POLL_MS = 20_000
+export const MAX_BOARD_WAITERS_PER_ARTIFACT = 400
 export const OWNER_TICKET_TTL_MS = 60_000
 export const OWNER_SESSION_TTL_MS = 30 * 24 * HOUR_MS
 /** A session's sliding expiry is written at most this often, not on every request. */

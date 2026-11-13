@@ -67,6 +67,7 @@
     "@maestrly/artifact-host": "0.1.0",
     "@maestrly/bot-fleet-protocol": "0.1.0",
     "@maestrly/protocol": "0.1.0",
+    "@maestrly/whiteboard": "0.1.0",
     "@milkdown/crepe": "^7.22.3",
     "@modelcontextprotocol/sdk": "1.32.1",
     "@noble/curves": "2.4.0",

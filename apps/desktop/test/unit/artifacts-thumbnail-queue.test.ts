@@ -47,6 +47,31 @@ describe('ThumbnailQueue', () => {
     expect(deps.capture).toHaveBeenCalledTimes(2)
   })
 
+  it('captures a version again when its content changed in place, as a whiteboard’s does', async () => {
+    let release: () => void = () => {}
+    const { queue, order } = setup({
+      capture: async (url) => {
+        order.push(url)
+        if (order.length === 1) await new Promise<void>((resolve) => (release = resolve))
+        return image
+      },
+    })
+    queue.request('board', 1)
+    await vi.waitFor(() => expect(order).toHaveLength(1))
+    // A change while the capture runs: the capture under way may have missed it, so another one follows.
+    queue.request('board', 1, { again: true })
+    queue.request('board', 1, { again: true })
+    release()
+    await queue.idle()
+    expect(order).toEqual(['owner:board:1', 'owner:board:1'])
+    queue.request('board', 1)
+    await queue.idle()
+    expect(order).toHaveLength(2)
+    queue.request('board', 1, { again: true })
+    await queue.idle()
+    expect(order).toHaveLength(3)
+  })
+
   it('retries a failed version only after a while, and reports failures', async () => {
     let fail = true
     const { queue, deps, advance } = setup({

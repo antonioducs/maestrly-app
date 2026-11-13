@@ -1,8 +1,18 @@
 const MINUTE_MS = 60_000
 const HOUR_MS = 60 * MINUTE_MS
 
-/** Requests per minute. They do not rely on client IPs: behind a proxy such as Tailscale, all arrive from loopback. */
-const REQUESTS_PER_MINUTE = { host: 600, artifact: 300, session: 120 } as const
+/**
+ * Requests per minute. They do not rely on client IPs: behind a proxy such as Tailscale, all arrive from loopback.
+ * Whiteboards have their own budget: every canvas sends while a person draws and asks again after every change.
+ */
+const REQUESTS_PER_MINUTE = {
+  host: 600,
+  artifact: 300,
+  session: 120,
+  boardHost: 2400,
+  boardArtifact: 1200,
+  boardSession: 240,
+} as const
 const CODE_FAILURES_PER_BROWSER = 5
 const CODE_LOCK_MS = 15 * MINUTE_MS
 const CODE_ATTEMPTS_PER_ARTIFACT = 100

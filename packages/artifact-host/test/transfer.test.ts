@@ -43,7 +43,15 @@ function host(quotaBytes = 8 * 1024 * 1024): Host {
     cleanup()
   })
   return {
-    admin: createArtifactAdmin({ store, blobs, clock: clock.now, quotaBytes, sharing, ownerName: 'Owner' }),
+    admin: createArtifactAdmin({
+      store,
+      blobs,
+      clock: clock.now,
+      quotaBytes,
+      sharing,
+      ownerName: 'Owner',
+      whiteboardViewer: { file: async () => null },
+    }),
     store,
     blobs,
     sharing,
@@ -365,6 +373,66 @@ describe('artifact transfer', () => {
     }
     await target.admin.importArtifact(lying)
     expect(await target.admin.listFiles(id, 1)).toEqual(await source.admin.listFiles(id, 1))
+  })
+
+  it('moves a whiteboard with its board, and tells a different board apart', async () => {
+    const source = host()
+    const target = host()
+    const { detail, revision } = await source.admin.createBoard({
+      title: 'Plan',
+      owner: DEVICE,
+      origin: { workspaceId: 'ws-1', conversationId: 'conv-1', conversationTitle: 'Chat' },
+      ops: [
+        { op: 'section', id: 'now', title: 'Now' },
+        { op: 'card', id: 'a', text: 'Ship it', in: 'now' },
+      ],
+    })
+    await source.admin.applyBoard({ id: detail.id, baseRevision: revision, ops: [{ op: 'delete', id: 'a' }] })
+    const manifest = await source.admin.exportArtifact(detail.id)
+    expect(manifest.kind).toBe('whiteboard')
+    expect(manifest.board?.revision).toBe(revision + 1)
+    expect(manifest.versions[0]?.files).toEqual([])
+    const imported = await target.admin.importArtifact(JSON.parse(JSON.stringify({ ...manifest, owner: DEVICE })))
+    expect(imported.kind).toBe('whiteboard')
+    const [before, after] = [await source.admin.readBoard(detail.id), await target.admin.readBoard(detail.id)]
+    expect(after.revision).toBe(before.revision)
+    expect(after.outline).toEqual(before.outline)
+    const copy = await target.admin.exportArtifact(detail.id)
+    expect(sameContent(copy, manifest)).toBe(true)
+    // The deleted card travels as a tombstone, so a late copy of it cannot come back.
+    expect(copy.board?.elements.find((stored) => stored.element.id === 'a')?.element.isDeleted).toBe(true)
+
+    const changed = structuredClone(manifest)
+    const section = changed.board!.elements.find((stored) => stored.element.id === 'now')!
+    section.element = { ...section.element, x: section.element.x + 1 }
+    expect(sameContent(changed, manifest)).toBe(false)
+    expect(sameContent({ ...manifest, kind: 'page', board: undefined }, manifest)).toBe(false)
+    const again = await errorOf(target.admin.importArtifact({ ...changed, owner: DEVICE }))
+    expect(again.code).toBe('already_exists')
+  })
+
+  it('refuses a whiteboard manifest that carries files or a board that is not valid', async () => {
+    const source = host()
+    const target = host()
+    const { detail } = await source.admin.createBoard({
+      title: 'Plan',
+      owner: DEVICE,
+      origin: { workspaceId: null, conversationId: null, conversationTitle: null },
+      ops: [{ op: 'card', id: 'a', text: 'A' }],
+    })
+    const manifest = await source.admin.exportArtifact(detail.id)
+    const page = await richArtifact(source)
+    const file = (await source.admin.exportArtifact(page)).versions[0]!.files[0]!
+    const withFiles = structuredClone(manifest)
+    withFiles.versions[0]!.files = [file]
+    expect((await errorOf(target.admin.importArtifact({ ...withFiles, owner: DEVICE }))).code).toBe('invalid_input')
+    const broken = structuredClone(manifest)
+    ;(broken.board!.elements[0]!.element as { x: unknown }).x = 'left'
+    expect((await errorOf(target.admin.importArtifact({ ...broken, owner: DEVICE }))).code).toBe('invalid_input')
+    expect((await errorOf(target.admin.importArtifact({ ...manifest, board: undefined, owner: DEVICE }))).code).toBe(
+      'invalid_input'
+    )
+    expect(await target.admin.list()).toEqual([])
   })
 
   it('crosses a JSON transport, with the new methods on the upload path', async () => {

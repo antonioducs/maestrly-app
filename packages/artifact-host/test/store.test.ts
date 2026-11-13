@@ -80,6 +80,7 @@ describe('ArtifactStore', () => {
     store.createArtifact(artifact('A'), version())
     expect(store.getArtifact('A')).toEqual({
       id: 'A',
+      kind: 'page',
       title: 'Title A',
       description: '',
       ownerKind: 'local',

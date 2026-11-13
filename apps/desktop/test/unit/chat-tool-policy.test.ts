@@ -52,8 +52,8 @@ describe('external MCP tool policy', () => {
 })
 
 describe('Maestrly app-tool policy', () => {
-  it('classifies the complete 132-tool product-policy universe', () => {
-    expect(Object.keys(APP_TOOL_POLICY)).toHaveLength(132)
+  it('classifies the complete 136-tool product-policy universe', () => {
+    expect(Object.keys(APP_TOOL_POLICY)).toHaveLength(136)
     for (const entry of Object.values(APP_TOOL_POLICY)) {
       expect(entry).toEqual({
         allowedInPlanAsk: expect.any(Boolean),
@@ -267,6 +267,8 @@ describe('deferred tool loading policy', () => {
       'project_notes_list_pages',
       'debug_start',
       'artifact_create',
+      'whiteboard_create',
+      'whiteboard_read',
     ]) {
       expect(appToolDeferrable(name), name).toBe(true)
     }

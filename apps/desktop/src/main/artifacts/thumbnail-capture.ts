@@ -116,8 +116,22 @@ export function encodeThumbnail(frame: NativeImage, rect: FrameRect): Uint8Array
   throw new ThumbnailCaptureError('too_large')
 }
 
-/** Captures the owner view at `url` (a fresh single-use owner link) and returns the JPEG preview. */
-export async function captureArtifactThumbnail(url: string): Promise<Uint8Array> {
+let previous: Promise<unknown> = Promise.resolve()
+
+/**
+ * Captures the owner view at `url` (a fresh single-use owner link) and returns the JPEG preview. One capture at a time:
+ * thumbnails and whiteboard snapshots share the partition, which each capture wipes when it ends.
+ */
+export function captureArtifactThumbnail(url: string): Promise<Uint8Array> {
+  const run = previous.then(
+    () => capture(url),
+    () => capture(url)
+  )
+  previous = run.catch(() => undefined)
+  return run
+}
+
+async function capture(url: string): Promise<Uint8Array> {
   const origin = new URL(url).origin
   const ses = thumbnailSession()
   // Only the owner view's own origin may load as a page; subresources follow the content's CSP.

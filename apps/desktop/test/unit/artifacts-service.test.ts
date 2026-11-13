@@ -4,7 +4,7 @@ import path from 'node:path'
 import { type ArtifactHost, ArtifactHostError, openArtifactHost } from '@maestrly/artifact-host'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { InviteVault } from '../../src/main/artifacts/invite-vault'
-import { ArtifactsService } from '../../src/main/artifacts/service'
+import { ArtifactsService, BOARD_THUMBNAIL_DELAY_MS } from '../../src/main/artifacts/service'
 import { type ArtifactSource, createDesktopSources, serverUnavailable } from '../../src/main/artifacts/sources'
 import { deleteConversation, getConversation, insertConversation } from '../../src/main/store'
 import type { Conversation, StandaloneConversation } from '../../src/shared/conversation'
@@ -29,7 +29,8 @@ function makeDeps() {
     openExternal: vi.fn(async (_url: string) => {}),
     openInDrawer: vi.fn((_convId: string, _url: string, _activate: boolean) => {}),
     resolveDirectory: vi.fn(async (_conversation: Conversation, relative: string) => path.join(root, relative)),
-    requestThumbnail: vi.fn((_id: string, _version: number) => {}),
+    requestThumbnail: vi.fn((_id: string, _version: number, _options?: { again?: boolean }) => {}),
+    captureSnapshot: vi.fn(async (_url: string) => new Uint8Array([0xff, 0xd8])),
   }
 }
 let deps: ReturnType<typeof makeDeps>
@@ -103,7 +104,16 @@ async function errorOf(promise: Promise<unknown>): Promise<ArtifactHostError> {
 beforeEach(async () => {
   freshDb()
   root = mkdtempSync(path.join(os.tmpdir(), 'artifacts-service-'))
-  host = await openArtifactHost({ dataDir: path.join(root, 'artifacts'), port: 0, quotaBytes: 1024 * 1024 })
+  // Whiteboards need a viewer to serve; an empty page stands in for the canvas.
+  const viewer = path.join(root, 'viewer')
+  mkdirSync(viewer)
+  writeFileSync(path.join(viewer, 'index.html'), '<!doctype html><title>Board</title>')
+  host = await openArtifactHost({
+    dataDir: path.join(root, 'artifacts'),
+    port: 0,
+    quotaBytes: 1024 * 1024,
+    whiteboardViewerDir: viewer,
+  })
   publicAddress = null
   serverReady = true
   deps = makeDeps()
@@ -141,6 +151,7 @@ beforeEach(async () => {
     getConversation,
     workspaceName: (id) => (id === 'gone' ? undefined : `Project ${id.slice(0, 4)}`),
     requestThumbnail: deps.requestThumbnail,
+    captureSnapshot: deps.captureSnapshot,
     resolveDirectory: deps.resolveDirectory,
     openExternal: deps.openExternal,
     openInDrawer: deps.openInDrawer,
@@ -470,6 +481,88 @@ describe('ArtifactsService', () => {
     expect((await service.responses(id)).map((item) => item.author.name)).toEqual(['Ana'])
     expect(await service.setSharing(id, { responsesEnabled: false })).toMatchObject({ responsesEnabled: false })
     await respondAsGuest(id, 'Late', { answer: 'maybe' }, 403)
+  })
+
+  it('lets agents create, read and edit whiteboards within their scope', async () => {
+    const conversation = makeConversation(makeWorkspace().id)
+    const outsider = makeConversation(makeWorkspace().id)
+    const created = await service.createBoard(conversation.id, {
+      title: 'Plan',
+      ops: [{ op: 'card', id: 'api', text: 'API' }],
+    })
+    const id = created.detail.id
+    expect(created.detail).toMatchObject({
+      kind: 'whiteboard',
+      ownerKind: 'device',
+      ownerId: 'device-1',
+      workspaceId: conversation.workspaceId,
+      conversationId: conversation.id,
+    })
+    expect(deps.requestThumbnail).toHaveBeenCalledWith(id, 1)
+
+    const read = await service.readBoardForConversation(conversation.id, id, { since: 0 })
+    expect(read.outline.cards.map((card) => card.text)).toEqual(['API'])
+    for (const attempt of [
+      service.readBoardForConversation(outsider.id, id),
+      service.applyBoardForConversation(outsider.id, {
+        id,
+        baseRevision: read.revision,
+        ops: [{ op: 'delete', id: 'api' }],
+      }),
+      service.boardSnapshotForConversation(outsider.id, id),
+    ])
+      expect((await errorOf(attempt)).code).toBe('not_found')
+
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      deps.requestThumbnail.mockClear()
+      const move = (x: number) => ({ op: 'move' as const, id: 'api', to: { x, y: 0 } })
+      const first = await service.applyBoardForConversation(conversation.id, {
+        id,
+        baseRevision: read.revision,
+        ops: [move(100)],
+      })
+      expect(first).toMatchObject({ title: 'Plan', revision: read.revision + 1, applied: [0], conflicts: [] })
+      vi.advanceTimersByTime(BOARD_THUMBNAIL_DELAY_MS - 1)
+      await service.applyBoardForConversation(conversation.id, { id, baseRevision: first.revision, ops: [move(200)] })
+      vi.advanceTimersByTime(BOARD_THUMBNAIL_DELAY_MS - 1)
+      expect(deps.requestThumbnail).not.toHaveBeenCalled()
+      vi.advanceTimersByTime(1)
+      // One new preview once the agent stops, of the version that changed in place.
+      expect(deps.requestThumbnail.mock.calls).toEqual([[id, 1, { again: true }]])
+    } finally {
+      vi.useRealTimers()
+    }
+
+    const snapshot = await service.boardSnapshotForConversation(conversation.id, id)
+    expect(snapshot).toEqual({ revision: read.revision + 2, image: new Uint8Array([0xff, 0xd8]) })
+    expect(deps.captureSnapshot.mock.calls[0]?.[0]).toMatch(
+      new RegExp(`^http://127\\.0\\.0\\.1:4010/a/${id}#o=.+&v=1&preview=1$`)
+    )
+    const { detail: pageDetail } = await service.create(conversation.id, { title: 'Page', files: page })
+    expect((await errorOf(service.boardSnapshotForConversation(conversation.id, pageDetail.id))).code).toBe(
+      'unsupported_type'
+    )
+  })
+
+  it('tells a whiteboard from a page, and lets the owner choose who draws on it', async () => {
+    const conversation = makeConversation(makeWorkspace().id)
+    const { detail: pageDetail } = await service.create(conversation.id, { title: 'Page', files: page })
+    const { detail } = await host.admin.createBoard({
+      title: 'Board',
+      owner: { kind: 'device', id: 'device-1' },
+      origin: { workspaceId: conversation.workspaceId, conversationId: conversation.id, conversationTitle: null },
+    })
+    const kinds = new Map((await service.listAll()).map((item) => [item.id, item.kind]))
+    expect(kinds.get(detail.id)).toBe('whiteboard')
+    expect(kinds.get(pageDetail.id)).toBe('page')
+    expect((await service.detail(detail.id))?.kind).toBe('whiteboard')
+
+    expect((await service.sharing(detail.id)).boardEditors).toBe('owner')
+    expect((await service.setSharing(detail.id, { boardEditors: 'people' })).boardEditors).toBe('people')
+    expect((await host.admin.readBoard(detail.id)).editors).toBe('people')
+    expect((await service.sharing(pageDetail.id)).boardEditors).toBeUndefined()
+    expect((await errorOf(service.setSharing(pageDetail.id, { boardEditors: 'people' }))).code).toBe('invalid_input')
   })
 
   it('lets agents read, answer and resolve comments within their scope', async () => {

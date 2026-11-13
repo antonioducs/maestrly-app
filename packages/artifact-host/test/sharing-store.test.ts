@@ -98,6 +98,7 @@ describe('SharingStore', () => {
       accessCodeHash: null,
       commentsEnabled: true,
       responsesEnabled: true,
+      boardEditors: 'owner',
     })
     sharing.setSharing('A', { visibility: 'link', linkExpiresAt: 5000, accessCodeHash: 'scrypt$a$b' })
     sharing.setSharing('A', { commentsEnabled: false })
@@ -108,9 +109,12 @@ describe('SharingStore', () => {
       accessCodeHash: 'scrypt$a$b',
       commentsEnabled: false,
       responsesEnabled: false,
+      boardEditors: 'owner',
     })
     sharing.setSharing('A', { responsesEnabled: true })
     expect(sharing.getSharing('A')?.responsesEnabled).toBe(true)
+    sharing.setSharing('A', { boardEditors: 'people' })
+    expect(sharing.getSharing('A')?.boardEditors).toBe('people')
     sharing.setSharing('A', { linkExpiresAt: null, accessCodeHash: null })
     expect(sharing.getSharing('A')).toMatchObject({ linkExpiresAt: null, accessCodeHash: null })
     expect(sharing.getSharing('B')?.visibility).toBe('private')

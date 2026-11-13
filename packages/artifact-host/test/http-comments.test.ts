@@ -133,7 +133,12 @@ describe('comment routes', () => {
   it('takes no comments while they are turned off, and says so in the state', async () => {
     await post(maria, 'Before')
     await h.admin.setSharing(id, { commentsEnabled: false })
-    expect((await maria.get(`${api}/state`)).json.can).toEqual({ comment: false, resolve: false, respond: true })
+    expect((await maria.get(`${api}/state`)).json.can).toEqual({
+      comment: false,
+      resolve: false,
+      respond: true,
+      edit: false,
+    })
     const refused = await post(maria, 'After')
     expect(refused.status).toBe(403)
     expect(refused.json).toEqual({ error: 'comments_disabled' })

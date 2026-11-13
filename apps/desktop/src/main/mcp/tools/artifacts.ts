@@ -34,6 +34,13 @@ export function artifactToolFailure(t: McpToolContext['t']) {
       if (reason === 'on_this_computer') return err(t('errors.artifacts.onThisComputer'))
       return err(t('errors.artifacts.hostUnavailable'))
     }
+    // A whiteboard where a page was expected, or the reverse, and a server that has no whiteboards: no file is wrong.
+    if (error.code === 'unsupported_type' && typeof error.details?.path !== 'string')
+      return err(
+        error.details?.reason === 'no_whiteboards'
+          ? t('errors.artifacts.noWhiteboards')
+          : t('errors.artifacts.wrongKind', { message: error.message })
+      )
     return err(t(`errors.artifacts.${error.code}`, { ...error.details, message: error.message }))
   }
 }

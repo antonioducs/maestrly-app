@@ -1,4 +1,5 @@
 import type { FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
+import { ARTIFACT_CARD_TOOLS } from '../../shared/artifacts'
 import { toolOutputImages, type MessagePart, type ToolState } from '../../shared/chat'
 
 /**
@@ -231,8 +232,7 @@ const PINNED_TOOLS = new Set([
   'create_workspace',
   'delegate',
   'task',
-  'artifact_create',
-  'artifact_update',
+  ...ARTIFACT_CARD_TOOLS,
 ])
 
 const isSubagentPart = (part: MessagePart): part is ToolPart =>
@@ -474,7 +474,7 @@ const pinnedFleetItem = (item: FleetStepItem): boolean =>
     // A task the bot started is a row of its own, with its difficulty, model and result.
     (baseToolName(item.name) === 'task' && !!item.task) ||
     !!item.files?.length ||
-    ['artifact_create', 'artifact_update'].includes(baseToolName(item.name)))
+    ARTIFACT_CARD_TOOLS.includes(baseToolName(item.name)))
 
 type FleetToolItem = Extract<FleetTranscriptItem, { kind: 'tool' }>
 

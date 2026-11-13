@@ -26,6 +26,19 @@ describe('rate limiter', () => {
     expect(limiter.allow('session', 's2')).toBe(true)
   })
 
+  it('gives whiteboards a budget of their own, larger than a page’s', () => {
+    const limiter = createRateLimiter(testClock().now)
+    for (let i = 0; i < 240; i++) expect(limiter.allow('boardSession', 's1')).toBe(true)
+    expect(limiter.allow('boardSession', 's1')).toBe(false)
+    // A session that used its whiteboard budget still has its page budget, and the other way around.
+    expect(limiter.allow('session', 's1')).toBe(true)
+    for (let i = 0; i < 1200; i++) expect(limiter.allow('boardArtifact', 'A')).toBe(true)
+    expect(limiter.allow('boardArtifact', 'A')).toBe(false)
+    for (let i = 0; i < 2400; i++) expect(limiter.allow('boardHost', '')).toBe(true)
+    expect(limiter.allow('boardHost', '')).toBe(false)
+    expect(limiter.allow('host', '')).toBe(true)
+  })
+
   it('makes a browser wait fifteen minutes after five wrong codes', () => {
     const clock = testClock()
     const limiter = createRateLimiter(clock.now)

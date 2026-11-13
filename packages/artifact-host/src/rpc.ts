@@ -39,6 +39,9 @@ export const ADMIN_METHODS = [
   'exportArtifact',
   'putBlobs',
   'importArtifact',
+  'createBoard',
+  'readBoard',
+  'applyBoard',
 ] as const satisfies readonly (keyof ArtifactAdmin)[]
 
 export type AdminMethod = (typeof ADMIN_METHODS)[number]

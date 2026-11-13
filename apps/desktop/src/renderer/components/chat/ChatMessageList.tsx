@@ -28,6 +28,7 @@ import { SharedToolImages, ToolCallCard } from './ToolCallCard'
 import { ConversationDispatchCard, openConversationById } from './ConversationDispatchCard'
 import { WorkspaceCreationCard } from './WorkspaceCreationCard'
 import { ArtifactCard } from '../artifacts/ArtifactCard'
+import { ARTIFACT_CARD_TOOLS } from '../../../shared/artifacts'
 import { SubagentCard } from './SubagentCard'
 import { OrchestrationRun } from './OrchestrationRun'
 import { QuestionCard } from './QuestionCard'
@@ -346,7 +347,7 @@ function Part({
       return <ConversationDispatchCard part={toolPart} conversationId={conversationId} messageId={messageId} />
     if (toolPart.toolName === 'create_workspace')
       return <WorkspaceCreationCard part={toolPart} conversationId={conversationId} messageId={messageId} />
-    if (toolPart.toolName === 'artifact_create' || toolPart.toolName === 'artifact_update')
+    if (ARTIFACT_CARD_TOOLS.includes(toolPart.toolName))
       return <ArtifactCard part={toolPart} conversationId={conversationId} messageId={messageId} />
     if (toolPart.toolName === 'task' || toolPart.toolName === 'delegate')
       return (

@@ -6,3 +6,4 @@ node_modules
 **/.cache
 .bot-fleet-local
 prototypes
+packages/whiteboard/build

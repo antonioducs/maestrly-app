@@ -83,6 +83,7 @@ beforeEach(async () => {
     quotaBytes: 1024 * 1024,
     onChange,
     onActivity,
+    whiteboardViewer: { file: async () => null },
   })
   id = await create('Shared')
   other = await create('Other')
@@ -203,6 +204,27 @@ describe('sharing admin', () => {
       linkExpiresAt: null,
       visibility: 'link',
     })
+  })
+
+  it('lets the people a whiteboard is shared with edit it, and refuses that for a page', async () => {
+    const { detail } = await admin.createBoard({
+      title: 'Board',
+      owner: { kind: 'local', id: 'local' },
+      origin: { workspaceId: null, conversationId: null, conversationTitle: null },
+    })
+    expect((await admin.getSharing(detail.id)).boardEditors).toBe('owner')
+    onChange.mockClear()
+    expect((await admin.setSharing(detail.id, { boardEditors: 'people' })).boardEditors).toBe('people')
+    expect(sharing.getSharing(detail.id)?.boardEditors).toBe('people')
+    expect(onChange).toHaveBeenCalledWith(detail.id)
+    expect((await admin.readBoard(detail.id)).editors).toBe('people')
+    expect((await admin.setSharing(detail.id, { boardEditors: 'owner' })).boardEditors).toBe('owner')
+    expect((await errorOf(admin.setSharing(detail.id, { boardEditors: 'all' as never }))).code).toBe('invalid_input')
+
+    expect((await errorOf(admin.setSharing(id, { boardEditors: 'people' }))).code).toBe('invalid_input')
+    expect(sharing.getSharing(id)?.boardEditors).toBe('owner')
+    // A page has no board, so its sharing says nothing about who edits one.
+    expect((await admin.getSharing(id)).boardEditors).toBeUndefined()
   })
 
   it('signs guests out when the access code changes, and keeps invited people', async () => {

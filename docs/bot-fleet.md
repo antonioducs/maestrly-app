@@ -166,7 +166,9 @@ settings alone. Upgraded servers keep hosting off until you enable it in
 port mapping to older installations; reconnect after updating if needed.
 
 The gateway embeds the artifact host and stores its pages in `/data/artifacts`
-in its persistent volume. The device API port (7443) also serves the artifact
+in its persistent volume. The gateway image also ships the whiteboard canvas
+(about 18 MB) in `/app/whiteboard-viewer`, which the host serves for every
+[whiteboard](artifacts.md#whiteboards). The device API port (7443) also serves the artifact
 viewer under `/a/`, `/c/`, `/_maestrly/shell/` and `/robots.txt`, so the
 desktop, and any route you expose to the gateway, reach bots and artifacts at one
 address. The desktop opens server pages through its gateway connection whenever

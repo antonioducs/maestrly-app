@@ -21,6 +21,8 @@ files:
   # The renderer bundles Mermaid (src/renderer/lib/mermaid.ts); its packaged copies keep only their licenses.
   - "!node_modules/mermaid/dist/**"
   - "!node_modules/@mermaid-js/parser/dist/**"
+  # The whiteboard canvas ships with the bot gateway, not the app: the app needs only the board model in dist/.
+  - "!node_modules/@maestrly/whiteboard/{build,viewer}/**"
   # node-pty ships prebuilds for every platform, and packaging rebuilds it into build/Release anyway. The x64 helper
   # is the Apple silicon app's only Intel code, and macOS warns that the app depends on Rosetta because of it. This
   # stays here, in the shared list: a `files` list under `mac` becomes a second matcher that ignores the exclusions above.
