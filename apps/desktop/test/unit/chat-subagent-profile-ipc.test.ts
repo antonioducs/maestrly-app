@@ -99,13 +99,11 @@ describe('subagent profile IPC', () => {
     })) as { ok: boolean }
     expect(result.ok).toBe(false)
     expect(getAppSetting(SUBAGENT_PROFILES_SETTING_KEY)).toBeNull()
-    for (const effort of ['off', 'maestrly-ultra']) {
-      const pseudo = (await handlers.get('chat:subagent-profiles:set-global')!({} as never, {
-        version: 1,
-        default: [{ providerId: 'p', modelId: 'm', effort }],
-      })) as { ok: boolean }
-      expect(pseudo.ok).toBe(false)
-    }
+    const pseudo = (await handlers.get('chat:subagent-profiles:set-global')!({} as never, {
+      version: 1,
+      default: [{ providerId: 'p', modelId: 'm', effort: 'maestrly-ultra' }],
+    })) as { ok: boolean }
+    expect(pseudo.ok).toBe(false)
     await expect(handlers.get('chat:subagent-profiles:model-meta')!({} as never, '', 'model')).resolves.toEqual({
       status: 'unavailable',
       meta: null,
@@ -345,7 +343,7 @@ describe('subagent profile IPC', () => {
     ).resolves.toEqual({ status: 'available', models: ['sonnet', 'opus'] })
   })
 
-  it('rejects authoritative effort incompatibility before persistence', async () => {
+  it('accepts effort off for models without configurable reasoning while rejecting incompatible explicit efforts', async () => {
     getProviderMock.mockReturnValue({ id: 'provider', name: 'Provider', baseURL: 'https://api.openai.com/v1' })
     hasApiKeyMock.mockReturnValue(true)
     fetchModelsWithStatusMock.mockResolvedValue({ status: 'available', models: ['model'] })
@@ -355,13 +353,26 @@ describe('subagent profile IPC', () => {
       { status: 'available' as const, meta: { reasoning: true, reasoningEfforts: ['low'] } },
     ]) {
       getSubagentProfileModelMetaMock.mockResolvedValue(meta)
-      const result = (await handlers.get('chat:subagent-profiles:set-global')!({} as never, {
+      const rejected = (await handlers.get('chat:subagent-profiles:set-global')!({} as never, {
         version: 1,
         default: [{ providerId: 'provider', modelId: 'model', effort: 'high' }],
       })) as { ok: boolean; errors?: Array<{ code: string }> }
-      expect(result).toMatchObject({ ok: false, errors: [{ code: 'invalid-effort' }] })
+      expect(rejected).toMatchObject({ ok: false, errors: [{ code: 'invalid-effort' }] })
       expect(getAppSetting(SUBAGENT_PROFILES_SETTING_KEY)).toBeNull()
     }
+
+    getSubagentProfileModelMetaMock.mockResolvedValue({ status: 'available', meta: { reasoning: false } })
+    const accepted = (await handlers.get('chat:subagent-profiles:set-global')!({} as never, {
+      version: 1,
+      default: [{ providerId: 'provider', modelId: 'model', effort: 'off' }],
+    })) as { ok: boolean; value?: { rules: unknown; diagnostics: unknown[] } }
+    expect(accepted).toMatchObject({
+      ok: true,
+      value: {
+        rules: { version: 1, default: [{ providerId: 'provider', modelId: 'model', effort: 'off' }] },
+        diagnostics: [],
+      },
+    })
   })
 
   it('allows supported Fast, rejects known incompatibility and warns on unknown capability', async () => {

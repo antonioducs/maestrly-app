@@ -76,6 +76,7 @@ describe('subagent profile conversation UI contract', () => {
     const maestro = source('src/renderer/components/chat/MaestroControl.tsx')
     expect(editor).toContain("import { ProfileSelectionBody } from '../model-settings/SelectionBodies'")
     expect(editor).toContain('<ProfileSelectionBody')
+    expect(editor).toContain('allowOff')
     expect(bodies).toContain("import { CandidateFields } from '../subagent-profiles/CandidateFields'")
     expect(bodies).toContain('<CandidateFields')
     expect(maestro).toContain('<CandidateFields')

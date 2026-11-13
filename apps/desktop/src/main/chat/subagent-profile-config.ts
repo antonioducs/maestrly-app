@@ -32,8 +32,8 @@ function parseCandidate(
   if (!providerId || !modelId || !effort) {
     return { errors: [structuralError(`${path} requires providerId, modelId and effort.`)] }
   }
-  if (!allowLegacyPseudoEfforts && !isRealSubagentProfileEffort(effort)) {
-    return { errors: [structuralError(`${path}.effort must be a real model effort, not “${effort}”.`)] }
+  if (!allowLegacyPseudoEfforts && effort !== 'off' && !isRealSubagentProfileEffort(effort)) {
+    return { errors: [structuralError(`${path}.effort must be a real model effort or off, not “${effort}”.`)] }
   }
   if (raw.fastMode !== undefined && typeof raw.fastMode !== 'boolean') {
     return { errors: [structuralError(`${path}.fastMode must be a boolean when provided.`)] }
