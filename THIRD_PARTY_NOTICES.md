@@ -167,7 +167,7 @@ The complete licenses are distributed with the packages in
 ## node-forge
 
 The desktop app includes [node-forge](https://github.com/digitalbazaar/forge)
-1.4.2 to sign the self-signed certificate a computer presents to the owner's
+1.4.3 to sign the self-signed certificate a computer presents to the owner's
 other computers. It is dual-licensed under the BSD-3-Clause License and the GNU
 GPL 2.0; Maestrly uses it under the BSD-3-Clause License, Copyright (c) 2010,
 Digital Bazaar, Inc. The complete license is distributed with the package in
@@ -222,9 +222,9 @@ SOFTWARE.
 ## Mobile app
 
 The mobile app (`apps/mobile`) is built with [Expo](https://expo.dev) SDK 58
-(`expo` 58.0.14 and the `expo-*` modules, such as `expo-video` 58.0.11,
-`expo-audio` 58.0.9 and `expo-sharing` 58.0.19, Expo Router 58.0.23) and
-[React Native](https://reactnative.dev) 0.88.0, both under the MIT License. It
+(`expo` 58.0.25 and the `expo-*` modules, such as `expo-video` 58.0.14,
+`expo-audio` 58.0.12 and `expo-sharing` 58.0.23, Expo Router 58.0.31) and
+[React Native](https://reactnative.dev) 0.88.1, both under the MIT License. It
 also includes, under the MIT License,
 [react-native-marked](https://github.com/gmsgowtham/react-native-marked) 8.3.2
 with [marked](https://github.com/markedjs/marked) 18.0.14,
@@ -372,7 +372,7 @@ are in
 
 ## Cursor SDK
 
-Maestrly packages `@cursor/sdk` 1.0.34 and one matching supported native helper
+Maestrly packages `@cursor/sdk` 1.3.1 and one matching supported native helper
 package. These are proprietary Anysphere components, separate from Maestrly's
 MIT-licensed source. The upstream license is reproduced verbatim in
 [`cursor-sdk-LICENSE.md`](apps/desktop/resources/licenses/cursor-sdk-LICENSE.md);

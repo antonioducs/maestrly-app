@@ -1,6 +1,6 @@
 # Cursor subscription
 
-Maestrly's desktop chat supports Cursor through the bundled Cursor SDK 1.0.34.
+Maestrly's desktop chat supports Cursor through the bundled Cursor SDK 1.3.1.
 In **Settings › Maestrly Chat › Accounts**, choose **Add account**, pick
 **Cursor**, and complete the browser sign-in flow. Then choose a discovered
 Cursor model in the conversation model picker. To connect another Cursor account

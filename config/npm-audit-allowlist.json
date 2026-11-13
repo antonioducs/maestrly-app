@@ -1,26 +1,4 @@
 {
   "schema": 1,
-  "exceptions": [
-    {
-      "package": "deepmerge",
-      "path": "node_modules/deepmerge",
-      "advisories": ["GHSA-gcqx-w48m-w2h4"],
-      "reason": "Build-time only: expo 58 -> @expo/config (58.0.9, the latest release, which still depends on deepmerge ^4.3.1) merges the mobile app's own config with the modifications of its config plugins (Config.js, getConfigFilePaths and plugin props), on the developer's machine, from files this repository owns. The prototype poisoning needs a malicious source object in mergeObject(); nothing here passes input from outside the repository to it, and nothing of it ships in the mobile app. deepmerge 4.3.1 is the latest release and the advisory lists no patched version.",
-      "expiresOn": "2026-11-11"
-    },
-    {
-      "package": "zod",
-      "path": "apps/desktop/node_modules/@cursor/sdk/node_modules/zod",
-      "advisories": ["GHSA-mrhx-c7xc-m3w5"],
-      "reason": "The memory exhaustion is in zod 4's array parsing ($ZodArray, handleArrayResult in zod/v4/core), which this copy (3.25.76) has only under its zod/v4 subpath; the advisory marks it because the 3.x line has no patched release. @cursor/sdk 1.0.34 imports the v3 API from \"zod\", whose implementation (zod/v3) has no such code. The desktop app's own schemas use the patched zod 4.6.7. @cursor/sdk is pinned at 1.0.34 and bundles its own copy of zod/v4/mini inside its dist, which no dependency update changes; 1.0.38 and later take zod as a peer dependency, so a later SDK bump removes this copy.",
-      "expiresOn": "2026-11-11"
-    },
-    {
-      "package": "zod",
-      "path": "node_modules/@expo/cli/node_modules/zod",
-      "advisories": ["GHSA-mrhx-c7xc-m3w5"],
-      "reason": "Build-time only: expo 58 -> @expo/cli, the development server and bundler CLI of the mobile app, which is not shipped in it. The memory exhaustion is in zod 4's array parsing ($ZodArray, handleArrayResult in zod/v4/core); this copy (3.25.76) is used through the v3 API (require(\"zod\")), whose implementation has no such code, and the advisory marks it because the 3.x line has no patched release. It validates DevTools plugin and MCP extension descriptions (DevToolsPlugin.schema, createMCPDevToolsExtensionSchema) on the developer's machine. @expo/cli 58.1.14, the latest release, still depends on zod ^3.25.76.",
-      "expiresOn": "2026-11-11"
-    }
-  ]
+  "exceptions": []
 }
