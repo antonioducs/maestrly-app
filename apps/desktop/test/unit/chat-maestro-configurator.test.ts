@@ -17,6 +17,8 @@ import {
   validateMaestroProposalCatalog,
 } from '../../src/main/chat/maestro-configurator'
 import type { executeSubagent } from '../../src/main/chat/subagent-executor'
+import type { ChatAgent } from '../../src/main/chat/agents'
+import { selectSubagentToolNames } from '../../src/main/chat/tools'
 
 const h = vi.hoisted(() => ({
   providers: [{ id: 'provider-1', name: 'Provider One' }],
@@ -182,11 +184,32 @@ describe('Maestro configurator service', () => {
     proposed.strategy = 'best-quality'
     proposed.pool[0].candidates = [{ providerId: 'provider-1', modelId: 'fable', effort: 'high' }]
     const execute = vi.fn(
-      async (args: { tools?: ToolSet; onTextUpdate?: (update: { kind: 'append'; text: string }) => void }) => {
+      async (args: {
+        tools?: ToolSet
+        allowedToolNames?: ReadonlySet<string>
+        definition: ChatAgent
+        readOnly: boolean
+        onTextUpdate?: (update: { kind: 'append'; text: string }) => void
+      }) => {
         expect(Object.keys(args.tools ?? {}).sort()).toEqual([
           'propose_maestro_config',
           'read_available_model_catalog',
           'read_maestro_draft',
+          'read_usage_summary',
+        ])
+        // The executor intersects the allowlist with the read-only policy; the research built-ins must survive it.
+        const policy = selectSubagentToolNames({
+          definition: args.definition,
+          readOnly: args.readOnly,
+          providedHostTools: args.tools,
+        })
+        expect([...(args.allowedToolNames ?? [])].filter((name) => policy.has(name)).sort()).toEqual([
+          'propose_maestro_config',
+          'read_available_model_catalog',
+          'read_maestro_draft',
+          'read_usage_summary',
+          'web_search',
+          'webfetch',
         ])
         expect('bash' in (args.tools ?? {})).toBe(false)
         args.onTextUpdate?.({ kind: 'append', text: 'Preparing proposal' })
@@ -349,6 +372,25 @@ describe('Maestro configurator service', () => {
     const service = serviceWith(async () => ({ text: 'ok', model: { providerId: 'provider-1', modelId: 'fable' } }))
     await service.setProfile({ providerId: 'provider-1', modelId: 'fable', effort: 'high' })
     await runTurn(service, { text: 'hi', draft, baseHash: prepared.value.baseHash })
+  })
+
+  it('reads the usage summary for the requested period against the live catalog', async () => {
+    const summary = { totals: { tokens: 42 } } as never
+    const usage = vi.fn(async () => summary)
+    const service = serviceWith(
+      async (args) => {
+        await expect(args.tools!.read_usage_summary.execute!({ days: 7 }, toolContext('usage'))).resolves.toBe(summary)
+        return { text: 'ok', model: { providerId: 'provider-1', modelId: 'fable' } }
+      },
+      { usage }
+    )
+    await service.setProfile({ providerId: 'provider-1', modelId: 'fable', effort: 'high' })
+    await runTurn(service, {
+      text: 'How much do I spend?',
+      draft: createDefaultMaestroConfig(),
+      baseHash: hashMaestroConfig(createDefaultMaestroConfig()),
+    })
+    expect(usage).toHaveBeenCalledWith({ days: 7, catalog })
   })
 
   it('reads the editor state live: open strategy, unsaved changes and unfinished rows', async () => {
