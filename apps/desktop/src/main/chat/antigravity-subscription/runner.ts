@@ -873,7 +873,13 @@ export async function runAntigravitySubscriptionChat(
         return false
       }
     })()
-    if (terminal.kind === 'finish' && !ephemeral && identityCurrent && canPersistSession()) {
+    // A stop the runtime acknowledged leaves the session idle with the partial turn Maestrly persisted, so the next
+    // turn resumes it; a fresh session would have to replay the whole conversation, which a long one only fits by
+    // compacting. Without the acknowledgement the session may still be running and is discarded.
+    const reusable =
+      terminal.kind === 'finish' ||
+      (terminal.kind === 'aborted' && outcome.result !== null && activeToolset.wasInitialized())
+    if (reusable && !ephemeral && identityCurrent && canPersistSession()) {
       putAntigravitySessionBinding({
         conversationId: args.conversationId,
         accountId,
@@ -925,7 +931,7 @@ export async function runAntigravitySubscriptionChat(
     unsubscribe?.()
     if (toolset && !sessionKept) {
       toolset.setActiveTurn(null)
-      // A failed or unfinished turn never leaves a reusable live session behind.
+      // A failed turn, or a stop the runtime never acknowledged, leaves no reusable live session behind.
       args.manager.dropLiveSession(args.conversationId)
       toolset.dispose()
     } else {

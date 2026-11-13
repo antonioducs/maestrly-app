@@ -147,13 +147,17 @@ function syntheticMcpTools(count: number, description: string): Record<string, u
   return tools
 }
 
-async function cancelSlowTurn() {
+const sessionsWithTools = () =>
+  fake.requests('session/new').filter((entry) => (entry.params as { mcpServers: unknown[] }).mcpServers.length)
+
+/** `DEAF` keeps the prompt running past the cancel, as a runtime that never acknowledges it. */
+async function cancelSlowTurn(verb: 'SLOW' | 'DEAF' = 'SLOW') {
   const controller = new AbortController()
-  const pending = turn('SLOW', { signal: controller.signal })
+  const pending = turn(verb, { signal: controller.signal })
   try {
     // Cancel an active prompt, even when setup takes longer on a busy runner.
     await vi.waitFor(() => {
-      expect(promptText(fake.requests('session/prompt').at(-1))).toMatch(/(?:^|\n)SLOW$/)
+      expect(promptText(fake.requests('session/prompt').at(-1))).toMatch(new RegExp(`(?:^|\\n)${verb}$`))
     })
   } finally {
     controller.abort()
@@ -412,11 +416,25 @@ describe('Antigravity chat runner', () => {
     expect(textOf(events)).toBe('permission:deny')
   })
 
-  it('cancels the ACP turn when Maestrly aborts', async () => {
-    const { events } = await cancelSlowTurn()
+  it('cancels the ACP turn when Maestrly aborts and keeps the session the runtime stopped', async () => {
+    const { events, result } = await cancelSlowTurn()
     expect(events.at(-1)?.kind).toBe('aborted')
     expect(fake.requests('session/cancel')).toHaveLength(1)
-    expect(getAntigravitySessionBinding(conversationId)).toBeUndefined()
+    expect(getAntigravitySessionBinding(conversationId)).toMatchObject({
+      sessionId: result.sessionId,
+      lastMessageId: listChatMessages(conversationId).at(-1)?.id,
+    })
+  })
+
+  it('continues the session after a stop instead of seeding a new one', async () => {
+    await turn('ECHO before')
+    await cancelSlowTurn()
+    const { events } = await turn('ECHO after')
+    expect(textOf(events)).toBe('after')
+    expect(sessionsWithTools()).toHaveLength(1)
+    expect(fake.requests('session/delete')).toHaveLength(0)
+    expectResumedPrompt(promptText(fake.requests('session/prompt').at(-1)), 'ECHO after')
+    expect(manager.liveSessionCount()).toBe(1)
   })
 
   it('reports a rejected sign-in and marks the account signed out', async () => {
@@ -512,11 +530,15 @@ describe('Antigravity chat runner', () => {
     expect(existsSync(manager.root)).toBe(true)
   })
 
-  it('keeps a live session only after a finished turn', async () => {
-    await turn('ECHO keep')
+  it('discards a session that never acknowledged a stop and seeds the next turn', async () => {
+    await turn('ECHO earlier-answer')
     expect(manager.liveSessionCount()).toBe(1)
-    const { events } = await cancelSlowTurn()
+    const { events } = await cancelSlowTurn('DEAF')
     expect(events.at(-1)?.kind).toBe('aborted')
     expect(manager.liveSessionCount()).toBe(0)
-  })
+    const next = await turn('ECHO after')
+    expect(textOf(next.events)).toBe('after')
+    expect(sessionsWithTools()).toHaveLength(2)
+    expect(promptText(fake.requests('session/prompt').at(-1))).toContain('earlier-answer')
+  }, 20_000)
 })
