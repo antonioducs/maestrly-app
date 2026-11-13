@@ -30,9 +30,17 @@ import { ChatModelChip } from '@/components/chat/ChatModelChip'
 import { DictationSettings } from '@/components/chat/DictationSettings'
 import { OptionSelect, SelectOption } from '@/components/ui/option-select'
 import { pickSystemVoice, systemVoicesFor } from '@/components/assistant/voice/speaker'
+import { assetProgress, formatBytes } from '@/components/chat/runtime-asset-presentation'
+import { hostApi } from '@/lib/hosts/host-context'
+import type { AsrSupport } from '../../../shared/asr'
+import { LOCAL_HOST_ID } from '../../../shared/host-key'
 import type { SupportedLocale } from '../../../shared/locale'
+import type { RuntimeAssetInfo } from '../../../shared/runtime-assets'
+import { defaultWakePhrase, WAKE_PHRASE_MAX, WAKE_PHRASE_MIN } from '../../../shared/wake-phrase'
 import { cn } from '@/lib/utils'
 import type { TFn } from './shared'
+
+const localApi = hostApi(LOCAL_HOST_ID)
 
 function Switch({
   checked,
@@ -123,6 +131,7 @@ function VoiceSettings({
 }) {
   const os = window.api.platformInfo.os
   const { i18n } = useTranslation()
+  const { t: tChat } = useTranslation('chat')
   const locale: SupportedLocale = (i18n.resolvedLanguage ?? i18n.language).toLowerCase().startsWith('pt')
     ? 'pt-BR'
     : 'en'
@@ -131,6 +140,60 @@ function VoiceSettings({
   const [testError, setTestError] = useState<string | null>(null)
   const systemVoices = useSystemVoices()
   const dictation = useRef<HTMLDivElement>(null)
+  const [asrSupport, setAsrSupport] = useState<AsrSupport | null>(null)
+  const [wakeModel, setWakeModel] = useState<RuntimeAssetInfo | null>(null)
+  const [modelBusy, setModelBusy] = useState(false)
+  const [wakeStatus, setWakeStatus] = useState<{ listening: boolean; error: 'mic' | 'worker' | null } | null>(null)
+  const [phraseInput, setPhraseInput] = useState(voice.wakePhrase ?? '')
+  const [phraseInvalid, setPhraseInvalid] = useState(false)
+
+  useEffect(() => {
+    setPhraseInput(voice.wakePhrase ?? '')
+    setPhraseInvalid(false)
+  }, [voice.wakePhrase])
+
+  useEffect(() => {
+    let alive = true
+    void window.api
+      .chatAsrSupport()
+      .then((next) => alive && setAsrSupport(next))
+      .catch(() => {})
+    void localApi
+      .runtimeAssetStatus('wake-model')
+      .then((next) => alive && setWakeModel(next))
+      .catch(() => {})
+    const off = localApi.onRuntimeAssetChanged((info) => {
+      if (info.id === 'wake-model') setWakeModel(info)
+    })
+    return () => {
+      alive = false
+      off()
+    }
+  }, [])
+
+  useEffect(() => {
+    let alive = true
+    const refreshStatus = () => {
+      if (document.visibilityState === 'hidden') return
+      void window.api
+        .assistantWakeStatus()
+        .then((next) => alive && setWakeStatus(next))
+        .catch(() => {})
+    }
+    refreshStatus()
+    if (!voice.wakeWord || disabled) {
+      return () => {
+        alive = false
+      }
+    }
+    const timer = setInterval(refreshStatus, 5000)
+    document.addEventListener('visibilitychange', refreshStatus)
+    return () => {
+      alive = false
+      clearInterval(timer)
+      document.removeEventListener('visibilitychange', refreshStatus)
+    }
+  }, [voice, disabled])
 
   const loadOptions = useCallback(() => {
     void window.api
@@ -342,6 +405,157 @@ function VoiceSettings({
         title={t('settings.assistant.voice.shortcutListensTitle')}
         desc={t('settings.assistant.voice.shortcutListensDesc')}
       />
+      <Switch
+        checked={voice.wakeWord}
+        onChange={(next) => setVoice({ wakeWord: next })}
+        icon={<AudioLines />}
+        title={t('settings.assistant.voice.wakeWordTitle')}
+        desc={t('settings.assistant.voice.wakeWordDesc')}
+        disabled={asrSupport !== null && !asrSupport.supported}
+      />
+      {asrSupport !== null && !asrSupport.supported && (
+        <p className="text-[11px] leading-snug text-muted-foreground">
+          {t('settings.assistant.voice.wakeUnsupported')}
+        </p>
+      )}
+      {voice.wakeWord && (asrSupport === null || asrSupport.supported) && (
+        <div className="flex flex-col gap-2.5 rounded-lg border border-border bg-white/[0.02] px-3 py-2.5">
+          <Row label={t('settings.assistant.voice.wakePhrase')}>
+            <input
+              type="text"
+              value={phraseInput}
+              onChange={(e) => {
+                setPhraseInput(e.target.value)
+                if (phraseInvalid) setPhraseInvalid(false)
+              }}
+              onBlur={() => {
+                const trimmed = phraseInput.trim()
+                if (!trimmed) {
+                  setPhraseInvalid(false)
+                  if (voice.wakePhrase !== null) setVoice({ wakePhrase: null })
+                  return
+                }
+                if (trimmed.length < WAKE_PHRASE_MIN || trimmed.length > WAKE_PHRASE_MAX) {
+                  setPhraseInvalid(true)
+                  return
+                }
+                setPhraseInvalid(false)
+                if (trimmed !== voice.wakePhrase) setVoice({ wakePhrase: trimmed })
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  e.currentTarget.blur()
+                }
+              }}
+              placeholder={defaultWakePhrase(locale)}
+              aria-label={t('settings.assistant.voice.wakePhrase')}
+              className="w-52 rounded-md border border-border bg-black/20 px-2.5 py-1.5 text-[13px] text-foreground outline-none placeholder:text-muted-foreground focus:border-indigo-500/60"
+            />
+          </Row>
+          {phraseInvalid && (
+            <p className="text-[11px] leading-snug text-destructive">
+              {t('settings.assistant.voice.wakePhraseInvalid')}
+            </p>
+          )}
+          {wakeModel && wakeModel.status.state !== 'ready' && (() => {
+            const cancelled = wakeModel.status.state === 'failed' && /cancel/i.test(wakeModel.status.error ?? '')
+            const modelState = cancelled ? 'not-installed' : wakeModel.status.state
+            const size = formatBytes(wakeModel.downloadBytes)
+            const progress = assetProgress(wakeModel)
+            const runModelOp = (op: () => Promise<RuntimeAssetInfo | boolean>) => {
+              setModelBusy(true)
+              void op()
+                .then((res) => {
+                  if (typeof res !== 'boolean') setWakeModel(res)
+                })
+                .catch((err: unknown) => console.error('[wake] model operation failed', err))
+                .finally(() => setModelBusy(false))
+            }
+            return (
+              <div className="flex flex-col gap-2 border-t border-border pt-2.5">
+                <p className="text-[12px] leading-snug text-muted-foreground">
+                  {t('settings.assistant.voice.wakeModelDesc', { size })}
+                </p>
+                {modelState === 'downloading' ? (
+                  <>
+                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/[0.08]">
+                      <div className="h-full bg-indigo-500 transition-[width]" style={{ width: `${progress}%` }} />
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[12px] text-muted-foreground">
+                        {tChat('mic.modelDownloading', {
+                          done: wakeModel.status.bytesDownloaded
+                            ? formatBytes(wakeModel.status.bytesDownloaded)
+                            : '0 B',
+                          total: formatBytes(wakeModel.status.totalBytes || wakeModel.downloadBytes),
+                        })}
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={modelBusy}
+                        onClick={() => runModelOp(() => localApi.runtimeAssetCancel('wake-model'))}
+                      >
+                        {t('settings.assistant.voice.wakeModelCancel')}
+                      </Button>
+                    </div>
+                  </>
+                ) : modelState === 'verifying' || modelState === 'installing' || modelState === 'removing' ? (
+                  <span className="flex items-center gap-2 text-[12px] text-muted-foreground">
+                    <Loader2 className="size-3.5 animate-spin" />
+                    {modelState === 'verifying'
+                      ? tChat('mic.modelVerifying')
+                      : modelState === 'installing'
+                        ? tChat('mic.modelInstalling')
+                        : tChat('settings.componentState_removing')}
+                  </span>
+                ) : modelState === 'failed' ? (
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[12px] text-destructive">
+                      {wakeModel.status.error || tChat('mic.modelFailed')}
+                    </span>
+                    <Button
+                      size="sm"
+                      disabled={modelBusy}
+                      onClick={() => runModelOp(() => localApi.runtimeAssetInstall('wake-model'))}
+                    >
+                      {t('settings.assistant.voice.wakeModelRetry')}
+                    </Button>
+                  </div>
+                ) : modelState === 'corrupt' ? (
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[12px] text-destructive">{tChat('settings.componentState_corrupt')}</span>
+                    <Button
+                      size="sm"
+                      disabled={modelBusy}
+                      onClick={() => runModelOp(() => localApi.runtimeAssetRepair('wake-model'))}
+                    >
+                      {t('settings.assistant.voice.wakeModelRetry')}
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="flex justify-end">
+                    <Button
+                      size="sm"
+                      disabled={modelBusy}
+                      onClick={() => runModelOp(() => localApi.runtimeAssetInstall('wake-model'))}
+                    >
+                      {t('settings.assistant.voice.wakeModelDownload')}
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )
+          })()}
+          {wakeStatus?.error === 'mic' && (
+            <p className="text-[11px] leading-snug text-destructive">{t('settings.assistant.voice.wakeMicError')}</p>
+          )}
+          {wakeStatus?.error === 'worker' && (
+            <p className="text-[11px] leading-snug text-destructive">{t('settings.assistant.voice.wakeWorkerError')}</p>
+          )}
+        </div>
+      )}
 
       <div ref={dictation} className="flex scroll-mt-4 flex-col gap-2">
         <div>
