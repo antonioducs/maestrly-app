@@ -175,6 +175,9 @@ test('hosts whiteboards only with the viewer the image ships', async () => {
   expect(
     loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: dir, MAESTRLY_WHITEBOARD_VIEWER_DIR: ` ${viewer} ` }).whiteboardViewerDir
   ).toBe(viewer)
+  expect(() =>
+    loadConfig({ MAESTRLY_GATEWAY_DATA_DIR: dir, MAESTRLY_WHITEBOARD_VIEWER_DIR: 'relative/viewer' })
+  ).toThrow('Expected an absolute path')
   cleanups.push(async () => rmSync(dir, { recursive: true, force: true }))
   const board = {
     title: 'Board',

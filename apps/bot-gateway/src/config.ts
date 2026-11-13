@@ -1,4 +1,5 @@
 import { chmodSync, mkdirSync, readFileSync } from 'node:fs'
+import path from 'node:path'
 import { z } from 'zod'
 import {
   FLEET_BOT_BROWSERS,
@@ -56,7 +57,7 @@ const schema = z.object({
   /** The built whiteboard canvas the image ships; without it, the artifact host has no whiteboards. */
   whiteboardViewerDir: z
     .string()
-    .regex(/^\/[^\0]*$/, 'Expected an absolute path')
+    .refine((value) => path.isAbsolute(value) && !value.includes('\0'), 'Expected an absolute path')
     .nullable(),
 })
 export type GatewayConfig = z.infer<typeof schema>
