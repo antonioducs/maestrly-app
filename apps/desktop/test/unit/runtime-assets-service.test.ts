@@ -43,6 +43,7 @@ function registry(version = '1.0.0', sizes = { downloadBytes: 100, unpackedBytes
     'github-copilot-runtime': empty('github-copilot-runtime'),
     'local-ml-runtime': empty('local-ml-runtime'),
     'whisper-model': definition(version, sizes),
+    'wake-model': empty('wake-model'),
     'antigravity-acp-runtime': empty('antigravity-acp-runtime'),
   }
 }

@@ -331,30 +331,42 @@ const antigravityAcpTargets = targetRecord(antigravityAcp, ([id, os, suffix, dig
   }
 })
 
+const WHISPER_MODELS_REVISION = '5359861c739e955e79d9a303bcbc70fb988958b1'
+function whisperFileTargets(file: string, bytes: number, digest: string) {
+  return Object.freeze(
+    Object.fromEntries(
+      Object.keys(localMlManifest.targets).map((id) => [
+        id,
+        Object.freeze({
+          id: id as RuntimeTargetId,
+          url: `https://huggingface.co/ggerganov/whisper.cpp/resolve/${WHISPER_MODELS_REVISION}/${file}`,
+          archive: 'file' as const,
+          fileName: file,
+          hash: { algorithm: 'sha256' as const, digest, encoding: 'hex' as const },
+          downloadBytes: bytes,
+          maxDownloadBytes: bytes,
+          unpackedBytes: bytes,
+          criticalPaths: Object.freeze([file]),
+        }),
+      ])
+    ) as Partial<Record<RuntimeTargetId, RuntimeAssetTarget>>
+  )
+}
 /** whisper.cpp speech model file, pinned to an immutable Hugging Face revision and installed as one file. */
 export const WHISPER_MODEL_FILE = 'ggml-large-v3-turbo-q5_0.bin'
 const WHISPER_MODEL_BYTES = 574_041_195
-const whisperModelTargets = Object.freeze(
-  Object.fromEntries(
-    Object.keys(localMlManifest.targets).map((id) => [
-      id,
-      Object.freeze({
-        id: id as RuntimeTargetId,
-        url: `https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/${WHISPER_MODEL_FILE}`,
-        archive: 'file' as const,
-        fileName: WHISPER_MODEL_FILE,
-        hash: {
-          algorithm: 'sha256' as const,
-          digest: '394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2',
-          encoding: 'hex' as const,
-        },
-        downloadBytes: WHISPER_MODEL_BYTES,
-        maxDownloadBytes: WHISPER_MODEL_BYTES,
-        unpackedBytes: WHISPER_MODEL_BYTES,
-        criticalPaths: Object.freeze([WHISPER_MODEL_FILE]),
-      }),
-    ])
-  ) as Partial<Record<RuntimeTargetId, RuntimeAssetTarget>>
+const whisperModelTargets = whisperFileTargets(
+  WHISPER_MODEL_FILE,
+  WHISPER_MODEL_BYTES,
+  '394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2'
+)
+/** whisper.cpp model that listens for the wake phrase: small enough to run on every utterance in the room. */
+export const WAKE_MODEL_FILE = 'ggml-base-q5_1.bin'
+const WAKE_MODEL_BYTES = 59_707_625
+const wakeModelTargets = whisperFileTargets(
+  WAKE_MODEL_FILE,
+  WAKE_MODEL_BYTES,
+  '422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898'
 )
 
 export const RUNTIME_ASSET_REGISTRY: Readonly<Record<RuntimeAssetId, RuntimeAssetDefinition>> = Object.freeze({
@@ -371,6 +383,7 @@ export const RUNTIME_ASSET_REGISTRY: Readonly<Record<RuntimeAssetId, RuntimeAsse
     targets: localMlTargets,
   }),
   'whisper-model': Object.freeze({ id: 'whisper-model', version: 'large-v3-turbo-q5', targets: whisperModelTargets }),
+  'wake-model': Object.freeze({ id: 'wake-model', version: 'base-q5-1', targets: wakeModelTargets }),
   'antigravity-acp-runtime': Object.freeze({
     id: 'antigravity-acp-runtime',
     version: ANTIGRAVITY_ACP_VERSION,

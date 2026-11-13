@@ -38,7 +38,11 @@ suite('managed provider runtime assets real smoke', () => {
   // Local ML runtime and the voice model have no executable to smoke; Claude Code is managed only on the Linux
   // targets bots run on.
   const providerIds = RUNTIME_ASSET_IDS.filter(
-    (id) => id !== 'local-ml-runtime' && id !== 'whisper-model' && RUNTIME_ASSET_REGISTRY[id].targets[targetId]
+    (id) =>
+      id !== 'local-ml-runtime' &&
+      id !== 'whisper-model' &&
+      id !== 'wake-model' &&
+      RUNTIME_ASSET_REGISTRY[id].targets[targetId]
   ) as RuntimeAssetId[]
   for (const id of providerIds) {
     it(

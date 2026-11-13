@@ -94,6 +94,7 @@ function harness(
       'github-copilot-runtime': empty('github-copilot-runtime'),
       'local-ml-runtime': empty('local-ml-runtime'),
       'whisper-model': empty('whisper-model'),
+      'wake-model': empty('wake-model'),
       'antigravity-acp-runtime': empty('antigravity-acp-runtime'),
     },
     target: 'mac-arm64',
