@@ -74,7 +74,7 @@ describe('subagent profile config', () => {
   it('rejects invalid structures, new synthetic efforts, and normalized collisions without persisting', () => {
     expect(validateSubagentProfileRules({ version: 1, default: [{ providerId: 'p' }] }).ok).toBe(false)
     expect(setGlobalSubagentProfileRules({ version: 1, default: [] }).ok).toBe(false)
-    for (const effort of ['', 'off', 'maestrly-ultra']) {
+    for (const effort of ['', 'maestrly-ultra']) {
       expect(
         setGlobalSubagentProfileRules({
           version: 1,
@@ -86,6 +86,13 @@ describe('subagent profile config', () => {
       setGlobalSubagentProfileRules({ version: 1, byAgent: { foo_bar: [profile], 'foo-bar': [profile] } }).ok
     ).toBe(false)
     expect(getAppSetting(SUBAGENT_PROFILES_SETTING_KEY)).toBeNull()
+
+    expect(
+      setGlobalSubagentProfileRules({
+        version: 1,
+        default: [{ providerId: 'p', modelId: 'm', effort: 'off' }],
+      }).ok
+    ).toBe(true)
   })
 
   it('rejects non-boolean fastMode', () => {
@@ -155,14 +162,14 @@ describe('subagent profile config', () => {
   })
 
   it('reads legacy configurations with synthetic efforts but requires replacement before saving again', () => {
-    const legacyOff = { version: 1 as const, default: [{ providerId: 'p', modelId: 'm', effort: 'off' }] }
+    const defaultOff = { version: 1 as const, default: [{ providerId: 'p', modelId: 'm', effort: 'off' }] }
     const legacyMaestrlyUltra = {
       version: 1 as const,
       default: [{ providerId: 'p', modelId: 'm', effort: 'maestrly-ultra' }],
     }
-    setAppSetting(SUBAGENT_PROFILES_SETTING_KEY, JSON.stringify(legacyOff))
-    expect(getGlobalSubagentProfileRules().rules).toEqual(legacyOff)
-    expect(setGlobalSubagentProfileRules(legacyOff).ok).toBe(false)
+    setAppSetting(SUBAGENT_PROFILES_SETTING_KEY, JSON.stringify(defaultOff))
+    expect(getGlobalSubagentProfileRules().rules).toEqual(defaultOff)
+    expect(setGlobalSubagentProfileRules(defaultOff).ok).toBe(true)
 
     patchConvUiPrefs('c', { chat: { ...getConvUiPrefs('c').chat, subagentProfiles: legacyMaestrlyUltra } })
     expect(getConversationSubagentProfileRules('c').rules).toEqual(legacyMaestrlyUltra)

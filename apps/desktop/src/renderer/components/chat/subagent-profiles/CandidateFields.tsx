@@ -189,7 +189,7 @@ export function CandidateFields({
         noConfigurableEffort ? t('subagentProfiles.noConfigurableEffortShort') : t('subagentProfiles.effort')
       }
       ariaLabel={t('subagentProfiles.effort')}
-      allowCustom={allowCustomEffort && !allowOff}
+      allowCustom={allowCustomEffort}
       disabled={!modelMeta || readOnly}
       invalid={
         candidate.effort !== 'off' &&
@@ -243,7 +243,7 @@ export function CandidateFields({
       {unavailableFable && (
         <p className="col-span-full text-[11px] text-red-300">{t('subagentProfiles.modelUnavailable')}</p>
       )}
-      {allowCustomEffort && !allowOff && candidate.effort && (
+      {allowCustomEffort && candidate.effort && candidate.effort !== 'off' && (
         <p className="col-span-full text-[11px] text-amber-300">
           {t('subagentProfiles.diagnostics.effort-unverified')}
         </p>

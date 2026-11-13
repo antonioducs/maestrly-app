@@ -136,14 +136,14 @@ export async function listAgents(cwd: string, home: string = os.homedir()): Prom
         const model = fm.model?.trim() || undefined
         const effort = fm.effort?.trim().toLowerCase() || undefined
         const completeProfile = provider && model && model.toLowerCase() !== 'inherit' && effort
-        const invalidEffort = completeProfile && !isRealSubagentProfileEffort(effort)
+        const invalidEffort = completeProfile && effort !== 'off' && !isRealSubagentProfileEffort(effort)
         const incompleteProfile = (provider || effort) && !completeProfile
         const profileDiagnostics: SubagentProfileDiagnostic[] | undefined = invalidEffort
           ? [
               {
                 code: 'invalid-effort',
                 severity: 'warning',
-                message: 'Frontmatter profile requires a real reasoning effort.',
+                message: 'Frontmatter profile requires a real reasoning effort or off.',
               },
             ]
           : incompleteProfile

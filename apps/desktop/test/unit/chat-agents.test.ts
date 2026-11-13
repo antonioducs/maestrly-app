@@ -74,7 +74,7 @@ describe('listAgents', () => {
     expect(list.find((a) => a.name === 'broken')?.profileDiagnostics?.[0]?.code).toBe('incomplete-frontmatter')
   })
 
-  it('rejects empty and synthetic efforts but accepts native Ultra', async () => {
+  it('rejects empty and synthetic efforts but accepts off and native Ultra', async () => {
     mkAgent('.claude/agents', 'empty.md', '---\nprovider: openai\nmodel: gpt-5\neffort: \n---\nEmpty.')
     mkAgent('.claude/agents', 'off.md', '---\nprovider: openai\nmodel: gpt-5\neffort: off\n---\nOff.')
     mkAgent(
@@ -85,11 +85,16 @@ describe('listAgents', () => {
     mkAgent('.claude/agents', 'ultra.md', '---\nprovider: openai\nmodel: gpt-5\neffort: ultra\n---\nUltra.')
     const list = await listAgents(dir, dir)
 
-    for (const name of ['empty', 'off', 'maestrly-ultra']) {
+    for (const name of ['empty', 'maestrly-ultra']) {
       const agent = list.find((item) => item.name === name)
       expect(agent?.profile).toBeUndefined()
       expect(agent?.profileDiagnostics?.[0]?.code).toBe(name === 'empty' ? 'incomplete-frontmatter' : 'invalid-effort')
     }
+    expect(list.find((item) => item.name === 'off')?.profile).toEqual({
+      providerId: 'openai',
+      modelId: 'gpt-5',
+      effort: 'off',
+    })
     expect(list.find((item) => item.name === 'ultra')?.profile).toEqual({
       providerId: 'openai',
       modelId: 'gpt-5',

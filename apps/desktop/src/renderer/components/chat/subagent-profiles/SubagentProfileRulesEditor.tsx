@@ -346,6 +346,7 @@ function RuleRow({
                     value={value}
                     config={config}
                     catalogRevision={catalogRevision}
+                    allowOff
                     inherit={
                       scope === 'default' && index === 0 && chain.length <= 1
                         ? {
