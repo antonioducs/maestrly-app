@@ -295,6 +295,8 @@ describe('voice settings', () => {
       speed: 1,
       autoSpeak: true,
       shortcutListens: true,
+      wakeWord: false,
+      wakePhrase: null,
       realtimeModel: 'gpt-realtime-2.1-mini',
       realtimeVoice: 'marin',
     })

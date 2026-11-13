@@ -17,7 +17,7 @@ function harness(opts: {
     voice: { wakeWord: opts.wakeWord ?? false, wakePhrase: opts.wakePhrase ?? null },
   })
   let nowMs = 10_000
-  let supported = opts.supported ?? true
+  const supported = opts.supported ?? true
   let ready = opts.modelReady ?? true
   let locale = opts.locale ?? 'pt-BR'
   let transcript = opts.transcript ?? 'Oi, Maestro.'
