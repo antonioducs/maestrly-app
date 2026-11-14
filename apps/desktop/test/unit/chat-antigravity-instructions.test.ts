@@ -1,9 +1,11 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { closeDb, freshDb } from '../helpers/db'
 import { buildAntigravityInstructions } from '../../src/main/chat/antigravity-subscription/session'
+import { MAESTRO_SYSTEM_SPEC } from '../../src/main/chat/maestro-prompt'
+import { createDefaultMaestroConfig, type MaestroTurnSnapshotV1 } from '../../src/shared/maestro'
 
 const h = vi.hoisted(() => ({ git: vi.fn() }))
 vi.mock('../../src/main/git-service', () => ({ gitEnvInfo: h.git }))
@@ -11,6 +13,18 @@ vi.mock('../../src/main/git-service', () => ({ gitEnvInfo: h.git }))
 let cwd: string
 
 const occurrences = (text: string, needle: string) => text.split(needle).length - 1
+
+const frozenMaestroTurn = (): MaestroTurnSnapshotV1 => {
+  const config = createDefaultMaestroConfig()
+  return {
+    version: 1,
+    strategy: config.strategy,
+    pool: config.pool,
+    source: 'safe-default',
+    diagnostics: [],
+    frozenAt: 1,
+  }
+}
 
 const build = (overrides: Partial<Parameters<typeof buildAntigravityInstructions>[0]> = {}) =>
   buildAntigravityInstructions({
@@ -83,6 +97,19 @@ describe('Antigravity instructions', () => {
     const { instructions } = await build()
     expect(instructions).toContain('Antigravity adds its own agent instructions')
     expect(instructions).toContain('Use only the tools listed in <maestrly_tools>')
+  })
+
+  it('give the Maestro orchestrator its contract once and no skill catalog to load', async () => {
+    const skillDir = path.join(cwd, '.agents', 'skills', 'sentinel-skill')
+    mkdirSync(skillDir, { recursive: true })
+    writeFileSync(path.join(skillDir, 'SKILL.md'), '---\nname: sentinel-skill\ndescription: Sentinel skill.\n---\nBody')
+    const agent = await build({ mode: 'agent' })
+    expect(agent.skills.map((skill) => skill.name)).toContain('sentinel-skill')
+    const maestro = await build({ mode: 'maestro', maestro: frozenMaestroTurn() })
+    expect(occurrences(maestro.instructions, MAESTRO_SYSTEM_SPEC)).toBe(1)
+    expect(maestro.skills).toEqual([])
+    expect(maestro.instructions).not.toContain('sentinel-skill')
+    expect(maestro.instructions).toContain('# Maestro Agent Pool')
   })
 
   it('compose a standalone chat as a general assistant with personal memory only', async () => {

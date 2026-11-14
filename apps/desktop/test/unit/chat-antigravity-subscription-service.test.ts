@@ -459,10 +459,11 @@ describe('Google AI context projection', () => {
   const projection = async (conversationId: string): Promise<ChatContextProjection | undefined> =>
     ((await register().get('chat:history:stats')!({}, conversationId)) as ChatHistoryStats).contextProjection
 
-  it('reuses the occupancy the session measured for its next request', async () => {
-    const conversationId = seed({ contextSnapshot: measured() })
+  it('does not admit a turn on the occupancy the server reported, which can fold two model calls together', async () => {
+    const conversationId = seed({ contextSnapshot: measured({ usedTokens: 461_933 }) })
     const reading = await projection(conversationId)
-    expect(reading).toEqual({ usedTokens: 24_310, source: 'runtime-usage', quality: 'measured' })
+    expect(reading).toMatchObject({ source: 'portable-transcript', quality: 'estimated', occupancyUnknown: true })
+    expect(reading?.usedTokens).toBe(estimateNativeSeedContextTokens(listConversationContextMessages(conversationId)))
   })
 
   it('reports unknown occupancy when the server measured none, instead of the transcript size', async () => {

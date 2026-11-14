@@ -18,9 +18,10 @@ import { maestroAgentsFromTurn, renderMaestroAgentCatalog } from '../maestro-del
 import { MAESTRO_SYSTEM_SPEC, renderMaestroTurnPolicy } from '../maestro-prompt'
 import { droppedImageText, nativeSeedContextText, renderNativeSeedTranscript } from '../message'
 import { pdfFallbackText } from '../pdf-attachments'
+import { estimatePortableContextTokens, estimateTextTokens } from '../portable-context'
 import { buildProjectContext } from '../project-context'
 import { commandShellEnvironment } from '../tools/command-shell'
-import { effectiveSkills } from '../skill-state'
+import { mainAgentSkills } from '../skill-state'
 import { type ChatSkill, renderSkillCatalogEntries } from '../skills'
 import { listEffectiveAgents } from '../virtual-subagents'
 
@@ -78,10 +79,7 @@ export function hashAntigravityInstructions(instructions: string): string {
 export async function buildAntigravityInstructions(
   args: BuildAntigravityInstructionsArgs
 ): Promise<AntigravityInstructions> {
-  const skills =
-    args.mode === 'ask'
-      ? []
-      : (await effectiveSkills(args.cwd, args.conversationId)).filter((skill) => skill.modelInvocable)
+  const skills = await mainAgentSkills(args.mode, args.cwd, args.conversationId)
   const allAgents = await listEffectiveAgents({
     cwd: args.cwd,
     conversationId: args.conversationId,
@@ -149,7 +147,8 @@ export async function buildAntigravityInstructions(
       ? ['The `review_plan` tool presents a plan for user approval; when the user approves, a new turn executes it.']
       : []),
     'The `ask_question` tool asks the user a question and waits for the answer.',
-    ...(args.mode === 'maestro' ? [MAESTRO_SYSTEM_SPEC] : []),
+    // The Maestrly base layout already carries the contract in its capability section.
+    ...(args.mode === 'maestro' && !prompt.stablePrefix.includes(MAESTRO_SYSTEM_SPEC) ? [MAESTRO_SYSTEM_SPEC] : []),
     ...(args.mode === 'maestro' && args.maestro ? [renderMaestroTurnPolicy(args.maestro)] : []),
     ...(ultra ? [harnessUltraGuidance(harness, args.mode) ?? ultra] : []),
     ...(notes ? ['The conversation has a Notes tab; use it when the user asks about notes.'] : []),
@@ -167,6 +166,28 @@ export async function buildAntigravityInstructions(
     skills,
     agents,
   }
+}
+
+/** Antigravity's own system prompt and native tool declarations, ~15.6 KB on runtime 1.4.0. */
+const ANTIGRAVITY_RUNTIME_PROMPT_TOKENS = 5_500
+
+/**
+ * Occupancy of an Antigravity session as Maestrly estimates it. The server's `usage_update` is the difference between
+ * two cumulative totals read at racy moments (runtime 1.4.0), so one report can fold two model calls together — about
+ * twice the real window — and it cannot serve as a measurement.
+ */
+export function estimateAntigravityContextTokens(args: {
+  instructions: string
+  toolCatalog: string
+  history: readonly ChatMessage[]
+  assistant: ChatMessage
+}): number {
+  return (
+    ANTIGRAVITY_RUNTIME_PROMPT_TOKENS +
+    estimateTextTokens(args.instructions) +
+    estimateTextTokens(args.toolCatalog) +
+    estimatePortableContextTokens([...args.history, args.assistant])
+  )
 }
 
 /** `liveAssistant` carries a compaction made during this turn, so the seed starts from its summary. */

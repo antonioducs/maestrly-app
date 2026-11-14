@@ -21,6 +21,23 @@ import { GENUI_PROMPT } from './genui-prompt'
 export const HOST_USING_TOOLS = `# Using your tools
 Prefer the dedicated tools over the shell: \`read\` to read files (not cat/head/tail/sed), \`edit\`/\`write\` to change them (not sed/awk/echo redirection), \`grep\`/\`glob\` to search (not grep/find/ls) — they let the user review your work cleanly and are faster. Reserve \`bash\` for real shell/system work (build, tests, git, running scripts). When you decide to use a tool, call it in the SAME turn — don't announce "I'll read the file" and then stop and wait for the user. When several tool calls are independent (none needs another's result), make them in parallel in one response; only go sequential when a call genuinely depends on a previous result.`
 
+/** Maestro's orchestrator cannot edit or run anything: its tools only orient tasks and check reports. */
+const HOST_USING_TOOLS_MAESTRO = `# Using your tools
+Use \`grep\`/\`glob\` to locate and \`read\` to inspect what you need to orient a task or check a report. When you decide to call a tool or delegate, do it in the SAME turn — don't announce it and stop. Make independent calls in parallel in one response.`
+
+const MAESTRO_WORKING_ON_THE_PROJECT = `# Working on the project
+Workers change code and run checks; you decide what to delegate, judge their reports and answer. Honor explicit user instructions and required project checks, including requested reviews and named agents: delegate them, never drop them. Report outcomes faithfully: say what a worker verified and what it did not, and never imply a success no one checked. You're a collaborator, not just an executor: if the request rests on a wrong assumption, or a report reveals an adjacent bug, say so.`
+
+/** The profile's work section addresses an agent that edits and runs checks itself; Maestro's orchestrator gets its own. */
+function maestroProfileText(text: string | null | undefined): string {
+  return (text ?? '')
+    .split(/\n\s*\n/)
+    .map((paragraph) =>
+      paragraph.split('\n', 1)[0].trim() === '# Working on the project' ? MAESTRO_WORKING_ON_THE_PROJECT : paragraph
+    )
+    .join('\n\n')
+}
+
 /**
  * Contract of `start_conversations`, carried in its tool description so it only reaches models that actually have
  * the tool. Persistent conversations are not subagents: they outlive this turn and belong to the person.
@@ -169,7 +186,7 @@ export function harnessBehaviorHeader(harness: ResolvedHarness): string | null {
 
 export function hostCapabilitySection(mode: ChatBehavior): string {
   if (mode === 'maestro') {
-    return `\n\nMAESTRO EXPERIENCE: the parent is structurally read-only. You may inspect with read/search tools and coordinate through delegate, but you cannot edit, write, run shell commands, test, build, generate mutable artifacts, or invoke mutating MCP/app tools directly.\n\n${MAESTRO_SYSTEM_SPEC}`
+    return `\n\nMAESTRO EXPERIENCE: the parent is structurally read-only. You may orient yourself with read/search tools and coordinate through delegate, but you cannot edit, write, run shell commands, test, build, generate mutable artifacts, or invoke mutating MCP/app tools directly.\n\n${MAESTRO_SYSTEM_SPEC}`
   }
   if (mode === 'ask') {
     return `\n\nASK MODE (restricted tools): use the available read and safe-recording tools to ground your answer in real project context. ${HOST_RESTRICTED_CAPABILITIES} ${HOST_ASK_DISPATCH_GUIDANCE} If the task requires changing the project or running commands in this conversation, tell the user to switch to Agent mode (they toggle it with Shift+Tab).`
@@ -272,6 +289,11 @@ function standaloneCapabilities(mode: ChatBehavior): string {
  * actual toolset: models otherwise assume tools exist and emit calls the harness cannot serve.
  */
 export function buildMaestrlyBasePrompt(input: MaestrlyBasePromptInput): string {
+  const maestro = input.mode === 'maestro'
+  const styleAndWork = maestro
+    ? maestroProfileText(input.harness.prompts.styleAndWork)
+    : input.harness.prompts.styleAndWork
+  const usingTools = maestro ? HOST_USING_TOOLS_MAESTRO : HOST_USING_TOOLS
   if (input.scope === 'standalone') {
     const isBot = Boolean(botIdentityPrompt(input.cwd))
     const chatStyle = input.harness.prompts.chatStyle?.trim() ?? ''
@@ -291,8 +313,8 @@ ${discovery} Online research requires an actually available tool: use web_search
       harnessBehaviorHeader(input.harness),
       botIdentityPrompt(input.cwd),
       botTaskPolicyPrompt(input.conversationId),
-      standaloneProfileText(input.harness.prompts.styleAndWork, { chatStyle: Boolean(chatStyle) }),
-      HOST_USING_TOOLS,
+      standaloneProfileText(styleAndWork, { chatStyle: Boolean(chatStyle) }),
+      usingTools,
       standaloneCapabilities(input.mode),
       HOST_RENDERING + hostGenUiSection(input.generatedInterfaces),
       isBot ? '' : PERSONAL_MEMORY_TOOL_GUIDANCE,
@@ -305,7 +327,7 @@ ${discovery} Online research requires an actually available tool: use web_search
       .join('\n\n')
   }
   const header = harnessBehaviorHeader(input.harness)
-  const base = [hostIdentityLine(input.cwd), header, input.harness.prompts.styleAndWork, HOST_USING_TOOLS]
+  const base = [hostIdentityLine(input.cwd), header, styleAndWork, usingTools]
     .filter((part): part is string => Boolean(part))
     .join('\n\n')
   const designPrompt = renderDesignModePrompt(input.mode)

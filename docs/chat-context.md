@@ -638,13 +638,19 @@ conversation removes the worktree and branch it created.
 
 The context meter shows how much of the model's working context is occupied.
 For Codex (including Astra) and Claude subscriptions, it updates as the runtime
-reports new samples, grouping updates within one second. Google AI does the same
-when its ACP server reports usage (server 1.3.0 and later). It does not count every
+reports new samples, grouping updates within one second. It does not count every
 generated character, and the value can decrease after compaction.
+
+Google AI updates after each model call its ACP server reports (server 1.3.0 and
+later), but the number the server sends can fold two model calls together, about
+twice the real occupancy. The meter therefore shows Maestrly's estimate of the
+session instead, with a `~` prefix: its instructions, tool list, and history, plus
+an allowance for the runtime's own prompt. Automatic compaction does not rely on
+the server's number either.
 
 Cursor reports only the tokens billed for each turn, summed over all of its model
 calls, so its meter shows **context unknown**. Google AI shows the same when the
-server has not reported usage for the current session. Maestrly does not display its
+server has not reported a model call for the current session. Maestrly does not display its
 transcript estimate as the context size for these runtimes because that estimate
 omits the runtime's own instructions and tools. Hover over the meter to see the
 transcript size. Accumulated usage and cost are still shown when reported.

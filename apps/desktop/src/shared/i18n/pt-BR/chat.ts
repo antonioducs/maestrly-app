@@ -986,6 +986,8 @@ export default {
       resumedTitle: 'Continua a mesma sessão nativa de {{session}}',
       recreatedTitle:
         'Não foi possível retomar {{session}} ({{reason}}); um worker novo recebeu o relatório anterior como contexto',
+      failed: 'retomada falhou',
+      failedTitle: 'A tentativa de retomar {{session}} falhou antes que um worker novo assumisse',
     },
   },
   subagentSession: {

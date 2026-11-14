@@ -58,7 +58,7 @@ import { buildAppTools, buildMcpTools } from './mcp'
 import { resolveAppToolAccess } from './app-tool-access'
 import { buildOpenAIProjectContext, buildProjectContext } from './project-context'
 import { renderSkillCatalogEntries, renderSkillContext } from './skills'
-import { effectiveSkills, findEffectiveSkill } from './skill-state'
+import { findEffectiveSkill, mainAgentSkills } from './skill-state'
 import { listEffectiveAgents } from './virtual-subagents'
 import { catalogProviderForBaseURL, getProviderModelMetaWithStatus } from './model-meta'
 import {
@@ -837,8 +837,8 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
 
   // Project skills (model-discovered SKILL.md folders): prompt catalog + use_skill tool to load
   // body + root + inventory on demand. In plan/agent; ask stays lean (read to answer, no
-  // skill catalog). DISABLED skills (global/conversation) never enter or consume context.
-  const skills = mode === 'ask' ? [] : (await effectiveSkills(cwd, conversationId)).filter((s) => s.modelInvocable)
+  // skill catalog) and Maestro's workers load them. DISABLED skills never enter or consume context.
+  const skills = await mainAgentSkills(mode, cwd, conversationId)
   const skillTools: ToolSet = skills.length
     ? {
         use_skill: tool({

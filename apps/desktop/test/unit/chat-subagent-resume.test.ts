@@ -9,6 +9,7 @@ import {
   recreatedTask,
   releaseTurnDelegationRuntimes,
   resolveSubagentResume,
+  settledSubagentResume,
 } from '../../src/main/chat/subagent-resume'
 import {
   createSubagentSession,
@@ -32,6 +33,18 @@ const replay = [
   { role: 'user' as const, content: 'Build it.' },
   { role: 'assistant' as const, content: '[tool read → completed]\nDone.' },
 ]
+
+describe('settledSubagentResume', () => {
+  it('reports a worker that failed while reopening its session as failed, not as recreated', () => {
+    expect(settledSubagentResume({ resumed: true })).toEqual({ status: 'resumed' })
+    expect(settledSubagentResume({ resumed: false, resumeReason: 'resume-rejected' })).toEqual({
+      status: 'recreated',
+      reason: 'resume-rejected',
+    })
+    expect(settledSubagentResume({ resumed: false })).toEqual({ status: 'failed' })
+    expect(settledSubagentResume({})).toEqual({ status: 'failed' })
+  })
+})
 
 describe('planSubagentResume', () => {
   it.each([

@@ -213,7 +213,9 @@ export const SubagentCard = memo(function SubagentCard({
               'shrink-0 rounded px-1.5 py-0.5 text-[10px]',
               observableSession.resumeStatus === 'recreated'
                 ? 'bg-amber-500/15 text-amber-200'
-                : 'bg-sky-500/15 text-sky-200'
+                : observableSession.resumeStatus === 'failed'
+                  ? 'bg-red-500/15 text-red-200'
+                  : 'bg-sky-500/15 text-sky-200'
             )}
             title={
               observableSession.resumeStatus === 'recreated'
@@ -221,12 +223,16 @@ export const SubagentCard = memo(function SubagentCard({
                     session: observableSession.resumedFrom,
                     reason: observableSession.resumeReason ?? '',
                   })
-                : t('subagent.resume.resumedTitle', { session: observableSession.resumedFrom })
+                : observableSession.resumeStatus === 'failed'
+                  ? t('subagent.resume.failedTitle', { session: observableSession.resumedFrom })
+                  : t('subagent.resume.resumedTitle', { session: observableSession.resumedFrom })
             }
           >
             {observableSession.resumeStatus === 'recreated'
               ? t('subagent.resume.recreated', { reason: observableSession.resumeReason ?? '' })
-              : t('subagent.resume.resumed')}
+              : observableSession.resumeStatus === 'failed'
+                ? t('subagent.resume.failed')
+                : t('subagent.resume.resumed')}
           </span>
         )}
         <span className="ml-auto flex shrink-0 items-center gap-2 font-mono text-[11px] text-muted-foreground">

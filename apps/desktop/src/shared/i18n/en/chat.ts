@@ -978,6 +978,8 @@ export default {
       resumedTitle: 'Continues the same native session as {{session}}',
       recreatedTitle:
         'Could not resume {{session}} ({{reason}}); a fresh worker received the previous report as context',
+      failed: 'resume failed',
+      failedTitle: 'The attempt to resume {{session}} failed before a fresh worker could take over',
     },
   },
   subagentSession: {

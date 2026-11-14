@@ -819,6 +819,90 @@ describe('Claude subagent account rotation', () => {
     expect(a.calls[1].options).not.toHaveProperty('resume')
   })
 
+  describe('when Claude Code no longer has the session to resume', () => {
+    const MISSING = 'No conversation found with session ID: old-session'
+    const exitError = () => new Error(`Claude Code returned an error result: ${MISSING}`)
+    const missingResult = () =>
+      ({
+        ...result('error_during_execution', 0),
+        session_id: 'old-session',
+        num_turns: 0,
+        errors: [MISSING],
+      }) as SDKMessage
+    /** The first query is the resume attempt; the next ones run on the manager's default query. */
+    const withResumeAttempt = (manager: FakeManager, attempt: FakeQuery) => {
+      const queries = [attempt]
+      vi.spyOn(manager, 'createQuery').mockImplementation((input) => {
+        manager.calls.push(input)
+        return queries.shift() ?? manager.query
+      })
+    }
+    const resumeArgs = () => ({
+      ...argsFor(),
+      resume: { sessionId: 'old-session', fallbackTask: 'Previous report and current task' },
+    })
+    const expectFreshFallback = async (a: FakeManager) => {
+      const outcome = await runClaudeSubagent(resumeArgs())
+      expect(outcome).toMatchObject({ resumed: false, resumeReason: 'resume-rejected', text: 'Final review.' })
+      expect(outcome).not.toHaveProperty('error')
+      expect(a.calls).toHaveLength(2)
+      expect(a.calls[0].options).toHaveProperty('resume', 'old-session')
+      expect(a.calls[1].options).not.toHaveProperty('resume')
+      const messages: unknown[] = []
+      for await (const message of a.calls[1].prompt as AsyncIterable<unknown>) messages.push(message)
+      expect(JSON.stringify(messages)).toContain('Previous report and current task')
+    }
+
+    it('starts fresh when the error result arrives before the CLI exits', async () => {
+      const a = new FakeManager()
+      await routing(a, new FakeManager())
+      withResumeAttempt(
+        a,
+        new FakeQuery([missingResult()], () => {
+          throw exitError()
+        })
+      )
+      await expectFreshFallback(a)
+    })
+
+    it('starts fresh when the exit error is all the stream reports', async () => {
+      const a = new FakeManager()
+      await routing(a, new FakeManager())
+      withResumeAttempt(
+        a,
+        new FakeQuery([], () => {
+          throw exitError()
+        })
+      )
+      await expectFreshFallback(a)
+    })
+
+    it('starts fresh when initialization already fails with that message', async () => {
+      const a = new FakeManager()
+      await routing(a, new FakeManager())
+      a.query.initializationResult.mockRejectedValueOnce(exitError())
+      await expectFreshFallback(a)
+    })
+  })
+
+  it('keeps a reopened session as resumed when the resumed worker fails later', async () => {
+    const a = new FakeManager()
+    await routing(a, new FakeManager())
+    a.query = new FakeQuery(
+      [{ ...(assistant('Partial review.') as object), session_id: 'old-session' } as SDKMessage],
+      () => {
+        throw new Error('Claude Code returned an error result: API Error: 500 upstream failed')
+      }
+    )
+    const outcome = await runClaudeSubagent({
+      ...argsFor(),
+      resume: { sessionId: 'old-session', fallbackTask: 'Previous report' },
+    })
+    expect(outcome).toMatchObject({ resumed: true, error: expect.stringContaining('upstream failed') })
+    expect(outcome).not.toHaveProperty('resumeReason')
+    expect(a.calls).toHaveLength(1)
+  })
+
   it('launches every query of a delegated child on the screen of its own bot', async () => {
     const a = new FakeManager()
     const b = new FakeManager()

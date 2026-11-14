@@ -9,11 +9,13 @@ import { runChat } from '../../src/main/chat/runner'
 import { runClaudeChat } from '../../src/main/chat/claude-agent-sdk/runner'
 import { runGitHubCopilotChat } from '../../src/main/chat/github-copilot/runner'
 import { runCodexSubscriptionChat } from '../../src/main/chat/codex-subscription/runner'
-import { buildCursorHarnessContext } from '../../src/main/chat/cursor-subscription/session'
+import { buildCursorHarnessContext, renderCursorEnvelopeText } from '../../src/main/chat/cursor-subscription/session'
 import { commandShellEnvironment } from '../../src/main/chat/tools/command-shell'
 import { buildAntigravityInstructions } from '../../src/main/chat/antigravity-subscription/session'
 import { harnessFor } from '../../src/main/chat/harness/execution'
+import { MAESTRO_SYSTEM_SPEC } from '../../src/main/chat/maestro-prompt'
 import type { ChatStreamEvent } from '../../src/shared/chat'
+import { createDefaultMaestroConfig } from '../../src/shared/maestro'
 const h = vi.hoisted(() => ({
   stream: vi.fn(),
   resolve: vi.fn(),
@@ -299,6 +301,51 @@ it('builds standalone Cursor context without project material', async () => {
   expect(envelope.skillCatalog).not.toContain('Project skills')
   expect(envelope.environment).toContain(cwd)
   expect(envelope.environment).toContain(commandShellEnvironment())
+  expect(envelope.instructions).toContain('general assistant inside the Maestrly app')
+  expect(envelope.instructions).not.toContain('coding assistant inside the Maestrly app')
+  expect(envelope.instructions.split('# Personal chat memory').length - 1).toBe(1)
+  expect(envelope.instructions).not.toContain('# Durable project memory')
+})
+it('sends each piece of a project Cursor envelope once, whatever layout composed it', async () => {
+  writeFileSync(path.join(cwd, 'AGENTS.md'), 'PROJECT_RULE_SENTINEL')
+  for (const modelId of ['cursor-model', 'gpt-5.6-sol']) {
+    const { envelope } = await buildCursorHarnessContext({
+      projectId: 'p1',
+      cwd,
+      conversationId: 'fork',
+      mode: 'agent',
+      modelId,
+    })
+    const text = renderCursorEnvelopeText(envelope)
+    expect(text.split('PROJECT_RULE_SENTINEL').length - 1, modelId).toBe(1)
+    expect(text.split('# Durable project memory').length - 1, modelId).toBe(1)
+    expect(text.split('Available Maestrly agents:').length - 1, modelId).toBe(1)
+    expect(text, modelId).toContain(envelope.environment)
+  }
+})
+it('gives a Cursor Maestro orchestrator its contract once and no skill catalog', async () => {
+  h.git.mockResolvedValue(null)
+  const config = createDefaultMaestroConfig()
+  // Maestro requires a project.
+  const { envelope, skills } = await buildCursorHarnessContext({
+    projectId: 'p1',
+    cwd,
+    conversationId: 'fork',
+    mode: 'maestro',
+    maestro: {
+      version: 1,
+      strategy: config.strategy,
+      pool: config.pool,
+      source: 'safe-default',
+      diagnostics: [],
+      frozenAt: 1,
+    },
+    modelId: 'cursor-model',
+  })
+  expect(envelope.instructions.split(MAESTRO_SYSTEM_SPEC).length - 1).toBe(1)
+  expect(envelope.agentCatalog).toContain('# Maestro Agent Pool')
+  expect(skills).toEqual([])
+  expect(envelope.skillCatalog).toBe('')
 })
 it('tells an Antigravity session which shell runs its commands', async () => {
   h.git.mockResolvedValue(null)

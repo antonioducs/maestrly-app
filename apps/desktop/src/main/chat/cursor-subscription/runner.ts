@@ -84,6 +84,7 @@ import {
   buildCursorSeedTranscript,
   hashCursorHarnessEnvelope,
   isCursorAgentBindingCompatible,
+  renderCursorEnvelopeText,
 } from './session'
 import { cursorModelSelectionsEqual } from './manager'
 import type {
@@ -763,7 +764,7 @@ async function runCursorSubscriptionChatInScope(
         queueCursorAgentCleanup(args.conversationId, agentId, args.cwd, args.manager.accountId ?? null)
       }
 
-      const envelopeText = `# Maestrly harness\n${envelope.instructions}\n\n# Project\n${envelope.projectContext}\n\n${envelope.skillCatalog}\n${envelope.agentCatalog}\n\n${envelope.environment}`
+      const envelopeText = renderCursorEnvelopeText(envelope)
       const input = currentUserInput(currentUser, seedTranscript, dropImages)
       // A resumed agent keeps its contract but not a stale environment: the date and git state come with the message.
       const sendText = compatible

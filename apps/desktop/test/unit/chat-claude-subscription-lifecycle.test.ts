@@ -4,16 +4,19 @@ const h = vi.hoisted(() => ({
   manager: {
     deleteManagedSession: vi.fn(),
   },
+  diag: vi.fn(),
 }))
 
 vi.mock('../../src/main/chat/claude-agent-sdk/manager', () => ({
   getClaudeSubscriptionManager: () => h.manager,
 }))
+vi.mock('../../src/main/chat/diag-log', () => ({ chatDiag: h.diag }))
 
 import {
   deleteAllManagedClaudeSessions,
   deleteClaudeSessionForConversation,
   retryManagedClaudeSessionCleanup,
+  retryManagedClaudeSessionCleanupOnce,
 } from '../../src/main/chat/claude-agent-sdk/lifecycle'
 import {
   getClaudeSessionBinding,
@@ -58,6 +61,7 @@ describe('Claude session lifecycle', () => {
   beforeEach(() => {
     freshDb()
     h.manager.deleteManagedSession.mockReset().mockResolvedValue(undefined)
+    h.diag.mockReset()
   })
 
   afterEach(() => {
@@ -125,5 +129,44 @@ describe('Claude session lifecycle', () => {
     await retryManagedClaudeSessionCleanup()
     expect(h.manager.deleteManagedSession).toHaveBeenCalledWith('session-retry', '/repo')
     expect(listClaudeSessionCleanup()).toEqual([])
+  })
+
+  it('retries queued deletes once per process so a worker queued later stays resumable', async () => {
+    queueClaudeSessionCleanup('old-conversation', 'session-retired', '/repo')
+    await retryManagedClaudeSessionCleanupOnce()
+    expect(h.manager.deleteManagedSession).toHaveBeenCalledExactlyOnceWith('session-retired', '/repo')
+    expect(h.diag).toHaveBeenCalledWith({
+      kind: 'claude-session-deleted',
+      conv: 'old-conversation',
+      session: 'session-retired',
+      trigger: 'retry',
+      outcome: 'deleted',
+    })
+
+    // A Maestro worker queues its session as soon as it starts; later status and config reads must leave it alone.
+    queueClaudeSessionCleanup('maestro-conversation', 'worker-session', '/repo')
+    await retryManagedClaudeSessionCleanupOnce()
+    await retryManagedClaudeSessionCleanupOnce()
+    expect(h.manager.deleteManagedSession).toHaveBeenCalledTimes(1)
+    expect(listClaudeSessionCleanup()).toEqual([expect.objectContaining({ sessionId: 'worker-session' })])
+  })
+
+  it('records why a session could not be deleted', async () => {
+    const workspace = makeWorkspace()
+    const conversation = makeConversation(workspace.id, {})
+    bind(conversation.id, 'session-offline')
+    h.manager.deleteManagedSession.mockRejectedValue(new Error('runtime offline'))
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    await deleteClaudeSessionForConversation(conversation.id)
+
+    expect(h.diag).toHaveBeenCalledWith({
+      kind: 'claude-session-deleted',
+      conv: conversation.id,
+      session: 'session-offline',
+      trigger: 'conversation',
+      outcome: 'failed',
+      error: 'runtime offline',
+    })
   })
 })

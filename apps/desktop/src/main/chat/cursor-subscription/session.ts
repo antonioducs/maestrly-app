@@ -16,7 +16,7 @@ import { nativeSeedContextText, renderNativeSeedTranscript } from '../message'
 import type { ChatSkill } from '../skills'
 import { renderSkillCatalogEntries } from '../skills'
 import type { ChatAgent } from '../agents'
-import { effectiveSkills } from '../skill-state'
+import { mainAgentSkills } from '../skill-state'
 import { buildProjectContext } from '../project-context'
 import { commandShellEnvironment } from '../tools/command-shell'
 import { listEffectiveAgents } from '../virtual-subagents'
@@ -104,10 +104,7 @@ export interface BuildCursorHarnessContextArgs {
 export async function buildCursorHarnessContext(
   args: BuildCursorHarnessContextArgs
 ): Promise<{ envelope: CursorHarnessEnvelope; skills: readonly ChatSkill[]; agents: readonly ChatAgent[] }> {
-  const skills =
-    args.mode === 'ask'
-      ? []
-      : (await effectiveSkills(args.cwd, args.conversationId)).filter((skill) => skill.modelInvocable)
+  const skills = await mainAgentSkills(args.mode, args.cwd, args.conversationId)
   const skillContext = skillsCatalog(skills, args.projectId !== null)
   const allAgents = await listEffectiveAgents({
     cwd: args.cwd,
@@ -140,22 +137,25 @@ export async function buildCursorHarnessContext(
   const conversation = getConversation(args.conversationId)
   const notes = !isBotMode() && Boolean(conversation)
   const allowPlanReview = !isBotMode()
+  // The environment travels apart (`environment`): it changes between turns and must not alter the contract.
+  const basePrompt = buildHarnessPrompt({
+    harness,
+    cwd: args.cwd,
+    conversationId: args.conversationId,
+    scope: args.projectId === null ? 'standalone' : 'project',
+    mode: args.mode,
+    appToolsEnabled: args.appToolsEnabled ?? false,
+    ...(args.disabledAppToolGroups ? { disabledAppToolGroups: args.disabledAppToolGroups } : {}),
+    hasNotesTab: notes,
+    projectContext,
+    skillsContext: skillContext,
+    agentsContext: agentContext,
+    envContext: environment,
+    generatedInterfaces: generatedInterfacesEnabled(),
+  }).stablePrefix
+  const memoryGuidance = args.projectId === null ? PERSONAL_MEMORY_TOOL_GUIDANCE : MEMORY_TOOL_GUIDANCE
   const instructions = [
-    // The environment travels apart (`environment`): it changes between turns and must not alter the contract.
-    buildHarnessPrompt({
-      harness,
-      cwd: args.cwd,
-      conversationId: args.conversationId,
-      mode: args.mode,
-      appToolsEnabled: args.appToolsEnabled ?? false,
-      ...(args.disabledAppToolGroups ? { disabledAppToolGroups: args.disabledAppToolGroups } : {}),
-      hasNotesTab: notes,
-      projectContext,
-      skillsContext: skillContext,
-      agentsContext: agentContext,
-      envContext: environment,
-      generatedInterfaces: generatedInterfacesEnabled(),
-    }).stablePrefix,
+    basePrompt,
     'You are running inside Maestrly through the official Cursor Agent SDK runtime.',
     `Maestrly mode: ${args.mode}.`,
     'Use ONLY the custom tools offered to you; do not attempt tools you were not given.',
@@ -163,9 +163,10 @@ export async function buildCursorHarnessContext(
       ? ['The `review_plan` tool presents a plan for user approval; when the user approves, a new turn executes it.']
       : []),
     'The `ask_question` tool asks the user a question and waits for the answer.',
-    ...(args.mode === 'maestro' ? [MAESTRO_SYSTEM_SPEC] : []),
+    // The Maestrly base layout already carries the contract and the memory guidance.
+    ...(args.mode === 'maestro' && !basePrompt.includes(MAESTRO_SYSTEM_SPEC) ? [MAESTRO_SYSTEM_SPEC] : []),
     ...(args.mode === 'maestro' && args.maestro ? [renderMaestroTurnPolicy(args.maestro)] : []),
-    args.projectId === null ? PERSONAL_MEMORY_TOOL_GUIDANCE : MEMORY_TOOL_GUIDANCE,
+    ...(basePrompt.includes(memoryGuidance) ? [] : [memoryGuidance]),
     ...(ultra ? [harnessUltraGuidance(harness, args.mode) ?? ultra] : []),
     ...(notes ? ['The conversation has a Notes tab; use it when the user asks about notes.'] : []),
     "You are an assistant on the user's machine. The Maestrly tool layer enforces permissions; never claim you executed something you did not.",
@@ -186,6 +187,23 @@ export async function buildCursorHarnessContext(
     skills,
     agents,
   }
+}
+
+/**
+ * First message of a new agent. The base layout leaves project, skill and agent context to this envelope; the profile
+ * and standalone layouts already compose them into the instructions, so they are not repeated.
+ */
+export function renderCursorEnvelopeText(envelope: CursorHarnessEnvelope): string {
+  const pending = (part: string): string => (part.trim() && !envelope.instructions.includes(part.trim()) ? part : '')
+  const projectContext = pending(envelope.projectContext)
+  return [
+    `# Maestrly harness\n${envelope.instructions}`,
+    projectContext ? `# Project\n${projectContext}` : '',
+    [pending(envelope.skillCatalog), pending(envelope.agentCatalog)].filter(Boolean).join('\n'),
+    envelope.environment,
+  ]
+    .filter(Boolean)
+    .join('\n\n')
 }
 
 export const CURSOR_HARNESS_ENVELOPE_VERSION = 2

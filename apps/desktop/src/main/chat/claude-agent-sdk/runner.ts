@@ -56,7 +56,7 @@ import { buildProjectContext } from '../project-context'
 import type { QuestionBroker } from '../question-broker'
 import { IN_TURN_COMPACT_RATIO, type NormalizedAiUsage } from '../runner'
 import { renderSkillCatalogEntries, renderSkillContext, type ChatSkill } from '../skills'
-import { effectiveSkills, findEffectiveSkill } from '../skill-state'
+import { findEffectiveSkill, mainAgentSkills } from '../skill-state'
 import { SubagentCoordinator } from '../subagent-coordinator'
 import { buildAndRenderSubagentDispatchCatalog } from '../subagent-dispatch-catalog'
 import { createExplicitSubagentTurnState } from '../subagent-selection-guard'
@@ -638,10 +638,7 @@ async function prepareRuntime(
         })
       : { tools: {}, close: async () => {} }
   try {
-    const skills =
-      args.mode === 'ask'
-        ? []
-        : (await effectiveSkills(args.cwd, args.conversationId)).filter((skill) => skill.modelInvocable)
+    const skills = await mainAgentSkills(args.mode, args.cwd, args.conversationId)
     const skillTools: ToolSet = skills.length
       ? {
           use_skill: tool({

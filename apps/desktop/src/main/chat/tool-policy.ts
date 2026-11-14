@@ -224,12 +224,20 @@ export function isHostToolParallelSafe(name: string, metadata?: unknown): boolea
   return PARALLEL_SAFE_HOST_TOOL_NAMES.has(name)
 }
 
+/**
+ * Read-only app tools Maestro's orchestrator still does not receive: inspecting a page or the screen is work for a
+ * worker, which gets these tools with its own catalog. What people write — terminals, notes, whiteboards, artifact
+ * comments and responses — stays readable here, since a worker's resources are scoped to its delegation.
+ */
+const MAESTRO_WORKER_ONLY_TOOL_PREFIXES = ['browser_', 'computer_'] as const
+
 export function appToolAllowed(mode: ChatBehavior, name: string): boolean {
   if (name === 'review_plan') return false
   if (capabilityBehaviorFor(mode) === 'agent') return true
   const entry = APP_TOOL_POLICY[name as AppToolName]
   // Plan/Ask retain their product allowlist, including safe recording/navigation side effects. Maestro is a
   // stricter structural boundary: its parent receives only entries that are both allowlisted and proven read-only.
+  if (mode === 'maestro' && MAESTRO_WORKER_ONLY_TOOL_PREFIXES.some((prefix) => name.startsWith(prefix))) return false
   return entry?.allowedInPlanAsk === true && (mode !== 'maestro' || entry.readOnly)
 }
 

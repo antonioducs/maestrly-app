@@ -236,21 +236,27 @@ describe('Antigravity chat runner', () => {
     })
   })
 
-  it('publishes the context occupancy the server measures after each model call', async () => {
-    const { events } = await turn('USAGE 18000:1048576 24310:1048576', { contextWindow: 200_000 })
+  it('publishes its own occupancy estimate after each model call instead of the number the server reports', async () => {
+    // Runtime 1.4.0 can fold two model calls into one report, so the second number is not the window.
+    const { events } = await turn('USAGE 18000:1048576 260000:1048576', { contextWindow: 200_000 })
     const samples = events.flatMap((event) => (event.kind === 'context-usage' ? [event.snapshot] : []))
-    expect(samples.map((sample) => sample.usedTokens)).toEqual([18_000, 24_310])
+    expect(samples).toHaveLength(2)
+    const used = samples.map((sample) => sample.usedTokens)
+    expect(used[0]).toBeGreaterThan(0)
+    expect(used[1]).toBeGreaterThanOrEqual(used[0])
+    expect(used).not.toContain(18_000)
+    expect(used[1]).toBeLessThan(260_000)
     expect(samples.at(-1)).toMatchObject({
       modelContextWindow: 200_000,
-      quality: 'measured',
+      quality: 'estimated',
       model: { providerId: 'builtin_antigravity_subscription', modelId: 'gemini-3.8-flash' },
     })
     expect(kinds(events).lastIndexOf('context-usage')).toBeLessThan(kinds(events).lastIndexOf('finish'))
     const assistant = listChatMessages(conversationId).find((message) => message.role === 'assistant')
     expect(assistant?.contextSnapshot).toMatchObject({
-      usedTokens: 24_310,
+      usedTokens: samples.at(-1)!.usedTokens,
       modelContextWindow: 200_000,
-      quality: 'measured',
+      quality: 'estimated',
     })
     // Occupancy is no bill: the turn still reports no token usage of its own.
     expect(assistant?.usage).toBeUndefined()
@@ -259,7 +265,7 @@ describe('Antigravity chat runner', () => {
   it('keeps the server window without a manual limit and publishes no occupancy the server did not send', async () => {
     const measured = await turn('USAGE 24310:1048576')
     expect(measured.events.find((event) => event.kind === 'context-usage')).toMatchObject({
-      snapshot: { usedTokens: 24_310, modelContextWindow: 1_048_576 },
+      snapshot: { modelContextWindow: 1_048_576, quality: 'estimated' },
     })
     const unmeasured = await turn('ECHO oi')
     expect(textOf(unmeasured.events)).toBe('oi')

@@ -19,6 +19,7 @@ import type {
   ChatUsage,
   ToolOutput,
   SubagentRunMeta,
+  SubagentResumeStatus,
   SubagentRuntimeHandle,
 } from '../../../shared/chat'
 import type { ChatBehavior } from '../../../shared/conversation-experience'
@@ -64,7 +65,7 @@ import type { PermissionBroker } from '../permission'
 import { buildProjectContext } from '../project-context'
 import type { QuestionBroker } from '../question-broker'
 import { renderSkillCatalogEntries, renderSkillContext, type ChatSkill } from '../skills'
-import { effectiveSkills, findEffectiveSkill } from '../skill-state'
+import { findEffectiveSkill, mainAgentSkills } from '../skill-state'
 import type { ChatAgent } from '../agents'
 import { listEffectiveAgents } from '../virtual-subagents'
 import { buildAndRenderSubagentDispatchCatalog } from '../subagent-dispatch-catalog'
@@ -125,6 +126,7 @@ import {
   planSubagentResume,
   recreatedTask,
   resolveSubagentResume,
+  settledSubagentResume,
   subagentToolSignature,
   type SubagentReplayMessage,
   type SubagentResumeRecreateReason,
@@ -1969,10 +1971,7 @@ async function buildDynamicTools(
     const hostTools = mergeDynamicToolSets(mcp.tools, app.tools, bridgeTools)
     // Skills are ordinary host tools too. Keeping them in this raw set means nested runtimes can share the
     // exact same capability adaptation as MCP/app outputs instead of inheriting the parent's image policy.
-    const skills =
-      args.mode === 'ask'
-        ? []
-        : (await effectiveSkills(args.cwd, args.conversationId)).filter((skill) => skill.modelInvocable)
+    const skills = await mainAgentSkills(args.mode, args.cwd, args.conversationId)
     const skillTools: ToolSet = skills.length
       ? {
           use_skill: tool({
@@ -3689,7 +3688,7 @@ export async function runCodexSubscriptionChat(
                 })
               : null
             let resumeOutcomeRecorded = false
-            const recordResume = (status: 'resumed' | 'recreated', reason?: string): void => {
+            const recordResume = (status: SubagentResumeStatus, reason?: string): void => {
               if (resumeOutcomeRecorded) return
               resumeOutcomeRecorded = true
               sessionRecorder.resumeOutcome(status, reason)
@@ -3723,8 +3722,8 @@ export async function runCodexSubscriptionChat(
             }
             const settleResume = (outcome: { resumed?: boolean; resumeReason?: string }): void => {
               if (!resumeSource) return
-              if (outcome.resumed) recordResume('resumed')
-              else recordResume('recreated', outcome.resumeReason ?? 'resume-rejected')
+              const settled = settledSubagentResume(outcome)
+              recordResume(settled.status, settled.reason)
             }
             // Set when every Codex account of the child's chain is exhausted: another model may continue the task.
             let codexChildAccountsExhausted = false

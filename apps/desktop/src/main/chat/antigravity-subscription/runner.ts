@@ -87,7 +87,12 @@ import {
   antigravityPromptTextBytes,
   assertAntigravityPromptFits,
 } from './prompt-limit'
-import { buildAntigravityInstructions, buildAntigravityPromptBlocks, buildAntigravitySeedTranscript } from './session'
+import {
+  buildAntigravityInstructions,
+  buildAntigravityPromptBlocks,
+  buildAntigravitySeedTranscript,
+  estimateAntigravityContextTokens,
+} from './session'
 import {
   getAntigravitySessionBinding,
   putAntigravitySessionBinding,
@@ -784,15 +789,23 @@ export async function runAntigravitySubscriptionChat(
         backgroundPrefix.notifyAfterPersist()
       },
     })
-    // Occupancy is the session's (instructions, tools and history), measured by the server after each model call.
+    // The server's report marks the end of a model call; the occupancy itself is Maestrly's estimate of the session
+    // (instructions, tools and history), because the reported number can fold two calls together.
     const observeContext = contextProgress.observeAttempt()
     unsubscribe = connection.subscribe(session.sessionId, (update) => {
       const reported = readAntigravityContextUsage(update)
       if (reported) {
+        const estimated = estimateAntigravityContextTokens({
+          instructions,
+          toolCatalog: activeToolset.catalog,
+          history,
+          assistant: messages[0],
+        })
+        chatDiag({ kind: 'antigravity-context-usage', conv: args.conversationId, reported: reported.used, estimated })
         observeContext({
-          usedTokens: reported.used,
+          usedTokens: estimated,
           modelContextWindow: contextWindowFor(reported.size),
-          quality: 'measured',
+          quality: 'estimated',
         })
       }
       for (const event of mapper.push(update)) apply(event)

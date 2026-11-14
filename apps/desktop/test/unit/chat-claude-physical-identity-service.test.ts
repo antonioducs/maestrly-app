@@ -127,7 +127,7 @@ vi.mock('../../src/main/chat/claude-agent-sdk', () => ({
   getClaudeSubscriptionManager: (id?: string | null) => (id ? h.slots.get(id) : h.manager),
   inspectClaudeSessionCompatibility: vi.fn(async () => true),
   putClaudeSessionBinding: vi.fn(),
-  retryManagedClaudeSessionCleanup: h.retryCleanup,
+  retryManagedClaudeSessionCleanupOnce: h.retryCleanup,
   runClaudeChat: h.runClaude,
 }))
 vi.mock('../../src/main/chat/claude-agent-sdk/manager', () => ({

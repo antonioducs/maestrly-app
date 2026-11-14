@@ -55,7 +55,7 @@ import type { PermissionBroker } from '../permission'
 import type { QuestionBroker } from '../question-broker'
 import { buildProjectContext } from '../project-context'
 import { renderSkillCatalogEntries, renderSkillContext, type ChatSkill } from '../skills'
-import { effectiveSkills, findEffectiveSkill } from '../skill-state'
+import { findEffectiveSkill, mainAgentSkills } from '../skill-state'
 import type { ChatAgent } from '../agents'
 import { listEffectiveAgents } from '../virtual-subagents'
 import { buildAndRenderSubagentDispatchCatalog } from '../subagent-dispatch-catalog'
@@ -585,10 +585,7 @@ async function prepareRuntime(
       : { tools: {}, close: async () => {} }
 
   try {
-    const skills =
-      args.mode === 'ask'
-        ? []
-        : (await effectiveSkills(args.cwd, args.conversationId)).filter((skill) => skill.modelInvocable)
+    const skills = await mainAgentSkills(args.mode, args.cwd, args.conversationId)
     const skillTools: ToolSet = skills.length
       ? {
           use_skill: tool({
