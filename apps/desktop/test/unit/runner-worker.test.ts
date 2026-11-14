@@ -838,7 +838,8 @@ suite('runner worker', () => {
       await vi.waitFor(() => expect(readHistoryFile(root)).toEqual(worker.history()))
       for (const file of [path.join(root, 'history.json'), storage.historyLog(keyOf(storage, JOB_ID))])
         expect(statSync(file).mode & 0o777).toBe(0o600)
-      expect(readdirSync(root).filter((name) => name.endsWith('.tmp'))).toEqual([])
+      // The job's folder goes before the state without it is written, so that last write may still be in flight.
+      await vi.waitFor(() => expect(readdirSync(root).filter((name) => name.endsWith('.tmp'))).toEqual([]))
       expect(readdirSync(storage.historyDir())).toEqual([`${keyOf(storage, JOB_ID)}.log`])
     })
 
