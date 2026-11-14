@@ -1,3 +1,4 @@
+import { chatDiag } from '../diag-log'
 import { claudeSubscriptionErrorMessage } from './errors'
 import { getClaudeSubscriptionManager, type ClaudeSubscriptionManager } from './manager'
 import {
@@ -15,21 +16,39 @@ function alreadyAbsent(error: unknown): boolean {
   return /not found|does not exist|unknown session/i.test(claudeSubscriptionErrorMessage(error))
 }
 
+/** Which path asked for the delete, so a session that vanished can be traced in the diagnostics log. */
+export type ClaudeSessionDeleteTrigger = 'conversation' | 'retry' | 'account-boundary'
+
 export async function hardDeleteClaudeSession(
   manager: ClaudeSubscriptionManager,
   sessionId: string,
-  cwd: string
+  cwd: string,
+  trace?: { trigger: ClaudeSessionDeleteTrigger; conversationId: string }
 ): Promise<void> {
+  const record = (outcome: 'deleted' | 'absent' | 'failed', error?: string): void => {
+    if (!trace) return
+    chatDiag({
+      kind: 'claude-session-deleted',
+      conv: trace.conversationId,
+      session: sessionId,
+      trigger: trace.trigger,
+      outcome,
+      ...(error ? { error: error.slice(0, 300) } : {}),
+    })
+  }
   try {
     await manager.deleteManagedSession(sessionId, cwd)
     clearClaudeSessionCleanup(sessionId)
+    record('deleted')
   } catch (error) {
     if (alreadyAbsent(error)) {
       clearClaudeSessionCleanup(sessionId)
+      record('absent')
       return
     }
     const message = claudeSubscriptionErrorMessage(error)
     markClaudeSessionCleanupFailed(sessionId, message)
+    record('failed', message)
     throw new Error(message)
   }
 }
@@ -48,7 +67,10 @@ export async function deleteClaudeSessionForConversation(
   const failures: unknown[] = []
   for (const cleanup of cleanups) {
     try {
-      await hardDeleteClaudeSession(managerFor(cleanup.accountId), cleanup.sessionId, cleanup.cwd)
+      await hardDeleteClaudeSession(managerFor(cleanup.accountId), cleanup.sessionId, cleanup.cwd, {
+        trigger: 'conversation',
+        conversationId: cleanup.conversationId,
+      })
     } catch (error) {
       failures.push(error)
       console.warn(
@@ -68,9 +90,27 @@ export async function retryManagedClaudeSessionCleanup(
 ): Promise<void> {
   await Promise.all(
     listClaudeSessionCleanup().map((cleanup) =>
-      hardDeleteClaudeSession(managerFor(cleanup.accountId), cleanup.sessionId, cleanup.cwd).catch(() => undefined)
+      hardDeleteClaudeSession(managerFor(cleanup.accountId), cleanup.sessionId, cleanup.cwd, {
+        trigger: 'retry',
+        conversationId: cleanup.conversationId,
+      }).catch(() => undefined)
     )
   )
+}
+
+let cleanupRetriedThisProcess = false
+
+/**
+ * Retries the queued deletes once per process, on the first authenticated status. A session in use is queued too —
+ * a Maestro worker's from its first message until its parent turn releases it, an isolated session until its run
+ * ends — so retrying on every status or config read deleted workers the parent was about to resume.
+ */
+export async function retryManagedClaudeSessionCleanupOnce(
+  managerFor: (accountId: string | null) => ClaudeSubscriptionManager = getClaudeSubscriptionManager
+): Promise<void> {
+  if (cleanupRetriedThisProcess) return
+  cleanupRetriedThisProcess = true
+  await retryManagedClaudeSessionCleanup(managerFor)
 }
 
 /** `accountId` limits the boundary to ONE account (slot login/logout); omitted means all accounts (global wipe). */
@@ -90,7 +130,10 @@ export async function deleteAllManagedClaudeSessions(
     listClaudeSessionCleanup()
       .filter((cleanup) => !scoped || cleanup.accountId === target)
       .map((cleanup) =>
-        hardDeleteClaudeSession(managerFor(cleanup.accountId), cleanup.sessionId, cleanup.cwd).catch(() => undefined)
+        hardDeleteClaudeSession(managerFor(cleanup.accountId), cleanup.sessionId, cleanup.cwd, {
+          trigger: 'account-boundary',
+          conversationId: cleanup.conversationId,
+        }).catch(() => undefined)
       )
   )
 }

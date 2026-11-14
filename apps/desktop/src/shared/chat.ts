@@ -336,7 +336,8 @@ export interface SubagentSessionUsage {
   cacheCreate: number
 }
 
-export type SubagentResumeStatus = 'resumed' | 'recreated'
+/** `failed`: the attempt to reopen the previous session failed and no fresh worker took over. */
+export type SubagentResumeStatus = 'resumed' | 'recreated' | 'failed'
 
 export type SubagentRuntimeHandle =
   | { kind: 'codex-thread'; threadId: string; accountId: string | null; toolSignature: string }

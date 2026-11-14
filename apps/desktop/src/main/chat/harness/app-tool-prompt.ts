@@ -32,15 +32,17 @@ export function appToolPromptGroups(
   const notes = hasNotesTab && on('notes')
   const maestro = mode === 'maestro'
   const off = APP_TOOL_GROUPS.filter((group) => disabled.has(group))
+  // Maestro's orchestrator leaves the browser to its workers (see appToolAllowed).
+  const browser = on('browser') && !maestro
   return {
     listed: (
       ['terminal', 'browser', ...(hasNotesTab ? ['notes' as const] : []), 'memory', 'debug'] as AppToolGroup[]
-    ).filter(on),
+    ).filter((group) => on(group) && (group !== 'browser' || browser)),
     preferred: (['terminal', 'memory', ...(hasNotesTab ? ['notes' as const] : [])] as AppToolGroup[]).filter(on),
     restricted: [
       notes ? (maestro ? 'notes list/read' : 'notes list/read/create/write/append') : '',
       on('memory') ? 'memory search/list/read' : '',
-      on('browser') ? (maestro ? 'browser inspection/read' : 'browser navigation/read') : '',
+      browser ? 'browser navigation/read' : '',
       on('terminal') ? 'terminal read' : '',
     ].filter(Boolean),
     disabledNote: off.length

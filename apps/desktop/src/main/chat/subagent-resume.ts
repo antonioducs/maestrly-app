@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import type { SubagentRuntimeHandle } from '../../shared/chat'
+import type { SubagentResumeStatus, SubagentRuntimeHandle } from '../../shared/chat'
 import { getClaudeSubscriptionManager } from './claude-agent-sdk/manager'
 import { clearClaudeSessionCleanup } from './claude-agent-sdk/session-store'
 import {
@@ -182,6 +182,19 @@ export function planSubagentResume(input: {
     return { mode: 'recreate', reason: 'tools-changed' }
   }
   return { mode: 'native', handle }
+}
+
+/**
+ * How a continuation that tried the native session ended, from what the runtime reported. A runtime names the reason
+ * whenever it recreated the worker, so no reason means the native attempt itself failed.
+ */
+export function settledSubagentResume(result: { resumed?: boolean; resumeReason?: string }): {
+  status: SubagentResumeStatus
+  reason?: string
+} {
+  if (result.resumed) return { status: 'resumed' }
+  if (result.resumeReason) return { status: 'recreated', reason: result.resumeReason }
+  return { status: 'failed' }
 }
 
 /** Recreated-turn task: the new worker receives the previous report as explicit context. */

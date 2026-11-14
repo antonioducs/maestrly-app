@@ -133,7 +133,7 @@ vi.mock('../../src/main/chat/claude-agent-sdk', () => ({
   inspectClaudeSessionCompatibility: h.inspect,
   listClaudeSubscriptionManagers: () => [h.manager],
   putClaudeSessionBinding: vi.fn(),
-  retryManagedClaudeSessionCleanup: h.retryCleanup,
+  retryManagedClaudeSessionCleanupOnce: h.retryCleanup,
   runClaudeChat: h.runClaude,
 }))
 vi.mock('../../src/main/chat/claude-agent-sdk/desktop-login', () => ({

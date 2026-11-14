@@ -52,6 +52,22 @@ const FORBIDDEN_CHILD_TOOLS = new Set<string>([
   ...PARENT_ONLY_CONVERSATION_TOOL_NAMES,
 ])
 
+/**
+ * Claude Code's answer when the session to resume no longer exists. The CLI sends an error result ("No conversation
+ * found with session ID: …") and exits, and the SDK then throws that same text.
+ */
+const RESUME_REJECTED =
+  /no conversation found|session.*(?:not found|does not exist|unknown|invalid|expired)|(?:unknown|invalid|expired).*session/i
+
+export function isClaudeResumeRejection(text: string): boolean {
+  return RESUME_REJECTED.test(text)
+}
+
+function resultErrorText(message: SDKResultMessage): string {
+  if ('errors' in message) return message.errors.join('\n')
+  return message.is_error ? message.result : ''
+}
+
 export interface RunClaudeSubagentArgs {
   manager?: ClaudeSubscriptionManager
   accountIdentity?: ClaudeSubscriptionAccountIdentity
@@ -258,6 +274,8 @@ async function runClaudeSubagentAttempt(
     runtimeSignal.addEventListener('abort', onRuntimeAbort, { once: true })
     if (runtimeSignal.aborted) onRuntimeAbort()
     let replaced = false
+    let rejected = false
+    let producedAssistant = false
     try {
       query = args.manager.createQuery(
         {
@@ -314,20 +332,26 @@ async function runClaudeSubagentAttempt(
           args.onQuota(quota)
           throw error
         }
-        if (
-          attempt.resumeId &&
-          !abortRequested &&
-          /session.*(?:not found|does not exist|unknown|invalid|expired)|(?:unknown|invalid|expired).*session/i.test(
-            String(error)
-          )
-        )
-          return 'rejected'
+        if (attempt.resumeId && !abortRequested && isClaudeResumeRejection(String(error))) return 'rejected'
         throw error
       }
       args.progress?.(`Starting subagent ${args.agentName}`)
       let sessionReported = false
       try {
         for await (const message of query) {
+          // Checked before the session id: the error result may carry the very id that could not be resumed.
+          if (
+            attempt.resumeId &&
+            !producedAssistant &&
+            message.type === 'result' &&
+            isClaudeResumeRejection(resultErrorText(message))
+          ) {
+            rejected = true
+            queryAbort.abort(new Error('Claude could not resume the previous session; restarting fresh.'))
+            void query.interrupt().catch(() => undefined)
+            break
+          }
+          if (message.type === 'assistant') producedAssistant = true
           if (
             !sessionReported &&
             'session_id' in message &&
@@ -341,6 +365,8 @@ async function runClaudeSubagentAttempt(
               void query.interrupt().catch(() => undefined)
               break
             }
+            // The previous session reopened: a later failure is a failure of the resumed worker, not of the resume.
+            if (attempt.resumeId) resumed = true
             args.onSessionStarted?.({
               sessionId: message.session_id,
               resumed: Boolean(attempt.resumeId),
@@ -380,9 +406,15 @@ async function runClaudeSubagentAttempt(
         }
       } catch (error) {
         if (replaced && !abortRequested) return 'session-replaced'
+        if (
+          attempt.resumeId &&
+          !abortRequested &&
+          (rejected || (!producedAssistant && isClaudeResumeRejection(String(error))))
+        )
+          return 'rejected'
         throw error
       }
-      return replaced ? 'session-replaced' : 'done'
+      return replaced ? 'session-replaced' : rejected ? 'rejected' : 'done'
     } finally {
       runtimeSignal.removeEventListener('abort', onRuntimeAbort)
       if (replaced) {
@@ -396,6 +428,7 @@ async function runClaudeSubagentAttempt(
       ? await stream({ taskText: args.task, resumeId: args.resume.sessionId })
       : await stream({ taskText: args.task })
     if (outcome !== 'done') {
+      resumed = false
       resumeReason = outcome === 'rejected' ? 'resume-rejected' : 'session-replaced'
       args.progress?.(`Could not resume previous session (${resumeReason}); starting a fresh one`)
       closeQuery()

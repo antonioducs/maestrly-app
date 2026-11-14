@@ -17,6 +17,7 @@ import type {
   ChatSkillSelection,
   ChatSkillsState,
 } from '../../shared/chat'
+import type { ChatBehavior } from '../../shared/conversation-experience'
 import { getAppSetting, getConversation, getConvUiPrefs, patchConvUiPrefs, setAppSetting } from '../store'
 import { listPluginSkills } from '../plugins/runtime'
 import { countSkillResources, listSkills, normalizedSkillName, type ChatSkill, type SkillOverride } from './skills'
@@ -359,6 +360,15 @@ export function forgetSkillNames(names: readonly string[]): void {
   const groups = listSkillGroups()
   if (groups.some((group) => group.skills.some((name) => gone.has(name))))
     saveSkillGroups(groups.map((group) => ({ ...group, skills: group.skills.filter((name) => !gone.has(name)) })))
+}
+
+/**
+ * Model-invocable skills the MAIN agent of a turn receives (catalog + `use_skill`). Ask stays lean, and Maestro's
+ * orchestrator delegates the work instead of doing it: its workers load skills themselves.
+ */
+export async function mainAgentSkills(mode: ChatBehavior, cwd: string, conversationId?: string): Promise<ChatSkill[]> {
+  if (mode === 'ask' || mode === 'maestro') return []
+  return (await effectiveSkills(cwd, conversationId)).filter((skill) => skill.modelInvocable)
 }
 
 /** ENABLED skills (global + set + conversation override). */

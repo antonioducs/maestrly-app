@@ -16,6 +16,7 @@ import {
   listSkillGroups,
   listSkillInfos,
   listSkillsState,
+  mainAgentSkills,
   readSkillDetail,
   removeSkillGroup,
   resetConversationSkillOverrides,
@@ -92,6 +93,19 @@ describe('global state and per-conversation overrides', () => {
     setConversationSkillOverride(a.id, 'deploy', 'inherit') // Inherits the disabled global state again.
     expect(conversationSkillOverrides(a.id)).toEqual({})
     expect((await effectiveSkills(cwd, a.id, home)).map((s) => s.name)).toEqual(['review'])
+  })
+
+  it('gives the main agent its model-invocable skills, except in Ask and for the Maestro orchestrator', async () => {
+    mkSkill(cwd, 'deploy', '---\nname: deploy\n---\nbody')
+    mkSkill(cwd, 'manual', '---\nname: manual\ndisable-model-invocation: true\n---\nbody')
+    const conv = chatConversation()
+    for (const mode of ['agent', 'plan'] as const) {
+      const names = (await mainAgentSkills(mode, cwd, conv.id)).map((skill) => skill.name)
+      expect(names, mode).toContain('deploy')
+      expect(names, mode).not.toContain('manual')
+    }
+    expect(await mainAgentSkills('ask', cwd, conv.id)).toEqual([])
+    expect(await mainAgentSkills('maestro', cwd, conv.id)).toEqual([])
   })
 
   it('uses global skills when conversation IDs are absent', async () => {
@@ -276,19 +290,24 @@ describe('UI listings', () => {
 })
 
 describe('skill consumer contracts', () => {
-  it('all four runners resolve skills through effectiveSkills and never raw listSkills', () => {
+  it('every runner resolves its main agent skills through effectiveSkills and never raw listSkills', () => {
     const root = fileURLToPath(new URL('../../src/main/chat/', import.meta.url))
     const runners = [
       'runner.ts',
       'claude-agent-sdk/runner.ts',
       'github-copilot/runner.ts',
       'codex-subscription/runner.ts',
+      'cursor-subscription/session.ts',
+      'antigravity-subscription/session.ts',
     ]
     for (const file of runners) {
       const source = readFileSync(path.join(root, file), 'utf8')
-      expect(source, file).toContain('effectiveSkills')
+      expect(source, file).toContain('mainAgentSkills(')
       expect(source, file).not.toMatch(/\blistSkills\(/)
     }
+    expect(readFileSync(path.join(root, 'skill-state.ts'), 'utf8')).toMatch(
+      /function mainAgentSkills[\s\S]*?effectiveSkills\(cwd, conversationId\)/
+    )
     // The slash palette also resolves effective skills.
     const service = readFileSync(path.join(root, 'service.ts'), 'utf8')
     expect(service).toContain('effectiveSkills')

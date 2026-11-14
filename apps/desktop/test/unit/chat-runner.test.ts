@@ -115,6 +115,7 @@ vi.mock('../../src/main/chat/skills', () => ({
 }))
 vi.mock('../../src/main/chat/skill-state', () => ({
   effectiveSkills: async () => [],
+  mainAgentSkills: async () => [],
   findEffectiveSkill: async () => null,
 }))
 vi.mock('../../src/main/chat/virtual-subagents', () => ({ listEffectiveAgents: async () => [] }))

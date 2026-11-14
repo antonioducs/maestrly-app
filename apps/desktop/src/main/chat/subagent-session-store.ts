@@ -110,7 +110,7 @@ function summaryFromRow(row: SessionRow): SubagentSessionSummary {
     tests: stringList(compact.tests),
     ...(row.error ? { error: row.error } : {}),
     ...(row.resumed_from ? { resumedFrom: row.resumed_from } : {}),
-    ...(row.resume_status === 'resumed' || row.resume_status === 'recreated'
+    ...(row.resume_status === 'resumed' || row.resume_status === 'recreated' || row.resume_status === 'failed'
       ? { resumeStatus: row.resume_status }
       : {}),
     ...(row.resume_reason ? { resumeReason: row.resume_reason } : {}),

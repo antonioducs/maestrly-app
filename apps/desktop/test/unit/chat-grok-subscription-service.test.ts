@@ -196,7 +196,7 @@ vi.mock('../../src/main/chat/claude-agent-sdk', () => ({
   }),
   inspectClaudeSessionCompatibility: vi.fn(async () => true),
   putClaudeSessionBinding: vi.fn(),
-  retryManagedClaudeSessionCleanup: vi.fn(async () => {}),
+  retryManagedClaudeSessionCleanupOnce: vi.fn(async () => {}),
   runClaudeChat: vi.fn(),
 }))
 

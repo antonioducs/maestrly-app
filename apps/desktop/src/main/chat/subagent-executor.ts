@@ -57,6 +57,7 @@ import {
   claudeSubagentRuntimeSignature,
   recreatedTask,
   resolveSubagentResume,
+  settledSubagentResume,
   subagentToolSignature,
   type SubagentReplayMessage,
   type SubagentResumeRecreateReason,
@@ -370,8 +371,8 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
   let attemptFailure: unknown
   const settleResume = (result: { resumed?: boolean; resumeReason?: string }): void => {
     if (!resumeSource) return
-    if (result.resumed) recordResume('resumed')
-    else recordResume('recreated', result.resumeReason ?? 'resume-rejected')
+    const outcome = settledSubagentResume(result)
+    recordResume(outcome.status, outcome.reason)
   }
   /**
    * A Codex child whose account has a fallback route walks it like the root turn and helpers do: a confirmed quota

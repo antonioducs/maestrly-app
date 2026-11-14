@@ -44,6 +44,26 @@ describe('Maestro parent/worker capability boundary', () => {
     expect(SYSTEM_PROMPT('/repo', true, 'maestro', true)).toContain('parent is structurally read-only')
   })
 
+  it('sends multi-file investigation to a pool exploration agent instead of the parent', () => {
+    const prompt = SYSTEM_PROMPT('/repo', true, 'maestro', true)
+    expect(prompt).toContain('not investigation')
+    expect(prompt).toContain('delegate kind=explore to the pool agent best suited for exploration')
+  })
+
+  it('addresses the parent as an orchestrator, not as an agent that edits and runs checks', () => {
+    for (const modelId of ['generic-model', 'claude-opus-5', 'gemini-4-argon']) {
+      const maestro = SYSTEM_PROMPT('/repo', true, 'maestro', true, modelId)
+      expect(maestro.split('# Maestro orchestration contract').length - 1, modelId).toBe(1)
+      expect(maestro, modelId).toContain('Workers change code and run checks')
+      expect(maestro, modelId).not.toContain('`edit`/`write` to change them')
+      expect(maestro, modelId).not.toContain('todo_write')
+      expect(maestro, modelId).not.toMatch(/browser_\*|browser (?:navigation|inspection)/)
+      const agent = SYSTEM_PROMPT('/repo', true, 'agent', true, modelId)
+      expect(agent, modelId).toContain('`edit`/`write` to change them')
+      expect(agent, modelId).not.toContain('Workers change code and run checks')
+    }
+  })
+
   it('requires the parent to choose an agent while keeping execution details out of delegate input', () => {
     const properties = Object.keys(MAESTRO_DELEGATE_TOOL_SCHEMA.properties)
     expect(properties).toEqual(expect.arrayContaining(['agent', 'task', 'kind', 'domain', 'reviewOf', 'independent']))
@@ -76,6 +96,15 @@ describe('Maestro parent/worker capability boundary', () => {
     for (const mutating of ['browser_navigate', 'notes_write_page', 'project_notes_append_page']) {
       expect(appToolAllowed('maestro', mutating), mutating).toBe(false)
     }
+    // Inspecting pages and the screen is worker work; what people write stays readable by the parent.
+    for (const workerOnly of ['browser_snapshot', 'browser_read_text', 'computer_screenshot']) {
+      expect(appToolAllowed('maestro', workerOnly), workerOnly).toBe(false)
+      expect(appToolAllowed('agent', workerOnly), workerOnly).toBe(true)
+      expect(appToolAllowed('plan', workerOnly), workerOnly).toBe(true)
+    }
+    expect(appToolAllowed('maestro', 'terminal_read')).toBe(true)
+    expect(appToolAllowed('maestro', 'whiteboard_read')).toBe(true)
+    expect(appToolAllowed('maestro', 'artifact_comments')).toBe(true)
     for (const [name, policy] of Object.entries(APP_TOOL_POLICY)) {
       if (appToolAllowed('maestro', name)) expect(policy.readOnly, name).toBe(true)
     }

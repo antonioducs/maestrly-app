@@ -206,7 +206,7 @@ import {
   getClaudeSubscriptionManager,
   listClaudeSubscriptionManagers,
   inspectClaudeSessionCompatibility,
-  retryManagedClaudeSessionCleanup,
+  retryManagedClaudeSessionCleanupOnce,
   runClaudeChat,
   type ClaudeSubscriptionAccountIdentity,
   type ClaudeSubscriptionStatus,
@@ -461,7 +461,6 @@ import {
   resolveUltraEffort,
 } from '../../shared/chat'
 import { responseDurationMs } from '../../shared/response-duration'
-import { sameContextModel } from '../../shared/context-observation'
 import type {
   ChatAttachmentInput,
   ChatConfig,
@@ -1730,7 +1729,7 @@ function scheduleClaudeConfigRefresh(previous: ChatSubscriptionAuthStatus): void
   const promise = claudeAuthStatus()
     .then(async (current) => {
       if (generation !== claudeAuthGeneration || claudeLoginPending) return
-      if (current.authenticated) await retryManagedClaudeSessionCleanup().catch(() => undefined)
+      if (current.authenticated) await retryManagedClaudeSessionCleanupOnce().catch(() => undefined)
       if (!sameSubscriptionAuthStatus(previous, current)) broadcastClaudeAuth(current)
     })
     .catch(() => undefined)
@@ -3861,14 +3860,11 @@ async function currentChatHistoryStats(
       binding.lastMessageId === latestMessage?.id &&
       binding.accountFingerprint === identity.fingerprint
     )
-    // The ACP server reports no billing usage. Servers from 1.3.0 send the session's occupancy (`usage_update`), kept
-    // as the turn's context snapshot; older servers send nothing. The snapshot's window is not reused: the selected
-    // model or its manual limit may have changed since.
-    const snapshot = latestMessage?.contextSnapshot
-    reportedOccupancy =
-      runtimeReusable && snapshot?.quality === 'measured' && sameContextModel(snapshot.model, selection)
-        ? snapshot.usedTokens
-        : null
+    // The ACP server reports no billing usage, and its `usage_update` can fold two model calls into one report (about
+    // twice the window on runtime 1.4.0). The runner keeps its own estimate as the turn's snapshot for the meter, and
+    // older turns kept the server's number as "measured": neither is a measurement, so admission estimates the
+    // transcript with the full reserve for instructions and tools.
+    reportedOccupancy = null
     runtimeWindowReusable = false
     stats = chatHistoryStats(conversationId, {
       isNativeCompactionActive: (messageId) => runtimeReusable && binding?.lastMessageId === messageId,
@@ -10232,7 +10228,7 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
       const refresh = payload?.refresh === true
       const previous = refresh ? claudeAuthSnapshot(accountId) : null
       const status = await claudeAuthStatus(refresh, accountId)
-      if (!accountId && status.authenticated) await retryManagedClaudeSessionCleanup().catch(() => undefined)
+      if (!accountId && status.authenticated) await retryManagedClaudeSessionCleanupOnce().catch(() => undefined)
       const answer = accountId ? { ...status, accountId } : status
       // "Check again" found Claude Code installed (or gone): every window's model lists follow, without a restart.
       if (previous && !sameSubscriptionAuthStatus(previous, status)) broadcastClaudeAuth(answer)

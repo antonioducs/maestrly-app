@@ -5,6 +5,29 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Changed
+
+- **Leaner Maestro orchestrator prompt**: the orchestrator no longer receives
+  the skill catalog (its workers still load skills), the browser and screen
+  inspection tools (left to workers), or guidance about editing files and
+  running checks itself, and the Antigravity and Cursor runtimes no longer send
+  the Maestro contract twice. This removes roughly 6–7k tokens from every new
+  orchestrator session.
+
+### Fixed
+
+- **Google Antigravity context meter**: the meter no longer shows about twice
+  the real occupancy. The number the Antigravity server reports can fold two
+  model calls together, so Maestrly now shows its own estimate (marked `~`) and
+  no longer uses that number to decide automatic compaction.
+- **Cursor instructions sent once**: new Cursor agents no longer receive the
+  memory guidance twice, nor the project instructions, skills, and subagents
+  twice with GPT models. Standalone Cursor chats now get the general-assistant
+  prompt and personal memory instead of the project-coding prompt.
+- **Claude worker resumption**: a Claude worker whose native session no longer
+  exists starts over instead of failing the delegation, and a resumption that
+  still fails shows as **failed** instead of looking finished.
+
 ## [0.36.0] - 2026-11-13
 
 ### Added
