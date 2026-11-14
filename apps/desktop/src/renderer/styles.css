@@ -84,6 +84,11 @@
   --status-waiting: #EDEAE3;
   --status-error: #ff7a85;
   --artifact-warn: #f2b45c;
+
+  /* The assistant's voice screen: the person's voice in amber, on the window's own black. */
+  --voice-you: #f2b45c;
+  --voice-you-ink: #f6ddb4;
+  --voice-canvas: #0a0a0b;
 }
 
 /* Default border color. In the base layer: unlayered, it outranked every `border-<color>` utility (Tailwind v4 puts
@@ -363,6 +368,52 @@ input[type='checkbox']:not(.appearance-none).accent-destructive:checked {
 .chat-msgs .agent-activity-prose .dark-glass-prose {
   font-size: calc(var(--chat-font, 14.5px) * 0.9);
   line-height: 1.55;
+}
+
+/* ---------- the assistant's voice screen ---------- */
+@keyframes voice-word-in {
+  from {
+    opacity: 0;
+    filter: blur(3px);
+  }
+}
+
+@keyframes voice-rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+/* The microphone calls for a tap a few times, then waits quietly. */
+@keyframes voice-beckon {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(237, 234, 227, 0.28);
+  }
+  60% {
+    box-shadow: 0 0 0 12px rgba(237, 234, 227, 0);
+  }
+}
+
+.voice-word-in {
+  animation: voice-word-in 0.28s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.voice-rise {
+  animation: voice-rise 0.3s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.voice-beckon {
+  animation: voice-beckon 2.2s cubic-bezier(0.2, 0.7, 0.2, 1) 3;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voice-word-in,
+  .voice-rise,
+  .voice-beckon {
+    animation: none;
+  }
 }
 
 /* ---------- onboarding: mini mockups animados ---------- */

@@ -5,6 +5,7 @@ vi.mock('@/lib/mic-recorder', () => mic)
 
 import {
   REALTIME_IDLE_CLOSE_MS,
+  REALTIME_IDLE_WARN_MS,
   type RealtimeState,
   startRealtimeClient,
 } from '../../src/renderer/components/assistant/voice/realtime-client'
@@ -62,14 +63,22 @@ function setup() {
   vi.stubGlobal('MediaStream', class {})
   const states: RealtimeState[] = []
   const onClosed = vi.fn()
+  const onTranscript = vi.fn()
+  const onTool = vi.fn()
+  const onPersonSpeaking = vi.fn()
+  const onIdleWarning = vi.fn()
   const started = startRealtimeClient({
     deviceId: 'mic-1',
     onState: (state) => states.push(state),
     onError: vi.fn(),
     onClosed,
+    onTranscript,
+    onTool,
+    onPersonSpeaking,
+    onIdleWarning,
   })
   const last = () => states[states.length - 1]
-  return { track, api, states, last, onClosed, started }
+  return { track, api, states, last, onClosed, onTranscript, onTool, onPersonSpeaking, onIdleWarning, started }
 }
 
 beforeEach(() => {
@@ -186,7 +195,98 @@ describe('the Realtime call, full duplex', () => {
     FakePeer.last.emit({ type: 'input_audio_buffer.speech_stopped' })
     FakePeer.last.emit({ type: 'response.done' })
     vi.advanceTimersByTime(REALTIME_IDLE_CLOSE_MS + 10_000)
-    expect(onClosed).toHaveBeenCalledOnce()
+    expect(onClosed).toHaveBeenCalledExactlyOnceWith('idle')
     expect(api.assistantRealtimeStop).toHaveBeenCalledOnce()
+  })
+
+  it('warns 15 s before closing for silence, and keeping the call starts the two minutes over', async () => {
+    const { started, onClosed, onIdleWarning } = setup()
+    const client = await started
+    const start = Date.now()
+    vi.advanceTimersByTime(REALTIME_IDLE_CLOSE_MS - REALTIME_IDLE_WARN_MS - 1000)
+    expect(onIdleWarning).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(2000)
+    expect(onIdleWarning).toHaveBeenCalledExactlyOnceWith(start + REALTIME_IDLE_CLOSE_MS)
+    client.keepAlive()
+    expect(onIdleWarning).toHaveBeenLastCalledWith(null)
+    vi.advanceTimersByTime(REALTIME_IDLE_WARN_MS + 2000)
+    expect(onClosed).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(REALTIME_IDLE_CLOSE_MS)
+    expect(onClosed).toHaveBeenCalledExactlyOnceWith('idle')
+  })
+
+  it('says why it ended: hung up, or a connection that failed', async () => {
+    const first = setup()
+    ;(await first.started).close()
+    expect(first.onClosed).toHaveBeenCalledExactlyOnceWith('hangup')
+    vi.clearAllMocks()
+    const second = setup()
+    await second.started
+    const peer = FakePeer.last
+    const [, onChange] = peer.addEventListener.mock.calls.find(([type]) => type === 'connectionstatechange')!
+    peer.connectionState = 'failed'
+    onChange()
+    expect(second.onClosed).toHaveBeenCalledExactlyOnceWith('network')
+  })
+
+  it('streams what the voice says and gives the person’s words once their turn is transcribed', async () => {
+    const { started, onTranscript, onPersonSpeaking } = setup()
+    await started
+    const peer = FakePeer.last
+    peer.emit({ type: 'input_audio_buffer.speech_started' })
+    expect(onPersonSpeaking).toHaveBeenLastCalledWith(true)
+    vi.advanceTimersByTime(800)
+    peer.emit({ type: 'input_audio_buffer.speech_stopped' })
+    expect(onPersonSpeaking).toHaveBeenLastCalledWith(false)
+    const stoppedAt = Date.now()
+    peer.emit({ type: 'response.output_audio_transcript.delta', item_id: 'out_1', delta: 'Três bots' })
+    peer.emit({ type: 'response.output_audio_transcript.delta', item_id: 'out_1', delta: ' rodando.' })
+    peer.emit({ type: 'conversation.item.input_audio_transcription.delta', item_id: 'in_1', delta: 'Como estão' })
+    peer.emit({
+      type: 'conversation.item.input_audio_transcription.completed',
+      item_id: 'in_1',
+      transcript: 'Como estão meus bots?',
+    })
+    peer.emit({ type: 'response.output_audio_transcript.done', item_id: 'out_1', transcript: 'Três bots rodando.' })
+    expect(onTranscript.mock.calls.map(([t]) => t)).toEqual([
+      { who: 'voice', id: 'out_1', text: 'Três bots', final: false },
+      { who: 'voice', id: 'out_1', text: 'Três bots rodando.', final: false },
+      { who: 'you', id: 'in_1', text: 'Como estão', final: false, turnEndedAt: stoppedAt },
+      { who: 'you', id: 'in_1', text: 'Como estão meus bots?', final: true, turnEndedAt: stoppedAt },
+      { who: 'voice', id: 'out_1', text: 'Três bots rodando.', final: true },
+    ])
+  })
+
+  it('reports each tool call when it starts and with its output', async () => {
+    const { started, onTool } = setup()
+    await started
+    FakePeer.last.emit({
+      type: 'response.function_call_arguments.done',
+      name: 'ask_assistant',
+      call_id: 'call_1',
+      arguments: '{"request":"trocar a conta"}',
+    })
+    expect(onTool).toHaveBeenCalledWith({
+      callId: 'call_1',
+      name: 'ask_assistant',
+      args: { request: 'trocar a conta' },
+      done: false,
+    })
+    await vi.waitFor(() => expect(onTool).toHaveBeenCalledTimes(2))
+    expect(onTool).toHaveBeenLastCalledWith({
+      callId: 'call_1',
+      name: 'ask_assistant',
+      args: { request: 'trocar a conta' },
+      done: true,
+      output: '{"answer":"done"}',
+    })
+  })
+
+  it('reads no level without Web Audio, and none from a muted microphone', async () => {
+    const { started } = setup()
+    const client = await started
+    expect(client.levels()).toEqual({ input: 0, output: 0 })
+    client.setMuted(true)
+    expect(client.levels().input).toBe(0)
   })
 })

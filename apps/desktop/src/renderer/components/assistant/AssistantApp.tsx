@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ExternalLink, RotateCcw, SquarePen, X } from 'lucide-react'
+import { ExternalLink, MessageSquareText, RotateCcw, SquarePen, X } from 'lucide-react'
 import type { AssistantInfo, AssistantVoiceSettings } from '../../../shared/assistant'
 import { ChatView } from '@/components/chat/ChatView'
 import { Button } from '@/components/ui/button'
@@ -9,11 +9,22 @@ import { hostApi } from '@/lib/hosts/host-context'
 import { LOCAL_HOST_ID } from '../../../shared/host-key'
 import { useVoiceSession } from './voice/use-voice-session'
 import { VoiceButton } from './voice/VoiceButton'
+import { mainAction, VoiceCallChip, VoiceStage, VoiceStrip } from './voice/VoiceStage'
 import { shouldListen, startWakeListener } from './voice/wake-listener'
 import { MIC_DEVICE_KEY } from '@/lib/dictation'
+import { cn } from '@/lib/utils'
 
 /** Statuses that wait for the person: the window stays up while it loses focus, so the card can be answered. */
 const NEEDS_PERSON = new Set(['asking', 'waiting'])
+
+/** Keys the voice screen takes only when the person is not typing or on a control that uses them. */
+const typingTarget = (target: EventTarget | null) =>
+  target instanceof HTMLElement && !!target.closest('input, textarea, select, [contenteditable="true"]')
+const controlTarget = (target: EventTarget | null) =>
+  target instanceof HTMLElement && !!target.closest('button, a, summary, [role="switch"], [role="option"]')
+
+const focusComposer = () =>
+  document.querySelector<HTMLElement>('[data-assistant-chat] .chat-input[contenteditable="true"]')?.focus()
 
 export function AssistantApp() {
   const { t, i18n } = useTranslation('ui')
@@ -25,6 +36,34 @@ export function AssistantApp() {
   const voice = useVoiceSession({ conversationId: info?.conversationId ?? null, voice: voiceSettings, locale })
   const { tap: voiceTap, escape: voiceEscape } = voice
   const [wake, setWake] = useState({ listening: false })
+
+  // The voice screen takes the window from the moment the voice starts, however it started, until the person
+  // leaves it; the conversation opens over it as a sheet while the voice goes on in a bar.
+  const [voiceMode, setVoiceMode] = useState(false)
+  const [sheet, setSheet] = useState(false)
+  const voiceActive = voice.state !== 'idle' || voice.call !== null
+  useEffect(() => {
+    if (voiceActive) setVoiceMode(true)
+  }, [voiceActive])
+  const covered = voiceMode && !sheet
+  const leaveVoice = useCallback(() => {
+    voiceEscape()
+    setVoiceMode(false)
+    setSheet(false)
+  }, [voiceEscape])
+  const openConversation = useCallback((write?: boolean) => {
+    setSheet(true)
+    if (write) requestAnimationFrame(focusComposer)
+  }, [])
+  const closeConversation = useCallback(() => setSheet(false), [])
+  useEffect(() => {
+    if (!covered) return
+    requestAnimationFrame(() =>
+      document.querySelector<HTMLElement>('[data-voice-stage] [data-voice-main], [data-voice-redial]')?.focus()
+    )
+  }, [covered])
+  const keys = useRef({ voice, voiceMode, sheet, covered })
+  keys.current = { voice, voiceMode, sheet, covered }
 
   useEffect(() => {
     void window.api
@@ -68,6 +107,12 @@ export function AssistantApp() {
     window.addEventListener('focus', loadVoiceSettings)
     const off = window.api.onAssistantShown(({ listen }) => {
       loadVoiceSettings()
+      // Opened again with the voice quiet: the chat, unless it opens to listen.
+      const { voice: current } = keys.current
+      if (!listen && current.state === 'idle' && !current.call) {
+        setVoiceMode(false)
+        setSheet(false)
+      }
       if (listen) voiceTap()
     })
     return () => {
@@ -89,6 +134,8 @@ export function AssistantApp() {
     return window.api.onAssistantConversationChanged((next) => {
       setStatus(undefined)
       setInfo(next)
+      setVoiceMode(false)
+      setSheet(false)
     })
   }, [load])
 
@@ -106,14 +153,37 @@ export function AssistantApp() {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || event.defaultPrevented) return
+      if (event.defaultPrevented) return
       if (document.querySelector('[role="dialog"], [role="menu"], [role="listbox"]')) return
-      // Esc first stops the voice; once it is quiet, Esc hides the window.
-      if (voiceEscape()) {
-        event.preventDefault()
+      const { voice: current, voiceMode: inVoice, sheet: sheetOpen, covered: onStage } = keys.current
+      if (event.key === 'Escape') {
+        // Esc closes the conversation, then stops the voice talking, then the voice; once quiet, it hides the window.
+        if (inVoice && sheetOpen) {
+          event.preventDefault()
+          setSheet(false)
+          return
+        }
+        if (current.call && current.state === 'speaking') {
+          event.preventDefault()
+          current.interrupt()
+          return
+        }
+        if (voiceEscape()) {
+          event.preventDefault()
+          return
+        }
+        window.api.assistantHide()
         return
       }
-      window.api.assistantHide()
+      if (!inVoice || event.metaKey || event.ctrlKey || event.altKey || typingTarget(event.target)) return
+      if (event.key === ' ' && onStage && !controlTarget(event.target)) {
+        if (current.mode === 'realtime' && !current.call) return
+        event.preventDefault()
+        mainAction(current)
+      } else if ((event.key === 'c' || event.key === 'C') && !event.repeat) {
+        event.preventDefault()
+        setSheet((open) => !open)
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -129,6 +199,8 @@ export function AssistantApp() {
       .then((next) => {
         setStatus(undefined)
         setInfo(next)
+        setVoiceMode(false)
+        setSheet(false)
       })
       .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason)))
   }, [])
@@ -137,8 +209,27 @@ export function AssistantApp() {
     <SettingsProvider openSettings={openSettings}>
       <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
         <header className="drag hairline-b flex h-10 shrink-0 items-center gap-1 pl-3 pr-1">
-          <span className="flex-1 truncate text-sm font-medium">{t('assistant.title')}</span>
+          {voiceMode ? (
+            <div className="min-w-0 flex-1">
+              <VoiceCallChip session={voice} />
+            </div>
+          ) : (
+            <span className="flex-1 truncate text-sm font-medium">{t('assistant.title')}</span>
+          )}
           <div className="no-drag flex items-center">
+            {voiceMode && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className={cn('h-7 gap-1.5 px-2 text-[12.5px] font-normal text-foreground/75', sheet && 'bg-accent')}
+                title={t('assistant.voice.stage.conversationKey')}
+                aria-expanded={sheet}
+                onClick={() => (sheet ? closeConversation() : openConversation())}
+              >
+                <MessageSquareText />
+                {t('assistant.voice.stage.conversation')}
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="icon"
@@ -171,7 +262,8 @@ export function AssistantApp() {
             </Button>
           </div>
         </header>
-        {voice.notice && (
+        {voiceMode && sheet && <VoiceStrip session={voice} onBack={closeConversation} onExit={leaveVoice} />}
+        {voice.notice && !covered && (
           <div role="status" className="hairline-b flex items-start gap-2 px-3 py-1.5 text-xs text-muted-foreground">
             <span className="flex-1">{t(`assistant.voice.notice.${voice.notice}`)}</span>
             <button
@@ -187,16 +279,19 @@ export function AssistantApp() {
         )}
         <main className="relative min-h-0 flex-1">
           {info ? (
-            <ChatView
-              key={info.conversationId}
-              conversationId={info.conversationId}
-              workspaceId={null}
-              cwd={info.cwd}
-              experience="standard"
-              visible
-              status={status}
-              micSlotOverride={({ submitText }) => <VoiceButton session={voice} submitText={submitText} />}
-            />
+            // Under the voice screen the chat stays mounted: the voice sends through its composer.
+            <div data-assistant-chat className="contents" inert={covered || undefined}>
+              <ChatView
+                key={info.conversationId}
+                conversationId={info.conversationId}
+                workspaceId={null}
+                cwd={info.cwd}
+                experience="standard"
+                visible
+                status={status}
+                micSlotOverride={({ submitText }) => <VoiceButton session={voice} submitText={submitText} />}
+              />
+            </div>
           ) : (
             <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center text-sm text-muted-foreground">
               {error ? (
@@ -210,6 +305,16 @@ export function AssistantApp() {
               ) : (
                 <span>{t('assistant.loading')}</span>
               )}
+            </div>
+          )}
+          {covered && (
+            <div className="absolute inset-0 z-20">
+              <VoiceStage
+                session={voice}
+                onOpenConversation={openConversation}
+                onExit={leaveVoice}
+                onOpenSettings={() => void window.api.assistantOpenSettings('assistant')}
+              />
             </div>
           )}
         </main>
