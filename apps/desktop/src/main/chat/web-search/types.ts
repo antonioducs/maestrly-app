@@ -16,7 +16,7 @@ export interface WebSearchRequest {
   cwd: string
 }
 
-/** List backends return hits; the ChatGPT backend returns the model's findings with their sources. */
+/** List backends return hits; the subscription backends return the findings with their sources. */
 export type WebSearchOutcome = { kind: 'results'; hits: WebSearchHit[] } | { kind: 'summary'; text: string }
 
 export interface WebSearchBackend {
@@ -24,6 +24,7 @@ export interface WebSearchBackend {
   label: string
   /** Why the backend cannot run (missing key, no account); '' when always available. */
   unavailableReason: string
-  available: () => boolean | Promise<boolean>
+  /** Receives the request because a subscription account may be off limits to its conversation. */
+  available: (request: WebSearchRequest) => boolean | Promise<boolean>
   search: (request: WebSearchRequest) => Promise<WebSearchOutcome>
 }

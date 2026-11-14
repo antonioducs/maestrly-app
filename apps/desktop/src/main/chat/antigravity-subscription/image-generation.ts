@@ -12,7 +12,7 @@ import { deleteGeneratedImages, MAX_GENERATED_IMAGE_BYTES, saveGeneratedImage } 
 import type { GeneratedImageEmission } from '../tools/util'
 import { antigravityErrorMessage, isAntigravityQuotaError, redactAntigravityCredentials } from './errors'
 import type { AntigravityAccountIdentity, AntigravitySubscriptionManager } from './manager'
-import { type AntigravityModelEntry, resolveAntigravityModelValue } from './models'
+import { pickAntigravityHelperModel, resolveAntigravityModelValue } from './models'
 import { antigravityAcpHome, isStrictlyInside } from './paths'
 import { ANTIGRAVITY_IMAGE_TOOL, createAntigravityImagePermissionPolicy } from './permissions'
 
@@ -65,21 +65,6 @@ function abortError(signal: AbortSignal): unknown {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms).unref?.())
-}
-
-/**
- * The cheapest chat model that can call the tool, at its lowest thinking level. The model only forwards the request:
- * the image comes from Google's image model whichever one is chosen.
- */
-export function pickAntigravityImageModel(
-  entries: readonly AntigravityModelEntry[]
-): { modelId: string; effort: 'low' } | null {
-  const chat = entries.filter((entry) => !/image/i.test(`${entry.id} ${entry.displayName}`))
-  const isFlash = (entry: AntigravityModelEntry) => /flash/i.test(`${entry.id} ${entry.displayName}`)
-  const isLite = (entry: AntigravityModelEntry) => /lite/i.test(`${entry.id} ${entry.displayName}`)
-  const entry =
-    chat.find((candidate) => isFlash(candidate) && !isLite(candidate)) ?? chat.find(isFlash) ?? chat[0] ?? entries[0]
-  return entry ? { modelId: entry.id, effort: 'low' } : null
 }
 
 /**
@@ -156,7 +141,8 @@ export async function generateImageWithAntigravityRuntime(args: AntigravityImage
   try {
     manager.assertAccountIdentity(args.accountIdentity)
     const models = await manager.listModels()
-    const model = pickAntigravityImageModel(models)
+    // The model only forwards the request: the image comes from Google's image model whichever one is chosen.
+    const model = pickAntigravityHelperModel(models)
     const modelValue = model && resolveAntigravityModelValue(models, model.modelId, model.effort)
     if (!modelValue) throw new Error('Google AI has no model available to generate images.')
     const connection = await manager.connection(signal)

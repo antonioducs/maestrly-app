@@ -1759,12 +1759,13 @@ export default {
       'Permite que os modelos respondam com pequenas interfaces que você vê e usa, como fotos de produtos, gráficos e calculadoras, e que vejam uma prévia antes de mostrá-las. As instruções somam cerca de 850 tokens a cada conversa, quase sempre servidos do cache, e cada prévia acrescenta um print ao contexto. Desligue para economizar esses tokens; respostas que já têm interfaces continuam mostrando elas.',
     webSearchHeading: 'Busca na web',
     webSearchDescription:
-      'Permite que os modelos pesquisem na web. As consultas são enviadas ao provedor escolhido. O modo Automático usa primeiro uma chave de API configurada, depois sua assinatura do ChatGPT e, por fim, o DuckDuckGo.',
+      'Permite que os modelos pesquisem na web. As consultas são enviadas ao provedor escolhido. O modo Automático usa primeiro uma chave de API configurada, depois sua assinatura do ChatGPT, sua assinatura do Google AI e, por fim, o DuckDuckGo.',
     webSearchProvider: {
       auto: 'Automático',
       tavily: 'Tavily (chave de API)',
       brave: 'Brave Search (chave de API)',
       chatgpt: 'Assinatura do ChatGPT',
+      google: 'Assinatura do Google AI (Google Search)',
       duckduckgo: 'DuckDuckGo (sem chave, pode ser bloqueado)',
       off: 'Desativada',
     },

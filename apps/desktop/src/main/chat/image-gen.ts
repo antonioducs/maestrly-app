@@ -113,12 +113,13 @@ export interface ImageGenRouteOptions {
 }
 
 /**
- * First Google AI account with a stored sign-in, in drawing order: the conversation's own account, the default one,
- * then additional accounts. Reads token files only; never starts the ACP server.
+ * First Google AI account with a stored sign-in that this conversation may use, for helper work such as drawing or
+ * web search: the conversation's own account, the default one, then additional accounts. Reads token files only;
+ * never starts the ACP server.
  */
-async function antigravityImageAccount(
+export async function antigravityHelperAccount(
   conversationId: string,
-  preferred: string | null | undefined
+  preferred?: string | null
 ): Promise<{ accountId: string | null } | null> {
   try {
     const { ANTIGRAVITY_SUBSCRIPTION_PROVIDER_ID, listSubscriptionAccounts, withSubscriptionAccount } = await import(
@@ -152,7 +153,7 @@ export async function resolveImageGenRoute(
   const chatgpt = async (): Promise<ImageGenRoute | null> =>
     (await codexImageGenConnected()) ? { provider: 'chatgpt' } : null
   const google = async (): Promise<ImageGenRoute | null> => {
-    const account = await antigravityImageAccount(conversationId, options.antigravityAccountId)
+    const account = await antigravityHelperAccount(conversationId, options.antigravityAccountId)
     return account ? { provider: 'google', accountId: account.accountId } : null
   }
   const preference = getImageGenProvider()

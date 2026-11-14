@@ -63,7 +63,7 @@ describe('Tavily backend', () => {
 
   it('is unavailable without a key', async () => {
     const backend = createTavilyBackend(() => null)
-    expect(await backend.available()).toBe(false)
+    expect(await backend.available(request('q', 5))).toBe(false)
     await expect(backend.search(request('q', 5))).rejects.toThrow(/Add a Tavily API key/)
   })
 })
@@ -91,7 +91,7 @@ describe('Brave backend', () => {
   })
 
   it('is unavailable without a key', async () => {
-    expect(await createBraveBackend(() => null).available()).toBe(false)
+    expect(await createBraveBackend(() => null).available(request('q', 5))).toBe(false)
   })
 })
 
@@ -130,7 +130,7 @@ describe('DuckDuckGo backend', () => {
   it('posts the query as a browser and limits results', async () => {
     const fetch = mockFetch(() => new Response(DDG_FIXTURE, { headers: { 'content-type': 'text/html' } }))
     const backend = createDuckDuckGoBackend()
-    expect(await backend.available()).toBe(true)
+    expect(await backend.available(request('q', 5))).toBe(true)
     expect(await backend.search(request('electron vibrancy', 1))).toEqual({ kind: 'results', hits: [DDG_HITS[0]] })
     const { url, init } = call(fetch)
     expect(url).toBe('https://html.duckduckgo.com/html/')

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { AcpPermissionOption, AcpPermissionRequest } from '../../src/main/chat/acp/protocol'
 import {
   createAntigravityImagePermissionPolicy,
+  createAntigravitySearchPermissionPolicy,
   decideAntigravityPermission,
 } from '../../src/main/chat/antigravity-subscription/permissions'
 
@@ -75,5 +76,29 @@ describe('Antigravity image session permission policy', () => {
       outcome: { outcome: 'selected', optionId: 'deny' },
     })
     expect(decide(imageCall())).toEqual({ outcome: { outcome: 'selected', optionId: 'allow' } })
+  })
+})
+
+describe('Antigravity web search session permission policy', () => {
+  const searchCall = (title = 'Run search_web?', meta?: AcpPermissionRequest['toolCall']['_meta']) => ({
+    sessionId: 's',
+    toolCall: { toolCallId: 't', title, kind: 'search', _meta: meta },
+    options: ALL_OPTIONS,
+  })
+
+  it('allows the first search_web call once, never always', () => {
+    const decide = createAntigravitySearchPermissionPolicy()
+    expect(decide(searchCall())).toEqual({ outcome: { outcome: 'selected', optionId: 'allow' } })
+    expect(decide(searchCall())).toEqual({ outcome: { outcome: 'selected', optionId: 'deny' } })
+  })
+
+  it('keeps rejecting other built-in tools, the image tool included', () => {
+    const decide = createAntigravitySearchPermissionPolicy()
+    expect(decide(searchCall('Run generate_image?'))).toEqual({ outcome: { outcome: 'selected', optionId: 'deny' } })
+    expect(decide(searchCall('Run read_url_content?'))).toEqual({ outcome: { outcome: 'selected', optionId: 'deny' } })
+    expect(decide(searchCall('maestrly_search_web', { mcp: { server: 'other', tool: 'search_web' } }))).toEqual({
+      outcome: { outcome: 'selected', optionId: 'deny' },
+    })
+    expect(decide(searchCall())).toEqual({ outcome: { outcome: 'selected', optionId: 'allow' } })
   })
 })
