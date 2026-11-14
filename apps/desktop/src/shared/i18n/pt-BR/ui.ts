@@ -1111,6 +1111,9 @@ export default {
         wakePhrase: 'Frase',
         wakePhraseInvalid: 'Use de 2 a 40 caracteres, com pelo menos uma letra ou número.',
         wakeModelDesc: 'Precisa de um download único de {{size}}; a detecção roda neste computador.',
+        wakeResources: 'Enquanto isso estiver ligado, a detecção de voz ocupa cerca de 600 MB de memória.',
+        wakeResourcesCpu:
+          'Enquanto isso estiver ligado, a detecção de voz ocupa cerca de 700 MB de memória e, neste computador, roda no processador: leva cerca de um segundo para conferir cada coisa dita perto do microfone.',
         wakeModelDownload: 'Baixar',
         wakeModelCancel: 'Cancelar',
         wakeModelRetry: 'Tentar de novo',

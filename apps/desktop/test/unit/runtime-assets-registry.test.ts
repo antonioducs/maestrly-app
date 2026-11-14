@@ -140,12 +140,17 @@ describe('runtime asset registry', () => {
 
   it('pins the wake model like the dictation model, as one file on every local ML target', () => {
     const wake = RUNTIME_ASSET_REGISTRY['wake-model']
-    expect(wake.version).toBe('base-q5-1')
+    expect(wake.version).toBe('small-q5-1')
     expect(Object.keys(wake.targets).sort()).toEqual(Object.keys(RUNTIME_ASSET_REGISTRY['whisper-model'].targets).sort())
     for (const target of Object.values(wake.targets)) {
-      expect(target).toMatchObject({ archive: 'file', fileName: 'ggml-base-q5_1.bin', criticalPaths: ['ggml-base-q5_1.bin'] })
-      expect(target?.url).toContain('/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base-q5_1.bin')
-      expect(target?.hash.digest).toMatch(/^[0-9a-f]{64}$/)
+      expect(target).toMatchObject({
+        archive: 'file',
+        fileName: 'ggml-small-q5_1.bin',
+        criticalPaths: ['ggml-small-q5_1.bin'],
+        downloadBytes: 190_085_487,
+      })
+      expect(target?.url).toContain('/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-small-q5_1.bin')
+      expect(target?.hash.digest).toBe('ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb')
     }
   })
 

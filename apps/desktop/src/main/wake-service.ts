@@ -1,5 +1,5 @@
 import type { AssistantSettings } from '../shared/assistant'
-import { defaultWakePhrase, matchesWakePhrase, wakeScore } from '../shared/wake-phrase'
+import { defaultWakePhrase, matchesWakePhrase, wakePrompt, wakeScore } from '../shared/wake-phrase'
 import type { WakeWorker } from './wake-worker-host'
 
 export type WakePause = 'locked' | 'suspended'
@@ -28,6 +28,11 @@ export const WAKE_COOLDOWN_MS = 3000
 export const WAKE_RESTART_DELAY_MS = 1000
 export const WAKE_MIN_BURST_SAMPLES = 4000 // 0.25 s at 16 kHz
 export const WAKE_MAX_BURST_SAMPLES = 40_000 // 2.5 s
+/**
+ * A pause in the phrase ("Oi… Maestro") splits it into two bursts: what a burst arriving within this time of the
+ * previous one heard is also read after the previous transcript.
+ */
+export const WAKE_JOIN_MS = 2500
 
 const CRASH_WINDOW_MS = 60_000
 const CRASH_BUDGET = 3
@@ -49,6 +54,9 @@ export function createWakeService(deps: WakeServiceDeps) {
   let restartTimer: { cancel(): void } | null = null
   let lastSentListening: boolean | null = null
   let inFlight = false
+  /** The newest burst that arrived during a detection: the phrase said right after other speech must not be lost. */
+  let queued: { audio: Float32Array; at: number } | null = null
+  let previous: { text: string; at: number } | null = null
   let cooldownUntil = 0
   let applyChain: Promise<void> = Promise.resolve()
 
@@ -154,31 +162,48 @@ export function createWakeService(deps: WakeServiceDeps) {
     return applyChain
   }
 
-  async function burst(audio: unknown): Promise<void> {
-    if (!(audio instanceof Float32Array)) return
-    if (audio.length < WAKE_MIN_BURST_SAMPLES || audio.length > WAKE_MAX_BURST_SAMPLES) return
-    if (inFlight || now() < cooldownUntil) return
+  async function check(audio: Float32Array, at: number): Promise<void> {
+    if (now() < cooldownUntil) return
     if (!worker && wanted() && ready && pauses.size === 0 && error !== 'worker') {
       await apply()
     }
     if (!isListening() || !worker) return
     if (error === 'mic') error = null
+    const locale = deps.locale()
+    const language: 'pt' | 'en' = locale.startsWith('pt') ? 'pt' : 'en'
+    const phrase = deps.settings().voice.wakePhrase ?? defaultWakePhrase(locale)
+    const result = await worker.detect(audio, language, wakePrompt(phrase))
+    if (!result) return
+    const before = previous && at - previous.at <= WAKE_JOIN_MS ? previous.text : null
+    const alone = matchesWakePhrase(result.text, phrase)
+    const joined = !alone && before !== null && matchesWakePhrase(`${before} ${result.text}`, phrase)
+    const matched = alone || joined
+    previous = matched || !result.text ? null : { text: result.text, at }
+    const parts = [`[wake] ${result.ms} ms score=${wakeScore(result.text, phrase).toFixed(2)}`]
+    if (matched) parts.push(joined ? 'match joined' : 'match')
+    if (deps.logTranscripts) parts.push(JSON.stringify(result.text))
+    console.log(parts.join(' '))
+    if (matched) {
+      cooldownUntil = now() + WAKE_COOLDOWN_MS
+      deps.onWake()
+    }
+  }
+
+  async function burst(audio: unknown): Promise<void> {
+    if (!(audio instanceof Float32Array)) return
+    if (audio.length < WAKE_MIN_BURST_SAMPLES || audio.length > WAKE_MAX_BURST_SAMPLES) return
+    const at = now()
+    if (inFlight) {
+      queued = { audio, at }
+      return
+    }
     inFlight = true
     try {
-      const locale = deps.locale()
-      const language: 'pt' | 'en' = locale.startsWith('pt') ? 'pt' : 'en'
-      const phrase = deps.settings().voice.wakePhrase ?? defaultWakePhrase(locale)
-      const result = await worker.detect(audio, language)
-      if (!result) return
-      const score = wakeScore(result.text, phrase)
-      const matched = matchesWakePhrase(result.text, phrase)
-      const parts = [`[wake] ${result.ms} ms score=${score.toFixed(2)}`]
-      if (matched) parts.push('match')
-      if (deps.logTranscripts) parts.push(JSON.stringify(result.text))
-      console.log(parts.join(' '))
-      if (matched) {
-        cooldownUntil = now() + WAKE_COOLDOWN_MS
-        deps.onWake()
+      let next: { audio: Float32Array; at: number } | null = { audio, at }
+      while (next) {
+        await check(next.audio, next.at)
+        next = queued
+        queued = null
       }
     } finally {
       inFlight = false

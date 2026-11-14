@@ -472,6 +472,9 @@ function VoiceSettings({
               {t('settings.assistant.voice.wakePhraseInvalid')}
             </p>
           )}
+          <p className="text-[11px] leading-snug text-muted-foreground">
+            {t(os === 'mac' ? 'settings.assistant.voice.wakeResources' : 'settings.assistant.voice.wakeResourcesCpu')}
+          </p>
           {(() => {
             const runtimeAsset = wakeAssets['local-ml-runtime']
             const wakeModel = wakeAssets['wake-model']
@@ -481,11 +484,17 @@ function VoiceSettings({
 
             const isCancelled = (a: RuntimeAssetInfo) =>
               a.status.state === 'failed' && /cancel/i.test(a.status.error ?? '')
+            // A model this version no longer uses (the base model of 0.36) reads as corrupt: it only needs the new one.
+            const isOutdated = (a: RuntimeAssetInfo) =>
+              a.status.state === 'corrupt' && !!a.status.version && a.status.version !== a.availableVersion
             const activeAsset =
               missing.find((a) => ['downloading', 'verifying', 'installing', 'removing'].includes(a.status.state)) ??
-              missing.find((a) => (a.status.state === 'failed' && !isCancelled(a)) || a.status.state === 'corrupt') ??
+              missing.find(
+                (a) => (a.status.state === 'failed' && !isCancelled(a)) || (a.status.state === 'corrupt' && !isOutdated(a))
+              ) ??
               missing[0]
-            const modelState = isCancelled(activeAsset) ? 'not-installed' : activeAsset.status.state
+            const modelState =
+              isCancelled(activeAsset) || isOutdated(activeAsset) ? 'not-installed' : activeAsset.status.state
             const size = formatBytes(missing.reduce((sum, a) => sum + a.downloadBytes, 0))
             const progress = assetProgress(activeAsset)
             const installMissing = () => {

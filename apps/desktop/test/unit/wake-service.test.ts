@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import { assistantSettingsSchema, type AssistantSettings } from '../../src/shared/assistant'
-import { createWakeService, WAKE_RESTART_DELAY_MS, type WakeServiceDeps } from '../../src/main/wake-service'
+import {
+  createWakeService,
+  WAKE_JOIN_MS,
+  WAKE_RESTART_DELAY_MS,
+  type WakeServiceDeps,
+} from '../../src/main/wake-service'
 import type { WakeWorker } from '../../src/main/wake-worker-host'
 
 function harness(opts: {
@@ -149,7 +154,60 @@ describe('wake word service', () => {
     const h = harness({ wakeWord: true, wakePhrase: null, locale: 'pt-BR', transcript: 'Oi, Maestro.' })
     await h.service.apply()
     await h.service.burst(burstOf())
-    expect(h.workers[0].detect).toHaveBeenCalledWith(expect.any(Float32Array), 'pt')
+    expect(h.workers[0].detect).toHaveBeenCalledWith(expect.any(Float32Array), 'pt', 'Oi Maestro.')
+    expect(h.onWake).toHaveBeenCalledTimes(1)
+  })
+
+  it('prompts Whisper with a custom phrase', async () => {
+    const h = harness({ wakeWord: true, wakePhrase: 'Olá Jarvis!', locale: 'en', transcript: 'Olá, Jarvis.' })
+    await h.service.apply()
+    await h.service.burst(burstOf())
+    expect(h.workers[0].detect).toHaveBeenCalledWith(expect.any(Float32Array), 'en', 'Olá Jarvis.')
+    expect(h.onWake).toHaveBeenCalledTimes(1)
+  })
+
+  it('reads a phrase split by a pause across two bursts', async () => {
+    const h = harness({ wakeWord: true, transcript: 'Oi.' })
+    await h.service.apply()
+    await h.service.burst(burstOf())
+    expect(h.onWake).not.toHaveBeenCalled()
+    h.advance(1200)
+    h.setTranscript('Maestro.')
+    await h.service.burst(burstOf())
+    expect(h.onWake).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not join bursts further apart than the join window', async () => {
+    const h = harness({ wakeWord: true, transcript: 'Oi.' })
+    await h.service.apply()
+    await h.service.burst(burstOf())
+    h.advance(WAKE_JOIN_MS + 1)
+    h.setTranscript('Maestro.')
+    await h.service.burst(burstOf())
+    expect(h.onWake).not.toHaveBeenCalled()
+  })
+
+  it('checks the newest burst that arrived during a detection instead of dropping it', async () => {
+    const h = harness({ wakeWord: true, transcript: 'Bom dia a todos' })
+    await h.service.apply()
+    let release: () => void = () => {}
+    h.workers[0].detect.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve({ text: 'Bom dia a todos', silent: false, ms: 900 })
+        })
+    )
+    const first = h.service.burst(burstOf())
+    const older = burstOf(8000)
+    const newest = burstOf(12_000)
+    await h.service.burst(older)
+    await h.service.burst(newest)
+    h.setTranscript('Oi, Maestro.')
+    release()
+    await first
+
+    expect(h.workers[0].detect).toHaveBeenCalledTimes(2)
+    expect(h.workers[0].detect.mock.calls[1][0]).toBe(newest)
     expect(h.onWake).toHaveBeenCalledTimes(1)
   })
 

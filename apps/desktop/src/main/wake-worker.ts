@@ -1,6 +1,6 @@
 /**
  * Wake-word detection utilityProcess runs Silero VAD and a small whisper.cpp model outside main so it never blocks
- * UI or IPC. Requests: init { moduleUrl, modelPath, useGpu }, warm { id }, detect { id, audio, language }.
+ * UI or IPC. Requests: init { moduleUrl, modelPath, useGpu }, warm { id }, detect { id, audio, language, prompt }.
  * Responses: ready, warm:done { id }, warm:error { id, error }, detect:result { id, text, silent, ms },
  * detect:error { id, error }.
  */
@@ -57,6 +57,7 @@ parentPort.on('message', async (e) => {
     id?: string
     audio?: Float32Array
     language?: string
+    prompt?: string
     moduleUrl?: string
     modelPath?: string
     useGpu?: boolean
@@ -79,7 +80,9 @@ parentPort.on('message', async (e) => {
     try {
       const audio = msg.audio instanceof Float32Array ? msg.audio : new Float32Array(msg.audio ?? [])
       const started = Date.now()
-      const { text, silent } = await detectWakeText(await getEngine(), audio, msg.language === 'en' ? 'en' : 'pt')
+      const language = msg.language === 'en' ? 'en' : 'pt'
+      const prompt = typeof msg.prompt === 'string' ? msg.prompt.slice(0, 64) : ''
+      const { text, silent } = await detectWakeText(await getEngine(), audio, language, prompt)
       parentPort.postMessage({ type: 'detect:result', id: msg.id, text, silent, ms: Date.now() - started })
     } catch (err) {
       parentPort.postMessage({ type: 'detect:error', id: msg.id, error: String((err as Error)?.message ?? err) })

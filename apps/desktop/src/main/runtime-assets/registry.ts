@@ -360,13 +360,16 @@ const whisperModelTargets = whisperFileTargets(
   WHISPER_MODEL_BYTES,
   '394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2'
 )
-/** whisper.cpp model that listens for the wake phrase: small enough to run on every utterance in the room. */
-export const WAKE_MODEL_FILE = 'ggml-base-q5_1.bin'
-const WAKE_MODEL_BYTES = 59_707_625
+/**
+ * whisper.cpp model that listens for the wake phrase. Measured on short pt-BR clips: base heard "Oi Maestro" as
+ * "Oi, vai astro" most of the time and large-v3-turbo did worse than small, which also answers in about 200 ms.
+ */
+export const WAKE_MODEL_FILE = 'ggml-small-q5_1.bin'
+const WAKE_MODEL_BYTES = 190_085_487
 const wakeModelTargets = whisperFileTargets(
   WAKE_MODEL_FILE,
   WAKE_MODEL_BYTES,
-  '422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898'
+  'ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb'
 )
 
 export const RUNTIME_ASSET_REGISTRY: Readonly<Record<RuntimeAssetId, RuntimeAssetDefinition>> = Object.freeze({
@@ -383,7 +386,7 @@ export const RUNTIME_ASSET_REGISTRY: Readonly<Record<RuntimeAssetId, RuntimeAsse
     targets: localMlTargets,
   }),
   'whisper-model': Object.freeze({ id: 'whisper-model', version: 'large-v3-turbo-q5', targets: whisperModelTargets }),
-  'wake-model': Object.freeze({ id: 'wake-model', version: 'base-q5-1', targets: wakeModelTargets }),
+  'wake-model': Object.freeze({ id: 'wake-model', version: 'small-q5-1', targets: wakeModelTargets }),
   'antigravity-acp-runtime': Object.freeze({
     id: 'antigravity-acp-runtime',
     version: ANTIGRAVITY_ACP_VERSION,

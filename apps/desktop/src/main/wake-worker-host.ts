@@ -13,7 +13,7 @@ export interface WakeDetectResult {
 }
 
 export interface WakeWorker {
-  detect(audio: Float32Array, language: 'pt' | 'en'): Promise<WakeDetectResult | null>
+  detect(audio: Float32Array, language: 'pt' | 'en', prompt: string): Promise<WakeDetectResult | null>
   stop(): void
 }
 
@@ -145,14 +145,14 @@ export async function startWakeWorker(onExit: () => void): Promise<WakeWorker | 
     }
 
     return {
-      detect(audio, language) {
+      detect(audio, language, prompt) {
         if (stopped) return Promise.resolve(null)
         const id = String(++seq)
         return new Promise<WakeDetectResult | null>((resolve) => {
           const timer = setTimeout(() => settle(id, null), REQUEST_TIMEOUT_MS)
           pending.set(id, { resolve, timer })
           try {
-            w.postMessage({ type: 'detect', id, audio, language })
+            w.postMessage({ type: 'detect', id, audio, language, prompt })
           } catch (e) {
             console.error('[wake] failed to send to wake-worker:', (e as Error)?.message ?? e)
             settle(id, null)

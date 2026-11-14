@@ -20,11 +20,23 @@ describe('the wake burst gate', () => {
     expect(feed(createBurstGate(), times(500, quiet))).toEqual([])
   })
 
-  it('cuts one burst with its pre-roll after 400 ms of silence', () => {
-    const bursts = feed(createBurstGate(), [...times(50, quiet), ...times(40, loud), ...times(25, quiet)])
+  it('cuts one burst with its pre-roll after 600 ms of silence', () => {
+    const bursts = feed(createBurstGate(), [...times(50, quiet), ...times(40, loud), ...times(35, quiet)])
     expect(bursts).toHaveLength(1)
-    // 300 ms pre-roll + 800 ms speech + 400 ms trailing silence
-    expect(bursts[0].length).toBe((15 + 40 + 20) * FRAME)
+    // 300 ms pre-roll + 800 ms speech + 600 ms trailing silence
+    expect(bursts[0].length).toBe((15 + 40 + 30) * FRAME)
+  })
+
+  it('keeps a phrase with a half-second pause in one burst', () => {
+    const bursts = feed(createBurstGate(), [
+      ...times(50, quiet),
+      ...times(15, loud),
+      ...times(25, quiet),
+      ...times(30, loud),
+      ...times(35, quiet),
+    ])
+    expect(bursts).toHaveLength(1)
+    expect(bursts[0].length).toBe((15 + 15 + 25 + 30 + 30) * FRAME)
   })
 
   it('ignores clicks shorter than the minimum speech', () => {

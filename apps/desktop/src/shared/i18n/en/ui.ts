@@ -1105,6 +1105,9 @@ export default {
         wakePhrase: 'Phrase',
         wakePhraseInvalid: 'Use 2 to 40 characters, with at least one letter or number.',
         wakeModelDesc: 'Needs a one-time {{size}} download; detection runs on this computer.',
+        wakeResources: 'While this is on, voice detection keeps about 600 MB of memory in use.',
+        wakeResourcesCpu:
+          'While this is on, voice detection keeps about 700 MB of memory in use, and on this computer it runs on the processor: it takes about a second to check each thing said near the microphone.',
         wakeModelDownload: 'Download',
         wakeModelCancel: 'Cancel',
         wakeModelRetry: 'Try again',
