@@ -68,7 +68,7 @@ interface Label {
   mono: boolean
 }
 
-function toolLabel(t: TFunction, step: ActivityToolStep<unknown>, tense: 'live' | 'done'): Label {
+export function toolLabel(t: TFunction, step: ActivityToolStep<unknown>, tense: 'live' | 'done'): Label {
   const name = baseToolName(step.toolName)
   let category = step.category
   // Opening a page in the browser reads like opening a page.
@@ -88,7 +88,7 @@ function toolLabel(t: TFunction, step: ActivityToolStep<unknown>, tense: 'live' 
     : { text: t(`activity.${tense}.${category}Bare`), slot: null, mono: false }
 }
 
-const plainLabel = (label: Label): string => label.text.replace(SLOT, label.slot ?? '')
+export const plainLabel = (label: Label): string => label.text.replace(SLOT, label.slot ?? '')
 
 function LabelText({ label }: { label: Label }) {
   if (label.slot === null) return <>{label.text}</>

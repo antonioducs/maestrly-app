@@ -89,7 +89,7 @@ export function VoiceButton({
 }
 
 /** Minutes and seconds since `startedAt`, ticking each second; null without a call. */
-function useElapsed(startedAt: number | null): string | null {
+export function useElapsed(startedAt: number | null): string | null {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     if (startedAt === null) return

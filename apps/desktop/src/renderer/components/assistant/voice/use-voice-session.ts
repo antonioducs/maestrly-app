@@ -6,15 +6,34 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { AssistantVoiceSettings } from '../../../../shared/assistant'
 import { dictationLanguage } from '../../../../shared/asr'
-import type { ChatStreamEvent } from '../../../../shared/chat'
+import type { ChatStreamEvent, PendingChatQuestion } from '../../../../shared/chat'
 import { LOCAL_HOST_ID } from '../../../../shared/host-key'
 import type { SupportedLocale } from '../../../../shared/locale'
 import { MIC_DEVICE_KEY, readLanguageMode } from '@/lib/dictation'
 import { createEndOfSpeechDetector } from '@/lib/end-of-speech'
 import { hostApi } from '@/lib/hosts/host-context'
 import { type MicRecording, startMicRecording } from '@/lib/mic-recorder'
-import { type RealtimeClient, RealtimeStartError, type RealtimeState, startRealtimeClient } from './realtime-client'
+import {
+  type RealtimeClient,
+  type RealtimeCloseReason,
+  type RealtimeLevels,
+  RealtimeStartError,
+  type RealtimeState,
+  type RealtimeTranscript,
+  startRealtimeClient,
+} from './realtime-client'
 import { createSpeaker, type Speaker } from './speaker'
+import {
+  EMPTY_VOICE_ACTIVITY,
+  endVoiceCall,
+  newVoiceTurn,
+  questionsSettled,
+  startVoiceCall,
+  type VoiceActivity,
+  voiceActivityFromCall,
+  voiceActivityFromChat,
+} from './voice-activity'
+import type { VoiceCaption } from './voice-caption'
 import {
   createVoiceMachine,
   questionPrompt,
@@ -30,16 +49,51 @@ const NOTICE_MS = 6000
 /** The voice's state as the window shows it; `muted` only happens during a Realtime call. */
 export type VoiceSessionState = VoiceState | 'muted'
 
+/** How the last Realtime call ended, or the code of the error that kept it from starting. */
+export interface VoiceCallEnd {
+  reason: RealtimeCloseReason | 'mic' | 'key-missing' | 'key-rejected' | 'bad-offer'
+  /** Null when it never connected. */
+  startedAt: number | null
+  endedAt: number
+}
+
 export interface VoiceSession {
   state: VoiceSessionState
+  /** The mode in Settings: tap to talk with the assistant's agent, or a Realtime call. */
+  mode: 'agent' | 'realtime'
+  /** The Realtime call's own state while one is open, connecting included; null without one. */
+  call: RealtimeState | null
+  /** The microphone of the call is off. */
+  muted: boolean
+  /** The server hears the person during a call. */
+  personSpeaking: boolean
   /** The microphone's loudness while listening (RMS, 0–1). */
   level: number
+  /** Both loudnesses now, read on each frame by the voice screen without rendering. */
+  levels(): RealtimeLevels
   /** When the open Realtime call started; null without one. */
   realtimeStartedAt: number | null
+  /** What the person said last, or what the assistant is saying. */
+  caption: VoiceCaption | null
+  /** The tools that run for the person's request. */
+  activity: VoiceActivity
+  /** The first card in the conversation waiting for the person. */
+  question: PendingChatQuestion | null
+  /** How the last call ended, until another starts. */
+  callEnd: VoiceCallEnd | null
+  /** When the call closes for silence, during its last seconds; null otherwise. */
+  idleClosesAt: number | null
+  /** Answers are read aloud (agent mode). */
+  reads: boolean
   /** A notice code for `assistant.voice.notice.*`, shown until dismissed or for a few seconds. */
   notice: string | null
   /** Starts or stops the voice; during a Realtime call, mutes or unmutes it, or interrupts it while it talks. */
   tap(): void
+  setMuted(muted: boolean): void
+  /** Stops the voice while it talks; the turn goes on. */
+  interrupt(): void
+  /** Keeps the call open: the silence starts over. */
+  keepCall(): void
   /** Ends the Realtime call. */
   hangUp(): void
   /** Stops listening and reading; false when there was nothing to stop. */
@@ -81,6 +135,10 @@ export function useVoiceSession(opts: {
   const questions = useRef(new Set<string>())
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const dispatchRef = useRef<(event: VoiceEvent) => void>(() => {})
+  const [caption, setCaption] = useState<VoiceCaption | null>(null)
+  const [activity, setActivity] = useState<VoiceActivity>(EMPTY_VOICE_ACTIVITY)
+  const [question, setQuestion] = useState<PendingChatQuestion | null>(null)
+  const micLevel = useRef(0)
 
   const showNotice = useCallback((code: string | null) => {
     if (noticeTimer.current) clearTimeout(noticeTimer.current)
@@ -102,6 +160,10 @@ export function useVoiceSession(opts: {
       speed: v?.speed ?? 1,
       onIdle: () => dispatchRef.current({ type: 'speech-queue-empty' }),
       onError: (error) => dispatchRef.current({ type: 'speech-failed', error }),
+      onSentence: (text, durationMs) =>
+        setCaption({ who: 'voice', text, streaming: false, startedAt: Date.now(), durationMs, charIndex: null }),
+      onBoundary: (charIndex) =>
+        setCaption((current) => (current?.who === 'voice' ? { ...current, charIndex } : current)),
     })
     speaker.current = { key, speaker: next }
     return next
@@ -117,7 +179,10 @@ export function useVoiceSession(opts: {
       if (!pcm.length) return dispatch({ type: 'transcribe-failed', error: 'silent' })
       const language = dictationLanguage(readLanguageMode(localStorage), settings.current.locale)
       const result = await window.api.chatTranscribe(pcm, { language })
-      if (result.text?.trim()) dispatch({ type: 'transcribed', text: result.text })
+      const text = result.text?.trim()
+      if (text && id === transcription.current)
+        setCaption({ who: 'you', text, streaming: false, startedAt: Date.now(), durationMs: null, charIndex: null })
+      if (text) dispatch({ type: 'transcribed', text })
       else dispatch({ type: 'transcribe-failed', error: result.error ?? 'silent' })
     } catch {
       dispatch({ type: 'transcribe-failed', error: 'unavailable' })
@@ -135,10 +200,13 @@ export function useVoiceSession(opts: {
             if (config.engine === 'local') void window.api.chatAsrWarm().catch(() => false)
           })
           .catch(() => {})
+        // A new turn of the person: the screen waits for their words.
+        setCaption(null)
         const pending = startMicRecording({
           deviceId: localStorage.getItem(MIC_DEVICE_KEY),
           onLevel: (rms, atMs) => {
             if (generation !== micGeneration.current) return
+            micLevel.current = rms
             setLevel(rms)
             const verdict = detector.feed(rms, atMs)
             if (verdict === 'end' || verdict === 'max') dispatchRef.current({ type: 'speech-end' })
@@ -153,6 +221,7 @@ export function useVoiceSession(opts: {
       }
       if (effect === 'stop-mic' || effect === 'cancel-mic') {
         micGeneration.current++
+        micLevel.current = 0
         setLevel(0)
         const pending = recording.current
         recording.current = null
@@ -169,6 +238,7 @@ export function useVoiceSession(opts: {
       }
       if ('submit' in effect) {
         following.current = { awaiting: true, messageId: null, partId: null }
+        setActivity(newVoiceTurn)
         if (!submitRef.current?.(effect.submit)) dispatchRef.current({ type: 'turn-ended' })
         return
       }
@@ -203,7 +273,10 @@ export function useVoiceSession(opts: {
     if (!conversationId) return
     return hostApi(LOCAL_HOST_ID).onChatStream(conversationId, (raw) => {
       const event = raw as ChatStreamEvent
+      setActivity((current) => voiceActivityFromChat(current, event, Date.now()))
       if (event.kind === 'questions-pending') {
+        setQuestion(event.questions[0] ?? null)
+        if (!event.questions.length) setActivity((current) => questionsSettled(current, Date.now()))
         const known = questions.current
         const now = new Set(event.questions.map((pending) => pending.toolCallId))
         for (const id of known) if (!now.has(id)) dispatchRef.current({ type: 'question-gone', toolCallId: id })
@@ -240,17 +313,57 @@ export function useVoiceSession(opts: {
     })
   }, [conversationId])
 
-  // A new session (or leaving the window) stops the voice.
-  useEffect(() => () => dispatchRef.current({ type: 'escape' }), [conversationId])
+  // A new session (or leaving the window) stops the voice and starts the screen over.
+  useEffect(
+    () => () => {
+      dispatchRef.current({ type: 'escape' })
+      questions.current = new Set()
+      setCaption(null)
+      setActivity(EMPTY_VOICE_ACTIVITY)
+      setQuestion(null)
+    },
+    [conversationId]
+  )
 
   // Realtime mode: a voice call with OpenAI, which hands requests to the assistant conversation.
   const realtime = useRef<RealtimeClient | null>(null)
   const connecting = useRef(false)
   const [realtimeState, setRealtimeState] = useState<RealtimeState | null>(null)
   const [realtimeStartedAt, setRealtimeStartedAt] = useState<number | null>(null)
+  const callStartedAt = useRef<number | null>(null)
+  const [muted, setMutedState] = useState(false)
+  const [personSpeaking, setPersonSpeaking] = useState(false)
+  const [callEnd, setCallEnd] = useState<VoiceCallEnd | null>(null)
+  const [idleClosesAt, setIdleClosesAt] = useState<number | null>(null)
   const closeRealtime = useCallback(() => {
     realtime.current?.close()
     realtime.current = null
+  }, [])
+  /** The voice's answer on screen: its item, and when its first words came. */
+  const voiceTurn = useRef<{ id: string; startedAt: number } | null>(null)
+  /** The call's transcripts: the voice's words as it says them, and the person's once their turn is transcribed. */
+  const onTranscript = useCallback((said: RealtimeTranscript) => {
+    const now = Date.now()
+    if (said.who === 'voice') {
+      if (voiceTurn.current?.id !== said.id) voiceTurn.current = { id: said.id, startedAt: now }
+      const startedAt = voiceTurn.current.startedAt
+      setCaption({
+        who: 'voice',
+        text: said.text,
+        streaming: !said.final,
+        startedAt,
+        durationMs: null,
+        charIndex: null,
+      })
+      return
+    }
+    if (said.final) setActivity(newVoiceTurn)
+    setCaption((current) =>
+      // The voice already answers this turn: its words stay on screen, the person's are in the conversation.
+      current?.who === 'voice' && current.startedAt > (said.turnEndedAt ?? 0)
+        ? current
+        : { who: 'you', text: said.text, streaming: !said.final, startedAt: now, durationMs: null, charIndex: null }
+    )
   }, [])
   const tapRealtime = useCallback(() => {
     const client = realtime.current
@@ -258,23 +371,39 @@ export function useVoiceSession(opts: {
       if (connecting.current) return
       connecting.current = true
       showNotice(null)
+      setCallEnd(null)
+      setCaption(null)
+      setActivity(startVoiceCall)
       void startRealtimeClient({
         deviceId: localStorage.getItem(MIC_DEVICE_KEY),
         onState: setRealtimeState,
         onError: (code) => showNotice(`realtime-${code === 'network' ? 'network' : 'error'}`),
-        onClosed: () => {
+        onClosed: (reason) => {
           realtime.current = null
           setRealtimeState(null)
           setRealtimeStartedAt(null)
+          setMutedState(false)
+          setPersonSpeaking(false)
+          setIdleClosesAt(null)
+          setActivity((current) => endVoiceCall(current, Date.now()))
+          setCallEnd({ reason, startedAt: callStartedAt.current, endedAt: Date.now() })
+          callStartedAt.current = null
         },
+        onTranscript,
+        onTool: (event) => setActivity((current) => voiceActivityFromCall(current, event, Date.now())),
+        onPersonSpeaking: setPersonSpeaking,
+        onIdleWarning: setIdleClosesAt,
       })
         .then((started) => {
           realtime.current = started
+          callStartedAt.current = started.startedAt
           setRealtimeStartedAt(started.startedAt)
         })
         .catch((error: unknown) => {
+          const code = error instanceof RealtimeStartError ? error.code : 'network'
           setRealtimeState(null)
-          showNotice(`realtime-${error instanceof RealtimeStartError ? error.code : 'network'}`)
+          setCallEnd({ reason: code as VoiceCallEnd['reason'], startedAt: null, endedAt: Date.now() })
+          showNotice(`realtime-${code}`)
         })
         .finally(() => {
           connecting.current = false
@@ -282,8 +411,11 @@ export function useVoiceSession(opts: {
       return
     }
     if (realtimeState === 'speaking') client.interrupt()
-    else client.setMuted(!client.muted)
-  }, [realtimeState, showNotice])
+    else {
+      client.setMuted(!client.muted)
+      setMutedState(client.muted)
+    }
+  }, [realtimeState, showNotice, onTranscript])
   useEffect(() => closeRealtime, [closeRealtime, conversationId])
   // Leaving Realtime mode in Settings ends the call.
   useEffect(() => {
@@ -315,13 +447,38 @@ export function useVoiceSession(opts: {
   realtimeModeRef.current = realtimeMode
   return {
     state: shownState,
+    mode: realtimeMode ? 'realtime' : 'agent',
+    call: inCall ? realtimeState : null,
+    muted: inCall && muted,
+    personSpeaking: inCall && personSpeaking,
     level,
+    levels: useCallback(() => {
+      if (realtime.current) return realtime.current.levels()
+      return { input: micLevel.current, output: speaker.current?.speaker.level() ?? 0 }
+    }, []),
     notice,
     realtimeStartedAt,
+    caption,
+    activity,
+    question,
+    callEnd,
+    idleClosesAt: inCall ? idleClosesAt : null,
+    reads: voice?.autoSpeak ?? true,
     tap: useCallback(() => {
       if (realtimeModeRef.current) tapRef.current()
       else dispatchRef.current({ type: 'tap' })
     }, []),
+    setMuted: useCallback((next: boolean) => {
+      const client = realtime.current
+      if (!client) return
+      client.setMuted(next)
+      setMutedState(client.muted)
+    }, []),
+    interrupt: useCallback(() => {
+      if (realtime.current) realtime.current.interrupt()
+      else if (machine.current.state === 'speaking') dispatchRef.current({ type: 'tap' })
+    }, []),
+    keepCall: useCallback(() => realtime.current?.keepAlive(), []),
     hangUp: closeRealtime,
     escape: useCallback(() => {
       if (realtime.current) {

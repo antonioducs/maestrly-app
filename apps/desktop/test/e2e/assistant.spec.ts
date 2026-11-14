@@ -54,7 +54,12 @@ const test = base.extend<{ session: Session }>({
     try {
       await new Promise<void>((resolve) => model.listen(0, '127.0.0.1', resolve))
       app = await playwright._electron.launch({
-        args: [path.join(desktop, 'out/main/index.js')],
+        // A fake microphone: the voice never opens the machine's own, and behaves the same on every platform.
+        args: [
+          path.join(desktop, 'out/main/index.js'),
+          '--use-fake-device-for-media-stream',
+          '--use-fake-ui-for-media-stream',
+        ],
         env: {
           ...process.env,
           AGENTS_E2E: '1',
@@ -221,4 +226,49 @@ test('the assistant window opens its own pinned conversation, streams a reply an
   const after = (await api(page, 'listStandaloneConversations', true)) as Array<{ id: string; archived: number }>
   expect(after.find((chat) => chat.id === conversation!.id)?.archived).toBe(1)
   expect(after.filter((chat) => !chat.archived && chat.id !== conversation!.id).length).toBeGreaterThan(0)
+})
+
+test('the voice takes the assistant window, with the conversation one key away', async ({ session }) => {
+  const { app, page } = session
+  const opened = app.waitForEvent('window')
+  await api(page, 'assistantShow')
+  const assistant = await opened
+  await expect(editor(assistant)).toBeVisible()
+  const stage = assistant.locator('[data-voice-stage]')
+  const strip = assistant.locator('[data-voice-strip]')
+
+  // Tap to talk: the voice screen covers the chat, which stays mounted underneath.
+  await assistant.getByRole('button', { name: 'Talk to the assistant', exact: true }).click()
+  await expect(stage).toBeVisible()
+  await expect(assistant.getByRole('region', { name: 'Voice' })).toBeVisible()
+  await expect(assistant.locator('[data-assistant-chat]')).toHaveAttribute('inert', '')
+  // C opens the conversation as a sheet and folds the voice into a bar; Esc brings the voice back.
+  await assistant.keyboard.press('c')
+  await expect(strip).toBeVisible()
+  await expect(stage).toHaveCount(0)
+  await expect(editor(assistant)).toBeVisible()
+  await expect(assistant.getByRole('button', { name: /^Conversation/ })).toHaveAttribute('aria-expanded', 'true')
+  await assistant.keyboard.press('Escape')
+  await expect(stage).toBeVisible()
+  // Typing instead of talking opens the conversation with the cursor in its composer.
+  await assistant.getByRole('button', { name: 'Type instead of talking' }).click()
+  await expect(editor(assistant)).toBeFocused()
+  await strip.getByRole('button', { name: 'Back to the voice' }).click()
+  await assistant.getByRole('button', { name: 'Leave voice mode' }).click()
+  await expect(stage).toHaveCount(0)
+  await expect(editor(assistant)).toBeVisible()
+  await expect(assistant.locator('[data-assistant-chat]')).not.toHaveAttribute('inert', '')
+
+  // Realtime without an OpenAI key: the call cannot start, and the screen says why and leads to Settings.
+  await api(page, 'setAssistantSettings', { voice: { mode: 'realtime' } })
+  await assistant.evaluate(() => window.dispatchEvent(new Event('focus')))
+  await expect
+    .poll(() => assistant.evaluate(async () => (await (window as any).api.assistantSettings()).settings.voice.mode))
+    .toBe('realtime')
+  await assistant.getByRole('button', { name: 'Talk to the assistant', exact: true }).click()
+  await expect(stage).toHaveAttribute('data-voice-stage', 'ended')
+  await expect(assistant.getByRole('heading', { name: 'Realtime needs an OpenAI key' })).toBeVisible()
+  await expect(assistant.getByRole('button', { name: 'Open Settings' })).toBeVisible()
+  await expect(assistant.getByRole('button', { name: 'Call again' })).toBeVisible()
+  await api(page, 'setAssistantSettings', { voice: { mode: 'agent' } })
 })

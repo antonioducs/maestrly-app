@@ -8,6 +8,36 @@ import { openMicStream } from '@/lib/mic-recorder'
 
 export type RealtimeState = 'connecting' | 'listening' | 'thinking' | 'speaking' | 'muted'
 
+/** Why the call ended: the person hung up, nobody talked for two minutes, the connection failed, or the voice did not stop. */
+export type RealtimeCloseReason = 'hangup' | 'idle' | 'network' | 'error'
+
+/** What was said, as the server transcribes it: the person's turn once it ends, the voice's words as it says them. */
+export interface RealtimeTranscript {
+  who: 'you' | 'voice'
+  id: string
+  /** Everything heard of this turn so far. */
+  text: string
+  final: boolean
+  /** When the person's turn ended (`you` only): a voice that started after it already answered it. */
+  turnEndedAt?: number
+}
+
+/** A tool the voice calls: once when it starts, once with its output. */
+export interface RealtimeToolEvent {
+  callId: string
+  name: string
+  args: Record<string, unknown>
+  done: boolean
+  output?: string
+}
+
+export interface RealtimeLevels {
+  /** The microphone's loudness (RMS, 0–1); 0 while muted. */
+  input: number
+  /** The voice's loudness as it plays. */
+  output: number
+}
+
 export interface RealtimeClient {
   readonly startedAt: number
   readonly muted: boolean
@@ -15,6 +45,9 @@ export interface RealtimeClient {
   setMuted(muted: boolean): void
   /** Stops the voice at once. */
   interrupt(): void
+  /** Counts as someone talking: the two minutes of silence start over. */
+  keepAlive(): void
+  levels(): RealtimeLevels
   close(): void
 }
 
@@ -26,6 +59,8 @@ export class RealtimeStartError extends Error {
 
 /** The session closes after two minutes without anyone talking. */
 export const REALTIME_IDLE_CLOSE_MS = 120_000
+/** How long before that the window says the call is about to end. */
+export const REALTIME_IDLE_WARN_MS = 15_000
 /** After an interruption, audio still playing past this closes the call: the voice must stop. */
 const INTERRUPT_GRACE_MS = 300
 /** The person's words are transcribed after their turn; a tool call waits this long for them. */
@@ -37,17 +72,70 @@ interface ServerEvent {
   type: string
   item_id?: string
   transcript?: string
+  delta?: string
   call_id?: string
   name?: string
   arguments?: string
   error?: { code?: string; message?: string }
 }
 
+function parseArgs(json: string | undefined): Record<string, unknown> {
+  try {
+    const value = JSON.parse(json ?? '{}')
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  } catch {
+    return {}
+  }
+}
+
+/** Loudness meters for the call's two streams; none where Web Audio is missing. */
+function createMeters(input: MediaStream) {
+  if (typeof AudioContext === 'undefined') return null
+  let context: AudioContext
+  try {
+    context = new AudioContext()
+  } catch {
+    return null
+  }
+  const analyser = () => {
+    const node = context.createAnalyser()
+    node.fftSize = 512
+    return node
+  }
+  const buffer = new Float32Array(512)
+  const rms = (node: AnalyserNode | null) => {
+    if (!node) return 0
+    node.getFloatTimeDomainData(buffer)
+    let sum = 0
+    for (const value of buffer) sum += value * value
+    return Math.sqrt(sum / buffer.length)
+  }
+  const mic = analyser()
+  context.createMediaStreamSource(input).connect(mic)
+  let voice: AnalyserNode | null = null
+  return {
+    attachOutput(stream: MediaStream) {
+      if (voice || !stream.getAudioTracks().length) return
+      voice = analyser()
+      // Only measured: the audio element plays it.
+      context.createMediaStreamSource(stream).connect(voice)
+    },
+    read: (): RealtimeLevels => ({ input: rms(mic), output: rms(voice) }),
+    close: () => void context.close().catch(() => {}),
+  }
+}
+
 export async function startRealtimeClient(opts: {
   deviceId?: string | null
   onState(state: RealtimeState): void
   onError(code: string): void
-  onClosed(): void
+  onClosed(reason: RealtimeCloseReason): void
+  onTranscript?(transcript: RealtimeTranscript): void
+  onTool?(event: RealtimeToolEvent): void
+  /** The server hears the person (between the start and the end of their speech). */
+  onPersonSpeaking?(speaking: boolean): void
+  /** When the call will close for silence, from 15 s before; null once someone talks again. */
+  onIdleWarning?(closesAt: number | null): void
 }): Promise<RealtimeClient> {
   opts.onState('connecting')
   const stream = await openMicStream(opts.deviceId, CALL_AUDIO).catch(() => {
@@ -61,9 +149,12 @@ export async function startRealtimeClient(opts: {
   const peer = new RTCPeerConnection()
   const audio = new Audio()
   audio.autoplay = true
+  const meters = createMeters(stream)
   peer.ontrack = (event) => {
-    audio.srcObject = event.streams[0] ?? new MediaStream([event.track])
+    const remote = event.streams[0] ?? new MediaStream([event.track])
+    audio.srcObject = remote
     void audio.play().catch(() => {})
+    meters?.attachOutput(remote)
   }
   peer.addTrack(track, stream)
   const channel = peer.createDataChannel('oai-events')
@@ -79,10 +170,14 @@ export async function startRealtimeClient(opts: {
   let speaking = false
   let tools = 0
   let lastActivity = Date.now()
+  let idleWarning: number | null = null
+  let speechStoppedAt = 0
   let interruptTimer: ReturnType<typeof setTimeout> | null = null
   const heard: string[] = []
   const transcribing = new Set<string>()
   const settled: Array<() => void> = []
+  /** The transcripts still coming in, by item. */
+  const partial = new Map<string, string>()
 
   const current = (): RealtimeState => {
     if (personSpeaking && !muted) return 'listening'
@@ -112,7 +207,7 @@ export async function startRealtimeClient(opts: {
         })
       : Promise.resolve()
 
-  const close = () => {
+  const close = (reason: RealtimeCloseReason) => {
     if (closed) return
     closed = true
     clearInterval(idleTimer)
@@ -126,16 +221,46 @@ export async function startRealtimeClient(opts: {
     peer.close()
     for (const t of stream.getTracks()) t.stop()
     audio.srcObject = null
+    meters?.close()
     window.api.assistantRealtimeStop()
-    opts.onClosed()
+    opts.onClosed(reason)
+  }
+
+  const checkIdle = () => {
+    if (closed || !connected) return
+    const busy = speaking || tools > 0 || personSpeaking
+    const closesAt = lastActivity + REALTIME_IDLE_CLOSE_MS
+    if (!busy && Date.now() >= closesAt) return close('idle')
+    const warning = !busy && closesAt - Date.now() <= REALTIME_IDLE_WARN_MS ? closesAt : null
+    if (warning === idleWarning) return
+    idleWarning = warning
+    opts.onIdleWarning?.(warning)
+  }
+
+  const transcript = (who: 'you' | 'voice', event: ServerEvent, final: boolean) => {
+    const id = event.item_id ?? ''
+    const text = final ? (event.transcript ?? partial.get(id) ?? '') : (partial.get(id) ?? '') + (event.delta ?? '')
+    if (final) partial.delete(id)
+    else partial.set(id, text)
+    if (!text.trim()) return
+    opts.onTranscript?.({
+      who,
+      id,
+      text: text.trim(),
+      final,
+      ...(who === 'you' ? { turnEndedAt: speechStoppedAt } : {}),
+    })
   }
 
   const runTool = async (event: ServerEvent) => {
     tools++
     refresh()
+    const name = event.name ?? ''
+    const callId = event.call_id ?? ''
+    const args = parseArgs(event.arguments)
+    opts.onTool?.({ callId, name, args, done: false })
     await transcriptsSettled()
     if (closed) return
-    const name = event.name ?? ''
     // A request or an answer consumes what the person said; the overview leaves it for the next one.
     const words = name === 'maestrly_overview' ? [...heard] : heard.splice(0)
     let output: string
@@ -147,9 +272,11 @@ export async function startRealtimeClient(opts: {
     tools--
     if (closed) return
     lastActivity = Date.now()
+    opts.onTool?.({ callId, name, args, done: true, output })
     send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: event.call_id, output } })
     send({ type: 'response.create' })
     refresh()
+    checkIdle()
   }
 
   channel.addEventListener('message', ({ data }) => {
@@ -164,22 +291,38 @@ export async function startRealtimeClient(opts: {
         // Talking over the voice interrupts it: the server cancels the response and clears its audio.
         personSpeaking = true
         lastActivity = Date.now()
+        opts.onPersonSpeaking?.(true)
         break
       case 'input_audio_buffer.speech_stopped':
         // The person's turn ended; the server answers it.
         personSpeaking = false
         responding = true
         lastActivity = Date.now()
+        speechStoppedAt = lastActivity
+        opts.onPersonSpeaking?.(false)
         break
       case 'input_audio_buffer.committed':
         if (event.item_id) transcribing.add(event.item_id)
         break
+      case 'conversation.item.input_audio_transcription.delta':
+        transcript('you', event, false)
+        break
       case 'conversation.item.input_audio_transcription.completed':
         if (event.transcript?.trim()) heard.push(event.transcript.trim())
+        transcript('you', event, true)
         transcriptDone(event.item_id)
         break
       case 'conversation.item.input_audio_transcription.failed':
+        partial.delete(event.item_id ?? '')
         transcriptDone(event.item_id)
+        break
+      case 'response.output_audio_transcript.delta':
+      case 'response.audio_transcript.delta':
+        transcript('voice', event, false)
+        break
+      case 'response.output_audio_transcript.done':
+      case 'response.audio_transcript.done':
+        transcript('voice', event, true)
         break
       case 'response.created':
         responding = true
@@ -208,17 +351,17 @@ export async function startRealtimeClient(opts: {
         break
     }
     refresh()
+    checkIdle()
   })
   peer.addEventListener('connectionstatechange', () => {
     if (peer.connectionState === 'failed') {
       opts.onError('network')
-      close()
-    } else if (peer.connectionState === 'closed') close()
+      close('network')
+    } else if (peer.connectionState === 'closed') close('network')
   })
 
-  const idleTimer = setInterval(() => {
-    if (!speaking && !tools && !personSpeaking && Date.now() - lastActivity > REALTIME_IDLE_CLOSE_MS) close()
-  }, 5000)
+  // Every second, so the warning counts down and the call closes on time.
+  const idleTimer = setInterval(checkIdle, 1000)
 
   try {
     const offer = await peer.createOffer()
@@ -227,7 +370,7 @@ export async function startRealtimeClient(opts: {
     if (!result.ok) throw new RealtimeStartError(result.error)
     await peer.setRemoteDescription({ type: 'answer', sdp: result.answerSdp })
   } catch (error) {
-    close()
+    close('network')
     throw error instanceof RealtimeStartError ? error : new RealtimeStartError('network')
   }
   connected = true
@@ -239,7 +382,7 @@ export async function startRealtimeClient(opts: {
     send({ type: 'output_audio_buffer.clear' })
     if (interruptTimer) clearTimeout(interruptTimer)
     interruptTimer = setTimeout(() => {
-      if (speaking) close()
+      if (speaking) close('error')
     }, INTERRUPT_GRACE_MS)
   }
 
@@ -255,8 +398,17 @@ export async function startRealtimeClient(opts: {
       track.enabled = !next
       lastActivity = Date.now()
       refresh()
+      checkIdle()
     },
     interrupt,
-    close,
+    keepAlive() {
+      lastActivity = Date.now()
+      checkIdle()
+    },
+    levels() {
+      const levels = meters?.read() ?? { input: 0, output: 0 }
+      return muted ? { ...levels, input: 0 } : levels
+    },
+    close: () => close('hangup'),
   }
 }

@@ -14,6 +14,16 @@ User-visible changes by version. Downloads are on
   sources linked to the pages themselves rather than Google's redirect links.
   Searches count against the subscription's usage limits. Automatic mode tries
   it after the ChatGPT subscription and before DuckDuckGo.
+- **Voice screen for the assistant**: when you talk to the assistant, its window
+  shows the voice instead of the chat. Five lines move with the sound (amber for
+  you, light for the assistant), the caption shows what you said or the sentence
+  being read, word by word, and up to three short lines say what the assistant
+  is doing for you. Confirmations appear as a card you answer with a tap or by
+  voice. **Conversation** (or `C`) opens the same chat while the voice goes on
+  in a bar; `Space` uses the microphone and `Esc` stops the answer, then the
+  voice. A Realtime call warns 15 seconds before it closes for silence, and when
+  it ends the screen shows its length, what was done and why it stopped, with
+  **Call again**. See [Voice](docs/chat-context.md#voice).
 
 ### Changed
 

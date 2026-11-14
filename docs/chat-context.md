@@ -415,13 +415,37 @@ listens or reads stops it. Choose the voice in **Settings → Assistant → Voic
   mid-sentence or interrupt the voice by speaking; tap the microphone button to
   mute or unmute, and use the hang-up button or `Esc` to end the call. It is
   billed to your OpenAI key for what you say and what it answers (silence is not
-  billed), and the call ends after two minutes without anyone talking.
+  billed), and the call ends after two minutes without anyone talking. Fifteen
+  seconds before that, the window offers **Stay on the call**.
 
 Simple confirmations can be answered by voice. Permission approvals never can:
 the assistant asks you to confirm them on the card. With a subscription, local
 Whisper and the system voice, talking to the assistant costs nothing beyond the
 subscription. The window shows why a voice step failed, for example a missing or
 rejected key or an unavailable microphone, and the answer stays in the chat.
+
+Once the voice starts, however it started, the window becomes a voice screen
+instead of the chat:
+
+- **Five lines** move with the sound: amber while you talk, light while the
+  assistant answers, a ripple while it works, dotted while the microphone is off.
+- **The caption** shows what you said last, or the sentence being read, lit word
+  by word.
+- **What the assistant does** for your request appears below in up to three
+  short lines (for example "Looking at your conversations and bots"), with how
+  long each took.
+- **A confirmation** the assistant needs appears as a card: tap an option or say
+  it.
+- **Controls**: the microphone in the middle (talk, or mute the call), the
+  keyboard to type instead, and the button that leaves voice mode or hangs up.
+  `Space` uses the microphone, `Esc` stops the answer, then the voice, and `C`
+  shows the conversation.
+
+The conversation is the same chat, saved in the assistant: **Conversation** in
+the header (or `C`) opens it while the voice goes on in a bar above it, with its
+own microphone and hang-up buttons. When a Realtime call ends, the screen shows
+how long it lasted, what was done and, when it dropped or could not start, why,
+with **Call again**.
 
 #### Open by voice
 
