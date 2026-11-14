@@ -469,9 +469,11 @@ export class RunnerWorker {
   ): Promise<FleetRunnerJobLogPage | null> {
     const { storage } = this.deps
     const job = this.held.get(idOf(serverId, jobId))
-    if (job && !job.logKept) return readLogPage(storage.logFile(job.key), offset, limit)
+    // A job enters the history after the end of its log is kept, but before `logKept` is set: from then on, that copy.
+    const ended = this.ended.some((entry) => entry.serverId === serverId && entry.jobId === jobId)
+    if (job && !job.logKept && !ended) return readLogPage(storage.logFile(job.key), offset, limit)
     const key = this.keyOf(serverId, jobId)
-    if (!key || !this.ended.some((entry) => entry.serverId === serverId && entry.jobId === jobId)) return null
+    if (!key || !ended) return null
     return readLogPage(storage.historyLog(key), offset, limit)
   }
 
