@@ -81,6 +81,21 @@ export function resolveAntigravityModelValue(
   return (requested && entry.efforts[requested]) || entry.efforts[entry.defaultEffort] || null
 }
 
+/**
+ * The cheapest chat model that can call a built-in tool, at its lowest thinking level. Helper sessions (image
+ * generation, web search) only forward the request: the work is done by the tool whichever model calls it.
+ */
+export function pickAntigravityHelperModel(
+  entries: readonly AntigravityModelEntry[]
+): { modelId: string; effort: 'low' } | null {
+  const chat = entries.filter((entry) => !/image/i.test(`${entry.id} ${entry.displayName}`))
+  const isFlash = (entry: AntigravityModelEntry) => /flash/i.test(`${entry.id} ${entry.displayName}`)
+  const isLite = (entry: AntigravityModelEntry) => /lite/i.test(`${entry.id} ${entry.displayName}`)
+  const entry =
+    chat.find((candidate) => isFlash(candidate) && !isLite(candidate)) ?? chat.find(isFlash) ?? chat[0] ?? entries[0]
+  return entry ? { modelId: entry.id, effort: 'low' } : null
+}
+
 export function antigravityModelEfforts(entry: AntigravityModelEntry): AntigravityEffort[] {
   return EFFORT_ORDER.filter((effort) => entry.efforts[effort])
 }

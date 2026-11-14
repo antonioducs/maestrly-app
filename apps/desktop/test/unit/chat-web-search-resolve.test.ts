@@ -11,6 +11,7 @@ const LABELS: Record<WebSearchBackendId, string> = {
   tavily: 'Tavily',
   brave: 'Brave',
   chatgpt: 'ChatGPT',
+  google: 'Google AI',
   duckduckgo: 'DuckDuckGo',
 }
 
@@ -39,6 +40,7 @@ describe('runWebSearch', () => {
       tavily: fake('tavily', { available: false }),
       brave: fake('brave', { search: async () => hits('https://brave.example.test') }),
       chatgpt: fake('chatgpt'),
+      google: fake('google'),
       duckduckgo: fake('duckduckgo'),
     }
     const run = await runWebSearch({ provider: 'auto', backends, request: request() })
@@ -58,12 +60,30 @@ describe('runWebSearch', () => {
         },
       }),
       chatgpt: fake('chatgpt', { search: async () => ({ kind: 'summary', text: 'Found.' }) }),
+      google: fake('google'),
       duckduckgo: fake('duckduckgo'),
     }
     const run = await runWebSearch({ provider: 'auto', backends, request: request() })
     expect(run.backend.id).toBe('chatgpt')
     expect(run.outcome).toEqual({ kind: 'summary', text: 'Found.' })
     expect(backends.duckduckgo.search).not.toHaveBeenCalled()
+  })
+
+  it('searches with Google AI after ChatGPT and before DuckDuckGo in automatic mode', async () => {
+    const backends = {
+      tavily: fake('tavily', { available: false }),
+      brave: fake('brave', { available: false }),
+      chatgpt: fake('chatgpt', { available: false }),
+      google: fake('google', { search: async () => ({ kind: 'summary', text: 'Grounded.' }) }),
+      duckduckgo: fake('duckduckgo'),
+    }
+    const search = request()
+    const run = await runWebSearch({ provider: 'auto', backends, request: search })
+    expect(run.backend.id).toBe('google')
+    expect(run.outcome).toEqual({ kind: 'summary', text: 'Grounded.' })
+    // Availability depends on the conversation, whose accounts may be off limits.
+    expect(backends.google.available).toHaveBeenCalledWith(search)
+    expect(backends.duckduckgo.available).not.toHaveBeenCalled()
   })
 
   it('reports every backend when all of them fail', async () => {
@@ -74,12 +94,19 @@ describe('runWebSearch', () => {
       tavily: fake('tavily', { available: false }),
       brave: fake('brave', { search: failing('HTTP 429') }),
       chatgpt: fake('chatgpt', { search: failing('x') }),
+      google: fake('google', { search: failing('quota') }),
       duckduckgo: fake('duckduckgo', { search: failing('blocked') }),
     }
     const error = await runWebSearch({ provider: 'auto', backends, request: request() }).catch((e: Error) => e)
     expect(error).toBeInstanceOf(Error)
     const message = (error as Error).message
-    for (const part of ['Tavily: add a key', 'Brave: HTTP 429', 'ChatGPT: x', 'DuckDuckGo: blocked'])
+    for (const part of [
+      'Tavily: add a key',
+      'Brave: HTTP 429',
+      'ChatGPT: x',
+      'Google AI: quota',
+      'DuckDuckGo: blocked',
+    ])
       expect(message).toContain(part)
   })
 
@@ -94,6 +121,7 @@ describe('runWebSearch', () => {
       }),
       brave: fake('brave'),
       chatgpt: fake('chatgpt'),
+      google: fake('google'),
       duckduckgo: fake('duckduckgo'),
     }
     await expect(runWebSearch({ provider: 'auto', backends, request: request(controller.signal) })).rejects.toThrow(
@@ -108,6 +136,7 @@ describe('runWebSearch', () => {
       tavily: fake('tavily', { available: false }),
       brave: fake('brave'),
       chatgpt: fake('chatgpt'),
+      google: fake('google'),
       duckduckgo: fake('duckduckgo'),
     }
     await expect(runWebSearch({ provider: 'tavily', backends, request: request() })).rejects.toThrow(
@@ -126,6 +155,7 @@ describe('runWebSearch', () => {
         },
       }),
       chatgpt: fake('chatgpt'),
+      google: fake('google'),
       duckduckgo: fake('duckduckgo'),
     }
     await expect(runWebSearch({ provider: 'brave', backends, request: request() })).rejects.toThrow(
@@ -141,6 +171,7 @@ describe('runWebSearch', () => {
       tavily: fake('tavily'),
       brave: fake('brave'),
       chatgpt: fake('chatgpt'),
+      google: fake('google'),
       duckduckgo: fake('duckduckgo'),
     }
     await expect(runWebSearch({ provider: 'off', backends, request: request() })).rejects.toThrow(/turned off/)

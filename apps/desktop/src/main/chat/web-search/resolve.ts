@@ -2,7 +2,13 @@ import type { WebSearchProvider } from '../../../shared/web-search'
 import type { WebSearchBackend, WebSearchBackendId, WebSearchOutcome, WebSearchRequest } from './types'
 
 /** A configured key is an explicit choice, is faster, and does not spend subscription quota. */
-export const AUTO_WEB_SEARCH_ORDER: readonly WebSearchBackendId[] = ['tavily', 'brave', 'chatgpt', 'duckduckgo']
+export const AUTO_WEB_SEARCH_ORDER: readonly WebSearchBackendId[] = [
+  'tavily',
+  'brave',
+  'chatgpt',
+  'google',
+  'duckduckgo',
+]
 
 export function webSearchBackendOrder(provider: WebSearchProvider): readonly WebSearchBackendId[] {
   if (provider === 'off') return []
@@ -28,7 +34,7 @@ export async function runWebSearch(args: {
   for (const id of order) {
     const backend = args.backends[id]
     args.request.signal.throwIfAborted()
-    if (!(await backend.available())) {
+    if (!(await backend.available(args.request))) {
       if (args.provider !== 'auto') throw new Error(`${backend.label} is not available: ${backend.unavailableReason}.`)
       failures.push(`${backend.label}: ${backend.unavailableReason}`)
       continue

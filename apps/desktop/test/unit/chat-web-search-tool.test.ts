@@ -38,6 +38,7 @@ function useBackends(outcome?: WebSearchOutcome): Record<WebSearchBackendId, Web
     tavily: backend('tavily', 'Tavily'),
     brave: backend('brave', 'Brave Search', { available: true, outcome }),
     chatgpt: backend('chatgpt', 'ChatGPT'),
+    google: backend('google', 'Google AI'),
     duckduckgo: backend('duckduckgo', 'DuckDuckGo'),
   }
   h.backends = backends

@@ -1741,12 +1741,13 @@ export default {
       'Lets models answer with small interfaces you can see and use, such as product pictures, charts and calculators, and preview them before showing them. The instructions add about 850 tokens to each conversation, mostly served from cache, and each preview adds a screenshot to the context. Turn it off to save those tokens; answers that already have interfaces keep showing them.',
     webSearchHeading: 'Web search',
     webSearchDescription:
-      'Lets models search the web. Queries are sent to the selected provider. Automatic uses a configured API key first, then your ChatGPT subscription, then DuckDuckGo.',
+      'Lets models search the web. Queries are sent to the selected provider. Automatic uses a configured API key first, then your ChatGPT subscription, then your Google AI subscription, then DuckDuckGo.',
     webSearchProvider: {
       auto: 'Automatic',
       tavily: 'Tavily (API key)',
       brave: 'Brave Search (API key)',
       chatgpt: 'ChatGPT subscription',
+      google: 'Google AI subscription (Google Search)',
       duckduckgo: 'DuckDuckGo (no key, may be blocked)',
       off: 'Off',
     },

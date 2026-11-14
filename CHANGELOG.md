@@ -5,6 +5,16 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+### Added
+
+- **Web search with a Google AI subscription**: Settings → Tools → Web search
+  can search Google through a signed-in Google AI account (Antigravity), with
+  no API key. Each search runs in a throwaway session that may only call
+  Google's own search tool, once. It returns Google's grounded answer with its
+  sources linked to the pages themselves rather than Google's redirect links.
+  Searches count against the subscription's usage limits. Automatic mode tries
+  it after the ChatGPT subscription and before DuckDuckGo.
+
 ### Changed
 
 - **Leaner Maestro orchestrator prompt**: the orchestrator no longer receives

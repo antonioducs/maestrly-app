@@ -12,6 +12,10 @@
 // Built-in image tool (1.4.0 wire format), only when the session enables `generate_image`:
 //   IMAGE <prompt> (image inline) | IMAGEPATH <prompt> (only `rawOutput.imagePath`) | IMAGE2 <prompt> (two calls).
 // After the image the model keeps writing until the turn is cancelled.
+// Built-in web search tool (1.4.0 wire format), only when the session enables `search_web`:
+//   SEARCH <query> (grounded answer citing a grounding redirect) | SEARCH2 <query> (two calls) |
+//   SEARCHFAIL <query> (the call fails with RESOURCE_EXHAUSTED). After the result the model keeps writing until the
+//   turn is cancelled.
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
@@ -284,6 +288,73 @@ async function runPrompt(session, prompt) {
     const started = Date.now()
     while (!session.cancelled && Date.now() - started < 10_000) {
       chunk('The image has been generated. ')
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    return { stopReason: session.cancelled ? 'cancelled' : 'end_turn' }
+  }
+  if (verb === 'SEARCH' || verb === 'SEARCH2' || verb === 'SEARCHFAIL') {
+    if (!(session.meta?.agy?.enabledTools ?? []).includes('search_web')) {
+      chunk('I cannot search the web here.')
+      return { stopReason: 'end_turn' }
+    }
+    const query = rest.join(' ')
+    for (let call = 0; call < (verb === 'SEARCH2' ? 2 : 1); call++) {
+      const toolCallId = randomUUID().replaceAll('-', '')
+      const title = 'Run search_web?'
+      notifyUpdate(session.id, {
+        sessionUpdate: 'tool_call',
+        toolCallId,
+        title,
+        kind: 'search',
+        status: 'pending',
+        rawInput: { query },
+      })
+      const decision = await requestClient('session/request_permission', {
+        sessionId: session.id,
+        toolCall: { toolCallId, kind: 'search', status: 'pending', title, rawInput: { query } },
+        options: PERMISSION_OPTIONS,
+      })
+      const selected = decision?.outcome?.outcome === 'selected' ? decision.outcome.optionId : 'cancelled'
+      const failed = (text) =>
+        notifyUpdate(session.id, {
+          sessionUpdate: 'tool_call_update',
+          toolCallId,
+          status: 'failed',
+          content: [{ type: 'content', content: { type: 'text', text } }],
+        })
+      if (selected !== 'allow' && selected !== 'allow_always') {
+        failed(`permission:${selected}`)
+        continue
+      }
+      notifyUpdate(session.id, {
+        sessionUpdate: 'tool_call_update',
+        toolCallId,
+        title: 'Running search_web',
+        kind: 'search',
+        status: 'in_progress',
+        rawInput: { query, domain: '', summary: '' },
+      })
+      if (verb === 'SEARCHFAIL') {
+        failed('RESOURCE_EXHAUSTED: search quota exceeded')
+        continue
+      }
+      const answer = [
+        `Result ${call + 1} for **${query}**[1].`,
+        '',
+        'Sources:',
+        '[1] [docs.example.test](https://vertexaisearch.cloud.google.com/grounding-api-redirect/FAKE_SOURCE_1)',
+      ].join('\n')
+      notifyUpdate(session.id, {
+        sessionUpdate: 'tool_call_update',
+        toolCallId,
+        status: 'completed',
+        content: [{ type: 'content', content: { type: 'text', text: answer } }],
+        rawOutput: answer,
+      })
+    }
+    const started = Date.now()
+    while (!session.cancelled && Date.now() - started < 10_000) {
+      chunk('According to the search results, ')
       await new Promise((resolve) => setTimeout(resolve, 50))
     }
     return { stopReason: session.cancelled ? 'cancelled' : 'end_turn' }

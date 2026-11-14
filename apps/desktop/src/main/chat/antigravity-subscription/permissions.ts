@@ -29,22 +29,36 @@ export function decideAntigravityPermission(request: unknown): AcpPermissionOutc
 /** The only built-in tool an image session enables; the server titles its approval "Run generate_image?". */
 export const ANTIGRAVITY_IMAGE_TOOL = 'generate_image'
 const IMAGE_TOOL_TITLE = /\bgenerate[_ ]image\b/i
+/** The only built-in tool a web search session enables; the server titles its approval "Run search_web?". */
+export const ANTIGRAVITY_SEARCH_TOOL = 'search_web'
+const SEARCH_TOOL_TITLE = /\bsearch[_ ]web\b/i
 
 /**
- * Permission policy of one image session: its first built-in `generate_image` call runs once. Everything else,
- * including a second image, falls back to {@link decideAntigravityPermission}, which rejects built-in tools.
+ * Permission policy of a session that enables one built-in tool: the first call whose approval title matches runs
+ * once. Everything else, including a second call, falls back to {@link decideAntigravityPermission}, which rejects
+ * built-in tools.
  */
-export function createAntigravityImagePermissionPolicy(): (request: unknown) => AcpPermissionOutcome {
+function createSingleBuiltinPermissionPolicy(title: RegExp): (request: unknown) => AcpPermissionOutcome {
   let granted = false
   return (request) => {
     const value = request as Partial<AcpPermissionRequest> | null | undefined
     const toolCall = value?.toolCall
     const options = Array.isArray(value?.options) ? value.options : []
-    if (granted || !toolCall || toolCall._meta?.mcp || !IMAGE_TOOL_TITLE.test(toolCall.title ?? '')) {
+    if (granted || !toolCall || toolCall._meta?.mcp || !title.test(toolCall.title ?? '')) {
       return decideAntigravityPermission(request)
     }
     const outcome = select(options, ['allow_once'])
     if (outcome.outcome.outcome === 'selected') granted = true
     return outcome
   }
+}
+
+/** Permission policy of one image session: one built-in `generate_image` call. */
+export function createAntigravityImagePermissionPolicy(): (request: unknown) => AcpPermissionOutcome {
+  return createSingleBuiltinPermissionPolicy(IMAGE_TOOL_TITLE)
+}
+
+/** Permission policy of one web search session: one built-in `search_web` call. */
+export function createAntigravitySearchPermissionPolicy(): (request: unknown) => AcpPermissionOutcome {
+  return createSingleBuiltinPermissionPolicy(SEARCH_TOOL_TITLE)
 }

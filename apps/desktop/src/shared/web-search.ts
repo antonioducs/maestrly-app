@@ -1,5 +1,5 @@
 /** Web search provider choice shared by the main process (tool, settings IPC) and the settings UI. */
-export const WEB_SEARCH_PROVIDERS = ['auto', 'tavily', 'brave', 'chatgpt', 'duckduckgo', 'off'] as const
+export const WEB_SEARCH_PROVIDERS = ['auto', 'tavily', 'brave', 'chatgpt', 'google', 'duckduckgo', 'off'] as const
 export type WebSearchProvider = (typeof WEB_SEARCH_PROVIDERS)[number]
 
 /** Providers that need a user API key. */

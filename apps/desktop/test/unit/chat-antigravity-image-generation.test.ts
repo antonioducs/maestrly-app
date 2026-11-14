@@ -8,10 +8,12 @@ import {
   ANTIGRAVITY_IMAGE_SESSION_META,
   generateImageWithAntigravityRuntime,
   parseAntigravityImageToolUpdate,
-  pickAntigravityImageModel,
 } from '../../src/main/chat/antigravity-subscription/image-generation'
 import type { AntigravitySubscriptionManager } from '../../src/main/chat/antigravity-subscription/manager'
-import { parseAntigravityModelOptions } from '../../src/main/chat/antigravity-subscription/models'
+import {
+  parseAntigravityModelOptions,
+  pickAntigravityHelperModel,
+} from '../../src/main/chat/antigravity-subscription/models'
 import { antigravityAcpHome } from '../../src/main/chat/antigravity-subscription/paths'
 import { readGeneratedImage } from '../../src/main/chat/generated-images'
 import { createFakeAntigravity, type FakeAntigravity } from '../helpers/antigravity-fake'
@@ -175,7 +177,7 @@ describe('Antigravity image tool updates', () => {
   })
 })
 
-describe('Antigravity image model choice', () => {
+describe('Antigravity helper model choice', () => {
   const entries = parseAntigravityModelOptions([
     { value: 'gemini-pro-agent', name: 'Gemini 3.1 Pro (High)' },
     { value: 'gemini-flash-lite', name: 'Gemini 3 Flash Lite' },
@@ -185,14 +187,14 @@ describe('Antigravity image model choice', () => {
   ])
 
   it('prefers a full Flash model at its lowest level', () => {
-    expect(pickAntigravityImageModel(entries)).toEqual({ modelId: 'gemini-3.8-flash', effort: 'low' })
+    expect(pickAntigravityHelperModel(entries)).toEqual({ modelId: 'gemini-3.8-flash', effort: 'low' })
   })
 
   it('falls back to any chat model, and to nothing for an empty catalog', () => {
-    expect(pickAntigravityImageModel(entries.filter((entry) => !/flash/i.test(entry.id)))).toEqual({
+    expect(pickAntigravityHelperModel(entries.filter((entry) => !/flash/i.test(entry.id)))).toEqual({
       modelId: 'gemini-3.1-pro',
       effort: 'low',
     })
-    expect(pickAntigravityImageModel([])).toBeNull()
+    expect(pickAntigravityHelperModel([])).toBeNull()
   })
 })
