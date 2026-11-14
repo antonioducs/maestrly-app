@@ -19,7 +19,7 @@
         "appAsarBytes": 306112047,
         "appAsarUnpackedBytes": 24306538,
         "frameworksBytes": 286550918,
-        "extraResourcesBytes": 41099499,
+        "extraResourcesBytes": 63648563,
         "mlAggregateBytes": 0,
         "maxArtifactBytes": 237721708
       },
@@ -28,7 +28,7 @@
         "appAsarBytes": 336723252,
         "appAsarUnpackedBytes": 26737192,
         "frameworksBytes": 315206010,
-        "extraResourcesBytes": 45209449,
+        "extraResourcesBytes": 70013420,
         "mlAggregateBytes": 0,
         "maxArtifactBytes": 261493879
       }

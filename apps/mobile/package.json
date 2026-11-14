@@ -50,7 +50,7 @@
     "expo-router": "58.0.31",
     "expo-secure-store": "58.0.3",
     "expo-sharing": "58.0.23",
-    "expo-speech-recognition": "58.0.0",
+    "expo-speech-recognition": "58.0.1",
     "expo-splash-screen": "58.0.14",
     "expo-status-bar": "58.0.5",
     "expo-system-ui": "58.0.7",
@@ -59,7 +59,7 @@
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "react-native": "0.88.1",
-    "react-native-marked": "8.3.2",
+    "react-native-marked": "8.3.4",
     "react-native-reanimated": "4.7.1",
     "react-native-safe-area-context": "5.11.1",
     "react-native-screens": "4.30.1",
@@ -72,8 +72,8 @@
   "devDependencies": {
     "@types/node": "24.19.2",
     "@types/react": "19.3.0",
-    "playwright-core": "1.64.1",
+    "playwright-core": "1.65.0",
     "typescript": "7.0.2",
-    "vitest": "5.0.4"
+    "vitest": "5.1.0"
   }
 }
