@@ -172,6 +172,16 @@ describe('ChatWindowManager', () => {
       height: 820,
     })
   })
+  it('opens the child in its owner’s process, with no preload or Node.js', () => {
+    const s = setup()
+    expect(s.owner.open(s.prepare().frameName).overrideBrowserWindowOptions?.webPreferences).toEqual({
+      preload: '',
+      nodeIntegration: false,
+      contextIsolation: true,
+      webSecurity: true,
+      sandbox: false,
+    })
+  })
   it('reveals the source only for an owned, open chat window', () => {
     const s = setup()
     const { key, frameName } = s.prepare()
