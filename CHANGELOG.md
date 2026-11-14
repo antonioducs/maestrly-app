@@ -5,6 +5,8 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.37.0] - 2026-11-14
+
 ### Added
 
 - **Web search with a Google AI subscription**: Settings → Tools → Web search
