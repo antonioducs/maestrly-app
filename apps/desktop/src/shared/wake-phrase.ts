@@ -4,7 +4,15 @@
  */
 export const WAKE_PHRASE_MIN = 2
 export const WAKE_PHRASE_MAX = 40
-export const WAKE_MATCH_THRESHOLD = 0.8
+/**
+ * Each word heard against the phrase's word in the same place, so a close word passes ("maestra") and a neighbour that
+ * shares most letters with the whole phrase does not ("Oi mestre", "O maestro regeu").
+ */
+const WORD_MATCH = 0.75
+/** The phrase with its words run together or split differently by the recognizer ("Oimaestro"). */
+const JOINED_MATCH = 0.9
+/** Everything heard is the phrase, or nearly: Whisper often writes "Oi Maestro" said alone as "O Maestro.". */
+const ALONE_MATCH = 0.85
 /** Words that may come before the phrase ("é, oi Maestro"). */
 const LEADING_WORDS = 1
 const DEFAULTS: Record<string, string> = { 'pt-BR': 'Oi Maestro', en: 'Hey Maestro' }
@@ -40,7 +48,15 @@ function similarity(a: string, b: string): number {
   return 1 - row[b.length] / Math.max(a.length, b.length)
 }
 
-/** The best similarity between the phrase and the first words heard, with windows one word shorter or longer. */
+/** Whisper hears a short clip far better when told what to expect: the phrase is the prompt. */
+export function wakePrompt(phrase: string): string {
+  return `${phrase.trim().replace(/[\s.,;:!?…]+$/u, '')}.`
+}
+
+/**
+ * The best similarity between the phrase and the first words heard, with windows one word shorter or longer. Only for
+ * logs: the decision is matchesWakePhrase.
+ */
 export function wakeScore(transcript: string, phrase: string): number {
   const want = normalizeSpeech(phrase)
   const heard = normalizeSpeech(transcript)
@@ -57,5 +73,19 @@ export function wakeScore(transcript: string, phrase: string): number {
 }
 
 export function matchesWakePhrase(transcript: string, phrase: string): boolean {
-  return wakeScore(transcript, phrase) >= WAKE_MATCH_THRESHOLD
+  const want = normalizeSpeech(phrase)
+  const heard = normalizeSpeech(transcript)
+  if (!want.length || !heard.length) return false
+  const joined = want.join('')
+  for (let skip = 0; skip <= LEADING_WORDS; skip++) {
+    const aligned = heard.slice(skip, skip + want.length)
+    if (aligned.length === want.length && aligned.every((word, i) => similarity(word, want[i]) >= WORD_MATCH)) {
+      return true
+    }
+    for (let size = Math.max(1, want.length - 1); size <= want.length + 1; size++) {
+      const part = heard.slice(skip, skip + size)
+      if (part.length === size && similarity(part.join(''), joined) >= JOINED_MATCH) return true
+    }
+  }
+  return heard.length <= want.length + 1 && similarity(heard.join(''), joined) >= ALONE_MATCH
 }

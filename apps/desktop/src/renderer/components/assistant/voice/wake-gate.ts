@@ -6,6 +6,8 @@ const NOISE_FACTOR = 2.5
 const MIN_THRESHOLD = 0.01
 const NOISE_ADAPT = 0.05
 const CALIBRATION_MS = 300
+/** Long enough that a natural pause inside the phrase ("Oi… Maestro") does not cut it in two. */
+const SILENCE_MS = 600
 
 export interface BurstGateOptions {
   sampleRate?: number
@@ -39,7 +41,7 @@ export function createBurstGate(opts: BurstGateOptions = {}): { push(frame: Floa
   const frameMs = opts.frameMs ?? 20
   const calibrationFrames = Math.max(1, Math.round(CALIBRATION_MS / frameMs))
   const preRollFrames = Math.max(0, Math.round((opts.preRollMs ?? 300) / frameMs))
-  const silenceFrames = Math.max(1, Math.round((opts.silenceMs ?? 400) / frameMs))
+  const silenceFrames = Math.max(1, Math.round((opts.silenceMs ?? SILENCE_MS) / frameMs))
   const minSpeechFrames = Math.max(1, Math.round((opts.minSpeechMs ?? 200) / frameMs))
   const maxFrames = Math.max(1, Math.round((opts.maxMs ?? 2500) / frameMs))
 

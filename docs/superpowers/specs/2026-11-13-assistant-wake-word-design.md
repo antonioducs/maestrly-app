@@ -1,6 +1,27 @@
 # Assistant wake word — design
 
-Date: 2026-11-13 · Status: proposed
+Date: 2026-11-13 · Status: implemented in 0.36.0, model and matching revised on 2026-11-14
+
+## Revision 2026-11-14
+
+Acceptance on an M2 Pro with 9 synthesized pt-BR voices (81 utterances that must
+trigger, 108 sentences that must not, room noise added) rejected the base model:
+
+| Setup | Detected | False triggers | Time per burst |
+| --- | --- | --- | --- |
+| base (0.36.0) | 7/81 | 7/108 | ~90 ms |
+| base, phrase as prompt | 58/63 without long pauses | 8/108, it writes the phrase over other speech | ~70 ms |
+| small, phrase as prompt, strict matching, 600 ms cut, joined bursts | 66/81 | 0/108 | ~200 ms |
+| large-v3-turbo, phrase as prompt | 29/63 without long pauses | 2/108 | ~810 ms |
+
+The wake model is now `ggml-small-q5_1.bin` (190 MB, about 600 MB resident; about 1.3 s
+per burst on the processor). Whisper is prompted with the phrase. Matching compares each
+word with the phrase's word in the same place (0.75), the words run together (0.9), or a
+transcript that is only the phrase (0.85), which rejects "Oi mestre" and "O maestro
+regeu…". The gate waits 600 ms of silence, and a burst arriving within 2.5 s of the
+previous one is also read after the previous transcript. A burst arriving during a
+detection waits for it instead of being dropped. A model trained for the phrase, the way
+dedicated wake word engines work, was left out for now.
 
 ## Goal
 

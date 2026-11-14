@@ -3,7 +3,7 @@ import type { SpeechSegment } from './asr-audio'
 export interface WhisperContextLike {
   transcribeData(
     audio: ArrayBuffer,
-    options?: { language?: string; maxThreads?: number }
+    options?: { language?: string; maxThreads?: number; prompt?: string }
   ): { promise: Promise<{ result: string }> }
   release(): Promise<void>
 }

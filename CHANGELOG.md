@@ -13,6 +13,14 @@ User-visible changes by version. Downloads are on
   running checks itself, and the Antigravity and Cursor runtimes no longer send
   the Maestro contract twice. This removes roughly 6–7k tokens from every new
   orchestrator session.
+- **Open by voice** now recognizes the wake phrase reliably: it uses the
+  whisper.cpp small model (~190 MB, replacing the ~57 MB base model, which
+  heard "Oi Maestro" as other words most of the time), tells it the phrase to
+  expect, ignores sentences that only sound close to it ("Oi mestre", "o maestro
+  regeu…"), and accepts a short pause inside the phrase. On synthesized pt-BR
+  voices it went from 7 to 66 detections out of 81, with no false trigger out of
+  108 other sentences. It keeps about 600 MB of memory in use while on. If you
+  downloaded the base model in 0.36.0, the setting offers the new download.
 
 ### Fixed
 
