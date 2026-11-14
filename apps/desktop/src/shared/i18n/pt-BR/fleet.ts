@@ -2095,6 +2095,7 @@ export default {
       },
       check: 'Testar conexão',
       checking: 'Testando…',
+      creating: 'Criando o backup…',
       probe: {
         empty: 'Conectado. Esta pasta está vazia: um backup novo será criado aqui.',
         existing: 'Já existe um backup do Maestrly aqui. Use a chave de recuperação dele para conectar.',
