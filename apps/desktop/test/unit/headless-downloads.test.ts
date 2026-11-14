@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -12,17 +12,26 @@ const electron = vi.hoisted(() => {
   const app = {
     listeners: new Map<string, Listener>(),
     on: (name: string, listener: Listener) => app.listeners.set(name, listener),
-    getPath: () => '',
+    paths: new Map<string, string>(),
+    getPath: (name: string) => app.paths.get(name) ?? '',
+    setPath: (name: string, value: string) => app.paths.set(name, value),
   }
   return { fakeSession, app, defaultSession: fakeSession() }
 })
 vi.mock('electron', () => ({ app: electron.app, session: { defaultSession: electron.defaultSession } }))
 
-import { availableDownloadPath, saveHeadlessDownloads } from '../../src/main/headless-downloads'
+import {
+  applyHeadlessDownloadsFolder,
+  availableDownloadPath,
+  headlessDownloadsFolder,
+  saveHeadlessDownloads,
+} from '../../src/main/headless-downloads'
 
 const dirs: string[] = []
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+  electron.app.paths.clear()
+  vi.restoreAllMocks()
 })
 
 function download(filename: string, savePath = '') {
@@ -84,6 +93,35 @@ describe('downloads of a headless instance', () => {
     session.listeners.get('will-download')!(event, item)
     expect(event.preventDefault).toHaveBeenCalled()
     expect(item.setSavePath).not.toHaveBeenCalled()
+  })
+
+  it('uses ~/Downloads when Electron answers the home folder itself, and keeps any other folder', () => {
+    const home = path.join(path.sep, 'home', 'bot')
+    expect(headlessDownloadsFolder(home, home)).toBe(path.join(home, 'Downloads'))
+    expect(headlessDownloadsFolder(`${home}${path.sep}`, home)).toBe(path.join(home, 'Downloads'))
+    expect(headlessDownloadsFolder(path.join(home, 'Baixados'), home)).toBe(path.join(home, 'Baixados'))
+  })
+
+  it('points the app at the Downloads folder and creates it before anything reads it', () => {
+    const home = mkdtempSync(path.join(os.tmpdir(), 'maestrly-home-'))
+    dirs.push(home)
+    electron.app.paths.set('home', home)
+    electron.app.paths.set('downloads', home)
+
+    const folder = applyHeadlessDownloadsFolder()
+    expect(folder).toBe(path.join(home, 'Downloads'))
+    expect(electron.app.getPath('downloads')).toBe(folder)
+    expect(statSync(folder).isDirectory()).toBe(true)
+
+    // A folder it cannot create is still the folder: each download then cancels itself instead of asking.
+    const blocker = path.join(home, 'not-a-directory')
+    writeFileSync(blocker, '')
+    electron.app.paths.set('home', blocker)
+    electron.app.paths.set('downloads', blocker)
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+    expect(applyHeadlessDownloadsFolder()).toBe(path.join(blocker, 'Downloads'))
+    expect(electron.app.getPath('downloads')).toBe(path.join(blocker, 'Downloads'))
+    expect(logged).toHaveBeenCalledOnce()
   })
 
   it('makes names safe and keeps their extension when numbering', () => {
