@@ -86,10 +86,14 @@ jobs:
       - name: Test the mobile app's web build
         if: runner.os == 'Linux'
         run: npm run test:e2e:mobile
-      # A whiteboard on a real artifact host, edited at once by its owner, a guest and the agent, in that Chromium.
+      # A whiteboard on a real artifact host, edited at once by its owner, a guest and the agent. The viewer keeps its
+      # own lockfile, so its Playwright may want another Chromium build than the one installed above.
       - name: Test the whiteboard viewer
         if: runner.os == 'Linux'
-        run: npm run build:artifact-host && npm run build:whiteboard-viewer && npm run test:whiteboard-viewer
+        run: >-
+          npm run build:artifact-host && npm run build:whiteboard-viewer &&
+          npm exec --prefix packages/whiteboard/viewer -- playwright install chromium &&
+          npm run test:whiteboard-viewer
 
   units:
     name: Unit tests ${{ matrix.shard }}/2
