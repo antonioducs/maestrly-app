@@ -372,7 +372,7 @@ For voice dictation the archive also contains:
   License, Copyright (c) 2020-present Silero Team, distributed as
   [`silero-vad-MIT.txt`](apps/desktop/resources/licenses/silero-vad-MIT.txt).
 
-The speech models, OpenAI Whisper large-v3-turbo and Whisper base (`ggml-base-q5_1.bin`,
+The speech models, OpenAI Whisper large-v3-turbo and Whisper small (`ggml-small-q5_1.bin`,
 MIT License, Copyright (c) 2022 OpenAI) in the GGML format published by
 [ggerganov/whisper.cpp](https://huggingface.co/ggerganov/whisper.cpp), are not
 distributed with Maestrly. They are downloaded from Hugging Face only when the user

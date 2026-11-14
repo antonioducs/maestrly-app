@@ -428,11 +428,13 @@ rejected key or an unavailable microphone, and the answer stays in the chat.
 Turn on **Open by voice** in **Settings → Assistant → Voice** to open the
 assistant hands-free by saying your wake phrase (**Oi Maestro** in Portuguese,
 **Hey Maestro** in English, or a phrase you choose). Enabling it requires a
-one-time download of a local wake-word model (about 57 MB) — and the local ML
+one-time download of a local wake-word model (about 190 MB) — and the local ML
 runtime when it is not already installed — after you confirm it.
 Wake-phrase detection runs entirely on this computer using Silero VAD and
 whisper.cpp; audio leaves the computer only after the wake phrase opens the
-assistant. Because the microphone stays open while listening for the phrase, the
+assistant. While it is on, detection keeps about 600 MB of memory in use. Macs
+run it on the GPU; on Windows and Linux it runs on the processor and takes about
+a second to check each thing said near the microphone. Because the microphone stays open while listening for the phrase, the
 operating system's microphone indicator remains on. Listening pauses automatically
 while the screen is locked on macOS and Windows, while the computer sleeps, and
 during an active voice session or Realtime call.
