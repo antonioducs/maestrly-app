@@ -14,7 +14,7 @@ import {
 } from './remote-host/server/bot-access'
 import { createHostSources } from './remote-host/server/host-artifacts'
 import { ARTIFACT_OPEN_REQUEST_CHANNEL } from '../shared/artifacts'
-import { saveHeadlessDownloads } from './headless-downloads'
+import { applyHeadlessDownloadsFolder, saveHeadlessDownloads } from './headless-downloads'
 import { RemoteUiHub } from './remote-host/server/remote-ui-hub'
 import { startServerHostMode } from './remote-host/server/start'
 import { isSupportedLocale } from '../shared/locale'
@@ -1284,7 +1284,7 @@ app.on('child-process-gone', (_e, details) => {
 app.whenReady().then(async () => {
   installSystemQuitHandlers({ platform: process.platform, signals: process, powerMonitor, quit: quitForSystem })
   // Before any session exists, so that every session of a headless instance saves its downloads without a dialog.
-  if (isHeadlessInstance()) saveHeadlessDownloads()
+  if (isHeadlessInstance()) saveHeadlessDownloads(applyHeadlessDownloadsFolder())
   fixPathForGuiApp()
   if (process.env.MAESTRLY_PACKAGED_LOCAL_ML_SMOKE === '1') {
     try {
