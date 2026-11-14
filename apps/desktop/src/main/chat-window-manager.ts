@@ -168,7 +168,16 @@ export class ChatWindowManager {
         fullscreenable: true,
         alwaysOnTop: false,
         modal: false,
-        webPreferences: { preload: '', nodeIntegration: false, contextIsolation: true, webSecurity: true },
+        // The owner renders into this about:blank through the WindowProxy window.open returns, which needs the child in
+        // the owner's (unsandboxed) process. Since Electron 45 a child whose sandbox differs from its opener's gets a
+        // process of its own and window.open returns null. It has no preload and no Node.js either way.
+        webPreferences: {
+          preload: '',
+          nodeIntegration: false,
+          contextIsolation: true,
+          webSecurity: true,
+          sandbox: false,
+        },
       },
     }
   }
