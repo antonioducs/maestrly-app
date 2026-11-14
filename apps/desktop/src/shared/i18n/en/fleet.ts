@@ -2076,6 +2076,7 @@ export default {
       },
       check: 'Check connection',
       checking: 'Checking…',
+      creating: 'Creating the backup…',
       probe: {
         empty: 'Connected. This folder is empty: a new backup will be created here.',
         existing: 'There is already a Maestrly backup here. Use its recovery key to connect.',

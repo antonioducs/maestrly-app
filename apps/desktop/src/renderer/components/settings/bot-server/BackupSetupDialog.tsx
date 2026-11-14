@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Loader2 } from 'lucide-react'
 import {
   FLEET_BACKUP_LIMITS,
   type FleetBackupProbeResponse,
@@ -99,9 +100,12 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 export function BackupDestinationStep({
   api,
   onProbed,
+  creating = false,
 }: {
   api: Pick<FleetBackupApi, 'probe' | 'driveSignIn' | 'cancelDriveSignIn'>
   onProbed: (draft: FleetBackupDestinationDraft, result: FleetBackupProbeResponse) => void
+  /** The probe passed and the backup is being created at the destination, which can take a while. */
+  creating?: boolean
 }) {
   const { t } = useTranslation('fleet')
   const [provider, setProvider] = useState<Provider>('drive')
@@ -285,13 +289,20 @@ export function BackupDestinationStep({
         </div>
       )}
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" disabled={!draft || checking} onClick={() => void check()}>
+        <Button size="sm" disabled={!draft || checking || creating} onClick={() => void check()}>
+          {(checking || creating) && <Loader2 className="animate-spin" />}
           {checking ? t('botServer.backups.checking') : t('botServer.backups.check')}
         </Button>
-        {result?.state === 'empty' && (
+        {creating ? (
           <span role="status" className="text-xs text-muted-foreground">
-            {t('botServer.backups.probe.empty')}
+            {t('botServer.backups.creating')}
           </span>
+        ) : (
+          result?.state === 'empty' && (
+            <span role="status" className="text-xs text-muted-foreground">
+              {t('botServer.backups.probe.empty')}
+            </span>
+          )
         )}
         {result?.state === 'existing' && (
           <span role="status" className="text-xs text-muted-foreground">
@@ -444,7 +455,7 @@ export function BackupSetupDialog({
           <DialogDescription>{t('botServer.backups.intro')}</DialogDescription>
         </DialogHeader>
         {step.kind === 'where' && (
-          <BackupDestinationStep api={api} onProbed={(draft, result) => void probed(draft, result)} />
+          <BackupDestinationStep api={api} creating={busy} onProbed={(draft, result) => void probed(draft, result)} />
         )}
         {step.kind === 'existing-key' && (
           <ExistingKeyStep api={api} draft={step.draft} hasSavedKey={step.hasSavedKey} onConnected={advance} />
