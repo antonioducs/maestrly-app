@@ -5,6 +5,33 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.37.1] - 2026-11-15
+
+### Changed
+
+- Update Electron to 45.3.2 and refresh app dependencies.
+
+### Fixed
+
+- **Bot environment Downloads folder**: bot and server environments now point
+  Downloads to `~/Downloads` at startup and create it when missing, instead of
+  falling back to the home folder (`~`). Previously, files downloaded by headless
+  instances or bot browsers landed loose in the home folder, and **Resources →
+  Disk** counted the whole home folder as **Downloads**. Environments pick this
+  up after restarting on an image with this version; files already saved in the
+  home folder stay where they are. See [Bot fleet](docs/bot-fleet.md).
+- **Remote browser stream after resize**: remote host and bot browser streams
+  now drop stale JPEG frames from before a viewport resize whose aspect ratio
+  does not match the new surface dimensions and request a fresh repaint (falling
+  back to showing the frame after three consecutive mismatches), preventing
+  briefly stretched frames and offset clicks.
+- **New conversation branch selection**: picking an existing branch in the new
+  conversation dialog no longer resets back to the current branch when
+  repositories or branches refresh.
+- **Backup setup progress**: the backup setup dialog now shows a spinner and a
+  "Creating the backup…" status while creating the backup at the destination and
+  keeps the button disabled so the screen does not appear frozen or run twice.
+
 ## [0.37.0] - 2026-11-14
 
 ### Added
