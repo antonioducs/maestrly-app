@@ -1,5 +1,4 @@
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { WebContentsView, type WebContents } from 'electron'
 import { panelSearch } from '../drawer-scope'
 import { preparePanelMemoryEviction, registerPanelTarget, sendToPanel, unregisterPanelTarget } from '../window-ipc'
@@ -31,7 +30,8 @@ import { registerReclaimable, scheduleMemoryReclaim, unregisterReclaimable } fro
 import { MEMORY_RECLAIM_RETRY_MS, PANEL_COLD_TTL_MS } from '../performance/policy'
 import { startLoad } from '../web-contents-load'
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
+// Not __dirname: electron-vite adds its own to the bundle, which Rolldown does not rename this one around.
+const moduleDir = import.meta.dirname
 
 /** Cold eviction is deliberately conservative: safe panel renderers get ten minutes of warm state. */
 export { PANEL_COLD_TTL_MS }
@@ -48,7 +48,7 @@ function loadPanel(view: WebContentsView, tab: string, convId: string): void {
   if (process.env.ELECTRON_RENDERER_URL) {
     startLoad(`panel:${tab}`, view.webContents.loadURL(`${process.env.ELECTRON_RENDERER_URL}/panel.html${search}`))
   } else {
-    startLoad(`panel:${tab}`, view.webContents.loadFile(path.join(__dirname, '../renderer/panel.html'), { search }))
+    startLoad(`panel:${tab}`, view.webContents.loadFile(path.join(moduleDir, '../renderer/panel.html'), { search }))
   }
 }
 

@@ -19,7 +19,6 @@ import { RemoteUiHub } from './remote-host/server/remote-ui-hub'
 import { startServerHostMode } from './remote-host/server/start'
 import { isSupportedLocale } from '../shared/locale'
 import { environmentScreenBounds } from './fleet/instance/window-bounds'
-import { fileURLToPath } from 'node:url'
 import {
   app,
   BrowserWindow,
@@ -305,7 +304,8 @@ import { createBrowserTab, focusBrowserDrawer } from './drawer/browser'
 import { registerFleetInstanceIpc } from './fleet/instance/ipc'
 import { botHost } from './bot/host'
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
+// Not __dirname: electron-vite adds its own to the bundle, which Rolldown does not rename this one around.
+const moduleDir = import.meta.dirname
 const isDev = !!process.env.ELECTRON_RENDERER_URL
 
 // Isolate the application profile before acquiring locks or opening persistent stores.
@@ -949,7 +949,7 @@ async function createWindow(): Promise<void> {
     const loaded = await settleLoad('main-window', mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL))
     if (loaded && !isHeadlessInstance() && !wc.isDestroyed()) wc.openDevTools({ mode: 'detach' })
   } else {
-    await settleLoad('main-window', mainWindow.loadFile(path.join(__dirname, '../renderer/index.html')))
+    await settleLoad('main-window', mainWindow.loadFile(path.join(moduleDir, '../renderer/index.html')))
   }
 }
 
@@ -1326,8 +1326,8 @@ app.whenReady().then(async () => {
 
   if (isDev && process.platform === 'darwin' && app.dock) {
     const base = getChannelInfo().iconBase
-    let icon = nativeImage.createFromPath(path.join(__dirname, `../../resources/${base}.png`))
-    if (icon.isEmpty()) icon = nativeImage.createFromPath(path.join(__dirname, '../../resources/icon.png'))
+    let icon = nativeImage.createFromPath(path.join(moduleDir, `../../resources/${base}.png`))
+    if (icon.isEmpty()) icon = nativeImage.createFromPath(path.join(moduleDir, '../../resources/icon.png'))
     if (!icon.isEmpty()) app.dock.setIcon(icon)
   }
 
@@ -1445,9 +1445,9 @@ app.whenReady().then(async () => {
   // Elsewhere: the coloured app icon — template images would render as a solid square.
   const trayIcon =
     process.platform === 'darwin'
-      ? nativeImage.createFromPath(path.join(__dirname, '../../resources/trayTemplate.png'))
+      ? nativeImage.createFromPath(path.join(moduleDir, '../../resources/trayTemplate.png'))
       : nativeImage
-          .createFromPath(path.join(__dirname, '../../resources/icon.png'))
+          .createFromPath(path.join(moduleDir, '../../resources/icon.png'))
           .resize({ width: process.platform === 'win32' ? 16 : 22, height: process.platform === 'win32' ? 16 : 22 })
   if (!trayIcon.isEmpty()) {
     if (process.platform === 'darwin') trayIcon.setTemplateImage(true)
