@@ -12,6 +12,7 @@
     "src/main/**/*",
     "src/preload/**/*",
     "src/renderer/vite-env.d.ts",
+    "src/shared/i18n/i18next.d.ts",
     "vitest.config.ts",
     "playwright.config.ts"
   ]
