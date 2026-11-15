@@ -108,6 +108,7 @@ export function NewConversationDialog({
 
   const [busy, setBusy] = useState(false)
   const creatingRef = useRef(false)
+  const defaultsAppliedForRef = useRef<string | undefined>(undefined)
   const [fetching, setFetching] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -143,6 +144,7 @@ export function NewConversationDialog({
     setExperience('standard')
     dispatchLocalFlow({ type: 'reset' })
     creatingRef.current = false
+    defaultsAppliedForRef.current = undefined
     setCoord('')
     setCfg({})
     setSelected(workspaceId ? [workspaceId] : workspaces[0] ? [workspaces[0].id] : [])
@@ -151,13 +153,19 @@ export function NewConversationDialog({
   useEffect(() => {
     if (!open) return
     const known = new Set(workspaces.map((workspace) => workspace.id))
-    setSelected((current) => current.filter((id) => known.has(id)))
+    setSelected((current) => {
+      const next = current.filter((id) => known.has(id))
+      return next.length === current.length ? current : next
+    })
   }, [open, workspaces])
 
   useEffect(() => {
     const primaryId = selected[0]
-    if (primaryId && branchesByWs[primaryId]) {
+    // Defaults apply only when the primary repo changes, so a re-run never overwrites the user's pick.
+    const primaryChanged = defaultsAppliedForRef.current !== primaryId
+    if (primaryId && primaryChanged && branchesByWs[primaryId]) {
       const info = branchesByWs[primaryId]
+      defaultsAppliedForRef.current = primaryId
       setBase(branchChoice(info, info.defaultBranch))
       setExistingBranch(branchChoice(info, info.current || info.local[0] || info.defaultBranch))
     }
@@ -168,7 +176,8 @@ export function NewConversationDialog({
         .then((info) => {
           setBranchesByWs((prev) => ({ ...prev, [wsId]: info }))
           setCfg((prev) => (prev[wsId] ? prev : { ...prev, [wsId]: { branch: coord, base: info.defaultBranch } }))
-          if (wsId === primaryId) {
+          if (wsId === primaryId && defaultsAppliedForRef.current !== primaryId) {
+            defaultsAppliedForRef.current = primaryId
             setBase(branchChoice(info, info.defaultBranch))
             setExistingBranch(branchChoice(info, info.current || info.local[0] || info.defaultBranch))
           }
