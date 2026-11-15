@@ -66,6 +66,10 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 3
+    groups:
+      # react-dom requires the react of its own version, so they must move together.
+      react:
+        patterns: ["react", "react-dom"]
     ignore:
       # The viewer's build patches Excalidraw's font fallback, which must be redone for every version.
       - dependency-name: "@excalidraw/excalidraw"
