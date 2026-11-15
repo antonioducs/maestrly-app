@@ -1,5 +1,4 @@
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { BrowserWindow, screen } from 'electron'
 import { resolvePreload } from '../resolve-preload'
 import { settleLoad } from '../web-contents-load'
@@ -8,7 +7,8 @@ import { ensureAssistantConversation } from './assistant-conversation'
 import { getAssistantSettings, getAssistantWindowBounds, setAssistantWindowBounds } from './assistant-settings'
 import { type AssistantBrowserWindow, AssistantWindow } from './assistant-window'
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
+// Not __dirname: electron-vite adds its own to the bundle, which Rolldown does not rename this one around.
+const moduleDir = import.meta.dirname
 
 async function load(win: AssistantBrowserWindow): Promise<void> {
   const browser = win as unknown as BrowserWindow
@@ -21,7 +21,7 @@ async function load(win: AssistantBrowserWindow): Promise<void> {
   if (process.env.ELECTRON_RENDERER_URL) {
     await settleLoad('assistant-window', browser.loadURL(`${process.env.ELECTRON_RENDERER_URL}/assistant.html`))
   } else {
-    await settleLoad('assistant-window', browser.loadFile(path.join(__dirname, '../renderer/assistant.html')))
+    await settleLoad('assistant-window', browser.loadFile(path.join(moduleDir, '../renderer/assistant.html')))
   }
 }
 

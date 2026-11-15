@@ -23,6 +23,9 @@ export default defineConfig({
           // The artifact host serves agent-generated pages over HTTP; keep it out of the main process.
           'artifact-host-worker': resolve(__dirname, 'src/main/artifact-host-worker.ts'),
         },
+        // Modules find the workers, the preload and the renderer from their own folder (import.meta.dirname), so a
+        // shared chunk sits beside the entries: in chunks/, pdf-text would look for out/main/chunks/pdf-worker.js.
+        output: { chunkFileNames: '[name]-[hash].js' },
       },
     },
   },
