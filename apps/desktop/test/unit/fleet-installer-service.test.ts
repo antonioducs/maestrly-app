@@ -1249,15 +1249,17 @@ describe('artifact viewer ports', () => {
       )
     const close = (server: net.Server) => new Promise<void>((resolve) => server.close(() => resolve()))
     const viewerDestination = await listen(viewer)
-    await close(viewer)
     const apiDestination = await listen(api)
+    // The server refuses the viewer's channels while it is down. Closing its port instead would free it for another
+    // test running in parallel to take, and the forward would then succeed.
+    let viewerUp = false
     let viewerAttempts = 0
     const fake = await startFakeSshServer({
       users: {},
       forwardTo: (port) => {
         if (port === 4010) {
           viewerAttempts++
-          return viewerDestination
+          return viewerUp ? viewerDestination : null
         }
         return port === 7443 ? apiDestination : null
       },
@@ -1294,13 +1296,13 @@ describe('artifact viewer ports', () => {
       expect(service.artifactsViewerPort()).toBeNull()
       expect(service.status().artifactsTunnelError).not.toBeNull()
       expect(await (await fetch(`http://127.0.0.1:${actual[0].port}`)).text()).toBe('synthetic API')
-      await listen(viewer, viewerDestination)
+      viewerUp = true
       await expect.poll(() => service.artifactsViewerPort(), { timeout: 4000 }).toBe(port)
       expect(service.status().artifactsTunnelError).toBeNull()
       expect(await (await fetch(`http://127.0.0.1:${port}`)).text()).toBe('synthetic artifact')
       expect(fake.connections).toBe(2)
       // Leave recovery scheduled, then verify disconnect cancels it and closes both listeners.
-      await close(viewer)
+      viewerUp = false
       await expect(fetch(`http://127.0.0.1:${port}`)).rejects.toThrow()
       await service.disconnect()
       const attempts = viewerAttempts
