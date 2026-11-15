@@ -172,6 +172,21 @@ function frame(wc: WebContents, sessionId = 1, width = 800, height = 600) {
   })
 }
 
+/** The start of a JPEG of this size, up to its frame header, in base64: all the stream reads of it. */
+function jpeg(width: number, height: number): string {
+  const jfif = [0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0, 0]
+  const header = [0xff, 0xc0, 0x00, 0x11, 0x08, height >> 8, height & 0xff, width >> 8, width & 0xff, 0x03]
+  return Buffer.from([0xff, 0xd8, ...jfif, ...header, ...new Array(9).fill(0)]).toString('base64')
+}
+
+function picture(wc: WebContents, sessionId: number, size: [number, number], page: [number, number]) {
+  wc.debugger.emit('message', {}, 'Page.screencastFrame', {
+    data: jpeg(...size),
+    sessionId,
+    metadata: { deviceWidth: page[0], deviceHeight: page[1] },
+  })
+}
+
 let tab: WebContents
 
 beforeEach(() => {
@@ -228,6 +243,31 @@ describe('remote browser stream', () => {
     expect(sender.events('drawer:browser-frame')).toEqual([
       { convId: 'conv-1', streamId, source: 1, seq: 1, width: 800, height: 600, data: '/9j/AAAA' },
     ])
+  })
+
+  it('drops a picture still of the page’s previous size and asks for a new one, but not forever', async () => {
+    const { sender, streamId } = await started()
+    const sizes = () => sender.events('drawer:browser-frame').map((item: any) => [item.width, item.height])
+    tab.invalidate.mockClear()
+    // A 1000x800 page scaled into the new 900x640 surface, described as the new page.
+    picture(tab, 1, [800, 640], [900, 640])
+    expect(sizes()).toEqual([])
+    expect(tab.debugger.sent('Page.screencastFrameAck')).toEqual([{ sessionId: 1 }])
+    expect(tab.invalidate).toHaveBeenCalledOnce()
+
+    picture(tab, 2, [900, 640], [900, 640])
+    // A HiDPI page or a slow link makes the picture smaller, in the page's shape.
+    picture(tab, 3, [450, 320], [900, 640])
+    expect(sizes()).toEqual([
+      [900, 640],
+      [900, 640],
+    ])
+
+    acknowledgeBrowserFrame(sender, 'conv-1', streamId, 1)
+    acknowledgeBrowserFrame(sender, 'conv-1', streamId, 2)
+    // A page whose pictures never match is still shown, after a few.
+    for (let sessionId = 4; sessionId <= 7; sessionId++) picture(tab, sessionId, [800, 640], [900, 640])
+    expect(sizes()).toHaveLength(3)
   })
 
   it('keeps two frames on their way and acknowledges each to Chromium only once the window has', async () => {

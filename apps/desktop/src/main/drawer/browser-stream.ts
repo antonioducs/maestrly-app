@@ -72,6 +72,8 @@ const COPY_SETTLE_MS = 500
 const COPY_POLL_MS = 25
 /** The page reads the clipboard after `paste()` returns; the next clipboard user waits this long. */
 const PASTE_HOLD_MS = 150
+/** Frames in a row whose picture is not of the page's size that are dropped before one is shown anyway. */
+const MAX_STALE_FRAMES = 3
 
 interface Source {
   id: number
@@ -116,6 +118,8 @@ interface Stream {
   rtts: number[]
   focused: boolean
   input: Promise<void>
+  /** Frames dropped in a row because their picture was still of the page's previous size. */
+  staleFrames: number
 }
 
 interface ScreencastFrameParams {
@@ -302,12 +306,48 @@ function forward(stream: Stream, source: Source, epoch: number, params: Screenca
   notify(stream, 'drawer:browser-frame', frame)
 }
 
+/** The width and height of a base64 JPEG, read from its frame header; null when it is not found near the start. */
+function jpegFrameSize(data: string): { width: number; height: number } | null {
+  // Chromium's JPEGs carry only JFIF and quantization tables before the frame header.
+  const bytes = Buffer.from(data.slice(0, 4096), 'base64')
+  if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return null
+  for (let offset = 2; offset + 9 <= bytes.length; ) {
+    if (bytes[offset] !== 0xff) return null
+    const marker = bytes[offset + 1]
+    if (marker >= 0xc0 && marker <= 0xc2)
+      return { width: bytes.readUInt16BE(offset + 7), height: bytes.readUInt16BE(offset + 5) }
+    offset += 2 + bytes.readUInt16BE(offset + 2)
+  }
+  return null
+}
+
+/**
+ * Right after the page is resized, Chromium may still send a picture of the previous size, scaled into the new one
+ * and described with the new size. The viewer would stretch it and place clicks on it as if it were the new page.
+ */
+function isStaleFrame(params: ScreencastFrameParams): boolean {
+  const { deviceWidth: width, deviceHeight: height } = params.metadata ?? {}
+  if (!width || !height) return false
+  const picture = jpegFrameSize(params.data)
+  if (!picture) return false
+  // The picture may be smaller (a HiDPI page, a slow link), but it has the page's shape, give or take a pixel.
+  return Math.abs(picture.width * height - picture.height * width) > Math.max(width, height)
+}
+
 function onScreencastFrame(stream: Stream, source: Source, params: ScreencastFrameParams): void {
   if (typeof params?.data !== 'string' || typeof params.sessionId !== 'number') return
   if (streams.get(stream.convId) !== stream || stream.source !== source) {
     void sendCdp(source.wc, 'Page.screencastFrameAck', { sessionId: params.sessionId }).catch(() => {})
     return
   }
+  if (stream.staleFrames < MAX_STALE_FRAMES && isStaleFrame(params)) {
+    stream.staleFrames++
+    void sendCdp(source.wc, 'Page.screencastFrameAck', { sessionId: params.sessionId }).catch(() => {})
+    // A page that does not change paints no new frame by itself.
+    if (!source.wc.isDestroyed()) source.wc.invalidate()
+    return
+  }
+  stream.staleFrames = 0
   if (framesInFlight(stream, Date.now()) >= BROWSER_STREAM_LIMITS.maxFramesInFlight) {
     // Chromium keeps at most a few frames unacknowledged, so this is the last one it sends until the window catches
     // up. A frame it replaces is acknowledged, or Chromium would count it forever.
@@ -572,6 +612,7 @@ export function startBrowserStream(
     rtts: [],
     focused: false,
     input: Promise.resolve(),
+    staleFrames: 0,
   }
   streams.set(convId, stream)
   viewer.once('destroyed', stream.onViewerGone)
