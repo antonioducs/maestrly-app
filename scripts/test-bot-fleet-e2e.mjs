@@ -71,10 +71,23 @@ function run(command, args, options = {}) {
       const stderr = Buffer.concat(err).toString()
       if (code === 0 || options.allowFailure) resolve({ code, stdout, stderr })
       else {
-        // A test script prints its failure before the logs of its containers, which can push it out of the tail.
-        const failure = /^FAIL .*(?:\n {4}at .*){0,8}/m.exec(stderr)?.[0]
+        // A test script prints its failure before the logs of its containers, which can push it out of the tail. The
+        // failure runs from its FAIL line through the first lines of its stack, with an assertion's diff in between.
+        const start = stderr.search(/^FAIL /m)
+        let failure = null
+        if (start >= 0) {
+          const lines = stderr.slice(start).split('\n').slice(0, 80)
+          const stack = lines.findIndex((line) => /^ {4}at /.test(line))
+          let end = stack >= 0 ? stack : 30
+          while (stack >= 0 && end < stack + 8 && /^ {4}at /.test(lines[end] ?? '')) end++
+          failure = lines.slice(0, end).join('\n')
+        }
+        // The step it failed in is the one after the last that passed.
+        const passed = stdout.match(/^PASS .*$/gm)?.at(-1)
         const tail = stderr.slice(-3000)
-        const shown = failure && !tail.includes(failure) ? failure + '\n...\n' + tail : tail
+        const shown =
+          (passed ? 'after ' + passed + '\n' : '') +
+          (failure && !tail.includes(failure) ? failure + '\n...\n' + tail : tail)
         reject(new Error(command + ' ' + args.join(' ') + ' exited ' + code + ': ' + shown))
       }
     })
