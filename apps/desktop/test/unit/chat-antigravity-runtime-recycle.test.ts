@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AcpClient } from '../../src/main/chat/acp/client'
 import type { AntigravityHostToolset } from '../../src/main/chat/antigravity-subscription/host-mcp'
+import { ANTIGRAVITY_SESSION_META } from '../../src/main/chat/antigravity-subscription/manager'
 import { createFakeAntigravity, FAKE_ACP_AGENT, type FakeAntigravity } from '../helpers/antigravity-fake'
 
 let fake: FakeAntigravity
@@ -123,5 +124,66 @@ describe('Antigravity runtime recycling', () => {
     const second = await next
     expect(second.generation).toBeGreaterThan(first.generation)
     expect(release).toHaveBeenCalledTimes(1)
+  })
+
+  it('moves new requests to a fresh process once one has opened its session budget', async () => {
+    const leases: ReturnType<typeof vi.fn>[] = []
+    const manager = fake.manager({
+      maxSessionsPerProcess: 2,
+      resolveRuntime: async () => {
+        const release = vi.fn()
+        leases.push(release)
+        return { command: process.execPath, args: [FAKE_ACP_AGENT], release }
+      },
+    })
+    await manager.login()
+    const session = { cwd: manager.workDir, mcpServers: [], _meta: ANTIGRAVITY_SESSION_META }
+    const first = await manager.connection()
+    await first.newSession(session)
+    await first.resumeSession({ ...session, sessionId: (await first.newSession(session)).sessionId })
+    const second = await manager.connection()
+    expect(second.generation).toBeGreaterThan(first.generation)
+    // The request that started on the old process keeps it until it lets go.
+    expect(first.client.alive).toBe(true)
+    first.release()
+    await first.client.exited
+    await vi.waitFor(() => expect(leases[1]).toHaveBeenCalledTimes(1))
+    expect(second.client.alive).toBe(true)
+    second.release()
+    expect(second.client.alive).toBe(true)
+  })
+
+  it('closes a process over its budget when its last caller releases it, without waiting for a request', async () => {
+    const manager = fake.manager({ maxSessionsPerProcess: 1 })
+    await manager.login()
+    const first = await manager.connection()
+    await first.newSession({ cwd: manager.workDir, mcpServers: [], _meta: ANTIGRAVITY_SESSION_META })
+    const disposeTools = vi.fn()
+    manager.setLiveSession('conversation', {
+      sessionId: 'session',
+      generation: first.generation,
+      toolset: { dispose: disposeTools } as unknown as AntigravityHostToolset,
+      toolSignature: 'tools',
+      instructionHash: 'instructions',
+      modelValue: null,
+    })
+    first.release()
+    first.release()
+    await first.client.exited
+    expect(disposeTools).toHaveBeenCalledTimes(1)
+    expect(manager.getLiveSession('conversation')).toBeUndefined()
+    const next = await manager.connection()
+    expect(next.generation).toBeGreaterThan(first.generation)
+  })
+
+  it('shuts down processes that were replaced but are still held', async () => {
+    const manager = fake.manager({ maxSessionsPerProcess: 1 })
+    await manager.login()
+    const first = await manager.connection()
+    await first.newSession({ cwd: manager.workDir, mcpServers: [], _meta: ANTIGRAVITY_SESSION_META })
+    const second = await manager.connection()
+    await manager.dispose()
+    await first.client.exited
+    await second.client.exited
   })
 })

@@ -1,10 +1,11 @@
-import type { AcpContentBlock, AcpPromptResult, AcpSessionSetupResult } from '../acp/protocol'
+import type { AcpContentBlock, AcpPromptResult } from '../acp/protocol'
 import { isAcpMessageChunk } from '../acp/protocol'
 import type { IsolatedSummaryResult } from '../portable-summarizer'
-import { AntigravityModelUnavailableError } from './errors'
+import { AntigravityModelUnavailableError, antigravityExecutionErrorChunk, isAntigravityHarnessLost } from './errors'
 import {
   ANTIGRAVITY_SESSION_META,
   type AntigravityAccountIdentity,
+  type AntigravityConnection,
   type AntigravitySubscriptionManager,
 } from './manager'
 import { resolveAntigravityModelValue } from './models'
@@ -39,14 +40,28 @@ export async function runAntigravityIsolatedPrompt(args: AntigravityIsolatedProm
   args.manager.assertAccountIdentity(args.accountIdentity)
   const modelValue = resolveAntigravityModelValue(await args.manager.listModels(), args.modelId, args.reasoningEffort)
   if (!modelValue) throw new AntigravityModelUnavailableError(args.modelId)
+  try {
+    return await runIsolatedPromptOnce(args, prompt, modelValue)
+  } catch (error) {
+    // The prompt has no tools, so repeating it in a fresh session has no side effects.
+    if (args.signal.aborted || !isAntigravityHarnessLost(error)) throw error
+    return runIsolatedPromptOnce(args, prompt, modelValue)
+  }
+}
+
+async function runIsolatedPromptOnce(
+  args: AntigravityIsolatedPromptArgs,
+  prompt: AcpContentBlock[],
+  modelValue: string
+): Promise<{ text: string }> {
   const release = args.manager.retain()
+  let connection: AntigravityConnection | undefined
   let sessionId: string | undefined
   let unsubscribe: (() => void) | undefined
   try {
-    const connection = await args.manager.connection(args.signal)
+    connection = await args.manager.connection(args.signal)
     const { client } = connection
-    const created = await client.request<AcpSessionSetupResult>(
-      'session/new',
+    const created = await connection.newSession(
       { cwd: args.manager.workDir, mcpServers: [], _meta: ANTIGRAVITY_SESSION_META },
       { signal: args.signal }
     )
@@ -59,10 +74,13 @@ export async function runAntigravityIsolatedPrompt(args: AntigravityIsolatedProm
       { signal: args.signal }
     )
     let text = ''
+    let failure = null as Error | null
     unsubscribe = connection.subscribe(id, (update) => {
       if (update.sessionUpdate !== 'agent_message_chunk' || !isAcpMessageChunk(update)) return
       const content = update.content as { type?: string; text?: unknown }
-      if (content.type === 'text' && typeof content.text === 'string') text += content.text
+      if (content.type !== 'text' || typeof content.text !== 'string') return
+      failure ??= antigravityExecutionErrorChunk(content.text)
+      if (!failure) text += content.text
     })
     const cancel = () => client.notify('session/cancel', { sessionId: id })
     args.signal.addEventListener('abort', cancel, { once: true })
@@ -78,6 +96,7 @@ export async function runAntigravityIsolatedPrompt(args: AntigravityIsolatedProm
     }
     if (result.stopReason === 'cancelled') throw abortError(args.signal)
     if (result.stopReason === 'refusal') throw new Error('Google declined to answer this request.')
+    if (failure) throw failure
     args.manager.assertAccountIdentity(args.accountIdentity)
     return { text: text.trim() }
   } catch (error) {
@@ -85,6 +104,7 @@ export async function runAntigravityIsolatedPrompt(args: AntigravityIsolatedProm
   } finally {
     unsubscribe?.()
     if (sessionId) void args.manager.deleteSession(sessionId)
+    connection?.release()
     release()
   }
 }

@@ -8,7 +8,10 @@
  *
  * The server cannot close or delete a session (it implements neither `session/close` nor `session/delete`), and every
  * session keeps a `localharness` process alive until the server exits. The model catalog, the subscription tier,
- * and the `/usage` report therefore share one probe session per server process instead of opening one per request.
+ * and the `/usage` report therefore share one probe session per server process instead of opening one per request,
+ * and a process that has opened {@link DEFAULT_MAX_SESSIONS_PER_PROCESS} sessions is replaced: new requests start a
+ * fresh one while the old one exits once its last caller releases it. Busy bots never leave the process idle, so
+ * without that the harnesses pile up until the machine swaps.
  */
 import { mkdir, rm, chmod } from 'node:fs/promises'
 import path from 'node:path'
@@ -26,6 +29,7 @@ import {
   type AcpSessionSetupResult,
   type AcpSessionUpdate,
 } from '../acp/protocol'
+import { chatDiag } from '../diag-log'
 import {
   ANTIGRAVITY_USAGE_COMMAND,
   type AntigravityTier,
@@ -62,6 +66,8 @@ export const ANTIGRAVITY_SESSION_META = Object.freeze({ agy: Object.freeze({ ena
 
 const SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const DEFAULT_IDLE_CLOSE_MS = 10 * 60_000
+/** Each harness holds 40–100 MB; this bounds one server process to a few gigabytes. */
+const DEFAULT_MAX_SESSIONS_PER_PROCESS = 24
 /**
  * Catalog lifetime once its server process is gone, and for forced refreshes. While that process runs, a regular
  * request keeps its probe's catalog; each forced refresh costs another session process until the server exits.
@@ -86,6 +92,15 @@ export interface AntigravityConnection {
   subscribe(sessionId: string, listener: (update: AcpSessionUpdate) => void): () => void
   /** Slash commands the server advertised for a session; empty when none arrived within `timeoutMs`. */
   availableCommands(sessionId: string, timeoutMs: number): Promise<readonly string[]>
+  /** `session/new`, counted toward this process's session budget. */
+  newSession(params: unknown, options?: { signal?: AbortSignal }): Promise<AcpSessionSetupResult>
+  /** `session/resume`, which also starts a harness, counted like a new session. */
+  resumeSession(params: unknown, options?: { signal?: AbortSignal }): Promise<unknown>
+  /**
+   * Ends this caller's use of the process. A replaced process exits once every caller released it, so callers must
+   * release in `finally`; an unreleased handle only delays that exit until the idle close or shutdown.
+   */
+  release(): void
 }
 
 interface AntigravityProbe {
@@ -110,6 +125,7 @@ export interface AntigravityManagerOptions {
   resolveRuntime?: () => Promise<AntigravityRuntimeCommand>
   processEnv?: (root: string) => NodeJS.ProcessEnv
   idleCloseMs?: number
+  maxSessionsPerProcess?: number
   now?: () => number
 }
 
@@ -119,7 +135,13 @@ interface ConnectionState {
   readonly runtime: AntigravityRuntimeCommand
   readonly subscribers: Map<string, Set<(update: AcpSessionUpdate) => void>>
   readonly commands: Map<string, readonly string[]>
-  readonly handle: AntigravityConnection
+  readonly handle: Omit<AntigravityConnection, 'release'>
+  /** Sessions opened or resumed on this process, each with a harness that lives until the process exits. */
+  sessions: number
+  /** Unreleased handles returned by `connection()`. */
+  holds: number
+  /** Over its session budget: the next request starts a new process and this one exits once released. */
+  retiring: boolean
 }
 
 function commandNames(update: AcpSessionUpdate): readonly string[] {
@@ -170,6 +192,7 @@ export class AntigravitySubscriptionManager {
   private readonly resolveRuntime: () => Promise<AntigravityRuntimeCommand>
   private readonly processEnv: (root: string) => NodeJS.ProcessEnv
   private readonly idleCloseMs: number
+  private readonly maxSessionsPerProcess: number
   private readonly now: () => number
   private readonly authListeners = new Set<() => void>()
   private readonly liveSessions = new Map<string, AntigravityLiveSession>()
@@ -181,6 +204,10 @@ export class AntigravitySubscriptionManager {
   private epoch = 0
   private generation = 0
   private conn: ConnectionState | null = null
+  /** Replaced processes still serving requests that started on them. */
+  private readonly retired = new Set<ConnectionState>()
+  /** Closes of replaced processes that are still running, so shutdown can wait for them. */
+  private readonly retiredClosing = new Set<Promise<void>>()
   private connecting: Promise<ConnectionState> | null = null
   private closing: Promise<void> | null = null
   private runtimeUses = 0
@@ -206,6 +233,7 @@ export class AntigravitySubscriptionManager {
     this.resolveRuntime = options.resolveRuntime ?? resolveAntigravityRuntime
     this.processEnv = options.processEnv ?? ((root) => buildAntigravityProcessEnv(root))
     this.idleCloseMs = options.idleCloseMs ?? DEFAULT_IDLE_CLOSE_MS
+    this.maxSessionsPerProcess = Math.max(1, options.maxSessionsPerProcess ?? DEFAULT_MAX_SESSIONS_PER_PROCESS)
     this.now = options.now ?? Date.now
   }
 
@@ -354,11 +382,57 @@ export class AntigravitySubscriptionManager {
     signal?.throwIfAborted()
     if (this.disposed) throw new Error('Google AI is shutting down.')
     if (!this.currentProjectId() || this.authenticationRequired) throw new AntigravityAuthRequiredError()
-    if (this.conn?.client.alive) return this.conn.handle
+    if (this.conn?.client.alive && this.conn.retiring) this.retire(this.conn)
+    if (this.conn?.client.alive) return this.lease(this.conn)
     this.connecting ??= this.openConnection().finally(() => {
       this.connecting = null
     })
-    return (await raceAbort(this.connecting, signal)).handle
+    return this.lease(await raceAbort(this.connecting, signal))
+  }
+
+  private lease(state: ConnectionState): AntigravityConnection {
+    state.holds++
+    let released = false
+    return {
+      ...state.handle,
+      release: () => {
+        if (released) return
+        released = true
+        state.holds--
+        this.settleRetiring(state)
+      },
+    }
+  }
+
+  private noteSessionOpened(state: ConnectionState): void {
+    state.sessions++
+    if (state.retiring || state.sessions < this.maxSessionsPerProcess) return
+    state.retiring = true
+    chatDiag({ kind: 'antigravity-runtime-retiring', generation: state.generation, sessions: state.sessions })
+  }
+
+  /** Detaches a process over its budget; it keeps serving the requests that already hold it. */
+  private retire(state: ConnectionState): void {
+    if (this.conn !== state) return
+    this.conn = null
+    this.retired.add(state)
+    this.settleRetiring(state)
+  }
+
+  /** Closes a process over its budget once nothing holds it; live sessions resume on the next one. */
+  private settleRetiring(state: ConnectionState): void {
+    if (!state.retiring || state.holds > 0) return
+    if (this.conn === state) this.conn = null
+    else if (!this.retired.delete(state)) return
+    this.detachConnection(state)
+    const closing: Promise<void> = state.client
+      .close()
+      .catch(() => undefined)
+      .finally(() => {
+        state.runtime.release()
+        this.retiredClosing.delete(closing)
+      })
+    this.retiredClosing.add(closing)
   }
 
   /** Keeps the shared process alive while a request that is not yet a live session is running. */
@@ -389,8 +463,9 @@ export class AntigravitySubscriptionManager {
       return cached.entries
     }
     const release = this.retain()
+    let connection: AntigravityConnection | null = null
     try {
-      const connection = await this.connection()
+      connection = await this.connection()
       const fresh = this.models
       // Another caller may have probed this process while this one waited for it.
       if (fresh && fresh !== cached && fresh.epoch === this.epoch && fresh.generation === connection.generation) {
@@ -400,6 +475,7 @@ export class AntigravitySubscriptionManager {
     } catch (error) {
       throw this.translateError(error)
     } finally {
+      connection?.release()
       release()
     }
   }
@@ -441,7 +517,7 @@ export class AntigravitySubscriptionManager {
     if (pending?.generation === connection.generation) return pending.promise
     const epoch = this.epoch
     const promise: Promise<AntigravityProbe> = (async () => {
-      const session = await connection.client.request<AcpSessionSetupResult>('session/new', {
+      const session = await connection.newSession({
         cwd: this.workDir,
         mcpServers: [],
         _meta: ANTIGRAVITY_SESSION_META,
@@ -473,12 +549,13 @@ export class AntigravitySubscriptionManager {
   private async fetchUsage(epoch: number): Promise<ChatSubscriptionUsageWindow[] | null> {
     const release = this.retain()
     let unsubscribe: (() => void) | null = null
+    let connection: AntigravityConnection | null = null
     const remember = (windows: ChatSubscriptionUsageWindow[] | null) => {
       if (epoch === this.epoch) this.usage = { at: this.now(), epoch, windows }
       return windows
     }
     try {
-      const connection = await this.connection()
+      connection = await this.connection()
       const { sessionId } = await this.openProbe(connection, true)
       if (!sessionId) return remember(null)
       const commands = await connection.availableCommands(sessionId, COMMANDS_WAIT_MS)
@@ -501,6 +578,7 @@ export class AntigravitySubscriptionManager {
       throw this.translateError(error)
     } finally {
       unsubscribe?.()
+      connection?.release()
       release()
     }
   }
@@ -666,9 +744,17 @@ export class AntigravitySubscriptionManager {
     })
     client.setRequestHandler('session/request_permission', async (params) => this.decidePermission(params))
     const generation = ++this.generation
-    const handle: AntigravityConnection = {
+    const handle: ConnectionState['handle'] = {
       client,
       generation,
+      newSession: (params, options) => {
+        this.noteSessionOpened(state)
+        return client.request<AcpSessionSetupResult>('session/new', params, options)
+      },
+      resumeSession: (params, options) => {
+        this.noteSessionOpened(state)
+        return client.request('session/resume', params, options)
+      },
       subscribe(sessionId, listener) {
         let listeners = subscribers.get(sessionId)
         if (!listeners) {
@@ -701,10 +787,20 @@ export class AntigravitySubscriptionManager {
         })
       },
     }
-    const state: ConnectionState = { client, generation, runtime, subscribers, commands, handle }
+    const state: ConnectionState = {
+      client,
+      generation,
+      runtime,
+      subscribers,
+      commands,
+      handle,
+      sessions: 0,
+      holds: 0,
+      retiring: false,
+    }
     this.conn = state
     void client.exited.then(() => {
-      if (this.conn === state) this.discardConnection(state)
+      if (this.conn === state || this.retired.delete(state)) this.discardConnection(state)
     })
     return state
   }
@@ -735,20 +831,34 @@ export class AntigravitySubscriptionManager {
   private async closeConnection(): Promise<void> {
     if (this.closing) return this.closing
     this.clearIdleTimer()
+    const retired = this.closeRetired()
     const pending = this.connecting
     if (pending) await pending.catch(() => undefined)
     if (this.closing) return this.closing
     const state = this.conn
-    if (!state) return
+    if (!state) return retired
     this.detachConnection(state)
-    this.closing = state.client
-      .close()
-      .catch(() => undefined)
+    this.closing = Promise.all([state.client.close().catch(() => undefined), retired])
+      .then(() => undefined)
       .finally(() => {
         state.runtime.release()
         this.closing = null
       })
     await this.closing
+  }
+
+  /** Shutdown, sign-in changes and runtime recycling also end the requests still on replaced processes. */
+  private closeRetired(): Promise<void> {
+    const retired = [...this.retired]
+    this.retired.clear()
+    return Promise.all([
+      ...this.retiredClosing,
+      ...retired.map(async (state) => {
+        this.detachConnection(state)
+        await state.client.close().catch(() => undefined)
+        state.runtime.release()
+      }),
+    ]).then(() => undefined)
   }
 
   private dropAllLiveSessions(): void {

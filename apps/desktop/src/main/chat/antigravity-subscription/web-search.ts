@@ -5,9 +5,9 @@
  * The tool's grounded answer is the result, so the turn is cancelled as soon as it arrives instead of waiting for the
  * model to restate it.
  */
-import type { AcpPromptResult, AcpSessionSetupResult, AcpSessionUpdate } from '../acp/protocol'
+import type { AcpPromptResult, AcpSessionUpdate } from '../acp/protocol'
 import { antigravityErrorMessage, isAntigravityQuotaError, redactAntigravityCredentials } from './errors'
-import type { AntigravityAccountIdentity, AntigravitySubscriptionManager } from './manager'
+import type { AntigravityAccountIdentity, AntigravityConnection, AntigravitySubscriptionManager } from './manager'
 import { pickAntigravityHelperModel, resolveAntigravityModelValue } from './models'
 import { ANTIGRAVITY_SEARCH_TOOL, createAntigravitySearchPermissionPolicy } from './permissions'
 
@@ -82,6 +82,7 @@ export async function searchWebWithAntigravityRuntime(args: AntigravitySearchArg
   const { manager, signal } = args
   if (signal.aborted) throw abortError(signal)
   const release = manager.retain()
+  let connection: AntigravityConnection | undefined
   let sessionId: string | undefined
   let unsubscribe: (() => void) | undefined
   let removePolicy: (() => void) | undefined
@@ -91,10 +92,9 @@ export async function searchWebWithAntigravityRuntime(args: AntigravitySearchArg
     const model = pickAntigravityHelperModel(models)
     const modelValue = model && resolveAntigravityModelValue(models, model.modelId, model.effort)
     if (!modelValue) throw new Error('Google AI has no model available to search the web.')
-    const connection = await manager.connection(signal)
+    connection = await manager.connection(signal)
     const { client } = connection
-    const created = await client.request<AcpSessionSetupResult>(
-      'session/new',
+    const created = await connection.newSession(
       { cwd: manager.workDir, mcpServers: [], _meta: ANTIGRAVITY_SEARCH_SESSION_META },
       { signal }
     )
@@ -173,6 +173,7 @@ export async function searchWebWithAntigravityRuntime(args: AntigravitySearchArg
     removePolicy?.()
     // The server cannot delete sessions; this removes the session's files.
     if (sessionId) void manager.deleteSession(sessionId)
+    connection?.release()
     release()
   }
 }

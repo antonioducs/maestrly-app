@@ -332,10 +332,15 @@ describe('chat background compaction coordinator', () => {
       input.onCheckpoint(checkpoint)
       return { summary: oversized ? 'x'.repeat(input.maxSummaryTokens * 3 + 3) : 'fits' }
     })
+    const diagnostic = vi.fn()
+    test.deps.diagnostic = diagnostic
     test.messages.set(id, [assistant(id, 'source')])
     test.coordinator.notify(id, { conversationWindow: 128_000 })
     await test.coordinator.settled()
     expect(test.coordinator.status(id)).toMatchObject({ status: 'failed', error: 'summarizer-invalid-output' })
+    expect(diagnostic).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'failed', reason: 'summarizer-invalid-output', detail: 'oversized' })
+    )
     expect(test.coordinator.record(id)?.work).toBeNull()
 
     oversized = false
