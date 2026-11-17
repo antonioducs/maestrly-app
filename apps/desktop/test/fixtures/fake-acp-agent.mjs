@@ -4,6 +4,8 @@
 //   ECHO <text> | TOOL <name> <json args> | NATIVE | SLOW | DEAF (ignores session/cancel) | SKIPMCP | EXIT |
 //   ASKCLIENT <method>
 //   USAGE <used>:<size> ... (one `usage_update` per model call, as servers from 1.3.0 send)
+//   LOSEHARNESS (first such prompt of the process only: the 1.5.0 report of a lost harness, sent as the turn's text;
+//   later ones behave like any other text)
 // Any other text is echoed back as `ok:<text>` after the MCP server has been initialized.
 // Environment: FAKE_ACP_SCENARIO (auth-cancel), FAKE_ACP_PROJECT, FAKE_ACP_LOG (NDJSON of received messages),
 // FAKE_ACP_CHILD_PID_FILE (spawn a helper and write its pid), FAKE_ACP_STDERR_BYTES (stderr noise at startup).
@@ -171,6 +173,8 @@ function lastCommand(prompt) {
   return last.trim().split('\n').at(-1)?.trim() ?? ''
 }
 
+let harnessLost = false
+
 async function runPrompt(session, prompt) {
   session.cancelled = false
   const command = lastCommand(prompt)
@@ -178,6 +182,11 @@ async function runPrompt(session, prompt) {
   const chunk = (text) =>
     notifyUpdate(session.id, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } })
   if (verb === 'EXIT') process.exit(3)
+  if (verb === 'LOSEHARNESS' && !harnessLost) {
+    harnessLost = true
+    chunk('Agent execution error: Harness process exited unexpectedly (WS close code 1011).\nHarness stderr:\n(none)')
+    return { stopReason: 'end_turn' }
+  }
   if (verb !== 'SKIPMCP') {
     try {
       await ensureMcp(session)

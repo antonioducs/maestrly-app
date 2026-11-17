@@ -84,6 +84,32 @@ export function isAntigravityAuthRequired(error: unknown): boolean {
   )
 }
 
+const EXECUTION_ERROR_PREFIX = 'Agent execution error: '
+
+/** A turn the server ended with an error it reported as the turn's text. */
+export class AntigravityExecutionError extends Error {
+  constructor(message: string) {
+    super(redactAntigravityCredentials(message))
+    this.name = 'AntigravityExecutionError'
+  }
+}
+
+/**
+ * The server answers `session/prompt` normally when the turn fails and sends the failure as a final message chunk
+ * (`Agent execution error: ...`), so a caller that only reads text would take it for the model's answer.
+ */
+export function antigravityExecutionErrorChunk(text: string): AntigravityExecutionError | null {
+  return text.startsWith(EXECUTION_ERROR_PREFIX) ? new AntigravityExecutionError(text.trim()) : null
+}
+
+/**
+ * The server lost a session's harness: it crashed, or the server stalled past the harness WebSocket keepalive (close
+ * code 1011), which drops every open session at once. A fresh session on a healthy process can succeed.
+ */
+export function isAntigravityHarnessLost(error: unknown): boolean {
+  return error instanceof Error && /Harness process exited/i.test(error.message)
+}
+
 export function isAntigravityQuotaError(error: unknown): boolean {
   return error instanceof Error && QUOTA_PATTERN.test(error.message)
 }

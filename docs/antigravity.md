@@ -126,6 +126,17 @@ full. If the prompt still cannot fit, Maestrly stops with an error before sendin
 it; shorten the message or compact the conversation and retry. Summarization
 uses stages that fit the same limit.
 
+The server cannot close a session, so each one keeps a helper process
+(`localharness`, 40–100 MB) running until the server exits. Once a server has
+opened 24 sessions (conversations, subagents, summary stages, searches and
+images all count), new requests start a fresh server and the old one stops when
+the requests still running on it finish; conversations resume their sessions on
+the new server. A server that runs out of memory stalls, and the stall drops
+every open session at once (`Harness process exited unexpectedly (WS close
+code 1011)`). The server reports that loss as the turn's text; Maestrly treats
+it as an error, never as the answer. A summary stage retries once in a fresh
+session, and so does a subagent if none of its tools had started.
+
 The first prompt also carries every tool's description and schema. Over a budget
 of 96 KB, Maestrly lists MCP tools with a one-line summary, then app tools if
 that is not enough; core, skill and delegation tools keep their schemas. The

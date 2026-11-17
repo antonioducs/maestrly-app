@@ -31,7 +31,7 @@ import { getConvUiPrefs } from '../../store'
 import { resolveAppToolAccess } from '../app-tool-access'
 import { deferredLoadingToolNames } from '../tool-policy'
 import { AcpRpcError } from '../acp/client'
-import { ACP_RESOURCE_NOT_FOUND_CODE, type AcpPromptResult, type AcpSessionSetupResult } from '../acp/protocol'
+import { ACP_RESOURCE_NOT_FOUND_CODE, type AcpPromptResult } from '../acp/protocol'
 import {
   activatePreparedCompaction,
   createBackgroundCompactionPrefixNotifier,
@@ -291,6 +291,7 @@ export async function runAntigravitySubscriptionChat(
   const toolAbort = new AbortController()
   const toolSignal = AbortSignal.any([args.signal, toolAbort.signal])
   const releaseProcess = args.manager.retain()
+  let releaseConnection: (() => void) | null = null
   let toolset: AntigravityHostToolset | null = null
   let sessionId: string | null = null
   let sessionCreated = false
@@ -568,6 +569,7 @@ export async function runAntigravitySubscriptionChat(
 
     // Session selection: reuse the live session, resume the persisted one, or start fresh with a seed.
     const connection = await args.manager.connection(args.signal)
+    releaseConnection = connection.release
     const client = connection.client
     const workDir = args.manager.workDir
     const binding = ephemeral ? undefined : getAntigravitySessionBinding(args.conversationId)
@@ -604,7 +606,7 @@ export async function runAntigravitySubscriptionChat(
     }
     if (!current && compatible) {
       try {
-        await client.request('session/resume', {
+        await connection.resumeSession({
           sessionId: binding.sessionId,
           cwd: workDir,
           mcpServers: [turnToolset.mcpServer],
@@ -628,7 +630,7 @@ export async function runAntigravitySubscriptionChat(
         retireAntigravitySessionBinding(args.conversationId, binding.sessionId)
         if (binding.accountId === accountId) void args.manager.deleteSession(binding.sessionId)
       }
-      const created = await client.request<AcpSessionSetupResult>('session/new', {
+      const created = await connection.newSession({
         cwd: workDir,
         mcpServers: [turnToolset.mcpServer],
         _meta: ANTIGRAVITY_SESSION_META,
@@ -953,6 +955,7 @@ export async function runAntigravitySubscriptionChat(
     if (sessionId && sessionCreated && !sessionKept) void args.manager.deleteSession(sessionId)
     await mcpClose?.().catch(() => undefined)
     await appClose?.().catch(() => undefined)
+    releaseConnection?.()
     releaseProcess()
     contextProgress.dispose()
     try {

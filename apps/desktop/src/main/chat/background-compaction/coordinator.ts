@@ -28,7 +28,10 @@ const MAX_SUMMARY_TOKENS = 8_000
 const RETRY_DELAY_MS = 30_000
 
 class BackgroundCompactionInvariantError extends Error {
-  constructor(readonly code: string) {
+  constructor(
+    readonly code: string,
+    readonly detail?: string
+  ) {
     super(code)
     this.name = 'BackgroundCompactionInvariantError'
   }
@@ -65,6 +68,16 @@ function failureCode(error: unknown): string {
   if (/timed out|timeout|time budget/.test(message)) return 'summarizer-timeout'
   if (/empty|oversized|invalid output/.test(message)) return 'summarizer-invalid-output'
   return 'background-compaction-failed'
+}
+
+/** Which check rejected the summary; the code alone does not tell an empty answer from a too-long one. */
+function failureDetail(error: unknown, code: string): string | undefined {
+  if (code !== 'summarizer-invalid-output') return undefined
+  if (error instanceof BackgroundCompactionInvariantError && error.detail) return error.detail
+  const message = error instanceof Error ? error.message : String(error)
+  if (/oversized/i.test(message)) return 'oversized'
+  if (/empty/i.test(message)) return 'empty'
+  return undefined
 }
 
 /**
@@ -806,10 +819,10 @@ export class ChatBackgroundCompactionCoordinator {
       })
       controller.signal.throwIfAborted()
       const summary = summarized.summary.trim()
-      if (!summary) throw new BackgroundCompactionInvariantError('summarizer-invalid-output')
+      if (!summary) throw new BackgroundCompactionInvariantError('summarizer-invalid-output', 'empty')
       const summaryTokens = estimateTextTokens(summary)
       if (summaryTokens > work.maxSummaryTokens) {
-        throw new BackgroundCompactionInvariantError('summarizer-invalid-output')
+        throw new BackgroundCompactionInvariantError('summarizer-invalid-output', 'oversized')
       }
       const config = parseBackgroundCompactionConfig(this.deps.getConfig(conversationId))
       const current = this.store.get(conversationId)
@@ -880,11 +893,13 @@ export class ChatBackgroundCompactionCoordinator {
       const code = failureCode(error)
       // Resuming would replay the same completed stages into the same rejection: a retry starts the round over.
       this.markFailed(conversationId, code === 'summarizer-invalid-output' ? { ...current, work: null } : current, code)
+      const detail = failureDetail(error, code)
       this.deps.diagnostic?.({
         kind: 'failed',
         conversationId,
         durationMs: Math.max(0, this.now() - startedAt),
         reason: code,
+        ...(detail ? { detail } : {}),
       })
       return false
     }

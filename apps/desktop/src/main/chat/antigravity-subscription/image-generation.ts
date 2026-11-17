@@ -7,11 +7,11 @@
  */
 import fsp from 'node:fs/promises'
 import path from 'node:path'
-import type { AcpPromptResult, AcpSessionSetupResult, AcpSessionUpdate } from '../acp/protocol'
+import type { AcpPromptResult, AcpSessionUpdate } from '../acp/protocol'
 import { deleteGeneratedImages, MAX_GENERATED_IMAGE_BYTES, saveGeneratedImage } from '../generated-images'
 import type { GeneratedImageEmission } from '../tools/util'
 import { antigravityErrorMessage, isAntigravityQuotaError, redactAntigravityCredentials } from './errors'
-import type { AntigravityAccountIdentity, AntigravitySubscriptionManager } from './manager'
+import type { AntigravityAccountIdentity, AntigravityConnection, AntigravitySubscriptionManager } from './manager'
 import { pickAntigravityHelperModel, resolveAntigravityModelValue } from './models'
 import { antigravityAcpHome, isStrictlyInside } from './paths'
 import { ANTIGRAVITY_IMAGE_TOOL, createAntigravityImagePermissionPolicy } from './permissions'
@@ -135,6 +135,7 @@ export async function generateImageWithAntigravityRuntime(args: AntigravityImage
   const { manager, signal } = args
   if (signal.aborted) throw abortError(signal)
   const release = manager.retain()
+  let connection: AntigravityConnection | undefined
   let sessionId: string | undefined
   let unsubscribe: (() => void) | undefined
   let removePolicy: (() => void) | undefined
@@ -145,10 +146,9 @@ export async function generateImageWithAntigravityRuntime(args: AntigravityImage
     const model = pickAntigravityHelperModel(models)
     const modelValue = model && resolveAntigravityModelValue(models, model.modelId, model.effort)
     if (!modelValue) throw new Error('Google AI has no model available to generate images.')
-    const connection = await manager.connection(signal)
+    connection = await manager.connection(signal)
     const { client } = connection
-    const created = await client.request<AcpSessionSetupResult>(
-      'session/new',
+    const created = await connection.newSession(
       { cwd: manager.workDir, mcpServers: [], _meta: ANTIGRAVITY_IMAGE_SESSION_META },
       { signal }
     )
@@ -240,6 +240,7 @@ export async function generateImageWithAntigravityRuntime(args: AntigravityImage
     removePolicy?.()
     // The server cannot delete sessions; this removes the session's files, the generated image included.
     if (sessionId) void manager.deleteSession(sessionId)
+    connection?.release()
     release()
   }
 }

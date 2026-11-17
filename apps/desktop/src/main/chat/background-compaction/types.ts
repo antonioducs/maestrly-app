@@ -113,6 +113,8 @@ export interface BackgroundCompactionDiagnostic {
   newTokens?: number
   reusedTokens?: number
   reason?: string
+  /** For `summarizer-invalid-output`: `empty` or `oversized`. */
+  detail?: string
 }
 
 export interface BackgroundCompactionCoordinatorDeps {

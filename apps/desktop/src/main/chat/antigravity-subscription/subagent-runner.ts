@@ -2,7 +2,7 @@ import type { ToolSet } from 'ai'
 import { getConversation } from '../../store'
 import type { ChatModelRef } from '../../../shared/chat'
 import type { SubagentExecutionSnapshotV1 } from '../../../shared/subagent-profiles'
-import type { AcpPromptResult, AcpSessionSetupResult } from '../acp/protocol'
+import type { AcpPromptResult } from '../acp/protocol'
 import { isAcpMessageChunk } from '../acp/protocol'
 import type { ChatAgent } from '../agents'
 import { resolveAntigravityHarness } from '../harness/adapters/antigravity'
@@ -13,11 +13,18 @@ import { createSubagentTextEmitter, type SubagentTextUpdateHandler } from '../su
 import { PARENT_ONLY_CONVERSATION_TOOL_NAMES } from '../tool-policy'
 import { selectSubagentToolNames } from '../tools'
 import { subagentEnvironment } from '../tools/command-shell'
-import { AntigravityModelUnavailableError, AntigravityToolsUnavailableError, antigravityErrorMessage } from './errors'
+import {
+  AntigravityModelUnavailableError,
+  AntigravityToolsUnavailableError,
+  antigravityErrorMessage,
+  antigravityExecutionErrorChunk,
+  isAntigravityHarnessLost,
+} from './errors'
 import { type AntigravityHostToolset, registerAntigravityHostToolset } from './host-mcp'
 import {
   ANTIGRAVITY_SESSION_META,
   type AntigravityAccountIdentity,
+  type AntigravityConnection,
   type AntigravitySubscriptionManager,
 } from './manager'
 import { resolveAntigravityModelValue } from './models'
@@ -70,9 +77,21 @@ function abortedError(model: ChatModelRef): Error {
  * token usage, so none is recorded.
  */
 export async function runAntigravitySubagent(args: RunAntigravitySubagentArgs): Promise<AntigravitySubagentResult> {
+  const first = await runAntigravitySubagentOnce(args)
+  if (!first.retryable || args.signal.aborted) return first.result
+  // Nothing ran yet, so starting over in a fresh session repeats no side effect.
+  args.progress?.('Google Antigravity lost the session; retrying the subagent')
+  return (await runAntigravitySubagentOnce(args)).result
+}
+
+async function runAntigravitySubagentOnce(
+  args: RunAntigravitySubagentArgs
+): Promise<{ result: AntigravitySubagentResult; retryable?: boolean }> {
   args.signal.throwIfAborted()
   const effective = args.profile.effective
-  if (!effective) return { text: '', error: `Subagent "${args.agentName}" has no runnable execution profile.` }
+  if (!effective) {
+    return { result: { text: '', error: `Subagent "${args.agentName}" has no runnable execution profile.` } }
+  }
   const model: ChatModelRef = { providerId: effective.providerId, modelId: effective.modelId }
   const allowedNames = selectSubagentToolNames({
     definition: args.definition,
@@ -104,9 +123,11 @@ export async function runAntigravitySubagent(args: RunAntigravitySubagentArgs): 
   const toolAbort = new AbortController()
   const toolSignal = AbortSignal.any([args.signal, toolAbort.signal])
   const release = args.manager.retain()
+  let connection: AntigravityConnection | null = null
   let toolset: AntigravityHostToolset | null = null
   let sessionId: string | null = null
   let unsubscribe: (() => void) | null = null
+  let toolsStarted = 0
   try {
     args.manager.assertAccountIdentity(args.accountIdentity)
     const modelValue = resolveAntigravityModelValue(
@@ -122,9 +143,9 @@ export async function runAntigravitySubagent(args: RunAntigravitySubagentArgs): 
     toolset = childToolset
     const prompt = `<maestrly_instructions>\n${instructions}\n</maestrly_instructions>\n\n${childToolset.catalog}\n\n# Task\n${args.task}`
     assertAntigravityPromptFits([{ type: 'text', text: prompt }])
-    const connection = await args.manager.connection(args.signal)
+    connection = await args.manager.connection(args.signal)
     const { client } = connection
-    const created = await client.request<AcpSessionSetupResult>('session/new', {
+    const created = await connection.newSession({
       cwd: args.manager.workDir,
       mcpServers: [childToolset.mcpServer],
       _meta: ANTIGRAVITY_SESSION_META,
@@ -135,18 +156,24 @@ export async function runAntigravitySubagent(args: RunAntigravitySubagentArgs): 
     await client.request('session/set_config_option', { sessionId: id, configId: 'model', value: modelValue })
 
     let text = ''
+    let failure = null as Error | null
     const emitText = createSubagentTextEmitter(args.onTextUpdate)
     unsubscribe = connection.subscribe(id, (update) => {
       if (update.sessionUpdate !== 'agent_message_chunk' || !isAcpMessageChunk(update)) return
       const content = update.content as { type?: string; text?: unknown }
       if (content.type !== 'text' || typeof content.text !== 'string') return
+      failure ??= antigravityExecutionErrorChunk(content.text)
+      if (failure) return
       text += content.text
       emitText(text)
     })
     childToolset.setActiveTurn({
       tools,
       signal: toolSignal,
-      onToolStart: ({ toolName }) => args.progress?.(`${toolName} started`),
+      onToolStart: ({ toolName }) => {
+        toolsStarted++
+        args.progress?.(`${toolName} started`)
+      },
       onToolResult: () => undefined,
     })
     args.progress?.(`Starting subagent ${args.agentName}`)
@@ -164,21 +191,31 @@ export async function runAntigravitySubagent(args: RunAntigravitySubagentArgs): 
     }
     if (args.signal.aborted || result.stopReason === 'cancelled') throw abortedError(model)
     args.manager.assertAccountIdentity(args.accountIdentity)
-    if (!childToolset.wasInitialized()) return { text, error: new AntigravityToolsUnavailableError().message, model }
-    if (result.stopReason === 'refusal') return { text, error: 'Google declined to answer this request.', model }
-    return { text: text.trim() || '(the subagent returned no text)', model }
+    if (failure) throw failure
+    if (!childToolset.wasInitialized()) {
+      return { result: { text, error: new AntigravityToolsUnavailableError().message, model } }
+    }
+    if (result.stopReason === 'refusal') {
+      return { result: { text, error: 'Google declined to answer this request.', model } }
+    }
+    return { result: { text: text.trim() || '(the subagent returned no text)', model } }
   } catch (error) {
     toolAbort.abort()
     if (args.signal.aborted || (error instanceof Error && error.message === 'Subagent aborted')) {
       throw Object.assign(error instanceof Error ? error : new Error(String(error)), { subagentModel: model })
     }
-    return { text: '', error: antigravityErrorMessage(args.manager.translateError(error)).message, model }
+    const translated = args.manager.translateError(error)
+    return {
+      result: { text: '', error: antigravityErrorMessage(translated).message, model },
+      retryable: toolsStarted === 0 && isAntigravityHarnessLost(translated),
+    }
   } finally {
     toolAbort.abort()
     unsubscribe?.()
     toolset?.setActiveTurn(null)
     toolset?.dispose()
     if (sessionId) void args.manager.deleteSession(sessionId)
+    connection?.release()
     release()
   }
 }

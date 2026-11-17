@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   AntigravityAccountChangedError,
+  AntigravityExecutionError,
   AntigravityPromptTooLargeError,
 } from '../../src/main/chat/antigravity-subscription/errors'
 import {
@@ -78,6 +79,22 @@ describe('Antigravity isolated prompts', () => {
       AntigravityPromptTooLargeError
     )
     expect(fake.requests('session/new')).toHaveLength(0)
+  })
+
+  it('retries once in a fresh session when the server reports a lost harness as the answer', async () => {
+    const { text } = await runAntigravityIsolatedPrompt(args('history\nLOSEHARNESS'))
+    expect(text).not.toContain('Agent execution error')
+    expect(fake.requests('session/prompt')).toHaveLength(2)
+  })
+
+  it('never returns a server error report as the answer', async () => {
+    // A one-session budget sends the retry to a new process, which loses its harness too.
+    manager = fake.manager({ maxSessionsPerProcess: 1 })
+    await manager.login()
+    const failure = runAntigravityIsolatedPrompt(args('history\nLOSEHARNESS'))
+    await expect(failure).rejects.toBeInstanceOf(AntigravityExecutionError)
+    await expect(failure).rejects.toThrow('WS close code 1011')
+    expect(fake.requests('session/prompt')).toHaveLength(2)
   })
 
   it('refuses to run for another account identity', async () => {

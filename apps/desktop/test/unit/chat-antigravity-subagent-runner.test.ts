@@ -167,6 +167,24 @@ describe('Antigravity subagent runner', () => {
     await expect.poll(() => fake.requests('session/cancel').length).toBe(1)
   })
 
+  it('starts over in a fresh session when the harness was lost before any tool ran', async () => {
+    const progress: string[] = []
+    const result = await runAntigravitySubagent(args('LOSEHARNESS', { progress: (line) => progress.push(line) }))
+    expect(result.error).toBeUndefined()
+    expect(result.text).not.toContain('Agent execution error')
+    expect(fake.requests('session/prompt')).toHaveLength(2)
+    expect(progress).toContain('Google Antigravity lost the session; retrying the subagent')
+  })
+
+  it('reports a lost harness as the child error, not as its answer', async () => {
+    manager = fake.manager({ maxSessionsPerProcess: 1 })
+    await manager.login()
+    const result = await runAntigravitySubagent(args('LOSEHARNESS'))
+    expect(result.text).toBe('')
+    expect(result.error).toMatch(/Harness process exited unexpectedly/)
+    expect(fake.requests('session/prompt')).toHaveLength(2)
+  })
+
   it('reports an unavailable model as a child error', async () => {
     const input = args('ECHO x')
     const result = await runAntigravitySubagent({
