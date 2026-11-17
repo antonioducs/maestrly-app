@@ -41,6 +41,10 @@ export function createHttpSource(server: PairedServer, token: string): FleetSour
         buildPath(FLEET_GATEWAY_ROUTES.botImage.path, { id: botId, imageId }, laneId ? { run: laneId } : undefined),
       headers: client.headers(),
     }),
+    avatarSource: (botId, version) => ({
+      uri: server.origin + buildPath(FLEET_GATEWAY_ROUTES.botAvatar.path, { id: botId }, { v: version }),
+      headers: client.headers(),
+    }),
     fileSource: (botId, fileId) => ({
       uri: server.origin + buildPath(FLEET_GATEWAY_ROUTES.botFile.path, { id: botId, fileId }),
       headers: client.headers(),

@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   hasFeature: vi.fn((_feature: string) => false),
   call: vi.fn(async (_route?: string): Promise<unknown> => undefined),
   getImage: vi.fn(async () => ({ mediaType: 'image/png', data: new Uint8Array([137, 80, 78, 71]) })),
+  getAvatar: vi.fn(async () => ({ mediaType: 'image/png', data: new Uint8Array([137, 80, 78, 71]) })),
   downloadFile: vi.fn(async () => {}),
   cancelDownload: vi.fn(),
   getActiveDownload: vi.fn(() => null),
@@ -49,6 +50,7 @@ vi.mock('../../src/main/fleet/client/servers', () => {
     call: mocks.call,
     hasFeature: mocks.hasFeature,
     getImage: mocks.getImage,
+    getAvatar: mocks.getAvatar,
     downloadFile: mocks.downloadFile,
     cancelDownload: mocks.cancelDownload,
     getActiveDownload: mocks.getActiveDownload,
@@ -370,6 +372,43 @@ describe('fleet IPC validation', () => {
     await expect(invoke('fleet:getImage', SERVER, 'bot', 't-gone')).rejects.toThrow('FLEET_IMAGE_NOT_FOUND')
     mocks.getImage.mockRejectedValueOnce(new FleetClientError('INSTANCE_UNAVAILABLE', 0, 'Gateway unavailable'))
     await expect(invoke('fleet:getImage', SERVER, 'bot', 't-later')).rejects.toThrow('Gateway unavailable')
+  })
+  it('reads, sets and removes bot pictures and orders bots and environments only on servers that can', async () => {
+    const handlers = new Map<string, (...args: unknown[]) => unknown>()
+    const register = (channel: string, fn: (...args: unknown[]) => unknown): void => {
+      handlers.set(channel, fn)
+    }
+    registerFleetClientIpc({ handle: register, mhandle: register, on: register, mon: register } as IpcRegistrar)
+    const invoke = (channel: string, ...args: unknown[]) => handlers.get(channel)?.({ sender: {} }, ...args)
+    await expect(invoke('fleet:getBotAvatar', SERVER, 'scout')).resolves.toMatchObject({ mediaType: 'image/png' })
+    expect(mocks.getAvatar).toHaveBeenCalledWith('scout')
+    mocks.getAvatar.mockRejectedValueOnce(new FleetClientError('NOT_FOUND', 404, 'No picture'))
+    await expect(invoke('fleet:getBotAvatar', SERVER, 'scout')).resolves.toBeNull()
+    expect(() => invoke('fleet:getBotAvatar', SERVER, '../scout')).toThrow()
+
+    const avatar = { mediaType: 'image/png', data: 'iVBORw==' }
+    mocks.hasFeature.mockReturnValue(false)
+    expect(() => invoke('fleet:setBotAvatar', SERVER, 'scout', avatar)).toThrow()
+    expect(() => invoke('fleet:reorderBots', SERVER, ['scout'])).toThrow()
+    expect(() => invoke('fleet:reorderEnvironments', SERVER, ['home'])).toThrow()
+    expect(mocks.call).not.toHaveBeenCalled()
+
+    mocks.hasFeature.mockReturnValue(true)
+    await invoke('fleet:setBotAvatar', SERVER, 'scout', avatar)
+    await invoke('fleet:removeBotAvatar', SERVER, 'scout')
+    await invoke('fleet:reorderBots', SERVER, ['scout', 'coder'])
+    await invoke('fleet:reorderEnvironments', SERVER, ['home'])
+    expect(mocks.call.mock.calls).toEqual([
+      ['botAvatarPut', { params: { id: 'scout' }, body: avatar }],
+      ['botAvatarDelete', { params: { id: 'scout' } }],
+      ['botsReorder', { body: { botIds: ['scout', 'coder'] } }],
+      ['environmentsReorder', { body: { environmentIds: ['home'] } }],
+    ])
+    expect(() =>
+      invoke('fleet:setBotAvatar', SERVER, 'scout', { mediaType: 'image/svg+xml', data: 'PHN2Zy8+' })
+    ).toThrow()
+    expect(() => invoke('fleet:reorderBots', SERVER, ['scout', 'scout'])).toThrow()
+    mocks.hasFeature.mockReturnValue(false)
   })
   it('rejects invalid bot IDs, creation bodies, actions, resolutions, and screen frames before dispatch', async () => {
     process.env.MAESTRLY_BOT_MODE = '1'

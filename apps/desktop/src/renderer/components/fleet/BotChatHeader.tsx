@@ -10,6 +10,7 @@ import { takeoverBlocksResume } from '@/lib/fleet/selectors'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import { sideTurns } from '@/lib/fleet/turns'
 import { cn } from '@/lib/utils'
+import { BotAvatar } from './BotAvatar'
 import { botFilesDrawerId } from './BotFilesDrawer'
 import { BotPaneSwitch, type BotPane } from './BotPaneSwitch'
 
@@ -57,13 +58,7 @@ export function BotIdentity({
   const { t } = useTranslation('fleet')
   return (
     <>
-      <span
-        aria-hidden="true"
-        className="flex size-[30px] shrink-0 items-center justify-center rounded-[9px] text-[13px] font-semibold text-white"
-        style={{ background: bot.tint }}
-      >
-        {bot.name.charAt(0).toUpperCase()}
-      </span>
+      <BotAvatar bot={bot} className="size-[30px] rounded-[9px] text-[13px]" />
       <div className="min-w-0 overflow-hidden">
         {heading ? (
           <h1 className="truncate text-sm font-semibold leading-tight">{bot.name}</h1>

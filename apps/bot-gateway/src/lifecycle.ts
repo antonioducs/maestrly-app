@@ -709,6 +709,7 @@ export class Lifecycle {
       runtimes: instance?.runtimes ?? null,
       additionalRuntimes: instance?.additionalRuntimes,
       botIds: this.store.botsOfEnvironment(environment.id).map((bot) => bot.id),
+      position: this.store.environmentPosition(environment.id),
       createdAt: environment.createdAt,
       updatedAt: environment.updatedAt,
     }
@@ -1010,6 +1011,8 @@ export class Lifecycle {
       runSettings: FLEET_ROUTINE_RUN_SETTINGS_DEFAULT,
       runningRun: null,
       turns: null,
+      avatar: null,
+      position: null,
       peerSettings: FLEET_PEER_THREAD_SETTINGS_DEFAULT,
       delegation: null,
       sharedFiles: null,
@@ -2531,6 +2534,22 @@ export class Lifecycle {
     }
     if (input.talksTo) for (const peerId of new Set([...bot.talksTo, ...input.talksTo])) this.emitBot(peerId)
     return this.get(id)!
+  }
+  /** Gives a bot a picture, or with null takes it away; its profile does not change. */
+  setAvatar(id: string, avatar: { mediaType: string; data: Buffer; version: string } | null): FleetBot {
+    this.store.setBotAvatar(id, avatar)
+    this.emitBot(id)
+    return this.get(id)!
+  }
+  /** The owner's new order of bots; devices hear of every bot whose place changed. */
+  reorderBots(ids: string[]): FleetBot[] {
+    for (const id of this.store.reorderBots(ids)) this.emitBot(id)
+    return this.list()
+  }
+  /** The owner's new order of environments; devices hear of every environment whose place changed. */
+  reorderEnvironments(ids: string[]): FleetEnvironment[] {
+    for (const id of this.store.reorderEnvironments(ids)) this.emitEnvironment(id, false)
+    return this.environments()
   }
   /**
    * Gives a bot a model, in its environment's turn. A running bot takes it first, and a refusal changes nothing. In an

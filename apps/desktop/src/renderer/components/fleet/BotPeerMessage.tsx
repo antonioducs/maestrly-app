@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { ArrowRight } from 'lucide-react'
 import { MarkdownViewer } from '@/components/MarkdownViewer'
 import { useChatOwnerWindow } from '@/lib/chat-window-context'
+import { BotAvatar, type BotAvatarBot } from './BotAvatar'
 
 /** A long message shows this much until the owner asks for the rest. */
 const CLAMP_PX = 320
@@ -12,21 +13,10 @@ const HEADINGS = 'h1, h2, h3, h4, h5, h6'
 const fade = 'linear-gradient(to bottom, #000 calc(100% - 72px), transparent)'
 const clampStyle: CSSProperties = { maxHeight: CLAMP_PX, overflow: 'hidden', maskImage: fade, WebkitMaskImage: fade }
 
-interface PeerBot {
-  name: string
-  tint: string
-}
+type PeerBot = BotAvatarBot
 
 function BotMark({ bot }: { bot: PeerBot }) {
-  return (
-    <span
-      aria-hidden="true"
-      className="flex size-[22px] shrink-0 items-center justify-center rounded-md text-[10.5px] font-semibold text-white"
-      style={{ background: bot.tint }}
-    >
-      {bot.name.charAt(0).toUpperCase()}
-    </span>
-  )
+  return <BotAvatar bot={bot} className="size-[22px] rounded-md text-[10.5px]" />
 }
 
 function sameList(a: readonly string[], b: readonly string[]): boolean {

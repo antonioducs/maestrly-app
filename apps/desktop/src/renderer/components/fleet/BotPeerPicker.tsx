@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { filterPeerGroups, foldText, peerGroups } from '@/lib/fleet/create-bot'
 import { fixedContainingBlock } from '@/lib/fixed-panel-position'
 import { cn } from '@/lib/utils'
+import { BotAvatar, type BotAvatarBot } from './BotAvatar'
 
 /** Chips shown under the field before the rest collapse into a count. */
 const CHIPS_SHOWN = 10
@@ -26,18 +27,12 @@ function Highlight({ text, query }: { text: string; query: string }) {
   )
 }
 
-function Avatar({ bot, size = 'sm' }: { bot: Pick<FleetBot, 'name' | 'tint'>; size?: 'sm' | 'xs' }) {
+function Avatar({ bot, size = 'sm' }: { bot: BotAvatarBot; size?: 'sm' | 'xs' }) {
   return (
-    <span
-      aria-hidden="true"
-      className={cn(
-        'flex shrink-0 items-center justify-center font-semibold text-white',
-        size === 'sm' ? 'size-[22px] rounded-md text-[10.5px]' : 'size-[18px] rounded-[5px] text-[9.5px]'
-      )}
-      style={{ background: bot.tint }}
-    >
-      {bot.name.charAt(0).toUpperCase()}
-    </span>
+    <BotAvatar
+      bot={bot}
+      className={size === 'sm' ? 'size-[22px] rounded-md text-[10.5px]' : 'size-[18px] rounded-[5px] text-[9.5px]'}
+    />
   )
 }
 

@@ -152,6 +152,7 @@ function environment(id: string, name = id, patch: Partial<FleetEnvironment> = {
     update: null,
     runtimes: null,
     botIds: [],
+    position: null,
     createdAt: at,
     updatedAt: at,
     ...patch,

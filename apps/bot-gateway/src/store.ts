@@ -397,7 +397,7 @@ export class Store {
     const version = Number(
       (this.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get() as Row | undefined)?.value ?? 0
     )
-    if (version > 24) throw new Error('Gateway database schema is newer than this binary')
+    if (version > 25) throw new Error('Gateway database schema is newer than this binary')
     if (version === 0) {
       this.db.exec(`
         CREATE TABLE devices (id TEXT PRIMARY KEY, name TEXT NOT NULL, token_sha256 TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, last_seen_at TEXT, revoked_at TEXT);
@@ -607,6 +607,7 @@ export class Store {
       `)
       this.db.prepare("UPDATE meta SET value='24' WHERE key='schema_version'").run()
     }
+    if (version <= 24) this.migrateFleetOrder()
 
     if (this.db.prepare('PRAGMA foreign_key_check').all().length)
       throw new Error('Gateway migration foreign key check failed')
@@ -735,6 +736,24 @@ export class Store {
       if (!existing.has(name)) this.db.exec(`ALTER TABLE environments ADD COLUMN ${name} ${definition}`)
     this.db.exec("UPDATE environments SET host_folder='shared' WHERE kind='workspaces' AND host_folder IS NULL")
     this.db.prepare("UPDATE meta SET value='13' WHERE key='schema_version'").run()
+  }
+  /**
+   * Schema 25: the owner's order of bots and environments (`fleet-order`), from the oldest first as they were listed,
+   * and the pictures of bots (`bot-avatars`), kept apart so reading a bot never reads its picture.
+   */
+  private migrateFleetOrder() {
+    const columns = (table: string) =>
+      new Set((this.db.prepare(`PRAGMA table_info(${table})`).all() as Row[]).map((row) => String(row.name)))
+    const bots = columns('bots')
+    if (!bots.has('position')) this.db.exec('ALTER TABLE bots ADD COLUMN position INTEGER')
+    if (!bots.has('avatar_version')) this.db.exec('ALTER TABLE bots ADD COLUMN avatar_version TEXT')
+    if (!columns('environments').has('position')) this.db.exec('ALTER TABLE environments ADD COLUMN position INTEGER')
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS bot_avatars (bot_id TEXT PRIMARY KEY REFERENCES bots(id) ON DELETE CASCADE, media_type TEXT NOT NULL, data BLOB NOT NULL, version TEXT NOT NULL, updated_at TEXT NOT NULL);
+      UPDATE bots SET position=(SELECT COUNT(*) FROM bots AS older WHERE older.created_at<bots.created_at OR (older.created_at=bots.created_at AND older.id<bots.id)) WHERE position IS NULL;
+      UPDATE environments SET position=(SELECT COUNT(*) FROM environments AS older WHERE older.created_at<environments.created_at OR (older.created_at=environments.created_at AND older.id<environments.id)) WHERE position IS NULL;
+    `)
+    this.db.prepare("UPDATE meta SET value='25' WHERE key='schema_version'").run()
   }
   private routineRun(row: Row): StoredRoutineRun {
     const json = <T>(value: unknown): T | null => (value ? (JSON.parse(String(value)) as T) : null)
@@ -1614,6 +1633,11 @@ export class Store {
       archivedAt: (row.archived_at as string | null) ?? null,
     }
   }
+  /** An environment's place in the owner's order (a new one goes last); null when it is unknown. */
+  environmentPosition(id: string): number | null {
+    const row = this.db.prepare('SELECT position FROM environments WHERE id=?').get(id) as Row | undefined
+    return row?.position === null || row?.position === undefined ? null : Number(row.position)
+  }
   private checkMemoryLimit(bytes: number | null) {
     if (bytes !== null && !(Number.isSafeInteger(bytes) && bytes > 0))
       throw new GatewayError('INVALID_REQUEST', 'Invalid memory limit')
@@ -1629,7 +1653,7 @@ export class Store {
       if (this.getEnvironment(environment.id)) throw new GatewayError('CONFLICT', 'Environment already exists')
       this.db
         .prepare(
-          'INSERT INTO environments(id,name,kind,lifecycle,setup_json,container_name,volume_name,memory_limit_bytes,cpu_limit,idle_stop_minutes,tint,host_folder,compaction_json,update_requested_at,created_at,updated_at,archived_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
+          'INSERT INTO environments(id,name,kind,lifecycle,setup_json,container_name,volume_name,memory_limit_bytes,cpu_limit,idle_stop_minutes,tint,host_folder,compaction_json,update_requested_at,created_at,updated_at,archived_at,position) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,(SELECT COALESCE(MAX(position)+1,0) FROM environments))'
         )
         .run(
           environment.id,
@@ -1659,11 +1683,49 @@ export class Store {
     const row = this.db.prepare('SELECT * FROM environments WHERE id=?').get(id) as Row | undefined
     return row ? this.environment(row) : null
   }
-  /** Environments that have (or are getting) a container, oldest first. */
+  /** Environments that have (or are getting) a container, in the owner's order. */
   listEnvironments(): StoredEnvironment[] {
     return (
-      this.db.prepare('SELECT * FROM environments WHERE archived_at IS NULL ORDER BY created_at, id').all() as Row[]
+      this.db
+        .prepare('SELECT * FROM environments WHERE archived_at IS NULL ORDER BY position, created_at, id')
+        .all() as Row[]
     ).map((row) => this.environment(row))
+  }
+  /**
+   * Puts the named active environments first, in this order, and every other environment after them in its current
+   * order. Returns the ids whose position changed.
+   */
+  reorderEnvironments(ids: string[]): string[] {
+    return this.transaction(() => {
+      const active = new Set(this.listEnvironments().map((environment) => environment.id))
+      for (const id of ids) if (!active.has(id)) throw new GatewayError('NOT_FOUND', 'Environment not found')
+      const rows = this.db
+        .prepare('SELECT id, position FROM environments ORDER BY position, created_at, id')
+        .all() as Row[]
+      return this.applyOrder('environments', rows, ids)
+    })
+  }
+  /** Same as `reorderEnvironments`, for active bots. */
+  reorderBots(ids: string[]): string[] {
+    return this.transaction(() => {
+      const active = new Set(this.listBots().map((bot) => bot.id))
+      for (const id of ids) if (!active.has(id)) throw new GatewayError('NOT_FOUND', 'Bot not found')
+      const rows = this.db.prepare('SELECT id, position FROM bots ORDER BY position, created_at, id').all() as Row[]
+      return this.applyOrder('bots', rows, ids)
+    })
+  }
+  private applyOrder(table: 'bots' | 'environments', rows: Row[], ids: string[]): string[] {
+    const named = new Set(ids)
+    const order = [...ids, ...rows.map((row) => String(row.id)).filter((id) => !named.has(id))]
+    const current = new Map(rows.map((row) => [String(row.id), row.position as number | null]))
+    const update = this.db.prepare(`UPDATE ${table} SET position=? WHERE id=?`)
+    const changed: string[] = []
+    order.forEach((id, position) => {
+      if (current.get(id) === position) return
+      update.run(position, id)
+      changed.push(id)
+    })
+    return changed
   }
   archivedEnvironments(): StoredEnvironment[] {
     return (
@@ -1953,8 +2015,8 @@ export class Store {
         )
       }
       this.db
-        .prepare(`INSERT INTO bots(id,name,role,instructions,tint,ceiling,selection_json,compaction_json,talks_to_json,paused,publish_artifacts,lifecycle,setup_json,created_at,updated_at,archived_at,environment_id,slot,delegation_json,archived_with_environment)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`)
+        .prepare(`INSERT INTO bots(id,name,role,instructions,tint,ceiling,selection_json,compaction_json,talks_to_json,paused,publish_artifacts,lifecycle,setup_json,created_at,updated_at,archived_at,environment_id,slot,delegation_json,archived_with_environment,position)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,(SELECT COALESCE(MAX(position)+1,0) FROM bots))`)
         .run(
           bot.id,
           bot.name,
@@ -2219,6 +2281,8 @@ export class Store {
       storage: null,
       runningRun: null,
       turns: null,
+      avatar: typeof row.avatar_version === 'string' ? row.avatar_version : null,
+      position: row.position === null || row.position === undefined ? null : Number(row.position),
     }
   }
   getBot(id: string): FleetBot | null {
@@ -2230,11 +2294,35 @@ export class Store {
       this.db
         .prepare(
           includeArchived
-            ? 'SELECT * FROM bots ORDER BY created_at'
-            : 'SELECT * FROM bots WHERE archived_at IS NULL ORDER BY created_at'
+            ? 'SELECT * FROM bots ORDER BY position, created_at, id'
+            : 'SELECT * FROM bots WHERE archived_at IS NULL ORDER BY position, created_at, id'
         )
         .all() as Row[]
     ).map((row) => this.bot(row))
+  }
+  /** A bot's picture, or null when it has none. */
+  botAvatar(id: string): { mediaType: string; data: Buffer; version: string } | null {
+    const row = this.db.prepare('SELECT media_type, data, version FROM bot_avatars WHERE bot_id=?').get(id) as
+      | Row
+      | undefined
+    return row
+      ? { mediaType: String(row.media_type), data: Buffer.from(row.data as Uint8Array), version: String(row.version) }
+      : null
+  }
+  /** Gives an active bot a picture (null removes it); its record names the new version. */
+  setBotAvatar(id: string, avatar: { mediaType: string; data: Buffer; version: string } | null, at = now()) {
+    this.transaction(() => {
+      const bot = this.getBot(id)
+      if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
+      if (avatar)
+        this.db
+          .prepare(
+            'INSERT INTO bot_avatars(bot_id,media_type,data,version,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(bot_id) DO UPDATE SET media_type=excluded.media_type, data=excluded.data, version=excluded.version, updated_at=excluded.updated_at'
+          )
+          .run(id, avatar.mediaType, avatar.data, avatar.version, at)
+      else this.db.prepare('DELETE FROM bot_avatars WHERE bot_id=?').run(id)
+      this.db.prepare('UPDATE bots SET avatar_version=?, updated_at=? WHERE id=?').run(avatar?.version ?? null, at, id)
+    })
   }
   archivedBots(): ArchivedBotRecord[] {
     return (
@@ -2285,6 +2373,7 @@ export class Store {
           'botPeerThreadMessageSend:' + id
         )
       this.db.prepare('DELETE FROM bot_secrets WHERE bot_id=?').run(id)
+      this.db.prepare('DELETE FROM bot_avatars WHERE bot_id=?').run(id)
       this.db.prepare('DELETE FROM bots WHERE id=?').run(id)
     })
   }

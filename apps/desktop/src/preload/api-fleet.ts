@@ -333,6 +333,25 @@ export const fleetApi = {
   /** The bot's last move, running or finished, with why it failed. */
   fleetGetBotMove: (serverId: FleetServerId, botId: string): Promise<FleetBotMove> =>
     ipcRenderer.invoke('fleet:botMove', serverId, botId),
+  /** The picture the owner gave a bot (`bot-avatars`); null when it has none. */
+  fleetGetBotAvatar: (serverId: FleetServerId, botId: string): Promise<FleetImageData | null> =>
+    ipcRenderer.invoke('fleet:getBotAvatar', serverId, botId),
+  /** Gives a bot a picture: a square PNG, JPEG or WebP, base64-encoded (`FLEET_BOT_AVATAR_LIMITS`). */
+  fleetSetBotAvatar: (
+    serverId: FleetServerId,
+    botId: string,
+    avatar: { mediaType: 'image/png' | 'image/jpeg' | 'image/webp'; data: string }
+  ): Promise<FleetBot> => ipcRenderer.invoke('fleet:setBotAvatar', serverId, botId, avatar),
+  fleetRemoveBotAvatar: (serverId: FleetServerId, botId: string): Promise<FleetBot> =>
+    ipcRenderer.invoke('fleet:removeBotAvatar', serverId, botId),
+  /** The owner's order of bots (`fleet-order`): these first, in this order, the others after them. */
+  fleetReorderBots: (serverId: FleetServerId, botIds: string[]): Promise<{ bots: FleetBot[] }> =>
+    ipcRenderer.invoke('fleet:reorderBots', serverId, botIds),
+  fleetReorderEnvironments: (
+    serverId: FleetServerId,
+    environmentIds: string[]
+  ): Promise<{ environments: FleetEnvironment[] }> =>
+    ipcRenderer.invoke('fleet:reorderEnvironments', serverId, environmentIds),
   fleetListArchivedBots: (serverId: FleetServerId): Promise<{ bots: FleetArchivedBot[] }> =>
     ipcRenderer.invoke('fleet:listArchivedBots', serverId),
   /** Recreates an archived bot's container on its kept files; it comes back as `creating`. */

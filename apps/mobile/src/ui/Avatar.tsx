@@ -1,7 +1,9 @@
 import type { FleetBot } from '@maestrly/bot-fleet-protocol'
+import { Image } from 'expo-image'
 import { memo, useEffect, useRef } from 'react'
 import { Animated, Easing, Platform, View } from 'react-native'
 import Svg, { Path } from 'react-native-svg'
+import { useOptionalFleetController } from '../fleet/react'
 import { useTheme } from '../theme/ThemeProvider'
 import { fonts, mix } from '../theme/tokens'
 import { useReducedMotion } from './useReducedMotion'
@@ -13,17 +15,23 @@ const nativeDriver = Platform.OS !== 'web'
 
 export type AvatarStatus = FleetBot['status']
 
-/** A bot's initial inside the brand's open ring; the ring shows what the bot is doing. Decorative: rows say it. */
+/**
+ * A bot's picture, or else its initial, inside the brand's open ring; the ring shows what the bot is doing.
+ * Decorative: rows say it.
+ */
 export const Avatar = memo(function Avatar({
   name,
   tint,
   status,
   size = 40,
+  image,
 }: {
   name: string
   tint: string
   status: AvatarStatus
   size?: number
+  /** The picture the owner gave the bot, with the headers the server needs. */
+  image?: { uri: string; headers?: Record<string, string> } | null
 }) {
   const { palette } = useTheme()
   const reduced = useReducedMotion()
@@ -90,18 +98,23 @@ export const Avatar = memo(function Avatar({
           justifyContent: 'center',
           backgroundColor: offline ? palette.surface : mix(tint, palette.raised, 0.2),
           opacity: offline ? 0.55 : 1,
+          overflow: 'hidden',
         }}
       >
-        <Animated.Text
-          style={{
-            fontFamily: fonts.display,
-            fontSize: size * 0.34,
-            lineHeight: size * 0.4,
-            color: offline ? palette.muted : mix(tint, palette.ink, 0.78),
-          }}
-        >
-          {name.slice(0, 1).toUpperCase()}
-        </Animated.Text>
+        {image ? (
+          <Image source={image} contentFit="cover" style={{ width: '100%', height: '100%' }} transition={120} />
+        ) : (
+          <Animated.Text
+            style={{
+              fontFamily: fonts.display,
+              fontSize: size * 0.34,
+              lineHeight: size * 0.4,
+              color: offline ? palette.muted : mix(tint, palette.ink, 0.78),
+            }}
+          >
+            {name.slice(0, 1).toUpperCase()}
+          </Animated.Text>
+        )}
       </View>
       {offline ? null : (
         <Animated.View
@@ -132,6 +145,8 @@ export const Avatar = memo(function Avatar({
   )
 })
 
-export const BotAvatar = ({ bot, size }: { bot: FleetBot; size?: number }) => (
-  <Avatar name={bot.name} tint={bot.tint} status={bot.status} size={size} />
-)
+export const BotAvatar = ({ bot, size }: { bot: FleetBot; size?: number }) => {
+  const source = useOptionalFleetController()?.source
+  const image = bot.avatar && source?.avatarSource ? source.avatarSource(bot.id, bot.avatar) : null
+  return <Avatar name={bot.name} tint={bot.tint} status={bot.status} size={size} image={image} />
+}

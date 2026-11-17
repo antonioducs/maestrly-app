@@ -8,7 +8,7 @@ import {
   type FleetOwnerMemoryEntry,
 } from '@maestrly/bot-fleet-protocol'
 import type { FleetProvisioningTargetInput } from '../../../shared/fleet-targets'
-import { compareByName, environmentOf, groupBotsByEnvironment, type FleetEnvironmentGroup } from './selectors'
+import { compareByOrder, environmentOf, groupBotsByEnvironment, type FleetEnvironmentGroup } from './selectors'
 import type { FleetController } from './use-fleet'
 import type { FleetServerId } from '../../../shared/fleet-servers'
 
@@ -241,7 +241,7 @@ export function botRestartAvailability(fleet: Pick<FleetController, 'state'>, bo
 }
 
 export function environmentBots(environment: Pick<FleetEnvironment, 'id'>, bots: FleetBot[]): FleetBot[] {
-  return bots.filter((bot) => bot.environmentId === environment.id).sort(compareByName)
+  return bots.filter((bot) => bot.environmentId === environment.id).sort(compareByOrder)
 }
 
 export function formatNames(names: string[], language: string): string {

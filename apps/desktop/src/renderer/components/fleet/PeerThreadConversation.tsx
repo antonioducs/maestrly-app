@@ -217,7 +217,7 @@ export function PeerThreadConversation({
   }
 
   const peer = fleet.state.snapshot.bots.find((item) => item.id === thread.peer.botId)
-  const peerLook = { name: thread.peer.name, tint: peer?.tint ?? UNKNOWN_BOT_TINT }
+  const peerLook = { id: peer?.id, avatar: peer?.avatar, name: thread.peer.name, tint: peer?.tint ?? UNKNOWN_BOT_TINT }
   const when = new Date(thread.createdAt).toLocaleString(i18n.language, {
     day: 'numeric',
     month: 'short',

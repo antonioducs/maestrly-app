@@ -67,6 +67,28 @@ describe('fleet state', () => {
     expect(state.inbox).toEqual([])
   })
 
+  it('keeps bots and environments in the order the owner set on another device', () => {
+    let state = fleetReducer(initialFleetState, {
+      type: 'snapshot',
+      bots: [
+        { ...juno, position: 0 },
+        { ...atlas, position: 1 },
+      ],
+      environments: [
+        { ...environmentRecord({ id: 'home', name: 'Home' }), position: 0 },
+        { ...environmentRecord({ id: 'work', name: 'Work' }), position: 1 },
+      ],
+      inbox: [],
+    })
+    state = fleetReducer(state, event({ type: 'bot.updated', bot: { ...atlas, position: 0 } }))
+    state = fleetReducer(state, event({ type: 'bot.updated', bot: { ...juno, position: 1 } }))
+    expect(state.bots.map((bot) => bot.id)).toEqual(['atlas', 'juno'])
+    const [home, work] = state.environments
+    state = fleetReducer(state, event({ type: 'environment.updated', environment: { ...home, position: 1 } }))
+    state = fleetReducer(state, event({ type: 'environment.updated', environment: { ...work, position: 0 } }))
+    expect(state.environments.map((environment) => environment.id)).toEqual(['work', 'home'])
+  })
+
   it('replaces the whole inbox', () => {
     let state = fleetReducer(initialFleetState, {
       type: 'snapshot',

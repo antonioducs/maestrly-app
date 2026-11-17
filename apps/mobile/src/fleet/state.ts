@@ -160,6 +160,22 @@ function withPage(previous: TranscriptState, page: FleetTranscriptPage, mode: 'l
   return { items, before: page.before, loading: false, stale: false, loaded: true, failed: false }
 }
 
+/**
+ * In the owner's order (`fleet-order`), which another device may change: what has no place (servers that predate it)
+ * keeps where it is after what has one. Sorting is stable, so the server's order holds among equals.
+ */
+function byPosition<T extends { position?: number | null }>(list: T[]): T[] {
+  if (!list.some((item) => item.position != null)) return list
+  return list
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => {
+      const left = a.item.position ?? Number.POSITIVE_INFINITY,
+        right = b.item.position ?? Number.POSITIVE_INFINITY
+      return left === right ? a.index - b.index : left - right
+    })
+    .map(({ item }) => item)
+}
+
 function upsertById<T extends { id: string }>(list: T[], value: T): T[] {
   const at = list.findIndex((item) => item.id === value.id)
   if (at < 0) return [...list, value]
@@ -238,13 +254,13 @@ function applyEvent(state: FleetState, event: FleetGatewayEvent): FleetState {
       // An archive reply can arrive after `bot.removed`: an archived bot is never listed.
       return event.bot.lifecycle === 'archived'
         ? withoutBot(state, event.bot.id)
-        : { ...state, bots: upsertById(state.bots, event.bot) }
+        : { ...state, bots: byPosition(upsertById(state.bots, event.bot)) }
     case 'bot.removed':
       return withoutBot(state, event.botId)
     case 'environment.updated':
       return event.environment.lifecycle === 'archived'
         ? withoutEnvironment(state, event.environment.id)
-        : { ...state, environments: upsertById(state.environments, event.environment) }
+        : { ...state, environments: byPosition(upsertById(state.environments, event.environment)) }
     case 'environment.removed':
       return withoutEnvironment(state, event.environmentId)
     case 'inbox.updated':

@@ -3,25 +3,14 @@ import { AlertTriangle, ArrowRightLeft, Check, CornerDownLeft, Loader2, Trash2 }
 import type { FleetBot, FleetPeerThread } from '@maestrly/bot-fleet-protocol'
 import { threadState } from '@/lib/fleet/threads'
 import { cn } from '@/lib/utils'
+import { BotAvatar, type BotAvatarBot } from './BotAvatar'
 
 /** Two bots' initials side by side: the one whose thread it is, and the other one. */
-export function PairAvatars({
-  bot,
-  peer,
-}: {
-  bot: Pick<FleetBot, 'name' | 'tint'>
-  peer: { name: string; tint: string }
-}) {
+export function PairAvatars({ bot, peer }: { bot: BotAvatarBot; peer: BotAvatarBot }) {
   return (
     <span aria-hidden="true" className="flex shrink-0 -space-x-1.5">
       {[bot, peer].map((who, index) => (
-        <span
-          key={index}
-          className="flex size-6 items-center justify-center rounded-[7px] text-[11px] font-semibold text-white ring-2 ring-chat-canvas"
-          style={{ background: who.tint }}
-        >
-          {who.name.charAt(0).toUpperCase()}
-        </span>
+        <BotAvatar key={index} bot={who} className="size-6 rounded-[7px] text-[11px] ring-2 ring-chat-canvas" />
       ))}
     </span>
   )
@@ -40,7 +29,7 @@ export function PeerThreadBridge({
   onOpen,
 }: {
   bot: FleetBot
-  peer: { name: string; tint: string }
+  peer: BotAvatarBot
   /** What the bot sent to open it. */
   text: string
   at: string

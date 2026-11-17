@@ -17,6 +17,21 @@ export function compareByName(a: { id: string; name: string }, b: { id: string; 
   return a.name.localeCompare(b.name) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
 }
 
+/**
+ * In the owner's order (`fleet-order`), then by name. What has no place, from servers that predate it, goes after
+ * what has one, by name.
+ */
+export function compareByOrder(
+  a: { id: string; name: string; position?: number | null },
+  b: { id: string; name: string; position?: number | null }
+): number {
+  const left = a.position ?? null,
+    right = b.position ?? null
+  if (left !== null && right !== null && left !== right) return left - right
+  if ((left === null) !== (right === null)) return left === null ? 1 : -1
+  return compareByName(a, b)
+}
+
 /** An environment that hosts the owner's chats and workspaces instead of bots. */
 export const isWorkspacesEnvironment = (environment: Pick<FleetEnvironment, 'kind'>): boolean =>
   environment.kind === 'workspaces'
@@ -25,13 +40,13 @@ export const isWorkspacesEnvironment = (environment: Pick<FleetEnvironment, 'kin
 export const botEnvironments = (environments: FleetEnvironment[]): FleetEnvironment[] =>
   environments.filter((environment) => !isWorkspacesEnvironment(environment))
 
-/** The server's workspaces environments, one per scope of the owner's work, by name. */
+/** The server's workspaces environments, one per scope of the owner's work, in the owner's order. */
 export const workspacesEnvironments = (environments: FleetEnvironment[]): FleetEnvironment[] =>
-  environments.filter(isWorkspacesEnvironment).sort(compareByName)
+  environments.filter(isWorkspacesEnvironment).sort(compareByOrder)
 
 export type FleetEnvironmentGroup = { environment: FleetEnvironment; bots: FleetBot[] }
 /**
- * Environments by name, each with its bots by name. Bots of no listed environment stay ungrouped: every bot of a
+ * Environments in the owner's order, each with its bots in that order (by name on servers that predate it). Bots of no listed environment stay ungrouped: every bot of a
  * gateway without environments, and a bot whose environment has not arrived yet.
  */
 export function groupBotsByEnvironment(
@@ -40,7 +55,7 @@ export function groupBotsByEnvironment(
 ): { groups: FleetEnvironmentGroup[]; ungrouped: FleetBot[] } {
   // A workspaces environment holds no bots: it is shown apart, on the Server page.
   const groups = botEnvironments(environments)
-    .sort(compareByName)
+    .sort(compareByOrder)
     .map((environment) => ({ environment, bots: [] as FleetBot[] }))
   const byId = new Map(groups.map((group) => [group.environment.id, group]))
   const ungrouped: FleetBot[] = []
@@ -49,8 +64,8 @@ export function groupBotsByEnvironment(
     if (group) group.bots.push(bot)
     else ungrouped.push(bot)
   }
-  for (const group of groups) group.bots.sort(compareByName)
-  return { groups, ungrouped: ungrouped.sort(compareByName) }
+  for (const group of groups) group.bots.sort(compareByOrder)
+  return { groups, ungrouped: ungrouped.sort(compareByOrder) }
 }
 
 /** The listed environment a bot runs in, if any. */

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { FleetBot, FleetEnvironment } from '@maestrly/bot-fleet-protocol'
 import { AlertTriangle, BrainCircuit, CircleArrowUp, Clock, Server } from 'lucide-react'
@@ -15,8 +15,31 @@ import {
 } from '@/lib/fleet/environments'
 import { botMoveAvailability, moveTargetAvailability } from '@/lib/fleet/move'
 import { groupBotsByEnvironment } from '@/lib/fleet/selectors'
+import { botOrderWith, canReorder, placeId, sameOrder, shiftId } from '@/lib/fleet/order'
 import type { FleetController } from '@/lib/fleet/use-fleet'
+import { BotAvatar } from './BotAvatar'
 import { MoveBotDialog } from './MoveBotDialog'
+
+/** Where a dragged bot or environment would land: before or after the row it is over. */
+type DropAt = { kind: 'bot' | 'environment'; id: string; after: boolean }
+type DropEdge = 'before' | 'after'
+
+/** The line that shows where a dragged row lands. */
+function DropLine({ edge }: { edge: DropEdge }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={`pointer-events-none absolute inset-x-1 z-10 h-0.5 rounded-full bg-primary ${edge === 'before' ? '-top-px' : '-bottom-px'}`}
+    />
+  )
+}
+
+/** Alt+↑ and Alt+↓ move a row one place, as dragging it does. */
+function shiftKey(event: ReactKeyboardEvent, onShift: ((step: -1 | 1) => void) | undefined) {
+  if (!onShift || !event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return
+  event.preventDefault()
+  onShift(event.key === 'ArrowUp' ? -1 : 1)
+}
 
 const dotClass: Record<EnvironmentDot, string> = {
   ready: 'bg-emerald-400',
@@ -52,16 +75,23 @@ export function FleetSidebarPanel({
 }) {
   const { t } = useTranslation('fleet')
   const { connection, snapshot } = fleet.state
-  // A bot dragged onto another environment opens its move there; nothing moves before the owner confirms.
+  // A bot dragged onto another environment opens its move there; nothing moves before the owner confirms. Dropped
+  // between the bots of its own environment, or an environment between others, it takes that place at once.
   const [dragging, setDragging] = useState<FleetBot | null>(null)
+  const [draggingEnvironment, setDraggingEnvironment] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<string | null>(null)
+  const [dropAt, setDropAt] = useState<DropAt | null>(null)
   const [moveTo, setMoveTo] = useState<{ bot: FleetBot; environmentId: string } | null>(null)
+  // A filtered list leaves bots out: their places would be guessed.
+  const orderable = !query && canReorder(connection.features)
   const movable = (bot: FleetBot) => botMoveAvailability(fleet, bot) === 'ready'
   const accepts = (environment: FleetEnvironment) =>
-    !!dragging && moveTargetAvailability(fleet, dragging, environment) === 'ready'
+    !!dragging && movable(dragging) && moveTargetAvailability(fleet, dragging, environment) === 'ready'
   const endDrag = () => {
     setDragging(null)
+    setDraggingEnvironment(null)
     setDropTarget(null)
+    setDropAt(null)
   }
   if (
     connection.state === 'unconfigured' ||
@@ -87,6 +117,57 @@ export function FleetSidebarPanel({
     : null
   const bots = grouped ? grouped.ungrouped : snapshot.bots.filter((bot) => botMatchesQuery(bot, query))
   const empty = grouped ? grouped.resultCount === 0 : bots.length === 0
+  const groups = grouped?.groups ?? []
+  const botsOf = (environmentId: string | null) =>
+    (environmentId === null ? bots : (groups.find((group) => group.environment.id === environmentId)?.bots ?? [])).map(
+      (bot) => bot.id
+    )
+  const orderBots = (environmentId: string | null, next: string[]) => {
+    if (!sameOrder(botsOf(environmentId), next)) void fleet.reorderBots(botOrderWith(groups, bots, environmentId, next))
+  }
+  const environmentIds = groups.map((group) => group.environment.id)
+  const orderEnvironments = (next: string[]) => {
+    if (!sameOrder(environmentIds, next)) void fleet.reorderEnvironments(next)
+  }
+  // Over the lower half of a row, the dragged one goes after it.
+  const lowerHalf = (event: ReactDragEvent<HTMLElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect()
+    return event.clientY > rect.top + rect.height / 2
+  }
+  const botRowProps = (bot: FleetBot, environmentId: string | null) => {
+    const sorting =
+      orderable && dragging !== null && dragging.id !== bot.id && dragging.environmentId === bot.environmentId
+    return {
+      draggable: orderable || (environmentId !== null && movable(bot)),
+      onDragStart: () => setDragging(bot),
+      onDragEnd: endDrag,
+      dropEdge: (dropAt?.kind === 'bot' && dropAt.id === bot.id
+        ? dropAt.after
+          ? 'after'
+          : 'before'
+        : null) as DropEdge | null,
+      onDragOver: (event: ReactDragEvent<HTMLElement>) => {
+        if (!sorting) return
+        event.preventDefault()
+        event.stopPropagation()
+        event.dataTransfer.dropEffect = 'move'
+        const after = lowerHalf(event)
+        if (dropAt?.kind !== 'bot' || dropAt.id !== bot.id || dropAt.after !== after)
+          setDropAt({ kind: 'bot', id: bot.id, after })
+        if (dropTarget) setDropTarget(null)
+      },
+      onDrop: (event: ReactDragEvent<HTMLElement>) => {
+        if (!sorting || !dragging) return
+        event.preventDefault()
+        event.stopPropagation()
+        orderBots(environmentId, placeId(botsOf(environmentId), dragging.id, bot.id, lowerHalf(event)))
+        endDrag()
+      },
+      onShift: orderable
+        ? (step: -1 | 1) => orderBots(environmentId, shiftId(botsOf(environmentId), bot.id, step))
+        : undefined,
+    }
+  }
   const segments = memorySegments(snapshot.host, snapshot.bots, snapshot.environments)
   return (
     <div className="p-2 text-xs">
@@ -160,37 +241,59 @@ export function FleetSidebarPanel({
         </button>
       )}
       <div className="mt-2 space-y-0.5">
-        {grouped?.groups.map((group) => {
-          const over = dropTarget === group.environment.id
+        {groups.map((group) => {
+          const id = group.environment.id
+          const over = dropTarget === id
+          const sortingEnvironments = orderable && draggingEnvironment !== null && draggingEnvironment !== id
+          const edge = dropAt?.kind === 'environment' && dropAt.id === id ? (dropAt.after ? 'after' : 'before') : null
           return (
             <div
-              key={group.environment.id}
+              key={id}
               role="group"
               aria-label={group.environment.name}
               data-drop-target={over || undefined}
-              className={`rounded-md pt-1 transition-colors ${over ? 'bg-primary/10 ring-1 ring-primary/50' : ''}`}
+              className={`relative rounded-md pt-1 transition-colors ${over ? 'bg-primary/10 ring-1 ring-primary/50' : ''}`}
               onDragOver={(event) => {
+                if (sortingEnvironments) {
+                  event.preventDefault()
+                  event.dataTransfer.dropEffect = 'move'
+                  const after = lowerHalf(event)
+                  if (edge !== (after ? 'after' : 'before')) setDropAt({ kind: 'environment', id, after })
+                  return
+                }
                 if (!accepts(group.environment)) return
                 event.preventDefault()
                 event.dataTransfer.dropEffect = 'move'
-                if (dropTarget !== group.environment.id) setDropTarget(group.environment.id)
+                if (dropAt) setDropAt(null)
+                if (dropTarget !== id) setDropTarget(id)
               }}
               onDragLeave={(event) => {
                 if (event.currentTarget.contains(event.relatedTarget as Node | null)) return
-                if (dropTarget === group.environment.id) setDropTarget(null)
+                if (dropTarget === id) setDropTarget(null)
               }}
               onDrop={(event) => {
+                if (sortingEnvironments && draggingEnvironment) {
+                  event.preventDefault()
+                  orderEnvironments(placeId(environmentIds, draggingEnvironment, id, lowerHalf(event)))
+                  endDrag()
+                  return
+                }
                 if (!dragging || !accepts(group.environment)) return
                 event.preventDefault()
-                setMoveTo({ bot: dragging, environmentId: group.environment.id })
+                setMoveTo({ bot: dragging, environmentId: id })
                 endDrag()
               }}
             >
+              {edge && <DropLine edge={edge} />}
               <EnvironmentHeader
                 environment={group.environment}
                 update={environmentUpdateState(group.environment, snapshot.host)}
-                selected={selected === `environment:${group.environment.id}`}
-                onOpen={() => onOpenEnvironment(group.environment.id)}
+                selected={selected === `environment:${id}`}
+                onOpen={() => onOpenEnvironment(id)}
+                draggable={orderable}
+                onDragStart={() => setDraggingEnvironment(id)}
+                onDragEnd={endDrag}
+                onShift={orderable ? (step) => orderEnvironments(shiftId(environmentIds, id, step)) : undefined}
               />
               {over && dragging && (
                 <p role="status" className="px-2 pb-1 text-primary">
@@ -205,9 +308,7 @@ export function FleetSidebarPanel({
                     selected={selected === bot.id}
                     marked={!!marked?.has(bot.id)}
                     onOpen={() => onOpenBot(bot.id)}
-                    draggable={movable(bot)}
-                    onDragStart={() => setDragging(bot)}
-                    onDragEnd={endDrag}
+                    {...botRowProps(bot, id)}
                   />
                 ))}
               </div>
@@ -221,6 +322,7 @@ export function FleetSidebarPanel({
             selected={selected === bot.id}
             marked={!!marked?.has(bot.id)}
             onOpen={() => onOpenBot(bot.id)}
+            {...botRowProps(bot, null)}
           />
         ))}
         {empty && (
@@ -245,16 +347,28 @@ export function FleetSidebarPanel({
   )
 }
 
+/** The type a dragged environment carries, which no other drop target of the app reads. */
+const ENVIRONMENT_DRAG_TYPE = 'application/x-maestrly-environment'
+
 function EnvironmentHeader({
   environment,
   update,
   selected,
   onOpen,
+  draggable = false,
+  onDragStart,
+  onDragEnd,
+  onShift,
 }: {
   environment: FleetEnvironment
   update: EnvironmentUpdateState
   selected: boolean
   onOpen: () => void
+  /** The environment can be dragged to another place among the others. */
+  draggable?: boolean
+  onDragStart?: () => void
+  onDragEnd?: () => void
+  onShift?: (step: -1 | 1) => void
 }) {
   const { t } = useTranslation('fleet')
   const bots = t('environment.botCount', { count: environment.botIds.length })
@@ -274,6 +388,16 @@ function EnvironmentHeader({
       onClick={onOpen}
       aria-current={selected ? 'page' : undefined}
       aria-label={[label, updateLabel, oomLabel].filter(Boolean).join(' · ')}
+      title={draggable ? t('move.reorderEnvironment', { name: environment.name }) : undefined}
+      draggable={draggable}
+      onDragStart={(event) => {
+        if (!draggable) return
+        event.dataTransfer.effectAllowed = 'move'
+        event.dataTransfer.setData(ENVIRONMENT_DRAG_TYPE, environment.id)
+        onDragStart?.()
+      }}
+      onDragEnd={onDragEnd}
+      onKeyDown={(event) => shiftKey(event, onShift)}
       className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring ${selected ? 'bg-accent' : ''}`}
     >
       <span aria-hidden="true" className={`size-2 shrink-0 rounded-full ${dotClass[environmentDot(environment)]}`} />
@@ -311,60 +435,71 @@ function BotRow({
   draggable = false,
   onDragStart,
   onDragEnd,
+  dropEdge = null,
+  onDragOver,
+  onDrop,
+  onShift,
 }: {
   bot: FleetBot
   selected: boolean
   /** The bot has something new for the owner. */
   marked?: boolean
   onOpen: () => void
-  /** The bot can be dragged onto another environment to move there. */
+  /** The bot can be dragged to another place in its environment, or onto another environment to move there. */
   draggable?: boolean
   onDragStart?: () => void
   onDragEnd?: () => void
+  /** A dragged bot would land before or after this one. */
+  dropEdge?: DropEdge | null
+  onDragOver?: (event: ReactDragEvent<HTMLElement>) => void
+  onDrop?: (event: ReactDragEvent<HTMLElement>) => void
+  /** Moves the bot one place among its environment's, from the keyboard. */
+  onShift?: (step: -1 | 1) => void
 }) {
   const { t } = useTranslation('fleet')
   const activity = activityLabel(bot.activity, bot.status)
   return (
-    <button
-      type="button"
-      onClick={onOpen}
-      aria-current={selected ? 'page' : undefined}
-      draggable={draggable}
-      onDragStart={(event) => {
-        if (!draggable) return
-        event.dataTransfer.effectAllowed = 'move'
-        event.dataTransfer.setData(BOT_DRAG_TYPE, bot.id)
-        onDragStart?.()
-      }}
-      onDragEnd={onDragEnd}
-      className={`flex w-full items-center gap-2 rounded-md px-2 py-2 text-left hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring ${selected ? 'bg-accent' : ''}`}
-    >
-      <span
-        className="relative flex size-8 shrink-0 items-center justify-center rounded-lg font-semibold text-white"
-        style={{ background: bot.tint }}
+    <div className="relative" onDragOver={onDragOver} onDrop={onDrop}>
+      {dropEdge && <DropLine edge={dropEdge} />}
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-current={selected ? 'page' : undefined}
+        title={onShift ? t('move.reorderBot', { name: bot.name }) : undefined}
+        onKeyDown={(event) => shiftKey(event, onShift)}
+        draggable={draggable}
+        onDragStart={(event) => {
+          if (!draggable) return
+          event.dataTransfer.effectAllowed = 'move'
+          event.dataTransfer.setData(BOT_DRAG_TYPE, bot.id)
+          onDragStart?.()
+        }}
+        onDragEnd={onDragEnd}
+        className={`flex w-full items-center gap-2 rounded-md px-2 py-2 text-left hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring ${selected ? 'bg-accent' : ''}`}
       >
-        {bot.name.charAt(0).toUpperCase()}
-        <span
-          className={`absolute -bottom-0.5 -right-0.5 size-2.5 rounded-full border-2 border-sidebar ${bot.status === 'waiting' ? 'bg-amber-400' : bot.status === 'working' ? 'bg-blue-400' : bot.status === 'idle' ? 'bg-emerald-400' : 'bg-muted-foreground'}`}
-        />
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="block truncate font-medium">{bot.name}</span>
-        <span className="block truncate text-muted-foreground">
-          {bot.move ? t('move.moving') : t(activity.key, activity.values)}
+        <BotAvatar bot={bot} className="size-8 rounded-lg" hidden={false}>
+          <span
+            className={`absolute -bottom-0.5 -right-0.5 size-2.5 rounded-full border-2 border-sidebar ${bot.status === 'waiting' ? 'bg-amber-400' : bot.status === 'working' ? 'bg-blue-400' : bot.status === 'idle' ? 'bg-emerald-400' : 'bg-muted-foreground'}`}
+          />
+        </BotAvatar>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate font-medium">{bot.name}</span>
+          <span className="block truncate text-muted-foreground">
+            {bot.move ? t('move.moving') : t(activity.key, activity.values)}
+          </span>
         </span>
-      </span>
-      {bot.pendingCount > 0 && (
-        <span className="rounded-full bg-amber-500/15 px-1.5 text-amber-500">{bot.pendingCount}</span>
-      )}
-      {marked && (
-        <span
-          role="img"
-          aria-label={t('sidebar.botAttention')}
-          title={t('sidebar.botAttention')}
-          className="size-2 shrink-0 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.9)]"
-        />
-      )}
-    </button>
+        {bot.pendingCount > 0 && (
+          <span className="rounded-full bg-amber-500/15 px-1.5 text-amber-500">{bot.pendingCount}</span>
+        )}
+        {marked && (
+          <span
+            role="img"
+            aria-label={t('sidebar.botAttention')}
+            title={t('sidebar.botAttention')}
+            className="size-2 shrink-0 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.9)]"
+          />
+        )}
+      </button>
+    </div>
   )
 }

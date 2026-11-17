@@ -261,7 +261,12 @@ export function TranscriptRow({
       const peer = fleetBot(item.peer?.botId)
       return (
         <BotPeerMessage
-          from={{ name: item.peer?.name ?? peer?.name ?? '', tint: peer?.tint ?? UNKNOWN_BOT_TINT }}
+          from={{
+            id: peer?.id,
+            avatar: peer?.avatar,
+            name: item.peer?.name ?? peer?.name ?? '',
+            tint: peer?.tint ?? UNKNOWN_BOT_TINT,
+          }}
           to={bot}
           at={at}
           text={item.text}
@@ -488,7 +493,7 @@ export function TranscriptRow({
       return (
         <PeerThreadBridge
           bot={bot}
-          peer={{ name: item.to.name, tint: peer?.tint ?? UNKNOWN_BOT_TINT }}
+          peer={{ id: peer?.id, avatar: peer?.avatar, name: item.to.name, tint: peer?.tint ?? UNKNOWN_BOT_TINT }}
           text={item.text}
           at={at}
           thread={threads?.loaded ? (threads.threads.find((thread) => thread.id === threadId) ?? null) : undefined}
@@ -499,7 +504,7 @@ export function TranscriptRow({
     return (
       <BotPeerMessage
         from={bot}
-        to={{ name: item.to.name, tint: peer?.tint ?? UNKNOWN_BOT_TINT }}
+        to={{ id: peer?.id, avatar: peer?.avatar, name: item.to.name, tint: peer?.tint ?? UNKNOWN_BOT_TINT }}
         at={at}
         text={item.text}
         footer={t(item.delivered ? 'transcript.delivered' : 'transcript.notDelivered')}
