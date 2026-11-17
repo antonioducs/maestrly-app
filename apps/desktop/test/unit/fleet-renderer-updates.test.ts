@@ -61,6 +61,7 @@ const environment = (id: string, patch: Partial<FleetEnvironment> = {}): FleetEn
   update: { available: false, pendingSince: null },
   runtimes: null,
   botIds: [],
+  position: null,
   createdAt: at,
   updatedAt: at,
   ...patch,

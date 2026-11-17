@@ -64,6 +64,9 @@ import {
   FLEET_ROUTINE_PROMPT_MAX,
   FLEET_ROUTINE_TITLE_MAX,
   FLEET_RUNNER_LIMITS,
+  FLEET_BOT_AVATAR_LIMITS,
+  FLEET_BOT_AVATAR_MEDIA_TYPES,
+  FLEET_ORDER_IDS_MAX,
 } from './constants.js'
 import {
   fleetBackupRunSchema,
@@ -524,6 +527,32 @@ export const fleetPatchBotRequestSchema = z.object({
   delegation: fleetBotDelegationSchema.optional(),
 })
 export type FleetPatchBotRequest = z.infer<typeof fleetPatchBotRequestSchema>
+/** A bot's new picture (`bot-avatars`), base64-encoded; the gateway checks its format from its bytes. */
+export const fleetBotAvatarRequestSchema = z
+  .object({
+    mediaType: z.enum(FLEET_BOT_AVATAR_MEDIA_TYPES),
+    data: z
+      .string()
+      .min(1)
+      .max(Math.ceil(FLEET_BOT_AVATAR_LIMITS.maxBytes / 3) * 4)
+      .regex(/^[A-Za-z0-9+/]+={0,2}$/),
+  })
+  .strict()
+export type FleetBotAvatarRequest = z.infer<typeof fleetBotAvatarRequestSchema>
+/**
+ * The owner's new order (`fleet-order`): the named ids come first, in this order, and any other keeps its place after
+ * them. Unknown ids are refused.
+ */
+export const fleetBotsReorderRequestSchema = z
+  .object({ botIds: z.array(fleetBotIdSchema).min(1).max(FLEET_ORDER_IDS_MAX) })
+  .strict()
+  .refine((value) => new Set(value.botIds).size === value.botIds.length, 'duplicate ids')
+export type FleetBotsReorderRequest = z.infer<typeof fleetBotsReorderRequestSchema>
+export const fleetEnvironmentsReorderRequestSchema = z
+  .object({ environmentIds: z.array(fleetEnvironmentIdSchema).min(1).max(FLEET_ORDER_IDS_MAX) })
+  .strict()
+  .refine((value) => new Set(value.environmentIds).size === value.environmentIds.length, 'duplicate ids')
+export type FleetEnvironmentsReorderRequest = z.infer<typeof fleetEnvironmentsReorderRequestSchema>
 export const fleetSelectionsResponseSchema = z.object({
   options: z.array(fleetSelectionOptionSchema),
   current: fleetSelectionSchema.nullable(),
@@ -1746,6 +1775,30 @@ export const FLEET_GATEWAY_ROUTES = {
   botMove: { method: 'POST', path: '/v1/bots/:id/move', body: fleetBotMoveRequestSchema, response: fleetBotMoveSchema },
   /** The bot's last move, running or finished. */
   botMoveGet: { method: 'GET', path: '/v1/bots/:id/move', body: null, response: fleetBotMoveSchema },
+  /** `bot-avatars`: the bot's picture, as bytes of its media type; `NOT_FOUND` when it has none. */
+  botAvatar: { method: 'GET', path: '/v1/bots/:id/avatar', body: null, response: null },
+  botAvatarPut: {
+    method: 'PUT',
+    path: '/v1/bots/:id/avatar',
+    body: fleetBotAvatarRequestSchema,
+    response: fleetBotSchema,
+  },
+  botAvatarDelete: { method: 'DELETE', path: '/v1/bots/:id/avatar', body: null, response: fleetBotSchema },
+  // Outside `/v1/bots/:id` and `/v1/environments/:eid`, where they would collide with an id.
+  /** `fleet-order`: answers with every active bot, in the new order. */
+  botsReorder: {
+    method: 'PUT',
+    path: '/v1/bot-order',
+    body: fleetBotsReorderRequestSchema,
+    response: fleetBotsResponseSchema,
+  },
+  /** `fleet-order`: answers with every active environment, in the new order. */
+  environmentsReorder: {
+    method: 'PUT',
+    path: '/v1/environment-order',
+    body: fleetEnvironmentsReorderRequestSchema,
+    response: fleetEnvironmentsResponseSchema,
+  },
   // A separate collection: `/v1/bots/archived` would collide with a bot whose id is `archived`.
   // `separateEnvironments=1` lists only individually archived bots. Older clients also see archived environments of one.
   archivedBotsList: {

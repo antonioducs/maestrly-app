@@ -40,6 +40,12 @@ import {
   type FleetBackupRestoreRequest,
   type FleetBackupRunRequest,
   type FleetBackupUpdateRequest,
+  FLEET_BOT_AVATARS_FEATURE,
+  FLEET_BOT_AVATAR_LIMITS,
+  FLEET_ORDER_FEATURE,
+  type FleetBotAvatarRequest,
+  type FleetBotsReorderRequest,
+  type FleetEnvironmentsReorderRequest,
 } from '@maestrly/bot-fleet-protocol'
 import { ownerMemoryRequestHash } from '../owner-memory.js'
 import { once } from 'node:events'
@@ -169,6 +175,15 @@ function requireBot(ctx: GatewayContext, id: string) {
   const bot = ctx.lifecycle.get(id)
   if (!bot || bot.lifecycle === 'archived') throw new GatewayError('NOT_FOUND', 'Bot not found')
   return bot
+}
+/** The format of a bot's picture from its first bytes, or null when it is none the gateway keeps. */
+function avatarMediaType(data: Buffer): 'image/png' | 'image/jpeg' | 'image/webp' | null {
+  if (data.length >= 8 && data.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])))
+    return 'image/png'
+  if (data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff) return 'image/jpeg'
+  if (data.length >= 12 && data.toString('latin1', 0, 4) === 'RIFF' && data.toString('latin1', 8, 12) === 'WEBP')
+    return 'image/webp'
+  return null
 }
 /** A bot that exists, archived or not: only deleting it removes its records. */
 function requireBotRecord(ctx: GatewayContext, id: string) {
@@ -549,6 +564,8 @@ export async function publicRoute(
             FLEET_RUNNERS_FEATURE,
             FLEET_BOT_OWN_SKILLS_FEATURE,
             FLEET_BACKUPS_FEATURE,
+            FLEET_BOT_AVATARS_FEATURE,
+            FLEET_ORDER_FEATURE,
           ],
           botImage: ctx.config.botImage,
           botImageVersion: await ctx.host.botImageVersion(),
@@ -804,6 +821,42 @@ export async function publicRoute(
       }))
       return { body: result.response, status: result.status }
     }
+    case 'botAvatar': {
+      requireBot(ctx, id)
+      const avatar = ctx.store.botAvatar(id)
+      if (!avatar) throw new GatewayError('NOT_FOUND', 'This bot has no picture')
+      res.writeHead(200, {
+        'Content-Type': avatar.mediaType,
+        'Content-Length': avatar.data.length,
+        'X-Content-Type-Options': 'nosniff',
+        'Cache-Control': 'private, max-age=86400',
+        ETag: `"${avatar.version}"`,
+      })
+      res.end(avatar.data)
+      return { stream: true }
+    }
+    case 'botAvatarPut': {
+      requireBot(ctx, id)
+      const input = body as FleetBotAvatarRequest
+      const data = Buffer.from(input.data, 'base64')
+      if (!data.length || data.length > FLEET_BOT_AVATAR_LIMITS.maxBytes)
+        throw new GatewayError('INVALID_REQUEST', 'The picture is too large')
+      if (avatarMediaType(data) !== input.mediaType)
+        throw new GatewayError('INVALID_REQUEST', 'The picture is not a PNG, JPEG or WebP image')
+      const version = createHash('sha256').update(data).digest('hex').slice(0, 16)
+      return { body: ctx.lifecycle.setAvatar(id, { mediaType: input.mediaType, data, version }) }
+    }
+    case 'botAvatarDelete':
+      requireBot(ctx, id)
+      return { body: ctx.lifecycle.setAvatar(id, null) }
+    case 'botsReorder':
+      return { body: { bots: ctx.lifecycle.reorderBots((body as FleetBotsReorderRequest).botIds) } }
+    case 'environmentsReorder':
+      return {
+        body: {
+          environments: ctx.lifecycle.reorderEnvironments((body as FleetEnvironmentsReorderRequest).environmentIds),
+        },
+      }
     case 'botMoveGet': {
       requireBotRecord(ctx, id)
       const move = ctx.lifecycle.latestMove(id)

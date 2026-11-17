@@ -54,6 +54,7 @@ import {
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import { cn } from '@/lib/utils'
 import { BotAutonomyTable } from './BotAutonomyTable'
+import { BotAvatarField } from './BotAvatarField'
 import { BotMemorySection } from './BotMemorySection'
 import { BotOwnSkillsSection } from './BotOwnSkillsSection'
 import { BotDesktopAccessSection } from './BotDesktopAccessSection'
@@ -568,6 +569,7 @@ export function BotSettings({
           <SettingsTabPanel tab="identity" current={current}>
             <SettingsSection id={domId('identity')} title={navLabel('identity')} note={t('botSettings.identityNote')}>
               <SettingsCard className="flex flex-col gap-4 p-[18px]">
+                <BotAvatarField fleet={fleet} bot={bot} />
                 <div className="grid grid-cols-1 gap-4 @xl:grid-cols-2">
                   <Field
                     id="fleet-settings-name"

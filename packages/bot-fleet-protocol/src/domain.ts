@@ -521,6 +521,10 @@ export const fleetBotTurnSchema = z.object({
 })
 export type FleetBotTurn = z.infer<typeof fleetBotTurnSchema>
 
+/** A version of a bot's picture: the start of its SHA-256, so it changes with the picture. */
+export const fleetAvatarVersionSchema = z.string().regex(/^[0-9a-f]{16}$/)
+export const fleetPositionSchema = z.number().int().nonnegative()
+
 export const fleetBotSchema = z.object({
   id: fleetBotIdSchema,
   name: fleetNameSchema,
@@ -584,6 +588,10 @@ export const fleetBotSchema = z.object({
    * `status` and `runningRun` tell the same for one turn at a time. Read with `fleetPrimaryWorking`/`fleetLaneTurn`.
    */
   turns: z.array(fleetBotTurnSchema).nullable().default(null),
+  /** The version of the picture the owner gave it (`bot-avatars`), read from `botAvatar`; null when it has none. */
+  avatar: fleetAvatarVersionSchema.nullable().default(null),
+  /** Its place in the owner's order (`fleet-order`), lowest first; null from gateways that predate it. */
+  position: fleetPositionSchema.nullable().default(null),
   createdAt: fleetTimestampSchema,
   updatedAt: fleetTimestampSchema,
 })
@@ -719,6 +727,8 @@ export const fleetEnvironmentSchema = z.object({
   /** Additional runtime IDs, kept separate so older readers can still parse the legacy runtimes. */
   additionalRuntimes: fleetRuntimesSchema.optional(),
   botIds: z.array(fleetBotIdSchema).max(FLEET_ENVIRONMENT_LIMITS.botsMax),
+  /** Its place in the owner's order (`fleet-order`), lowest first; null from gateways that predate it. */
+  position: fleetPositionSchema.nullable().default(null),
   createdAt: fleetTimestampSchema,
   updatedAt: fleetTimestampSchema,
 })

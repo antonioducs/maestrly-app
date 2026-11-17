@@ -265,6 +265,20 @@ describe('preload API — exposure', () => {
     expect(invokeSpy).toHaveBeenCalledWith('fleet:botMove', SERVER, 'scout')
   })
 
+  it('forwards bot pictures and the order of bots and environments to their channels', async () => {
+    const avatar = { mediaType: 'image/png' as const, data: 'iVBORw==' }
+    await api.fleetGetBotAvatar(SERVER, 'scout')
+    await api.fleetSetBotAvatar(SERVER, 'scout', avatar)
+    await api.fleetRemoveBotAvatar(SERVER, 'scout')
+    await api.fleetReorderBots(SERVER, ['scout', 'coder'])
+    await api.fleetReorderEnvironments(SERVER, ['home'])
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:getBotAvatar', SERVER, 'scout')
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:setBotAvatar', SERVER, 'scout', avatar)
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:removeBotAvatar', SERVER, 'scout')
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:reorderBots', SERVER, ['scout', 'coder'])
+    expect(invokeSpy).toHaveBeenCalledWith('fleet:reorderEnvironments', SERVER, ['home'])
+  })
+
   it("forwards Settings → Computers and the pairing dialogs to this computer's peer channels", async () => {
     await api.peerOverview()
     await api.peerSetHosting(true)
@@ -460,7 +474,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(703)
+    expect(keys).toHaveLength(708)
     expect(keys.sort()).toMatchSnapshot()
   })
 

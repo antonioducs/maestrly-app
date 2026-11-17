@@ -559,6 +559,23 @@ export const FLEET_DICTATION_FEATURE = 'dictation'
 export const FLEET_BOT_RESTART_FEATURE = 'bot-restart'
 
 /**
+ * Gateway feature (`moreFeatures` of `/v1/meta`): the owner gives a bot a picture of its own (`botAvatarPut`,
+ * `botAvatarDelete`), which devices read from `botAvatar` while `avatar` on the bot names its version.
+ */
+export const FLEET_BOT_AVATARS_FEATURE = 'bot-avatars'
+/** A bot's picture: square, at most this many pixels a side and bytes, in one of these formats. */
+export const FLEET_BOT_AVATAR_LIMITS = { sizePx: 256, maxBytes: 256 * 1024 } as const
+export const FLEET_BOT_AVATAR_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/webp'] as const
+
+/**
+ * Gateway feature (`moreFeatures` of `/v1/meta`): the owner orders bots and environments (`botsReorder`,
+ * `environmentsReorder`), and both carry their `position` in that order.
+ */
+export const FLEET_ORDER_FEATURE = 'fleet-order'
+/** The most ids one reorder request names. */
+export const FLEET_ORDER_IDS_MAX = 500
+
+/**
  * Gateway feature (`moreFeatures` of `/v1/meta`): the server backs up environments to storage the owner chooses and
  * restores them as new environments.
  */

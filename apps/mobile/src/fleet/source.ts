@@ -35,6 +35,11 @@ export interface FleetSource {
    * conversation is read from there (`laneId`).
    */
   imageSource(botId: string, imageId: string, laneId?: string | null): { uri: string; headers?: Record<string, string> }
+  /**
+   * The picture the owner gave a bot (`bot-avatars`), at its version so a new picture is never read from the cache;
+   * absent from the demo, whose bots show their initial.
+   */
+  avatarSource?(botId: string, version: string): { uri: string; headers?: Record<string, string> }
   /** Where a file a bot shared downloads from, with the headers the server needs. */
   fileSource(botId: string, fileId: string): { uri: string; headers: Record<string, string> }
   /** The base64 contents of a file chosen on the phone, read only when its message is sent. */

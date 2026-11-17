@@ -11,7 +11,7 @@ import {
 } from '@maestrly/bot-fleet-protocol'
 import type { FleetConnectionView, FleetSnapshot } from '../../../preload/api-fleet'
 import type { FleetServerId } from '../../../shared/fleet-servers'
-import { compareByName } from './selectors'
+import { compareByOrder } from './selectors'
 
 export type TranscriptState = FleetTranscriptPage & {
   loaded: boolean
@@ -317,7 +317,7 @@ export function fleetReducer(state: FleetState, action: FleetAction): FleetState
               bots: [
                 ...state.snapshot.bots.filter((bot) => bot.id !== event.bot.id),
                 ...(event.bot.lifecycle === 'archived' ? [] : [event.bot]),
-              ].sort((a, b) => a.name.localeCompare(b.name)),
+              ].sort(compareByOrder),
             },
           }
         case 'bot.removed': {
@@ -470,7 +470,7 @@ export function fleetReducer(state: FleetState, action: FleetAction): FleetState
               environments: [
                 ...state.snapshot.environments.filter((environment) => environment.id !== event.environment.id),
                 event.environment,
-              ].sort(compareByName),
+              ].sort(compareByOrder),
             },
           }
         case 'environment.removed':

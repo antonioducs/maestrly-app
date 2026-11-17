@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import type { FleetController } from '@/lib/fleet/use-fleet'
+import { BotAvatar } from './BotAvatar'
 import { InteractionCard, pendingToTranscript } from './InteractionCard'
 export function InboxView({
   fleet,
@@ -18,13 +19,10 @@ export function InboxView({
           {fleet.state.snapshot.inbox.map(({ botId, interaction }) => (
             <div key={`${botId}:${interaction.id}`} className="rounded-xl border border-border bg-card p-4">
               <div className="mb-3 flex items-center gap-3">
-                <span
-                  className="flex size-9 items-center justify-center rounded-lg text-sm font-semibold text-white"
-                  style={{ background: fleet.state.snapshot.bots.find((bot) => bot.id === botId)?.tint ?? '#777' }}
-                  aria-hidden="true"
-                >
-                  {(fleet.state.snapshot.bots.find((bot) => bot.id === botId)?.name ?? botId).charAt(0)}
-                </span>
+                <BotAvatar
+                  bot={fleet.state.snapshot.bots.find((bot) => bot.id === botId) ?? { name: botId, tint: '#777' }}
+                  className="size-9 rounded-lg text-sm"
+                />
                 <button
                   type="button"
                   onClick={() => onOpenBot(botId)}

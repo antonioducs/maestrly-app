@@ -5,6 +5,7 @@ import { FLEET_ENVIRONMENT_LIMITS, type FleetBot } from '@maestrly/bot-fleet-pro
 import { activityLabel } from '@/lib/fleet/format'
 import { cn } from '@/lib/utils'
 import { botStatusDot } from './BotChatHeader'
+import { BotAvatar } from './BotAvatar'
 
 const COLUMNS = 4
 
@@ -62,16 +63,10 @@ export function EnvironmentRack({
                 )}
               >
                 <span className="flex min-w-0 items-center gap-2.5">
-                  <span
-                    aria-hidden="true"
-                    className={cn(
-                      'flex size-[30px] shrink-0 items-center justify-center rounded-[9px] text-[13px] font-semibold text-white',
-                      asleep && 'brightness-75 grayscale'
-                    )}
-                    style={{ background: bot.tint }}
-                  >
-                    {bot.name.charAt(0).toUpperCase()}
-                  </span>
+                  <BotAvatar
+                    bot={bot}
+                    className={cn('size-[30px] rounded-[9px] text-[13px]', asleep && 'brightness-75 grayscale')}
+                  />
                   <span className="min-w-0">
                     <span className="block truncate text-[13.5px] font-semibold">{bot.name}</span>
                     {bot.role && <span className="block truncate text-[11.5px] text-muted-foreground">{bot.role}</span>}

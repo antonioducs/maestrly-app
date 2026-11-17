@@ -15,6 +15,9 @@ export function useFleetController(): FleetController {
   return controller
 }
 
+/** The active server's controller, or null where none is active (an avatar shown before pairing). */
+export const useOptionalFleetController = (): FleetController | null => useContext(FleetContext)
+
 /**
  * Reads the fleet state. The store's state object only changes on updates, so it is safe to subscribe to as a whole;
  * the selector then runs once per change.

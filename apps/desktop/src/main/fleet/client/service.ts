@@ -248,6 +248,9 @@ export class FleetClientService {
   getImage(botId: string, imageId: string, runId?: string | null) {
     return this.requireApi().getImage(botId, imageId, runId)
   }
+  getAvatar(botId: string) {
+    return this.requireApi().getAvatar(botId)
+  }
 
   /** Saves a bot file to Downloads and resolves with its receipt; joins the transfer already running for it. */
   downloadFile(botId: string, fileId: string): Promise<string> {

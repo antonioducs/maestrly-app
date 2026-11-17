@@ -213,12 +213,18 @@ export class FleetApiClient {
     imageId: string,
     runId?: string | null
   ): Promise<{ mediaType: string; data: Uint8Array }> {
-    let response: Response
-    const path = buildPath(
-      FLEET_GATEWAY_ROUTES.botImage.path,
-      { id: botId, imageId },
-      runId ? { run: runId } : undefined
+    return this.readImage(
+      buildPath(FLEET_GATEWAY_ROUTES.botImage.path, { id: botId, imageId }, runId ? { run: runId } : undefined)
     )
+  }
+
+  /** The picture the owner gave a bot (`bot-avatars`). */
+  getAvatar(botId: string): Promise<{ mediaType: string; data: Uint8Array }> {
+    return this.readImage(buildPath(FLEET_GATEWAY_ROUTES.botAvatar.path, { id: botId }))
+  }
+
+  private async readImage(path: string): Promise<{ mediaType: string; data: Uint8Array }> {
+    let response: Response
     try {
       response = await fetch(this.origin + path, {
         headers: this.headers(),

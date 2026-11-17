@@ -193,6 +193,57 @@ export function createFleetActions(
       setActionError({ botId: null, environmentId, message: fleetErrorMessage(error) })
     }
   }
+  const at = () => new Date().toISOString()
+  /**
+   * The owner's new order of bots (`fleet-order`): shown at once, then as the server answers. A refusal puts back the
+   * order the server has.
+   */
+  const reorderBots = async (botIds: string[]) => {
+    setActionError(null)
+    const byId = new Map(stateOf().snapshot.bots.map((bot) => [bot.id, bot]))
+    botIds.forEach((id, position) => {
+      const bot = byId.get(id)
+      if (bot && bot.position !== position)
+        dispatch({ type: 'event', value: { type: 'bot.updated', at: at(), bot: { ...bot, position } } })
+    })
+    try {
+      const { bots } = await window.api.fleetReorderBots(serverId, botIds)
+      for (const bot of bots) dispatch({ type: 'event', value: { type: 'bot.updated', at: at(), bot } })
+    } catch (error) {
+      setActionError({ botId: null, environmentId: null, message: fleetErrorMessage(error) })
+      await refresh().catch(() => {})
+    }
+  }
+  const reorderEnvironments = async (environmentIds: string[]) => {
+    setActionError(null)
+    const byId = new Map(stateOf().snapshot.environments.map((environment) => [environment.id, environment]))
+    environmentIds.forEach((id, position) => {
+      const environment = byId.get(id)
+      if (environment && environment.position !== position)
+        dispatch({
+          type: 'event',
+          value: { type: 'environment.updated', at: at(), environment: { ...environment, position } },
+        })
+    })
+    try {
+      const { environments } = await window.api.fleetReorderEnvironments(serverId, environmentIds)
+      for (const environment of environments)
+        dispatch({ type: 'event', value: { type: 'environment.updated', at: at(), environment } })
+    } catch (error) {
+      setActionError({ botId: null, environmentId: null, message: fleetErrorMessage(error) })
+      await refresh().catch(() => {})
+    }
+  }
+  /** Gives a bot a picture, or with null takes it away; throws so the settings can say why. */
+  const setBotAvatar = async (
+    botId: string,
+    avatar: Parameters<typeof window.api.fleetSetBotAvatar>[2] | null
+  ): Promise<void> => {
+    const bot = avatar
+      ? await window.api.fleetSetBotAvatar(serverId, botId, avatar)
+      : await window.api.fleetRemoveBotAvatar(serverId, botId)
+    dispatch({ type: 'event', value: { type: 'bot.updated', at: at(), bot } })
+  }
   const resolve = async (botId: string, id: string, resolution: FleetInteractionResolution) => {
     await window.api.fleetResolveInteraction(serverId, botId, id, resolution)
     const [bot, inbox] = await Promise.all([
@@ -223,6 +274,9 @@ export function createFleetActions(
     updateEnvironment,
     cancelEnvironmentUpdate,
     checkEnvironmentRuntimes,
+    reorderBots,
+    reorderEnvironments,
+    setBotAvatar,
     resolve,
   }
 }

@@ -62,6 +62,11 @@ import {
   fleetPeerThreadPatchRequestSchema,
   fleetAddApiKeyAccountRequestSchema,
   fleetRoutineRunSettingsSchema,
+  FLEET_BOT_AVATARS_FEATURE,
+  FLEET_ORDER_FEATURE,
+  fleetBotAvatarRequestSchema,
+  fleetBotsReorderRequestSchema,
+  fleetEnvironmentsReorderRequestSchema,
 } from '@maestrly/bot-fleet-protocol'
 import type { IpcRegistrar } from '../../ipc-registrar'
 import { isHeadlessInstance } from '../../remote-host/server/config'
@@ -264,6 +269,36 @@ export function registerFleetClientIpc(reg: IpcRegistrar): void {
   scoped.handle('fleet:botMove', (fleet, _event, botId: unknown) => {
     if (!fleet.hasFeature(FLEET_BOT_MOVE_FEATURE)) throw new Error(FLEET_BOT_MOVE_UNSUPPORTED)
     return fleet.call('botMoveGet', { params: { id: id.parse(botId) } })
+  })
+  // A bot's picture (`bot-avatars`): null when it has none, so the UI shows its initial.
+  const requireFeature = (fleet: FleetClientService, feature: string) => {
+    if (!fleet.hasFeature(feature))
+      throw new FleetClientError('PROTOCOL_INCOMPATIBLE', 426, 'Update the bot server to use this')
+  }
+  scoped.handle('fleet:getBotAvatar', (fleet, _event, botId: unknown) =>
+    fleet.getAvatar(id.parse(botId)).catch((error: unknown) => {
+      if (error instanceof FleetClientError && (error.status === 404 || error.code === 'NOT_FOUND')) return null
+      throw error
+    })
+  )
+  scoped.mhandle('fleet:setBotAvatar', (fleet, _event, botId: unknown, avatar: unknown) => {
+    requireFeature(fleet, FLEET_BOT_AVATARS_FEATURE)
+    return fleet.call('botAvatarPut', {
+      params: { id: id.parse(botId) },
+      body: fleetBotAvatarRequestSchema.parse(avatar),
+    })
+  })
+  scoped.mhandle('fleet:removeBotAvatar', (fleet, _event, botId: unknown) => {
+    requireFeature(fleet, FLEET_BOT_AVATARS_FEATURE)
+    return fleet.call('botAvatarDelete', { params: { id: id.parse(botId) } })
+  })
+  scoped.mhandle('fleet:reorderBots', (fleet, _event, botIds: unknown) => {
+    requireFeature(fleet, FLEET_ORDER_FEATURE)
+    return fleet.call('botsReorder', { body: fleetBotsReorderRequestSchema.parse({ botIds }) })
+  })
+  scoped.mhandle('fleet:reorderEnvironments', (fleet, _event, environmentIds: unknown) => {
+    requireFeature(fleet, FLEET_ORDER_FEATURE)
+    return fleet.call('environmentsReorder', { body: fleetEnvironmentsReorderRequestSchema.parse({ environmentIds }) })
   })
   scoped.handle('fleet:listArchivedBots', (fleet) =>
     fleet.call('archivedBotsList', { query: { separateEnvironments: 1 } })

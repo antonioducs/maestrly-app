@@ -54,6 +54,8 @@ export function botRecord(id: string, overrides: Partial<FleetBot> = {}): FleetB
     runSettings: FLEET_ROUTINE_RUN_SETTINGS_DEFAULT,
     runningRun: null,
     turns: null,
+    avatar: null,
+    position: null,
     peerSettings: FLEET_PEER_THREAD_SETTINGS_DEFAULT,
     delegation: null,
     sharedFiles: null,
