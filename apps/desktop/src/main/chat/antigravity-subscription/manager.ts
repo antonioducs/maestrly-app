@@ -206,6 +206,8 @@ export class AntigravitySubscriptionManager {
   private conn: ConnectionState | null = null
   /** Replaced processes still serving requests that started on them. */
   private readonly retired = new Set<ConnectionState>()
+  /** Closes of replaced processes that are still running, so shutdown can wait for them. */
+  private readonly retiredClosing = new Set<Promise<void>>()
   private connecting: Promise<ConnectionState> | null = null
   private closing: Promise<void> | null = null
   private runtimeUses = 0
@@ -423,10 +425,14 @@ export class AntigravitySubscriptionManager {
     if (this.conn === state) this.conn = null
     else if (!this.retired.delete(state)) return
     this.detachConnection(state)
-    void state.client
+    const closing: Promise<void> = state.client
       .close()
       .catch(() => undefined)
-      .finally(() => state.runtime.release())
+      .finally(() => {
+        state.runtime.release()
+        this.retiredClosing.delete(closing)
+      })
+    this.retiredClosing.add(closing)
   }
 
   /** Keeps the shared process alive while a request that is not yet a live session is running. */
@@ -845,13 +851,14 @@ export class AntigravitySubscriptionManager {
   private closeRetired(): Promise<void> {
     const retired = [...this.retired]
     this.retired.clear()
-    return Promise.all(
-      retired.map(async (state) => {
+    return Promise.all([
+      ...this.retiredClosing,
+      ...retired.map(async (state) => {
         this.detachConnection(state)
         await state.client.close().catch(() => undefined)
         state.runtime.release()
-      })
-    ).then(() => undefined)
+      }),
+    ]).then(() => undefined)
   }
 
   private dropAllLiveSessions(): void {
