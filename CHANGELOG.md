@@ -5,6 +5,39 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.38.0] - 2026-11-17
+
+### Added
+
+- **Bot pictures**: give any bot a picture in **Bot settings → Identity**. The
+  app crops the middle square and scales it to 256 px (PNG, JPEG, or WebP up to
+  256 KB), replacing the bot's initial across the desktop and mobile apps (the
+  `@` mention chip in the message editor still shows the initial). Requires a
+  bot server on this version; older servers keep showing initials and ask you
+  to update the server.
+- **Reorder bots and environments**: drag bots within their environment and
+  environments among each other in the sidebar (or press `Alt+Up` / `Alt+Down`),
+  when the sidebar is not filtered. Dragging a bot onto another environment
+  still opens the move dialog. Order is saved on the bot server and synced
+  across devices; older servers keep listing by name. The bot gateway database
+  moves to schema 25 for pictures and order. Older gateways cannot open it, so
+  back up the gateway volume before updating the server. See
+  [Bot fleet](docs/bot-fleet.md).
+
+### Fixed
+
+- **Antigravity memory exhaustion in long-running sessions**: Antigravity's
+  server cannot close sessions individually and holds a `localharness` helper
+  process per opened session until the server exits. Once a server has opened
+  24 sessions (conversations, subagents, summary stages, web searches, and
+  images all count), new requests now start a fresh server and the old one
+  exits once its remaining active requests finish, resuming conversations on the
+  new server. When a server drops a harness (`WS close code 1011`), Maestrly
+  now treats it as an error instead of the turn's answer, retries summary stages
+  and idle subagents once in a fresh session, and ends conversation turns with
+  a readable error so the next message starts a fresh session. See
+  [Antigravity](docs/antigravity.md).
+
 ## [0.37.1] - 2026-11-15
 
 ### Changed
