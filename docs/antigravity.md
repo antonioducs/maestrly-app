@@ -134,8 +134,11 @@ the requests still running on it finish; conversations resume their sessions on
 the new server. A server that runs out of memory stalls, and the stall drops
 every open session at once (`Harness process exited unexpectedly (WS close
 code 1011)`). The server reports that loss as the turn's text; Maestrly treats
-it as an error, never as the answer. A summary stage retries once in a fresh
-session, and so does a subagent if none of its tools had started.
+it as an error, never as the answer. A conversation turn ends with that error,
+keeping what it already wrote, and the next message starts a fresh session; the
+turn is not retried because its tools may already have run. A summary stage
+retries once in a fresh session, and so does a subagent if none of its tools
+had started.
 
 The first prompt also carries every tool's description and schema. Over a budget
 of 96 KB, Maestrly lists MCP tools with a one-line summary, then app tools if

@@ -31,7 +31,7 @@ import { getConvUiPrefs } from '../../store'
 import { resolveAppToolAccess } from '../app-tool-access'
 import { deferredLoadingToolNames } from '../tool-policy'
 import { AcpRpcError } from '../acp/client'
-import { ACP_RESOURCE_NOT_FOUND_CODE, type AcpPromptResult } from '../acp/protocol'
+import { ACP_RESOURCE_NOT_FOUND_CODE, type AcpPromptResult, isAcpMessageChunk } from '../acp/protocol'
 import {
   activatePreparedCompaction,
   createBackgroundCompactionPrefixNotifier,
@@ -68,10 +68,13 @@ import { enableConversationLinkTools } from '../tools/conversation-link'
 import { enableAssistantTools } from '../tools/assistant'
 import type { GeneratedImageEmission, ToolContext } from '../tools/util'
 import {
+  type AntigravityExecutionError,
   AntigravityModelUnavailableError,
   AntigravityPromptTooLargeError,
   AntigravityToolsUnavailableError,
   antigravityErrorMessage,
+  antigravityExecutionErrorChunk,
+  isAntigravityHarnessLost,
   redactAntigravityCredentials,
 } from './errors'
 import { type AntigravityHostToolset, registerAntigravityHostToolset } from './host-mcp'
@@ -794,6 +797,8 @@ export async function runAntigravitySubscriptionChat(
     // The server's report marks the end of a model call; the occupancy itself is Maestrly's estimate of the session
     // (instructions, tools and history), because the reported number can fold two calls together.
     const observeContext = contextProgress.observeAttempt()
+    // The server ends a failed turn normally and sends the failure as its last text, which must not read as the answer.
+    let executionError = null as AntigravityExecutionError | null
     unsubscribe = connection.subscribe(session.sessionId, (update) => {
       const reported = readAntigravityContextUsage(update)
       if (reported) {
@@ -809,6 +814,17 @@ export async function runAntigravitySubscriptionChat(
           modelContextWindow: contextWindowFor(reported.size),
           quality: 'estimated',
         })
+      }
+      if (update.sessionUpdate === 'agent_message_chunk' && isAcpMessageChunk(update)) {
+        const content = update.content as { type?: string; text?: unknown }
+        const failure =
+          content.type === 'text' && typeof content.text === 'string'
+            ? antigravityExecutionErrorChunk(content.text)
+            : null
+        if (failure) {
+          executionError ??= failure
+          return
+        }
       }
       for (const event of mapper.push(update)) apply(event)
     })
@@ -833,6 +849,28 @@ export async function runAntigravitySubscriptionChat(
     pending.catch(() => undefined)
     const aborted = args.signal.aborted || outcome.result?.stopReason === 'cancelled'
     const usage = subagentOnlyUsage(subagentUsage)
+
+    if (!aborted && executionError) {
+      chatDiag({
+        kind: 'antigravity-execution-error',
+        conv: args.conversationId,
+        harnessLost: isAntigravityHarnessLost(executionError),
+      })
+      // A lost harness leaves the server session unusable; the next turn starts a fresh one.
+      if (!ephemeral) retireAntigravitySessionBinding(args.conversationId, session.sessionId)
+      apply(
+        {
+          kind: 'error',
+          messageId: assistantId,
+          message: antigravityErrorMessage(executionError).message,
+          ...(usage ? { usage } : {}),
+          responseDurationMs: responseDurationMs(responseStartedAt),
+        },
+        true
+      )
+      coalescer.flush()
+      return { planSubmitted, sessionId: session.sessionId }
+    }
 
     if (!aborted && !activeToolset.wasInitialized()) {
       chatDiag({ kind: 'antigravity-tools-unavailable', conv: args.conversationId })

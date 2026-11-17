@@ -117,6 +117,11 @@ export function isAntigravityQuotaError(error: unknown): boolean {
 export function antigravityErrorMessage(error: unknown): { message: string; code?: ChatErrorCode } {
   if (isAntigravityAuthRequired(error)) return { message: new AntigravityAuthRequiredError().message }
   if (error instanceof AcpProcessExitedError) return { message: new AntigravityRuntimeStoppedError().message }
+  if (isAntigravityHarnessLost(error)) {
+    // The first line names the cause; the harness stderr that follows is startup noise.
+    const cause = (error as Error).message.replace(EXECUTION_ERROR_PREFIX, '').split('\n')[0].trim()
+    return { message: `Google Antigravity lost this session: ${cause} Send the message again.` }
+  }
   if (isAntigravityQuotaError(error)) return { message: QUOTA_MESSAGE }
   if (error instanceof Error && error.message.trim()) return { message: redactAntigravityCredentials(error.message) }
   if (typeof error === 'string' && error.trim()) return { message: redactAntigravityCredentials(error) }

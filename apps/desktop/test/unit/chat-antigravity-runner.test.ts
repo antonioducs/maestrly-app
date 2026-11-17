@@ -464,6 +464,20 @@ describe('Antigravity chat runner', () => {
     expect(getAntigravitySessionBinding(conversationId)).toBeUndefined()
   })
 
+  it('ends the turn with an error when the server reports a lost harness as its text', async () => {
+    await turn('ECHO before')
+    expect(getAntigravitySessionBinding(conversationId)).toBeDefined()
+    const { events } = await turn('LOSEHARNESS')
+    expect(textOf(events)).not.toContain('Agent execution error')
+    expect(events.at(-1)).toMatchObject({
+      kind: 'error',
+      message:
+        'Google Antigravity lost this session: Harness process exited unexpectedly (WS close code 1011). Send the message again.',
+    })
+    expect(getAntigravitySessionBinding(conversationId)).toBeUndefined()
+    expect(manager.liveSessionCount()).toBe(0)
+  })
+
   it('resumes the persisted session on a restarted process with a fresh tool server', async () => {
     await turn('ECHO before')
     const firstUrl = firstMcpUrl(fake.requests('session/new').at(-1))
