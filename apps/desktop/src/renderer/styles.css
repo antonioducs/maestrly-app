@@ -843,6 +843,9 @@ input[type='checkbox']:not(.appearance-none).accent-destructive:checked {
 .artifact-card:hover .artifact-thumb {
   border-color: rgba(237, 234, 227, 0.26);
 }
+.artifact-card.has-news .artifact-thumb {
+  border-color: color-mix(in srgb, var(--primary) 55%, transparent);
+}
 .artifact-card.is-selected .artifact-thumb {
   border-color: var(--primary);
   box-shadow: 0 0 0 1px var(--primary);

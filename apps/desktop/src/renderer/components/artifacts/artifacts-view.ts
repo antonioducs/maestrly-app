@@ -59,9 +59,21 @@ export function projectOptions(items: readonly ArtifactListItem[], locale: strin
   ]
 }
 
+/** Activity the owner has not looked at yet (comments, responses, access requests, new devices): what the rail counts. */
+export const hasNews = (item: ArtifactListItem): boolean => item.unseenEvents > 0
+
 export function visibleArtifacts(
   items: readonly ArtifactListItem[],
-  options: { query: string; project: ProjectFilter; sort: ArtifactSort; locale: string }
+  options: {
+    query: string
+    project: ProjectFilter
+    sort: ArtifactSort
+    locale: string
+    /** Only artifacts with unseen activity. */
+    newsOnly?: boolean
+    /** Stays listed under `newsOnly` after its activity is seen, so the open artifact does not vanish under its sheet. */
+    keep?: string | null
+  }
 ): ArtifactListItem[] {
   const needle = options.query.trim().toLocaleLowerCase(options.locale)
   const compare: Record<ArtifactSort, (a: ArtifactListItem, b: ArtifactListItem) => number> = {
@@ -74,13 +86,14 @@ export function visibleArtifacts(
     .filter(
       (item) =>
         matchesProject(item, options.project) &&
+        (!options.newsOnly || hasNews(item) || item.id === options.keep) &&
         (!needle || `${item.title}\n${item.description}`.toLocaleLowerCase(options.locale).includes(needle))
     )
     .sort((a, b) => compare[options.sort](a, b) || b.updatedAt - a.updatedAt)
 }
 
-export function showToolbar(count: number, query: string, project: ProjectFilter): boolean {
-  return count >= TOOLBAR_MIN_ARTIFACTS || query.trim() !== '' || project !== ALL_PROJECTS
+export function showToolbar(count: number, query: string, project: ProjectFilter, newsOnly = false): boolean {
+  return count >= TOOLBAR_MIN_ARTIFACTS || query.trim() !== '' || project !== ALL_PROJECTS || newsOnly
 }
 
 export function nearQuota(server: ArtifactServerStatus | null): boolean {

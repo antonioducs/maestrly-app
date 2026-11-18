@@ -6,6 +6,7 @@ import {
   artifactSource,
   arrivals,
   centerBody,
+  hasNews,
   matchesProject,
   nearQuota,
   projectFilter,
@@ -108,6 +109,22 @@ describe('artifacts center view', () => {
     expect(showToolbar(4, '', ALL_PROJECTS)).toBe(true)
     expect(showToolbar(1, 'x', ALL_PROJECTS)).toBe(true)
     expect(showToolbar(1, '', STANDALONE)).toBe(true)
+    expect(showToolbar(1, '', ALL_PROJECTS, true)).toBe(true)
+  })
+
+  it('filters to artifacts with unseen activity, keeping the open one after it is seen', () => {
+    const items = [item('a', { unseenEvents: 2 }), item('b'), item('c', { unseenEvents: 1, project: null })]
+    expect(hasNews(items[0]!)).toBe(true)
+    expect(hasNews(items[1]!)).toBe(false)
+    const view = (options: { newsOnly?: boolean; keep?: string | null; project?: string }) =>
+      visibleArtifacts(items, { query: '', project: ALL_PROJECTS, sort: 'title', locale: 'en', ...options }).map(
+        (entry) => entry.id
+      )
+    expect(view({})).toEqual(['a', 'b', 'c'])
+    expect(view({ newsOnly: true })).toEqual(['a', 'c'])
+    expect(view({ newsOnly: true, project: STANDALONE })).toEqual(['c'])
+    expect(view({ newsOnly: true, keep: 'b' })).toEqual(['a', 'b', 'c'])
+    expect(view({ keep: 'b' })).toEqual(['a', 'b', 'c'])
   })
 
   it('warns near the storage limit of the bot server', () => {
