@@ -175,6 +175,14 @@ export default {
       cancelled: 'The backup was cancelled.',
       failed: 'Open Settings to see why.',
     },
+    routinesTray: 'Maestrly stays in the tray to run your routines.',
+    routine: {
+      waiting: 'Needs your approval to continue',
+      failed: 'The run failed',
+      failedWithError: 'The run failed: {{error}}',
+      notable: 'Finished with something to check',
+      finished: 'Finished running',
+    },
   },
   fleetBackup: {
     keyFile:

@@ -66,6 +66,7 @@ export interface RoutineRunner {
   start(routineId: string, trigger: RoutineRunTrigger, scheduledAt: number): Promise<LocalRoutineRun>
   stop(runId: string): void
   isBusy(routineId: string): boolean
+  handlesConversation(conversationId: string): boolean
   onConversationStatus(conversationId: string, status: string): void
   waitForRun(runId: string): Promise<LocalRoutineRun | null>
   dispose(): void
@@ -201,6 +202,10 @@ export function createRoutineRunner(deps: RoutineRunnerDeps = {}): RoutineRunner
   function isBusy(routineId: string): boolean {
     if (busyRoutines.has(routineId)) return true
     return listActiveRuns().some((run) => run.routineId === routineId)
+  }
+
+  function handlesConversation(conversationId: string): boolean {
+    return activeByConv.has(conversationId)
   }
 
   function cleanupRun(state: ActiveRunState): void {
@@ -497,6 +502,7 @@ export function createRoutineRunner(deps: RoutineRunnerDeps = {}): RoutineRunner
     start,
     stop,
     isBusy,
+    handlesConversation,
     onConversationStatus,
     waitForRun,
     dispose,

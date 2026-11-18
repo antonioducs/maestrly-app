@@ -259,17 +259,29 @@ function purgeRetiredChatGptWeb(): void {
 
 /** The executor registered an OS login item; with its setting gone nothing else could ever remove it. */
 function retireExecutorLoginItem(): void {
+  const doneRow = db.prepare("SELECT value FROM app_settings WHERE key = 'retired.executorLoginItem'").get() as
+    | { value: string }
+    | undefined
+  if (doneRow?.value === '1') return
+
   const row = db.prepare("SELECT value FROM app_settings WHERE key = 'platform.desktop-executor.v1'").get() as
     | { value: string }
     | undefined
   if (!row || !app.isPackaged) return
   try {
     if (JSON.parse(row.value)?.autoStart !== true) return
-    // Windows matches the login item by its arguments.
-    app.setLoginItemSettings({
-      openAtLogin: false,
-      ...(process.platform === 'win32' ? { args: ['--maestrly-login-launch'] } : {}),
-    })
+    const routinesRow = db.prepare("SELECT value FROM app_settings WHERE key = 'routines.settings'").get() as
+      | { value: string }
+      | undefined
+    const routinesOpenAtLogin = routinesRow ? JSON.parse(routinesRow.value)?.openAtLogin === true : false
+    if (!routinesOpenAtLogin) {
+      // Windows matches the login item by its arguments.
+      app.setLoginItemSettings({
+        openAtLogin: false,
+        ...(process.platform === 'win32' ? { args: ['--maestrly-login-launch'] } : {}),
+      })
+    }
+    db.prepare('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)').run('retired.executorLoginItem', '1')
   } catch {
     /* A corrupt setting or an unavailable login item API must not block startup. */
   }

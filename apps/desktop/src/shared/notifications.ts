@@ -6,6 +6,8 @@ export type NotificationTarget =
   | { kind: 'bot'; serverId: FleetServerId; botId: string; runId?: string; threadId?: string }
   /** A server's backups, in Settings. */
   | { kind: 'backups'; serverId: FleetServerId }
+  /** A local routine run. */
+  | { kind: 'routine-run'; routineId: string; runId: string; conversationId?: string | null }
 
 /**
  * What last marked a bot, as the notifications center shows it: a turn of the bot's own conversation that ended or

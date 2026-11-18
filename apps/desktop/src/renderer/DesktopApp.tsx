@@ -819,6 +819,14 @@ function DesktopShell({
           openSettings('fleet', { fleetServer: target.serverId })
           return
         }
+        if (target.kind === 'routine-run') {
+          window.dispatchEvent(
+            new CustomEvent('maestrly:open-routine-run', {
+              detail: { routineId: target.routineId, runId: target.runId },
+            })
+          )
+          return
+        }
         if (!fleets.servers.some((server) => server.id === target.serverId)) return
         onBotsServer(target.serverId)
         openFleetView(notificationFleetView(target))

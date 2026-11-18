@@ -175,6 +175,14 @@ export default {
       cancelled: 'O backup foi cancelado.',
       failed: 'Abra as Configurações para ver o motivo.',
     },
+    routinesTray: 'O Maestrly continua na bandeja para rodar suas rotinas.',
+    routine: {
+      waiting: 'Precisa da sua aprovação para continuar',
+      failed: 'A execução falhou',
+      failedWithError: 'A execução falhou: {{error}}',
+      notable: 'Terminou com novidades',
+      finished: 'Execução concluída',
+    },
   },
   fleetBackup: {
     keyFile:
