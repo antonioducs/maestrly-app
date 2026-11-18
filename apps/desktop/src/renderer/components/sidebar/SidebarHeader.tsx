@@ -104,9 +104,11 @@ export function SidebarPanelHeader({
       ? 'sidebar.filterChats'
       : tab === 'bots'
         ? 'sidebar.filterBots'
-        : tab === 'inbox'
-          ? 'sidebar.filterInbox'
-          : 'sidebar.filterPlaceholder'
+        : tab === 'routines'
+          ? 'sidebar.filterRoutines'
+          : tab === 'inbox'
+            ? 'sidebar.filterInbox'
+            : 'sidebar.filterPlaceholder'
   )
   const createButton = create && (
     <Button

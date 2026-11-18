@@ -6,6 +6,7 @@ import {
   Bell,
   BookOpen,
   Bot,
+  CalendarClock,
   CircleArrowUp,
   Clock,
   FlaskConical,
@@ -43,6 +44,7 @@ const TAB_ICON: Record<SidebarTab, LucideIcon> = {
   chats: MessagesSquare,
   workspaces: FolderTree,
   bots: Bot,
+  routines: CalendarClock,
 }
 
 type ShowTooltip = (e: { currentTarget: HTMLElement }, text: string, side?: 'below' | 'right') => void
@@ -66,6 +68,8 @@ export function SidebarRail({
   inbox = { waiting: 0, unread: 0 },
   botPendingCount,
   botUpdate = null,
+  routineAttentionCount = 0,
+  routineRailDot = false,
   onOpenAbout,
   showQuickTooltip,
   hideQuickTooltip,
@@ -84,6 +88,8 @@ export function SidebarRail({
   botPendingCount: number
   /** Bots can be updated, or an update of theirs runs or waits. */
   botUpdate?: 'available' | 'pending' | null
+  routineAttentionCount?: number
+  routineRailDot?: boolean
   onOpenAbout: () => void
   showQuickTooltip: ShowTooltip
   hideQuickTooltip: () => void
@@ -227,6 +233,26 @@ export function SidebarRail({
                     )}
                   </>
                 )
+              else if (item === 'routines')
+                marks =
+                  routineAttentionCount > 0 ? (
+                    <span
+                      data-testid="sidebar-routines-count"
+                      className="absolute -right-0.5 -top-0.5 min-w-4 rounded-full bg-[var(--routine)] px-1 text-center text-[9.5px] font-bold leading-4 text-[#0a0a0b] ring-2 ring-[#141416]"
+                    >
+                      {routineAttentionCount > 99 ? '99+' : routineAttentionCount}
+                      <span className="sr-only">
+                        {' '}
+                        {t('sidebar.routinesAttention', { count: routineAttentionCount })}
+                      </span>
+                    </span>
+                  ) : routineRailDot ? (
+                    <span
+                      aria-hidden="true"
+                      data-testid="sidebar-routines-dot"
+                      className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-[var(--routine)] ring-2 ring-[#141416]"
+                    />
+                  ) : null
               else if (needsYou)
                 marks = (
                   <span
@@ -239,7 +265,9 @@ export function SidebarRail({
                   ? [label, t('sidebar.experimental'), botUpdate ? botUpdateLabel : ''].filter(Boolean).join(' · ')
                   : item === 'inbox' && inboxCount > 0
                     ? `${label} · ${t('sidebar.inboxCount', { waiting: inbox.waiting, unread: inbox.unread })}`
-                    : label
+                    : item === 'routines' && routineAttentionCount > 0
+                      ? `${label} · ${t('sidebar.routinesAttention', { count: routineAttentionCount })}`
+                      : label
               return (
                 <button
                   key={item}

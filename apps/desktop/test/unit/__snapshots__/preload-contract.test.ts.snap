@@ -643,6 +643,7 @@ exports[`preload API — exposure > preserves the public preload API inventory 1
   "routinesDuplicate",
   "routinesGet",
   "routinesGetProposal",
+  "routinesGetRun",
   "routinesGetSettings",
   "routinesList",
   "routinesListRuns",

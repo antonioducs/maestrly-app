@@ -6,6 +6,7 @@ import {
   type FleetRoutineSchedule,
 } from '@maestrly/bot-fleet-protocol'
 import type { ChatPermMode, ChatReasoningEffort } from './chat'
+import type { StandaloneConversation } from './conversation'
 
 export type RoutineSchedule = FleetRoutineSchedule
 export type RoutineNotify = 'notable' | 'all' | 'none'
@@ -247,6 +248,11 @@ export interface RoutineListRunsResult {
   runs: LocalRoutineRun[]
   total: number
   hasMore: boolean
+}
+
+export interface RoutineRunDetails {
+  run: LocalRoutineRun
+  conversation: StandaloneConversation | null
 }
 
 export function isRoutineRunSkipped(run: Pick<LocalRoutineRun, 'status'>): boolean {

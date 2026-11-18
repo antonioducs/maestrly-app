@@ -118,6 +118,16 @@ export function registerRoutinesIpc(reg: IpcRegistrar, deps: RoutinesIpcDeps = {
     return runsInRange(from, to)
   })
 
+  reg.handle('routines:getRun', (_event, runId: unknown) => {
+    const id = routineIdSchema.parse(runId)
+    const run = getRun(id)
+    if (!run) return null
+    if (!run.conversationId || run.conversationDeleted) return { run, conversation: null }
+    const conv = getConversation(run.conversationId)
+    const conversation = conv?.scope === 'standalone' && conv.routineRunId === run.id ? conv : null
+    return { run, conversation }
+  })
+
   reg.mhandle('routines:pinRun', (_event, runId: unknown, pinned: unknown) =>
     updateRun(routineIdSchema.parse(runId), { pinned: z.boolean().parse(pinned) })
   )

@@ -476,7 +476,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(733)
+    expect(keys).toHaveLength(734)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -503,6 +503,7 @@ describe('preload API — exposure', () => {
     await api.routinesStopRun('run-1')
     await api.routinesListRuns({ routineId: 'r-1', filter: 'attention', limit: 20, offset: 0 })
     await api.routinesRunsInRange(100, 200)
+    await api.routinesGetRun('run-1')
     await api.routinesPinRun('run-1', true)
     await api.routinesDeleteRunConversation('run-1')
     await api.routinesMarkRunSeen('run-1')
@@ -527,6 +528,7 @@ describe('preload API — exposure', () => {
       ['routines:stopRun', 'run-1'],
       ['routines:listRuns', { routineId: 'r-1', filter: 'attention', limit: 20, offset: 0 }],
       ['routines:runsInRange', { from: 100, to: 200 }],
+      ['routines:getRun', 'run-1'],
       ['routines:pinRun', 'run-1', true],
       ['routines:deleteRunConversation', 'run-1'],
       ['routines:markRunSeen', 'run-1'],

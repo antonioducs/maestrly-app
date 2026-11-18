@@ -13,6 +13,7 @@ import {
   getRoutine,
   getRun,
   insertRun,
+  updateRun,
 } from '../../src/main/routines/store'
 import { registerRoutinesIpc } from '../../src/main/routines/ipc'
 
@@ -237,5 +238,48 @@ describe('registerRoutinesIpc', () => {
     await h.invoke('routines:setSettings', { keepRunning: false, openAtLogin: true })
     expect(h.applyLoginItem).toHaveBeenCalledWith(true)
     expect(await h.invoke('routines:getSettings')).toEqual({ keepRunning: false, openAtLogin: true })
+  })
+
+  it('returns run details with its linked conversation when not deleted', async () => {
+    const h = makeHarness()
+    const routine = createRoutine(sampleDraft(), null)
+    const runConv = makeConv('conv-run-1')
+    getDb()
+      .prepare('UPDATE conversations SET routine_id = ?, routine_run_id = ? WHERE id = ?')
+      .run(routine.id, 'pending-run', runConv.id)
+    const run = insertRun({
+      routineId: routine.id,
+      scheduledAt: 4000,
+      startedAt: 4000,
+      finishedAt: 4500,
+      trigger: 'schedule',
+      status: 'notable',
+      summary: 'Price dropped',
+      report: null,
+      error: null,
+      conversationId: runConv.id,
+      conversationDeleted: false,
+      pinned: false,
+      unread: true,
+    })
+    getDb().prepare('UPDATE conversations SET routine_run_id = ? WHERE id = ?').run(run.id, runConv.id)
+
+    expect(await h.invoke('routines:getRun', 'missing-run')).toBeNull()
+
+    const details = await h.invoke<{ run: LocalRoutineRun; conversation: StandaloneConversation | null }>(
+      'routines:getRun',
+      run.id
+    )
+    expect(details.run.id).toBe(run.id)
+    expect(details.conversation?.id).toBe(runConv.id)
+    expect(details.conversation?.routineRunId).toBe(run.id)
+
+    updateRun(run.id, { conversationDeleted: true })
+    const deletedDetails = await h.invoke<{ run: LocalRoutineRun; conversation: StandaloneConversation | null }>(
+      'routines:getRun',
+      run.id
+    )
+    expect(deletedDetails.run.conversationDeleted).toBe(true)
+    expect(deletedDetails.conversation).toBeNull()
   })
 })

@@ -75,6 +75,10 @@ import type { FleetServerId, FleetServerView } from '../../shared/fleet-servers'
 import { type HostId, LOCAL_HOST_ID } from '../../shared/host-key'
 import type { FleetController } from '@/lib/fleet/use-fleet'
 import { fleetSearchCount } from '@/lib/fleet/environments'
+import { RoutinesSidebarPanel } from '@/components/routines/RoutinesSidebarPanel'
+import { scheduleSummary } from '@/lib/routines/schedule-text'
+import type { RoutinesMainView } from '@/lib/use-main-panels'
+import type { LocalRoutine, LocalRoutineRun } from '../../shared/routines'
 import {
   conversationSidebarTab,
   crossTabMatches,
@@ -84,6 +88,23 @@ import {
 } from '@/components/sidebar/sidebar-tabs'
 
 export type { OpenTargets, OpenExternalTarget }
+
+export interface SidebarRoutinesProps {
+  routines: readonly LocalRoutine[]
+  runsByRoutine: Record<string, readonly LocalRoutineRun[]>
+  attentionCount: number
+  railDot: boolean
+  view: RoutinesMainView | null
+  backgroundEnabled: boolean
+  expandedIds: ReadonlySet<string>
+  flashRoutineId: string | null
+  onToggleExpanded: (routineId: string) => void
+  onOpenAgenda: () => void
+  onOpenRoutine: (routineId: string) => void
+  onOpenRun: (routineId: string, runId: string) => void
+  onEnableBackground: () => void
+  onNewRoutine: () => void
+}
 
 /** A remote host in the sidebar: what it lists, in shell form, and what its heading does. */
 export interface SidebarHostSection {
@@ -240,6 +261,8 @@ interface Props {
   /** Opens Settings → Computers. */
   onOpenComputers?: () => void
   inbox?: SidebarInbox
+  routines?: SidebarRoutinesProps
+  onTabChange?: (tab: SidebarTab) => void
 }
 
 export function Sidebar({
@@ -311,13 +334,17 @@ export function Sidebar({
   onConnectComputer,
   onOpenComputers,
   inbox,
+  routines,
+  onTabChange,
 }: Props) {
   const { t } = useTranslation('ui')
+  const { t: tRoutines } = useTranslation('routines')
   const [query, setQuery] = useState('')
   const [tab, setTab] = useState<SidebarTab>(() => readSidebarTab(localStorage.getItem('sidebar.tab')))
   const selectTab = (next: SidebarTab) => {
     setTab(next)
     localStorage.setItem('sidebar.tab', next)
+    onTabChange?.(next)
   }
 
   // The machine whose chats and workspaces are listed; one at a time once the window reaches more than this computer.
@@ -347,7 +374,7 @@ export function Sidebar({
   useEffect(() => {
     if (!requestedHost) return
     selectHost(requestedHost.hostId)
-    if (tab === 'bots' || tab === 'inbox') selectTab('workspaces')
+    if (tab === 'bots' || tab === 'inbox' || tab === 'routines') selectTab('workspaces')
     if (collapsed) onCollapsedChange(false)
   }, [requestedHost?.requestId])
 
@@ -400,10 +427,21 @@ export function Sidebar({
     () => filterStandaloneConversations(standaloneConversations, q).filter((chat) => q || chat.pinnedAt === null),
     [standaloneConversations, q]
   )
+  const routineMatchCount = useMemo(() => {
+    if (!q || !routines) return 0
+    const tr = (key: string, opts?: Record<string, unknown>): string => String(tRoutines(key as never, opts as never))
+    return routines.routines.filter(
+      (r) =>
+        r.title.toLowerCase().includes(q) ||
+        r.instruction.toLowerCase().includes(q) ||
+        scheduleSummary(r.schedule, tr).toLowerCase().includes(q)
+    ).length
+  }, [q, routines, tRoutines])
   const filterCounts = {
     chats: q ? filterStandaloneConversations([...standaloneConversations, ...remoteChats], q).length : 0,
     workspaces: workspaceFilterCount([...workspaces, ...remoteWorkspaces], q),
     bots: q ? fleetSearchCount(fleet.state.connection, fleet.state.snapshot, q) : 0,
+    routines: routineMatchCount,
   }
   const crossMatches = q && tab !== 'inbox' && filterCounts[tab] === 0 ? crossTabMatches(tab, filterCounts) : []
   const inboxView = useInboxView(inbox?.items ?? NO_INBOX_ITEMS, query, inbox?.actions ?? NO_INBOX_ACTIONS)
@@ -785,6 +823,7 @@ export function Sidebar({
   /** What the `+` of the open section creates, on the machine the sidebar shows. */
   const createAction = ((): SidebarCreateAction | null => {
     if (tab === 'inbox') return null
+    if (tab === 'routines') return routines ? { label: tRoutines('newRoutine'), onClick: routines.onNewRoutine } : null
     if (tab === 'bots')
       return {
         label: t('sidebar.createBot'),
@@ -811,7 +850,7 @@ export function Sidebar({
 
   /** The `⋯` of the open section: how the chosen machine's lists are shown, and what can be done to that machine. */
   const viewMenu = ((): ReactNode => {
-    if (tab === 'bots' || tab === 'inbox') return null
+    if (tab === 'bots' || tab === 'inbox' || tab === 'routines') return null
     const items: ReactNode[] = []
     if (tab === 'workspaces' && listedEditable)
       items.push(
@@ -1092,6 +1131,8 @@ export function Sidebar({
         inbox={inbox?.counts}
         botPendingCount={botPendingCount}
         botUpdate={botUpdate}
+        routineAttentionCount={routines?.attentionCount ?? 0}
+        routineRailDot={routines?.railDot ?? false}
         onOpenAbout={onOpenAbout}
         showQuickTooltip={showQuickTooltip}
         hideQuickTooltip={hideQuickTooltip}
@@ -1121,8 +1162,8 @@ export function Sidebar({
           query={query}
           onQueryChange={setQuery}
         >
-          {/* The center gathers every machine's: it has no switcher. */}
-          {multiHost && tab !== 'bots' && tab !== 'inbox' && (
+          {/* The center, Bots and Routines do not switch hosts. */}
+          {multiHost && tab !== 'bots' && tab !== 'inbox' && tab !== 'routines' && (
             <HostSwitcher
               hosts={switcherHosts}
               selectedId={selectedHostId}
@@ -1294,6 +1335,44 @@ export function Sidebar({
               onOpenOwnerMemory={onOpenFleetOwnerMemory}
             />
             {tab === 'bots' &&
+              crossMatches.map(({ tab: matchTab, count }) => (
+                <button
+                  key={matchTab}
+                  type="button"
+                  onClick={() => selectTab(matchTab)}
+                  className="mx-2 mt-2 flex w-[calc(100%-1rem)] items-center justify-between rounded-md border border-dashed border-border px-2 py-2 text-left text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+                >
+                  {t('sidebar.crossTabResults', { count, tab: t(`sidebar.${matchTab}`) })}
+                  <ChevronRight className="size-3.5" />
+                </button>
+              ))}
+          </div>
+
+          <div
+            id="sidebar-panel-routines"
+            role="tabpanel"
+            aria-labelledby="sidebar-tab-routines"
+            hidden={tab !== 'routines'}
+            className="flex min-h-0 flex-1 flex-col pt-2 [&[hidden]]:hidden"
+          >
+            {routines && (
+              <RoutinesSidebarPanel
+                routines={routines.routines}
+                runsByRoutine={routines.runsByRoutine}
+                query={query}
+                view={routines.view}
+                activeConversationId={activeId}
+                backgroundEnabled={routines.backgroundEnabled}
+                expandedIds={routines.expandedIds}
+                flashRoutineId={routines.flashRoutineId}
+                onToggleExpanded={routines.onToggleExpanded}
+                onOpenAgenda={routines.onOpenAgenda}
+                onOpenRoutine={routines.onOpenRoutine}
+                onOpenRun={routines.onOpenRun}
+                onEnableBackground={routines.onEnableBackground}
+              />
+            )}
+            {tab === 'routines' &&
               crossMatches.map(({ tab: matchTab, count }) => (
                 <button
                   key={matchTab}

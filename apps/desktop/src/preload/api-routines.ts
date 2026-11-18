@@ -7,6 +7,7 @@ import type {
   RoutineListRunsResult,
   RoutineOrigin,
   RoutineProposal,
+  RoutineRunDetails,
   RoutineSavedPermission,
   RoutineSettings,
   RoutineToastPayload,
@@ -30,6 +31,8 @@ export const routinesApi = {
     ipcRenderer.invoke('routines:listRuns', input),
   routinesRunsInRange: (from: number, to: number): Promise<LocalRoutineRun[]> =>
     ipcRenderer.invoke('routines:runsInRange', { from, to }),
+  routinesGetRun: (runId: string): Promise<RoutineRunDetails | null> =>
+    ipcRenderer.invoke('routines:getRun', runId),
   routinesPinRun: (runId: string, pinned: boolean): Promise<LocalRoutineRun | null> =>
     ipcRenderer.invoke('routines:pinRun', runId, pinned),
   routinesDeleteRunConversation: (runId: string): Promise<boolean> =>

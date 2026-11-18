@@ -1,7 +1,7 @@
 import type { Conversation } from '../../../shared/conversation'
 
-/** The notifications center first: it gathers what the other three hold that needs the owner. */
-export const sidebarTabs = ['inbox', 'chats', 'workspaces', 'bots'] as const
+/** The notifications center first: it gathers what the other sections hold that needs the owner. */
+export const sidebarTabs = ['inbox', 'chats', 'workspaces', 'bots', 'routines'] as const
 export type SidebarTab = (typeof sidebarTabs)[number]
 
 export function readSidebarTab(value: string | null): SidebarTab {
@@ -9,7 +9,10 @@ export function readSidebarTab(value: string | null): SidebarTab {
 }
 
 export function conversationSidebarTab(conversation: Conversation): SidebarTab {
-  return conversation.scope === 'standalone' ? 'chats' : 'workspaces'
+  if (conversation.scope === 'standalone') {
+    return conversation.routineRunId ? 'routines' : 'chats'
+  }
+  return 'workspaces'
 }
 
 export function nextSidebarTab(current: SidebarTab, key: string): SidebarTab | null {
