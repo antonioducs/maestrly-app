@@ -92,6 +92,7 @@ import {
 } from '@/lib/chat-history-window'
 import { boundDraftAttachments } from '@/lib/draft-attachment-budget'
 import { useChatOwnerWindow, useChatSourceConversation } from '@/lib/chat-window-context'
+import { LOCAL_HOST_ID } from '../../../shared/host-key'
 import { draftAttachmentKind, hasArtifactAttachment } from '@/lib/attachment-kind'
 import {
   MAX_ATTACHMENT_IMAGE_BYTES,
@@ -141,6 +142,7 @@ interface Props {
   conversationId: string
   /** Shown while a review holds the conversation. */
   conversationName?: string
+  isRoutineRun?: boolean
   /** Opens this conversation's Plan tab. */
   onOpenPlan?: () => void
   cwd: string
@@ -189,6 +191,7 @@ export function ChatView({
   workspaceId,
   conversationId,
   conversationName,
+  isRoutineRun = false,
   onOpenPlan,
   cwd: _cwd,
   experience,
@@ -2272,6 +2275,8 @@ export function ChatView({
                 )}
                 <div ref={scrollRef} className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
                   <ChatMessageList
+                    conversationId={conversationId}
+                    isRoutineRun={isRoutineRun}
                     messages={messages}
                     experience={currentExperience}
                     streaming={streaming}
@@ -2579,6 +2584,40 @@ export function ChatView({
                         onAddFiles={addFiles}
                         fontScale={fontScale}
                         onFontScale={setFontScale}
+                        onScheduleRoutine={
+                          !botManaged && !botConversation && hostId === LOCAL_HOST_ID && !isRoutineRun
+                            ? () => {
+                                void Promise.all([
+                                  api.chatGetPermMode(conversationId).catch(() => 'auto' as const),
+                                  api.chatGetFastMode(conversationId).catch(() => false),
+                                ]).then(([initialPermMode, fastMode]) => {
+                                  window.dispatchEvent(
+                                    new CustomEvent('maestrly:schedule-from-chat', {
+                                      detail: {
+                                        sourceConversationId: conversationId,
+                                        originTitle: conversationName ?? '',
+                                        initialInstruction: draft,
+                                        initialPermMode,
+                                        initialModel:
+                                          selProviderId && selModelId
+                                            ? {
+                                                providerId: selProviderId,
+                                                modelId: selModelId,
+                                                reasoning,
+                                                fastMode,
+                                              }
+                                            : undefined,
+                                        onCreated: () => {
+                                          setDraft('')
+                                          setDraftMentions([])
+                                        },
+                                      },
+                                    })
+                                  )
+                                })
+                              }
+                            : undefined
+                        }
                       />
                       <ChatSkillsMenu conversationId={conversationId} onChanged={reloadCommands} />
                       {isMaestro ? (

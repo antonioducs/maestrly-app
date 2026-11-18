@@ -272,6 +272,7 @@ export default {
     adjustAction: 'Ajustar…',
     discardAction: 'Descartar',
     footerNote: 'Roda neste computador. Nada roda antes de você criar.',
+    remoteReadOnly: 'Esta rotina foi proposta em outro computador e só pode ser gerenciada lá.',
     plusMenuTitle: 'Agendar como rotina…',
     plusMenuSub: 'Usa o texto da mensagem como instrução',
   },

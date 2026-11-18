@@ -20,13 +20,20 @@ import { genUiPreviewsOf } from '../../../shared/genui-widget'
 import { cn } from '@/lib/utils'
 import { useSettings } from '@/lib/use-settings'
 import { useHostId } from '@/lib/hosts/host-context'
+import { LOCAL_HOST_ID } from '../../../shared/host-key'
 import { useAgentActivityMode } from '@/lib/agent-activity-preference'
-import { chatActivitySegments, isSharedScreenshot } from '@/lib/agent-activity'
+import { baseToolName, chatActivitySegments, isSharedScreenshot } from '@/lib/agent-activity'
 import { MemorySourcesChip } from './MemorySourcesChip'
 import { ChatAgentActivity } from './ChatAgentActivity'
 import { SharedToolImages, ToolCallCard } from './ToolCallCard'
 import { ConversationDispatchCard, openConversationById } from './ConversationDispatchCard'
 import { WorkspaceCreationCard } from './WorkspaceCreationCard'
+import {
+  LiveRoutineCreatedNotice,
+  RoutineProposalCard,
+  interleaveChatMenuRoutines,
+} from '../routines/RoutineProposalCard'
+import type { LocalRoutine } from '../../../shared/routines'
 import { ArtifactCard } from '../artifacts/ArtifactCard'
 import { ARTIFACT_CARD_TOOLS } from '../../../shared/artifacts'
 import { SubagentCard } from './SubagentCard'
@@ -340,16 +347,19 @@ function Part({
   if (part.type === 'agent-mention') return null
   if (part.type === 'tool') {
     const toolPart = part
-    if (toolPart.toolName === 'ask_question') return <QuestionCard part={toolPart} />
-    if (toolPart.toolName === 'todo_write')
+    const toolBase = baseToolName(toolPart.toolName)
+    if (toolBase === 'ask_question') return <QuestionCard part={toolPart} />
+    if (toolBase === 'todo_write')
       return toolPart.toolCallId === latestTodoId ? <TodoCard part={toolPart} /> : null
-    if (toolPart.toolName === 'start_conversations')
+    if (toolBase === 'start_conversations')
       return <ConversationDispatchCard part={toolPart} conversationId={conversationId} messageId={messageId} />
-    if (toolPart.toolName === 'create_workspace')
+    if (toolBase === 'create_workspace')
       return <WorkspaceCreationCard part={toolPart} conversationId={conversationId} messageId={messageId} />
+    if (toolBase === 'routine_propose')
+      return <RoutineProposalCard part={toolPart} conversationId={conversationId} messageId={messageId} />
     if (ARTIFACT_CARD_TOOLS.includes(toolPart.toolName))
       return <ArtifactCard part={toolPart} conversationId={conversationId} messageId={messageId} />
-    if (toolPart.toolName === 'task' || toolPart.toolName === 'delegate')
+    if (toolBase === 'task' || toolBase === 'delegate')
       return (
         <SubagentCard
           part={toolPart}
@@ -804,6 +814,8 @@ const Bubble = memo(function Bubble({
 })
 
 interface Props extends EditCtx {
+  conversationId?: string
+  isRoutineRun?: boolean
   messages: ChatMessage[]
 
   readOnly?: boolean
@@ -845,6 +857,8 @@ export interface ReviewReceiptProps {
 }
 
 export const ChatMessageList = memo(function ChatMessageList({
+  conversationId: providedConversationId,
+  isRoutineRun = false,
   messages,
   experience = 'standard',
   streaming,
@@ -879,7 +893,42 @@ export const ChatMessageList = memo(function ChatMessageList({
   const openImage = useCallback((src: string, name: string) => setLightbox({ src, name }), [])
   const closeImage = useCallback(() => setLightbox(null), [])
 
+  const hostId = useHostId()
+  const activeConversationId = providedConversationId ?? messages[0]?.conversationId ?? null
+  const [menuRoutines, setMenuRoutines] = useState<LocalRoutine[]>([])
+
+  useEffect(() => {
+    if (!activeConversationId || isRoutineRun || hostId !== LOCAL_HOST_ID) {
+      setMenuRoutines([])
+      return
+    }
+    let alive = true
+    const load = async () => {
+      try {
+        const list = await window.api.routinesList()
+        if (!alive) return
+        setMenuRoutines(
+          list.filter(
+            (r) => r.origin?.conversationId === activeConversationId && r.origin.via === 'menu'
+          )
+        )
+      } catch {
+        /* Ignore when routines API is unavailable in isolated contexts. */
+      }
+    }
+    void load()
+    const off = window.api.onRoutinesChanged(() => void load())
+    return () => {
+      alive = false
+      off()
+    }
+  }, [activeConversationId, isRoutineRun, hostId])
+
   const visibleMessages = useMemo(() => messages.filter((m) => !m.internal), [messages])
+  const timeline = useMemo(
+    () => interleaveChatMenuRoutines(visibleMessages, menuRoutines),
+    [visibleMessages, menuRoutines]
+  )
 
   const last = visibleMessages.length ? visibleMessages[visibleMessages.length - 1] : null
   const lastMarker = last
@@ -1033,7 +1082,7 @@ export const ChatMessageList = memo(function ChatMessageList({
     firstIdRef.current = firstId
   }, [messages])
 
-  if (visibleMessages.length === 0) {
+  if (visibleMessages.length === 0 && menuRoutines.length === 0) {
     return (
       <div className="flex h-full items-center justify-center px-6 text-center text-[14px] text-muted-foreground">
         <div className="max-w-sm">
@@ -1051,47 +1100,57 @@ export const ChatMessageList = memo(function ChatMessageList({
   return (
     <div ref={contentRef} className="chat-msgs mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-5 px-3 py-5">
       {lightbox && <ChatImageLightbox src={lightbox.src} name={lightbox.name} onClose={closeImage} />}
-      {visibleMessages.map((m, i) => (
-        // Keep the scroll anchor stable while content visibility updates card height.
+      {timeline.map((entry, i) => {
+        if (entry.kind === 'menu-routine') {
+          return (
+            <div key={`routine-menu:${entry.routine.id}`} className="min-w-0 max-w-full">
+              <LiveRoutineCreatedNotice routine={entry.routine} />
+            </div>
+          )
+        }
+        const m = entry.message
+        return (
+          // Keep the scroll anchor stable while content visibility updates card height.
 
-        <div
-          key={m.id}
-          data-msg-id={m.id}
-          className={cn(
-            'min-w-0 max-w-full scroll-mt-16 rounded-xl transition-shadow',
-            // A user message's hover actions fill the gap before the next message instead of adding a row. The
-            // margin sits on this element: its content visibility clips whatever overflows it.
-            m.role === 'user' && editingId !== m.id && '-mb-5',
-            highlightMsgId === m.id && 'ring-2 ring-sky-400/60 ring-offset-2 ring-offset-[#0d0d10]'
-          )}
-          style={
-            i < visibleMessages.length - 1
-              ? ({ contentVisibility: 'auto', containIntrinsicSize: 'auto 360px' } as CSSProperties)
-              : ({ containIntrinsicSize: 'auto 360px' } as CSSProperties)
-          }
-        >
-          <Bubble
-            message={m}
-            canEdit={!readOnly && !streaming && m.id === lastUserId}
-            isEditing={editingId === m.id}
-            latestTodoId={latestTodoId}
-            compact={compact}
-            live={m.id === liveMessageId}
-            agents={agents}
-            onStartEdit={onStartEdit}
-            onCancelEdit={onCancelEdit}
-            onSubmitEdit={onSubmitEdit}
-            onRetrySteering={onRetrySteering}
-            reviewReceipt={rowReviewReceipt}
-            onOpenMention={onOpenMention}
-            onOpenImage={openImage}
-            onUiSend={readOnly ? undefined : onUiSend}
-            searchQuery={searchHitIds?.has(m.id) ? searchQuery : undefined}
-            currentSearchMatch={currentSearchHitId === m.id}
-            turnChangesEntry={turnChanges?.byMessage.get(m.id)}
-          />
-        </div>
-      ))}
+          <div
+            key={m.id}
+            data-msg-id={m.id}
+            className={cn(
+              'min-w-0 max-w-full scroll-mt-16 rounded-xl transition-shadow',
+              // A user message's hover actions fill the gap before the next message instead of adding a row. The
+              // margin sits on this element: its content visibility clips whatever overflows it.
+              m.role === 'user' && editingId !== m.id && '-mb-5',
+              highlightMsgId === m.id && 'ring-2 ring-sky-400/60 ring-offset-2 ring-offset-[#0d0d10]'
+            )}
+            style={
+              i < timeline.length - 1
+                ? ({ contentVisibility: 'auto', containIntrinsicSize: 'auto 360px' } as CSSProperties)
+                : ({ containIntrinsicSize: 'auto 360px' } as CSSProperties)
+            }
+          >
+            <Bubble
+              message={m}
+              canEdit={!readOnly && !streaming && m.id === lastUserId}
+              isEditing={editingId === m.id}
+              latestTodoId={latestTodoId}
+              compact={compact}
+              live={m.id === liveMessageId}
+              agents={agents}
+              onStartEdit={onStartEdit}
+              onCancelEdit={onCancelEdit}
+              onSubmitEdit={onSubmitEdit}
+              onRetrySteering={onRetrySteering}
+              reviewReceipt={rowReviewReceipt}
+              onOpenMention={onOpenMention}
+              onOpenImage={openImage}
+              onUiSend={readOnly ? undefined : onUiSend}
+              searchQuery={searchHitIds?.has(m.id) ? searchQuery : undefined}
+              currentSearchMatch={currentSearchHitId === m.id}
+              turnChangesEntry={turnChanges?.byMessage.get(m.id)}
+            />
+          </div>
+        )
+      })}
       {streaming && !liveLine && (
         <div className="flex items-center gap-1.5 text-[13px] text-muted-foreground">
           <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-muted-foreground" />

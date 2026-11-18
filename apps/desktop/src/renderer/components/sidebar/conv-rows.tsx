@@ -12,8 +12,10 @@ import {
   FolderOpen,
   MoreHorizontal,
   Sparkles,
+  Clock,
 } from 'lucide-react'
 import type { Conversation } from '../../../preload'
+import { isRemoteKey } from '@/lib/hosts/shell-keys'
 import { BotConversationBadge } from '../bot/BotConversationBadge'
 import { cn } from '@/lib/utils'
 import { useLocale } from '@/lib/i18n'
@@ -45,6 +47,7 @@ export function useConvRows({
   showQuickTooltip,
   hideQuickTooltip,
   menus,
+  routineOriginCounts,
 }: {
   statuses: Record<string, AgentStatus>
   attention: Set<string>
@@ -62,8 +65,10 @@ export function useConvRows({
   showQuickTooltip: (e: MouseEvent<HTMLElement>, text: string) => void
   hideQuickTooltip: () => void
   menus: ReturnType<typeof useSidebarMenus>
+  routineOriginCounts?: ReadonlyMap<string, number>
 }) {
   const { t } = useTranslation('ui')
+  const { t: tRoutines } = useTranslation('routines')
   const [locale] = useLocale()
   const { convMenuItems, sharedFolderMenuItems } = menus
 
@@ -212,6 +217,17 @@ export function useConvRows({
                 {conv.repos?.length ?? ''}
               </span>
             ) : null}
+            {!isRemoteKey(conv.id) && (routineOriginCounts?.get(conv.id) ?? 0) > 0 && (() => {
+              const count = routineOriginCounts!.get(conv.id) ?? 0
+              return (
+                <span
+                  className="flex items-center text-[var(--routine)]"
+                  title={tRoutines(count === 1 ? 'list.chatMarkSingle' : 'list.chatMarkPlural', { count })}
+                >
+                  <Clock aria-hidden="true" className="size-3" />
+                </span>
+              )
+            })()}
             {ageLabel(conv.lastActivityAt)}
           </span>
         )}

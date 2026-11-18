@@ -28,6 +28,7 @@ import {
   Play,
   RefreshCw,
   SquareArrowOutUpRight,
+  Clock,
   CheckCheck,
 } from 'lucide-react'
 import { DndContext } from '@dnd-kit/core'
@@ -592,6 +593,14 @@ export function Sidebar({
     newSiblingConversation,
   })
   const { workspaceMenuItems, groupMenuItems } = menus
+  const routineOriginCounts = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const r of routines?.routines ?? []) {
+      if (!r.origin?.conversationId) continue
+      counts.set(r.origin.conversationId, (counts.get(r.origin.conversationId) ?? 0) + 1)
+    }
+    return counts
+  }, [routines?.routines])
   const { convItem, sharedFolder } = useConvRows({
     statuses,
     attention,
@@ -609,6 +618,7 @@ export function Sidebar({
     showQuickTooltip,
     hideQuickTooltip,
     menus,
+    routineOriginCounts,
   })
 
   const renderConvFlat = (convs: Conversation[]) =>
@@ -1237,6 +1247,12 @@ export function Sidebar({
                     )}
                     {q && filteredChats.length === 0 && (
                       <p className="px-4 py-6 text-center text-xs text-muted-foreground">{t('sidebar.nothingFound')}</p>
+                    )}
+                    {!q && (
+                      <p className="flex items-center gap-1.5 px-3 pb-1 pt-3 text-[11px] font-medium text-muted-foreground/60">
+                        <Clock aria-hidden="true" className="size-3 shrink-0" />
+                        <span>{tRoutines('list.chatsHint')}</span>
+                      </p>
                     )}
                   </>
                 )}

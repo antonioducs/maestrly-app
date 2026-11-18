@@ -361,6 +361,31 @@ export function useRoutines({
     [flashRoutine, onNavigateRoutine, refreshAll, t]
   )
 
+  const createFromProposal = useCallback(
+    async (proposalId: string, draft?: RoutineDraft) => {
+      const created = await window.api.routinesCreateFromProposal(proposalId, draft)
+      await refreshAll()
+      flashRoutine(created.id)
+      const tr = (key: string, opts?: Record<string, unknown>): string => String(t(key as never, opts as never))
+      const nextText = created.nextRunAt
+        ? t('toasts.createdNext', { when: formatWhen(created.nextRunAt, Date.now(), tr) })
+        : ''
+      toast({
+        id: `routine-created:${created.id}`,
+        tone: 'ok',
+        icon: 'check',
+        title: t('toasts.createdTitle'),
+        description: `${created.title}${nextText}`,
+        action: {
+          label: t('toasts.createdAction'),
+          onClick: () => onNavigateRoutine(created.id),
+        },
+      })
+      return created
+    },
+    [flashRoutine, onNavigateRoutine, refreshAll, t]
+  )
+
   const updateRoutine = useCallback(
     async (routineId: string, patch: RoutineUpdatePatch) => {
       const updated = await window.api.routinesUpdate(routineId, patch)
@@ -413,6 +438,7 @@ export function useRoutines({
     removeSavedPermission,
     openFolder,
     createRoutine,
+    createFromProposal,
     updateRoutine,
   }
 }

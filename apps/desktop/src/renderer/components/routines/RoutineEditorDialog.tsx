@@ -7,6 +7,7 @@ import type {
   LocalRoutine,
   RoutineDraft,
   RoutineMissed,
+  RoutineModel,
   RoutineNotify,
   RoutineRetentionDays,
   RoutineSavedPermission,
@@ -35,8 +36,11 @@ export type RoutineEditorTarget =
   | {
       kind: 'new'
       initialInstruction?: string
+      initialModel?: RoutineModel
+      initialPermMode?: ChatPermMode
       sourceConversationId?: string
       originTitle?: string
+      onCreated?: () => void
     }
   | {
       kind: 'proposal'
@@ -77,8 +81,8 @@ function initialFormForTarget(target: RoutineEditorTarget): RoutineEditorForm {
     title: '',
     instruction: target.initialInstruction ?? '',
     schedule: { kind: 'weekly', time: '09:00', days: [1, 2, 3, 4, 5], timezone: systemTimeZone() },
-    permMode: 'auto',
-    model: { ...DEFAULT_MODEL },
+    permMode: target.initialPermMode ?? 'auto',
+    model: target.initialModel ? { ...target.initialModel } : { ...DEFAULT_MODEL },
     notify: 'notable',
     missed: 'catchup',
     retentionDays: 30,
@@ -287,6 +291,7 @@ export function RoutineEditorFormBody({
         await target.onConfirmDraft(draft)
       } else {
         await onSaveNew(draft, target.sourceConversationId)
+        target.onCreated?.()
       }
       onClose()
     } catch (err) {

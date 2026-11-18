@@ -272,6 +272,7 @@ export default {
     adjustAction: 'Adjust…',
     discardAction: 'Discard',
     footerNote: 'Runs on this computer. Nothing runs before you create it.',
+    remoteReadOnly: 'This routine was proposed on another computer and can only be managed there.',
     plusMenuTitle: 'Schedule as routine…',
     plusMenuSub: 'Uses the message text as the instruction',
   },

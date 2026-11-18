@@ -9,7 +9,7 @@ import { requestMainNavigation } from '@/lib/main-navigation'
  * Native drawer and popup surfaces are suppressed whenever a DOM overlay needs to cover them. */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { PanelRight, MessagesSquare } from 'lucide-react'
+import { PanelRight, MessagesSquare, Clock } from 'lucide-react'
 import { i18n } from '@/lib/i18n'
 import { setComposerPrefill } from '@/lib/composer-prefill'
 import type { Conversation, Workspace } from '../preload'
@@ -451,6 +451,55 @@ function DesktopShell({
     window.dispatchEvent(new CustomEvent('maestrly:open-routine-run', { detail: { routineId, runId } }))
   }, [])
   const [routineEditorTarget, setRoutineEditorTarget] = useState<RoutineEditorTarget | null>(null)
+
+  useEffect(() => {
+    const onScheduleFromChat = (event: Event) => {
+      const detail = (
+        event as CustomEvent<{
+          sourceConversationId: string
+          originTitle?: string
+          initialInstruction?: string
+          initialPermMode?: 'ask' | 'auto' | 'full'
+          initialModel?: { providerId: string; modelId: string; reasoning: string; fastMode: boolean }
+          onCreated?: () => void
+        }>
+      ).detail
+      if (!detail?.sourceConversationId) return
+      setRoutineEditorTarget({
+        kind: 'new',
+        sourceConversationId: detail.sourceConversationId,
+        originTitle: detail.originTitle,
+        initialInstruction: detail.initialInstruction,
+        initialPermMode: detail.initialPermMode,
+        initialModel: detail.initialModel as RoutineEditorTarget extends { initialModel?: infer M } ? M : never,
+        onCreated: detail.onCreated,
+      })
+    }
+    const onAdjustProposal = (event: Event) => {
+      const detail = (
+        event as CustomEvent<{
+          proposalId: string
+          draft: import('../shared/routines').RoutineDraft
+          originTitle?: string
+        }>
+      ).detail
+      if (!detail?.proposalId || !detail.draft) return
+      setRoutineEditorTarget({
+        kind: 'proposal',
+        draft: detail.draft,
+        originTitle: detail.originTitle,
+        onConfirmDraft: async (editedDraft) => {
+          await routinesCtrl.createFromProposal(detail.proposalId, editedDraft)
+        },
+      })
+    }
+    window.addEventListener('maestrly:schedule-from-chat', onScheduleFromChat)
+    window.addEventListener('maestrly:adjust-routine-proposal', onAdjustProposal)
+    return () => {
+      window.removeEventListener('maestrly:schedule-from-chat', onScheduleFromChat)
+      window.removeEventListener('maestrly:adjust-routine-proposal', onAdjustProposal)
+    }
+  }, [routinesCtrl])
 
   const creatingChatRef = useRef(false)
   const [creatingChat, setCreatingChat] = useState(false)
@@ -1547,6 +1596,33 @@ function DesktopShell({
                         <ConversationBranchChip conversationId={rawId(active.id)} status={statuses[active.id]} />
                       </HostProvider>
                     )}
+                    {active && !activeRemote && (() => {
+                      const originRoutines = routinesCtrl.routines.filter(
+                        (r) => r.origin?.conversationId === rawId(active.id)
+                      )
+                      if (originRoutines.length === 0) return null
+                      const count = originRoutines.length
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (count === 1) nav.openRoutinesView({ kind: 'routine', id: originRoutines[0].id })
+                            else nav.openRoutinesView({ kind: 'agenda' })
+                            requestSidebarTab('routines')
+                          }}
+                          title={i18n.t('routines:list.headerChipTitle')}
+                          className="routine-header-chip"
+                        >
+                          <Clock aria-hidden="true" className="size-3 shrink-0" />
+                          <span>
+                            {i18n.t(
+                              count === 1 ? 'routines:list.headerChipSingle' : 'routines:list.headerChipPlural',
+                              { count }
+                            )}
+                          </span>
+                        </button>
+                      )
+                    })()}
                   </div>
                   <div className="no-drag flex min-w-0 items-center gap-2">
                     {active && !activeRemote && <ChatWindowButton target={{ kind: 'conversation', id: active.id }} />}
@@ -1659,6 +1735,9 @@ function DesktopShell({
                                 key={c.id}
                                 conversationId={c.id}
                                 conversationName={currentConversation.name}
+                                isRoutineRun={
+                                  currentConversation.scope === 'standalone' && Boolean(currentConversation.routineRunId)
+                                }
                                 onOpenPlan={() => {
                                   openDrawerTab(c.id, 'plan')
                                   setDrawerOpenByConv((current) => ({ ...current, [c.id]: true }))
