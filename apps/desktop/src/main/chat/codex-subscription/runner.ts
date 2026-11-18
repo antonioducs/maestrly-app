@@ -1926,7 +1926,7 @@ async function buildDynamicTools(
     const conversationLink = enableConversationLinkTools(bridgeNames, args.conversationId, args.mode)
     // The assistant conversation's own tools: a turn the person typed there.
     const assistantTools = enableAssistantTools(bridgeNames, args.conversationId, args.mode)
-    enableRoutineTools(bridgeNames, args.conversationId)
+    enableRoutineTools(bridgeNames, args.conversationId, args.mode)
     const bridgeTools = bridgeNames.size
       ? buildTools({
           executorReport: true,

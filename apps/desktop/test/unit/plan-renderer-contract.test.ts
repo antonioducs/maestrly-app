@@ -81,7 +81,7 @@ describe('plan decision failure in the renderer', () => {
     const view = source('src/renderer/components/chat/ChatView.tsx')
     const panels = source('src/renderer/lib/use-main-panels.ts')
 
-    expect(list).toContain("toolPart.toolName === 'start_conversations'")
+    expect(list).toContain("toolBase === 'start_conversations'")
     expect(list).toContain("message.source === 'conversation-dispatch'")
     expect(card).toContain('parseConversationDispatchBatchResult')
     expect(card).toContain("new CustomEvent('maestrly:open-conversation'")
@@ -104,7 +104,7 @@ describe('plan decision failure in the renderer', () => {
     const settings = source('src/renderer/components/SettingsView.tsx')
     const dialog = source('src/renderer/project-setup/ProjectSetupDialog.tsx')
 
-    expect(list).toContain("toolPart.toolName === 'create_workspace'")
+    expect(list).toContain("toolBase === 'create_workspace'")
     expect(card).toContain('parseWorkspaceCreationResult')
     expect(card).toContain('api.onWorkspaceCreationProgress(')
     expect(card).toContain('api.pickProjectsDirectory()')

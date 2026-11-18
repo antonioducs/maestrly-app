@@ -7,13 +7,14 @@ import {
   routineNotifySchema,
   type RoutineDraft,
 } from '../../../shared/routines'
+import type { ChatBehavior } from '../../../shared/conversation-experience'
 import { isBotMode } from '../../fleet/instance/config'
 import { isHeadlessInstance } from '../../remote-host/server/config'
 import { createProposal } from '../../routines/store'
 import { getConversation } from '../../store'
 import { autonomousPolicy } from '../autonomous'
 import { remoteChatPolicy } from '../remote-policy'
-import { ROUTINE_PROPOSE_TOOL_NAME, ROUTINE_RUN_REPORT_TOOL_NAME } from '../tool-policy'
+import { conversationDispatchToolsAllowed, ROUTINE_PROPOSE_TOOL_NAME, ROUTINE_RUN_REPORT_TOOL_NAME } from '../tool-policy'
 import { routineRunReportToolAllowed } from './routine-run-report'
 import { defineTool } from './util'
 
@@ -51,7 +52,8 @@ export type RoutineProposeResult =
  * Only local desktop conversations (standalone or project) that are not routine runs, not bot/headless instances,
  * not remote web chats, and not unattended autonomous turns may propose routines.
  */
-export function routineProposeToolAllowed(conversationId: string): boolean {
+export function routineProposeToolAllowed(conversationId: string, mode?: ChatBehavior): boolean {
+  if (mode && !conversationDispatchToolsAllowed(mode)) return false
   if (isBotMode() || isHeadlessInstance()) return false
   if (autonomousPolicy(conversationId) || remoteChatPolicy(conversationId)) return false
   const conversation = getConversation(conversationId)
@@ -61,12 +63,12 @@ export function routineProposeToolAllowed(conversationId: string): boolean {
 }
 
 /** Adds routine_run_report inside run conversations, or routine_propose in eligible local chats. */
-export function enableRoutineTools(enabled: Set<string>, conversationId: string): void {
+export function enableRoutineTools(enabled: Set<string>, conversationId: string, mode?: ChatBehavior): void {
   if (routineRunReportToolAllowed(conversationId)) {
     enabled.add(ROUTINE_RUN_REPORT_TOOL_NAME)
     return
   }
-  if (routineProposeToolAllowed(conversationId)) {
+  if (routineProposeToolAllowed(conversationId, mode)) {
     enabled.add(ROUTINE_PROPOSE_TOOL_NAME)
   }
 }

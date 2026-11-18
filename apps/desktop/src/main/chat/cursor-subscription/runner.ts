@@ -467,7 +467,7 @@ async function runCursorSubscriptionChatInScope(
     const conversationLink = enableConversationLinkTools(enabledBuiltins, args.conversationId, args.mode)
     // The assistant conversation's own tools: a turn the person typed there.
     const assistantTools = enableAssistantTools(enabledBuiltins, args.conversationId, args.mode)
-    enableRoutineTools(enabledBuiltins, args.conversationId)
+    enableRoutineTools(enabledBuiltins, args.conversationId, args.mode)
     if (state.emitGeneratedImage && (await generateImageToolEnabled(args.conversationId, args.mode))) {
       enabledBuiltins.add(GENERATE_IMAGE_TOOL_NAME)
     }
