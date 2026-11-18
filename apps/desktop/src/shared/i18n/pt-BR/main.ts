@@ -210,4 +210,7 @@ export default {
     confirmCancel: 'Cancelar',
     viaLine: '— via Assistente do Maestrly',
   },
+  routines: {
+    copySuffix: ' (cópia)',
+  },
 } as const

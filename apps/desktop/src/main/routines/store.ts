@@ -302,6 +302,61 @@ export function setRoutineEnabled(id: string, enabled: boolean, now = Date.now()
   return getRoutine(id)!
 }
 
+export function duplicateRoutine(id: string, title: string, now = Date.now()): LocalRoutine {
+  const existing = getRoutine(id)
+  if (!existing) throw new Error('Routine not found.')
+  const count = (getDb().prepare('SELECT COUNT(*) AS count FROM local_routines').get() as { count: number }).count
+  if (count >= ROUTINE_LIMITS.routinesMax) {
+    throw new Error(`Routine limit reached (${ROUTINE_LIMITS.routinesMax}).`)
+  }
+  const cleanTitle = title.trim().slice(0, ROUTINE_LIMITS.titleMax)
+  const draft = routineDraftSchema.parse({
+    title: cleanTitle || existing.title,
+    instruction: existing.instruction,
+    schedule: existing.schedule,
+    permMode: existing.permMode,
+    model: existing.model,
+    notify: existing.notify,
+    missed: existing.missed,
+    retentionDays: existing.retentionDays,
+  })
+  const copyId = randomUUID()
+  const folder = routineFolderPath(copyId)
+  fs.mkdirSync(folder, { recursive: true, mode: 0o700 })
+  getDb()
+    .prepare(
+      `INSERT INTO local_routines (
+        id, title, instruction, schedule_json, enabled, paused_at, perm_mode,
+        provider_id, model_id, reasoning, fast_mode, notify, missed, retention_days,
+        origin_conversation_id, origin_title, origin_via, folder, next_run_at, created_at, updated_at
+      ) VALUES (
+        @id, @title, @instruction, @scheduleJson, 0, @pausedAt, @permMode,
+        @providerId, @modelId, @reasoning, @fastMode, @notify, @missed, @retentionDays,
+        NULL, NULL, NULL, @folder, NULL, @createdAt, @updatedAt
+      )`
+    )
+    .run({
+      id: copyId,
+      title: draft.title,
+      instruction: draft.instruction,
+      scheduleJson: JSON.stringify(draft.schedule),
+      pausedAt: now,
+      permMode: draft.permMode,
+      providerId: draft.model.providerId,
+      modelId: draft.model.modelId,
+      reasoning: draft.model.reasoning,
+      fastMode: draft.model.fastMode ? 1 : 0,
+      notify: draft.notify,
+      missed: draft.missed,
+      retentionDays: draft.retentionDays,
+      folder,
+      createdAt: now,
+      updatedAt: now,
+    })
+  emitRoutinesChanged()
+  return getRoutine(copyId)!
+}
+
 export function setNextRunAt(id: string, nextRunAt: number | null): void {
   const changes = getDb().prepare('UPDATE local_routines SET next_run_at = ? WHERE id = ?').run(nextRunAt, id).changes
   if (changes > 0) emitRoutinesChanged()

@@ -7,9 +7,10 @@ import { ensureAppOwnedExcludes } from './git-service'
 import { isBotMode } from './fleet/instance/config'
 import { startBotInstanceMode } from './fleet/instance'
 import { applyRoutineLoginItem, isLoginItemSupported, wasOpenedAtLoginForRoutines } from './routines/lifecycle'
+import { registerRoutinesIpc } from './routines/ipc'
 import { createRoutineRunner, type RoutineRunner } from './routines/runner'
 import { createRoutineScheduler, type RoutineScheduler } from './routines/scheduler'
-import { getRoutineSettings, listRoutines } from './routines/store'
+import { getRoutineSettings, listRoutines, subscribeRoutinesChanged } from './routines/store'
 import { hostGatewayAccess, isHeadlessInstance, isServerMode } from './remote-host/server/config'
 import {
   ENVIRONMENT_BOT_ACCESS_CHANGED,
@@ -342,6 +343,7 @@ let appNotifications: AppNotifications | null = null
 const BOT_ATTENTION_KEY = 'notifications.botAttention.v1'
 let routineRunner: RoutineRunner | null = null
 let routineScheduler: RoutineScheduler | null = null
+let disposeRoutinesChanged: (() => void) | null = null
 let initialLoginHideConsumed = false
 let cancelProjectSetupsAndWait: (() => Promise<void>) | null = null
 let disposeConversationMigrationIpc: (() => void) | null = null
@@ -1288,6 +1290,14 @@ function registerIpc(): void {
     isPreventSleepEnabled,
     setPreventSleepEnabled,
   })
+  registerRoutinesIpc(reg, {
+    getRunner: () => routineRunner,
+    applyLoginItem: (openAtLogin) => {
+      if (!isE2E()) applyRoutineLoginItem(openAtLogin)
+    },
+    onEnabledChanged: () => rebuildTrayMenu(),
+    onRunSeen: (runId) => appNotifications?.routines.seen(runId),
+  })
 }
 
 if (!app.requestSingleInstanceLock()) {
@@ -1477,6 +1487,7 @@ app.whenReady().then(async () => {
     })
     routineScheduler = createRoutineScheduler({ runner: routineRunner })
     routineScheduler.start()
+    disposeRoutinesChanged = subscribeRoutinesChanged(() => broadcast('routines:changed'))
   }
 
   conversationMigrationService.replayIncomplete()
@@ -1899,6 +1910,8 @@ app.on('before-quit', (e) => {
 
   if (!quitResourcesDisposed) {
     quitResourcesDisposed = true
+    disposeRoutinesChanged?.()
+    disposeRoutinesChanged = null
     routineScheduler?.stop()
     routineRunner?.dispose()
     releaseInstanceLock()

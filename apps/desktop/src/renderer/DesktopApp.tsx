@@ -23,6 +23,7 @@ import { ProjectNotesView } from '@/components/ProjectNotesView'
 import { ProjectMemoryView } from '@/components/ProjectMemoryView'
 import { PopupOverlay } from '@/components/PopupOverlay'
 import { Button } from '@/components/ui/button'
+import { Toaster, toast } from '@/components/ui/toaster'
 import { SettingsProvider } from '@/lib/use-settings'
 import { OnboardingProvider } from '@/lib/use-onboarding'
 import { UpdateProvider } from '@/lib/use-update'
@@ -840,6 +841,71 @@ function DesktopShell({
     window.api.setAppBadgeCount(badgeCount)
   }, [badgeCount])
 
+  useEffect(() => {
+    return window.api.onRoutinesToast?.((payload) => {
+      const openRun = () =>
+        window.dispatchEvent(
+          new CustomEvent('maestrly:open-routine-run', {
+            detail: { routineId: payload.routine.id, runId: payload.run.id },
+          })
+        )
+      if (payload.kind === 'started') {
+        toast({
+          id: `routine-started:${payload.run.id}`,
+          tone: 'run',
+          icon: 'clock',
+          title: i18n.t('routines:toasts.startedTitle', { title: payload.routine.title }),
+          description: i18n.t('routines:toasts.startedDesc'),
+          durationMs: 4000,
+          action: { label: i18n.t('routines:toasts.followAction'), onClick: openRun },
+        })
+        return
+      }
+      if (payload.kind === 'skipped-busy') {
+        toast({
+          id: `routine-skipped:${payload.run.id}`,
+          tone: 'skip',
+          icon: 'skip',
+          title: i18n.t('routines:toasts.skippedBusyTitle'),
+          description: payload.routine.title,
+          durationMs: 4000,
+        })
+        return
+      }
+      if (payload.run.unread) {
+        const tone =
+          payload.run.status === 'failed'
+            ? 'error'
+            : payload.run.status === 'waiting'
+              ? 'warn'
+              : payload.run.status === 'notable'
+                ? 'notable'
+                : payload.run.status === 'done'
+                  ? 'ok'
+                  : 'quiet'
+        const icon =
+          payload.run.status === 'failed'
+            ? 'alert'
+            : payload.run.status === 'waiting'
+              ? 'user'
+              : payload.run.status === 'notable'
+                ? 'sparkle'
+                : payload.run.status === 'done'
+                  ? 'circleCheck'
+                  : 'check'
+        const short = i18n.t(`routines:outcome.${payload.run.status}.short` as never).toLowerCase()
+        toast({
+          id: `routine-result:${payload.run.id}`,
+          tone,
+          icon,
+          title: i18n.t('routines:toasts.resultTitle', { title: payload.routine.title, outcome: short }),
+          description: payload.run.summary ?? i18n.t(`routines:outcome.${payload.run.status}.label` as never),
+          action: { label: i18n.t('routines:toasts.openRunAction'), onClick: openRun },
+        })
+      }
+    })
+  }, [])
+
   // The bot on screen notifies nothing and gets no mark; opening it clears its mark.
   const visibleBotId = mainOverride === 'fleet' && fleetView?.kind === 'bot' ? fleetView.botId : null
   useEffect(() => {
@@ -1593,6 +1659,7 @@ function DesktopShell({
             />
 
             <PopupOverlay convId={mainOverride ? null : (active?.id ?? null)} />
+            <Toaster />
           </div>
         </OnboardingProvider>
       </UpdateProvider>

@@ -219,6 +219,44 @@ export function parseRoutineSettings(raw: unknown): RoutineSettings {
   return parsed.success ? parsed.data : { ...DEFAULT_ROUTINE_SETTINGS }
 }
 
+export interface RoutineToastPayload {
+  kind: 'started' | 'skipped-busy' | 'result'
+  routine: LocalRoutine
+  run: LocalRoutineRun
+}
+
+export interface RoutineSavedPermission {
+  id: string
+  scopeKey: string
+  action: string
+  resource: string
+}
+
+export type RoutineUpdatePatch = Partial<RoutineDraft>
+
+export type RoutineRunFilter = 'all' | 'notable' | 'issues'
+
+export interface RoutineListRunsInput {
+  routineId: string
+  filter: RoutineRunFilter
+  limit: number
+  before?: number
+}
+
+export interface RoutineListRunsResult {
+  runs: LocalRoutineRun[]
+  total: number
+  hasMore: boolean
+}
+
+export function isRoutineRunSkipped(run: Pick<LocalRoutineRun, 'status'>): boolean {
+  return run.status.startsWith('skipped_')
+}
+
+export function isRoutineRunIssue(run: Pick<LocalRoutineRun, 'status'>): boolean {
+  return run.status === 'failed' || run.status === 'waiting' || run.status === 'stopped' || isRoutineRunSkipped(run)
+}
+
 /**
  * Whether a run should alert the person under `notify`:
  * `failed` and `waiting` always alert; `notable` alerts unless `notify === 'none'`;
