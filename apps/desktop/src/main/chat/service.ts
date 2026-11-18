@@ -2733,7 +2733,7 @@ function wireBroker(b: PermissionBroker): void {
 }
 
 /** Effective conversation permission mode: conversation prefs → global Chat default. */
-function permModeFor(conversationId: string): 'full' | 'ask' | 'auto' {
+export function permModeFor(conversationId: string): 'full' | 'ask' | 'auto' {
   const m = getConvUiPrefs(conversationId).chat?.permMode
   if (m === 'full' || m === 'ask' || m === 'auto') return m
   const configured = getAppSetting('chat.defaultPermissionMode')

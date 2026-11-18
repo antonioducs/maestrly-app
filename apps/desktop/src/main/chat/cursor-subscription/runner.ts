@@ -39,6 +39,7 @@ import { builtinToolNamesForMode, buildTools } from '../tools'
 import { enableConversationDispatchTools } from '../tools/conversation-dispatch'
 import { enableConversationLinkTools } from '../tools/conversation-link'
 import { enableAssistantTools } from '../tools/assistant'
+import { enableRoutineTools } from '../tools/routine-propose'
 import type { GeneratedImageEmission, GeneratedImageUsage, ToolContext } from '../tools/util'
 import {
   emitGeneratedImagePart,
@@ -466,6 +467,7 @@ async function runCursorSubscriptionChatInScope(
     const conversationLink = enableConversationLinkTools(enabledBuiltins, args.conversationId, args.mode)
     // The assistant conversation's own tools: a turn the person typed there.
     const assistantTools = enableAssistantTools(enabledBuiltins, args.conversationId, args.mode)
+    enableRoutineTools(enabledBuiltins, args.conversationId)
     if (state.emitGeneratedImage && (await generateImageToolEnabled(args.conversationId, args.mode))) {
       enabledBuiltins.add(GENERATE_IMAGE_TOOL_NAME)
     }

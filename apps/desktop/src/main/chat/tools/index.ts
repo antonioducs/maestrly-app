@@ -33,6 +33,8 @@ import {
   waitConversationTool,
 } from './conversation-link'
 import { botReadTool, botSendTool, maestrlyOverviewTool, respondPendingTool } from './assistant'
+import { routineProposeTool } from './routine-propose'
+import { routineRunReportTool } from './routine-run-report'
 import { boundText, type ToolContext, type ToolDef } from './util'
 import { chatToolOutputToAiSdkOutput, modelOutputToChatToolOutput } from '../tool-output'
 import type { ChatBehavior } from '../../../shared/conversation-experience'
@@ -43,6 +45,7 @@ import {
   CONVERSATION_LINK_TOOL_NAMES,
   isHostToolReadOnly,
   PARENT_ONLY_CONVERSATION_TOOL_NAMES,
+  ROUTINE_TOOL_NAMES,
 } from '../tool-policy'
 import { OPENAI_APPLY_PATCH_TOOL_NAME, OPENAI_LOCAL_SHELL_TOOL_NAME } from '../openai/native-tools'
 import { webSearchToolEnabled } from '../web-search/settings'
@@ -75,6 +78,8 @@ export const ALL_TOOLS: ToolDef<any, any>[] = [
   botReadTool,
   botSendTool,
   respondPendingTool,
+  routineProposeTool,
+  routineRunReportTool,
 ]
 export const ALL_TOOL_NAMES = ALL_TOOLS.map((t) => t.name)
 
@@ -95,6 +100,8 @@ const OPT_IN_TOOL_NAMES = new Set<string>([
   ...CONVERSATION_LINK_TOOL_NAMES,
   // Only in the assistant conversation, for a main turn typed by the person (assistantRuntimeFor).
   ...ASSISTANT_TOOL_NAMES,
+  // Local routine proposals (local chats) and run reports (run conversations).
+  ...ROUTINE_TOOL_NAMES,
 ])
 
 /** Capabilities that make an Agent subagent a worker instead of a read-only investigator. */
