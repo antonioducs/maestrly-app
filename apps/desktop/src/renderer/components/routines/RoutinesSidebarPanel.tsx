@@ -204,9 +204,11 @@ export function RoutinesSidebarPanel({
     )
   }
 
+  const hasEnabledRoutine = routines.some((r) => r.enabled)
+
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-1.5 pb-4">
-      {!backgroundEnabled && (
+      {!backgroundEnabled && hasEnabledRoutine && view?.kind !== 'agenda' && (
         <div
           role="status"
           className="mx-1 mb-2 flex flex-col items-start gap-1.5 rounded-[10px] border border-[rgba(242,180,92,0.22)] bg-[rgba(242,180,92,0.08)] px-3 py-2.5 text-[12px] text-[#f6ddb4]"

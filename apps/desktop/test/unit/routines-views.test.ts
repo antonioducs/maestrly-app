@@ -111,6 +111,50 @@ describe('RoutinesSidebarPanel', () => {
     expect(html).toContain('Rotinas param com o Maestrly fechado')
     expect(html).toContain('disabled')
   })
+
+  it('hides the background banner on the agenda view, with zero routines, or with only paused routines', () => {
+    const active = makeRoutine()
+    const paused = makeRoutine({ id: 'r-disk', title: 'Espaço do Docker', enabled: false })
+    const baseProps = {
+      runsByRoutine: {},
+      query: '',
+      activeConversationId: null,
+      backgroundEnabled: false,
+      expandedIds: new Set<string>(),
+      onToggleExpanded: vi.fn(),
+      onOpenAgenda: vi.fn(),
+      onOpenRoutine: vi.fn(),
+      onOpenRun: vi.fn(),
+      onEnableBackground: vi.fn(),
+    }
+
+    const agendaHtml = renderToStaticMarkup(
+      createElement(RoutinesSidebarPanel, {
+        ...baseProps,
+        routines: [active],
+        view: { kind: 'agenda' },
+      })
+    )
+    expect(agendaHtml).not.toContain('Rotinas param com o Maestrly fechado')
+
+    const emptyHtml = renderToStaticMarkup(
+      createElement(RoutinesSidebarPanel, {
+        ...baseProps,
+        routines: [],
+        view: { kind: 'routine', id: 'r-lisboa' },
+      })
+    )
+    expect(emptyHtml).not.toContain('Rotinas param com o Maestrly fechado')
+
+    const pausedOnlyHtml = renderToStaticMarkup(
+      createElement(RoutinesSidebarPanel, {
+        ...baseProps,
+        routines: [paused],
+        view: { kind: 'routine', id: 'r-disk' },
+      })
+    )
+    expect(pausedOnlyHtml).not.toContain('Rotinas param com o Maestrly fechado')
+  })
 })
 
 describe('RoutinesAgendaView', () => {
@@ -177,6 +221,30 @@ describe('RoutinesAgendaView', () => {
     expect(html).toContain('A seguir')
     expect(html).toContain('Este computador')
     expect(html).toContain('Ligado')
+  })
+
+  it('hides the agenda background banner when there are zero or only paused routines', () => {
+    const paused = makeRoutine({ id: 'r-disk', enabled: false })
+    const baseProps = {
+      runsByRoutine: {},
+      attentionRuns: [],
+      settings: { keepRunning: false, openAtLogin: false },
+      preventSleepEnabled: true,
+      isLinux: false,
+      onNewRoutine: vi.fn(),
+      onAskInChat: vi.fn(),
+      onOpenRoutine: vi.fn(),
+      onOpenRun: vi.fn(),
+      onViewBots: vi.fn(),
+      onToggleKeepRunning: vi.fn(),
+      onToggleOpenAtLogin: vi.fn(),
+    }
+
+    const emptyHtml = renderToStaticMarkup(createElement(RoutinesAgendaView, { ...baseProps, routines: [] }))
+    expect(emptyHtml).not.toContain('Rotinas param com o Maestrly fechado.')
+
+    const pausedHtml = renderToStaticMarkup(createElement(RoutinesAgendaView, { ...baseProps, routines: [paused] }))
+    expect(pausedHtml).not.toContain('Rotinas param com o Maestrly fechado.')
   })
 })
 

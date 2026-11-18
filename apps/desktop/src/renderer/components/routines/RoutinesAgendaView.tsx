@@ -45,6 +45,7 @@ export function RoutinesAgendaView({
   const nowMs = Date.now()
   const tr = (key: string, opts?: Record<string, unknown>): string => String(t(key as never, opts as never))
 
+  const hasEnabledRoutine = routines.some((r) => r.enabled)
   const upcomingNexts = routines
     .filter((r): r is LocalRoutine & { nextRunAt: number } => r.enabled && r.nextRunAt != null)
     .sort((a, b) => a.nextRunAt - b.nextRunAt)
@@ -76,7 +77,7 @@ export function RoutinesAgendaView({
             </div>
           </div>
 
-          {!settings.keepRunning && (
+          {!settings.keepRunning && hasEnabledRoutine && (
             <div
               role="status"
               className="mb-4 flex items-center gap-2.5 rounded-[10px] border border-[rgba(242,180,92,0.22)] bg-[rgba(242,180,92,0.08)] px-3 py-2.5 text-[12.5px] text-[#f6ddb4]"
