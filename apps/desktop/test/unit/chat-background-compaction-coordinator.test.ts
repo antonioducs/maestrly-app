@@ -350,6 +350,44 @@ describe('chat background compaction coordinator', () => {
     expect(test.coordinator.getCandidate(id)?.summary).toBe('fits')
   })
 
+  it('resumes after the stages that passed when the summarizer rejects an oversized stage', async () => {
+    const id = createConversation()
+    const checkpoint: PortableSummaryCheckpoint = {
+      version: 1,
+      sourceHash: 'transcript',
+      maxChunkBytes: 1_000,
+      phase: 'chunk',
+      level: 0,
+      inputHash: 'input',
+      completed: ['stage one'],
+    }
+    let resumed: PortableSummaryCheckpoint | undefined | null = null
+    let reject = true
+    const test = harness(async (input) => {
+      input.onAttempt('chunk').settle({ outcome: 'success' })
+      resumed = input.resume
+      if (!reject) return { summary: 'fits' }
+      input.onCheckpoint(checkpoint)
+      throw new Error('The context compactor returned an oversized summary')
+    })
+    const diagnostic = vi.fn()
+    test.deps.diagnostic = diagnostic
+    test.messages.set(id, [assistant(id, 'source')])
+    test.coordinator.notify(id, { conversationWindow: 128_000 })
+    await test.coordinator.settled()
+    expect(test.coordinator.status(id)).toMatchObject({ status: 'failed', error: 'summarizer-invalid-output' })
+    expect(diagnostic).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'failed', reason: 'summarizer-invalid-output', detail: 'oversized' })
+    )
+    expect(test.coordinator.record(id)?.work?.resume).toEqual(checkpoint)
+
+    reject = false
+    expect(test.coordinator.retry(id)).toBe(true)
+    await test.coordinator.settled()
+    expect(resumed).toEqual(checkpoint)
+    expect(test.coordinator.getCandidate(id)?.summary).toBe('fits')
+  })
+
   it('continues the global queue after a failure and preserves an older ready candidate', async () => {
     const first = createConversation()
     const second = createConversation()

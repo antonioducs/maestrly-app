@@ -891,8 +891,11 @@ export class ChatBackgroundCompactionCoordinator {
         return false
       }
       const code = failureCode(error)
-      // Resuming would replay the same completed stages into the same rejection: a retry starts the round over.
-      this.markFailed(conversationId, code === 'summarizer-invalid-output' ? { ...current, work: null } : current, code)
+      // A final summary rejected here would come back the same from the same completed stages, so its retry starts
+      // the round over. A stage the summarizer rejected was never checkpointed: its retry resumes after the stages
+      // that passed instead of paying for them again.
+      const restart = error instanceof BackgroundCompactionInvariantError && code === 'summarizer-invalid-output'
+      this.markFailed(conversationId, restart ? { ...current, work: null } : current, code)
       const detail = failureDetail(error, code)
       this.deps.diagnostic?.({
         kind: 'failed',

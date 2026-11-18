@@ -279,7 +279,7 @@ export interface PortableSummaryOptions {
   maxRetries?: number
   /** Delay before a retry. Background preparation uses 30s; foreground compaction keeps the legacy immediate retry. */
   retryDelayMs?: number
-  /** Reject oversized model output as invalid so it can consume the single retry without becoming a candidate. */
+  /** Output over this limit is rejected; the next retry asks the model to shorten that output, not to redo the stage. */
   maxSummaryTokens?: number
   /** Overrides transient-error classification; cancellation/auth/configuration remain terminal. */
   shouldRetry?: (error: unknown) => boolean
@@ -354,6 +354,21 @@ function summaryFailure(
   }
   failure.cause = error
   return failure
+}
+
+function shortenSummaryPrompt(
+  label: string,
+  oversized: { text: string; tokens: number },
+  maxSummaryTokens: number
+): string {
+  const target = Math.max(1, Math.floor(maxSummaryTokens / 2))
+  return (
+    `${label}: your summary below has about ${oversized.tokens} portable tokens (conservative UTF-8 estimate), ` +
+    `over the limit of ${maxSummaryTokens}. Rewrite it as one shorter summary with the same headings, aiming for ` +
+    `about ${target} and never more than ${maxSummaryTokens} portable tokens. Merge related bullets and drop ` +
+    'low-value detail first; keep pending requests, exact identifiers and errors.\n\n' +
+    oversized.text
+  )
 }
 
 function summaryTimeoutMs(value: number | undefined, fallback: number): number {
@@ -552,6 +567,10 @@ export async function summarizePortableTranscript(
     for (let index = completed.length; index < source.length; index += 1) {
       const label =
         phase === 'chunk' ? `Source chunk ${index + 1}/${source.length}` : `Summary group ${index + 1}/${source.length}`
+      // Smallest answer over the limit so far. Repeating the source prompt tends to return an equally long answer
+      // (runtimes without an output cap, such as Antigravity, only see the limit as text), so the next attempt
+      // shortens this answer instead: a small input, and the stage's work is kept.
+      let oversized: { text: string; tokens: number } | null = null
       for (let attempt = 1; ; attempt += 1) {
         report({
           status: attempt === 1 ? 'running' : 'retrying',
@@ -565,12 +584,16 @@ export async function summarizePortableTranscript(
           ? `\nReturn no more than ${maxSummaryTokens} portable tokens (conservative UTF-8 estimate).`
           : ''
         const prompt = `${label}:${limitInstruction}\n\n${source[index]}`
+        const request =
+          oversized && maxSummaryTokens ? shortenSummaryPrompt(label, oversized, maxSummaryTokens) : prompt
         try {
-          const result = await runAttempt(prompt, phase)
+          const result = await runAttempt(request, phase)
           checkActive()
           text = result.text.trim()
           if (!text) throw new PortableSummaryEmptyError('The context compactor returned an empty summary')
-          if (maxSummaryTokens && estimateTextTokens(text) > maxSummaryTokens) {
+          const tokens = maxSummaryTokens ? estimateTextTokens(text) : 0
+          if (maxSummaryTokens && tokens > maxSummaryTokens) {
+            if (!oversized || tokens < oversized.tokens) oversized = { text, tokens }
             throw new PortableSummaryInvalidOutputError('The context compactor returned an oversized summary')
           }
         } catch (error) {
@@ -587,7 +610,7 @@ export async function summarizePortableTranscript(
           await waitForRetry()
           continue
         }
-        if (source.length === 1 && options.auditFinal) text = await auditedFinal(prompt, phase, text, index, attempt)
+        if (source.length === 1 && options.auditFinal) text = await auditedFinal(request, phase, text, index, attempt)
         output.push(text)
         report({ status: 'running', phase, completed: index + 1, total: source.length, attempt })
         options.onCheckpoint?.({

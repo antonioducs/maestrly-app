@@ -5,6 +5,7 @@ import {
   estimatePortableContextTokens,
   estimatePortablePartsTokens,
   estimateTextTokens,
+  PORTABLE_SUMMARY_MAX_RETRIES,
   portableContextLoad,
   portableContextOutputReserveTokens,
   portableContextReserveTokens,
@@ -333,6 +334,38 @@ describe('portable context', () => {
       await vi.advanceTimersByTimeAsync(1)
 
       expect(await pending).toMatchObject({ summary: 'bounded', calls: 2 })
+    })
+
+    it('retries an oversized answer by shortening it instead of resending the source', async () => {
+      const long = 'a'.repeat(600)
+      const shorter = 'b'.repeat(450)
+      const summarize = vi
+        .fn()
+        .mockResolvedValueOnce(measured(long))
+        .mockResolvedValueOnce(measured(shorter))
+        .mockResolvedValueOnce(measured('c'.repeat(900)))
+        .mockResolvedValueOnce(measured('bounded'))
+
+      const result = await summarizePortableTranscript('source text', 1_000, summarize, { maxSummaryTokens: 100 })
+
+      expect(result).toMatchObject({ summary: 'bounded', calls: 4 })
+      const prompts = summarize.mock.calls.map(([prompt]) => prompt as string)
+      expect(prompts[0]).toContain('source text')
+      expect(prompts[1]).toContain('about 200 portable tokens')
+      expect(prompts[1]).toContain('limit of 100')
+      expect(prompts[1]).toContain(long)
+      expect(prompts[1]).not.toContain('source text')
+      expect(prompts[2]).toContain(shorter)
+      // A longer answer to a shortening request does not replace the smallest one.
+      expect(prompts[3]).toContain(shorter)
+    })
+
+    it('still fails once every retry stays oversized', async () => {
+      const summarize = vi.fn().mockResolvedValue(measured('x'.repeat(600)))
+      await expect(summarizePortableTranscript('source', 1_000, summarize, { maxSummaryTokens: 100 })).rejects.toThrow(
+        'oversized summary'
+      )
+      expect(summarize).toHaveBeenCalledTimes(PORTABLE_SUMMARY_MAX_RETRIES + 1)
     })
 
     it('does not retry unclassified failures by default', async () => {
