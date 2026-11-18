@@ -9,12 +9,22 @@ const FALLBACK_WEEKDAYS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
 
 function monthsList(t: RoutineTranslator): readonly string[] {
   const raw = t('schedule.monthsShort', { returnObjects: true }) as unknown
-  return Array.isArray(raw) && raw.length === 12 ? (raw as string[]) : FALLBACK_MONTHS
+  if (Array.isArray(raw) && raw.length === 12) return raw as string[]
+  if (typeof raw === 'string') {
+    const parts = raw.split(',').map((s) => s.trim())
+    if (parts.length === 12 && parts.every(Boolean)) return parts
+  }
+  return FALLBACK_MONTHS
 }
 
 export function weekdaysList(t: RoutineTranslator): readonly string[] {
   const raw = t('schedule.weekdaysShort', { returnObjects: true }) as unknown
-  return Array.isArray(raw) && raw.length === 7 ? (raw as string[]) : FALLBACK_WEEKDAYS
+  if (Array.isArray(raw) && raw.length === 7) return raw as string[]
+  if (typeof raw === 'string') {
+    const parts = raw.split(',').map((s) => s.trim())
+    if (parts.length === 7 && parts.every(Boolean)) return parts
+  }
+  return FALLBACK_WEEKDAYS
 }
 
 export function startOfLocalDay(ms: number): number {

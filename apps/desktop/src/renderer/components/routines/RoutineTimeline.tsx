@@ -29,7 +29,7 @@ export function RoutineTimeline({
 }) {
   const { t } = useTranslation('routines')
   const nowMs = propNowMs ?? Date.now()
-  const tr = (key: string, opts?: Record<string, unknown>): string => String(t(key as never, opts as never))
+  const tr = (key: string, opts?: Record<string, unknown>): string => t(key as never, opts as never) as unknown as string
   const data = useMemo(
     () => buildTimelineData(routines, runsByRoutine, nowMs, tr),
     [routines, runsByRoutine, nowMs, t]

@@ -836,7 +836,7 @@ export function Sidebar({
   /** What the `+` of the open section creates, on the machine the sidebar shows. */
   const createAction = ((): SidebarCreateAction | null => {
     if (tab === 'inbox') return null
-    if (tab === 'routines') return routines ? { label: tRoutines('newRoutine'), onClick: routines.onNewRoutine } : null
+    if (tab === 'routines') return routines ? { label: tRoutines('list.newRoutine'), onClick: routines.onNewRoutine } : null
     if (tab === 'bots')
       return {
         label: t('sidebar.createBot'),
