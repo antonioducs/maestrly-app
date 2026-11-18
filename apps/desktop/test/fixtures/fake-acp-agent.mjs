@@ -201,6 +201,19 @@ async function runPrompt(session, prompt) {
     chunk(text.slice(Math.ceil(text.length / 2)))
     return { stopReason: 'end_turn' }
   }
+  // ACP 1.4 reports a model call Google rejected as the bare API message, then closes open tools and sends usage.
+  if (verb === 'APIFAIL') {
+    chunk('Reading the files. ')
+    chunk(rest.join(' ') || 'Request contains an invalid argument.')
+    notifyUpdate(session.id, { sessionUpdate: 'tool_call_update', toolCallId: 'open-1', status: 'failed' })
+    notifyUpdate(session.id, { sessionUpdate: 'usage_update', used: 1200, size: 1048576 })
+    return { stopReason: 'end_turn' }
+  }
+  if (verb === 'APIQUOTE') {
+    chunk('Request contains an invalid argument.')
+    chunk(' is what the API answers.')
+    return { stopReason: 'end_turn' }
+  }
   if (verb === 'TOOL') {
     const [name, ...json] = rest
     const args = json.length ? JSON.parse(json.join(' ')) : {}

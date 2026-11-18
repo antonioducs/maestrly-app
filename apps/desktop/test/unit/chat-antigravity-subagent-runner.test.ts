@@ -185,6 +185,12 @@ describe('Antigravity subagent runner', () => {
     expect(fake.requests('session/prompt')).toHaveLength(2)
   })
 
+  it('reports a rejected model call as the child error, not as its answer', async () => {
+    const result = await runAntigravitySubagent(args('APIFAIL'))
+    expect(result.text).toBe('')
+    expect(result.error).toMatch(/^Google AI rejected this request as invalid \(400 INVALID_ARGUMENT/)
+  })
+
   it('reports an unavailable model as a child error', async () => {
     const input = args('ECHO x')
     const result = await runAntigravitySubagent({

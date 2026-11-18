@@ -18,6 +18,7 @@ import {
   AntigravityToolsUnavailableError,
   antigravityErrorMessage,
   antigravityExecutionErrorChunk,
+  createAntigravityApiFailureHold,
   isAntigravityHarnessLost,
 } from './errors'
 import { type AntigravityHostToolset, registerAntigravityHostToolset } from './host-mcp'
@@ -29,6 +30,7 @@ import {
 } from './manager'
 import { resolveAntigravityModelValue } from './models'
 import { assertAntigravityPromptFits } from './prompt-limit'
+import { releasesApiFailure } from './stream-map'
 
 const FORBIDDEN_CHILD_TOOLS = new Set<string>([
   'task',
@@ -158,12 +160,20 @@ async function runAntigravitySubagentOnce(
     let text = ''
     let failure = null as Error | null
     const emitText = createSubagentTextEmitter(args.onTextUpdate)
+    const apiFailure = createAntigravityApiFailureHold<string>()
     unsubscribe = connection.subscribe(id, (update) => {
+      if (releasesApiFailure(update)) {
+        const released = apiFailure.release()
+        if (released) {
+          text += released
+          emitText(text)
+        }
+      }
       if (update.sessionUpdate !== 'agent_message_chunk' || !isAcpMessageChunk(update)) return
       const content = update.content as { type?: string; text?: unknown }
       if (content.type !== 'text' || typeof content.text !== 'string') return
       failure ??= antigravityExecutionErrorChunk(content.text)
-      if (failure) return
+      if (failure || apiFailure.hold(content.text, content.text)) return
       text += content.text
       emitText(text)
     })
@@ -191,6 +201,7 @@ async function runAntigravitySubagentOnce(
     }
     if (args.signal.aborted || result.stopReason === 'cancelled') throw abortedError(model)
     args.manager.assertAccountIdentity(args.accountIdentity)
+    failure ??= apiFailure.settle()
     if (failure) throw failure
     if (!childToolset.wasInitialized()) {
       return { result: { text, error: new AntigravityToolsUnavailableError().message, model } }

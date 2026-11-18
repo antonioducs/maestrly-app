@@ -1,7 +1,12 @@
 import type { AcpContentBlock, AcpPromptResult } from '../acp/protocol'
 import { isAcpMessageChunk } from '../acp/protocol'
 import type { IsolatedSummaryResult } from '../portable-summarizer'
-import { AntigravityModelUnavailableError, antigravityExecutionErrorChunk, isAntigravityHarnessLost } from './errors'
+import {
+  AntigravityModelUnavailableError,
+  antigravityExecutionErrorChunk,
+  createAntigravityApiFailureHold,
+  isAntigravityHarnessLost,
+} from './errors'
 import {
   ANTIGRAVITY_SESSION_META,
   type AntigravityAccountIdentity,
@@ -75,12 +80,15 @@ async function runIsolatedPromptOnce(
     )
     let text = ''
     let failure = null as Error | null
+    const apiFailure = createAntigravityApiFailureHold<string>()
     unsubscribe = connection.subscribe(id, (update) => {
       if (update.sessionUpdate !== 'agent_message_chunk' || !isAcpMessageChunk(update)) return
       const content = update.content as { type?: string; text?: unknown }
       if (content.type !== 'text' || typeof content.text !== 'string') return
       failure ??= antigravityExecutionErrorChunk(content.text)
-      if (!failure) text += content.text
+      if (failure) return
+      text += apiFailure.release() ?? ''
+      if (!apiFailure.hold(content.text, content.text)) text += content.text
     })
     const cancel = () => client.notify('session/cancel', { sessionId: id })
     args.signal.addEventListener('abort', cancel, { once: true })
@@ -96,6 +104,7 @@ async function runIsolatedPromptOnce(
     }
     if (result.stopReason === 'cancelled') throw abortError(args.signal)
     if (result.stopReason === 'refusal') throw new Error('Google declined to answer this request.')
+    failure ??= apiFailure.settle()
     if (failure) throw failure
     args.manager.assertAccountIdentity(args.accountIdentity)
     return { text: text.trim() }

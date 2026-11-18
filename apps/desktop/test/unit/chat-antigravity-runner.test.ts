@@ -478,6 +478,23 @@ describe('Antigravity chat runner', () => {
     expect(manager.liveSessionCount()).toBe(0)
   })
 
+  it('ends the turn with an error when the server reports a rejected model call as its last text', async () => {
+    await turn('ECHO before')
+    const { events } = await turn('APIFAIL')
+    expect(textOf(events)).toBe('Reading the files. ')
+    expect(events.at(-1)).toMatchObject({
+      kind: 'error',
+      message: expect.stringMatching(/^Google AI rejected this request as invalid \(400 INVALID_ARGUMENT/),
+    })
+    expect(getAntigravitySessionBinding(conversationId)).toBeUndefined()
+  })
+
+  it('keeps model text that only quotes an API error message', async () => {
+    const { events } = await turn('APIQUOTE')
+    expect(textOf(events)).toBe('Request contains an invalid argument. is what the API answers.')
+    expect(events.at(-1)).toMatchObject({ kind: 'finish', finishReason: 'stop' })
+  })
+
   it('resumes the persisted session on a restarted process with a fresh tool server', async () => {
     await turn('ECHO before')
     const firstUrl = firstMcpUrl(fake.requests('session/new').at(-1))

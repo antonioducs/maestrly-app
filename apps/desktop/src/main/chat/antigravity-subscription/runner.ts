@@ -31,7 +31,12 @@ import { getConvUiPrefs } from '../../store'
 import { resolveAppToolAccess } from '../app-tool-access'
 import { deferredLoadingToolNames } from '../tool-policy'
 import { AcpRpcError } from '../acp/client'
-import { ACP_RESOURCE_NOT_FOUND_CODE, type AcpPromptResult, isAcpMessageChunk } from '../acp/protocol'
+import {
+  ACP_RESOURCE_NOT_FOUND_CODE,
+  type AcpPromptResult,
+  type AcpSessionUpdate,
+  isAcpMessageChunk,
+} from '../acp/protocol'
 import {
   activatePreparedCompaction,
   createBackgroundCompactionPrefixNotifier,
@@ -68,12 +73,14 @@ import { enableConversationLinkTools } from '../tools/conversation-link'
 import { enableAssistantTools } from '../tools/assistant'
 import type { GeneratedImageEmission, ToolContext } from '../tools/util'
 import {
+  AntigravityApiError,
   type AntigravityExecutionError,
   AntigravityModelUnavailableError,
   AntigravityPromptTooLargeError,
   AntigravityToolsUnavailableError,
   antigravityErrorMessage,
   antigravityExecutionErrorChunk,
+  createAntigravityApiFailureHold,
   isAntigravityHarnessLost,
   redactAntigravityCredentials,
 } from './errors'
@@ -101,7 +108,12 @@ import {
   putAntigravitySessionBinding,
   retireAntigravitySessionBinding,
 } from './session-store'
-import { createAntigravityStreamMapper, readAntigravityContextUsage } from './stream-map'
+import {
+  createAntigravityStreamMapper,
+  createAntigravityUsageReader,
+  readAntigravityContextUsage,
+  releasesApiFailure,
+} from './stream-map'
 import { createAntigravityTaskRuntime } from './task-runtime'
 import { SubagentCoordinator } from '../subagent-coordinator'
 import { createExplicitSubagentTurnState } from '../subagent-selection-guard'
@@ -799,6 +811,8 @@ export async function runAntigravitySubscriptionChat(
     const observeContext = contextProgress.observeAttempt()
     // The server ends a failed turn normally and sends the failure as its last text, which must not read as the answer.
     let executionError = null as AntigravityExecutionError | null
+    const apiFailure = createAntigravityApiFailureHold<AcpSessionUpdate>()
+    const readUsage = createAntigravityUsageReader()
     unsubscribe = connection.subscribe(session.sessionId, (update) => {
       const reported = readAntigravityContextUsage(update)
       if (reported) {
@@ -808,23 +822,35 @@ export async function runAntigravitySubscriptionChat(
           history,
           assistant: messages[0],
         })
-        chatDiag({ kind: 'antigravity-context-usage', conv: args.conversationId, reported: reported.used, estimated })
+        const usage = readUsage(reported.used)
+        chatDiag({
+          kind: 'antigravity-context-usage',
+          conv: args.conversationId,
+          reported: reported.used,
+          perCall: usage.perCall,
+          ...(usage.calls > 1 ? { foldedCalls: usage.calls } : {}),
+          ...(reported.size ? { size: reported.size } : {}),
+          estimated,
+        })
         observeContext({
           usedTokens: estimated,
           modelContextWindow: contextWindowFor(reported.size),
           quality: 'estimated',
         })
       }
+      if (releasesApiFailure(update)) {
+        const released = apiFailure.release()
+        if (released) for (const event of mapper.push(released)) apply(event)
+      }
       if (update.sessionUpdate === 'agent_message_chunk' && isAcpMessageChunk(update)) {
         const content = update.content as { type?: string; text?: unknown }
-        const failure =
-          content.type === 'text' && typeof content.text === 'string'
-            ? antigravityExecutionErrorChunk(content.text)
-            : null
+        const text = content.type === 'text' && typeof content.text === 'string' ? content.text : null
+        const failure = text === null ? null : antigravityExecutionErrorChunk(text)
         if (failure) {
           executionError ??= failure
           return
         }
+        if (text !== null && apiFailure.hold(text, update)) return
       }
       for (const event of mapper.push(update)) apply(event)
     })
@@ -849,12 +875,14 @@ export async function runAntigravitySubscriptionChat(
     pending.catch(() => undefined)
     const aborted = args.signal.aborted || outcome.result?.stopReason === 'cancelled'
     const usage = subagentOnlyUsage(subagentUsage)
+    executionError ??= apiFailure.settle()
 
     if (!aborted && executionError) {
       chatDiag({
         kind: 'antigravity-execution-error',
         conv: args.conversationId,
         harnessLost: isAntigravityHarnessLost(executionError),
+        ...(executionError instanceof AntigravityApiError ? { status: executionError.status } : {}),
       })
       // A lost harness leaves the server session unusable; the next turn starts a fresh one.
       if (!ephemeral) retireAntigravitySessionBinding(args.conversationId, session.sessionId)

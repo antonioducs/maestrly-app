@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   createAntigravityStreamMapper,
+  createAntigravityUsageReader,
   readAntigravityContextUsage,
+  releasesApiFailure,
 } from '../../src/main/chat/antigravity-subscription/stream-map'
 
 const chunk = (text: string) => ({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } }) as const
@@ -72,5 +74,30 @@ describe('Antigravity stream mapper', () => {
     expect(readAntigravityContextUsage({ sessionUpdate: 'usage_update', used: -1, size: 100 })).toBeNull()
     expect(readAntigravityContextUsage({ sessionUpdate: 'usage_update', used: '24310', size: 100 })).toBeNull()
     expect(readAntigravityContextUsage(chunk('used 10'))).toBeNull()
+  })
+
+  it('splits a usage report that folds several model calls', () => {
+    const read = createAntigravityUsageReader()
+    expect(read(120_000)).toEqual({ perCall: 120_000, calls: 1 })
+    expect(read(133_282)).toEqual({ perCall: 133_282, calls: 1 })
+    // A failed call and its retry, reported together.
+    expect(read(267_169)).toEqual({ perCall: 133_585, calls: 2 })
+    expect(read(140_000)).toEqual({ perCall: 140_000, calls: 1 })
+  })
+
+  it('takes a small session doubling as real growth', () => {
+    const read = createAntigravityUsageReader()
+    read(9_000)
+    expect(read(25_000)).toEqual({ perCall: 25_000, calls: 1 })
+  })
+
+  it('releases a withheld failure only on updates that continue the turn', () => {
+    expect(releasesApiFailure(chunk('more'))).toBe(true)
+    expect(releasesApiFailure({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'x' } })).toBe(
+      true
+    )
+    expect(releasesApiFailure({ sessionUpdate: 'tool_call', toolCallId: 'x' })).toBe(true)
+    expect(releasesApiFailure({ sessionUpdate: 'tool_call_update', toolCallId: 'x', status: 'failed' })).toBe(false)
+    expect(releasesApiFailure({ sessionUpdate: 'usage_update', used: 1, size: 2 })).toBe(false)
   })
 })
