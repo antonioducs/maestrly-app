@@ -202,7 +202,9 @@ describe('scheduler runtime, startup recovery, and retention', () => {
     })
 
     expect(recoverInterruptedRoutineRuns(now)).toBe(2)
-    expect(getRun(orphan1.id)?.status).toBe('stopped')
+    expect(getRun(orphan1.id)?.status).toBe('failed')
+    expect(getRun(orphan1.id)?.error).toBe('Maestrly closed during the run')
+    expect(getRun(orphan1.id)?.unread).toBe(true)
     expect(getRun(orphan2.id)?.status).toBe('stopped')
     expect(getRun(orphan2.id)?.unread).toBe(false)
 

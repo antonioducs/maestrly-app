@@ -181,6 +181,7 @@ export default {
       waitingQuestion: 'Fez uma pergunta',
       failed: 'A execução falhou',
       failedWithError: 'A execução falhou: {{error}}',
+      closedDuringRun: 'O Maestrly fechou durante a execução',
       notable: 'Terminou com novidades',
       finished: 'Execução concluída',
     },

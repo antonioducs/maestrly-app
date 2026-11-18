@@ -7,6 +7,7 @@ import {
   type RoutineRunTrigger,
 } from '../../shared/routines'
 import { deleteRoutineRunConversation } from './runner'
+import { tMain } from '../i18n'
 import {
   insertRun,
   listActiveRuns,
@@ -135,12 +136,24 @@ export function decideTick(input: {
 
 export function recoverInterruptedRoutineRuns(now = Date.now()): number {
   const active = listActiveRuns()
+  const closedError = tMain('main')('notices.routine.closedDuringRun')
   for (const run of active) {
-    updateRun(run.id, {
-      status: 'stopped',
-      finishedAt: now,
-      unread: false,
-    })
+    if (run.status === 'running') {
+      updateRun(run.id, {
+        status: 'failed',
+        error: closedError,
+        finishedAt: now,
+        unread: true,
+        waiting: null,
+      })
+    } else {
+      updateRun(run.id, {
+        status: 'stopped',
+        finishedAt: now,
+        unread: false,
+        waiting: null,
+      })
+    }
   }
   return active.length
 }

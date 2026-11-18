@@ -181,6 +181,7 @@ export default {
       waitingQuestion: 'Asked a question',
       failed: 'The run failed',
       failedWithError: 'The run failed: {{error}}',
+      closedDuringRun: 'Maestrly closed during the run',
       notable: 'Finished with something to check',
       finished: 'Finished running',
     },
