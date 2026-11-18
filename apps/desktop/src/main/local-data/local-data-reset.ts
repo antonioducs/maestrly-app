@@ -22,6 +22,7 @@ import { clearEphemeralToolImages } from '../chat/tool-output'
 import { forgetChatStoreCaches } from '../chat/chat-store'
 import { resetHistoryIndex } from '../chat/history-index/store'
 import { clearBrowserHistory } from '../drawer/browser-history'
+import { emitRoutinesChanged } from '../routines/store'
 
 export interface LocalDataResetDeps {
   stopConversation: (id: string) => void | Promise<void>
@@ -149,6 +150,7 @@ export async function resetLocalAppData(deps: LocalDataResetDeps): Promise<void>
         'workspace_creations',
         'chat_usage_ledger',
         'workspace_groups',
+        'local_routines',
         'permission_saved',
         'app_settings',
       ]) {
@@ -156,6 +158,7 @@ export async function resetLocalAppData(deps: LocalDataResetDeps): Promise<void>
       }
     })
     forgetChatStoreCaches()
+    emitRoutinesChanged()
     databaseCleared = true
   })
   if (!databaseCleared) assertComplete('Local data cleanup was incomplete.')
@@ -165,6 +168,7 @@ export async function resetLocalAppData(deps: LocalDataResetDeps): Promise<void>
   for (const directory of [
     'standalone-chats',
     'workspace-data',
+    'routines',
     'chat-generated-images',
     'chat-attachment-images',
     'chat-tool-output',

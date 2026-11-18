@@ -78,6 +78,14 @@ import {
 import { getDb, listAllConversations, listWorkspaces } from '../../src/main/store'
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
+import {
+  createProposal,
+  createRoutine,
+  getRoutineSettings,
+  insertRun,
+  listRoutines,
+  setRoutineSettings,
+} from '../../src/main/routines/store'
 
 describe('resetLocalAppData', () => {
   beforeEach(() => {
@@ -410,5 +418,48 @@ describe('resetLocalAppData', () => {
     await rejected
     expect(listAllConversations()).toHaveLength(1)
     expect(h.resetCodexLocalData).not.toHaveBeenCalled()
+  })
+
+  it('removes all routines, runs, proposals, settings, and routine directories so nothing stays scheduled', async () => {
+    const conv = makeConversation(makeWorkspace().id)
+    const draft = {
+      title: 'Nightly check',
+      instruction: 'Check status.',
+      schedule: { kind: 'interval' as const, everyMinutes: 60 },
+      permMode: 'auto' as const,
+      model: { providerId: 'anthropic', modelId: 'claude-sonnet-4-5', reasoning: 'medium' as const, fastMode: false },
+      notify: 'notable' as const,
+      missed: 'catchup' as const,
+      retentionDays: 30 as const,
+    }
+    const routine = createRoutine(draft, { conversationId: conv.id, title: conv.name, via: 'proposal' }, 1000)
+    insertRun({
+      routineId: routine.id,
+      scheduledAt: 1000,
+      startedAt: 1000,
+      finishedAt: 2000,
+      trigger: 'schedule',
+      status: 'done',
+      summary: 'Ok',
+      report: null,
+      error: null,
+      conversationId: null,
+      conversationDeleted: false,
+      pinned: false,
+      unread: false,
+    })
+    createProposal(conv.id, draft, 1000)
+    setRoutineSettings({ keepRunning: false, openAtLogin: true })
+    mkdirSync(routine.folder, { recursive: true })
+    writeFileSync(path.join(routine.folder, 'report.md'), 'hello')
+
+    await resetLocalAppData({ stopConversation: vi.fn(), stopWorkspace: vi.fn() })
+
+    expect(listRoutines()).toEqual([])
+    expect(getDb().prepare('SELECT COUNT(*) AS c FROM local_routines').get()).toEqual({ c: 0 })
+    expect(getDb().prepare('SELECT COUNT(*) AS c FROM local_routine_runs').get()).toEqual({ c: 0 })
+    expect(getDb().prepare('SELECT COUNT(*) AS c FROM local_routine_proposals').get()).toEqual({ c: 0 })
+    expect(existsSync(path.join(h.userData, 'routines'))).toBe(false)
+    expect(getRoutineSettings()).toEqual({ keepRunning: true, openAtLogin: false })
   })
 })

@@ -10,7 +10,7 @@ import { applyRoutineLoginItem, isLoginItemSupported, wasOpenedAtLoginForRoutine
 import { registerRoutinesIpc } from './routines/ipc'
 import { createRoutineRunner, type RoutineRunner } from './routines/runner'
 import { createRoutineScheduler, type RoutineScheduler } from './routines/scheduler'
-import { getRoutineSettings, listRoutines, subscribeRoutinesChanged } from './routines/store'
+import { getRoutineSettings, listActiveRuns, listRoutines, subscribeRoutinesChanged } from './routines/store'
 import { hostGatewayAccess, isHeadlessInstance, isServerMode } from './remote-host/server/config'
 import {
   ENVIRONMENT_BOT_ACCESS_CHANGED,
@@ -580,6 +580,11 @@ async function stopAllLiveWork(): Promise<void> {
   await botHost.stop()
   await legacyArtifacts?.dispose()
   await cancelProjectSetupsAndWait?.()
+  for (const active of listActiveRuns()) {
+    routineRunner?.stop(active.id)
+    await routineRunner?.waitForRun(active.id)
+  }
+  if (!isE2E()) applyRoutineLoginItem(false)
   await Promise.all([
     ...listAllConversations().map((conversation) => stopConversationLive(conversation.id)),
     maestroConfiguratorService.stop(),
