@@ -1220,6 +1220,7 @@ export default {
     allowOnce: 'Permitir uma vez',
     allowAlways: 'Sempre permitir',
     allowAlwaysChat: 'Sempre permitir neste chat',
+    allowAlwaysRoutine: 'Sempre permitir nesta rotina',
     deny: 'Negar',
   },
   meter: {

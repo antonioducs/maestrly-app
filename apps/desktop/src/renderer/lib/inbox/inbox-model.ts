@@ -19,7 +19,7 @@ const NEWER_SLACK_MS = 2_000
 export type { InboxKind } from '../../../shared/inbox-kind'
 import type { InboxKind } from '../../../shared/inbox-kind'
 export type InboxGroup = 'waiting' | 'new' | 'read'
-export type InboxSource = 'workspace' | 'chat' | 'bot'
+export type InboxSource = 'workspace' | 'chat' | 'bot' | 'routine'
 /** Where in a bot it happened: its own conversation, a routine run, or a conversation with another bot. */
 export type InboxLane = 'main' | 'routine' | 'thread'
 
@@ -31,6 +31,7 @@ export type InboxTarget =
   | { kind: 'conversation'; conversationId: string }
   /** `requestId` is the request of a bot's that waits for the owner, which the list can answer. */
   | { kind: 'bot'; serverId: FleetServerId; botId: string; runId?: string; threadId?: string; requestId?: string }
+  | { kind: 'routine-run'; routineId: string; runId: string; conversationId?: string | null }
 
 /** The machine or environment an item belongs to, which the place filter offers. */
 export interface InboxPlace {
@@ -325,7 +326,7 @@ export function inboxPlaces(items: readonly InboxItem[]): Array<InboxPlace & { c
 }
 
 export function inboxSourceCounts(items: readonly InboxItem[]): Record<InboxSource | 'all', number> {
-  const counts = { all: items.length, workspace: 0, chat: 0, bot: 0 }
+  const counts = { all: items.length, workspace: 0, chat: 0, bot: 0, routine: 0 }
   for (const item of items) counts[item.source]++
   return counts
 }
@@ -342,7 +343,7 @@ export function inboxCounts(items: readonly InboxItem[]): { waiting: number; unr
 }
 
 const KINDS: ReadonlySet<string> = new Set(['question', 'approval', 'plan', 'help', 'error', 'finished', 'activity'])
-const SOURCES: ReadonlySet<string> = new Set(['workspace', 'chat', 'bot'])
+const SOURCES: ReadonlySet<string> = new Set(['workspace', 'chat', 'bot', 'routine'])
 const LANES: ReadonlySet<string> = new Set(['main', 'routine', 'thread'])
 const isNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value)
 const isString = (value: unknown): value is string => typeof value === 'string'
@@ -367,6 +368,15 @@ function readView(value: unknown): InboxView | null {
       ...(isString(target.runId) ? { runId: target.runId } : {}),
       ...(isString(target.threadId) ? { threadId: target.threadId } : {}),
       ...(isString(target.requestId) ? { requestId: target.requestId } : {}),
+    }
+  else if (target.kind === 'routine-run' && isString(target.routineId) && isString(target.runId))
+    parsedTarget = {
+      kind: 'routine-run',
+      routineId: target.routineId,
+      runId: target.runId,
+      ...(isString(target.conversationId) || target.conversationId === null
+        ? { conversationId: target.conversationId as string | null }
+        : {}),
     }
   else return null
   return {

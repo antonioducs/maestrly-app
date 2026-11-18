@@ -7,6 +7,7 @@ import {
   type LocalRoutine,
   type LocalRoutineRun,
   type RoutineModel,
+  type RoutineRunDetails,
   type RoutineRunFilter,
   type RoutineSavedPermission,
   type RoutineSettings,
@@ -269,6 +270,25 @@ export function useRoutines({
     [refreshAll, refreshDetail]
   )
 
+  const pinRun = useCallback(
+    async (runId: string, pinned: boolean) => {
+      await window.api.routinesPinRun(runId, pinned)
+      await refreshAll()
+      await refreshDetail()
+    },
+    [refreshAll, refreshDetail]
+  )
+
+  const deleteRunConversation = useCallback(
+    async (runId: string) => {
+      const ok = await window.api.routinesDeleteRunConversation(runId)
+      await refreshAll()
+      await refreshDetail()
+      return ok
+    },
+    [refreshAll, refreshDetail]
+  )
+
   const duplicateRoutine = useCallback(
     async (routineId: string) => {
       const copy = await window.api.routinesDuplicate(routineId)
@@ -433,6 +453,8 @@ export function useRoutines({
     toggleRoutineEnabled,
     runNow,
     stopRun,
+    pinRun,
+    deleteRunConversation,
     duplicateRoutine,
     deleteRoutine,
     removeSavedPermission,
@@ -441,4 +463,34 @@ export function useRoutines({
     createFromProposal,
     updateRoutine,
   }
+}
+
+export function useRoutineRunDetails(runId: string | null): RoutineRunDetails | null {
+  const [details, setDetails] = useState<RoutineRunDetails | null>(null)
+
+  useEffect(() => {
+    if (!runId) {
+      setDetails(null)
+      return
+    }
+    let alive = true
+    const load = async () => {
+      try {
+        const res = await window.api.routinesGetRun(runId)
+        if (alive) setDetails(res)
+      } catch {
+        if (alive) setDetails(null)
+      }
+    }
+    void load()
+    const off = window.api.onRoutinesChanged?.(() => {
+      void load()
+    })
+    return () => {
+      alive = false
+      off?.()
+    }
+  }, [runId])
+
+  return details
 }

@@ -447,7 +447,7 @@ export function Sidebar({
   const crossMatches = q && tab !== 'inbox' && filterCounts[tab] === 0 ? crossTabMatches(tab, filterCounts) : []
   const inboxView = useInboxView(inbox?.items ?? NO_INBOX_ITEMS, query, inbox?.actions ?? NO_INBOX_ACTIONS)
   /** Opens an item where it lives: its tab, its machine, and its workspace unfolded, scrolled to. */
-  const showInboxItemIn = (item: InboxItem, homeTab: 'workspaces' | 'chats' | 'bots') => {
+  const showInboxItemIn = (item: InboxItem, homeTab: 'workspaces' | 'chats' | 'bots' | 'routines') => {
     selectTab(homeTab)
     setQuery('')
     if (item.target.kind === 'conversation') {
@@ -457,6 +457,9 @@ export function Sidebar({
         ws.conversations.some((conversation) => conversation.id === conversationId)
       )
       if (workspace?.collapsed) onToggleWorkspaceCollapsed(workspace.id)
+    } else if (item.target.kind === 'routine-run') {
+      inbox?.actions.reveal(item)
+      return
     }
     inbox?.actions.reveal(item)
     requestAnimationFrame(() =>

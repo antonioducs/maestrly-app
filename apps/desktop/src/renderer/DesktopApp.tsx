@@ -1,7 +1,9 @@
-import { useRoutines } from '@/lib/routines/use-routines'
+import { useRoutines, useRoutineRunDetails } from '@/lib/routines/use-routines'
 import { RoutinesAgendaView } from '@/components/routines/RoutinesAgendaView'
 import { RoutineDetailView } from '@/components/routines/RoutineDetailView'
 import { RoutineEditorDialog, type RoutineEditorTarget } from '@/components/routines/RoutineEditorDialog'
+import { RoutineRunGoneView } from '@/components/routines/RoutineRunGoneView'
+import { RoutineRunHeader } from '@/components/routines/RoutineRunHeader'
 import type { SidebarTab } from '@/components/sidebar/sidebar-tabs'
 import { PersonalMemoryView } from '@/components/PersonalMemoryView'
 import { requestMainNavigation } from '@/lib/main-navigation'
@@ -46,7 +48,7 @@ import { useBotUpdates } from '@/lib/fleet/use-bot-updates'
 import { botsTabCounts, markedBots, notificationFleetView, useBotAttention } from '@/lib/fleet/bot-attention'
 import { useInbox } from '@/lib/inbox/use-inbox'
 import { useInboxObservations } from '@/lib/inbox/use-inbox-observations'
-import { botInboxKey, conversationInboxKey } from '@/lib/inbox/inbox-sources'
+import { botInboxKey, conversationInboxKey, routineRunInboxKey } from '@/lib/inbox/inbox-sources'
 import type { InboxItem } from '@/lib/inbox/inbox-model'
 import type { InboxActions } from '@/components/inbox/use-inbox-view'
 import { PersistentBotViews } from '@/components/fleet/PersistentBotViews'
@@ -125,6 +127,7 @@ function DesktopShell({
 }) {
   const api = hostApi(LOCAL_HOST_ID)
   const { t } = useTranslation('ui')
+  const { t: tRoutines } = useTranslation('routines')
   const [active, setActive] = useState<Conversation | null>(null)
   const mainRef = useRef<HTMLElement>(null)
 
@@ -450,6 +453,12 @@ function DesktopShell({
   const openRoutineRun = useCallback((routineId: string, runId: string) => {
     window.dispatchEvent(new CustomEvent('maestrly:open-routine-run', { detail: { routineId, runId } }))
   }, [])
+  const activeRoutineRunId =
+    active && !activeRemote && active.scope === 'standalone' && active.routineRunId ? active.routineRunId : null
+  const activeRoutineRunDetails = useRoutineRunDetails(activeRoutineRunId)
+  const goneRoutineRunDetails = useRoutineRunDetails(
+    nav.routinesView?.kind === 'run-gone' ? nav.routinesView.runId : null
+  )
   const [routineEditorTarget, setRoutineEditorTarget] = useState<RoutineEditorTarget | null>(null)
 
   useEffect(() => {
@@ -634,7 +643,10 @@ function DesktopShell({
     fleetSnapshots: fleets.servers.map((server) => fleets.controller(server.id).state.snapshot),
     botMarks,
     botEvents: botAttention.events,
+    routines: routinesCtrl.routines,
+    runsByRoutine: routinesCtrl.runsByRoutine,
     t,
+    tRoutines,
   })
   const {
     markRead: markInboxRead,
@@ -653,12 +665,19 @@ function DesktopShell({
       if (target.kind === 'conversation') {
         if (!isRemoteKey(target.conversationId)) acknowledgeConversation(target.conversationId)
         else remoteRef.current[hostOfKey(target.conversationId)]?.actions.acknowledgeConversation(target.conversationId)
+      } else if (target.kind === 'routine-run') {
+        void window.api.routinesMarkRunSeen(target.runId)
       } else if (!item.ownRead) window.api.fleetSeeBotAttention({ serverId: target.serverId, botId: target.botId })
     }
     const open = (item: InboxItem): void => {
       setInboxOpened(item)
-      markInboxRead([item.key])
       const { target } = item
+      if (target.kind === 'routine-run') {
+        if (item.group !== 'waiting') markInboxRead([item.key])
+        openRoutineRun(target.routineId, target.runId)
+        return
+      }
+      markInboxRead([item.key])
       if (target.kind === 'conversation') {
         const conversation = allConversationsRef.current.find(({ id }) => id === target.conversationId)
         if (conversation) handleSidebarConversationSelect(conversation)
@@ -694,14 +713,19 @@ function DesktopShell({
     markInboxRead,
     nav.openFleetView,
     onBotsServer,
+    openRoutineRun,
     restoreInboxItem,
   ])
   const inboxActiveKey = ((): string | null => {
+    if (nav.routinesView?.kind === 'run-gone') return routineRunInboxKey(nav.routinesView.runId)
     if (mainOverride === 'fleet' && fleetView?.kind === 'bot') {
       const opened = inboxOpened?.target
       return opened?.kind === 'bot' && opened.serverId === botsServer && opened.botId === fleetView.botId
         ? inboxOpened!.key
         : botInboxKey(botsServer, fleetView.botId)
+    }
+    if (!mainOverride && active?.scope === 'standalone' && active.routineRunId) {
+      return routineRunInboxKey(active.routineRunId)
     }
     return !mainOverride && active ? conversationInboxKey(active.id) : null
   })()
@@ -1558,21 +1582,25 @@ function DesktopShell({
                 )
               })()}
               {nav.routinesView?.kind === 'run-gone' && (() => {
-                const goneRoutineId = nav.routinesView.routineId
+                const goneView = nav.routinesView
+                const goneRoutine = routinesCtrl.routines.find((r) => r.id === goneView.routineId) ?? null
+                const goneRun =
+                  goneRoutineRunDetails?.run ??
+                  (routinesCtrl.runsByRoutine[goneView.routineId] ?? []).find((r) => r.id === goneView.runId) ??
+                  null
                 return (
-                  <div className="flex min-h-0 flex-1 items-center justify-center p-6 text-center text-sm text-muted-foreground">
-                    <div className="max-w-md space-y-2">
-                      <p className="font-medium text-foreground">{i18n.t('routines:run.gone.title')}</p>
-                      <p className="text-xs">{i18n.t('routines:run.gone.desc')}</p>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => nav.openRoutinesView({ kind: 'routine', id: goneRoutineId })}
-                      >
-                        {i18n.t('routines:detail.breadcrumbAgenda')}
-                      </Button>
-                    </div>
-                  </div>
+                  <RoutineRunGoneView
+                    routine={goneRoutine}
+                    run={goneRun}
+                    onOpenAgenda={() => {
+                      nav.openRoutinesView({ kind: 'agenda' })
+                      requestSidebarTab('routines')
+                    }}
+                    onOpenRoutine={(routineId) => {
+                      nav.openRoutinesView({ kind: 'routine', id: routineId })
+                      requestSidebarTab('routines')
+                    }}
+                  />
                 )
               })()}
               {onboardingOpen && (
@@ -1587,6 +1615,63 @@ function DesktopShell({
               )}
 
               <div className="flex min-h-0 flex-1 flex-col" style={mainOverride ? { display: 'none' } : undefined}>
+                {active && !activeRemote && active.scope === 'standalone' && active.routineRunId ? (() => {
+                  const activeRunId = active.routineRunId
+                  const headerRoutine =
+                    (active.routineId
+                      ? routinesCtrl.routines.find((r) => r.id === active.routineId)
+                      : undefined) ?? null
+                  const headerRun =
+                    activeRoutineRunDetails?.run ??
+                    (active.routineId
+                      ? (routinesCtrl.runsByRoutine[active.routineId] ?? []).find((r) => r.id === activeRunId)
+                      : undefined) ??
+                    null
+                  return (
+                    <RoutineRunHeader
+                      routine={headerRoutine}
+                      run={headerRun}
+                      titleFallback={active.name}
+                      onOpenAgenda={() => {
+                        nav.openRoutinesView({ kind: 'agenda' })
+                        requestSidebarTab('routines')
+                      }}
+                      onOpenRoutine={(routineId) => {
+                        nav.openRoutinesView({ kind: 'routine', id: routineId })
+                        requestSidebarTab('routines')
+                      }}
+                      onStop={() => void routinesCtrl.stopRun(activeRunId)}
+                      onTogglePin={() => {
+                        if (headerRun) void routinesCtrl.pinRun(headerRun.id, !headerRun.pinned)
+                      }}
+                      onDeleteConversation={async () => {
+                        const targetRoutineId = headerRoutine?.id ?? active.routineId ?? headerRun?.routineId
+                        await routinesCtrl.deleteRunConversation(activeRunId)
+                        if (targetRoutineId) {
+                          nav.openRoutinesView({ kind: 'run-gone', routineId: targetRoutineId, runId: activeRunId })
+                          requestSidebarTab('routines')
+                        } else {
+                          nav.openRoutinesView({ kind: 'agenda' })
+                          requestSidebarTab('routines')
+                        }
+                      }}
+                      rightExtra={
+                        <>
+                          <ChatWindowButton target={{ kind: 'conversation', id: active.id }} />
+                          <Button
+                            variant={drawerOpen ? 'secondary' : 'ghost'}
+                            size="icon"
+                            className="size-7 shrink-0"
+                            onClick={() => setDrawerOpen((v) => !v)}
+                            title={t('app.toggleDrawer', { shortcut: drawerShortcutLabel })}
+                          >
+                            <PanelRight className="size-4" />
+                          </Button>
+                        </>
+                      }
+                    />
+                  )
+                })() : (
                 <header className="drag flex h-10 shrink-0 items-center justify-between gap-2 hairline-b pl-[var(--view-header-inset)] pr-2">
                   <div className="no-drag flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
                     <span className="truncate text-[13px] font-medium text-foreground/90">{active?.name ?? ''}</span>
@@ -1647,6 +1732,7 @@ function DesktopShell({
                     </Button>
                   </div>
                 </header>
+                )}
 
                 <div className="relative min-h-0 flex-1">
                   {mountedConvs.map((c) => {
@@ -1730,32 +1816,76 @@ function DesktopShell({
                               </Button>
                             }
                           >
-                            {(detached) => (
-                              <ChatView
-                                key={c.id}
-                                conversationId={c.id}
-                                conversationName={currentConversation.name}
-                                isRoutineRun={
-                                  currentConversation.scope === 'standalone' && Boolean(currentConversation.routineRunId)
-                                }
-                                onOpenPlan={() => {
-                                  openDrawerTab(c.id, 'plan')
-                                  setDrawerOpenByConv((current) => ({ ...current, [c.id]: true }))
-                                }}
-                                workspaceId={c.workspaceId}
-                                cwd={c.cwd}
-                                experience={c.experience}
-                                botManaged={
-                                  !!currentConversation.botOrigin && currentConversation.botManagementState === 'active'
-                                }
-                                botConversation={currentConversation.botOrigin ? currentConversation : undefined}
-                                botName={currentConversation.botOrigin?.botName}
-                                onExperienceChange={handleConversationExperienceChange}
-                                visible={detached || (active?.id === c.id && !mainOverride)}
-                                status={statuses[c.id] ?? c.status}
-                                onEvictionSafetyChange={onChatEvictionSafetyChange}
-                              />
-                            )}
+                            {(detached) => {
+                              const convRunId =
+                                currentConversation.scope === 'standalone'
+                                  ? currentConversation.routineRunId
+                                  : undefined
+                              const convRoutineId =
+                                currentConversation.scope === 'standalone'
+                                  ? currentConversation.routineId
+                                  : undefined
+                              const convRoutine = convRoutineId
+                                ? routinesCtrl.routines.find((r) => r.id === convRoutineId) ?? null
+                                : null
+                              const convRun = convRunId
+                                ? (activeRoutineRunDetails?.run.id === convRunId
+                                    ? activeRoutineRunDetails.run
+                                    : convRoutineId
+                                      ? (routinesCtrl.runsByRoutine[convRoutineId] ?? []).find(
+                                          (r) => r.id === convRunId
+                                        ) ?? null
+                                      : null)
+                                : null
+                              return (
+                                <ChatView
+                                  key={c.id}
+                                  conversationId={c.id}
+                                  conversationName={currentConversation.name}
+                                  isRoutineRun={
+                                    currentConversation.scope === 'standalone' &&
+                                    Boolean(currentConversation.routineRunId)
+                                  }
+                                  routineRun={convRun}
+                                  onEditRoutineModel={
+                                    convRoutine
+                                      ? () =>
+                                          setRoutineEditorTarget({
+                                            kind: 'edit',
+                                            routine: convRoutine,
+                                            originTitle: convRoutine.origin?.title,
+                                          })
+                                      : undefined
+                                  }
+                                  onRunRoutineAgain={
+                                    convRoutineId
+                                      ? () => {
+                                          void window.api.routinesRunNow(convRoutineId).then((started) => {
+                                            void routinesCtrl.refreshAll()
+                                            if (started) openRoutineRun(convRoutineId, started.id)
+                                          })
+                                        }
+                                      : undefined
+                                  }
+                                  onOpenPlan={() => {
+                                    openDrawerTab(c.id, 'plan')
+                                    setDrawerOpenByConv((current) => ({ ...current, [c.id]: true }))
+                                  }}
+                                  workspaceId={c.workspaceId}
+                                  cwd={c.cwd}
+                                  experience={c.experience}
+                                  botManaged={
+                                    !!currentConversation.botOrigin && currentConversation.botManagementState === 'active'
+                                  }
+                                  botConversation={currentConversation.botOrigin ? currentConversation : undefined}
+                                  botName={currentConversation.botOrigin?.botName}
+                                  onExperienceChange={handleConversationExperienceChange}
+                                  visible={detached || (active?.id === c.id && !mainOverride)}
+                                  status={statuses[c.id] ?? c.status}
+                                  onEvictionSafetyChange={onChatEvictionSafetyChange}
+                                />
+                              )
+                            }}
                           </ChatWindowHost>
                         )}
                       </div>

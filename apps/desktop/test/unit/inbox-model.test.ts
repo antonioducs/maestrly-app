@@ -193,7 +193,7 @@ describe('notifications center ledger', () => {
       { ...away, count: 1 },
       { ...here, count: 2 },
     ])
-    expect(inboxSourceCounts(items)).toEqual({ all: 3, workspace: 1, chat: 1, bot: 1 })
+    expect(inboxSourceCounts(items)).toEqual({ all: 3, workspace: 1, chat: 1, bot: 1, routine: 0 })
     expect(filterInbox(items, { place: 'host:remote', source: null, query: '' }).map(({ key }) => key)).toEqual(['b'])
     expect(filterInbox(items, { place: null, source: 'chat', query: '' }).map(({ key }) => key)).toEqual(['c'])
     expect(filterInbox(items, { place: null, source: null, query: 'KUBECTL' }).map(({ key }) => key)).toEqual(['b'])

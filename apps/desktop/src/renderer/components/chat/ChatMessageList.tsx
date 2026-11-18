@@ -33,7 +33,10 @@ import {
   RoutineProposalCard,
   interleaveChatMenuRoutines,
 } from '../routines/RoutineProposalCard'
-import type { LocalRoutine } from '../../../shared/routines'
+import { RoutineReportCard } from '../routines/RoutineReportCard'
+import { RoutineRunFailureCard } from '../routines/RoutineRunFailureCard'
+import { RoutineRunTrigger } from '../routines/RoutineRunTrigger'
+import type { LocalRoutine, LocalRoutineRun } from '../../../shared/routines'
 import { ArtifactCard } from '../artifacts/ArtifactCard'
 import { ARTIFACT_CARD_TOOLS } from '../../../shared/artifacts'
 import { SubagentCard } from './SubagentCard'
@@ -357,6 +360,8 @@ function Part({
       return <WorkspaceCreationCard part={toolPart} conversationId={conversationId} messageId={messageId} />
     if (toolBase === 'routine_propose')
       return <RoutineProposalCard part={toolPart} conversationId={conversationId} messageId={messageId} />
+    if (toolBase === 'routine_run_report')
+      return <RoutineReportCard part={toolPart} conversationId={conversationId} messageId={messageId} />
     if (ARTIFACT_CARD_TOOLS.includes(toolPart.toolName))
       return <ArtifactCard part={toolPart} conversationId={conversationId} messageId={messageId} />
     if (toolBase === 'task' || toolBase === 'delegate')
@@ -502,6 +507,9 @@ function FileParts({
 
 const Bubble = memo(function Bubble({
   message,
+  isRoutineRun = false,
+  onEditRoutineModel,
+  onRunRoutineAgain,
   canEdit,
   isEditing,
   latestTodoId,
@@ -521,6 +529,9 @@ const Bubble = memo(function Bubble({
   turnChangesEntry,
 }: {
   message: ChatMessage
+  isRoutineRun?: boolean
+  onEditRoutineModel?: () => void
+  onRunRoutineAgain?: () => void
   canEdit: boolean
   isEditing: boolean
 
@@ -565,6 +576,9 @@ const Bubble = memo(function Bubble({
   const editBlockedByCatalog = hasAgentMentions && catalogLoading
 
   if (isUser) {
+    if (message.source === 'routine-run' && message.routineRun) {
+      return <RoutineRunTrigger meta={message.routineRun} />
+    }
     if (isEditing) {
       const editMentions: StructuredAgentMentionDraft[] = message.parts
         .filter((p): p is Extract<MessagePart, { type: 'agent-mention' }> => p.type === 'agent-mention')
@@ -756,38 +770,55 @@ const Bubble = memo(function Bubble({
               renderPart(p, i)
             )
           )}
-      {message.error && (
-        <div
-          role={
-            message.errorCode === 'claude-authentication-required' ||
-            subscriptionExhaustionMessageKey(message.errorCode)
-              ? 'alert'
-              : undefined
-          }
-          className="flex min-w-0 max-w-full flex-col items-start gap-2 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-[14px] text-red-300"
-        >
-          <span>
-            {message.errorCode === 'process-interrupted'
-              ? t('messages.processInterruptedError')
-              : message.errorCode === 'claude-authentication-required'
-                ? t('messages.claudeAuthenticationRequired')
-                : subscriptionExhaustionMessageKey(message.errorCode)
-                  ? t(subscriptionExhaustionMessageKey(message.errorCode)!)
-                  : automaticStopMessageKey(message.errorCode)
-                    ? t(automaticStopMessageKey(message.errorCode)!)
-                    : message.error}
-          </span>
-          {message.errorCode === 'claude-authentication-required' && (
-            <button
-              type="button"
-              onClick={() => openSettings('chat')}
-              className="rounded-md border border-red-300/30 bg-red-300/10 px-2.5 py-1.5 text-[12px] font-medium text-red-100 hover:bg-red-300/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-300/70"
-            >
-              {t('messages.manageClaudeConnection')}
-            </button>
-          )}
-        </div>
-      )}
+      {message.error &&
+        (isRoutineRun ? (
+          <RoutineRunFailureCard
+            error={
+              message.errorCode === 'process-interrupted'
+                ? t('messages.processInterruptedError')
+                : message.errorCode === 'claude-authentication-required'
+                  ? t('messages.claudeAuthenticationRequired')
+                  : subscriptionExhaustionMessageKey(message.errorCode)
+                    ? t(subscriptionExhaustionMessageKey(message.errorCode)!)
+                    : automaticStopMessageKey(message.errorCode)
+                      ? t(automaticStopMessageKey(message.errorCode)!)
+                      : message.error
+            }
+            onSwitchModel={onEditRoutineModel}
+            onRunAgain={onRunRoutineAgain}
+          />
+        ) : (
+          <div
+            role={
+              message.errorCode === 'claude-authentication-required' ||
+              subscriptionExhaustionMessageKey(message.errorCode)
+                ? 'alert'
+                : undefined
+            }
+            className="flex min-w-0 max-w-full flex-col items-start gap-2 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-[14px] text-red-300"
+          >
+            <span>
+              {message.errorCode === 'process-interrupted'
+                ? t('messages.processInterruptedError')
+                : message.errorCode === 'claude-authentication-required'
+                  ? t('messages.claudeAuthenticationRequired')
+                  : subscriptionExhaustionMessageKey(message.errorCode)
+                    ? t(subscriptionExhaustionMessageKey(message.errorCode)!)
+                    : automaticStopMessageKey(message.errorCode)
+                      ? t(automaticStopMessageKey(message.errorCode)!)
+                      : message.error}
+            </span>
+            {message.errorCode === 'claude-authentication-required' && (
+              <button
+                type="button"
+                onClick={() => openSettings('chat')}
+                className="rounded-md border border-red-300/30 bg-red-300/10 px-2.5 py-1.5 text-[12px] font-medium text-red-100 hover:bg-red-300/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-300/70"
+              >
+                {t('messages.manageClaudeConnection')}
+              </button>
+            )}
+          </div>
+        ))}
       {wasCut && (
         <div className="flex min-w-0 max-w-full items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/[0.08] px-3 py-1.5 text-[12px] text-amber-200/90">
           <TriangleAlert className="h-3.5 w-3.5 shrink-0" />
@@ -816,6 +847,9 @@ const Bubble = memo(function Bubble({
 interface Props extends EditCtx {
   conversationId?: string
   isRoutineRun?: boolean
+  routineRun?: LocalRoutineRun | null
+  onEditRoutineModel?: () => void
+  onRunRoutineAgain?: () => void
   messages: ChatMessage[]
 
   readOnly?: boolean
@@ -859,6 +893,9 @@ export interface ReviewReceiptProps {
 export const ChatMessageList = memo(function ChatMessageList({
   conversationId: providedConversationId,
   isRoutineRun = false,
+  routineRun = null,
+  onEditRoutineModel,
+  onRunRoutineAgain,
   messages,
   experience = 'standard',
   streaming,
@@ -1119,7 +1156,7 @@ export const ChatMessageList = memo(function ChatMessageList({
               'min-w-0 max-w-full scroll-mt-16 rounded-xl transition-shadow',
               // A user message's hover actions fill the gap before the next message instead of adding a row. The
               // margin sits on this element: its content visibility clips whatever overflows it.
-              m.role === 'user' && editingId !== m.id && '-mb-5',
+              m.role === 'user' && m.source !== 'routine-run' && editingId !== m.id && '-mb-5',
               highlightMsgId === m.id && 'ring-2 ring-sky-400/60 ring-offset-2 ring-offset-[#0d0d10]'
             )}
             style={
@@ -1130,6 +1167,9 @@ export const ChatMessageList = memo(function ChatMessageList({
           >
             <Bubble
               message={m}
+              isRoutineRun={isRoutineRun}
+              onEditRoutineModel={onEditRoutineModel}
+              onRunRoutineAgain={onRunRoutineAgain}
               canEdit={!readOnly && !streaming && m.id === lastUserId}
               isEditing={editingId === m.id}
               latestTodoId={latestTodoId}
@@ -1151,6 +1191,15 @@ export const ChatMessageList = memo(function ChatMessageList({
           </div>
         )
       })}
+      {isRoutineRun && routineRun?.status === 'failed' && !visibleMessages.some((m) => Boolean(m.error)) && (
+        <div className="min-w-0 max-w-full">
+          <RoutineRunFailureCard
+            error={routineRun.error ?? t('inbox.failedDesc', { ns: 'routines' })}
+            onSwitchModel={onEditRoutineModel}
+            onRunAgain={onRunRoutineAgain}
+          />
+        </div>
+      )}
       {streaming && !liveLine && (
         <div className="flex items-center gap-1.5 text-[13px] text-muted-foreground">
           <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-muted-foreground" />

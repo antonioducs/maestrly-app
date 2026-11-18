@@ -143,6 +143,9 @@ interface Props {
   /** Shown while a review holds the conversation. */
   conversationName?: string
   isRoutineRun?: boolean
+  routineRun?: import('../../../shared/routines').LocalRoutineRun | null
+  onEditRoutineModel?: () => void
+  onRunRoutineAgain?: () => void
   /** Opens this conversation's Plan tab. */
   onOpenPlan?: () => void
   cwd: string
@@ -192,6 +195,9 @@ export function ChatView({
   conversationId,
   conversationName,
   isRoutineRun = false,
+  routineRun = null,
+  onEditRoutineModel,
+  onRunRoutineAgain,
   onOpenPlan,
   cwd: _cwd,
   experience,
@@ -2277,6 +2283,9 @@ export function ChatView({
                   <ChatMessageList
                     conversationId={conversationId}
                     isRoutineRun={isRoutineRun}
+                    routineRun={routineRun}
+                    onEditRoutineModel={onEditRoutineModel}
+                    onRunRoutineAgain={onRunRoutineAgain}
                     messages={messages}
                     experience={currentExperience}
                     streaming={streaming}
@@ -2332,7 +2341,8 @@ export function ChatView({
 
               {pending.map((req) => (
                 <PermissionPrompt
-                  scope={workspaceId === null ? 'standalone' : 'project'}
+                  scope={isRoutineRun ? 'routine' : workspaceId === null ? 'standalone' : 'project'}
+                  routineWaitingSince={isRoutineRun ? (routineRun?.startedAt ?? routineRun?.scheduledAt ?? null) : null}
                   key={req.id}
                   request={req}
                   onDecide={(reply) => decide(req.id, reply)}
@@ -2525,7 +2535,14 @@ export function ChatView({
                   structuredAgentMentions={draftMentions}
                   streaming={streaming}
                   sendWhileStreaming={maestroLiveActive || midTurnSteering}
-                  streamingPlaceholder={maestroLiveActive ? t('composer.placeholderMaestroLive') : undefined}
+                  placeholder={isRoutineRun ? t('run.composerPlaceholderDone', { ns: 'routines' }) : undefined}
+                  streamingPlaceholder={
+                    maestroLiveActive
+                      ? t('composer.placeholderMaestroLive')
+                      : isRoutineRun
+                        ? t('run.composerPlaceholderRunning', { ns: 'routines' })
+                        : undefined
+                  }
                   disabled={keyMissing || botBlocked}
                   disabledPlaceholder={botBlocked ? t('bots.managedBy', { ns: 'ui', name: botName }) : undefined}
                   onSend={submitDraft}
