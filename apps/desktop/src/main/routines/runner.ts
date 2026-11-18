@@ -356,14 +356,20 @@ export function createRoutineRunner(deps: RoutineRunnerDeps = {}): RoutineRunner
 
     let run: LocalRoutineRun | null = null
     try {
-      const conv = await createRunConversation({
-        routineId,
-        runId,
-        name: formatRunConversationName(routine.title, startedAt),
-        folder: routine.folder,
-      })
-      state.conversationId = conv.id
-      configureRunConversation(conv.id, routine)
+      const prepareConversation = async (): Promise<string> => {
+        const conv = await createRunConversation({
+          routineId,
+          runId,
+          name: formatRunConversationName(routine.title, startedAt),
+          folder: routine.folder,
+        })
+        state.conversationId = conv.id
+        configureRunConversation(conv.id, routine)
+        activeByConv.set(conv.id, state)
+        return conv.id
+      }
+
+      const initialConvId = mainWebContents() ? await prepareConversation() : null
 
       run = insertRun({
         id: runId,
@@ -376,7 +382,7 @@ export function createRoutineRunner(deps: RoutineRunnerDeps = {}): RoutineRunner
         summary: null,
         report: null,
         error: null,
-        conversationId: conv.id,
+        conversationId: initialConvId,
         conversationDeleted: false,
         pinned: false,
         unread: false,
@@ -385,7 +391,6 @@ export function createRoutineRunner(deps: RoutineRunnerDeps = {}): RoutineRunner
 
       state.releaseAwake = acquireAwake(`routine-run:${runId}`)
       activeByRun.set(runId, state)
-      activeByConv.set(conv.id, state)
 
       const previousReports = latestReports(routineId, ROUTINE_LIMITS.previousReports)
       const prompt = buildRoutinePrompt({
@@ -414,8 +419,13 @@ export function createRoutineRunner(deps: RoutineRunnerDeps = {}): RoutineRunner
             if (winState === 'aborted' || state.stopped) {
               return settleRun(state, routine, { status: 'cancelled', assistantMessageId: null })
             }
+            const convId = state.conversationId ?? (await prepareConversation())
+            const liveRun = updateRun(runId, { conversationId: convId }) ?? createdRun
+            if (state.stopped || controller.signal.aborted) {
+              return settleRun(state, routine, { status: 'cancelled', assistantMessageId: null })
+            }
             state.handle = await startTurn({
-              conversationId: conv.id,
+              conversationId: convId,
               prompt,
               skipMemory: true,
               routineRun,
@@ -424,7 +434,7 @@ export function createRoutineRunner(deps: RoutineRunnerDeps = {}): RoutineRunner
             if (state.stopped) {
               state.handle.cancel()
             } else if (trigger === 'manual') {
-              onToast?.({ kind: 'started', routine, run: createdRun })
+              onToast?.({ kind: 'started', routine, run: liveRun })
             }
           }
           const outcome = await state.handle.done
@@ -441,9 +451,9 @@ export function createRoutineRunner(deps: RoutineRunnerDeps = {}): RoutineRunner
       }
 
       // Start synchronously when the window is already ready so callers see the active turn immediately.
-      if (mainWebContents()) {
+      if (initialConvId) {
         state.handle = await startTurn({
-          conversationId: conv.id,
+          conversationId: initialConvId,
           prompt,
           skipMemory: true,
           routineRun,

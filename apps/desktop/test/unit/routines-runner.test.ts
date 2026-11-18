@@ -323,7 +323,7 @@ describe('routine runner', () => {
       })
     )
 
-    // Missing main window becomes skipped_closed
+    // Missing main window becomes skipped_closed without leaving an empty conversation behind
     const noWindowEnv = makeDeps({
       getMainWebContents: () => null,
       waitWindowRetryMs: 5,
@@ -333,6 +333,29 @@ describe('routine runner', () => {
     const closedRun = await noWindowRunner.start(routines[0].id, 'schedule', noWindowEnv.now())
     const settledClosed = await noWindowRunner.waitForRun(closedRun.id)
     expect(settledClosed?.status).toBe('skipped_closed')
+    const leaked = getDb()
+      .prepare('SELECT COUNT(*) AS count FROM conversations WHERE routine_run_id = ?')
+      .get(closedRun.id) as { count: number }
+    expect(leaked.count).toBe(0)
+    expect(settledClosed?.conversationId === null || settledClosed?.conversationDeleted === true).toBe(true)
+
+    // When the main window opens while waiting, conversation is created and the turn runs
+    let win: { id: number } | null = null
+    setTimeout(() => {
+      win = { id: 1 }
+    }, 10)
+    const delayedEnv = makeDeps({
+      getMainWebContents: () => win,
+      waitWindowRetryMs: 5,
+      waitWindowTimeoutMs: 100,
+    })
+    const delayedRunner = createRoutineRunner(delayedEnv.deps)
+    const delayedRun = await delayedRunner.start(routines[0].id, 'schedule', delayedEnv.now())
+    await vi.waitFor(() => expect(delayedEnv.startedTurns).toHaveLength(1))
+    delayedEnv.startedTurns[0].done.resolve({ status: 'success', assistantMessageId: null })
+    const settledDelayed = await delayedRunner.waitForRun(delayedRun.id)
+    expect(settledDelayed?.status).toBe('done')
+    expect(settledDelayed?.conversationId).toBeTruthy()
   })
 
   it('copies attachments into <routine folder>/runs/<YYYY-MM-DD HHmm>/ before deleting conversation', async () => {
