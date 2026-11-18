@@ -35,6 +35,9 @@ and tools together as you plan, build, and review.
 - **Standalone chats:** start a conversation from **Chats → New chat** without
   adding a project, choosing a folder, or creating a Git repository. See
   [desktop chats](docs/chat-context.md#chats-and-projects).
+- **Scheduled routines:** ask an agent in chat or use the composer's **+** menu
+  to schedule recurring work that runs on this computer in its own continuable
+  conversation. See [routines](docs/routines.md).
 - **Chat and providers:** API-key providers plus user-enabled Codex, Claude,
   GitHub Copilot, Cursor, Grok, and Google AI (Antigravity) integrations.
 - **Maestro:** coordinated workers, specialist profiles, subagents, plans,
@@ -116,6 +119,7 @@ To contribute, read [CONTRIBUTING.md](CONTRIBUTING.md) and the
 - [Releasing](docs/releasing.md)
 - [Local data and recovery](docs/local-data.md)
 - [Artifacts](docs/artifacts.md)
+- [Routines](docs/routines.md)
 - [Context usage and compaction](docs/chat-context.md)
 - [Plugins](docs/plugins.md)
 - [Local ML and offline setup](apps/desktop/runtime-assets/local-ml/README.md)
