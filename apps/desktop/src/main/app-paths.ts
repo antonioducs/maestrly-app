@@ -62,5 +62,14 @@ export function standaloneConversationDir(id: string): string {
   return standaloneConversationRelPath(app.getPath('userData'), id)
 }
 
-export const standaloneChatRelPath = standaloneConversationRelPath
+export function standaloneChatRelPath(base: string, id: string): string {
+  return standaloneConversationRelPath(base, id)
+}
+
+export function routineRelPath(base: string, routineId: string): string {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(routineId)) {
+    throw new Error('Invalid routine id.')
+  }
+  return path.join(base, 'routines', routineId)
+}
 export const standaloneChatDir = standaloneConversationDir

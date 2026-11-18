@@ -20,6 +20,7 @@ import type {
   ChatModelUsage,
   ChatPerModelUsage,
   ChatReviewLoopMeta,
+  ChatRoutineRunMeta,
   ChatSearchHit,
   ChatUsage,
   ChatUsageStats,
@@ -106,6 +107,7 @@ interface MetaJson {
   providerFingerprint?: string;
   source?: ChatMessage["source"];
   peer?: ChatMessage["peer"];
+  routineRun?: ChatMessage["routineRun"];
   botName?: string;
   finishReason?: string;
   usage?: StoredChatUsage;
@@ -476,6 +478,38 @@ function parsePeerOrigin(raw: unknown): ChatMessage["peer"] | undefined {
   };
 }
 
+function parseRoutineRunMeta(raw: unknown): ChatRoutineRunMeta | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const value = raw as Record<string, unknown>;
+  if (
+    typeof value.routineId !== "string" ||
+    typeof value.runId !== "string" ||
+    typeof value.title !== "string" ||
+    typeof value.instruction !== "string" ||
+    !value.schedule ||
+    typeof value.schedule !== "object" ||
+    (value.trigger !== "schedule" &&
+      value.trigger !== "manual" &&
+      value.trigger !== "late") ||
+    typeof value.scheduledAt !== "number" ||
+    typeof value.startedAt !== "number" ||
+    typeof value.hasPreviousReport !== "boolean"
+  ) {
+    return undefined;
+  }
+  return {
+    routineId: value.routineId,
+    runId: value.runId,
+    title: value.title,
+    instruction: value.instruction,
+    schedule: value.schedule as ChatRoutineRunMeta["schedule"],
+    trigger: value.trigger,
+    scheduledAt: value.scheduledAt,
+    startedAt: value.startedAt,
+    hasPreviousReport: value.hasPreviousReport,
+  };
+}
+
 function rowToMessage(r: any): StoredChatMessage {
   let meta: MetaJson = {};
   try {
@@ -489,11 +523,14 @@ function rowToMessage(r: any): StoredChatMessage {
   const source =
     meta.source === "maestrly-review" ||
     meta.source === "conversation-dispatch" ||
-    meta.source === "conversation-message"
+    meta.source === "conversation-message" ||
+    meta.source === "routine-run"
       ? meta.source
       : undefined;
   const peer =
     source === "conversation-message" ? parsePeerOrigin(meta.peer) : undefined;
+  const routineRun =
+    source === "routine-run" ? parseRoutineRunMeta(meta.routineRun) : undefined;
   const review =
     source === "maestrly-review"
       ? parseChatReviewReport(meta.review)
@@ -511,6 +548,7 @@ function rowToMessage(r: any): StoredChatMessage {
       : {}),
     ...(source ? { source } : {}),
     ...(peer ? { peer } : {}),
+    ...(routineRun ? { routineRun } : {}),
     ...(typeof meta.botName === "string" && meta.botName
       ? { botName: meta.botName.slice(0, 160) }
       : {}),
@@ -546,6 +584,7 @@ function metaOf(m: StoredChatMessage): string {
   }
   if (m.source) meta.source = m.source;
   if (m.peer) meta.peer = m.peer;
+  if (m.routineRun) meta.routineRun = m.routineRun;
   if (m.botName) meta.botName = m.botName.slice(0, 160);
   if (m.finishReason) meta.finishReason = m.finishReason;
   if (m.usage) meta.usage = m.usage;

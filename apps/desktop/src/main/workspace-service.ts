@@ -148,10 +148,12 @@ export async function deleteConversation(
 
   if (conv.scope === 'standalone') {
     await removeStandaloneConversationDirectory(conv)
-    store
-      .getDb()
-      .prepare('DELETE FROM permission_saved WHERE project_id = ?')
-      .run(permissionScopeKey(conversationPermissionScope(conv)))
+    if (!conv.routineId) {
+      store
+        .getDb()
+        .prepare('DELETE FROM permission_saved WHERE project_id = ?')
+        .run(permissionScopeKey(conversationPermissionScope(conv)))
+    }
     await deleteRowAndArtifacts()
     return
   }

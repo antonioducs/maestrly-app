@@ -984,8 +984,21 @@ export interface ChatReviewLoopMeta {
 /**
  * `conversation-dispatch`: first message of a conversation started from another conversation (host-generated).
  * `conversation-message`: a message, report or result sent by the agent of another conversation (see `peer`).
+ * `routine-run`: first message of a local routine run conversation (host-generated).
  */
-export type ChatMessageSource = 'maestrly-review' | 'conversation-dispatch' | 'conversation-message'
+export type ChatMessageSource = 'maestrly-review' | 'conversation-dispatch' | 'conversation-message' | 'routine-run'
+
+export interface ChatRoutineRunMeta {
+  routineId: string
+  runId: string
+  title: string
+  instruction: string
+  schedule: import('@maestrly/bot-fleet-protocol').FleetRoutineSchedule
+  trigger: 'schedule' | 'manual' | 'late'
+  scheduledAt: number
+  startedAt: number
+  hasPreviousReport: boolean
+}
 
 /** Sender of a message that came from another conversation; the name is captured when it was delivered. */
 export interface ChatMessagePeerOrigin {
@@ -1035,6 +1048,8 @@ export interface ChatMessage {
   source?: ChatMessageSource
   /** Present with source `conversation-message`. */
   peer?: ChatMessagePeerOrigin
+  /** Present with source `routine-run`. */
+  routineRun?: ChatRoutineRunMeta
   /** Trusted bot identity captured when this particular message was admitted by main. */
   botName?: string
   createdAt: number

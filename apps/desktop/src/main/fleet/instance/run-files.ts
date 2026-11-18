@@ -96,30 +96,24 @@ function stampOf(createdAt: string): string {
 }
 
 type Kept = FleetRoutineRunKept['files'][number]
-interface Copy {
+export interface ExternalFileCopy {
   name: string
   mediaType: string
   read: () => Promise<Uint8Array | null>
 }
 
-/**
- * Copies what a run's conversation holds outside its folder (the images it generated or shared, and the owner's
- * attachments) into `routines/<routine>/<time>/` in the bot's conversation folder, before that conversation is
- * deleted; the files the run shared are in that folder already and are listed as they are. Nothing the run wrote is
- * ever overwritten: a name taken gets a number.
- */
-export async function keepRunFiles(options: {
-  record: LaneRecord
-  /** The bot's conversation folder, or null when it is gone: nothing is copied then. */
+export async function keepConversationFiles(options: {
+  conversationId: string
   folder: string | null
-  images: FleetImageStore
-  /** Files the run shared that are deleted with it: they are not listed as kept. */
-  dropped?: ReadonlySet<string>
-}): Promise<FleetRoutineRunKept> {
-  const { record, images } = options
-  const conversationId = record.conversationId
-  const copies: Copy[] = []
-  const shared: Kept[] = []
+  relativeFolder: string
+  extraCopies?: ExternalFileCopy[]
+  sharedFiles?: Kept[]
+  maxFiles?: number
+}): Promise<{ folder: string; files: Kept[] }> {
+  const { conversationId } = options
+  const maxFiles = options.maxFiles ?? FLEET_ROUTINE_RUN_LIMITS.keptFilesMax
+  const copies: ExternalFileCopy[] = []
+  const shared = options.sharedFiles ?? []
   let count = 0
   const next = () => ++count
   for (const message of messagesOf(conversationId)) {
@@ -164,6 +158,47 @@ export async function keepRunFiles(options: {
       }
     }
   }
+  if (options.extraCopies?.length) copies.push(...options.extraCopies)
+  const kept: Kept[] = []
+  if (copies.length && options.folder) {
+    const root = await fs.realpath(options.folder)
+    const target = path.join(root, ...options.relativeFolder.split('/'))
+    await fs.mkdir(target, { recursive: true, mode: 0o700 })
+    const real = await fs.realpath(target)
+    if (!real.startsWith(root + path.sep)) throw new Error('The folder for the run is outside the target folder.')
+    for (const copy of copies) {
+      if (kept.length >= maxFiles) break
+      const bytes = await copy.read().catch(() => null)
+      if (!bytes) continue
+      const written = await writeNew(real, copy.name, bytes)
+      const isImage = copy.mediaType.startsWith('image/') && imageMediaType(bytes) !== null
+      kept.push({ name: written, kind: isImage ? 'image' : 'file', byteSize: bytes.byteLength })
+    }
+  }
+  const files = [...kept, ...shared].slice(0, maxFiles)
+  return { folder: kept.length ? options.relativeFolder : '', files }
+}
+
+/**
+ * Copies what a run's conversation holds outside its folder (the images it generated or shared, and the owner's
+ * attachments) into `routines/<routine>/<time>/` in the bot's conversation folder, before that conversation is
+ * deleted; the files the run shared are in that folder already and are listed as they are. Nothing the run wrote is
+ * ever overwritten: a name taken gets a number.
+ */
+export async function keepRunFiles(options: {
+  record: LaneRecord
+  /** The bot's conversation folder, or null when it is gone: nothing is copied then. */
+  folder: string | null
+  images: FleetImageStore
+  /** Files the run shared that are deleted with it: they are not listed as kept. */
+  dropped?: ReadonlySet<string>
+}): Promise<FleetRoutineRunKept> {
+  const { record, images } = options
+  const conversationId = record.conversationId
+  const extraCopies: ExternalFileCopy[] = []
+  const shared: Kept[] = []
+  let count = 0
+  const next = () => ++count
   // The screenshots the bot showed the owner, and the files it shared.
   for (const { item } of projectMessages(messagesOf(conversationId), transcriptInputs([]), (part) =>
     images.toolRefs(part)
@@ -172,7 +207,7 @@ export async function keepRunFiles(options: {
     // Generated images were copied above: only tool screenshots (`t-`) remain.
     if (item.shared)
       for (const image of item.images.filter((entry) => entry.id.startsWith('t-')))
-        copies.push({
+        extraCopies.push({
           name: safeName(image.name, `screenshot-${next()}`, image.mediaType),
           mediaType: image.mediaType,
           read: async () => (await images.read(image.id, conversationId, []))?.bytes ?? null,
@@ -185,25 +220,13 @@ export async function keepRunFiles(options: {
           byteSize: file.byteSize,
         })
   }
-  const relative = laneKeptFolder(record)
-  const kept: Kept[] = []
-  if (copies.length && options.folder) {
-    const root = await fs.realpath(options.folder)
-    const target = path.join(root, ...relative.split('/'))
-    await fs.mkdir(target, { recursive: true, mode: 0o700 })
-    const real = await fs.realpath(target)
-    if (!real.startsWith(root + path.sep)) throw new Error('The folder for the run is outside the bot folder.')
-    for (const copy of copies) {
-      if (kept.length >= FLEET_ROUTINE_RUN_LIMITS.keptFilesMax) break
-      const bytes = await copy.read().catch(() => null)
-      if (!bytes) continue
-      const written = await writeNew(real, copy.name, bytes)
-      const isImage = copy.mediaType.startsWith('image/') && imageMediaType(bytes) !== null
-      kept.push({ name: written, kind: isImage ? 'image' : 'file', byteSize: bytes.byteLength })
-    }
-  }
-  const files = [...kept, ...shared].slice(0, FLEET_ROUTINE_RUN_LIMITS.keptFilesMax)
-  return { folder: kept.length ? relative : '', files }
+  return keepConversationFiles({
+    conversationId,
+    folder: options.folder,
+    relativeFolder: laneKeptFolder(record),
+    extraCopies,
+    sharedFiles: shared,
+  })
 }
 
 /** Writes a new file in `folder`, never over another: `name`, then `name-2`, `name-3`… Returns the name used. */
