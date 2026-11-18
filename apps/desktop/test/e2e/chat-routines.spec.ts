@@ -150,10 +150,7 @@ test('chat routines: + menu create, run now report, pause/edit/delete, and agent
     await page.waitForFunction(() => Boolean((window as any).api))
     expect(await realpath(await app.evaluate(({ app }) => app.getPath('userData')))).toBe(await realpath(profile))
 
-    const skipBtn = page.getByRole('button', { name: 'Skip', exact: true })
-    if (await skipBtn.isVisible({ timeout: 5_000 }).catch(() => false)) {
-      await skipBtn.click()
-    }
+    await page.getByRole('button', { name: 'Skip', exact: true }).click()
 
     const port = (model.address() as { port: number }).port
     const provider = await call('chatAddProvider', {

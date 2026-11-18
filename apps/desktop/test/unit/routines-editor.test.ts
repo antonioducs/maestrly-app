@@ -123,6 +123,18 @@ describe('RoutineEditorDialog', () => {
     expect(autoEditHtml).toContain('Sempre permitido nesta rotina')
     expect(autoEditHtml).toContain('curl')
     expect(autoEditHtml).toContain('/tmp/reports')
+
+    const foreverHtml = renderToStaticMarkup(
+      createElement(RoutineEditorFormBody, {
+        target: { kind: 'edit', routine: { ...sampleRoutine, retentionDays: null } },
+        savedPermissions: [],
+        onClose: noop,
+        onSaveNew: async () => {},
+        onSaveEdit: async () => {},
+        onRemoveSavedPermission: noop,
+      })
+    )
+    expect(foreverHtml).toContain('<option value="always" selected="">Sempre</option>')
   })
 
   it('closes model and reasoning popovers cleanly on Escape without dismissing outer dialog', () => {

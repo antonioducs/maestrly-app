@@ -670,15 +670,18 @@ export function RoutineEditorFormBody({
             </label>
             <select
               id={retentionInputId}
-              value={String(form.retentionDays)}
+              value={form.retentionDays === null ? 'always' : String(form.retentionDays)}
               onChange={(e) =>
-                setForm((prev) => ({ ...prev, retentionDays: Number(e.target.value) as RoutineRetentionDays }))
+                setForm((prev) => ({
+                  ...prev,
+                  retentionDays: (e.target.value === 'always' ? null : Number(e.target.value)) as RoutineRetentionDays,
+                }))
               }
               className={cn(inputClass, 'h-[34px] bg-[#212124]')}
             >
-              {[30, 60, 90, 0].map((days) => (
-                <option key={days} value={days}>
-                  {days === 0 ? t('editor.retentionAlways') : t('editor.retentionDays', { count: days })}
+              {([30, 60, 90, null] as const).map((days) => (
+                <option key={days ?? 'always'} value={days === null ? 'always' : String(days)}>
+                  {days === null ? t('editor.retentionAlways') : t('editor.retentionDays', { count: days })}
                 </option>
               ))}
             </select>
