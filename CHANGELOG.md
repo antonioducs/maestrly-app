@@ -5,6 +5,46 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.39.0] - 2026-11-18
+
+### Added
+
+- **Local scheduled routines on desktop**: ask an agent in a local chat to
+  schedule a task (review and confirm via a proposal card), choose **Schedule as
+  routine…** from the composer `+` menu, or create one in **Routines** (up to
+  50 routines per profile). Supports fixed-time and interval schedules (15 min
+  to 24 h), missed-run handling (**Run when back** up to 2 hours late or
+  **Skip**), isolated run conversations with a shared routine folder and
+  cross-run reports, configurable retention with **Always keep**, per-routine
+  tool approvals, model snapshots, notifications, and **This computer**
+  background/startup/wake settings. See [Routines](docs/routines.md).
+- **Artifacts activity indicator and filter**: the Artifacts center highlights
+  artifacts with new unseen activity and adds a **With activity** filter.
+- **Option to hide earlier versions on shared artifacts**: shared artifact links
+  now show only the current version to viewers by default; owners can turn on
+  **Show earlier versions** in the Share dialog to let viewers browse earlier
+  versions and their comments. The artifact host database moves to schema 4 for
+  this setting.
+
+### Changed
+
+- **Server-wide artifact collaboration for agents**: agents in desktop
+  conversations, workspaces environments, and bots with **Publish artifacts**
+  enabled can now list, read, update, reply to, and resolve comments on any
+  artifact or whiteboard on the server, while deleting and sharing remain
+  owner-only. See [Artifacts](docs/artifacts.md) and [Bot fleet](docs/bot-fleet.md).
+
+### Fixed
+
+- **Antigravity Google API rejection errors**: when Google's API rejects a model
+  call (for example `400 INVALID_ARGUMENT`) and Antigravity sends only that
+  message as the final text, Maestrly now ends the turn with an error naming the
+  status instead of displaying it as an answer, and starts a fresh session on
+  the next message. See [Antigravity](docs/antigravity.md).
+- **Background compaction oversized summaries**: when background context
+  compaction produces a summary larger than the budget, it shortens that
+  summary instead of repeating the compaction stage.
+
 ## [0.38.0] - 2026-11-17
 
 ### Added
