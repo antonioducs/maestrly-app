@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -44,5 +45,17 @@ describe('Toaster', () => {
     expect(html).toContain('Open run')
     dismissToasts((t) => t.id === 'run-1')
     expect(getToasts().map((t) => t.id)).toEqual(['other'])
+  })
+
+  it('layers toasts below modal dialog overlays so they do not cover dialog footers', () => {
+    toast({ tone: 'ok', title: 'Routine running' })
+    const html = renderToStaticMarkup(createElement(Toaster))
+    const dialogSrc = readFileSync(
+      new URL('../../src/renderer/components/ui/dialog.tsx', import.meta.url),
+      'utf8'
+    )
+    expect(dialogSrc).toContain('z-50')
+    expect(html).not.toContain('z-[70]')
+    expect(html).toContain('z-[45]')
   })
 })

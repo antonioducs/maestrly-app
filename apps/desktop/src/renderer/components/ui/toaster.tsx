@@ -211,7 +211,7 @@ export function Toaster() {
 
   return (
     <div
-      className="pointer-events-none fixed right-4 bottom-4 z-[70] flex w-[min(360px,calc(100vw-32px))] flex-col gap-2"
+      className="pointer-events-none fixed right-4 bottom-4 z-[45] flex w-[min(360px,calc(100vw-32px))] flex-col gap-2"
       aria-live="polite"
     >
       {list.map((item) => (
