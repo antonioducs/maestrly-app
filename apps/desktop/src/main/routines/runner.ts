@@ -132,6 +132,7 @@ interface ActiveRunState {
   controller: AbortController
   handle: InternalTurnHandle | null
   releaseAwake: (() => void) | null
+  hasSlot: boolean
   stopped: boolean
   done: Promise<LocalRoutineRun | null>
 }
@@ -183,13 +184,15 @@ export function createRoutineRunner(deps: RoutineRunnerDeps = {}): RoutineRunner
   }
 
   function releaseSlot(): void {
-    const next = slotWaiters.shift()
-    if (next) {
-      clearTimeout(next.timer)
-      next.resolve(true)
-      return
-    }
     activeSlots = Math.max(0, activeSlots - 1)
+    if (activeSlots < ROUTINE_LIMITS.concurrentRuns) {
+      const next = slotWaiters.shift()
+      if (next) {
+        activeSlots++
+        clearTimeout(next.timer)
+        next.resolve(true)
+      }
+    }
   }
 
   async function waitForMainWindow(signal: AbortSignal): Promise<'ready' | 'timeout' | 'aborted'> {
@@ -220,7 +223,10 @@ export function createRoutineRunner(deps: RoutineRunnerDeps = {}): RoutineRunner
     activeByRun.delete(state.runId)
     if (state.conversationId) activeByConv.delete(state.conversationId)
     busyRoutines.delete(state.routineId)
-    releaseSlot()
+    if (state.hasSlot) {
+      state.hasSlot = false
+      releaseSlot()
+    }
   }
 
   function settleRun(
@@ -343,6 +349,7 @@ export function createRoutineRunner(deps: RoutineRunnerDeps = {}): RoutineRunner
       controller,
       handle: null,
       releaseAwake: null,
+      hasSlot: true,
       stopped: false,
       done: Promise.resolve(null),
     }
@@ -520,6 +527,10 @@ export function createRoutineRunner(deps: RoutineRunnerDeps = {}): RoutineRunner
     if (status === 'waiting' || status === 'asking') {
       state.releaseAwake?.()
       state.releaseAwake = null
+      if (state.hasSlot) {
+        state.hasSlot = false
+        releaseSlot()
+      }
       const kind: RoutineWaitingKind = status === 'asking' ? 'question' : 'approval'
       const waiting = readWaitingDetail(conversationId, kind)
       if (run.status !== 'waiting') {
@@ -537,6 +548,10 @@ export function createRoutineRunner(deps: RoutineRunnerDeps = {}): RoutineRunner
 
     if (status === 'working' && run.status === 'waiting') {
       if (!state.releaseAwake) state.releaseAwake = acquireAwake(`routine-run:${state.runId}`)
+      if (!state.hasSlot) {
+        state.hasSlot = true
+        activeSlots++
+      }
       updateRun(state.runId, { status: 'running', waiting: null })
     }
   }

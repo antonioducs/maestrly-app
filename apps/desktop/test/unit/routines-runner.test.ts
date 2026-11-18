@@ -479,4 +479,43 @@ describe('routine runner', () => {
     env.startedTurns[0].done.resolve({ status: 'success', assistantMessageId: null })
     await runner.waitForRun(run.id)
   })
+
+  it('releases concurrency slots while runs are waiting and resumes them without re-queuing', async () => {
+    const routines = Array.from({ length: 6 }, (_, i) =>
+      createRoutine(sampleDraft({ title: `Routine ${i + 1}` }), null, 1000 + i)
+    )
+    const env = makeDeps({ waitSlotTimeoutMs: 30 })
+    const runner = createRoutineRunner(env.deps)
+
+    const r1 = await runner.start(routines[0].id, 'schedule', env.now())
+    const r2 = await runner.start(routines[1].id, 'schedule', env.now())
+    const r3 = await runner.start(routines[2].id, 'schedule', env.now())
+
+    runner.onConversationStatus(r1.conversationId!, 'waiting')
+    runner.onConversationStatus(r2.conversationId!, 'asking')
+    runner.onConversationStatus(r3.conversationId!, 'waiting')
+
+    // All 3 slots are released while waiting, so 3 new runs can start without timing out to skipped_busy.
+    const r4 = await runner.start(routines[3].id, 'schedule', env.now())
+    const r5 = await runner.start(routines[4].id, 'schedule', env.now())
+    const r6 = await runner.start(routines[5].id, 'schedule', env.now())
+    expect(r4.status).toBe('running')
+    expect(r5.status).toBe('running')
+    expect(r6.status).toBe('running')
+
+    // Waiting run resumes directly on working without waiting for a queued slot.
+    runner.onConversationStatus(r1.conversationId!, 'working')
+    expect(getRun(r1.id)?.status).toBe('running')
+
+    // Stopping a waiting run must not double-release slots.
+    runner.stop(r2.id)
+    await runner.waitForRun(r2.id)
+
+    for (const turn of env.startedTurns) {
+      turn.done.resolve({ status: 'success', assistantMessageId: null })
+    }
+    await Promise.all([r1, r3, r4, r5, r6].map((r) => runner.waitForRun(r.id)))
+    expect(getRun(r1.id)?.status).toBe('done')
+    expect(getRun(r4.id)?.status).toBe('done')
+  })
 })
