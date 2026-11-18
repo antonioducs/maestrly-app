@@ -7,6 +7,7 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { formatBytes } from '@/components/chat/runtime-asset-presentation'
 import { useLocale } from '@/lib/i18n'
+import { cn } from '@/lib/utils'
 import { ArtifactDetailSheet } from './ArtifactDetailSheet'
 import { ArtifactGridCard } from './ArtifactGridCard'
 import { EmptyState, LoadingGrid, NoMatchState, type SuggestionKey, UnavailableState } from './ArtifactsStates'
@@ -17,6 +18,7 @@ import {
   type ArtifactSort,
   arrivals,
   centerBody,
+  hasNews,
   nearQuota,
   type ProjectFilter,
   type ProjectOption,
@@ -118,6 +120,7 @@ export function ArtifactsCenter({
   const [query, setQuery] = useState('')
   const [project, setProject] = useState<ProjectFilter>(ALL_PROJECTS)
   const [sort, setSort] = useState<ArtifactSort>('updated')
+  const [newsOnly, setNewsOnly] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [opening, setOpening] = useState<ReadonlySet<string>>(new Set())
   const [confirm, setConfirm] = useState<ArtifactListItem | null>(null)
@@ -133,12 +136,14 @@ export function ArtifactsCenter({
   const shown = useRef<ReadonlySet<string>>(new Set())
 
   const options = useMemo(() => projectOptions(items, locale), [items, locale])
+  const newsCount = useMemo(() => items.filter(hasNews).length, [items])
   const visible = useMemo(
-    () => visibleArtifacts(items, { query, project, sort, locale }),
-    [items, query, project, sort, locale]
+    () => visibleArtifacts(items, { query, project, sort, locale, newsOnly, keep: selectedId }),
+    [items, query, project, sort, locale, newsOnly, selectedId]
   )
   const body = centerBody({ loading, server: serverStatus, listed, total: items.length, visible: visible.length })
-  const toolbar = body.kind !== 'loading' && body.kind !== 'unavailable' && showToolbar(items.length, query, project)
+  const toolbar =
+    body.kind !== 'loading' && body.kind !== 'unavailable' && showToolbar(items.length, query, project, newsOnly)
   const selected = selectedId ? items.find((item) => item.id === selectedId) : undefined
   const sharing = shareId ? items.find((item) => item.id === shareId) : undefined
 
@@ -146,6 +151,11 @@ export function ArtifactsCenter({
   useEffect(() => {
     if (project !== ALL_PROJECTS && !options.some((option) => option.value === project)) setProject(ALL_PROJECTS)
   }, [options, project])
+
+  // Once everything new has been seen and no artifact is open, the filter has nothing left to show.
+  useEffect(() => {
+    if (newsOnly && newsCount === 0 && !selectedId) setNewsOnly(false)
+  }, [newsOnly, newsCount, selectedId])
 
   // Artifacts and versions that appear while the center is open are marked for a moment.
   useEffect(() => {
@@ -313,6 +323,7 @@ export function ArtifactsCenter({
   const showLargest = () => {
     setSort('size')
     setProject(ALL_PROJECTS)
+    setNewsOnly(false)
     setQuery('')
     scrollRef.current?.scrollTo({ top: 0 })
     requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-testid="artifact-card-select"]')?.focus())
@@ -320,6 +331,7 @@ export function ArtifactsCenter({
   const clearFilters = () => {
     setQuery('')
     setProject(ALL_PROJECTS)
+    setNewsOnly(false)
     searchRef.current?.focus()
   }
 
@@ -329,7 +341,9 @@ export function ArtifactsCenter({
     ? project !== ALL_PROJECTS && currentProject
       ? t('artifacts.noMatch.queryIn', { query: trimmed, project: projectLabel(currentProject) })
       : t('artifacts.noMatch.query', { query: trimmed })
-    : t('artifacts.noMatch.project', { project: currentProject ? projectLabel(currentProject) : '' })
+    : newsOnly && project === ALL_PROJECTS
+      ? t('artifacts.noMatch.news')
+      : t('artifacts.noMatch.project', { project: currentProject ? projectLabel(currentProject) : '' })
 
   return (
     <div className="relative flex h-full flex-col" data-testid="artifacts-center">
@@ -429,6 +443,28 @@ export function ArtifactsCenter({
                   ))}
                 </SelectContent>
               </Select>
+              {(newsCount > 0 || newsOnly) && (
+                <button
+                  type="button"
+                  data-testid="artifacts-filter-news"
+                  aria-pressed={newsOnly}
+                  onClick={() => setNewsOnly((current) => !current)}
+                  className={cn(
+                    'flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-[12.5px] transition-colors',
+                    newsOnly
+                      ? 'border-primary/60 bg-primary/[0.14] text-foreground'
+                      : 'border-border-strong bg-black/[0.18] text-foreground/85 hover:text-foreground'
+                  )}
+                >
+                  <span className="size-1.5 rounded-full bg-primary" aria-hidden="true" />
+                  {t('artifacts.filter.news')}
+                  {newsCount > 0 && (
+                    <span className="rounded-full bg-primary px-1.5 text-[11px] font-semibold leading-4 text-primary-foreground">
+                      {newsCount}
+                    </span>
+                  )}
+                </button>
+              )}
               <Select value={sort} onValueChange={(value) => setSort(value as ArtifactSort)}>
                 <SelectTrigger
                   className="h-8 w-auto border-border-strong bg-black/[0.18] text-[12.5px]"

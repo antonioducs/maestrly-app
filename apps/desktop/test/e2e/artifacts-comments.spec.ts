@@ -127,6 +127,7 @@ test('comments on a shared artifact reach the owner and the agent', async () => 
     // 3. The owner sees it: on the card, in the sidebar count, and in the details with the passage and the author.
     await expect(card.getByTestId('artifact-card-comments')).toHaveText('1')
     await expect(page.getByTestId('sidebar-artifacts-unseen')).toHaveText('2')
+    await expect(card.getByTestId('artifact-card-news')).toHaveText('2 new')
     await card.getByTestId('artifact-card-select').click()
     const ownerThread = detail.getByTestId('artifact-comment-thread').first()
     await expect(ownerThread).toContainText(SENTENCE)

@@ -133,6 +133,7 @@ export function ArtifactGridCard({
         'artifact-card group relative flex flex-col rounded-[10px] pt-4',
         entering && 'artifact-enter',
         arrival && 'artifact-arrived',
+        item.unseenEvents > 0 && 'has-news',
         selected && 'is-selected'
       )}
     >
@@ -140,7 +141,12 @@ export function ArtifactGridCard({
         type="button"
         data-testid="artifact-card-select"
         className="absolute inset-0 z-[1] rounded-[10px] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring"
-        aria-label={t('artifacts.card.details', { title: item.title, version: item.currentVersion })}
+        aria-label={[
+          t('artifacts.card.details', { title: item.title, version: item.currentVersion }),
+          item.unseenEvents > 0 ? t('artifacts.card.news', { count: item.unseenEvents }) : null,
+        ]
+          .filter(Boolean)
+          .join('. ')}
         aria-pressed={selected}
         onClick={onSelect}
       />
@@ -148,10 +154,20 @@ export function ArtifactGridCard({
         <VersionStack versions={item.versionCount} />
         <div className="artifact-thumb relative aspect-[16/10] overflow-hidden rounded-[10px] border border-border-strong bg-[#141416]">
           <ArtifactThumbnail item={item} />
-          {arrival && (
+          {arrival ? (
             <span className="absolute left-2 top-2 rounded-full bg-primary px-2 text-[11px] font-semibold leading-[18px] text-primary-foreground">
               {arrival === 'artifact' ? t('artifacts.card.newArtifact') : t('artifacts.card.newVersion')}
             </span>
+          ) : (
+            item.unseenEvents > 0 && (
+              <span
+                data-testid="artifact-card-news"
+                className="absolute left-2 top-2 flex items-center gap-1 rounded-full bg-primary px-2 text-[11px] font-semibold leading-[18px] text-primary-foreground"
+              >
+                <span className="size-1.5 rounded-full bg-primary-foreground" aria-hidden="true" />
+                {t('artifacts.card.news', { count: item.unseenEvents })}
+              </span>
+            )
           )}
           {item.pendingRequests > 0 && (
             <span
