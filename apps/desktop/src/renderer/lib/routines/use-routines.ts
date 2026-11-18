@@ -494,3 +494,11 @@ export function useRoutineRunDetails(runId: string | null): RoutineRunDetails | 
 
   return details
 }
+
+export function shouldOpenRoutinesAgendaOnTab(
+  tab: string,
+  routinesView: { kind: string } | null,
+  activeRoutineRunId: string | null
+): boolean {
+  return tab === 'routines' && routinesView === null && activeRoutineRunId === null
+}

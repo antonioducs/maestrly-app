@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import { createInstance } from 'i18next'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -249,5 +251,20 @@ describe('RoutineDetailView', () => {
     )
     expect(fullHtml).not.toContain('Sempre permitido')
     expect(fullHtml).toContain('Criada em Rotinas')
+  })
+
+  it('opens the agenda when the routines tab is selected and no routine view or run is open', async () => {
+    const mod = await import('../../src/renderer/lib/routines/use-routines')
+    expect(mod.shouldOpenRoutinesAgendaOnTab('routines', null, null)).toBe(true)
+    expect(mod.shouldOpenRoutinesAgendaOnTab('routines', { kind: 'routine' }, null)).toBe(false)
+    expect(mod.shouldOpenRoutinesAgendaOnTab('routines', null, 'run-1')).toBe(false)
+    expect(mod.shouldOpenRoutinesAgendaOnTab('chats', null, null)).toBe(false)
+
+    const desktopSrc = readFileSync(
+      path.resolve(import.meta.dirname, '../../src/renderer/DesktopApp.tsx'),
+      'utf8'
+    )
+    expect(desktopSrc).toContain('shouldOpenRoutinesAgendaOnTab(nextTab, nav.routinesView, activeRoutineRunId)')
+    expect(desktopSrc).toContain("nav.openRoutinesView({ kind: 'agenda' })")
   })
 })

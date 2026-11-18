@@ -1,4 +1,8 @@
-import { useRoutines, useRoutineRunDetails } from '@/lib/routines/use-routines'
+import {
+  shouldOpenRoutinesAgendaOnTab,
+  useRoutineRunDetails,
+  useRoutines,
+} from '@/lib/routines/use-routines'
 import { RoutinesAgendaView } from '@/components/routines/RoutinesAgendaView'
 import { RoutineDetailView } from '@/components/routines/RoutineDetailView'
 import { RoutineEditorDialog, type RoutineEditorTarget } from '@/components/routines/RoutineEditorDialog'
@@ -1201,7 +1205,12 @@ function DesktopShell({
               activeId={active?.id ?? null}
               selectedConversation={active}
               requestedTab={tabRequest}
-              onTabChange={(nextTab) => routinesCtrl.notifySidebarTab(nextTab)}
+              onTabChange={(nextTab) => {
+                routinesCtrl.notifySidebarTab(nextTab)
+                if (shouldOpenRoutinesAgendaOnTab(nextTab, nav.routinesView, activeRoutineRunId)) {
+                  nav.openRoutinesView({ kind: 'agenda' })
+                }
+              }}
               fleet={fleet}
               selectedFleet={
                 fleetView?.kind === 'bot'
