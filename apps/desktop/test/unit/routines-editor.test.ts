@@ -94,6 +94,26 @@ describe('RoutineEditorDialog', () => {
     expect(proposalHtml).toContain('Viagem para Lisboa')
     expect(proposalHtml).toContain('Criar rotina')
     expect(proposalHtml).toContain('Permissões')
+    expect(proposalHtml).not.toMatch(/<select(?![^>]*aria-hidden="true")/)
+    expect(proposalHtml).toContain('role="combobox"')
+
+    const intervalDraft: RoutineDraft = {
+      ...sampleDraft,
+      schedule: { kind: 'interval', everyMinutes: 30 },
+    }
+    const intervalHtml = renderToStaticMarkup(
+      createElement(RoutineEditorFormBody, {
+        target: { kind: 'proposal', draft: intervalDraft, originTitle: 'Viagem para Lisboa', onConfirmDraft: noop },
+        savedPermissions: [],
+        onClose: noop,
+        onSaveNew: async () => {},
+        onSaveEdit: async () => {},
+        onRemoveSavedPermission: noop,
+      })
+    )
+    expect(intervalHtml).not.toMatch(/<select(?![^>]*aria-hidden="true")/)
+    expect(intervalHtml).toContain('role="combobox"')
+    expect(intervalHtml).toContain('minutos')
 
     const fullHtml = renderToStaticMarkup(
       createElement(RoutineEditorFormBody, {
@@ -134,7 +154,9 @@ describe('RoutineEditorDialog', () => {
         onRemoveSavedPermission: noop,
       })
     )
-    expect(foreverHtml).toContain('<option value="always" selected="">Sempre</option>')
+    expect(foreverHtml).not.toMatch(/<select(?![^>]*aria-hidden="true")/)
+    expect(foreverHtml).toContain('role="combobox"')
+    expect(foreverHtml).toContain('Sempre')
   })
 
   it('closes model and reasoning popovers cleanly on Escape without dismissing outer dialog', () => {

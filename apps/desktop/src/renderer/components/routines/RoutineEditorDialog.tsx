@@ -30,6 +30,7 @@ import { FastModeChip } from '@/components/chat/ChatFastModeToggle'
 import { loadModelPickerRows } from '@/components/chat/model-picker-rows'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { SearchSelect, type SearchOption } from '@/components/ui/search-select'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { RoutineSavedPermissionLabel } from './RoutineOutcomeBadge'
 
 export type RoutineEditorTarget =
@@ -443,17 +444,26 @@ export function RoutineEditorFormBody({
                 <label htmlFor={unitInputId} className="text-[12.5px] font-medium text-foreground/78">
                   {t('editor.unitLabel')}
                 </label>
-                <select
-                  id={unitInputId}
+                <Select
                   value={form.everyUnit}
-                  onChange={(e) =>
-                    setForm((prev) => ({ ...prev, everyUnit: e.target.value as 'minutes' | 'hours' }))
+                  onValueChange={(value) =>
+                    setForm((prev) => ({ ...prev, everyUnit: value as 'minutes' | 'hours' }))
                   }
-                  className={cn(inputClass, 'h-[34px] bg-[#212124]')}
                 >
-                  <option value="minutes">{t('editor.unitMinutes')}</option>
-                  <option value="hours">{t('editor.unitHours')}</option>
-                </select>
+                  <SelectTrigger id={unitInputId} className={cn(inputClass, 'h-[34px] shadow-none')}>
+                    <SelectValue>
+                      {form.everyUnit === 'hours' ? t('editor.unitHours') : t('editor.unitMinutes')}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="minutes" className="text-[13px]">
+                      {t('editor.unitMinutes')}
+                    </SelectItem>
+                    <SelectItem value="hours" className="text-[13px]">
+                      {t('editor.unitHours')}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             </div>
             <span className="text-[11.5px] text-[rgba(154,149,140,0.58)]">{t('editor.intervalHint')}</span>
@@ -651,16 +661,31 @@ export function RoutineEditorFormBody({
             <label htmlFor={notifyInputId} className="text-[12.5px] font-medium text-foreground/78">
               {t('editor.notifyLabel')}
             </label>
-            <select
-              id={notifyInputId}
+            <Select
               value={form.notify}
-              onChange={(e) => setForm((prev) => ({ ...prev, notify: e.target.value as RoutineNotify }))}
-              className={cn(inputClass, 'h-[34px] bg-[#212124]')}
+              onValueChange={(value) => setForm((prev) => ({ ...prev, notify: value as RoutineNotify }))}
             >
-              <option value="notable">{t('schedule.notifyNotable')}</option>
-              <option value="all">{t('schedule.notifyAll')}</option>
-              <option value="none">{t('schedule.notifyNone')}</option>
-            </select>
+              <SelectTrigger id={notifyInputId} className={cn(inputClass, 'h-[34px] shadow-none')}>
+                <SelectValue>
+                  {form.notify === 'all'
+                    ? t('schedule.notifyAll')
+                    : form.notify === 'none'
+                      ? t('schedule.notifyNone')
+                      : t('schedule.notifyNotable')}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="notable" className="text-[13px]">
+                  {t('schedule.notifyNotable')}
+                </SelectItem>
+                <SelectItem value="all" className="text-[13px]">
+                  {t('schedule.notifyAll')}
+                </SelectItem>
+                <SelectItem value="none" className="text-[13px]">
+                  {t('schedule.notifyNone')}
+                </SelectItem>
+              </SelectContent>
+            </Select>
             <span className="text-[11.5px] text-[rgba(154,149,140,0.58)]">{t('editor.notifyHint')}</span>
           </div>
 
@@ -668,23 +693,34 @@ export function RoutineEditorFormBody({
             <label htmlFor={retentionInputId} className="text-[12.5px] font-medium text-foreground/78">
               {t('editor.retentionLabel')}
             </label>
-            <select
-              id={retentionInputId}
+            <Select
               value={form.retentionDays === null ? 'always' : String(form.retentionDays)}
-              onChange={(e) =>
+              onValueChange={(value) =>
                 setForm((prev) => ({
                   ...prev,
-                  retentionDays: (e.target.value === 'always' ? null : Number(e.target.value)) as RoutineRetentionDays,
+                  retentionDays: (value === 'always' ? null : Number(value)) as RoutineRetentionDays,
                 }))
               }
-              className={cn(inputClass, 'h-[34px] bg-[#212124]')}
             >
-              {([30, 60, 90, null] as const).map((days) => (
-                <option key={days ?? 'always'} value={days === null ? 'always' : String(days)}>
-                  {days === null ? t('editor.retentionAlways') : t('editor.retentionDays', { count: days })}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger id={retentionInputId} className={cn(inputClass, 'h-[34px] shadow-none')}>
+                <SelectValue>
+                  {form.retentionDays === null
+                    ? t('editor.retentionAlways')
+                    : t('editor.retentionDays', { count: form.retentionDays })}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {([30, 60, 90, null] as const).map((days) => (
+                  <SelectItem
+                    key={days ?? 'always'}
+                    value={days === null ? 'always' : String(days)}
+                    className="text-[13px]"
+                  >
+                    {days === null ? t('editor.retentionAlways') : t('editor.retentionDays', { count: days })}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </div>
       </div>
