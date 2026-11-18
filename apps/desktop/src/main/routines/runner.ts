@@ -337,6 +337,7 @@ export function createRoutineRunner(deps: RoutineRunnerDeps = {}): RoutineRunner
       done: Promise.resolve(null),
     }
 
+    let run: LocalRoutineRun | null = null
     try {
       const conv = await createRunConversation({
         routineId,
@@ -347,7 +348,7 @@ export function createRoutineRunner(deps: RoutineRunnerDeps = {}): RoutineRunner
       state.conversationId = conv.id
       configureRunConversation(conv.id, routine)
 
-      const run = insertRun({
+      run = insertRun({
         id: runId,
         routineId,
         scheduledAt,
@@ -363,6 +364,7 @@ export function createRoutineRunner(deps: RoutineRunnerDeps = {}): RoutineRunner
         pinned: false,
         unread: false,
       })
+      const createdRun = run
 
       state.releaseAwake = acquireAwake(`routine-run:${runId}`)
       activeByRun.set(runId, state)
@@ -387,8 +389,6 @@ export function createRoutineRunner(deps: RoutineRunnerDeps = {}): RoutineRunner
         hasPreviousReport: previousReports.length > 0,
       }
 
-      if (trigger === 'manual') onToast?.({ kind: 'started', routine, run })
-
       const launchAndTrack = async (): Promise<LocalRoutineRun | null> => {
         try {
           if (!state.handle) {
@@ -404,7 +404,11 @@ export function createRoutineRunner(deps: RoutineRunnerDeps = {}): RoutineRunner
               routineRun,
               signal: controller.signal,
             })
-            if (state.stopped) state.handle.cancel()
+            if (state.stopped) {
+              state.handle.cancel()
+            } else if (trigger === 'manual') {
+              onToast?.({ kind: 'started', routine, run: createdRun })
+            }
           }
           const outcome = await state.handle.done
           return settleRun(state, routine, outcome)
@@ -428,18 +432,49 @@ export function createRoutineRunner(deps: RoutineRunnerDeps = {}): RoutineRunner
           routineRun,
           signal: controller.signal,
         })
+        if (state.stopped) {
+          state.handle.cancel()
+        } else if (trigger === 'manual') {
+          onToast?.({ kind: 'started', routine, run: createdRun })
+        }
       }
 
       state.done = launchAndTrack()
-      return run
+      return createdRun
     } catch (err) {
-      state.releaseAwake?.()
-      state.releaseAwake = null
-      activeByRun.delete(runId)
-      if (state.conversationId) activeByConv.delete(state.conversationId)
-      busyRoutines.delete(routineId)
-      releaseSlot()
-      throw err
+      const error = err instanceof Error ? err.message : String(err)
+      if (run) {
+        const settled = settleRun(
+          state,
+          routine,
+          state.stopped || controller.signal.aborted
+            ? { status: 'cancelled', assistantMessageId: null }
+            : { status: 'error', error }
+        )
+        state.done = Promise.resolve(settled)
+        return settled ?? run
+      }
+      cleanupRun(state)
+      const failedRun = insertRun({
+        id: runId,
+        routineId,
+        scheduledAt,
+        startedAt,
+        finishedAt: now(),
+        trigger,
+        status: 'failed',
+        summary: null,
+        report: null,
+        error,
+        conversationId: state.conversationId,
+        conversationDeleted: false,
+        pinned: false,
+        unread: true,
+      })
+      const currentRoutine = getRoutine(routineId) ?? routine
+      onAlert?.(failedRun, currentRoutine)
+      onToast?.({ kind: 'result', routine: currentRoutine, run: failedRun })
+      return failedRun
     }
   }
 

@@ -383,4 +383,54 @@ describe('routine runner', () => {
     const keptDir = path.join(routine.folder, 'runs', '2026-11-18 0805')
     expect(fs.readFileSync(path.join(keptDir, 'notes.txt'), 'utf8')).toBe('hello world')
   })
+
+  it('settles run as failed and releases busy/slot when startTurn or createRunConversation rejects', async () => {
+    const routine = createRoutine(sampleDraft(), null, 1000)
+
+    // 1. startTurn rejects with main window already ready
+    let attempt = 0
+    const env = makeDeps({
+      startExecutorChatTurn: async (args) => {
+        attempt++
+        if (attempt === 1) throw new Error('Provider disconnected')
+        const done = deferred<InternalTurnOutcome>()
+        env.startedTurns.push({ conversationId: args.conversationId, prompt: args.prompt, done })
+        return { cancel: () => done.resolve({ status: 'cancelled', assistantMessageId: null }), done: done.promise }
+      },
+    })
+    const runner = createRoutineRunner(env.deps)
+
+    const failedRun = await runner.start(routine.id, 'manual', env.now())
+    expect(failedRun.status).toBe('failed')
+    expect(failedRun.error).toBe('Provider disconnected')
+    expect(failedRun.unread).toBe(true)
+    expect(getRun(failedRun.id)?.status).toBe('failed')
+    expect(runner.isBusy(routine.id)).toBe(false)
+    expect(env.awakeKeys.size).toBe(0)
+    expect(env.toasts.some((t) => t.kind === 'started' && t.runId === failedRun.id)).toBe(false)
+    expect(env.toasts.some((t) => t.kind === 'result' && t.runId === failedRun.id)).toBe(true)
+    expect(env.alerts).toContainEqual({ runId: failedRun.id, status: 'failed' })
+
+    // Next start works cleanly and emits started only after turn starts
+    const okRun = await runner.start(routine.id, 'manual', env.now())
+    expect(okRun.status).toBe('running')
+    expect(env.toasts.some((t) => t.kind === 'started' && t.runId === okRun.id)).toBe(true)
+    env.startedTurns[0].done.resolve({ status: 'success', assistantMessageId: null })
+    await runner.waitForRun(okRun.id)
+
+    // 2. createRunConversation rejects -> records failed row and frees slot/busy
+    const convFailEnv = makeDeps({
+      createRunConversation: async () => {
+        throw new Error('Disk full')
+      },
+    })
+    const convFailRunner = createRoutineRunner(convFailEnv.deps)
+    const convFailedRun = await convFailRunner.start(routine.id, 'schedule', convFailEnv.now())
+    expect(convFailedRun.status).toBe('failed')
+    expect(convFailedRun.error).toBe('Disk full')
+    expect(convFailedRun.unread).toBe(true)
+    expect(getRun(convFailedRun.id)?.status).toBe('failed')
+    expect(convFailRunner.isBusy(routine.id)).toBe(false)
+    expect(convFailEnv.alerts).toContainEqual({ runId: convFailedRun.id, status: 'failed' })
+  })
 })
