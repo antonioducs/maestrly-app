@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { BRIDGE_SCRIPT, SHELL_FILES, SHELL_VERSION } from '../src/generated/shell-assets.js'
-import { MAX_BRIDGE_MESSAGE_CHARS, MAX_RESPONSE_BYTES, parseBridgeMessage } from '../src/shell/contract.js'
+import { hasVersionChoice } from '../src/shell/bar-model.js'
+import {
+  MAX_BRIDGE_MESSAGE_CHARS,
+  MAX_RESPONSE_BYTES,
+  parseBridgeMessage,
+  type ViewerState,
+} from '../src/shell/contract.js'
 import { format, pickLocale, SHELL_CATALOGS } from '../src/shell/i18n.js'
 
 describe('embedded shell assets', () => {
@@ -235,5 +241,20 @@ describe('parseBridgeMessage boards', () => {
       expect(message({ type: 'board-load', requestId })).toBeNull()
       expect(message({ type: 'board-push', requestId, elements: [] })).toBeNull()
     }
+  })
+})
+
+describe('hasVersionChoice', () => {
+  const artifact = (numbers: number[]): ViewerState['artifact'] => ({
+    id: 'A'.repeat(22),
+    kind: 'page',
+    title: 'Doc',
+    currentVersion: 3,
+    versions: numbers.map((number) => ({ number, createdAt: number, summary: '' })),
+  })
+
+  it('shows version controls only when the reader has more than the current version', () => {
+    expect(hasVersionChoice(artifact([3]))).toBe(false)
+    expect(hasVersionChoice(artifact([1, 2, 3]))).toBe(true)
   })
 })

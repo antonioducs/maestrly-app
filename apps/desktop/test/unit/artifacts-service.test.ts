@@ -451,6 +451,9 @@ describe('ArtifactsService', () => {
     const id = detail.id
     await service.setSharing(id, { visibility: 'link' })
     expect((await service.sharing(id)).responsesEnabled).toBe(true)
+    expect((await service.sharing(id)).versionsVisible).toBe(false)
+    expect(await service.setSharing(id, { versionsVisible: true })).toMatchObject({ versionsVisible: true })
+    expect(await service.setSharing(id, { versionsVisible: false })).toMatchObject({ versionsVisible: false })
     await respondAsGuest(id, 'Paula', { answer: 'yes' })
     await respondAsGuest(id, 'Ana', { answer: 'no' })
 

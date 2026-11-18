@@ -21,6 +21,8 @@ export interface ApiContext {
   res: http.ServerResponse
   /** The stored artifact's ID, never text taken from the request path. */
   artifactId: string
+  /** The artifact's current version number at the start of the request. */
+  currentVersion: number
   origin: string
   now: number
   body: Record<string, unknown>
@@ -48,6 +50,8 @@ export const noContent = (res: http.ServerResponse, extra: Headers = {}) => send
 /** The one answer for an artifact that is missing, private, expired, or not shared with whoever asks. */
 export const apiNotFound = (res: http.ServerResponse) => json(res, 404, { error: 'not_found' })
 export const apiForbidden = (res: http.ServerResponse) => json(res, 403, { error: 'forbidden' })
+/** The viewer is on a version its reader may no longer open; it reloads to the current one. */
+export const apiVersionReplaced = (res: http.ServerResponse) => json(res, 409, { error: 'version_replaced' })
 export const text = (res: http.ServerResponse, status: number, body: string) =>
   send(res, status, { ...API_HEADERS, 'content-type': TEXT_TYPE }, body)
 export const notFound = (res: http.ServerResponse) => text(res, 404, 'Not found')

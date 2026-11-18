@@ -492,6 +492,22 @@ export function ShareDialog({
               </section>
             )}
 
+            {/* A bot server older than hidden versions does not report them, and has no switch to show. */}
+            {sharing.visibility !== 'private' && typeof sharing.versionsVisible === 'boolean' && (
+              <section className="flex items-start justify-between gap-3 py-4 hairline-t">
+                <div className="min-w-0">
+                  <h3 className="text-xs font-semibold text-foreground/85">{t('artifacts.versions.allow')}</h3>
+                  <p className="mt-0.5 text-xs text-muted-foreground">{t('artifacts.versions.allowHint')}</p>
+                </div>
+                <SettingsSwitch
+                  checked={sharing.versionsVisible}
+                  label={t('artifacts.versions.allow')}
+                  disabled={busy}
+                  onChange={() => void patch({ versionsVisible: !sharing.versionsVisible })}
+                />
+              </section>
+            )}
+
             {item.kind === 'whiteboard' && sharing.visibility !== 'private' && sharing.boardEditors !== undefined && (
               <section className="flex items-start justify-between gap-3 py-4 hairline-t">
                 <div className="min-w-0">

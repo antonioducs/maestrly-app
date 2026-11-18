@@ -449,6 +449,11 @@ export default {
       allow: 'Respostas',
       allowHint: 'A página pode salvar uma resposta de cada pessoa que a abre. Só você vê as respostas.',
     },
+    versions: {
+      allow: 'Mostrar versões anteriores',
+      allowHint:
+        'Quem abre a página pode navegar pelas versões anteriores e ver os comentários delas. Sem isso, vê só a versão atual.',
+    },
     whiteboard: {
       allow: 'Quem tem acesso pode editar',
       allowHint: 'Essas pessoas desenham no quadro com você e o agente. Sem isso, elas só podem olhar.',

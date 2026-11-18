@@ -68,6 +68,8 @@ export interface CommentsOptions {
   onChange(): void
   /** A thread from another version was chosen: show that version. */
   onShowVersion(version: number): void
+  /** The host refused a change because a newer version replaced the one on screen for this reader. */
+  onReplaced(): void
 }
 
 export interface CommentsController {
@@ -194,6 +196,10 @@ export function createComments(options: CommentsOptions): CommentsController {
     if (response?.status === 403) return t('commentsOff')
     if (response?.status === 409) {
       const reason = (await bodyOf(response)).error
+      if (reason === 'version_replaced') {
+        options.onReplaced()
+        return t('commentReplaced')
+      }
       return reason === 'too_many_comments' ? t('commentsFull') : t('nameNeeded')
     }
     return t('commentFailed')
@@ -280,6 +286,7 @@ export function createComments(options: CommentsOptions): CommentsController {
 
   async function remove(comment: PublicComment): Promise<void> {
     const response = await api.write(`comments/${comment.id}`, 'DELETE').catch(() => null)
+    if (response?.status === 409 && (await bodyOf(response)).error === 'version_replaced') return options.onReplaced()
     if (response?.status !== 204 && response?.status !== 404) return toast(t('actionFailed'))
     setComments(comments.filter((item) => item.id !== comment.id && item.parentId !== comment.id))
     if (comment.parentId === null) {

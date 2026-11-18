@@ -5,6 +5,8 @@ import { isResponseData, type ResponseError, type ResponseSnapshot } from './con
 export function responseError(status: number | null, error: unknown): ResponseError {
   if (status === 403 && error === 'responses_closed') return 'closed'
   if (status === 409 && error === 'too_many_responses') return 'full'
+  // A newer version replaced the one on screen: the viewer offers it, and the page learns it cannot save here.
+  if (status === 409 && error === 'version_replaced') return 'unavailable'
   if (status === 413) return 'too_large'
   if (status === 400) return 'invalid'
   if (status === 429) return 'rate_limited'

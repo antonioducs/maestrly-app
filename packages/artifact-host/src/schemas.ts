@@ -198,6 +198,7 @@ export const sharingPatch = z
     accessCode: z.string().min(MIN_ACCESS_CODE_CHARS).max(MAX_ACCESS_CODE_CHARS).nullable().optional(),
     commentsEnabled: z.boolean().optional(),
     responsesEnabled: z.boolean().optional(),
+    versionsVisible: z.boolean().optional(),
     /** Whiteboards only: whether the people it is shared with may draw on it, or only its owner. */
     boardEditors: z.enum(['owner', 'people']).optional(),
   })
@@ -247,6 +248,8 @@ export interface SharingView {
   commentsEnabled: boolean
   /** Whether the page may save the responses of the people who open it. */
   responsesEnabled: boolean
+  /** Whether people the artifact is shared with may browse earlier versions and their comments. */
+  versionsVisible: boolean
   /** Whiteboards only: who may draw on it besides the agent. */
   boardEditors?: BoardEditors
   people: PersonView[]

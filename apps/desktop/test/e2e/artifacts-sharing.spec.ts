@@ -128,6 +128,12 @@ test('shares an artifact with invited people, approved requests and guests', asy
     await dialog.getByTestId('artifact-share-code').fill('letmein1')
     await dialog.getByRole('button', { name: 'Save code' }).click()
     await expect(dialog.getByTestId('artifact-share-status')).toContainText('Access code saved')
+    // Earlier versions stay hidden from the people it is shared with until the owner shows them.
+    const versions = dialog.getByRole('switch', { name: 'Show earlier versions' })
+    await expect(versions).toHaveAttribute('aria-checked', 'false')
+    await versions.click()
+    await expect(versions).toHaveAttribute('aria-checked', 'true')
+    await expect.poll(async () => (await owner!.artifacts('sharing', id)).versionsVisible as boolean).toBe(true)
     const guestPage = await visitor()
     await guestPage.goto(pageUrl)
     await guestPage.getByLabel('Access code').fill('wrong-code')

@@ -111,6 +111,8 @@ export interface ArtifactSharingView {
   commentsEnabled: boolean
   /** Whether the page may save the responses of the people who open it. */
   responsesEnabled: boolean
+  /** Whether people the artifact is shared with may browse earlier versions and their comments; absent on older servers. */
+  versionsVisible?: boolean
   /** Whiteboards only, on servers that have them. */
   boardEditors?: ArtifactBoardEditors
   people: ArtifactPersonView[]
@@ -128,6 +130,7 @@ export interface ArtifactSharingPatch {
   accessCode?: string | null
   commentsEnabled?: boolean
   responsesEnabled?: boolean
+  versionsVisible?: boolean
   boardEditors?: ArtifactBoardEditors
 }
 

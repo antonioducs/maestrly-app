@@ -1,6 +1,6 @@
 // The viewer shell: the top bar, the page in a sandboxed frame, and the comments pinned above it. Every text reaches
 // the DOM as text; nothing coming from the API or the frame is parsed as HTML.
-import { type ArtifactApi, createApi } from './api.js'
+import { type ArtifactApi, bodyOf, createApi } from './api.js'
 import { createBar, type Viewport } from './bar.js'
 import { createBoardSync } from './board.js'
 import { type CommentsController, createComments } from './comments.js'
@@ -19,6 +19,8 @@ import { closePopover, popoverOpen } from './popover.js'
 import { createResponses } from './responses.js'
 
 const VIEWER_PATH = /^\/a\/([A-Za-z0-9_-]{22})$/
+/** How often a reader without earlier versions checks whether a newer one replaced the page on screen. */
+const REPLACED_CHECK_MS = 30_000
 const languages = navigator.languages?.length ? navigator.languages : [navigator.language]
 const locale = pickLocale(languages)
 const t = (key: ShellKey, vars?: Record<string, string | number>) => format(locale, key, vars)
@@ -40,6 +42,8 @@ function renderViewer(api: ArtifactApi, state: ViewerState, initialVersion: numb
   let viewport: Viewport = 'desktop'
   let full = false
   let comments: CommentsController | null = null
+  // A newer version replaced the one on screen for a reader who cannot open earlier ones: only reloading shows it.
+  let replaced = false
   // A whiteboard's canvas fills the frame: comments are about the whole board, never a spot in it.
   const whiteboard = artifact.kind === 'whiteboard'
   document.title = artifact.title
@@ -106,8 +110,19 @@ function renderViewer(api: ArtifactApi, state: ViewerState, initialVersion: numb
       listOpen: comments?.listOpen ?? false,
       openCounts: comments?.openCounts() ?? new Map(),
     })
-    notice.hidden = version === current
+    notice.hidden = !replaced && version === current
     if (notice.hidden) return
+    if (replaced) {
+      notice.replaceChildren(
+        h('span', {}, t('noticeReplaced')),
+        h(
+          'button',
+          { type: 'button', class: 'notice-action', onclick: () => location.reload() },
+          t('noticeReplacedAction')
+        )
+      )
+      return
+    }
     const summary = artifact.versions.find((item) => item.number === version)?.summary
     notice.replaceChildren(
       h(
@@ -132,6 +147,7 @@ function renderViewer(api: ArtifactApi, state: ViewerState, initialVersion: numb
     failure.hidden = true
     try {
       const response = await api.write('frame', 'POST', { version: number })
+      if (response.status === 409 && (await bodyOf(response)).error === 'version_replaced') return showReplaced()
       if (!response.ok) throw new Error(String(response.status))
       const body = (await response.json()) as Partial<FrameResponse>
       if (typeof body.url !== 'string' || !body.url.startsWith('/c/')) throw new Error('Unexpected frame response')
@@ -139,6 +155,24 @@ function renderViewer(api: ArtifactApi, state: ViewerState, initialVersion: numb
     } catch {
       failure.hidden = false
     }
+  }
+
+  function showReplaced(): void {
+    if (replaced) return
+    replaced = true
+    sync()
+  }
+
+  // Without earlier versions, the page on screen stops loading once a new one is published; the viewer says so.
+  if (!state.can.history && !preview) {
+    const check = async () => {
+      if (replaced || document.visibilityState !== 'visible') return
+      const next = await api.state()
+      if (hasAccess(next) && next.artifact.currentVersion !== current) showReplaced()
+    }
+    const timer = setInterval(() => void check(), REPLACED_CHECK_MS)
+    document.addEventListener('visibilitychange', () => void check())
+    window.addEventListener('pagehide', () => clearInterval(timer))
   }
 
   function setVersion(next: number): void {
@@ -164,9 +198,19 @@ function renderViewer(api: ArtifactApi, state: ViewerState, initialVersion: numb
       version,
       onChange: sync,
       onShowVersion: setVersion,
+      onReplaced: showReplaced,
     })
 
-  const responses = createResponses({ api, t, state, frame, preview, version: () => version, onIdentity: sync })
+  const responses = createResponses({
+    api,
+    t,
+    state,
+    frame,
+    preview,
+    version: () => version,
+    onIdentity: sync,
+    onReplaced: showReplaced,
+  })
   const board = whiteboard
     ? createBoardSync({ api, frame, preview, onLost: () => showMessage(t('boardLost'), t('boardLostDetail')) })
     : null

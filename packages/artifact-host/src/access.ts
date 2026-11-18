@@ -35,6 +35,16 @@ export function canEditBoard(sharing: SharingFields, access: Access | null): boo
   return access.kind === 'owner' || sharing.boardEditors === 'people'
 }
 
+/** The owner always sees every version and its comments/responses; others only when the owner lets them. */
+export function seesHistory(sharing: SharingFields, access: Access | null): boolean {
+  return access?.kind === 'owner' || sharing.versionsVisible
+}
+
+/** A version older than the current one, which this viewer may no longer open: a newer one replaced it for them. */
+export function isReplaced(sharing: SharingFields, access: Access | null, version: number, current: number): boolean {
+  return Number.isInteger(version) && version >= 1 && version < current && !seesHistory(sharing, access)
+}
+
 export interface Gate {
   /** The visitor may ask the owner for access. */
   request: boolean

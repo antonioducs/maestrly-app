@@ -149,17 +149,20 @@ export function evaluateAuditReport(report, allowlist, now = new Date()) {
   return { accepted, failures }
 }
 
-function runAudit() {
-  let allowlist
-  try {
-    allowlist = JSON.parse(readFileSync(allowlistPath, 'utf8'))
-  } catch (error) {
-    throw new Error(`could not read ${path.relative(root, allowlistPath)}: ${error.message}`)
-  }
+/** Projects audited against the same allowlist; a nested one is named by the path its exceptions start with. */
+const AUDIT_TARGETS = [
+  { dir: root, prefix: '', args: [] },
+  {
+    dir: path.join(root, 'packages', 'whiteboard', 'viewer'),
+    prefix: 'packages/whiteboard/viewer/',
+    args: ['--omit=dev'],
+  },
+]
 
+function auditTarget({ dir, args }) {
   const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm'
-  const result = spawnSync(npm, ['audit', '--json'], {
-    cwd: root,
+  const result = spawnSync(npm, ['audit', '--json', ...args], {
+    cwd: dir,
     encoding: 'utf8',
     maxBuffer: 20 * 1024 * 1024,
     shell: false,
@@ -175,6 +178,33 @@ function runAudit() {
     report = JSON.parse(result.stdout)
   } catch (error) {
     throw new Error(`npm audit returned malformed JSON: ${error.message}`)
+  }
+  if (!isRecord(report) || report.auditReportVersion !== 2 || !isRecord(report.vulnerabilities)) {
+    throw new Error('audit report must use version 2 and contain vulnerabilities')
+  }
+  return report
+}
+
+function runAudit() {
+  let allowlist
+  try {
+    allowlist = JSON.parse(readFileSync(allowlistPath, 'utf8'))
+  } catch (error) {
+    throw new Error(`could not read ${path.relative(root, allowlistPath)}: ${error.message}`)
+  }
+
+  const report = { auditReportVersion: 2, vulnerabilities: {} }
+  for (const target of AUDIT_TARGETS) {
+    const found = auditTarget(target)
+    for (const [key, vulnerability] of Object.entries(found.vulnerabilities)) {
+      // A project outside the workspaces has node paths of its own; prefixing them keeps exceptions exact.
+      const nodes = Array.isArray(vulnerability?.nodes)
+        ? vulnerability.nodes.map((node) => (typeof node === 'string' ? `${target.prefix}${node}` : node))
+        : vulnerability?.nodes
+      report.vulnerabilities[`${target.prefix}${key}`] = isRecord(vulnerability)
+        ? { ...vulnerability, nodes }
+        : vulnerability
+    }
   }
   const evaluation = evaluateAuditReport(report, allowlist)
   for (const finding of evaluation.accepted) {

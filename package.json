@@ -52,7 +52,7 @@
     "smoke:packaged-desktop": "npm run smoke:packaged-desktop --workspace @maestrly/desktop",
     "smoke:packaged-local-ml-runtime": "npm run smoke:packaged-local-ml-runtime --workspace @maestrly/desktop",
     "postinstall": "node scripts/postinstall.mjs",
-    "audit:dependencies": "node scripts/audit-dependencies.mjs && npm audit --omit=dev --prefix apps/desktop/runtime-assets/local-ml && npm audit --omit=dev --prefix packages/whiteboard/viewer",
+    "audit:dependencies": "node scripts/audit-dependencies.mjs && npm audit --omit=dev --prefix apps/desktop/runtime-assets/local-ml",
     "check:history": "node scripts/check-commits.mjs",
     "verify:pr": "node scripts/verify-pr.mjs",
     "hooks:install": "git config core.hooksPath .githooks",

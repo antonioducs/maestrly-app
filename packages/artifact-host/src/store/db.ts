@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS artifacts (
   access_code_hash TEXT,
   comments_enabled INTEGER NOT NULL DEFAULT 1,
   responses_enabled INTEGER NOT NULL DEFAULT 1,
+  versions_visible INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
   kind TEXT NOT NULL DEFAULT 'page' CHECK (kind IN ('page', 'whiteboard')),
@@ -154,7 +155,7 @@ CREATE TABLE IF NOT EXISTS owner_tickets (
 ${BOARD_ELEMENTS}`
 
 /** Bumped with every change that tables created by an earlier build need applied through `MIGRATIONS`. */
-export const SCHEMA_VERSION = 3
+export const SCHEMA_VERSION = 4
 
 /** What brings tables created at version N - 1 to N. A new database is created current by `SCHEMA`. */
 const MIGRATIONS: Record<number, string> = {
@@ -180,6 +181,9 @@ ALTER TABLE artifacts ADD COLUMN kind TEXT NOT NULL DEFAULT 'page' CHECK (kind I
 ALTER TABLE artifacts ADD COLUMN board_revision INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE artifacts ADD COLUMN board_editors TEXT NOT NULL DEFAULT 'owner' CHECK (board_editors IN ('owner', 'people'));
 ${BOARD_ELEMENTS}`,
+  // Earlier versions and their comments are hidden from people the artifact is shared with by default.
+  4: `
+ALTER TABLE artifacts ADD COLUMN versions_visible INTEGER NOT NULL DEFAULT 0;`,
 }
 
 export function transaction<T>(db: DatabaseSync, fn: () => T): T {
