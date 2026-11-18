@@ -15,7 +15,8 @@ import { hostApi } from '@/lib/hosts/host-context'
 import { chatProviderChoices } from '@/components/chat/account-pool'
 import { modelDisplayName } from '@/components/chat/model-search'
 import { toast } from '@/components/ui/toaster'
-import { addLocalDays, startOfLocalDay } from './relative-time'
+import type { RoutineDraft, RoutineOrigin, RoutineUpdatePatch } from '../../../shared/routines'
+import { addLocalDays, formatWhen, startOfLocalDay } from './relative-time'
 
 export interface RoutineModelDisplayInfo {
   name: string
@@ -322,6 +323,60 @@ export function useRoutines({
     await window.api.routinesOpenFolder(routineId)
   }, [])
 
+  const createRoutine = useCallback(
+    async ({
+      draft,
+      origin = null,
+      stayInChat = false,
+    }: {
+      draft: RoutineDraft
+      origin?: RoutineOrigin | null
+      stayInChat?: boolean
+    }) => {
+      const created = await window.api.routinesCreate(draft, origin)
+      await refreshAll()
+      flashRoutine(created.id)
+      const tr = (key: string, opts?: Record<string, unknown>): string => String(t(key as never, opts as never))
+      const nextText = created.nextRunAt
+        ? t('toasts.createdNext', { when: formatWhen(created.nextRunAt, Date.now(), tr) })
+        : ''
+      toast({
+        id: `routine-created:${created.id}`,
+        tone: 'ok',
+        icon: 'check',
+        title: t('toasts.createdTitle'),
+        description: `${created.title}${nextText}`,
+        action: stayInChat
+          ? {
+              label: t('toasts.createdAction'),
+              onClick: () => onNavigateRoutine(created.id),
+            }
+          : undefined,
+      })
+      if (!stayInChat) {
+        onNavigateRoutine(created.id)
+      }
+      return created
+    },
+    [flashRoutine, onNavigateRoutine, refreshAll, t]
+  )
+
+  const updateRoutine = useCallback(
+    async (routineId: string, patch: RoutineUpdatePatch) => {
+      const updated = await window.api.routinesUpdate(routineId, patch)
+      await refreshAll()
+      await refreshDetail()
+      toast({
+        id: `routine-saved:${routineId}`,
+        tone: 'ok',
+        icon: 'check',
+        title: t('toasts.savedTitle'),
+      })
+      return updated
+    },
+    [refreshAll, refreshDetail, t]
+  )
+
   return {
     routines,
     runsByRoutine,
@@ -357,5 +412,7 @@ export function useRoutines({
     deleteRoutine,
     removeSavedPermission,
     openFolder,
+    createRoutine,
+    updateRoutine,
   }
 }

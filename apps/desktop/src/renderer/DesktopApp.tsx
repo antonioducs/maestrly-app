@@ -1,6 +1,7 @@
 import { useRoutines } from '@/lib/routines/use-routines'
 import { RoutinesAgendaView } from '@/components/routines/RoutinesAgendaView'
 import { RoutineDetailView } from '@/components/routines/RoutineDetailView'
+import { RoutineEditorDialog, type RoutineEditorTarget } from '@/components/routines/RoutineEditorDialog'
 import type { SidebarTab } from '@/components/sidebar/sidebar-tabs'
 import { PersonalMemoryView } from '@/components/PersonalMemoryView'
 import { requestMainNavigation } from '@/lib/main-navigation'
@@ -449,6 +450,7 @@ function DesktopShell({
   const openRoutineRun = useCallback((routineId: string, runId: string) => {
     window.dispatchEvent(new CustomEvent('maestrly:open-routine-run', { detail: { routineId, runId } }))
   }, [])
+  const [routineEditorTarget, setRoutineEditorTarget] = useState<RoutineEditorTarget | null>(null)
 
   const creatingChatRef = useRef(false)
   const [creatingChat, setCreatingChat] = useState(false)
@@ -1179,7 +1181,7 @@ function DesktopShell({
                 onOpenRoutine: (routineId) => nav.openRoutinesView({ kind: 'routine', id: routineId }),
                 onOpenRun: openRoutineRun,
                 onEnableBackground: () => void routinesCtrl.enableKeepRunning(),
-                onNewRoutine: () => nav.openRoutinesView({ kind: 'agenda' }),
+                onNewRoutine: () => setRoutineEditorTarget({ kind: 'new' }),
               }}
               onRemoveWorkspace={(id) =>
                 onHost(
@@ -1432,7 +1434,7 @@ function DesktopShell({
                   settings={routinesCtrl.settings}
                   preventSleepEnabled={routinesCtrl.preventSleepEnabled}
                   isLinux={window.api.platformInfo.os === 'linux'}
-                  onNewRoutine={() => nav.openRoutinesView({ kind: 'agenda' })}
+                  onNewRoutine={() => setRoutineEditorTarget({ kind: 'new' })}
                   onAskInChat={() => {
                     if (standaloneConversations[0]) handleSelect(standaloneConversations[0])
                     else void handleNewChat()
@@ -1456,7 +1458,7 @@ function DesktopShell({
                       settings={routinesCtrl.settings}
                       preventSleepEnabled={routinesCtrl.preventSleepEnabled}
                       isLinux={window.api.platformInfo.os === 'linux'}
-                      onNewRoutine={() => nav.openRoutinesView({ kind: 'agenda' })}
+                      onNewRoutine={() => setRoutineEditorTarget({ kind: 'new' })}
                       onAskInChat={() => {
                         if (standaloneConversations[0]) handleSelect(standaloneConversations[0])
                         else void handleNewChat()
@@ -1485,7 +1487,13 @@ function DesktopShell({
                     onToggleEnabled={() => void routinesCtrl.toggleRoutineEnabled(detailRoutine.id)}
                     onRunNow={() => void routinesCtrl.runNow(detailRoutine.id)}
                     onStopRun={(runId) => void routinesCtrl.stopRun(runId)}
-                    onEdit={() => {}}
+                    onEdit={() =>
+                      setRoutineEditorTarget({
+                        kind: 'edit',
+                        routine: detailRoutine,
+                        originTitle: detailRoutine.origin?.title,
+                      })
+                    }
                     onDuplicate={() => void routinesCtrl.duplicateRoutine(detailRoutine.id)}
                     onDelete={() => routinesCtrl.deleteRoutine(detailRoutine.id)}
                     onOpenRun={openRoutineRun}
@@ -1802,6 +1810,31 @@ function DesktopShell({
             </HostProvider>
 
             <AboutModal open={aboutOpen} onClose={() => setAboutOpen(false)} />
+            <HostProvider hostId={LOCAL_HOST_ID}>
+              <RoutineEditorDialog
+                target={routineEditorTarget}
+                savedPermissions={routineEditorTarget?.kind === 'edit' ? routinesCtrl.savedPermissions : []}
+                onClose={() => setRoutineEditorTarget(null)}
+                onSaveNew={async (draft, sourceConversationId) => {
+                  const originTitle = sourceConversationId
+                    ? (allConversations.find((c) => c.id === sourceConversationId)?.name ?? '')
+                    : ''
+                  await routinesCtrl.createRoutine({
+                    draft,
+                    origin: sourceConversationId
+                      ? { conversationId: sourceConversationId, title: originTitle, via: 'menu' }
+                      : null,
+                    stayInChat: Boolean(sourceConversationId),
+                  })
+                }}
+                onSaveEdit={async (routineId, patch) => {
+                  await routinesCtrl.updateRoutine(routineId, patch)
+                }}
+                onRemoveSavedPermission={(routineId, permId) =>
+                  routinesCtrl.removeSavedPermission(routineId, permId)
+                }
+              />
+            </HostProvider>
             {/* Another of the owner's computers asking to use this one shows its code here, whatever is open. */}
             <PeerPairingPrompt />
 
