@@ -12,6 +12,39 @@ export interface RoutineAttentionEntry {
   run: LocalRoutineRun
 }
 
+function ensureSentencePunctuation(text: string): string {
+  const trimmed = text.trim()
+  if (!trimmed) return ''
+  return /[.!?…]$/.test(trimmed) ? trimmed : `${trimmed}.`
+}
+
+function attentionRunSubtitle(
+  run: LocalRoutineRun,
+  tr: (key: string, opts?: Record<string, unknown>) => string
+): string | null {
+  if (run.status === 'waiting') {
+    const isQuestion = run.waiting?.kind === 'question'
+    const prompt = run.waiting?.prompt ? ensureSentencePunctuation(run.waiting.prompt) : ''
+    if (isQuestion) {
+      return prompt
+        ? tr('agenda.waitingQuestionWithPrompt', { prompt })
+        : tr('agenda.waitingQuestionFallback')
+    }
+    if (prompt) {
+      return tr('agenda.waitingApprovalWithPrompt', { prompt })
+    }
+    return run.summary || tr('agenda.waitingApprovalFallback')
+  }
+  if (run.status === 'failed') {
+    const err = run.error?.trim()
+    if (err) {
+      return tr('agenda.failedWithError', { error: err })
+    }
+    return run.summary || null
+  }
+  return run.summary || null
+}
+
 export function RoutinesAgendaView({
   routines,
   runsByRoutine,
@@ -136,6 +169,7 @@ export function RoutinesAgendaView({
                     {attentionRuns.map(({ routine, run }) => {
                       const tone = outcomeTone(run.status)
                       const at = runTimestamp(run)
+                      const subtitle = attentionRunSubtitle(run, tr)
                       return (
                         <button
                           key={run.id}
@@ -155,11 +189,11 @@ export function RoutinesAgendaView({
                           >
                             {outcomeIcon(run.status, 'size-[13px]')}
                           </span>
-                          <span className="routine-att-main min-w-0 flex-1">
-                            <span className="font-medium text-foreground">{routine.title}</span>{' '}
+                          <span className="routine-att-main min-w-0 flex-1 leading-[1.4]">
+                            <span className="text-[13px] font-medium text-foreground">{routine.title}</span>{' '}
                             <RoutineOutcomePill status={run.status} waitingKind={run.waiting?.kind} short className="ml-1" />
-                            {run.summary && (
-                              <span className="block truncate text-[12px] text-muted-foreground">{run.summary}</span>
+                            {subtitle && (
+                              <span className="block truncate text-[12px] text-muted-foreground">{subtitle}</span>
                             )}
                           </span>
                           <span className="routine-att-when shrink-0 text-[11px] text-[rgba(154,149,140,0.58)]">

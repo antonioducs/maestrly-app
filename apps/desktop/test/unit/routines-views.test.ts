@@ -186,20 +186,32 @@ describe('RoutinesAgendaView', () => {
 
   it('renders Precisa de você, Esta semana timeline, A seguir and background banner', () => {
     const routine = makeRoutine()
-    const waitingRun = makeRun({ id: 'run-wait', status: 'waiting', summary: 'Aguardando aprovação: npm test' })
+    const waitingRun = makeRun({
+      id: 'run-wait',
+      status: 'waiting',
+      summary: null,
+      waiting: { kind: 'approval', prompt: 'Quer apagar 3 instaladores (4,2 GB)' },
+    })
     const questionRun = makeRun({
       id: 'run-ask',
       status: 'waiting',
       summary: null,
       waiting: { kind: 'question', prompt: 'Qual pasta usar?' },
     })
+    const failedRun = makeRun({
+      id: 'run-fail',
+      status: 'failed',
+      summary: null,
+      error: 'Taxa excedida na API',
+    })
     const html = renderToStaticMarkup(
       createElement(RoutinesAgendaView, {
         routines: [routine],
-        runsByRoutine: { 'r-lisboa': [waitingRun, questionRun] },
+        runsByRoutine: { 'r-lisboa': [waitingRun, questionRun, failedRun] },
         attentionRuns: [
           { routine, run: waitingRun },
           { routine, run: questionRun },
+          { routine, run: failedRun },
         ],
         settings: { keepRunning: false, openAtLogin: false },
         preventSleepEnabled: true,
@@ -215,8 +227,12 @@ describe('RoutinesAgendaView', () => {
     )
     expect(html).toContain('Rotinas param com o Maestrly fechado.')
     expect(html).toContain('Precisa de você')
+    expect(html).toContain('text-[13px] font-medium text-foreground')
     expect(html).toContain('Aguardando você')
+    expect(html).toContain('Quer apagar 3 instaladores (4,2 GB). Aguardando sua aprovação.')
     expect(html).toContain('Fez uma pergunta')
+    expect(html).toContain('Qual pasta usar? Aguardando sua resposta.')
+    expect(html).toContain('Falhou: Taxa excedida na API')
     expect(html).toContain('Esta semana')
     expect(html).toContain('A seguir')
     expect(html).toContain('Este computador')
