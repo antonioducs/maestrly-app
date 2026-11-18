@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   AntigravityAccountChangedError,
+  AntigravityApiError,
   AntigravityExecutionError,
   AntigravityPromptTooLargeError,
 } from '../../src/main/chat/antigravity-subscription/errors'
@@ -85,6 +86,17 @@ describe('Antigravity isolated prompts', () => {
     const { text } = await runAntigravityIsolatedPrompt(args('history\nLOSEHARNESS'))
     expect(text).not.toContain('Agent execution error')
     expect(fake.requests('session/prompt')).toHaveLength(2)
+  })
+
+  it('fails instead of returning a rejected model call as the summary', async () => {
+    const failure = runAntigravityIsolatedPrompt(args('history\nAPIFAIL'))
+    await expect(failure).rejects.toBeInstanceOf(AntigravityApiError)
+    await expect(failure).rejects.toMatchObject({ status: 'INVALID_ARGUMENT' })
+  })
+
+  it('keeps text that only starts with an API error message', async () => {
+    const { text } = await runAntigravityIsolatedPrompt(args('history\nAPIQUOTE'))
+    expect(text).toBe('Request contains an invalid argument. is what the API answers.')
   })
 
   it('never returns a server error report as the answer', async () => {

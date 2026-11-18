@@ -14,6 +14,38 @@ export function readAntigravityContextUsage(update: AcpSessionUpdate): { used: n
   }
 }
 
+// Below this a call can legitimately double the previous one (a large tool result early in a session).
+const FOLD_MIN_TOKENS = 20_000
+const FOLD_RATIO = 1.9
+
+/**
+ * `usage_update.used` is how much the server's running token total grew since its previous report. A report that
+ * lands late folds two or more model calls together (a failed call and its retry, for one), which reads as a context
+ * twice its real size. The reader divides such a report by the number of calls it most likely holds.
+ */
+export function createAntigravityUsageReader(): (used: number) => { perCall: number; calls: number } {
+  let last = 0
+  return (used) => {
+    const ratio = last >= FOLD_MIN_TOKENS ? used / last : 0
+    const calls = ratio >= FOLD_RATIO ? Math.round(ratio) : 1
+    const perCall = Math.round(used / calls)
+    last = perCall
+    return { perCall, calls }
+  }
+}
+
+/**
+ * Whether an update shows the turn went on after a withheld chunk that read as a failure. The server follows a
+ * failure only with usage and tool-closing updates, which must not release it.
+ */
+export function releasesApiFailure(update: AcpSessionUpdate): boolean {
+  return (
+    update.sessionUpdate === 'agent_message_chunk' ||
+    update.sessionUpdate === 'agent_thought_chunk' ||
+    update.sessionUpdate === 'tool_call'
+  )
+}
+
 export interface AntigravityStreamMapper {
   push(update: AcpSessionUpdate): ChatStreamEvent[]
   /** Called before host tool events so later text opens a new text part. */

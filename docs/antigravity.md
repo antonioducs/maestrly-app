@@ -140,6 +140,13 @@ turn is not retried because its tools may already have run. A summary stage
 retries once in a fresh session, and so does a subagent if none of its tools
 had started.
 
+When Google's API rejects a model call (for example `400 INVALID_ARGUMENT`,
+"Request contains an invalid argument."), the server may retry it and then
+sends only Google's message as the turn's last text. Maestrly recognizes that
+message when nothing follows it and ends the turn with an error that names the
+status, instead of showing it as the answer. A model that writes the same words
+and keeps going is not affected. The next message starts a fresh session.
+
 The first prompt also carries every tool's description and schema. Over a budget
 of 96 KB, Maestrly lists MCP tools with a one-line summary, then app tools if
 that is not enough; core, skill and delegation tools keep their schemas. The
