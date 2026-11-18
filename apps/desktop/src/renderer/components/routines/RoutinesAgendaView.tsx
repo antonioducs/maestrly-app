@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import { AlertTriangle, Laptop, MessageSquare, Moon, Plus, Power } from 'lucide-react'
 import type { LocalRoutine, LocalRoutineRun, RoutineSettings } from '../../../shared/routines'
-import { formatDayShort, formatHHMM, formatRelative, formatWhen } from '@/lib/routines/relative-time'
+import { formatHHMM, formatRelative, formatUpcomingDay, formatWhen } from '@/lib/routines/relative-time'
 import { outcomeTone, runTimestamp } from '@/lib/routines/timeline'
 import { cn } from '@/lib/utils'
 import { outcomeIcon, RoutineOutcomePill, toneClass } from './RoutineOutcomeBadge'
@@ -204,7 +204,7 @@ export function RoutinesAgendaView({
                           {formatHHMM(routine.nextRunAt)}
                         </span>
                         <span className="text-[11px] text-[rgba(154,149,140,0.58)]">
-                          {formatDayShort(routine.nextRunAt, tr)} · {formatRelative(routine.nextRunAt, nowMs, tr)}
+                          {formatUpcomingDay(routine.nextRunAt, nowMs, tr)} · {formatRelative(routine.nextRunAt, nowMs, tr)}
                         </span>
                         <span className="truncate text-[12.5px] text-foreground">{routine.title}</span>
                       </button>

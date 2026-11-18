@@ -28,9 +28,9 @@ import { modelDisplayName } from '@/components/chat/model-search'
 import { toast } from '@/components/ui/toaster'
 import { ToolCallCard } from '@/components/chat/ToolCallCard'
 import {
-  formatDayShort,
   formatHHMM,
   formatRelative,
+  formatUpcomingDay,
   formatWhen,
 } from '@/lib/routines/relative-time'
 import {
@@ -273,7 +273,7 @@ export function RoutineProposalCardBody({
             <span className="mr-0.5 text-[11px] text-[rgba(154,149,140,0.58)]">{t('proposal.upcoming')}</span>
             {nextDates.map((d) => (
               <span key={d.getTime()} className="routine-tag">
-                {formatDayShort(d.getTime(), tr)} {formatHHMM(d.getTime())}
+                {formatUpcomingDay(d.getTime(), Date.now(), tr)} {formatHHMM(d.getTime())}
               </span>
             ))}
           </div>

@@ -21,7 +21,7 @@ import {
   validateEditorForm,
   type RoutineEditorForm,
 } from '@/lib/routines/editor-form'
-import { formatDayShort, formatHHMM } from '@/lib/routines/relative-time'
+import { formatHHMM, formatUpcomingDay } from '@/lib/routines/relative-time'
 import { upcomingRunDates } from '@/lib/routines/schedule-text'
 import { cn } from '@/lib/utils'
 import { ChatModelChip } from '@/components/chat/ChatModelChip'
@@ -472,7 +472,7 @@ export function RoutineEditorFormBody({
                   key={ts}
                   className="inline-flex items-center rounded-[5px] bg-white/[0.06] px-[6px] py-[1px] font-mono text-[11px] text-foreground/85"
                 >
-                  {formatDayShort(ts, tr)} {formatHHMM(ts)}
+                  {formatUpcomingDay(ts, Date.now(), tr)} {formatHHMM(ts)}
                 </span>
               )
             })

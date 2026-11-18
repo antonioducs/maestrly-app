@@ -69,11 +69,15 @@ export function formatRunDay(ms: number, refMs: number, t: RoutineTranslator, wi
   return `${withWeekday ? `${weekdaysList(t)[d.getDay()]} ` : ''}${formatDayShort(ms, t)}`
 }
 
+export function formatUpcomingDay(ms: number, refMs: number, t: RoutineTranslator): string {
+  return formatDayName(ms, refMs, t).split(',')[0]
+}
+
 export function formatShortIn(ms: number, refMs: number, t: RoutineTranslator): string {
   const d = Math.max(0, ms - refMs)
   if (d < HOUR) return t('schedule.minutes', { count: Math.max(1, Math.round(d / MIN)) })
   if (d < DAY) return t('schedule.hours', { count: Math.round(d / HOUR) })
-  return t('schedule.days', { count: Math.round(d / DAY) })
+  return t('schedule.daysShortUnit', { count: Math.round(d / DAY) })
 }
 
 export function formatRelative(ms: number, refMs: number, t: RoutineTranslator): string {
@@ -83,7 +87,10 @@ export function formatRelative(ms: number, refMs: number, t: RoutineTranslator):
   if (abs < MIN) txt = t('schedule.lessThanMin')
   else if (abs < HOUR) txt = t('schedule.minutes', { count: Math.round(abs / MIN) })
   else if (abs < DAY) txt = t('schedule.hours', { count: Math.round(abs / HOUR) })
-  else txt = t('schedule.days', { count: Math.round(abs / DAY) })
+  else {
+    const days = Math.round(abs / DAY)
+    txt = days === 1 ? t('schedule.day') : t('schedule.days', { count: days })
+  }
   return diff >= 0 ? t('schedule.relativeFuture', { time: txt }) : t('schedule.relativePast', { time: txt })
 }
 

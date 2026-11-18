@@ -101,7 +101,9 @@ export default {
     minutes: '{{count}} min',
     hours: '{{count}} h',
     hoursMinutes: '{{hours}} h {{minutes}} min',
+    day: '1 dia',
     days: '{{count}} dias',
+    daysShortUnit: '{{count}} d',
     daysShort: {
       1: 'Seg',
       2: 'Ter',
