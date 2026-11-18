@@ -335,4 +335,19 @@ describe('RoutineDetailView', () => {
     expect(desktopSrc).toContain('shouldOpenRoutinesAgendaOnTab(nextTab, nav.routinesView, activeRoutineRunId)')
     expect(desktopSrc).toContain("nav.openRoutinesView({ kind: 'agenda' })")
   })
+
+  it('shows the chats-tab routine hint only when at least one routine exists and no search query is active', async () => {
+    const mod = (await import('../../src/renderer/lib/routines/use-routines')) as {
+      shouldShowChatsRoutineHint?: (query: string, routinesCount: number) => boolean
+    }
+    expect(mod.shouldShowChatsRoutineHint?.('', 0)).toBe(false)
+    expect(mod.shouldShowChatsRoutineHint?.('', 1)).toBe(true)
+    expect(mod.shouldShowChatsRoutineHint?.('lisboa', 2)).toBe(false)
+
+    const sidebarSrc = readFileSync(
+      path.resolve(import.meta.dirname, '../../src/renderer/components/Sidebar.tsx'),
+      'utf8'
+    )
+    expect(sidebarSrc).toContain('shouldShowChatsRoutineHint(q, routines?.routines.length ?? 0)')
+  })
 })

@@ -502,3 +502,7 @@ export function shouldOpenRoutinesAgendaOnTab(
 ): boolean {
   return tab === 'routines' && routinesView === null && activeRoutineRunId === null
 }
+
+export function shouldShowChatsRoutineHint(query: string, routinesCount: number): boolean {
+  return query.trim().length === 0 && routinesCount > 0
+}

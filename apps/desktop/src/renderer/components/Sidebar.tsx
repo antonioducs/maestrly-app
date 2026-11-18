@@ -78,6 +78,7 @@ import type { FleetController } from '@/lib/fleet/use-fleet'
 import { fleetSearchCount } from '@/lib/fleet/environments'
 import { RoutinesSidebarPanel } from '@/components/routines/RoutinesSidebarPanel'
 import { scheduleSummary } from '@/lib/routines/schedule-text'
+import { shouldShowChatsRoutineHint } from '@/lib/routines/use-routines'
 import type { RoutinesMainView } from '@/lib/use-main-panels'
 import type { LocalRoutine, LocalRoutineRun } from '../../shared/routines'
 import {
@@ -1251,7 +1252,7 @@ export function Sidebar({
                     {q && filteredChats.length === 0 && (
                       <p className="px-4 py-6 text-center text-xs text-muted-foreground">{t('sidebar.nothingFound')}</p>
                     )}
-                    {!q && (
+                    {shouldShowChatsRoutineHint(q, routines?.routines.length ?? 0) && (
                       <p className="flex items-center gap-1.5 px-3 pb-1 pt-3 text-[11px] font-medium text-muted-foreground/60">
                         <Clock aria-hidden="true" className="size-3 shrink-0" />
                         <span>{tRoutines('list.chatsHint')}</span>
