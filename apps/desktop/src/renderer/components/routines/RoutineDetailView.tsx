@@ -306,7 +306,7 @@ export function RoutineDetailView({
                     const label = t(`outcome.${run.status}.label` as never)
                     const body = (
                       <>
-                        <span className="routine-run-when font-mono text-[11.5px] tabular-nums text-muted-foreground">
+                        <span className="routine-run-when whitespace-nowrap font-mono text-[11.5px] tabular-nums text-muted-foreground">
                           {formatRunDay(at, nowMs, tr, true)} {formatHHMM(run.scheduledAt)}
                           {lateTime && (
                             <span className="text-[rgba(154,149,140,0.58)]"> → {lateTime}</span>

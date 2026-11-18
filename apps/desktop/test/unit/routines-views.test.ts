@@ -337,6 +337,42 @@ describe('RoutineDetailView', () => {
     expect(fullHtml).toContain('Criada em Rotinas')
   })
 
+  it('keeps the routine run timestamp and trigger tag on one line in RoutineDetailView', () => {
+    const routine = makeRoutine()
+    const manualRun = makeRun({ id: 'run-manual', trigger: 'manual', status: 'nothing_new', summary: 'Sem novidades' })
+    const html = renderToStaticMarkup(
+      createElement(RoutineDetailView, {
+        routine,
+        runs: [manualRun],
+        totalRuns: 1,
+        hasMoreRuns: false,
+        timelineRuns: [manualRun],
+        savedPermissions: [],
+        filter: 'all',
+        modelInfo: { name: 'Claude Sonnet 4.6', providerName: 'Claude' },
+        onFilterChange: vi.fn(),
+        onShowMore: vi.fn(),
+        onBackAgenda: vi.fn(),
+        onToggleEnabled: vi.fn(),
+        onRunNow: vi.fn(),
+        onStopRun: vi.fn(),
+        onEdit: vi.fn(),
+        onDuplicate: vi.fn(),
+        onDelete: vi.fn(),
+        onOpenRun: vi.fn(),
+        onRemoveSavedPermission: vi.fn(),
+        onOpenFolder: vi.fn(),
+        onOpenOriginChat: vi.fn(),
+      })
+    )
+    expect(html).toContain('routine-run-when whitespace-nowrap')
+
+    const css = readFileSync(path.resolve(import.meta.dirname, '../../src/renderer/styles.css'), 'utf8')
+    const match = css.match(/\.routine-run-item\s*\{[^}]*grid-template-columns:\s*(\d+)px\s+minmax\(0,\s*1fr\)\s+auto/)
+    expect(match).not.toBeNull()
+    expect(Number(match?.[1])).toBeGreaterThanOrEqual(156)
+  })
+
   it('opens the agenda when the routines tab is selected and no routine view or run is open', async () => {
     const mod = await import('../../src/renderer/lib/routines/use-routines')
     expect(mod.shouldOpenRoutinesAgendaOnTab('routines', null, null)).toBe(true)

@@ -1457,7 +1457,7 @@ button.routine-tick:focus-visible {
 .routine-run-item {
   width: 100%;
   display: grid;
-  grid-template-columns: 122px minmax(0, 1fr) auto;
+  grid-template-columns: 160px minmax(0, 1fr) auto;
   gap: 4px 12px;
   align-items: center;
   padding: 10px 14px;
