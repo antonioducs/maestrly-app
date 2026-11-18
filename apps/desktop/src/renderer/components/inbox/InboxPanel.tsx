@@ -8,6 +8,7 @@ import {
   ChevronDown,
   CircleDot,
   ClipboardList,
+  Clock,
   FolderTree,
   Folder,
   Hand,
@@ -50,13 +51,21 @@ const SOURCES: ReadonlyArray<{ source: InboxSource | null; icon: typeof Bell | n
   { source: 'workspace', icon: FolderTree },
   { source: 'chat', icon: MessagesSquare },
   { source: 'bot', icon: Bot },
+  { source: 'routine', icon: Clock },
 ]
 
 /** The home tab of an item's source, for "Show in". */
-const HOME_TAB: Record<InboxSource, 'workspaces' | 'chats' | 'bots'> = {
+const HOME_TAB: Record<InboxSource, 'workspaces' | 'chats' | 'bots' | 'routines'> = {
   workspace: 'workspaces',
   chat: 'chats',
   bot: 'bots',
+  routine: 'routines',
+}
+
+function targetConversationId(item: InboxItem): string | null {
+  if (item.target.kind === 'conversation') return item.target.conversationId
+  if (item.target.kind === 'routine-run') return item.target.conversationId ?? null
+  return null
 }
 
 /** What waits in a conversation, read from its host: the question it asks, or the approval it needs. */
@@ -73,11 +82,11 @@ function usePendingDetails(items: readonly InboxItem[]): Record<string, PendingD
       items
         .filter(
           (item) =>
-            item.target.kind === 'conversation' &&
+            targetConversationId(item) !== null &&
             item.group === 'waiting' &&
             (item.kind === 'approval' || item.kind === 'question')
         )
-        .map((item) => ({ item, version: `${item.kind}@${item.at}` })),
+        .map((item) => ({ item, convId: targetConversationId(item)!, version: `${item.kind}@${item.at}` })),
     [items]
   )
   const signature = wanted.map(({ item, version }) => `${item.key}#${version}`).join('|')
@@ -85,9 +94,9 @@ function usePendingDetails(items: readonly InboxItem[]): Record<string, PendingD
   detailsRef.current = details
   useEffect(() => {
     let alive = true
-    for (const { item, version } of wanted) {
-      if (item.target.kind !== 'conversation' || detailsRef.current[item.key]?.version === version) continue
-      const { api, id } = hostTarget(item.target.conversationId)
+    for (const { item, convId, version } of wanted) {
+      if (detailsRef.current[item.key]?.version === version) continue
+      const { api, id } = hostTarget(convId)
       void api
         .chatRuntime(id)
         .then((runtime) => {
@@ -125,7 +134,7 @@ export function InboxPanel({
   /** Whether items come from more than one machine or environment, so each says where. */
   showPlaces: boolean
   /** Shows the item in its own tab, once opened. */
-  onShowIn: (item: InboxItem, tab: 'workspaces' | 'chats' | 'bots') => void
+  onShowIn: (item: InboxItem, tab: 'workspaces' | 'chats' | 'bots' | 'routines') => void
   showQuickTooltip: (e: { currentTarget: HTMLElement }, text: string) => void
   hideQuickTooltip: () => void
 }) {
@@ -151,10 +160,11 @@ export function InboxPanel({
   const respond = async (item: InboxItem, reply: 'once' | 'reject') => {
     setResponding((current) => new Set(current).add(item.key))
     try {
-      if (item.target.kind === 'conversation') {
+      const convId = targetConversationId(item)
+      if (convId) {
         const requestId = details[item.key]?.requestId
         if (!requestId) return
-        hostTarget(item.target.conversationId).api.chatPermissionRespond(requestId, reply)
+        hostTarget(convId).api.chatPermissionRespond(requestId, reply)
       } else await view.actions.resolveBotRequest(item, reply)
       view.actions.markRead([item])
     } catch {
@@ -205,6 +215,13 @@ export function InboxPanel({
         <span key="where" className="flex min-w-0 items-center gap-1">
           <MessagesSquare aria-hidden="true" className="size-[11px] shrink-0 opacity-80" />
           <span className="truncate">{t('inbox.source.chat')}</span>
+        </span>
+      )
+    else if (item.source === 'routine')
+      parts.push(
+        <span key="where" className="flex min-w-0 items-center gap-1">
+          <Clock aria-hidden="true" className="size-[11px] shrink-0 text-routine opacity-90" />
+          <span className="truncate">{t('inbox.source.routine')}</span>
         </span>
       )
     else {
@@ -421,7 +438,7 @@ export function InboxPanel({
           <div
             role="group"
             aria-label={t('inbox.filterSource')}
-            className="grid grid-cols-[1.3fr_1fr_1fr_1fr] gap-0.5 rounded-lg border border-border bg-black/20 p-0.5"
+            className="grid grid-cols-[1.3fr_1fr_1fr_1fr_1fr] gap-0.5 rounded-lg border border-border bg-black/20 p-0.5"
           >
             {SOURCES.map(({ source, icon: Icon }) => {
               const count = view.sourceCounts[source ?? 'all']

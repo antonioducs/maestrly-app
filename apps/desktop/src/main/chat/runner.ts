@@ -71,6 +71,7 @@ import { environmentLine } from './tools/command-shell'
 import { enableConversationDispatchTools } from './tools/conversation-dispatch'
 import { enableConversationLinkTools } from './tools/conversation-link'
 import { enableAssistantTools } from './tools/assistant'
+import { enableRoutineTools } from './tools/routine-propose'
 import {
   emitGeneratedImagePart,
   generateImageToolEnabled,
@@ -641,6 +642,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   const conversationLink = enableConversationLinkTools(enabledNames, conversationId, mode)
   // The assistant conversation's own tools: a turn the person typed there.
   const assistantTools = enableAssistantTools(enabledNames, conversationId, mode)
+  enableRoutineTools(enabledNames, conversationId, mode)
 
   if (autonomousPolicy(conversationId))
     for (const name of enabledNames) {

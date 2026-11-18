@@ -67,8 +67,18 @@ export function ChatReasoningPicker({
     const onDoc = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
     }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      e.stopPropagation()
+      setOpen(false)
+    }
     ownerDocument.addEventListener('mousedown', onDoc)
-    return () => ownerDocument.removeEventListener('mousedown', onDoc)
+    ownerDocument.addEventListener('keydown', onKey, true)
+    return () => {
+      ownerDocument.removeEventListener('mousedown', onDoc)
+      ownerDocument.removeEventListener('keydown', onKey, true)
+    }
   }, [ownerDocument, open])
 
   useEffect(() => {

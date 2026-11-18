@@ -356,11 +356,17 @@ export const CONVERSATION_LINK_TOOL_NAMES = [
  */
 export const ASSISTANT_TOOL_NAMES = ['maestrly_overview', 'bot_read', 'bot_send', 'respond_pending'] as const
 
-/** Every tool that starts, reads or messages other conversations; children never receive them. */
+/** Built-in, parent-only tools for proposing local routines in chat and reporting routine runs. */
+export const ROUTINE_PROPOSE_TOOL_NAME = 'routine_propose' as const
+export const ROUTINE_RUN_REPORT_TOOL_NAME = 'routine_run_report' as const
+export const ROUTINE_TOOL_NAMES = [ROUTINE_PROPOSE_TOOL_NAME, ROUTINE_RUN_REPORT_TOOL_NAME] as const
+
+/** Every tool that starts, reads or messages other conversations (or manages routines); children never receive them. */
 export const PARENT_ONLY_CONVERSATION_TOOL_NAMES = [
   ...CONVERSATION_DISPATCH_TOOL_NAMES,
   ...CONVERSATION_LINK_TOOL_NAMES,
   ...ASSISTANT_TOOL_NAMES,
+  ...ROUTINE_TOOL_NAMES,
 ] as const
 
 export const conversationLinkToolsAllowed = conversationDispatchToolsAllowed

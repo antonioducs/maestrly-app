@@ -8,11 +8,13 @@ import type { HostView } from '../../../shared/hosts'
 import type { FleetBotAttentionEvent } from '../../../shared/notifications'
 import { hostName } from '@/components/sidebar/HostSection'
 import type { ConversationStatus } from '../../../shared/conversation'
+import type { LocalRoutine, LocalRoutineRun } from '../../../shared/routines'
 import type { RemoteHostShell } from '../hosts/remote-host-runtime'
 import type { InboxObservation, InboxPlace } from './inbox-model'
 import {
   botObservations,
   conversationObservations,
+  routineObservations,
   type InboxBotServerInput,
   type InboxConversationInput,
 } from './inbox-sources'
@@ -50,7 +52,10 @@ export interface InboxObservationSources {
   fleetSnapshots: readonly FleetSnapshot[]
   botMarks: ReadonlySet<string>
   botEvents: ReadonlyMap<string, FleetBotAttentionEvent>
+  routines?: readonly LocalRoutine[]
+  runsByRoutine?: Readonly<Record<string, readonly LocalRoutineRun[]>>
   t: TFunction<'ui'>
+  tRoutines?: TFunction<'routines'>
 }
 
 /** What every host and server tells the notifications center now. */
@@ -138,5 +143,17 @@ export function useInboxObservations(sources: InboxObservationSources): InboxObs
     [botServers, sources.botMarks, sources.botEvents]
   )
 
-  return useMemo(() => [...conversationItems, ...botItems], [conversationItems, botItems])
+  const localPlace = useMemo(
+    () => hostPlace(hosts.find((host) => host.id === LOCAL_HOST_ID), LOCAL_HOST_ID, t),
+    [hosts, t]
+  )
+  const routineItems = useMemo(
+    () =>
+      sources.routines && sources.runsByRoutine && sources.tRoutines
+        ? routineObservations(sources.routines, sources.runsByRoutine, localPlace, sources.tRoutines)
+        : [],
+    [sources.routines, sources.runsByRoutine, localPlace, sources.tRoutines]
+  )
+
+  return useMemo(() => [...conversationItems, ...botItems, ...routineItems], [conversationItems, botItems, routineItems])
 }

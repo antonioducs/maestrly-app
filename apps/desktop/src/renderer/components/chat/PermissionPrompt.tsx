@@ -2,16 +2,20 @@ import { useTranslation } from 'react-i18next'
 import { AlertTriangle } from 'lucide-react'
 import type { ChatPermissionRequest } from '../../../shared/chat'
 import { permissionExtraResources } from '../../../shared/permission-preview'
+import { formatWhen } from '@/lib/routines/relative-time'
 
 interface Props {
-  scope?: 'project' | 'standalone'
+  scope?: 'project' | 'standalone' | 'routine'
+  routineWaitingSince?: number | null
   request: ChatPermissionRequest
   onDecide: (reply: 'once' | 'always' | 'reject') => void
 }
 
-export function PermissionPrompt({ request, onDecide, scope = 'project' }: Props) {
+export function PermissionPrompt({ request, onDecide, scope = 'project', routineWaitingSince = null }: Props) {
   const { t } = useTranslation('chat')
   const resources = permissionExtraResources(request)
+  const tr = (key: string, opts?: Record<string, unknown>): string =>
+    String(t(key as never, { ns: 'routines', ...opts } as never))
   return (
     <div className="mx-auto w-full max-w-3xl px-4 pb-2">
       <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5">
@@ -32,6 +36,14 @@ export function PermissionPrompt({ request, onDecide, scope = 'project' }: Props
                 {resources.join('\n')}
               </pre>
             )}
+            {scope === 'routine' && routineWaitingSince != null && (
+              <p className="mt-1.5 text-[12px] leading-[1.45] text-amber-100/80">
+                {t('run.waitingApprovalNote', {
+                  ns: 'routines',
+                  when: formatWhen(routineWaitingSince, Date.now(), tr).toLowerCase(),
+                })}
+              </p>
+            )}
             <div className="mt-2 flex flex-wrap gap-2">
               <button
                 type="button"
@@ -46,7 +58,13 @@ export function PermissionPrompt({ request, onDecide, scope = 'project' }: Props
                   onClick={() => onDecide('always')}
                   className="rounded-md border border-amber-500/50 px-2.5 py-1 text-[12px] font-medium text-amber-200 hover:bg-amber-500/15"
                 >
-                  {t(scope === 'standalone' ? 'permPrompt.allowAlwaysChat' : 'permPrompt.allowAlways')}
+                  {t(
+                    scope === 'routine'
+                      ? 'permPrompt.allowAlwaysRoutine'
+                      : scope === 'standalone'
+                        ? 'permPrompt.allowAlwaysChat'
+                        : 'permPrompt.allowAlways'
+                  )}
                 </button>
               )}
               <button

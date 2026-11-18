@@ -6,6 +6,11 @@ import { validateStandaloneConversationDirectory } from './standalone-conversati
 import { ensureAppOwnedExcludes } from './git-service'
 import { isBotMode } from './fleet/instance/config'
 import { startBotInstanceMode } from './fleet/instance'
+import { applyRoutineLoginItem, isLoginItemSupported, wasOpenedAtLoginForRoutines } from './routines/lifecycle'
+import { registerRoutinesIpc } from './routines/ipc'
+import { createRoutineRunner, type RoutineRunner } from './routines/runner'
+import { createRoutineScheduler, type RoutineScheduler } from './routines/scheduler'
+import { getRoutineSettings, listActiveRuns, listRoutines, subscribeRoutinesChanged } from './routines/store'
 import { hostGatewayAccess, isHeadlessInstance, isServerMode } from './remote-host/server/config'
 import {
   ENVIRONMENT_BOT_ACCESS_CHANGED,
@@ -336,6 +341,10 @@ let chatWindowManager: ChatWindowManager | null = null
 let appNotifications: AppNotifications | null = null
 /** The bots marked for the owner on this computer (see notifications/bot-attention). */
 const BOT_ATTENTION_KEY = 'notifications.botAttention.v1'
+let routineRunner: RoutineRunner | null = null
+let routineScheduler: RoutineScheduler | null = null
+let disposeRoutinesChanged: (() => void) | null = null
+let initialLoginHideConsumed = false
 let cancelProjectSetupsAndWait: (() => Promise<void>) | null = null
 let disposeConversationMigrationIpc: (() => void) | null = null
 let conversationMoveService: ConversationMoveService | null = null
@@ -416,11 +425,18 @@ function applyAssistantSettings(settings: AssistantSettings): 'conflict' | 'unsu
   return assistantShortcutError
 }
 
-/** Closing the main window only hides it while the assistant keeps the app running in the background. */
+/** Closing the main window only hides it while the assistant or local routines keep the app running in the background. */
+function keepsRunningInBackgroundForRoutines(): boolean {
+  if (isHeadlessInstance()) return false
+  const settings = getRoutineSettings()
+  return settings.keepRunning && listRoutines().some((routine) => routine.enabled)
+}
+
 function keepsRunningInBackground(): boolean {
   if (isHeadlessInstance()) return false
   const settings = getAssistantSettings()
-  return settings.enabled && settings.keepRunning
+  if (settings.enabled && settings.keepRunning) return true
+  return keepsRunningInBackgroundForRoutines()
 }
 
 /** Events the main window shows about the profile; on a host, the main renderer of each connected computer too. */
@@ -564,6 +580,11 @@ async function stopAllLiveWork(): Promise<void> {
   await botHost.stop()
   await legacyArtifacts?.dispose()
   await cancelProjectSetupsAndWait?.()
+  for (const active of listActiveRuns()) {
+    routineRunner?.stop(active.id)
+    await routineRunner?.waitForRun(active.id)
+  }
+  if (!isE2E()) applyRoutineLoginItem(false)
   await Promise.all([
     ...listAllConversations().map((conversation) => stopConversationLive(conversation.id)),
     maestroConfiguratorService.stop(),
@@ -799,8 +820,16 @@ function setupApplicationMenu(): void {
 
 async function createWindow(): Promise<void> {
   const isMac = process.platform === 'darwin'
+  const hideAtBoot =
+    !initialLoginHideConsumed &&
+    wasOpenedAtLoginForRoutines({
+      platform: process.platform,
+      argv: process.argv,
+      loginItemSettings: isLoginItemSupported(process.platform) ? app.getLoginItemSettings() : undefined,
+    })
+  initialLoginHideConsumed = true
   mainWindow = new BrowserWindow({
-    show: !isHeadlessInstance(),
+    show: !isHeadlessInstance() && !hideAtBoot,
     width: 1400,
     height: 900,
     minWidth: 940,
@@ -931,6 +960,23 @@ async function createWindow(): Promise<void> {
     if ((isHeadlessInstance() || keepsRunningInBackground()) && !backgroundQuit && !systemQuit) {
       e.preventDefault()
       mainWindow?.hide()
+      if (!isHeadlessInstance()) {
+        const assistantSettings = getAssistantSettings()
+        const assistantActive = assistantSettings.enabled && assistantSettings.keepRunning
+        if (
+          !assistantActive &&
+          keepsRunningInBackgroundForRoutines() &&
+          getAppSetting('routines.trayNoticeShown') !== '1'
+        ) {
+          setAppSetting('routines.trayNoticeShown', '1')
+          appNotifications?.notices.show({
+            key: 'routines:tray-kept',
+            title: 'Maestrly',
+            body: tMain('main')('notices.routinesTray'),
+            onClick: revealMainWindow,
+          })
+        }
+      }
       return
     }
     if (!confirmQuitOnce(() => e.preventDefault())) return
@@ -1249,6 +1295,14 @@ function registerIpc(): void {
     isPreventSleepEnabled,
     setPreventSleepEnabled,
   })
+  registerRoutinesIpc(reg, {
+    getRunner: () => routineRunner,
+    applyLoginItem: (openAtLogin) => {
+      if (!isE2E()) applyRoutineLoginItem(openAtLogin)
+    },
+    onEnabledChanged: () => rebuildTrayMenu(),
+    onRunSeen: (runId) => appNotifications?.routines.seen(runId),
+  })
 }
 
 if (!app.requestSingleInstanceLock()) {
@@ -1404,7 +1458,12 @@ app.whenReady().then(async () => {
       },
     })
   registry.on('status', broadcastStatus)
-  registry.on('status', ({ agentId, status, alert }) => appNotifications?.conversations.status(agentId, status, alert))
+  registry.on('status', ({ agentId, status, alert }) => {
+    routineRunner?.onConversationStatus(agentId, status)
+    if (!routineRunner?.handlesConversation(agentId)) {
+      appNotifications?.conversations.status(agentId, status, alert)
+    }
+  })
   onHostEvent((hostId, channel, args) => appNotifications?.hosts.event(hostId, channel, args))
   applyAlertSettings(getSoundSettings())
 
@@ -1420,6 +1479,21 @@ app.whenReady().then(async () => {
   }
   setupApplicationMenu()
   await createWindow()
+
+  if (!isHeadlessInstance() && !isBotMode()) {
+    if (!isE2E()) applyRoutineLoginItem(getRoutineSettings().openAtLogin)
+    routineRunner = createRoutineRunner({
+      onAlert: (run, routine) => {
+        appNotifications?.routines.notifyRun(run, routine)
+      },
+      onToast: (event) => {
+        broadcast('routines:toast', event)
+      },
+    })
+    routineScheduler = createRoutineScheduler({ runner: routineRunner })
+    routineScheduler.start()
+    disposeRoutinesChanged = subscribeRoutinesChanged(() => broadcast('routines:changed'))
+  }
 
   conversationMigrationService.replayIncomplete()
   // Runtime release checks: delayed, packaged builds and bots only, never for a component that is not installed.
@@ -1841,6 +1915,10 @@ app.on('before-quit', (e) => {
 
   if (!quitResourcesDisposed) {
     quitResourcesDisposed = true
+    disposeRoutinesChanged?.()
+    disposeRoutinesChanged = null
+    routineScheduler?.stop()
+    routineRunner?.dispose()
     releaseInstanceLock()
     floatingManager.flushPendingFloatPersists()
     floatingManager.disposeAll()

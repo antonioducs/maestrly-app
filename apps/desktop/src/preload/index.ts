@@ -21,6 +21,7 @@ import { artifactsApi } from './api-artifacts'
 import { transfersApi } from './api-transfers'
 import { conversationMoveApi } from './api-conversation-move'
 import { assistantApi } from './api-assistant'
+import { routinesApi } from './api-routines'
 
 export type * from '../shared/chat-window'
 
@@ -102,6 +103,7 @@ export type * from '../shared/conversation-move'
 export type * from '../shared/subagent-profile-effort'
 export type * from '../shared/subagent-profiles'
 export type * from '../shared/runtime-assets'
+export type * from '../shared/routines'
 
 export type * from './api-local-data'
 export type * from './api-app'
@@ -131,6 +133,7 @@ export type * from './api-peer'
 export type * from './api-host-fs'
 export type * from './api-artifacts'
 export type * from './api-transfers'
+export type * from './api-routines'
 
 /** This computer's app, window and devices: never routed to another host. */
 const localApi = {
@@ -155,6 +158,7 @@ const localApi = {
   ...transfersApi,
   ...conversationMoveApi,
   ...assistantApi,
+  ...routinesApi,
 }
 const api = { ...localHostApi, ...localApi }
 

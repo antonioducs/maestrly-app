@@ -472,6 +472,7 @@ import type {
   ChatPermissionEvent,
   ChatProviderInfo,
   ChatProviderKind,
+  ChatRoutineRunMeta,
   ChatRuntimeState,
   ChatStreamEvent,
   ChatSubscriptionAuthStatus,
@@ -2732,7 +2733,7 @@ function wireBroker(b: PermissionBroker): void {
 }
 
 /** Effective conversation permission mode: conversation prefs → global Chat default. */
-function permModeFor(conversationId: string): 'full' | 'ask' | 'auto' {
+export function permModeFor(conversationId: string): 'full' | 'ask' | 'auto' {
   const m = getConvUiPrefs(conversationId).chat?.permMode
   if (m === 'full' || m === 'ask' || m === 'auto') return m
   const configured = getAppSetting('chat.defaultPermissionMode')
@@ -4033,6 +4034,8 @@ interface StartSendOpts {
   onComplete?: (result: { planSubmitted: boolean; outcome: 'success' | 'error' | 'cancelled' }) => void
   /** First turn of a conversation started from another conversation; host-generated, never a human origin. */
   dispatchSeed?: { dispatchId: string; sourceConversationId: string; reportBack?: boolean }
+  /** First turn of a local routine run conversation; host-generated, never a human origin. */
+  routineRun?: ChatRoutineRunMeta
   /**
    * Message, report or result sent by the agent of another conversation: a visible, attributed bubble that starts a
    * linked (never human) turn. Framing for the model travels in hiddenParts.
@@ -4675,10 +4678,12 @@ async function startSendAttempt(
     for (const part of hiddenParts) parts.push(part)
     // A code review the person sent to the agent reaches the model with their message, once, whatever runs it.
     const reviewDeliveries =
-      !opts?.internal && !opts?.dispatchSeed && !opts?.peerMessage ? listUndeliveredReviewReports(conversationId) : []
+      !opts?.internal && !opts?.dispatchSeed && !opts?.peerMessage && !opts?.routineRun
+        ? listUndeliveredReviewReports(conversationId)
+        : []
     for (const message of reviewDeliveries) if (message.review) parts.push(reviewReportPart(message.review))
     const turnMemory =
-      opts?.internal || opts?.dispatchSeed || opts?.peerMessage || opts?.skipMemory
+      opts?.internal || opts?.dispatchSeed || opts?.peerMessage || opts?.routineRun || opts?.skipMemory
         ? null
         : await prepareTurnMemory({
             conversationId,
@@ -5135,6 +5140,7 @@ async function startSendAttempt(
       ...(opts?.botAdmission ? { botName: opts.botAdmission.botName } : {}),
       ...(opts?.internal ? { internal: true } : {}),
       ...(opts?.dispatchSeed ? { source: 'conversation-dispatch' as const } : {}),
+      ...(opts?.routineRun ? { source: 'routine-run' as const, routineRun: opts.routineRun } : {}),
       ...(opts?.peerMessage
         ? {
             source: 'conversation-message' as const,
@@ -5183,6 +5189,7 @@ async function startSendAttempt(
       conv.scope === 'standalone' &&
       !opts?.internal &&
       !opts?.peerMessage &&
+      !opts?.routineRun &&
       nameStandaloneConversationFromText(conversationId, text)
     ) {
       send('conversation:open', { conversation: getConversation(conversationId), focus: false })
@@ -12020,6 +12027,7 @@ export async function startExecutorChatTurn(input: {
   signal: AbortSignal
   remoteAdmission?: boolean
   botAdmission?: BotTurnAdmission
+  routineRun?: ChatRoutineRunMeta
   /** Slot already held by the caller (a bot command reserves it before configuring the turn). */
   slot?: ChatConversationSlot
 }): Promise<InternalTurnHandle> {
@@ -12042,6 +12050,7 @@ export async function startExecutorChatTurn(input: {
       memoryQuery: input.memoryQuery,
       remoteAdmission: input.remoteAdmission,
       botAdmission: input.botAdmission,
+      routineRun: input.routineRun,
       ...(input.slot ? { operation: input.slot.operation } : {}),
       runnerSignal: input.signal,
       runnerAdmission: (run) => {

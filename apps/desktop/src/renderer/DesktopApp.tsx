@@ -1,10 +1,21 @@
+import {
+  shouldOpenRoutinesAgendaOnTab,
+  useRoutineRunDetails,
+  useRoutines,
+} from '@/lib/routines/use-routines'
+import { RoutinesAgendaView } from '@/components/routines/RoutinesAgendaView'
+import { RoutineDetailView } from '@/components/routines/RoutineDetailView'
+import { RoutineEditorDialog, type RoutineEditorTarget } from '@/components/routines/RoutineEditorDialog'
+import { RoutineRunGoneView } from '@/components/routines/RoutineRunGoneView'
+import { RoutineRunHeader } from '@/components/routines/RoutineRunHeader'
+import type { SidebarTab } from '@/components/sidebar/sidebar-tabs'
 import { PersonalMemoryView } from '@/components/PersonalMemoryView'
 import { requestMainNavigation } from '@/lib/main-navigation'
 /** Local desktop shell. Keep live conversations mounted while project panels replace the main view.
  * Native drawer and popup surfaces are suppressed whenever a DOM overlay needs to cover them. */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { PanelRight, MessagesSquare } from 'lucide-react'
+import { PanelRight, MessagesSquare, Clock } from 'lucide-react'
 import { i18n } from '@/lib/i18n'
 import { setComposerPrefill } from '@/lib/composer-prefill'
 import type { Conversation, Workspace } from '../preload'
@@ -23,6 +34,7 @@ import { ProjectNotesView } from '@/components/ProjectNotesView'
 import { ProjectMemoryView } from '@/components/ProjectMemoryView'
 import { PopupOverlay } from '@/components/PopupOverlay'
 import { Button } from '@/components/ui/button'
+import { Toaster, toast } from '@/components/ui/toaster'
 import { SettingsProvider } from '@/lib/use-settings'
 import { OnboardingProvider } from '@/lib/use-onboarding'
 import { UpdateProvider } from '@/lib/use-update'
@@ -40,7 +52,7 @@ import { useBotUpdates } from '@/lib/fleet/use-bot-updates'
 import { botsTabCounts, markedBots, notificationFleetView, useBotAttention } from '@/lib/fleet/bot-attention'
 import { useInbox } from '@/lib/inbox/use-inbox'
 import { useInboxObservations } from '@/lib/inbox/use-inbox-observations'
-import { botInboxKey, conversationInboxKey } from '@/lib/inbox/inbox-sources'
+import { botInboxKey, conversationInboxKey, routineRunInboxKey } from '@/lib/inbox/inbox-sources'
 import type { InboxItem } from '@/lib/inbox/inbox-model'
 import type { InboxActions } from '@/components/inbox/use-inbox-view'
 import { PersistentBotViews } from '@/components/fleet/PersistentBotViews'
@@ -119,6 +131,7 @@ function DesktopShell({
 }) {
   const api = hostApi(LOCAL_HOST_ID)
   const { t } = useTranslation('ui')
+  const { t: tRoutines } = useTranslation('routines')
   const [active, setActive] = useState<Conversation | null>(null)
   const mainRef = useRef<HTMLElement>(null)
 
@@ -365,15 +378,19 @@ function DesktopShell({
     () => markedBots(botMarks, botsServer, fleet.state.snapshot.bots),
     [botMarks, botsServer, fleet.state.snapshot.bots]
   )
-  const [fleetTabRequest, setFleetTabRequest] = useState(0)
+  const [tabRequest, setTabRequest] = useState<{ tab: SidebarTab; requestId: number } | null>(null)
+  const tabRequestSeqRef = useRef(0)
+  const requestSidebarTab = useCallback((tab: SidebarTab) => {
+    setTabRequest({ tab, requestId: ++tabRequestSeqRef.current })
+  }, [])
   // A machine Settings asks the sidebar to show, such as a computer just paired.
   const [hostRequest, setHostRequest] = useState<{ hostId: HostId; requestId: number } | null>(null)
   const openFleetView = useCallback(
     (view: FleetView) => {
       nav.openFleetView(view)
-      setFleetTabRequest((value) => value + 1)
+      requestSidebarTab('bots')
     },
-    [nav.openFleetView]
+    [nav.openFleetView, requestSidebarTab]
   )
   const openFleetBot = useCallback(
     (botId: string, screen = false) => {
@@ -414,6 +431,88 @@ function DesktopShell({
     handleCreated,
     completeOnboarding,
   } = nav
+
+  const routinesCtrl = useRoutines({
+    detailRoutineId: nav.routinesView?.kind === 'routine' ? nav.routinesView.id : null,
+    onNavigateAgenda: () => {
+      nav.openRoutinesView({ kind: 'agenda' })
+      requestSidebarTab('routines')
+    },
+    onNavigateRoutine: (routineId) => {
+      nav.openRoutinesView({ kind: 'routine', id: routineId })
+      requestSidebarTab('routines')
+    },
+  })
+
+  useEffect(() => {
+    const switchTab = () => requestSidebarTab('routines')
+    window.addEventListener('maestrly:open-agenda', switchTab)
+    window.addEventListener('maestrly:open-routine', switchTab)
+    return () => {
+      window.removeEventListener('maestrly:open-agenda', switchTab)
+      window.removeEventListener('maestrly:open-routine', switchTab)
+    }
+  }, [requestSidebarTab])
+
+  const openRoutineRun = useCallback((routineId: string, runId: string) => {
+    window.dispatchEvent(new CustomEvent('maestrly:open-routine-run', { detail: { routineId, runId } }))
+  }, [])
+  const activeRoutineRunId =
+    active && !activeRemote && active.scope === 'standalone' && active.routineRunId ? active.routineRunId : null
+  const activeRoutineRunDetails = useRoutineRunDetails(activeRoutineRunId)
+  const goneRoutineRunDetails = useRoutineRunDetails(
+    nav.routinesView?.kind === 'run-gone' ? nav.routinesView.runId : null
+  )
+  const [routineEditorTarget, setRoutineEditorTarget] = useState<RoutineEditorTarget | null>(null)
+
+  useEffect(() => {
+    const onScheduleFromChat = (event: Event) => {
+      const detail = (
+        event as CustomEvent<{
+          sourceConversationId: string
+          originTitle?: string
+          initialInstruction?: string
+          initialPermMode?: 'ask' | 'auto' | 'full'
+          initialModel?: { providerId: string; modelId: string; reasoning: string; fastMode: boolean }
+          onCreated?: () => void
+        }>
+      ).detail
+      if (!detail?.sourceConversationId) return
+      setRoutineEditorTarget({
+        kind: 'new',
+        sourceConversationId: detail.sourceConversationId,
+        originTitle: detail.originTitle,
+        initialInstruction: detail.initialInstruction,
+        initialPermMode: detail.initialPermMode,
+        initialModel: detail.initialModel as RoutineEditorTarget extends { initialModel?: infer M } ? M : never,
+        onCreated: detail.onCreated,
+      })
+    }
+    const onAdjustProposal = (event: Event) => {
+      const detail = (
+        event as CustomEvent<{
+          proposalId: string
+          draft: import('../shared/routines').RoutineDraft
+          originTitle?: string
+        }>
+      ).detail
+      if (!detail?.proposalId || !detail.draft) return
+      setRoutineEditorTarget({
+        kind: 'proposal',
+        draft: detail.draft,
+        originTitle: detail.originTitle,
+        onConfirmDraft: async (editedDraft) => {
+          await routinesCtrl.createFromProposal(detail.proposalId, editedDraft)
+        },
+      })
+    }
+    window.addEventListener('maestrly:schedule-from-chat', onScheduleFromChat)
+    window.addEventListener('maestrly:adjust-routine-proposal', onAdjustProposal)
+    return () => {
+      window.removeEventListener('maestrly:schedule-from-chat', onScheduleFromChat)
+      window.removeEventListener('maestrly:adjust-routine-proposal', onAdjustProposal)
+    }
+  }, [routinesCtrl])
 
   const creatingChatRef = useRef(false)
   const [creatingChat, setCreatingChat] = useState(false)
@@ -548,7 +647,10 @@ function DesktopShell({
     fleetSnapshots: fleets.servers.map((server) => fleets.controller(server.id).state.snapshot),
     botMarks,
     botEvents: botAttention.events,
+    routines: routinesCtrl.routines,
+    runsByRoutine: routinesCtrl.runsByRoutine,
     t,
+    tRoutines,
   })
   const {
     markRead: markInboxRead,
@@ -567,12 +669,19 @@ function DesktopShell({
       if (target.kind === 'conversation') {
         if (!isRemoteKey(target.conversationId)) acknowledgeConversation(target.conversationId)
         else remoteRef.current[hostOfKey(target.conversationId)]?.actions.acknowledgeConversation(target.conversationId)
+      } else if (target.kind === 'routine-run') {
+        void window.api.routinesMarkRunSeen(target.runId)
       } else if (!item.ownRead) window.api.fleetSeeBotAttention({ serverId: target.serverId, botId: target.botId })
     }
     const open = (item: InboxItem): void => {
       setInboxOpened(item)
-      markInboxRead([item.key])
       const { target } = item
+      if (target.kind === 'routine-run') {
+        if (item.group !== 'waiting') markInboxRead([item.key])
+        openRoutineRun(target.routineId, target.runId)
+        return
+      }
+      markInboxRead([item.key])
       if (target.kind === 'conversation') {
         const conversation = allConversationsRef.current.find(({ id }) => id === target.conversationId)
         if (conversation) handleSidebarConversationSelect(conversation)
@@ -608,14 +717,19 @@ function DesktopShell({
     markInboxRead,
     nav.openFleetView,
     onBotsServer,
+    openRoutineRun,
     restoreInboxItem,
   ])
   const inboxActiveKey = ((): string | null => {
+    if (nav.routinesView?.kind === 'run-gone') return routineRunInboxKey(nav.routinesView.runId)
     if (mainOverride === 'fleet' && fleetView?.kind === 'bot') {
       const opened = inboxOpened?.target
       return opened?.kind === 'bot' && opened.serverId === botsServer && opened.botId === fleetView.botId
         ? inboxOpened!.key
         : botInboxKey(botsServer, fleetView.botId)
+    }
+    if (!mainOverride && active?.scope === 'standalone' && active.routineRunId) {
+      return routineRunInboxKey(active.routineRunId)
     }
     return !mainOverride && active ? conversationInboxKey(active.id) : null
   })()
@@ -759,6 +873,24 @@ function DesktopShell({
     // A remote host's list reaches the window a render after the host answered: a conversation just created or
     // opened there stays mounted meanwhile.
     if (active && isRemoteKey(active.id)) live.add(active.id)
+    // Routine run conversations are filtered out of normal chat lists; keep open ones live until deleted.
+    const existingRoutineIds = new Set(routinesCtrl.routines.map((r) => r.id))
+    const deletedRunIds = new Set<string>()
+    for (const runs of Object.values(routinesCtrl.runsByRoutine)) {
+      for (const run of runs) if (run.conversationDeleted) deletedRunIds.add(run.id)
+    }
+    for (const run of routinesCtrl.detailRuns) {
+      if (run.conversationDeleted) deletedRunIds.add(run.id)
+    }
+    const isLiveRoutineConv = (conv: Conversation) =>
+      conv.scope === 'standalone' &&
+      Boolean(conv.routineRunId) &&
+      (!conv.routineId || existingRoutineIds.has(conv.routineId) || routinesCtrl.routines.length === 0) &&
+      !deletedRunIds.has(conv.routineRunId!)
+    if (active && isLiveRoutineConv(active)) live.add(active.id)
+    for (const conv of mountedConvs) {
+      if (isLiveRoutineConv(conv)) live.add(conv.id)
+    }
     setMountedConvs((prev) => (prev.some((c) => !live.has(c.id)) ? prev.filter((c) => live.has(c.id)) : prev))
     // This computer does not store a remote host's conversations: one that left the window's lists (deleted, archived
     // or moved there, or its host disconnected) has its popups, floating windows and views closed here.
@@ -797,7 +929,7 @@ function DesktopShell({
       }
       return pruneDead(next)
     })
-  }, [allConversations, active?.id])
+  }, [allConversations, active?.id, routinesCtrl.routines, routinesCtrl.runsByRoutine, routinesCtrl.detailRuns])
 
   useEffect(
     () => window.api.onWindowFullscreen((full) => document.documentElement.classList.toggle('is-fullscreen', full)),
@@ -819,6 +951,14 @@ function DesktopShell({
           openSettings('fleet', { fleetServer: target.serverId })
           return
         }
+        if (target.kind === 'routine-run') {
+          window.dispatchEvent(
+            new CustomEvent('maestrly:open-routine-run', {
+              detail: { routineId: target.routineId, runId: target.runId },
+            })
+          )
+          return
+        }
         if (!fleets.servers.some((server) => server.id === target.serverId)) return
         onBotsServer(target.serverId)
         openFleetView(notificationFleetView(target))
@@ -831,6 +971,75 @@ function DesktopShell({
   useEffect(() => {
     window.api.setAppBadgeCount(badgeCount)
   }, [badgeCount])
+
+  useEffect(() => {
+    return window.api.onRoutinesToast?.((payload) => {
+      const openRun = () =>
+        window.dispatchEvent(
+          new CustomEvent('maestrly:open-routine-run', {
+            detail: { routineId: payload.routine.id, runId: payload.run.id },
+          })
+        )
+      if (payload.kind === 'started') {
+        toast({
+          id: `routine-started:${payload.run.id}`,
+          tone: 'run',
+          icon: 'clock',
+          title: i18n.t('routines:toasts.startedTitle', { title: payload.routine.title }),
+          description: i18n.t('routines:toasts.startedDesc'),
+          durationMs: 4000,
+          action: { label: i18n.t('routines:toasts.followAction'), onClick: openRun },
+        })
+        return
+      }
+      if (payload.kind === 'skipped-busy') {
+        toast({
+          id: `routine-skipped:${payload.run.id}`,
+          tone: 'skip',
+          icon: 'skip',
+          title: i18n.t('routines:toasts.skippedBusyTitle'),
+          description: payload.routine.title,
+          durationMs: 4000,
+        })
+        return
+      }
+      if (payload.run.unread) {
+        const tone =
+          payload.run.status === 'failed'
+            ? 'error'
+            : payload.run.status === 'waiting'
+              ? 'warn'
+              : payload.run.status === 'notable'
+                ? 'notable'
+                : payload.run.status === 'done'
+                  ? 'ok'
+                  : 'quiet'
+        const icon =
+          payload.run.status === 'failed'
+            ? 'alert'
+            : payload.run.status === 'waiting'
+              ? 'user'
+              : payload.run.status === 'notable'
+                ? 'sparkle'
+                : payload.run.status === 'done'
+                  ? 'circleCheck'
+                  : 'check'
+        const outcomeKey =
+          payload.run.status === 'waiting' && payload.run.waiting?.kind === 'question'
+            ? 'waitingQuestion'
+            : payload.run.status
+        const short = i18n.t(`routines:outcome.${outcomeKey}.short` as never).toLowerCase()
+        toast({
+          id: `routine-result:${payload.run.id}`,
+          tone,
+          icon,
+          title: i18n.t('routines:toasts.resultTitle', { title: payload.routine.title, outcome: short }),
+          description: payload.run.summary ?? i18n.t(`routines:outcome.${outcomeKey}.label` as never),
+          action: { label: i18n.t('routines:toasts.openRunAction'), onClick: openRun },
+        })
+      }
+    })
+  }, [])
 
   // The bot on screen notifies nothing and gets no mark; opening it clears its mark.
   const visibleBotId = mainOverride === 'fleet' && fleetView?.kind === 'bot' ? fleetView.botId : null
@@ -995,7 +1204,13 @@ function DesktopShell({
               attention={attention}
               activeId={active?.id ?? null}
               selectedConversation={active}
-              requestedTab={fleetTabRequest ? { tab: 'bots', requestId: fleetTabRequest } : null}
+              requestedTab={tabRequest}
+              onTabChange={(nextTab) => {
+                routinesCtrl.notifySidebarTab(nextTab)
+                if (shouldOpenRoutinesAgendaOnTab(nextTab, nav.routinesView, activeRoutineRunId)) {
+                  nav.openRoutinesView({ kind: 'agenda' })
+                }
+              }}
               fleet={fleet}
               selectedFleet={
                 fleetView?.kind === 'bot'
@@ -1022,7 +1237,7 @@ function DesktopShell({
               botUpdate={botUpdates.summary.pending ? 'pending' : botUpdates.summary.available ? 'available' : null}
               onCreateBot={() => {
                 openCreateBot(null)
-                setFleetTabRequest((value) => value + 1)
+                requestSidebarTab('bots')
               }}
               onOpenBotSettings={() => openSettings('fleet')}
               focusedWorkspaceId={focusedWorkspaceId}
@@ -1038,6 +1253,22 @@ function DesktopShell({
               onConnectComputer={() => openSettings('computers', { connectComputer: true })}
               onOpenComputers={() => openSettings('computers')}
               inbox={{ items: inbox.items, counts: inbox.counts, actions: inboxActions, activeKey: inboxActiveKey }}
+              routines={{
+                routines: routinesCtrl.routines,
+                runsByRoutine: routinesCtrl.runsByRoutine,
+                attentionCount: routinesCtrl.attentionRuns.length,
+                railDot: routinesCtrl.railDot,
+                view: nav.routinesView,
+                backgroundEnabled: routinesCtrl.settings.keepRunning,
+                expandedIds: routinesCtrl.expandedIds,
+                flashRoutineId: routinesCtrl.flashRoutineId,
+                onToggleExpanded: routinesCtrl.toggleExpanded,
+                onOpenAgenda: () => nav.openRoutinesView({ kind: 'agenda' }),
+                onOpenRoutine: (routineId) => nav.openRoutinesView({ kind: 'routine', id: routineId }),
+                onOpenRun: openRoutineRun,
+                onEnableBackground: () => void routinesCtrl.enableKeepRunning(),
+                onNewRoutine: () => setRoutineEditorTarget({ kind: 'new' }),
+              }}
               onRemoveWorkspace={(id) =>
                 onHost(
                   id,
@@ -1050,6 +1281,7 @@ function DesktopShell({
                 requestMainNavigation(() => {
                   setProjectNotesWs(wsId)
                   nav.setFleetView(null)
+                  nav.setRoutinesView(null)
                   setCreateBot(false)
                   setProjectMemoryWs(null)
                   setSettingsOpen(false)
@@ -1061,6 +1293,7 @@ function DesktopShell({
                 requestMainNavigation(() => {
                   setProjectMemoryWs(wsId)
                   nav.setFleetView(null)
+                  nav.setRoutinesView(null)
                   setCreateBot(false)
                   setProjectNotesWs(null)
                   setSettingsOpen(false)
@@ -1279,6 +1512,110 @@ function DesktopShell({
                   openFleetBot(id)
                 }}
               />
+              {nav.routinesView?.kind === 'agenda' && (
+                <RoutinesAgendaView
+                  routines={routinesCtrl.routines}
+                  runsByRoutine={routinesCtrl.runsByRoutine}
+                  attentionRuns={routinesCtrl.attentionRuns}
+                  settings={routinesCtrl.settings}
+                  preventSleepEnabled={routinesCtrl.preventSleepEnabled}
+                  isLinux={window.api.platformInfo.os === 'linux'}
+                  onNewRoutine={() => setRoutineEditorTarget({ kind: 'new' })}
+                  onAskInChat={() => {
+                    if (standaloneConversations[0]) handleSelect(standaloneConversations[0])
+                    else void handleNewChat()
+                  }}
+                  onOpenRoutine={(routineId) => nav.openRoutinesView({ kind: 'routine', id: routineId })}
+                  onOpenRun={openRoutineRun}
+                  onViewBots={() => openFleetView({ kind: 'server' })}
+                  onToggleKeepRunning={() => void routinesCtrl.toggleKeepRunning()}
+                  onToggleOpenAtLogin={() => void routinesCtrl.toggleOpenAtLogin()}
+                />
+              )}
+              {nav.routinesView?.kind === 'routine' && (() => {
+                const routineViewId = nav.routinesView.id
+                const detailRoutine = routinesCtrl.routines.find((r) => r.id === routineViewId) ?? null
+                if (!detailRoutine) {
+                  return (
+                    <RoutinesAgendaView
+                      routines={routinesCtrl.routines}
+                      runsByRoutine={routinesCtrl.runsByRoutine}
+                      attentionRuns={routinesCtrl.attentionRuns}
+                      settings={routinesCtrl.settings}
+                      preventSleepEnabled={routinesCtrl.preventSleepEnabled}
+                      isLinux={window.api.platformInfo.os === 'linux'}
+                      onNewRoutine={() => setRoutineEditorTarget({ kind: 'new' })}
+                      onAskInChat={() => {
+                        if (standaloneConversations[0]) handleSelect(standaloneConversations[0])
+                        else void handleNewChat()
+                      }}
+                      onOpenRoutine={(routineId) => nav.openRoutinesView({ kind: 'routine', id: routineId })}
+                      onOpenRun={openRoutineRun}
+                      onViewBots={() => openFleetView({ kind: 'server' })}
+                      onToggleKeepRunning={() => void routinesCtrl.toggleKeepRunning()}
+                      onToggleOpenAtLogin={() => void routinesCtrl.toggleOpenAtLogin()}
+                    />
+                  )
+                }
+                return (
+                  <RoutineDetailView
+                    routine={detailRoutine}
+                    runs={routinesCtrl.detailRuns}
+                    totalRuns={routinesCtrl.detailTotal}
+                    hasMoreRuns={routinesCtrl.detailHasMore}
+                    timelineRuns={routinesCtrl.timelineRunsByRoutine[detailRoutine.id] ?? []}
+                    savedPermissions={routinesCtrl.savedPermissions}
+                    filter={routinesCtrl.detailFilter}
+                    modelInfo={routinesCtrl.resolveModelInfo(detailRoutine.model)}
+                    onFilterChange={routinesCtrl.setDetailFilter}
+                    onShowMore={routinesCtrl.showMoreDetailRuns}
+                    onBackAgenda={() => nav.openRoutinesView({ kind: 'agenda' })}
+                    onToggleEnabled={() => void routinesCtrl.toggleRoutineEnabled(detailRoutine.id)}
+                    onRunNow={() => void routinesCtrl.runNow(detailRoutine.id)}
+                    onStopRun={(runId) => void routinesCtrl.stopRun(runId)}
+                    onEdit={() =>
+                      setRoutineEditorTarget({
+                        kind: 'edit',
+                        routine: detailRoutine,
+                        originTitle: detailRoutine.origin?.title,
+                      })
+                    }
+                    onDuplicate={() => void routinesCtrl.duplicateRoutine(detailRoutine.id)}
+                    onDelete={() => routinesCtrl.deleteRoutine(detailRoutine.id)}
+                    onOpenRun={openRoutineRun}
+                    onRemoveSavedPermission={(permId) =>
+                      void routinesCtrl.removeSavedPermission(detailRoutine.id, permId)
+                    }
+                    onOpenFolder={() => void routinesCtrl.openFolder(detailRoutine.id)}
+                    onOpenOriginChat={(conversationId) => {
+                      const origin = allConversations.find((c) => c.id === conversationId)
+                      if (origin) handleSelect(origin)
+                    }}
+                  />
+                )
+              })()}
+              {nav.routinesView?.kind === 'run-gone' && (() => {
+                const goneView = nav.routinesView
+                const goneRoutine = routinesCtrl.routines.find((r) => r.id === goneView.routineId) ?? null
+                const goneRun =
+                  goneRoutineRunDetails?.run ??
+                  (routinesCtrl.runsByRoutine[goneView.routineId] ?? []).find((r) => r.id === goneView.runId) ??
+                  null
+                return (
+                  <RoutineRunGoneView
+                    routine={goneRoutine}
+                    run={goneRun}
+                    onOpenAgenda={() => {
+                      nav.openRoutinesView({ kind: 'agenda' })
+                      requestSidebarTab('routines')
+                    }}
+                    onOpenRoutine={(routineId) => {
+                      nav.openRoutinesView({ kind: 'routine', id: routineId })
+                      requestSidebarTab('routines')
+                    }}
+                  />
+                )
+              })()}
               {onboardingOpen && (
                 <OnboardingFlow
                   workspaces={workspaces}
@@ -1291,6 +1628,63 @@ function DesktopShell({
               )}
 
               <div className="flex min-h-0 flex-1 flex-col" style={mainOverride ? { display: 'none' } : undefined}>
+                {active && !activeRemote && active.scope === 'standalone' && active.routineRunId ? (() => {
+                  const activeRunId = active.routineRunId
+                  const headerRoutine =
+                    (active.routineId
+                      ? routinesCtrl.routines.find((r) => r.id === active.routineId)
+                      : undefined) ?? null
+                  const headerRun =
+                    activeRoutineRunDetails?.run ??
+                    (active.routineId
+                      ? (routinesCtrl.runsByRoutine[active.routineId] ?? []).find((r) => r.id === activeRunId)
+                      : undefined) ??
+                    null
+                  return (
+                    <RoutineRunHeader
+                      routine={headerRoutine}
+                      run={headerRun}
+                      titleFallback={active.name}
+                      onOpenAgenda={() => {
+                        nav.openRoutinesView({ kind: 'agenda' })
+                        requestSidebarTab('routines')
+                      }}
+                      onOpenRoutine={(routineId) => {
+                        nav.openRoutinesView({ kind: 'routine', id: routineId })
+                        requestSidebarTab('routines')
+                      }}
+                      onStop={() => void routinesCtrl.stopRun(activeRunId)}
+                      onTogglePin={() => {
+                        if (headerRun) void routinesCtrl.pinRun(headerRun.id, !headerRun.pinned)
+                      }}
+                      onDeleteConversation={async () => {
+                        const targetRoutineId = headerRoutine?.id ?? active.routineId ?? headerRun?.routineId
+                        await routinesCtrl.deleteRunConversation(activeRunId)
+                        if (targetRoutineId) {
+                          nav.openRoutinesView({ kind: 'run-gone', routineId: targetRoutineId, runId: activeRunId })
+                          requestSidebarTab('routines')
+                        } else {
+                          nav.openRoutinesView({ kind: 'agenda' })
+                          requestSidebarTab('routines')
+                        }
+                      }}
+                      rightExtra={
+                        <>
+                          <ChatWindowButton target={{ kind: 'conversation', id: active.id }} />
+                          <Button
+                            variant={drawerOpen ? 'secondary' : 'ghost'}
+                            size="icon"
+                            className="size-7 shrink-0"
+                            onClick={() => setDrawerOpen((v) => !v)}
+                            title={t('app.toggleDrawer', { shortcut: drawerShortcutLabel })}
+                          >
+                            <PanelRight className="size-4" />
+                          </Button>
+                        </>
+                      }
+                    />
+                  )
+                })() : (
                 <header className="drag flex h-10 shrink-0 items-center justify-between gap-2 hairline-b pl-[var(--view-header-inset)] pr-2">
                   <div className="no-drag flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
                     <span className="truncate text-[13px] font-medium text-foreground/90">{active?.name ?? ''}</span>
@@ -1300,6 +1694,33 @@ function DesktopShell({
                         <ConversationBranchChip conversationId={rawId(active.id)} status={statuses[active.id]} />
                       </HostProvider>
                     )}
+                    {active && !activeRemote && (() => {
+                      const originRoutines = routinesCtrl.routines.filter(
+                        (r) => r.origin?.conversationId === rawId(active.id)
+                      )
+                      if (originRoutines.length === 0) return null
+                      const count = originRoutines.length
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (count === 1) nav.openRoutinesView({ kind: 'routine', id: originRoutines[0].id })
+                            else nav.openRoutinesView({ kind: 'agenda' })
+                            requestSidebarTab('routines')
+                          }}
+                          title={i18n.t('routines:list.headerChipTitle')}
+                          className="routine-header-chip"
+                        >
+                          <Clock aria-hidden="true" className="size-3 shrink-0" />
+                          <span>
+                            {i18n.t(
+                              count === 1 ? 'routines:list.headerChipSingle' : 'routines:list.headerChipPlural',
+                              { count }
+                            )}
+                          </span>
+                        </button>
+                      )
+                    })()}
                   </div>
                   <div className="no-drag flex min-w-0 items-center gap-2">
                     {active && !activeRemote && <ChatWindowButton target={{ kind: 'conversation', id: active.id }} />}
@@ -1324,6 +1745,7 @@ function DesktopShell({
                     </Button>
                   </div>
                 </header>
+                )}
 
                 <div className="relative min-h-0 flex-1">
                   {mountedConvs.map((c) => {
@@ -1407,29 +1829,76 @@ function DesktopShell({
                               </Button>
                             }
                           >
-                            {(detached) => (
-                              <ChatView
-                                key={c.id}
-                                conversationId={c.id}
-                                conversationName={currentConversation.name}
-                                onOpenPlan={() => {
-                                  openDrawerTab(c.id, 'plan')
-                                  setDrawerOpenByConv((current) => ({ ...current, [c.id]: true }))
-                                }}
-                                workspaceId={c.workspaceId}
-                                cwd={c.cwd}
-                                experience={c.experience}
-                                botManaged={
-                                  !!currentConversation.botOrigin && currentConversation.botManagementState === 'active'
-                                }
-                                botConversation={currentConversation.botOrigin ? currentConversation : undefined}
-                                botName={currentConversation.botOrigin?.botName}
-                                onExperienceChange={handleConversationExperienceChange}
-                                visible={detached || (active?.id === c.id && !mainOverride)}
-                                status={statuses[c.id] ?? c.status}
-                                onEvictionSafetyChange={onChatEvictionSafetyChange}
-                              />
-                            )}
+                            {(detached) => {
+                              const convRunId =
+                                currentConversation.scope === 'standalone'
+                                  ? currentConversation.routineRunId
+                                  : undefined
+                              const convRoutineId =
+                                currentConversation.scope === 'standalone'
+                                  ? currentConversation.routineId
+                                  : undefined
+                              const convRoutine = convRoutineId
+                                ? routinesCtrl.routines.find((r) => r.id === convRoutineId) ?? null
+                                : null
+                              const convRun = convRunId
+                                ? (activeRoutineRunDetails?.run.id === convRunId
+                                    ? activeRoutineRunDetails.run
+                                    : convRoutineId
+                                      ? (routinesCtrl.runsByRoutine[convRoutineId] ?? []).find(
+                                          (r) => r.id === convRunId
+                                        ) ?? null
+                                      : null)
+                                : null
+                              return (
+                                <ChatView
+                                  key={c.id}
+                                  conversationId={c.id}
+                                  conversationName={currentConversation.name}
+                                  isRoutineRun={
+                                    currentConversation.scope === 'standalone' &&
+                                    Boolean(currentConversation.routineRunId)
+                                  }
+                                  routineRun={convRun}
+                                  onEditRoutineModel={
+                                    convRoutine
+                                      ? () =>
+                                          setRoutineEditorTarget({
+                                            kind: 'edit',
+                                            routine: convRoutine,
+                                            originTitle: convRoutine.origin?.title,
+                                          })
+                                      : undefined
+                                  }
+                                  onRunRoutineAgain={
+                                    convRoutineId
+                                      ? () => {
+                                          void window.api.routinesRunNow(convRoutineId).then((started) => {
+                                            void routinesCtrl.refreshAll()
+                                            if (started) openRoutineRun(convRoutineId, started.id)
+                                          })
+                                        }
+                                      : undefined
+                                  }
+                                  onOpenPlan={() => {
+                                    openDrawerTab(c.id, 'plan')
+                                    setDrawerOpenByConv((current) => ({ ...current, [c.id]: true }))
+                                  }}
+                                  workspaceId={c.workspaceId}
+                                  cwd={c.cwd}
+                                  experience={c.experience}
+                                  botManaged={
+                                    !!currentConversation.botOrigin && currentConversation.botManagementState === 'active'
+                                  }
+                                  botConversation={currentConversation.botOrigin ? currentConversation : undefined}
+                                  botName={currentConversation.botOrigin?.botName}
+                                  onExperienceChange={handleConversationExperienceChange}
+                                  visible={detached || (active?.id === c.id && !mainOverride)}
+                                  status={statuses[c.id] ?? c.status}
+                                  onEvictionSafetyChange={onChatEvictionSafetyChange}
+                                />
+                              )
+                            }}
                           </ChatWindowHost>
                         )}
                       </div>
@@ -1563,6 +2032,31 @@ function DesktopShell({
             </HostProvider>
 
             <AboutModal open={aboutOpen} onClose={() => setAboutOpen(false)} />
+            <HostProvider hostId={LOCAL_HOST_ID}>
+              <RoutineEditorDialog
+                target={routineEditorTarget}
+                savedPermissions={routineEditorTarget?.kind === 'edit' ? routinesCtrl.savedPermissions : []}
+                onClose={() => setRoutineEditorTarget(null)}
+                onSaveNew={async (draft, sourceConversationId) => {
+                  const originTitle = sourceConversationId
+                    ? (allConversations.find((c) => c.id === sourceConversationId)?.name ?? '')
+                    : ''
+                  await routinesCtrl.createRoutine({
+                    draft,
+                    origin: sourceConversationId
+                      ? { conversationId: sourceConversationId, title: originTitle, via: 'menu' }
+                      : null,
+                    stayInChat: Boolean(sourceConversationId),
+                  })
+                }}
+                onSaveEdit={async (routineId, patch) => {
+                  await routinesCtrl.updateRoutine(routineId, patch)
+                }}
+                onRemoveSavedPermission={(routineId, permId) =>
+                  routinesCtrl.removeSavedPermission(routineId, permId)
+                }
+              />
+            </HostProvider>
             {/* Another of the owner's computers asking to use this one shows its code here, whatever is open. */}
             <PeerPairingPrompt />
 
@@ -1585,6 +2079,7 @@ function DesktopShell({
             />
 
             <PopupOverlay convId={mainOverride ? null : (active?.id ?? null)} />
+            <Toaster />
           </div>
         </OnboardingProvider>
       </UpdateProvider>

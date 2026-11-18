@@ -175,6 +175,16 @@ export default {
       cancelled: 'The backup was cancelled.',
       failed: 'Open Settings to see why.',
     },
+    routinesTray: 'Maestrly stays in the tray to run your routines.',
+    routine: {
+      waiting: 'Needs your approval to continue',
+      waitingQuestion: 'Asked a question',
+      failed: 'The run failed',
+      failedWithError: 'The run failed: {{error}}',
+      closedDuringRun: 'Maestrly closed during the run',
+      notable: 'Finished with something to check',
+      finished: 'Finished running',
+    },
   },
   fleetBackup: {
     keyFile:
@@ -201,5 +211,8 @@ export default {
     confirmRelease: 'Allow the rest of this request',
     confirmCancel: 'Cancel',
     viaLine: '— via Maestrly Assistant',
+  },
+  routines: {
+    copySuffix: ' (copy)',
   },
 } as const

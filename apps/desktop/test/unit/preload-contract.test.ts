@@ -39,6 +39,7 @@ import { transfersApi } from '../../src/preload/api-transfers'
 import { conversationMoveApi } from '../../src/preload/api-conversation-move'
 import { turnSnapshotsApi } from '../../src/preload/api-turn-snapshots'
 import { assistantApi } from '../../src/preload/api-assistant'
+import { routinesApi } from '../../src/preload/api-routines'
 import type { FleetServerId } from '../../src/shared/fleet-servers'
 
 /** A paired bot server, as the fleet preload calls name it first. */
@@ -97,6 +98,7 @@ const apiSlices: Array<[string, Record<string, unknown>]> = [
   ['conversationMoveApi', conversationMoveApi],
   ['turnSnapshotsApi', turnSnapshotsApi],
   ['assistantApi', assistantApi],
+  ['routinesApi', routinesApi],
 ]
 beforeAll(async () => {
   await import('../../src/preload/index') // Runs contextBridge.exposeInMainWorld('api', api).
@@ -474,8 +476,91 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(708)
+    expect(keys).toHaveLength(734)
     expect(keys.sort()).toMatchSnapshot()
+  })
+
+  it('forwards routine IPC calls and event listeners in exact argument order', async () => {
+    const draft = {
+      title: 'Check PRs',
+      instruction: 'Check open pull requests.',
+      schedule: { kind: 'daily' as const, at: '09:00', timezone: 'UTC' },
+      folder: '/tmp/repo',
+      providerId: 'openai',
+      modelId: 'gpt-5',
+      reasoningEffort: 'medium' as const,
+      fastMode: false,
+      permMode: 'default' as const,
+    }
+    await api.routinesList()
+    await api.routinesGet('r-1')
+    await api.routinesCreate(draft, { conversationId: 'c-1', messageId: 'm-1' })
+    await api.routinesUpdate('r-1', { title: 'Updated' })
+    await api.routinesDelete('r-1')
+    await api.routinesDuplicate('r-1')
+    await api.routinesSetEnabled('r-1', false)
+    await api.routinesRunNow('r-1')
+    await api.routinesStopRun('run-1')
+    await api.routinesListRuns({ routineId: 'r-1', filter: 'attention', limit: 20, offset: 0 })
+    await api.routinesRunsInRange(100, 200)
+    await api.routinesGetRun('run-1')
+    await api.routinesPinRun('run-1', true)
+    await api.routinesDeleteRunConversation('run-1')
+    await api.routinesMarkRunSeen('run-1')
+    await api.routinesListSavedPermissions('r-1')
+    await api.routinesRemoveSavedPermission('r-1', 'perm-1')
+    await api.routinesOpenFolder('r-1')
+    await api.routinesGetProposal('prop-1')
+    await api.routinesCreateFromProposal('prop-1', draft)
+    await api.routinesDiscardProposal('prop-1')
+    await api.routinesRestoreProposal('prop-1')
+    await api.routinesGetSettings()
+    await api.routinesSetSettings({ keepRunningInBackground: false })
+    expect(invokeSpy.mock.calls).toEqual([
+      ['routines:list'],
+      ['routines:get', 'r-1'],
+      ['routines:create', draft, { conversationId: 'c-1', messageId: 'm-1' }],
+      ['routines:update', 'r-1', { title: 'Updated' }],
+      ['routines:delete', 'r-1'],
+      ['routines:duplicate', 'r-1'],
+      ['routines:setEnabled', 'r-1', false],
+      ['routines:runNow', 'r-1'],
+      ['routines:stopRun', 'run-1'],
+      ['routines:listRuns', { routineId: 'r-1', filter: 'attention', limit: 20, offset: 0 }],
+      ['routines:runsInRange', { from: 100, to: 200 }],
+      ['routines:getRun', 'run-1'],
+      ['routines:pinRun', 'run-1', true],
+      ['routines:deleteRunConversation', 'run-1'],
+      ['routines:markRunSeen', 'run-1'],
+      ['routines:listSavedPermissions', 'r-1'],
+      ['routines:removeSavedPermission', 'r-1', 'perm-1'],
+      ['routines:openFolder', 'r-1'],
+      ['routines:getProposal', 'prop-1'],
+      ['routines:createFromProposal', 'prop-1', draft],
+      ['routines:discardProposal', 'prop-1'],
+      ['routines:restoreProposal', 'prop-1'],
+      ['routines:getSettings'],
+      ['routines:setSettings', { keepRunningInBackground: false }],
+    ])
+
+    const onChanged = vi.fn()
+    const offChanged = api.onRoutinesChanged(onChanged) as () => void
+    const changedListener = onSpy.mock.calls.at(-1)?.[1] as Fn
+    expect(onSpy).toHaveBeenLastCalledWith('routines:changed', changedListener)
+    changedListener({})
+    expect(onChanged).toHaveBeenCalledTimes(1)
+    offChanged()
+    expect(removeListenerSpy).toHaveBeenLastCalledWith('routines:changed', changedListener)
+
+    const onToast = vi.fn()
+    const offToast = api.onRoutinesToast(onToast) as () => void
+    const toastListener = onSpy.mock.calls.at(-1)?.[1] as Fn
+    expect(onSpy).toHaveBeenLastCalledWith('routines:toast', toastListener)
+    const toastPayload = { tone: 'ok', title: 'Done' }
+    toastListener({}, toastPayload)
+    expect(onToast).toHaveBeenCalledWith(toastPayload)
+    offToast()
+    expect(removeListenerSpy).toHaveBeenLastCalledWith('routines:toast', toastListener)
   })
 
   it('forwards the assistant window calls in exact argument order', async () => {

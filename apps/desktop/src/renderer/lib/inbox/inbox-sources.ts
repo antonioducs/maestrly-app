@@ -1,7 +1,9 @@
 import type { FleetBot, FleetInboxItem } from '@maestrly/bot-fleet-protocol'
+import type { TFunction } from 'i18next'
 import type { Conversation, ConversationStatus } from '../../../shared/conversation'
 import { type FleetServerId, fleetKey } from '../../../shared/fleet-servers'
 import type { FleetBotAttentionEvent, FleetBotAttentionKind } from '../../../shared/notifications'
+import type { LocalRoutine, LocalRoutineRun } from '../../../shared/routines'
 import type { InboxKind, InboxLane, InboxObservation, InboxPlace } from './inbox-model'
 import { botRequestKind, botRequestSummary, conversationKind } from '../../../shared/inbox-kind'
 
@@ -26,6 +28,7 @@ export const conversationInboxKey = (conversationId: string): string => `convers
 export const botInboxKey = (serverId: FleetServerId, botId: string): string => `bot:${fleetKey(serverId, botId)}`
 export const botRequestInboxKey = (serverId: FleetServerId, botId: string, requestId: string): string =>
   `request:${fleetKey(serverId, botId)}/${requestId}`
+export const routineRunInboxKey = (runId: string): string => `routine-run:${runId}`
 
 /** Every listed conversation, active or not: one that is not lets the center show it as read. */
 export function conversationObservations(
@@ -35,6 +38,7 @@ export function conversationObservations(
   const observations: InboxObservation[] = []
   for (const { conversation, project, place } of conversations) {
     if (conversation.archived === 1) continue
+    if (conversation.scope === 'standalone' && conversation.routineRunId) continue
     const status = state.statuses[conversation.id] ?? conversation.status
     const marked = state.attention.has(conversation.id)
     const kind = conversationKind(status, state.pendingPlanIds.has(conversation.id), marked)
@@ -149,6 +153,59 @@ export function botObservations(
         at: Number.isFinite(at) ? at : null,
         ownRead: true,
         transient: true,
+      })
+    }
+  }
+  return observations
+}
+
+export function routineObservations(
+  routines: readonly LocalRoutine[],
+  runsByRoutine: Readonly<Record<string, readonly LocalRoutineRun[]>>,
+  place: InboxPlace,
+  t: TFunction<'routines'>
+): InboxObservation[] {
+  const observations: InboxObservation[] = []
+  for (const routine of routines) {
+    for (const run of runsByRoutine[routine.id] ?? []) {
+      let active: InboxObservation['active'] = null
+      let summary: string | null = run.summary
+      let at: number | null = run.finishedAt ?? run.startedAt ?? run.scheduledAt
+
+      if (run.status === 'waiting') {
+        const isQuestion = run.waiting?.kind === 'question'
+        active = { kind: isQuestion ? 'question' : 'approval', unread: true }
+        summary = isQuestion ? t('inbox.waitingQuestionDesc') : t('inbox.waitingDesc')
+        at = run.startedAt ?? run.scheduledAt
+      } else if (run.unread) {
+        if (run.status === 'failed') {
+          active = { kind: 'error', unread: true }
+          summary = run.error ?? run.summary ?? t('inbox.failedDesc')
+        } else if (run.status === 'notable') {
+          active = { kind: 'finished', unread: true }
+          summary = run.summary ?? t('inbox.notableDesc')
+        } else {
+          active = { kind: 'finished', unread: true }
+          summary = run.summary ?? t('inbox.finishedDesc')
+        }
+      }
+
+      observations.push({
+        key: routineRunInboxKey(run.id),
+        view: {
+          source: 'routine',
+          title: routine.title,
+          summary,
+          place,
+          target: {
+            kind: 'routine-run',
+            routineId: routine.id,
+            runId: run.id,
+            conversationId: run.conversationId,
+          },
+        },
+        active,
+        at,
       })
     }
   }

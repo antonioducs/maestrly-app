@@ -17,6 +17,11 @@ import { type HostId, LOCAL_HOST_ID, parseHostKey } from '../../shared/host-key'
 import { memoryKeyFor, memoryTargetOf, type OpenMemoryRequest, personalMemoryKey } from './memory-target'
 import type { EnvironmentSettingsSection } from '@/components/fleet/environment-settings/sections'
 
+export type RoutinesMainView =
+  | { kind: 'agenda' }
+  | { kind: 'routine'; id: string }
+  | { kind: 'run-gone'; routineId: string; runId: string }
+
 export type FleetView =
   /** `runs` shows the bot's routine runs, `runId` one of them; `threadId` one of its conversations with other bots. */
   | {
@@ -66,6 +71,7 @@ export function useMainPanels({
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [artifactsOpen, setArtifactsOpen] = useState(false)
   const [fleetView, setFleetView] = useState<FleetView | null>(null)
+  const [routinesView, setRoutinesView] = useState<RoutinesMainView | null>(null)
   const [createBot, setCreateBot] = useState(false)
   // The environment a new bot joins when created from its environment view; null offers a new environment.
   const [createBotEnvironmentId, setCreateBotEnvironmentId] = useState<string | null>(null)
@@ -86,6 +92,7 @@ export function useMainPanels({
       if (!key) return
       setProjectNotesWs(null)
       setFleetView(null)
+      setRoutinesView(null)
       setCreateBot(false)
       setSettingsOpen(false)
       setArtifactsOpen(false)
@@ -114,6 +121,7 @@ export function useMainPanels({
         find(await relist())
       if (!conversation) return
       setFleetView(null)
+      setRoutinesView(null)
       setCreateBot(false)
       setProjectNotesWs(null)
       setProjectMemoryWs(null)
@@ -139,6 +147,7 @@ export function useMainPanels({
     (settingsOpen ? 'settings' : null) ||
     (artifactsOpen ? 'artifacts' : null) ||
     (onboardingOpen ? 'onboarding' : null) ||
+    (routinesView ? 'routines' : null) ||
     (fleetView ? 'fleet' : null) ||
     (createBot ? 'fleet-create' : null)
 
@@ -172,6 +181,7 @@ export function useMainPanels({
           setOnboardingOpen(false)
         }
         setFleetView(null)
+        setRoutinesView(null)
         setCreateBot(false)
         setActive(conversation)
       })
@@ -184,6 +194,7 @@ export function useMainPanels({
       const section = typeof sectionOrEvent === 'string' ? sectionOrEvent : 'chat'
       requestMainNavigation(() => {
         setFleetView(null)
+        setRoutinesView(null)
         setCreateBot(false)
         setSettingsSection(section)
         // A plain request clears the last one, so Settings opened again later starts where it is asked to.
@@ -222,6 +233,7 @@ export function useMainPanels({
   const openArtifacts = useCallback(() => {
     requestMainNavigation(() => {
       setFleetView(null)
+      setRoutinesView(null)
       setCreateBot(false)
       setProjectNotesWs(null)
       setProjectMemoryWs(null)
@@ -272,6 +284,7 @@ export function useMainPanels({
         setArtifactsOpen(false)
         setOnboardingOpen(false)
         setFleetView(null)
+        setRoutinesView(null)
         setCreateBot(false)
         setActive(conversation)
       })
@@ -296,6 +309,7 @@ export function useMainPanels({
         setArtifactsOpen(false)
         setOnboardingOpen(false)
         setCreateBot(false)
+        setRoutinesView(null)
         setActive(null)
         setFleetView(view)
       })
@@ -303,9 +317,81 @@ export function useMainPanels({
     [setActive]
   )
 
+  const openRoutinesView = useCallback(
+    (view: RoutinesMainView) => {
+      requestMainNavigation(() => {
+        setProjectNotesWs(null)
+        setProjectMemoryWs(null)
+        setSettingsOpen(false)
+        setArtifactsOpen(false)
+        setOnboardingOpen(false)
+        setCreateBot(false)
+        setFleetView(null)
+        setActive(null)
+        setRoutinesView(view)
+      })
+    },
+    [setActive]
+  )
+
+  useEffect(() => {
+    const onOpenAgenda = () => openRoutinesView({ kind: 'agenda' })
+    const onOpenRoutine = (event: Event) => {
+      const routineId = (event as CustomEvent<{ routineId?: string }>).detail?.routineId
+      if (routineId) openRoutinesView({ kind: 'routine', id: routineId })
+    }
+    const onOpenRun = async (event: Event) => {
+      const detail = (event as CustomEvent<{ routineId?: string; runId?: string }>).detail
+      if (!detail?.runId) return
+      try {
+        await window.api.routinesMarkRunSeen?.(detail.runId)
+      } catch {}
+      let details = null
+      try {
+        details = await window.api.routinesGetRun?.(detail.runId)
+      } catch {}
+      if (details?.conversation) {
+        const conversation = details.conversation
+        requestMainNavigation(() => {
+          setProjectNotesWs(null)
+          setProjectMemoryWs(null)
+          setSettingsOpen(false)
+          setArtifactsOpen(false)
+          setOnboardingOpen(false)
+          setCreateBot(false)
+          setFleetView(null)
+          setRoutinesView(null)
+          setActive(conversation)
+        })
+        return
+      }
+      if (details) {
+        openRoutinesView({
+          kind: 'run-gone',
+          routineId: detail.routineId ?? details.run.routineId,
+          runId: detail.runId,
+        })
+        return
+      }
+      openRoutinesView(detail.routineId ? { kind: 'routine', id: detail.routineId } : { kind: 'agenda' })
+    }
+    const onOpenRunListener = (event: Event) => void onOpenRun(event)
+    window.addEventListener('maestrly:open-agenda', onOpenAgenda)
+    window.addEventListener('maestrly:open-routine', onOpenRoutine)
+    window.addEventListener('maestrly:open-routine-run', onOpenRunListener)
+    return () => {
+      window.removeEventListener('maestrly:open-agenda', onOpenAgenda)
+      window.removeEventListener('maestrly:open-routine', onOpenRoutine)
+      window.removeEventListener('maestrly:open-routine-run', onOpenRunListener)
+    }
+  }, [openRoutinesView, setActive])
+
   return {
     fleetView,
     setFleetView,
+    routinesView,
+    setRoutinesView,
+    openRoutinesView,
     createBot,
     setCreateBot,
     createBotEnvironmentId,

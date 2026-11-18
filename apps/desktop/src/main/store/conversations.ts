@@ -71,9 +71,9 @@ export function insertConversation(c: Conversation): void {
   getDb()
     .prepare(
       `INSERT INTO conversations
-       (id, scope, workspace_id, name, branch, mode, experience, cwd, status, created_at, archived, pinned_at, last_activity_at, is_multi, ui_prefs, bot_origin, bot_management_state, bot_manual_chat_enabled, folder_owner_id, position)
+       (id, scope, workspace_id, name, branch, mode, experience, cwd, status, created_at, archived, pinned_at, last_activity_at, is_multi, ui_prefs, bot_origin, bot_management_state, bot_manual_chat_enabled, folder_owner_id, routine_id, routine_run_id, position)
      VALUES
-       (@id, @scope, @workspaceId, @name, @branch, @mode, @experience, @cwd, @status, @createdAt, @archived, @pinnedAt, @lastActivityAt, @isMulti, @uiPrefs, @botOrigin, @botManagementState, @botManualChatEnabled, @folderOwnerId,
+       (@id, @scope, @workspaceId, @name, @branch, @mode, @experience, @cwd, @status, @createdAt, @archived, @pinnedAt, @lastActivityAt, @isMulti, @uiPrefs, @botOrigin, @botManagementState, @botManualChatEnabled, @folderOwnerId, @routineId, @routineRunId,
         (SELECT COALESCE(MAX(position), -1) + 1 FROM conversations WHERE scope = @scope AND workspace_id IS @workspaceId))`
     )
     .run({
@@ -97,6 +97,8 @@ export function insertConversation(c: Conversation): void {
       // Releasing a bot chat for the person's own messages is their later choice, never a creation default.
       botManualChatEnabled: c.botOrigin && c.botManualChatEnabled ? 1 : 0,
       folderOwnerId: c.scope === 'standalone' ? (c.folderOwnerId ?? null) : null,
+      routineId: c.scope === 'standalone' ? (c.routineId ?? null) : null,
+      routineRunId: c.scope === 'standalone' ? (c.routineRunId ?? null) : null,
     })
 }
 
@@ -181,7 +183,7 @@ export function listConversations(workspaceId: string, includeArchived = false):
 
 export function listStandaloneConversations(includeArchived = false): StandaloneConversation[] {
   return getDb()
-    .prepare(`SELECT * FROM conversations WHERE scope = 'standalone'
+    .prepare(`SELECT * FROM conversations WHERE scope = 'standalone' AND routine_id IS NULL
     ${includeArchived ? '' : 'AND archived = 0'} ORDER BY position ASC, created_at ASC`)
     .all()
     .map((row) => rowToConversation(row) as StandaloneConversation)
@@ -223,7 +225,9 @@ export function clearConversationAttention(id: string): boolean {
 /** Unarchived conversations waiting for the person. */
 export function listConversationAttention(): string[] {
   return (
-    getDb().prepare('SELECT id FROM conversations WHERE attention_at IS NOT NULL AND archived = 0').all() as Array<{
+    getDb()
+      .prepare('SELECT id FROM conversations WHERE attention_at IS NOT NULL AND archived = 0 AND routine_id IS NULL')
+      .all() as Array<{
       id: string
     }>
   ).map((row) => row.id)
@@ -375,6 +379,8 @@ function rowToConversation(r: any): Conversation | undefined {
     isMulti: r.is_multi ?? 0,
     uiPrefs: parseUiPrefs(r.ui_prefs),
     ...(r.scope === 'standalone' && typeof r.folder_owner_id === 'string' ? { folderOwnerId: r.folder_owner_id } : {}),
+    ...(r.scope === 'standalone' && typeof r.routine_id === 'string' ? { routineId: r.routine_id } : {}),
+    ...(r.scope === 'standalone' && typeof r.routine_run_id === 'string' ? { routineRunId: r.routine_run_id } : {}),
     ...(r.bot_origin
       ? {
           botOrigin: JSON.parse(r.bot_origin),

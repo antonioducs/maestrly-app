@@ -11,6 +11,7 @@ import { FleetBotNotices } from './bot-notices'
 import { ConversationNotices } from './conversation-notices'
 import { HostConversationAlerts } from './host-conversations'
 import { Presence } from './presence'
+import { RoutineNotices } from './routine-notices'
 import { SystemNotices } from './system-notices'
 
 export interface AppNotificationsDeps {
@@ -38,6 +39,7 @@ export class AppNotifications {
   readonly botAttention: FleetBotAttention
   readonly bots: FleetBotNotices
   readonly backups: FleetBackupNotices
+  readonly routines: RoutineNotices
   readonly badge: AppBadge
 
   constructor(private readonly deps: AppNotificationsDeps) {
@@ -68,6 +70,11 @@ export class AppNotifications {
       serverName: deps.serverName,
       open: (target) => this.open(target),
     })
+    this.routines = new RoutineNotices({
+      notices: this.notices,
+      sees: (id) => this.presence.seesConversation(id),
+      open: (target) => this.open(target),
+    })
   }
 
   /** The bot the main window shows now, as it reports it; null when it shows anything else. */
@@ -95,6 +102,15 @@ export class AppNotifications {
   open(target: NotificationTarget): void {
     // A server's backups show in Settings, in the main window.
     if (target.kind === 'backups') {
+      this.deps.focusMainWindow()
+      this.deps.sendToMainWindow('notification:open', target)
+      return
+    }
+    if (target.kind === 'routine-run') {
+      const revealed = target.conversationId
+        ? (this.deps.chatWindows()?.reveal(chatWindowKey({ kind: 'conversation', id: target.conversationId })) ?? false)
+        : false
+      if (revealed) return
       this.deps.focusMainWindow()
       this.deps.sendToMainWindow('notification:open', target)
       return

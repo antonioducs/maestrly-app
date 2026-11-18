@@ -16,7 +16,7 @@ describe('ChatMessageList renderPart exhaustiveness', () => {
     // The early return precedes specialized tool cards.
     const mentionReturn = messageListSource.indexOf("if (part.type === 'agent-mention') return null")
     expect(mentionReturn).toBeGreaterThanOrEqual(0)
-    const firstToolCard = messageListSource.indexOf("toolPart.toolName === 'ask_question'")
+    const firstToolCard = messageListSource.indexOf("toolBase === 'ask_question'")
     expect(firstToolCard).toBeGreaterThan(0)
     expect(mentionReturn).toBeLessThan(firstToolCard)
   })

@@ -55,6 +55,7 @@ import {
   CONVERSATION_DISPATCH_TOOL_NAMES,
   CONVERSATION_LINK_TOOL_NAMES,
   PARENT_ONLY_CONVERSATION_TOOL_NAMES,
+  ROUTINE_TOOL_NAMES,
 } from '../../src/main/chat/tool-policy'
 import { interactiveTool } from '../../src/main/chat/autonomous'
 import { setAssistantRoleResolver } from '../../src/main/chat/harness/assistant-role'
@@ -113,6 +114,7 @@ describe('conversation link tool surface', () => {
       ...CONVERSATION_DISPATCH_TOOL_NAMES,
       ...CONVERSATION_LINK_TOOL_NAMES,
       ...ASSISTANT_TOOL_NAMES,
+      ...ROUTINE_TOOL_NAMES,
     ])
     for (const name of CONVERSATION_LINK_TOOL_NAMES) {
       expect(ALL_TOOL_NAMES).toContain(name)

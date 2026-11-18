@@ -74,13 +74,14 @@ import {
   CONVERSATION_DISPATCH_TOOL_NAMES,
   CONVERSATION_LINK_TOOL_NAMES,
   DEFERRED_LOADING_METADATA,
+  ROUTINE_PROPOSE_TOOL_NAME,
 } from '../../src/main/chat/tool-policy'
 
 /**
  * Exactly the readers an Ask turn exposes, plus the conversation tools Ask offers in every turn. A turn the person did
  * not type receives them without a runtime, so they refuse; they are offered anyway to keep the thread's tool set.
  */
-// A typed turn outside the assistant conversation: the dispatch and link tools, never the assistant's own.
+// A typed turn outside the assistant conversation: dispatch, link, and routine proposal tools, never the assistant's own.
 const ASK_TOOL_NAMES = [
   'glob',
   'grep',
@@ -89,6 +90,7 @@ const ASK_TOOL_NAMES = [
   'webfetch',
   ...CONVERSATION_DISPATCH_TOOL_NAMES,
   ...CONVERSATION_LINK_TOOL_NAMES,
+  ROUTINE_PROPOSE_TOOL_NAME,
 ].sort()
 const toolNames = (start: unknown) =>
   (start as { dynamicTools: Array<{ name: string }> }).dynamicTools.map((tool) => tool.name).sort()

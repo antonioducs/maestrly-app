@@ -37,6 +37,7 @@ export interface TurnAdmissionShape {
   runnerSignal?: unknown
   dispatchSeed?: unknown
   peerMessage?: unknown
+  routineRun?: unknown
   hiddenParts?: readonly unknown[]
 }
 
@@ -54,6 +55,7 @@ export function isHumanTurnAdmission(opts: TurnAdmissionShape | undefined): bool
     !opts?.runnerSignal &&
     !opts?.dispatchSeed &&
     !opts?.peerMessage &&
+    !opts?.routineRun &&
     !opts?.hiddenParts?.length
   )
 }

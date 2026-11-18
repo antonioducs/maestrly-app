@@ -1,7 +1,7 @@
 import { useChatDocument } from '@/lib/chat-window-context'
 import { useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Plus, ImageIcon, Bot, SlidersHorizontal, ChevronRight, Puzzle } from 'lucide-react'
+import { Plus, ImageIcon, CalendarClock, Bot, SlidersHorizontal, ChevronRight, Puzzle } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { ChatConfig, ChatConvTools, ChatMode } from '../../../shared/chat'
 import { APP_TOOL_GROUPS, type AppToolGroup, type AppToolGroupState } from '../../../shared/app-tool-groups'
@@ -51,6 +51,8 @@ export function ChatPlusMenu({
   onFontScale,
   source: providedSource,
   manageMcpLabel,
+  onScheduleRoutine,
+  initialOpenPanel = null,
 }: {
   conversationId: string
   mode: ChatMode
@@ -59,15 +61,18 @@ export function ChatPlusMenu({
   onFontScale: (n: number) => void
   source?: ChatComposerSource
   manageMcpLabel?: string
+  onScheduleRoutine?: () => void
+  initialOpenPanel?: 'menu' | 'subagents' | null
 }) {
   const ownerDocument = useChatDocument()
   const { t } = useTranslation('chat')
+  const { t: tr } = useTranslation('routines')
   const { t: tp } = useTranslation('plugins')
   const api = useHostApi()
   const hostId = useHostId()
   const { openSettings } = useSettings()
   const source = providedSource ?? localChatComposerSource(api, conversationId)
-  const [activePanel, setActivePanel] = useState<'menu' | 'subagents' | null>(null)
+  const [activePanel, setActivePanel] = useState<'menu' | 'subagents' | null>(initialOpenPanel)
   const [config, setConfig] = useState<Pick<ChatConfig, 'mcpServers' | 'appToolsEnabled' | 'imageGenEnabled'> | null>(
     null
   )
@@ -253,6 +258,25 @@ export function ChatPlusMenu({
             <ImageIcon className="h-4 w-4 text-muted-foreground" />
             {t('plusMenu.imageFile')}
           </button>
+          {!source.bot && onScheduleRoutine && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setActivePanel(null)
+                onScheduleRoutine()
+              }}
+              className="flex w-full items-start gap-2 rounded-md px-2.5 py-2 text-left text-foreground hover:bg-white/[0.05]"
+            >
+              <CalendarClock className="mt-0.5 h-4 w-4 shrink-0 text-[var(--routine)]" />
+              <span className="min-w-0">
+                <span className="block text-[13px]">{tr('proposal.plusMenuTitle')}</span>
+                <span className="block truncate text-[11px] text-muted-foreground">
+                  {tr('proposal.plusMenuSub')}
+                </span>
+              </span>
+            </button>
+          )}
           <div className="flex items-center justify-between gap-2 rounded-md px-2.5 py-2 hover:bg-white/[0.05]">
             <div className="flex min-w-0 items-center gap-2">
               <Bot className="h-4 w-4 shrink-0 text-muted-foreground" />

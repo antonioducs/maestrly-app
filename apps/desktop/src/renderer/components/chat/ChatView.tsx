@@ -92,6 +92,7 @@ import {
 } from '@/lib/chat-history-window'
 import { boundDraftAttachments } from '@/lib/draft-attachment-budget'
 import { useChatOwnerWindow, useChatSourceConversation } from '@/lib/chat-window-context'
+import { LOCAL_HOST_ID } from '../../../shared/host-key'
 import { draftAttachmentKind, hasArtifactAttachment } from '@/lib/attachment-kind'
 import {
   MAX_ATTACHMENT_IMAGE_BYTES,
@@ -141,6 +142,10 @@ interface Props {
   conversationId: string
   /** Shown while a review holds the conversation. */
   conversationName?: string
+  isRoutineRun?: boolean
+  routineRun?: import('../../../shared/routines').LocalRoutineRun | null
+  onEditRoutineModel?: () => void
+  onRunRoutineAgain?: () => void
   /** Opens this conversation's Plan tab. */
   onOpenPlan?: () => void
   cwd: string
@@ -189,6 +194,10 @@ export function ChatView({
   workspaceId,
   conversationId,
   conversationName,
+  isRoutineRun = false,
+  routineRun = null,
+  onEditRoutineModel,
+  onRunRoutineAgain,
   onOpenPlan,
   cwd: _cwd,
   experience,
@@ -2272,6 +2281,11 @@ export function ChatView({
                 )}
                 <div ref={scrollRef} className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
                   <ChatMessageList
+                    conversationId={conversationId}
+                    isRoutineRun={isRoutineRun}
+                    routineRun={routineRun}
+                    onEditRoutineModel={onEditRoutineModel}
+                    onRunRoutineAgain={onRunRoutineAgain}
                     messages={messages}
                     experience={currentExperience}
                     streaming={streaming}
@@ -2327,7 +2341,8 @@ export function ChatView({
 
               {pending.map((req) => (
                 <PermissionPrompt
-                  scope={workspaceId === null ? 'standalone' : 'project'}
+                  scope={isRoutineRun ? 'routine' : workspaceId === null ? 'standalone' : 'project'}
+                  routineWaitingSince={isRoutineRun ? (routineRun?.startedAt ?? routineRun?.scheduledAt ?? null) : null}
                   key={req.id}
                   request={req}
                   onDecide={(reply) => decide(req.id, reply)}
@@ -2520,7 +2535,14 @@ export function ChatView({
                   structuredAgentMentions={draftMentions}
                   streaming={streaming}
                   sendWhileStreaming={maestroLiveActive || midTurnSteering}
-                  streamingPlaceholder={maestroLiveActive ? t('composer.placeholderMaestroLive') : undefined}
+                  placeholder={isRoutineRun ? t('run.composerPlaceholderDone', { ns: 'routines' }) : undefined}
+                  streamingPlaceholder={
+                    maestroLiveActive
+                      ? t('composer.placeholderMaestroLive')
+                      : isRoutineRun
+                        ? t('run.composerPlaceholderRunning', { ns: 'routines' })
+                        : undefined
+                  }
                   disabled={keyMissing || botBlocked}
                   disabledPlaceholder={botBlocked ? t('bots.managedBy', { ns: 'ui', name: botName }) : undefined}
                   onSend={submitDraft}
@@ -2579,6 +2601,40 @@ export function ChatView({
                         onAddFiles={addFiles}
                         fontScale={fontScale}
                         onFontScale={setFontScale}
+                        onScheduleRoutine={
+                          !botManaged && !botConversation && hostId === LOCAL_HOST_ID && !isRoutineRun
+                            ? () => {
+                                void Promise.all([
+                                  api.chatGetPermMode(conversationId).catch(() => 'auto' as const),
+                                  api.chatGetFastMode(conversationId).catch(() => false),
+                                ]).then(([initialPermMode, fastMode]) => {
+                                  window.dispatchEvent(
+                                    new CustomEvent('maestrly:schedule-from-chat', {
+                                      detail: {
+                                        sourceConversationId: conversationId,
+                                        originTitle: conversationName ?? '',
+                                        initialInstruction: draft,
+                                        initialPermMode,
+                                        initialModel:
+                                          selProviderId && selModelId
+                                            ? {
+                                                providerId: selProviderId,
+                                                modelId: selModelId,
+                                                reasoning,
+                                                fastMode,
+                                              }
+                                            : undefined,
+                                        onCreated: () => {
+                                          setDraft('')
+                                          setDraftMentions([])
+                                        },
+                                      },
+                                    })
+                                  )
+                                })
+                              }
+                            : undefined
+                        }
                       />
                       <ChatSkillsMenu conversationId={conversationId} onChanged={reloadCommands} />
                       {isMaestro ? (

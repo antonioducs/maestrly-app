@@ -247,8 +247,18 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
     const onDoc = (e: MouseEvent) => {
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false)
     }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      e.stopPropagation()
+      setOpen(false)
+    }
     ownerDocument.addEventListener('mousedown', onDoc)
-    return () => ownerDocument.removeEventListener('mousedown', onDoc)
+    ownerDocument.addEventListener('keydown', onKey, true)
+    return () => {
+      ownerDocument.removeEventListener('mousedown', onDoc)
+      ownerDocument.removeEventListener('keydown', onKey, true)
+    }
   }, [ownerDocument, open])
 
   const providerChoices = config ? chatProviderChoices(config) : []
@@ -389,6 +399,7 @@ export const ChatModelChip = forwardRef<ChatModelChipHandle, Props>(function Cha
                 }
                 if (e.key === 'Escape') {
                   e.preventDefault()
+                  e.stopPropagation()
                   setOpen(false)
                 }
               }}

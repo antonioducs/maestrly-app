@@ -160,6 +160,10 @@ export interface StandaloneConversation extends ConversationBase {
    * Set once by the main process; deleting this conversation never deletes that folder.
    */
   folderOwnerId?: string
+  /** Set on standalone conversations created for a local routine run. */
+  routineId?: string
+  /** Set on standalone conversations created for a local routine run. */
+  routineRunId?: string
 }
 
 export type Conversation = ProjectConversation | StandaloneConversation

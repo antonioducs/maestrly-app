@@ -1212,6 +1212,7 @@ export default {
     allowOnce: 'Allow once',
     allowAlways: 'Always allow',
     allowAlwaysChat: 'Always allow in this chat',
+    allowAlwaysRoutine: 'Always allow in this routine',
     deny: 'Deny',
   },
   meter: {

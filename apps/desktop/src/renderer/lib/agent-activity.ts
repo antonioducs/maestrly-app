@@ -230,6 +230,8 @@ const PINNED_TOOLS = new Set([
   'todo_write',
   'start_conversations',
   'create_workspace',
+  'routine_propose',
+  'routine_run_report',
   'delegate',
   'task',
   ...ARTIFACT_CARD_TOOLS,

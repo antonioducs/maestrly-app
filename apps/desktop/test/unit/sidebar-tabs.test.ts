@@ -16,21 +16,24 @@ describe('sidebar tabs', () => {
     expect(readSidebarTab(null)).toBe('workspaces')
     expect(readSidebarTab('invalid')).toBe('workspaces')
     expect(readSidebarTab('bots')).toBe('bots')
+    expect(readSidebarTab('routines')).toBe('routines')
     expect(readSidebarTab('inbox')).toBe('inbox')
     expect(conversationSidebarTab({ scope: 'standalone' } as Conversation)).toBe('chats')
+    expect(conversationSidebarTab({ scope: 'standalone', routineRunId: 'run-1' } as Conversation)).toBe('routines')
     expect(conversationSidebarTab({ scope: 'project' } as Conversation)).toBe('workspaces')
   })
 
   it('wraps arrow navigation and jumps to the ends', () => {
     // A vertical rail, the notifications center first: up and down move between tabs, and left and right still do.
-    expect(nextSidebarTab('inbox', 'ArrowUp')).toBe('bots')
-    expect(nextSidebarTab('bots', 'ArrowDown')).toBe('inbox')
+    expect(nextSidebarTab('inbox', 'ArrowUp')).toBe('routines')
+    expect(nextSidebarTab('routines', 'ArrowDown')).toBe('inbox')
     expect(nextSidebarTab('inbox', 'ArrowDown')).toBe('chats')
     expect(nextSidebarTab('chats', 'ArrowDown')).toBe('workspaces')
-    expect(nextSidebarTab('inbox', 'ArrowLeft')).toBe('bots')
-    expect(nextSidebarTab('bots', 'ArrowRight')).toBe('inbox')
+    expect(nextSidebarTab('bots', 'ArrowDown')).toBe('routines')
+    expect(nextSidebarTab('inbox', 'ArrowLeft')).toBe('routines')
+    expect(nextSidebarTab('routines', 'ArrowRight')).toBe('inbox')
     expect(nextSidebarTab('workspaces', 'Home')).toBe('inbox')
-    expect(nextSidebarTab('workspaces', 'End')).toBe('bots')
+    expect(nextSidebarTab('workspaces', 'End')).toBe('routines')
     expect(nextSidebarTab('chats', 'Escape')).toBeNull()
   })
 
@@ -50,7 +53,9 @@ describe('sidebar tabs', () => {
         'ALPHA'
       )
     ).toBe(3)
-    expect(crossTabMatches('bots', { chats: 2, workspaces: 0, bots: 0 })).toEqual([{ tab: 'chats', count: 2 }])
+    expect(crossTabMatches('bots', { chats: 2, workspaces: 0, bots: 0, routines: 0 })).toEqual([
+      { tab: 'chats', count: 2 },
+    ])
   })
 
   it('connects each tab to a panel and persists the selected tab', () => {
@@ -64,11 +69,12 @@ describe('sidebar tabs', () => {
     // The tab's name is its label alone: what needs attention is its description.
     expect(rail).toContain('<span className="sr-only">{label}</span>')
     expect(rail).toMatch(/aria-describedby=\{needsYou \? `sidebar-tab-\$\{item\}-attention` : undefined\}/)
-    expect(sidebar.match(/role="tabpanel"/g)).toHaveLength(4)
+    expect(sidebar.match(/role="tabpanel"/g)).toHaveLength(5)
     expect(sidebar).toContain("hidden={tab !== 'inbox'}")
     expect(sidebar).toContain("hidden={tab !== 'chats'}")
     expect(sidebar).toContain("hidden={tab !== 'workspaces'}")
     expect(sidebar).toContain("hidden={tab !== 'bots'}")
+    expect(sidebar).toContain("hidden={tab !== 'routines'}")
     expect(sidebar).toContain("localStorage.getItem('sidebar.tab')")
     expect(sidebar).toContain("localStorage.setItem('sidebar.tab', next)")
     // A conversation opened from the notifications center leaves the sidebar on it; from anywhere else, on its tab.
@@ -84,7 +90,7 @@ describe('sidebar tabs', () => {
     expect(sidebar).toContain('selectHost(hostOfKey(workspace.id))')
     // The switcher only exists beside another machine, and never in the Bots tab or the notifications center, which
     // gathers every machine's.
-    expect(sidebar).toContain("multiHost && tab !== 'bots' && tab !== 'inbox' && (")
+    expect(sidebar).toContain("multiHost && tab !== 'bots' && tab !== 'inbox' && tab !== 'routines' && (")
     // Each list panel shows the chosen machine's section, never every machine's at once.
     expect(sidebar.match(/renderHostSection\(selectedSection, '(chats|workspaces)'\)/g)).toHaveLength(2)
     expect(sidebar).not.toContain('hostSections.map((section) => renderHostSection')

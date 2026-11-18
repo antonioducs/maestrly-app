@@ -20,13 +20,23 @@ import { genUiPreviewsOf } from '../../../shared/genui-widget'
 import { cn } from '@/lib/utils'
 import { useSettings } from '@/lib/use-settings'
 import { useHostId } from '@/lib/hosts/host-context'
+import { LOCAL_HOST_ID } from '../../../shared/host-key'
 import { useAgentActivityMode } from '@/lib/agent-activity-preference'
-import { chatActivitySegments, isSharedScreenshot } from '@/lib/agent-activity'
+import { baseToolName, chatActivitySegments, isSharedScreenshot } from '@/lib/agent-activity'
 import { MemorySourcesChip } from './MemorySourcesChip'
 import { ChatAgentActivity } from './ChatAgentActivity'
 import { SharedToolImages, ToolCallCard } from './ToolCallCard'
 import { ConversationDispatchCard, openConversationById } from './ConversationDispatchCard'
 import { WorkspaceCreationCard } from './WorkspaceCreationCard'
+import {
+  LiveRoutineCreatedNotice,
+  RoutineProposalCard,
+  interleaveChatMenuRoutines,
+} from '../routines/RoutineProposalCard'
+import { RoutineReportCard } from '../routines/RoutineReportCard'
+import { RoutineRunFailureCard } from '../routines/RoutineRunFailureCard'
+import { RoutineRunTrigger } from '../routines/RoutineRunTrigger'
+import type { LocalRoutine, LocalRoutineRun } from '../../../shared/routines'
 import { ArtifactCard } from '../artifacts/ArtifactCard'
 import { ARTIFACT_CARD_TOOLS } from '../../../shared/artifacts'
 import { SubagentCard } from './SubagentCard'
@@ -340,16 +350,21 @@ function Part({
   if (part.type === 'agent-mention') return null
   if (part.type === 'tool') {
     const toolPart = part
-    if (toolPart.toolName === 'ask_question') return <QuestionCard part={toolPart} />
-    if (toolPart.toolName === 'todo_write')
+    const toolBase = baseToolName(toolPart.toolName)
+    if (toolBase === 'ask_question') return <QuestionCard part={toolPart} />
+    if (toolBase === 'todo_write')
       return toolPart.toolCallId === latestTodoId ? <TodoCard part={toolPart} /> : null
-    if (toolPart.toolName === 'start_conversations')
+    if (toolBase === 'start_conversations')
       return <ConversationDispatchCard part={toolPart} conversationId={conversationId} messageId={messageId} />
-    if (toolPart.toolName === 'create_workspace')
+    if (toolBase === 'create_workspace')
       return <WorkspaceCreationCard part={toolPart} conversationId={conversationId} messageId={messageId} />
+    if (toolBase === 'routine_propose')
+      return <RoutineProposalCard part={toolPart} conversationId={conversationId} messageId={messageId} />
+    if (toolBase === 'routine_run_report')
+      return <RoutineReportCard part={toolPart} conversationId={conversationId} messageId={messageId} />
     if (ARTIFACT_CARD_TOOLS.includes(toolPart.toolName))
       return <ArtifactCard part={toolPart} conversationId={conversationId} messageId={messageId} />
-    if (toolPart.toolName === 'task' || toolPart.toolName === 'delegate')
+    if (toolBase === 'task' || toolBase === 'delegate')
       return (
         <SubagentCard
           part={toolPart}
@@ -492,6 +507,9 @@ function FileParts({
 
 const Bubble = memo(function Bubble({
   message,
+  isRoutineRun = false,
+  onEditRoutineModel,
+  onRunRoutineAgain,
   canEdit,
   isEditing,
   latestTodoId,
@@ -511,6 +529,9 @@ const Bubble = memo(function Bubble({
   turnChangesEntry,
 }: {
   message: ChatMessage
+  isRoutineRun?: boolean
+  onEditRoutineModel?: () => void
+  onRunRoutineAgain?: () => void
   canEdit: boolean
   isEditing: boolean
 
@@ -555,6 +576,9 @@ const Bubble = memo(function Bubble({
   const editBlockedByCatalog = hasAgentMentions && catalogLoading
 
   if (isUser) {
+    if (message.source === 'routine-run' && message.routineRun) {
+      return <RoutineRunTrigger meta={message.routineRun} />
+    }
     if (isEditing) {
       const editMentions: StructuredAgentMentionDraft[] = message.parts
         .filter((p): p is Extract<MessagePart, { type: 'agent-mention' }> => p.type === 'agent-mention')
@@ -746,38 +770,55 @@ const Bubble = memo(function Bubble({
               renderPart(p, i)
             )
           )}
-      {message.error && (
-        <div
-          role={
-            message.errorCode === 'claude-authentication-required' ||
-            subscriptionExhaustionMessageKey(message.errorCode)
-              ? 'alert'
-              : undefined
-          }
-          className="flex min-w-0 max-w-full flex-col items-start gap-2 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-[14px] text-red-300"
-        >
-          <span>
-            {message.errorCode === 'process-interrupted'
-              ? t('messages.processInterruptedError')
-              : message.errorCode === 'claude-authentication-required'
-                ? t('messages.claudeAuthenticationRequired')
-                : subscriptionExhaustionMessageKey(message.errorCode)
-                  ? t(subscriptionExhaustionMessageKey(message.errorCode)!)
-                  : automaticStopMessageKey(message.errorCode)
-                    ? t(automaticStopMessageKey(message.errorCode)!)
-                    : message.error}
-          </span>
-          {message.errorCode === 'claude-authentication-required' && (
-            <button
-              type="button"
-              onClick={() => openSettings('chat')}
-              className="rounded-md border border-red-300/30 bg-red-300/10 px-2.5 py-1.5 text-[12px] font-medium text-red-100 hover:bg-red-300/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-300/70"
-            >
-              {t('messages.manageClaudeConnection')}
-            </button>
-          )}
-        </div>
-      )}
+      {message.error &&
+        (isRoutineRun ? (
+          <RoutineRunFailureCard
+            error={
+              message.errorCode === 'process-interrupted'
+                ? t('messages.processInterruptedError')
+                : message.errorCode === 'claude-authentication-required'
+                  ? t('messages.claudeAuthenticationRequired')
+                  : subscriptionExhaustionMessageKey(message.errorCode)
+                    ? t(subscriptionExhaustionMessageKey(message.errorCode)!)
+                    : automaticStopMessageKey(message.errorCode)
+                      ? t(automaticStopMessageKey(message.errorCode)!)
+                      : message.error
+            }
+            onSwitchModel={onEditRoutineModel}
+            onRunAgain={onRunRoutineAgain}
+          />
+        ) : (
+          <div
+            role={
+              message.errorCode === 'claude-authentication-required' ||
+              subscriptionExhaustionMessageKey(message.errorCode)
+                ? 'alert'
+                : undefined
+            }
+            className="flex min-w-0 max-w-full flex-col items-start gap-2 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-[14px] text-red-300"
+          >
+            <span>
+              {message.errorCode === 'process-interrupted'
+                ? t('messages.processInterruptedError')
+                : message.errorCode === 'claude-authentication-required'
+                  ? t('messages.claudeAuthenticationRequired')
+                  : subscriptionExhaustionMessageKey(message.errorCode)
+                    ? t(subscriptionExhaustionMessageKey(message.errorCode)!)
+                    : automaticStopMessageKey(message.errorCode)
+                      ? t(automaticStopMessageKey(message.errorCode)!)
+                      : message.error}
+            </span>
+            {message.errorCode === 'claude-authentication-required' && (
+              <button
+                type="button"
+                onClick={() => openSettings('chat')}
+                className="rounded-md border border-red-300/30 bg-red-300/10 px-2.5 py-1.5 text-[12px] font-medium text-red-100 hover:bg-red-300/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-300/70"
+              >
+                {t('messages.manageClaudeConnection')}
+              </button>
+            )}
+          </div>
+        ))}
       {wasCut && (
         <div className="flex min-w-0 max-w-full items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/[0.08] px-3 py-1.5 text-[12px] text-amber-200/90">
           <TriangleAlert className="h-3.5 w-3.5 shrink-0" />
@@ -804,6 +845,11 @@ const Bubble = memo(function Bubble({
 })
 
 interface Props extends EditCtx {
+  conversationId?: string
+  isRoutineRun?: boolean
+  routineRun?: LocalRoutineRun | null
+  onEditRoutineModel?: () => void
+  onRunRoutineAgain?: () => void
   messages: ChatMessage[]
 
   readOnly?: boolean
@@ -845,6 +891,11 @@ export interface ReviewReceiptProps {
 }
 
 export const ChatMessageList = memo(function ChatMessageList({
+  conversationId: providedConversationId,
+  isRoutineRun = false,
+  routineRun = null,
+  onEditRoutineModel,
+  onRunRoutineAgain,
   messages,
   experience = 'standard',
   streaming,
@@ -879,7 +930,42 @@ export const ChatMessageList = memo(function ChatMessageList({
   const openImage = useCallback((src: string, name: string) => setLightbox({ src, name }), [])
   const closeImage = useCallback(() => setLightbox(null), [])
 
+  const hostId = useHostId()
+  const activeConversationId = providedConversationId ?? messages[0]?.conversationId ?? null
+  const [menuRoutines, setMenuRoutines] = useState<LocalRoutine[]>([])
+
+  useEffect(() => {
+    if (!activeConversationId || isRoutineRun || hostId !== LOCAL_HOST_ID) {
+      setMenuRoutines([])
+      return
+    }
+    let alive = true
+    const load = async () => {
+      try {
+        const list = await window.api.routinesList()
+        if (!alive) return
+        setMenuRoutines(
+          list.filter(
+            (r) => r.origin?.conversationId === activeConversationId && r.origin.via === 'menu'
+          )
+        )
+      } catch {
+        /* Ignore when routines API is unavailable in isolated contexts. */
+      }
+    }
+    void load()
+    const off = window.api.onRoutinesChanged(() => void load())
+    return () => {
+      alive = false
+      off()
+    }
+  }, [activeConversationId, isRoutineRun, hostId])
+
   const visibleMessages = useMemo(() => messages.filter((m) => !m.internal), [messages])
+  const timeline = useMemo(
+    () => interleaveChatMenuRoutines(visibleMessages, menuRoutines),
+    [visibleMessages, menuRoutines]
+  )
 
   const last = visibleMessages.length ? visibleMessages[visibleMessages.length - 1] : null
   const lastMarker = last
@@ -1033,7 +1119,7 @@ export const ChatMessageList = memo(function ChatMessageList({
     firstIdRef.current = firstId
   }, [messages])
 
-  if (visibleMessages.length === 0) {
+  if (visibleMessages.length === 0 && menuRoutines.length === 0) {
     return (
       <div className="flex h-full items-center justify-center px-6 text-center text-[14px] text-muted-foreground">
         <div className="max-w-sm">
@@ -1051,47 +1137,69 @@ export const ChatMessageList = memo(function ChatMessageList({
   return (
     <div ref={contentRef} className="chat-msgs mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-5 px-3 py-5">
       {lightbox && <ChatImageLightbox src={lightbox.src} name={lightbox.name} onClose={closeImage} />}
-      {visibleMessages.map((m, i) => (
-        // Keep the scroll anchor stable while content visibility updates card height.
+      {timeline.map((entry, i) => {
+        if (entry.kind === 'menu-routine') {
+          return (
+            <div key={`routine-menu:${entry.routine.id}`} className="min-w-0 max-w-full">
+              <LiveRoutineCreatedNotice routine={entry.routine} />
+            </div>
+          )
+        }
+        const m = entry.message
+        return (
+          // Keep the scroll anchor stable while content visibility updates card height.
 
-        <div
-          key={m.id}
-          data-msg-id={m.id}
-          className={cn(
-            'min-w-0 max-w-full scroll-mt-16 rounded-xl transition-shadow',
-            // A user message's hover actions fill the gap before the next message instead of adding a row. The
-            // margin sits on this element: its content visibility clips whatever overflows it.
-            m.role === 'user' && editingId !== m.id && '-mb-5',
-            highlightMsgId === m.id && 'ring-2 ring-sky-400/60 ring-offset-2 ring-offset-[#0d0d10]'
-          )}
-          style={
-            i < visibleMessages.length - 1
-              ? ({ contentVisibility: 'auto', containIntrinsicSize: 'auto 360px' } as CSSProperties)
-              : ({ containIntrinsicSize: 'auto 360px' } as CSSProperties)
-          }
-        >
-          <Bubble
-            message={m}
-            canEdit={!readOnly && !streaming && m.id === lastUserId}
-            isEditing={editingId === m.id}
-            latestTodoId={latestTodoId}
-            compact={compact}
-            live={m.id === liveMessageId}
-            agents={agents}
-            onStartEdit={onStartEdit}
-            onCancelEdit={onCancelEdit}
-            onSubmitEdit={onSubmitEdit}
-            onRetrySteering={onRetrySteering}
-            reviewReceipt={rowReviewReceipt}
-            onOpenMention={onOpenMention}
-            onOpenImage={openImage}
-            onUiSend={readOnly ? undefined : onUiSend}
-            searchQuery={searchHitIds?.has(m.id) ? searchQuery : undefined}
-            currentSearchMatch={currentSearchHitId === m.id}
-            turnChangesEntry={turnChanges?.byMessage.get(m.id)}
+          <div
+            key={m.id}
+            data-msg-id={m.id}
+            className={cn(
+              'min-w-0 max-w-full scroll-mt-16 rounded-xl transition-shadow',
+              // A user message's hover actions fill the gap before the next message instead of adding a row. The
+              // margin sits on this element: its content visibility clips whatever overflows it.
+              m.role === 'user' && m.source !== 'routine-run' && editingId !== m.id && '-mb-5',
+              highlightMsgId === m.id && 'ring-2 ring-sky-400/60 ring-offset-2 ring-offset-[#0d0d10]'
+            )}
+            style={
+              i < timeline.length - 1
+                ? ({ contentVisibility: 'auto', containIntrinsicSize: 'auto 360px' } as CSSProperties)
+                : ({ containIntrinsicSize: 'auto 360px' } as CSSProperties)
+            }
+          >
+            <Bubble
+              message={m}
+              isRoutineRun={isRoutineRun}
+              onEditRoutineModel={onEditRoutineModel}
+              onRunRoutineAgain={onRunRoutineAgain}
+              canEdit={!readOnly && !streaming && m.id === lastUserId}
+              isEditing={editingId === m.id}
+              latestTodoId={latestTodoId}
+              compact={compact}
+              live={m.id === liveMessageId}
+              agents={agents}
+              onStartEdit={onStartEdit}
+              onCancelEdit={onCancelEdit}
+              onSubmitEdit={onSubmitEdit}
+              onRetrySteering={onRetrySteering}
+              reviewReceipt={rowReviewReceipt}
+              onOpenMention={onOpenMention}
+              onOpenImage={openImage}
+              onUiSend={readOnly ? undefined : onUiSend}
+              searchQuery={searchHitIds?.has(m.id) ? searchQuery : undefined}
+              currentSearchMatch={currentSearchHitId === m.id}
+              turnChangesEntry={turnChanges?.byMessage.get(m.id)}
+            />
+          </div>
+        )
+      })}
+      {isRoutineRun && routineRun?.status === 'failed' && !visibleMessages.some((m) => Boolean(m.error)) && (
+        <div className="min-w-0 max-w-full">
+          <RoutineRunFailureCard
+            error={routineRun.error ?? t('inbox.failedDesc', { ns: 'routines' })}
+            onSwitchModel={onEditRoutineModel}
+            onRunAgain={onRunRoutineAgain}
           />
         </div>
-      ))}
+      )}
       {streaming && !liveLine && (
         <div className="flex items-center gap-1.5 text-[13px] text-muted-foreground">
           <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-muted-foreground" />

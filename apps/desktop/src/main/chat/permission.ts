@@ -427,3 +427,38 @@ export class PermissionBroker extends EventEmitter {
     return [...this.pending.values()].map((p) => p.request).filter((r) => r.conversationId === conversationId)
   }
 }
+
+export interface SavedPermission {
+  id: string
+  scopeKey: string
+  action: string
+  resource: string
+}
+
+export function listSavedPermissions(scopeKey: string): SavedPermission[] {
+  return (
+    getDb()
+      .prepare('SELECT id, project_id, action, resource FROM permission_saved WHERE project_id = ? ORDER BY rowid ASC')
+      .all(scopeKey) as Array<{ id: string; project_id: string; action: string; resource: string }>
+  ).map((row) => ({ id: row.id, scopeKey: row.project_id, action: row.action, resource: row.resource }))
+}
+
+export function deleteSavedPermission(id: string, scopeKey?: string): boolean {
+  const changes = scopeKey
+    ? getDb().prepare('DELETE FROM permission_saved WHERE id = ? AND project_id = ?').run(id, scopeKey).changes
+    : getDb().prepare('DELETE FROM permission_saved WHERE id = ?').run(id).changes
+  return Number(changes) > 0
+}
+
+export function copySavedPermissions(fromScopeKey: string, toScopeKey: string): void {
+  const rows = listSavedPermissions(fromScopeKey)
+  const stmt = getDb().prepare(
+    `INSERT INTO permission_saved (id, project_id, action, resource)
+     VALUES (?, ?, ?, ?) ON CONFLICT(project_id, action, resource) DO NOTHING`
+  )
+  for (const row of rows) stmt.run(randomUUID(), toScopeKey, row.action, row.resource)
+}
+
+export function deleteAllSavedPermissions(scopeKey: string): void {
+  getDb().prepare('DELETE FROM permission_saved WHERE project_id = ?').run(scopeKey)
+}

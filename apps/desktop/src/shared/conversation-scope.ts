@@ -45,15 +45,20 @@ export function getConversationCapabilities(conversation: Pick<Conversation, 'sc
   } as const
 }
 
-export type PermissionScope = { kind: 'project'; id: string } | { kind: 'conversation'; id: string }
+export type PermissionScope =
+  | { kind: 'project'; id: string }
+  | { kind: 'routine'; id: string }
+  | { kind: 'conversation'; id: string }
 
 export function conversationPermissionScope(conversation: Conversation): PermissionScope {
-  return conversation.scope === 'project'
-    ? { kind: 'project', id: conversation.workspaceId }
-    : { kind: 'conversation', id: conversation.id }
+  if (conversation.scope === 'project') return { kind: 'project', id: conversation.workspaceId }
+  if (conversation.routineId) return { kind: 'routine', id: conversation.routineId }
+  return { kind: 'conversation', id: conversation.id }
 }
 
-/** Keep existing workspace keys stable and namespace standalone permission decisions. */
+/** Keep existing workspace keys stable and namespace standalone/routine permission decisions. */
 export function permissionScopeKey(scope: PermissionScope): string {
-  return scope.kind === 'project' ? scope.id : `conversation:${scope.id}`
+  if (scope.kind === 'project') return scope.id
+  if (scope.kind === 'routine') return `routine:${scope.id}`
+  return `conversation:${scope.id}`
 }
