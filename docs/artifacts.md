@@ -21,7 +21,7 @@ edit and send. The agent uses these tools:
 | `artifact_create` | Publishes a page, from files passed inline (up to 5 MiB) or from a folder in the conversation's files, such as a build output. The entry file defaults to `index.html`. |
 | `artifact_update` | Creates a new version from exact text edits, added, replaced, or removed files, or a folder. The agent passes the version it read; if a newer version exists, the update fails instead of overwriting it. |
 | `artifact_get` | Reads an artifact's versions and files, or the text of one file. |
-| `artifact_list` | Lists the conversation's artifacts, or the whole project's. |
+| `artifact_list` | Lists the server's artifacts (pages and whiteboards), or narrows to the project or conversation. |
 | `artifact_open` | Opens an artifact in the conversation's browser drawer. |
 | `artifact_comments` | Reads the [comments](#comments) people left: each thread with the passage it quotes or the element it was placed on, its version, its author, and its replies. Open threads by default. |
 | `artifact_comment_reply` | Replies to a thread on your behalf. The reply is shown as written by your agent. |
@@ -33,20 +33,21 @@ of publishing the page some other way. Nothing is published on this computer.
 
 Reading, listing, and reading comments never ask for permission. Publishing,
 updating, opening, replying, and resolving follow the conversation's permission
-mode. An agent reaches only the artifacts of its own project, or of its own
-conversation when that conversation is standalone. Agents cannot delete or share
-artifacts.
+mode. An agent can list, read, update, open, reply to, and resolve comments on
+any artifact on the server, regardless of which conversation, project, paired
+computer, workspaces environment, or bot created it. Agents cannot delete or
+share artifacts.
 
 Bots have seven of these tools: all except `artifact_open`. Enable **Publish
-artifacts** for the bot to let it use them on the server. A bot can read, update,
-reply to, and resolve comments only on its own artifacts. **Open** on a bot
+artifacts** for the bot to let it use them on the server; an enabled bot can
+read, update, reply to, and resolve comments on any artifact on that server,
+while new artifacts it creates are attributed to the bot. **Open** on a bot
 publication card in the desktop opens the external viewer.
 
 Chats on a server's [workspaces environment](remote-workspaces.md) publish on
 that server with all eight tools and nothing to set up. The gateway gives the
-environment a token of its own, which works only for these tools and only on
-the environment's own artifacts. Their scope is the same as on this computer:
-their own project, or their own standalone conversation. The server's browser
+environment a token of its own, which works only for the agent tools while
+reaching any artifact on that server. The server's browser
 cannot reach the viewer, so `artifact_open` and **Open** on their cards open the
 page in the default browser of the computer that shows the conversation. The
 Artifacts center shows these artifacts as **Other computer**.
@@ -68,8 +69,8 @@ Artifacts center shows these artifacts as **Other computer**.
 The center lists the server's artifacts and shows the server's state next to
 its title. Cards name their bot, or show **Other computer** when another paired
 device published them. Every paired desktop manages all of the server's
-artifacts; agent access remains scoped to the publishing device and project or
-conversation, or to the owning bot. When the server is missing, unreachable, too
+artifacts, and authorized agents can work with any of them through the artifact
+tools while deletion and sharing stay with the owner. When the server is missing, unreachable, too
 old, or has hosting off, the center says so instead of listing artifacts, and
 offers the fix. Nothing is deleted in those cases.
 
@@ -427,10 +428,11 @@ on a whiteboard, and it draws the first version for you to rearrange.
 | `whiteboard_create` | Creates a whiteboard and draws its first content. |
 | `whiteboard_read` | Reads the board as an outline: sections, cards, texts, and links with their places, what a person made, and warnings about what reads badly, such as cards piled on each other, arrows crossing cards, or text that does not fit. With a revision it read before, it also says what changed since and who changed it. |
 | `whiteboard_edit` | Adds, changes, moves, connects, deletes, and arranges things, from the revision the agent read. |
-| `whiteboard_snapshot` | Looks at the board as you see it, to check the layout after a large change. Only on the app that owns the artifact; bots use the warnings of `whiteboard_read` instead. |
+| `whiteboard_snapshot` | Looks at the board as you see it, to check the layout after a large change. Available in desktop conversations; bots use the warnings of `whiteboard_read` instead. |
 
 Reading and looking never ask for permission; creating and editing follow the
-conversation's permission mode, and the agent's scope is the same as for pages.
+conversation's permission mode, and agents reach any whiteboard on the server
+just as they do pages.
 
 The board saves every change as it happens, with no versions: it is always the
 whiteboard you see. Everyone's canvas shows what the others do within a second

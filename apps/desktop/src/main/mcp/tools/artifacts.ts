@@ -51,8 +51,8 @@ const encoder = new TextEncoder()
 type InlineFile = { path: string; content: string; encoding?: 'utf8' | 'base64' }
 
 /**
- * Artifacts: versioned web pages the agent publishes for the user. Agents create, update, read and open them within
- * their scope; sharing and deletion stay with the owner in the app.
+ * Artifacts: versioned web pages the agent publishes for the user. Agents create, update, read and open artifacts on
+ * the server; sharing and deletion stay with the owner in the app.
  */
 export function registerArtifactTools(
   ctx: McpToolContext,
@@ -218,19 +218,21 @@ export function registerArtifactTools(
       title: t('tools.artifact_list.title'),
       description: t('tools.artifact_list.description'),
       inputSchema: {
-        scope: z.enum(['conversation', 'project']).optional().describe(t('tools.artifact_list.params.scope')),
+        scope: z.enum(['all', 'project', 'conversation']).optional().describe(t('tools.artifact_list.params.scope')),
       },
     },
     async ({ scope }) => {
       try {
-        const artifacts = await resolveService().listForConversation(convId, scope ?? 'conversation')
+        const artifacts = await resolveService().listForConversation(convId, scope ?? 'all')
         return ok(
           JSON.stringify(
             {
               artifacts: artifacts.map((artifact) => ({
                 id: artifact.id,
+                kind: artifact.kind ?? 'page',
                 title: artifact.title,
                 currentVersion: artifact.currentVersion,
+                workspaceId: artifact.workspaceId,
                 conversationId: artifact.conversationId,
                 updatedAt: artifact.updatedAt,
               })),
@@ -261,7 +263,6 @@ export function registerArtifactTools(
         const service = resolveService()
         // A delegated worker opens the tab without taking the drawer's focus from the user.
         const detail = await service.openInConversation(convId, id, version, {
-          checkScope: true,
           activate: !workerScope,
         })
         return ok(

@@ -143,7 +143,7 @@ it('publishes only on the bot server, and nowhere without one', async () => {
   expect(await h.service.listAll()).toEqual([])
 })
 
-it('enforces device and workspace scope, and lists only the server', async () => {
+it('reaches artifacts across devices, bots and workspaces, and lists only the server', async () => {
   const h = harness()
   const own = await h.service.create(h.conversation.id, { title: 'Own', files })
   const input = {
@@ -158,11 +158,19 @@ it('enforces device and workspace scope, and lists only the server', async () =>
   const other = await hosts[1].admin.create({ ...input, owner: { kind: 'device', id: 'dev-2' } })
   const bot = await hosts[1].admin.create({ ...input, owner: { kind: 'bot', id: 'scout' } })
   await earlier(h.conversation.id, h.conversation.workspaceId)
-  for (const id of [other.id, bot.id])
-    await expect(h.service.getForConversation(h.conversation.id, id)).rejects.toMatchObject({ code: 'not_found' })
+  const outsider = makeConversation(makeWorkspace().id)
+  for (const id of [own.detail.id, other.id, bot.id]) {
+    expect((await h.service.getForConversation(h.conversation.id, id)).id).toBe(id)
+    expect((await h.service.getForConversation(outsider.id, id)).id).toBe(id)
+  }
   const sibling = makeConversation(h.conversation.workspaceId!)
-  expect((await h.service.getForConversation(sibling.id, own.detail.id)).id).toBe(own.detail.id)
-  expect((await h.service.listForConversation(sibling.id, 'project')).map((a) => a.id)).toEqual([own.detail.id])
+  expect(new Set((await h.service.listForConversation(outsider.id)).map((a) => a.id))).toEqual(
+    new Set([own.detail.id, other.id, bot.id])
+  )
+  expect(new Set((await h.service.listForConversation(sibling.id, 'project')).map((a) => a.id))).toEqual(
+    new Set([own.detail.id, other.id, bot.id])
+  )
+  expect(await h.service.listForConversation(outsider.id, 'project')).toEqual([])
   const items = await h.service.listAll()
   expect(items).toHaveLength(3)
   expect(items.find((a) => a.id === other.id)).toMatchObject({ elsewhere: true, conversation: null, project: null })
@@ -170,6 +178,68 @@ it('enforces device and workspace scope, and lists only the server', async () =>
   expect(items[0]).not.toHaveProperty('host')
   h.set('unreachable')
   expect(await h.service.listAll()).toEqual([])
+})
+
+it('lists available servers when a secondary paired server is offline, and fails if none respond', async () => {
+  const SERVER_A = 'aaaaaaaa-0000-4000-8000-000000000001' as FleetServerId
+  const SERVER_B = 'bbbbbbbb-0000-4000-8000-000000000002' as FleetServerId
+  let onlineA = true
+  const sourceA: ArtifactSource = {
+    key: 'server',
+    server: SERVER_A,
+    owner: { kind: 'device', id: 'dev-1' },
+    ready: () => onlineA,
+    admin: async () => {
+      if (!onlineA) throw serverUnavailable('server_unreachable', 'primary')
+      return hosts[1].admin
+    },
+    viewerBase: () => 'http://127.0.0.1:7443',
+    publicBase: () => null,
+    linkExpiryDays: () => null,
+  }
+  const conversation = makeConversation(makeWorkspace().id)
+  const service = new ArtifactsService({
+    sources: createDesktopSources({
+      servers: () => [
+        {
+          serverId: SERVER_A,
+          source: onlineA ? sourceA : null,
+          unavailable: () => serverUnavailable('server_unreachable', 'primary'),
+        },
+        {
+          serverId: SERVER_B,
+          source: {
+            key: 'server',
+            server: SERVER_B,
+            owner: { kind: 'device', id: 'dev-2' },
+            ready: () => false,
+            admin: async () => {
+              await new Promise((resolve) => setTimeout(resolve, 15))
+              throw serverUnavailable('server_off', 'secondary')
+            },
+            viewerBase: () => null,
+            publicBase: () => null,
+            linkExpiryDays: () => null,
+          },
+          unavailable: () => serverUnavailable('server_off', 'secondary'),
+        },
+      ],
+      publishing: () => SERVER_A,
+    }),
+    vault: new InviteVault({ get: () => null, set: () => true, remove: () => {} }),
+    getConversation,
+    workspaceName: () => 'Project',
+    resolveDirectory: async () => root,
+    openExternal: async () => {},
+    openInDrawer: () => {},
+  })
+  const { detail } = await service.create(conversation.id, { title: 'Primary artifact', files })
+  expect((await service.listForConversation(conversation.id)).map((a) => a.id)).toEqual([detail.id])
+  onlineA = false
+  await expect(service.listForConversation(conversation.id)).rejects.toMatchObject({
+    code: 'host_unavailable',
+    details: { reason: 'server_unreachable', server: 'primary' },
+  })
 })
 
 it('says an artifact is on this computer instead of missing', async () => {

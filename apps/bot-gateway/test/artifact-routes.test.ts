@@ -32,17 +32,26 @@ test('device and bot credentials stay on their API; disabled causes are distinct
   })
 })
 
-test('bot creation and lists enforce ownership and all id calls enforce scope', async () => {
+test('bot creation stamps ownership, allows cross-owner agent access, and blocks owner-only methods', async () => {
   const h = await harness()
   await h.artifacts.update({ enabled: true })
   await h.lifecycle.patch(h.bot.id, { publishArtifacts: true })
   const own = await (await h.request('POST', '/internal/v1/artifacts/upload', call('create', [bundle()]), true)).json()
   expect(own.ok).toBe(true)
   expect(own.value).toMatchObject({ ownerKind: 'bot', ownerId: h.bot.id, workspaceId: null })
-  const device = await (await h.request('POST', '/v1/artifacts/upload', call('create', [bundle()]))).json()
+  const device = await (
+    await h.request(
+      'POST',
+      '/v1/artifacts/upload',
+      call('create', [
+        bundle({ origin: { workspaceId: 'ws-1', conversationId: 'dev-conv', conversationTitle: 'Dev chat' } }),
+      ])
+    )
+  ).json()
   expect(device.ok).toBe(true)
   expect(device.value.ownerKind).toBe('device')
   expect(device.value.ownerId).not.toBe('spoof')
+
   const list = await (
     await h.request(
       'POST',
@@ -51,34 +60,93 @@ test('bot creation and lists enforce ownership and all id calls enforce scope', 
       true
     )
   ).json()
-  expect(list.value.map((item: { id: string }) => item.id)).toEqual([own.value.id])
-  for (const method of [
-    'get',
-    'listFiles',
-    'readFile',
-    'listComments',
-    'addComment',
-    'setCommentResolved',
-    'listResponses',
-  ]) {
-    const result = await (
-      await h.request('POST', '/internal/v1/artifacts/admin', call(method, [device.value.id]), true)
+  expect(new Set(list.value.map((item: { id: string }) => item.id))).toEqual(new Set([own.value.id, device.value.id]))
+  const byProject = await (
+    await h.request('POST', '/internal/v1/artifacts/admin', call('list', [{ workspaceId: 'ws-1' }]), true)
+  ).json()
+  expect(byProject.value.map((item: { id: string }) => item.id)).toEqual([device.value.id])
+
+  expect(
+    await (await h.request('POST', '/internal/v1/artifacts/admin', call('get', [device.value.id]), true)).json()
+  ).toMatchObject({ ok: true, value: { id: device.value.id } })
+  expect(
+    await (await h.request('POST', '/internal/v1/artifacts/admin', call('listFiles', [device.value.id]), true)).json()
+  ).toMatchObject({ ok: true, value: [expect.objectContaining({ path: 'index.html' })] })
+  expect(
+    await (
+      await h.request(
+        'POST',
+        '/internal/v1/artifacts/admin',
+        call('readFile', [device.value.id, 1, 'index.html']),
+        true
+      )
     ).json()
-    expect(result).toMatchObject({ ok: false, error: { code: 'not_found' } })
-  }
+  ).toMatchObject({ ok: true })
+  expect(
+    await (
+      await h.request('POST', '/internal/v1/artifacts/admin', call('listResponses', [device.value.id]), true)
+    ).json()
+  ).toEqual({ ok: true, value: { responses: [], nextCursor: null } })
+
+  const thread = await h.artifacts
+    .admin()!
+    .addComment(device.value.id, { author: 'owner', body: 'Bot, update this?', version: 1 })
+  expect(
+    await (
+      await h.request('POST', '/internal/v1/artifacts/admin', call('listComments', [device.value.id]), true)
+    ).json()
+  ).toMatchObject({ ok: true, value: { comments: [expect.objectContaining({ id: thread.id })] } })
+  expect(
+    await (
+      await h.request(
+        'POST',
+        '/internal/v1/artifacts/admin',
+        call('addComment', [device.value.id, { parentId: thread.id, author: 'owner', body: 'Updated.' }]),
+        true
+      )
+    ).json()
+  ).toMatchObject({ ok: true, value: { author: { kind: 'agent' } } })
+  expect(
+    await (
+      await h.request(
+        'POST',
+        '/internal/v1/artifacts/admin',
+        call('setCommentResolved', [device.value.id, thread.id, true]),
+        true
+      )
+    ).json()
+  ).toMatchObject({ ok: true })
+
   const update = await (
     await h.request(
       'POST',
       '/internal/v1/artifacts/upload',
-      call('update', [{ id: device.value.id, baseVersion: 1, change: { kind: 'replace', files: bundle().files } }]),
+      call('update', [
+        {
+          id: device.value.id,
+          baseVersion: 1,
+          conversationTitle: 'Bot overwrite',
+          change: { kind: 'replace', files: bundle().files },
+        },
+      ]),
       true
     )
   ).json()
-  expect(update).toMatchObject({ ok: false, error: { code: 'not_found' } })
-  for (const method of ['delete', 'mintOwnerTicket', 'snapshot', 'setSharing', 'setThumbnail', 'deleteResponse']) {
-    expect(
-      await (await h.request('POST', '/internal/v1/artifacts/admin', call(method, [own.value.id]), true)).json()
-    ).toMatchObject({ ok: false, error: { code: 'invalid_input' } })
+  expect(update).toMatchObject({
+    ok: true,
+    value: { id: device.value.id, currentVersion: 2, conversationTitle: 'Dev chat' },
+  })
+
+  expect(
+    await (await h.request('POST', '/internal/v1/artifacts/admin', call('get', ['A'.repeat(22)]), true)).json()
+  ).toMatchObject({ ok: false, error: { code: 'not_found' } })
+
+  for (const target of [own.value.id, device.value.id]) {
+    for (const method of ['delete', 'mintOwnerTicket', 'snapshot', 'setSharing', 'setThumbnail', 'deleteResponse']) {
+      expect(
+        await (await h.request('POST', '/internal/v1/artifacts/admin', call(method, [target]), true)).json()
+      ).toMatchObject({ ok: false, error: { code: 'invalid_input' } })
+    }
   }
   expect(
     await (await h.request('POST', '/v1/artifacts/admin', call('snapshot', ['/tmp/forbidden']))).json()
@@ -441,7 +509,7 @@ test('bots can neither export, store blobs, nor import', async () => {
   expect(await h.artifacts.admin()!.get('BotImport_000000000001')).toBeNull()
 })
 
-test('a bot creates whiteboards under its own name and edits only its own', async () => {
+test('a bot creates whiteboards under its own name and reads or edits whiteboards across owners', async () => {
   const h = await harness()
   await h.artifacts.update({ enabled: true })
   await h.lifecycle.patch(h.bot.id, { publishArtifacts: true })
@@ -464,15 +532,25 @@ test('a bot creates whiteboards under its own name and edits only its own', asyn
   })
 
   const device = await (await h.request('POST', '/v1/artifacts/upload', call('create', [bundle()]))).json()
-  const applied = vi.spyOn(admin, 'applyBoard')
-  for (const [method, args] of [
-    ['applyBoard', [{ id: device.value.id, baseRevision: 0, ops: [{ op: 'delete', id: 'a' }] }]],
-    ['readBoard', [device.value.id]],
-  ] as const) {
-    const refused = await (
-      await h.request('POST', '/internal/v1/artifacts/admin', call(method, [...args]), true)
-    ).json()
-    expect(refused, method).toMatchObject({ ok: false, error: { code: 'not_found' } })
-  }
-  expect(applied).not.toHaveBeenCalled()
+  const readSpy = vi.spyOn(admin, 'readBoard').mockImplementation(async () => ({ revision: 1 }) as never)
+  const applySpy = vi
+    .spyOn(admin, 'applyBoard')
+    .mockImplementation(async () => ({ revision: 2, applied: [0], conflicts: [] }) as never)
+  const read = await (
+    await h.request('POST', '/internal/v1/artifacts/admin', call('readBoard', [device.value.id]), true)
+  ).json()
+  expect(read).toEqual({ ok: true, value: { revision: 1 } })
+  expect(readSpy).toHaveBeenCalledWith(device.value.id)
+
+  const editInput = { id: device.value.id, baseRevision: 1, ops: [{ op: 'delete' as const, id: 'a' }] }
+  const applied = await (
+    await h.request('POST', '/internal/v1/artifacts/admin', call('applyBoard', [editInput]), true)
+  ).json()
+  expect(applied).toEqual({ ok: true, value: { revision: 2, applied: [0], conflicts: [] } })
+  expect(applySpy).toHaveBeenCalledWith(editInput)
+
+  const missing = await (
+    await h.request('POST', '/internal/v1/artifacts/admin', call('readBoard', ['A'.repeat(22)]), true)
+  ).json()
+  expect(missing).toMatchObject({ ok: false, error: { code: 'not_found' } })
 })

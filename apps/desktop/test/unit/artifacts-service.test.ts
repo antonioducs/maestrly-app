@@ -184,19 +184,37 @@ describe('ArtifactsService', () => {
     expect(own.detail).toMatchObject({ workspaceId: null, conversationId: chat.id })
   })
 
-  it('keeps agents within their project or standalone conversation', async () => {
-    const first = makeConversation(makeWorkspace().id)
-    const other = makeConversation(makeWorkspace().id)
+  it('lets agents read, update and list artifacts across projects, standalone chats and owners', async () => {
+    const first = makeConversation(makeWorkspace().id, { name: 'Origin chat' })
+    const other = makeConversation(makeWorkspace().id, { name: 'Implementer chat' })
     const sibling = makeConversation(first.workspaceId)
     const { detail } = await service.create(first.id, { title: 'Scoped', files: page })
     expect((await service.getForConversation(sibling.id, detail.id)).id).toBe(detail.id)
-    expect((await errorOf(service.getForConversation(other.id, detail.id))).code).toBe('not_found')
+    expect((await service.getForConversation(other.id, detail.id)).id).toBe(detail.id)
 
     const chat = standalone()
     const otherChat = standalone()
     const own = await service.create(chat.id, { title: 'Own', files: page })
-    expect((await errorOf(service.getForConversation(otherChat.id, own.detail.id))).code).toBe('not_found')
-    expect((await errorOf(service.getForConversation(chat.id, detail.id))).code).toBe('not_found')
+    const bot = await host.admin.create({
+      title: 'Bot report',
+      owner: { kind: 'bot', id: 'scout' },
+      origin: { workspaceId: null, conversationId: 'bot-conv', conversationTitle: 'Scout' },
+      files: page,
+    })
+    expect((await service.getForConversation(otherChat.id, own.detail.id)).id).toBe(own.detail.id)
+    expect((await service.getForConversation(chat.id, detail.id)).id).toBe(detail.id)
+    expect((await service.getForConversation(other.id, bot.id)).id).toBe(bot.id)
+
+    const updated = await service.update(other.id, {
+      id: detail.id,
+      baseVersion: 1,
+      change: { kind: 'edits', edits: [{ path: 'index.html', oldText: 'Hello', newText: 'Updated across projects' }] },
+    })
+    expect(updated.detail).toMatchObject({ currentVersion: 2, conversationTitle: 'Origin chat' })
+
+    const allIds = (await service.listForConversation(other.id)).map((item) => item.id)
+    expect(new Set(allIds)).toEqual(new Set([detail.id, own.detail.id, bot.id]))
+    expect(allIds[0]).toBe(detail.id)
     expect((await service.listForConversation(chat.id, 'project')).map((item) => item.id)).toEqual([own.detail.id])
     expect((await service.listForConversation(sibling.id, 'project')).map((item) => item.id)).toEqual([detail.id])
     expect(await service.listForConversation(sibling.id, 'conversation')).toEqual([])
@@ -223,7 +241,7 @@ describe('ArtifactsService', () => {
       baseVersion: 1,
       change: { kind: 'edits', edits: [{ path: 'index.html', oldText: 'Hello', newText: 'Hi' }] },
     })
-    await service.openInConversation(conversation.id, detail.id, 2, { checkScope: true, activate: true })
+    await service.openInConversation(conversation.id, detail.id, 2, { activate: true })
     expect(deps.openInDrawer).toHaveBeenCalledWith(
       conversation.id,
       expect.stringMatching(new RegExp(`^http://127\\.0\\.0\\.1:4010/a/${detail.id}#o=[A-Za-z0-9_-]{43}&v=2$`)),
@@ -234,13 +252,17 @@ describe('ArtifactsService', () => {
       expect.stringMatching(new RegExp(`^http://127\\.0\\.0\\.1:4010/a/${detail.id}#o=[A-Za-z0-9_-]{43}$`))
     )
     const outsider = makeConversation(makeWorkspace().id)
-    expect(
-      (await errorOf(service.openInConversation(outsider.id, detail.id, undefined, { checkScope: true }))).code
-    ).toBe('not_found')
+    await service.openInConversation(outsider.id, detail.id)
+    expect(deps.openInDrawer).toHaveBeenLastCalledWith(
+      outsider.id,
+      expect.stringMatching(new RegExp(`^http://127\\.0\\.0\\.1:4010/a/${detail.id}#o=[A-Za-z0-9_-]{43}$`)),
+      true
+    )
+    expect((await errorOf(service.openInConversation(outsider.id, 'A'.repeat(22)))).code).toBe('not_found')
     expect(service.opensOnViewer).toBe(false)
   })
 
-  it('on a workspaces host, asks the computer showing the conversation to open it, within the same scope', async () => {
+  it('on a workspaces host, asks the computer showing the conversation to open any server artifact', async () => {
     const openOnViewer = vi.fn()
     const owner: ArtifactSource = {
       key: 'server',
@@ -265,7 +287,7 @@ describe('ArtifactsService', () => {
     const conversation = makeConversation(makeWorkspace().id)
     const { detail } = await onHost.create(conversation.id, { title: 'Remote page', files: page })
     expect(onHost.opensOnViewer).toBe(true)
-    expect(await onHost.openInConversation(conversation.id, detail.id, undefined, { checkScope: true })).toMatchObject({
+    expect(await onHost.openInConversation(conversation.id, detail.id)).toMatchObject({
       id: detail.id,
     })
     expect(openOnViewer).toHaveBeenCalledWith(conversation.id, {
@@ -273,14 +295,18 @@ describe('ArtifactsService', () => {
       artifactId: detail.id,
       version: 1,
     })
-    await onHost.openInConversation(conversation.id, detail.id, 1, { checkScope: true })
+    await onHost.openInConversation(conversation.id, detail.id, 1)
     expect(openOnViewer).toHaveBeenLastCalledWith(conversation.id, expect.objectContaining({ version: 1 }))
     expect(deps.openInDrawer).not.toHaveBeenCalled()
     const outsider = makeConversation(makeWorkspace().id)
-    expect(
-      (await errorOf(onHost.openInConversation(outsider.id, detail.id, undefined, { checkScope: true }))).code
-    ).toBe('not_found')
-    expect(openOnViewer).toHaveBeenCalledTimes(2)
+    await onHost.openInConversation(outsider.id, detail.id)
+    expect(openOnViewer).toHaveBeenLastCalledWith(outsider.id, {
+      conversationId: outsider.id,
+      artifactId: detail.id,
+      version: 1,
+    })
+    expect((await errorOf(onHost.openInConversation(outsider.id, 'A'.repeat(22)))).code).toBe('not_found')
+    expect(openOnViewer).toHaveBeenCalledTimes(3)
   })
 
   it('publishes a folder as a full replacement', async () => {
@@ -444,7 +470,7 @@ describe('ArtifactsService', () => {
     ])
   })
 
-  it('lets the owner read, delete and close responses, and agents read them within their scope', async () => {
+  it('lets the owner read, delete and close responses, and agents read them across conversations', async () => {
     const conversation = makeConversation(makeWorkspace().id)
     const outsider = makeConversation(makeWorkspace().id)
     const { detail } = await service.create(conversation.id, { title: 'Form', files: page })
@@ -477,8 +503,8 @@ describe('ArtifactsService', () => {
     const rest = await service.responsesForConversation(conversation.id, id, { cursor: read.nextCursor! })
     expect(rest).toMatchObject({ nextCursor: null })
     expect(rest.responses.map((item) => item.data)).toEqual([{ answer: 'no' }])
-    // Out of scope, the artifact and its responses do not exist.
-    expect((await errorOf(service.responsesForConversation(outsider.id, id, {}))).code).toBe('not_found')
+    expect((await service.responsesForConversation(outsider.id, id, {})).responses).toHaveLength(2)
+    expect((await errorOf(service.responsesForConversation(outsider.id, 'A'.repeat(22), {}))).code).toBe('not_found')
 
     await service.deleteResponse(id, responses[0]!.id)
     expect((await service.responses(id)).map((item) => item.author.name)).toEqual(['Ana'])
@@ -486,7 +512,7 @@ describe('ArtifactsService', () => {
     await respondAsGuest(id, 'Late', { answer: 'maybe' }, 403)
   })
 
-  it('lets agents create, read and edit whiteboards within their scope', async () => {
+  it('lets agents create, read and edit whiteboards across conversations', async () => {
     const conversation = makeConversation(makeWorkspace().id)
     const outsider = makeConversation(makeWorkspace().id)
     const created = await service.createBoard(conversation.id, {
@@ -503,16 +529,16 @@ describe('ArtifactsService', () => {
     })
     expect(deps.requestThumbnail).toHaveBeenCalledWith(id, 1)
 
-    const read = await service.readBoardForConversation(conversation.id, id, { since: 0 })
+    const read = await service.readBoardForConversation(outsider.id, id, { since: 0 })
     expect(read.outline.cards.map((card) => card.text)).toEqual(['API'])
     for (const attempt of [
-      service.readBoardForConversation(outsider.id, id),
+      service.readBoardForConversation(outsider.id, 'A'.repeat(22)),
       service.applyBoardForConversation(outsider.id, {
-        id,
+        id: 'A'.repeat(22),
         baseRevision: read.revision,
         ops: [{ op: 'delete', id: 'api' }],
       }),
-      service.boardSnapshotForConversation(outsider.id, id),
+      service.boardSnapshotForConversation(outsider.id, 'A'.repeat(22)),
     ])
       expect((await errorOf(attempt)).code).toBe('not_found')
 
@@ -520,7 +546,7 @@ describe('ArtifactsService', () => {
     try {
       deps.requestThumbnail.mockClear()
       const move = (x: number) => ({ op: 'move' as const, id: 'api', to: { x, y: 0 } })
-      const first = await service.applyBoardForConversation(conversation.id, {
+      const first = await service.applyBoardForConversation(outsider.id, {
         id,
         baseRevision: read.revision,
         ops: [move(100)],
@@ -537,7 +563,7 @@ describe('ArtifactsService', () => {
       vi.useRealTimers()
     }
 
-    const snapshot = await service.boardSnapshotForConversation(conversation.id, id)
+    const snapshot = await service.boardSnapshotForConversation(outsider.id, id)
     expect(snapshot).toEqual({ revision: read.revision + 2, image: new Uint8Array([0xff, 0xd8]) })
     expect(deps.captureSnapshot.mock.calls[0]?.[0]).toMatch(
       new RegExp(`^http://127\\.0\\.0\\.1:4010/a/${id}#o=.+&v=1&preview=1$`)
@@ -568,7 +594,7 @@ describe('ArtifactsService', () => {
     expect((await errorOf(service.setSharing(pageDetail.id, { boardEditors: 'people' }))).code).toBe('invalid_input')
   })
 
-  it('lets agents read, answer and resolve comments within their scope', async () => {
+  it('lets agents read, answer and resolve comments across conversations', async () => {
     const conversation = makeConversation(makeWorkspace().id)
     const outsider = makeConversation(makeWorkspace().id)
     const { detail } = await service.create(conversation.id, { title: 'Discussed', files: page })
@@ -577,23 +603,22 @@ describe('ArtifactsService', () => {
     const resolved = await host.admin.addComment(id, { author: 'owner', version: 1, body: 'Done already' })
     await host.admin.setCommentResolved(id, resolved.id, true)
 
-    const open = await service.commentsForConversation(conversation.id, id, { status: 'open' })
+    const open = await service.commentsForConversation(outsider.id, id, { status: 'open' })
     expect(open).toMatchObject({ currentVersion: 1, nextCursor: null })
     expect(open.comments.map((comment) => comment.body)).toEqual(['Is this right?'])
-    expect((await service.commentsForConversation(conversation.id, id, { status: 'all' })).comments).toHaveLength(2)
-    expect((await service.commentsForConversation(conversation.id, id, { version: 2 })).comments).toEqual([])
+    expect((await service.commentsForConversation(outsider.id, id, { status: 'all' })).comments).toHaveLength(2)
+    expect((await service.commentsForConversation(outsider.id, id, { version: 2 })).comments).toEqual([])
 
-    const reply = await service.replyForConversation(conversation.id, id, thread.id, 'Yes, checked.')
+    const reply = await service.replyForConversation(outsider.id, id, thread.id, 'Yes, checked.')
     expect(reply).toMatchObject({ parentId: thread.id, body: 'Yes, checked.', author: { kind: 'agent' } })
-    await service.resolveForConversation(conversation.id, id, thread.id)
+    await service.resolveForConversation(outsider.id, id, thread.id)
     expect((await service.commentsForConversation(conversation.id, id, { status: 'open' })).comments).toEqual([])
     expect((await service.listAll())[0]).toMatchObject({ openComments: 0 })
 
-    // Out of scope, the artifact and its comments do not exist.
     for (const attempt of [
-      service.commentsForConversation(outsider.id, id, {}),
-      service.replyForConversation(outsider.id, id, thread.id, 'Intruding'),
-      service.resolveForConversation(outsider.id, id, thread.id),
+      service.commentsForConversation(outsider.id, 'A'.repeat(22), {}),
+      service.replyForConversation(outsider.id, 'A'.repeat(22), thread.id, 'Missing'),
+      service.resolveForConversation(outsider.id, 'A'.repeat(22), thread.id),
     ])
       expect((await errorOf(attempt)).code).toBe('not_found')
     expect((await service.commentsForConversation(conversation.id, id, { status: 'all' })).comments).toHaveLength(3)

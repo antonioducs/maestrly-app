@@ -654,7 +654,7 @@ describe('workspaces environment artifacts', () => {
     'Content-Type': 'application/json',
   })
 
-  it('publishes as the device its environment is, with only the agent methods on its own artifacts', async () => {
+  it('publishes as the device its environment is, reaches artifacts across owners, and keeps owner methods blocked', async () => {
     const h = await setup()
     const id = await workspaces(h)
     await h.artifacts.update({ enabled: true })
@@ -671,22 +671,29 @@ describe('workspaces environment artifacts', () => {
     expect([device.ok, bot.ok]).toEqual([true, true])
 
     const ids = (result: Record<string, any>) => result.value.map((item: { id: string }) => item.id)
-    expect(ids(await host('admin', 'list', [{ ownerKind: 'bot', ownerId: h.bot.id }]))).toEqual([own.value.id])
+    expect(new Set(ids(await host('admin', 'list', [{ ownerKind: 'bot', ownerId: h.bot.id }])))).toEqual(
+      new Set([own.value.id, device.value.id, bot.value.id])
+    )
     expect(ids(await host('admin', 'list', [{ workspaceId: 'ws-1' }]))).toEqual([own.value.id])
     expect(ids(await host('admin', 'list', [{ workspaceId: 'ws-2' }]))).toEqual([])
-    expect(await host('admin', 'get', [own.value.id])).toMatchObject({ ok: true, value: { id: own.value.id } })
-    for (const other of [device.value.id, bot.value.id])
-      expect(await host('admin', 'get', [other])).toMatchObject({ ok: false, error: { code: 'not_found' } })
+    for (const target of [own.value.id, device.value.id, bot.value.id])
+      expect(await host('admin', 'get', [target])).toMatchObject({ ok: true, value: { id: target } })
     const update = await host('upload', 'update', [
       { id: device.value.id, baseVersion: 1, change: { kind: 'replace', files: bundle(null).files } },
     ])
-    expect(update).toMatchObject({ ok: false, error: { code: 'not_found' } })
+    expect(update).toMatchObject({ ok: true, value: { id: device.value.id, currentVersion: 2 } })
+    const botUpdate = await host('upload', 'update', [
+      { id: bot.value.id, baseVersion: 1, change: { kind: 'replace', files: bundle(null).files } },
+    ])
+    expect(botUpdate).toMatchObject({ ok: true, value: { id: bot.value.id, currentVersion: 2 } })
     // The owner's controls stay with the owner's computers.
-    for (const method of ['delete', 'mintOwnerTicket', 'setSharing', 'listEvents', 'exportArtifact'])
-      expect(await host('admin', method, [own.value.id]), method).toMatchObject({
-        ok: false,
-        error: { code: 'invalid_input' },
-      })
+    for (const target of [own.value.id, device.value.id, bot.value.id]) {
+      for (const method of ['delete', 'mintOwnerTicket', 'setSharing', 'listEvents', 'exportArtifact'])
+        expect(await host('admin', method, [target]), method).toMatchObject({
+          ok: false,
+          error: { code: 'invalid_input' },
+        })
+    }
     // The owner's computers see it with the rest.
     const listed = await json(await h.request('POST', '/v1/artifacts/admin', call('list', [])))
     expect(ids(listed)).toContain(own.value.id)

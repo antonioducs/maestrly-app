@@ -39,8 +39,8 @@ const unavailable = (reason: string): AdminResult => ({
 })
 
 /**
- * Whose artifacts an agent caller works with: a bot's own, or those of the workspaces environment that hosts the
- * owner's chats, which publishes as a device named after the environment. Only the latter's have projects.
+ * Who an agent caller publishes as: a bot, or the workspaces environment that hosts the owner's chats (which
+ * publishes as a device named after the environment). Only the latter originates from a project.
  */
 type AgentOwner = { kind: 'bot' | 'device'; id: string }
 const agentOwner = (caller: { botId: string } | { environmentId: string }): AgentOwner =>
@@ -63,19 +63,26 @@ async function agentArgs(
     const filter = args[0] === undefined ? {} : object(args[0])
     return [
       {
-        ownerKind: owner.kind,
-        ownerId: owner.id,
         ...(filter.conversationId !== undefined ? { conversationId: filter.conversationId } : {}),
-        ...(projects && filter.workspaceId !== undefined ? { workspaceId: filter.workspaceId } : {}),
+        ...(filter.workspaceId !== undefined ? { workspaceId: filter.workspaceId } : {}),
       },
     ]
   }
   const id = method === 'update' || method === 'applyBoard' ? object(args[0]).id : args[0]
   if (typeof id !== 'string') throw invalid()
   const artifact = await admin.get(id)
-  if (!artifact || artifact.ownerKind !== owner.kind || artifact.ownerId !== owner.id)
-    throw new ArtifactHostError('not_found', 'Artifact not found')
-  if (method === 'update') return [{ ...object(args[0]), createdBy: 'agent' }]
+  if (!artifact) throw new ArtifactHostError('not_found', 'Artifact not found')
+  if (method === 'update') {
+    const { conversationTitle, ...rest } = object(args[0])
+    const sameOwner = artifact.ownerKind === owner.kind && artifact.ownerId === owner.id
+    return [
+      {
+        ...rest,
+        ...(sameOwner && conversationTitle !== undefined ? { conversationTitle } : {}),
+        createdBy: 'agent',
+      },
+    ]
+  }
   if (method === 'addComment') {
     const input = object(args[1])
     if (typeof input.parentId !== 'string' || !input.parentId) throw invalid()
@@ -87,8 +94,8 @@ async function agentArgs(
 
 /**
  * Authentication is performed by the HTTP boundary before any artifact work. A device is the owner; a bot and the
- * workspaces environment that hosts the owner's chats are agents, limited to the methods of the agent tools and to
- * their own artifacts.
+ * workspaces environment that hosts the owner's chats are agents, limited to the methods of the agent tools while
+ * able to read and update any artifact on the server.
  */
 export async function artifactRoute(
   ctx: GatewayContext,

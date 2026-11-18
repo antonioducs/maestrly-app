@@ -1,5 +1,5 @@
 /**
- * Desktop side of artifacts: agent scope, the owner's views and actions, and the bot server's settings. Artifacts live
+ * Desktop side of artifacts: agent tools, the owner's views and actions, and the bot server's settings. Artifacts live
  * only on the bot server; this service talks to its admin interface, and moves what earlier versions left on this
  * computer.
  */
@@ -149,21 +149,22 @@ export class ArtifactsService {
     return conversation
   }
 
-  /** Agents reach only their owner's project, or their standalone conversation. */
-  private inScope(conversation: Conversation, artifact: ArtifactSummary, source: ArtifactSource): boolean {
-    if (artifact.ownerKind !== source.owner.kind || artifact.ownerId !== source.owner.id) return false
-    if (conversation.scope === 'standalone') return artifact.conversationId === conversation.id
-    return artifact.workspaceId === conversation.workspaceId
+  private preferredFirst(id: string, sources: ArtifactSource[]): ArtifactSource[] {
+    const cached = this.locations.get(id)
+    // Resolve against today's sources: pairing another server invalidates cached credentials.
+    const preferred =
+      cached &&
+      sources.find((s) => s.key === cached.key && s.server === cached.server && s.owner.id === cached.owner.id)
+    return preferred ? [preferred, ...sources.filter((s) => s !== preferred)] : sources
   }
 
-  private async find(id: string, sources: ArtifactSource[], conversation?: Conversation) {
+  private async find(id: string, sources: ArtifactSource[]) {
     let unavailable: unknown
     for (const source of sources) {
       try {
         const admin = await source.admin()
         const artifact = await admin.get(id)
         if (!artifact) continue
-        if (conversation && !this.inScope(conversation, artifact, source)) throw notFound()
         this.locations.set(id, source)
         return { source, admin, artifact }
       } catch (error) {
@@ -177,20 +178,14 @@ export class ArtifactsService {
 
   private async scoped(conversation: Conversation, id: string) {
     await this.refreshSources()
-    const found = await this.find(id, this.sources.forConversation(conversation), conversation)
+    const found = await this.find(id, this.preferredFirst(id, this.sources.forConversation(conversation)))
     if (!found) throw await this.missing(id)
     return found
   }
 
   private async at(id: string) {
     await this.refreshSources()
-    const sources = this.sources.managed()
-    const cached = this.locations.get(id)
-    // Resolve against today's sources: pairing another server invalidates cached credentials.
-    const preferred =
-      cached &&
-      sources.find((s) => s.key === cached.key && s.server === cached.server && s.owner.id === cached.owner.id)
-    return this.find(id, preferred ? [preferred, ...sources.filter((s) => s !== preferred)] : sources)
+    return this.find(id, this.preferredFirst(id, this.sources.managed()))
   }
 
   private async requiredAt(id: string) {
@@ -237,7 +232,7 @@ export class ArtifactsService {
     input: { id: string; baseVersion: number; summary?: string; entry?: string; change: ArtifactChange }
   ): Promise<{ detail: ArtifactDetail; skipped: string[] }> {
     const conversation = this.conversation(convId)
-    const { admin, source } = await this.scoped(conversation, input.id)
+    const { admin, artifact, source } = await this.scoped(conversation, input.id)
     let skipped: string[] = []
     let change: Exclude<ArtifactChange, { kind: 'directory' }> | { kind: 'replace'; files: BundleFile[] }
     if (input.change.kind === 'directory') {
@@ -247,13 +242,17 @@ export class ArtifactsService {
     } else {
       change = input.change
     }
+    const sameOrigin =
+      artifact.ownerKind === source.owner.kind &&
+      artifact.ownerId === source.owner.id &&
+      artifact.conversationId === conversation.id
     const detail = await admin.update({
       id: input.id,
       baseVersion: input.baseVersion,
       summary: input.summary,
       entry: input.entry,
       createdBy: 'agent',
-      conversationTitle: conversation.name,
+      ...(sameOrigin ? { conversationTitle: conversation.name } : {}),
       change,
     })
     if (source.viewerBase()) this.deps.requestThumbnail?.(detail.id, detail.currentVersion)
@@ -395,21 +394,40 @@ export class ArtifactsService {
     return { ...page, currentVersion: artifact.currentVersion }
   }
 
-  async listForConversation(convId: string, scope: 'conversation' | 'project'): Promise<ArtifactSummary[]> {
+  async listForConversation(
+    convId: string,
+    scope: 'all' | 'project' | 'conversation' = 'all'
+  ): Promise<ArtifactSummary[]> {
     const conversation = this.conversation(convId)
     await this.refreshSources()
     const sources = this.sources.forConversation(conversation)
-    const groups = await Promise.all(
+    const filter =
+      scope === 'all'
+        ? undefined
+        : scope === 'conversation' || conversation.scope === 'standalone'
+          ? { conversationId: conversation.id }
+          : { workspaceId: conversation.workspaceId }
+    const publishing = this.deps.servers?.publishingId() ?? undefined
+    const outcomes = await Promise.all(
       sources.map(async (source) => {
-        const admin = await source.admin()
-        const filter =
-          conversation.scope === 'standalone' || scope === 'conversation'
-            ? { conversationId: conversation.id }
-            : { workspaceId: conversation.workspaceId }
-        return admin.list({ ownerKind: source.owner.kind, ownerId: source.owner.id, ...filter })
+        try {
+          const admin = await source.admin()
+          const artifacts = filter ? await admin.list(filter) : await admin.list()
+          for (const artifact of artifacts) this.locations.set(artifact.id, source)
+          return { ok: true as const, artifacts }
+        } catch (error) {
+          if (!(error instanceof ArtifactHostError) || error.code !== 'host_unavailable') throw error
+          return { ok: false as const, source, error }
+        }
       })
     )
-    return groups.flat()
+    const groups = outcomes.flatMap((outcome) => (outcome.ok ? [outcome.artifacts] : []))
+    if (groups.length === 0) {
+      const failures = outcomes.filter((outcome) => !outcome.ok)
+      const chosen = (publishing && failures.find((failure) => failure.source.server === publishing)) ?? failures[0]
+      if (chosen) throw chosen.error
+    }
+    return groups.flat().sort((a, b) => b.updatedAt - a.updatedAt || a.id.localeCompare(b.id))
   }
 
   private toListItem(artifact: ArtifactSummary, source: ArtifactSource): ArtifactListItem {
@@ -730,12 +748,10 @@ export class ArtifactsService {
     convId: string,
     id: string,
     version?: number,
-    options: { checkScope?: boolean; activate?: boolean } = {}
+    options: { activate?: boolean } = {}
   ): Promise<ArtifactDetail> {
     const conversation = this.conversation(convId)
-    const { source, admin, artifact } = options.checkScope
-      ? await this.scoped(conversation, id)
-      : await this.requiredAt(id)
+    const { source, admin, artifact } = await this.scoped(conversation, id)
     if (this.deps.openOnViewer) {
       this.deps.openOnViewer(conversation.id, {
         conversationId: conversation.id,

@@ -24,8 +24,9 @@ export function botArtifactSource(runtime: BotRuntime): ArtifactSource | null {
 }
 
 /**
- * Artifacts an agent publishes through the gateway's internal API with its own token: a bot's, or those of the
- * workspaces host that runs the owner's chats. The gateway keeps each to its own artifacts and to the agent tools.
+ * Artifacts an agent reaches through the gateway's internal API with its own token: a bot, or the workspaces host
+ * that runs the owner's chats. The gateway stamps each caller as the owner on creation and limits it to the agent
+ * tools, while allowing access to any artifact on the server.
  */
 export function gatewayArtifactSource(options: {
   owner: ArtifactSource['owner']

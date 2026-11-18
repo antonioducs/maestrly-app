@@ -64,8 +64,9 @@ export default {
     },
     artifact_list: {
       title: 'Listar artefatos',
-      description: 'Lista os artefatos desta conversa, ou de todo o projeto com scope=project.',
-      params: { scope: 'conversation (padrão) ou project' },
+      description:
+        'Lista os artefatos do servidor (páginas e quadros), ou filtra por este projeto com scope=project ou por esta conversa com scope=conversation.',
+      params: { scope: 'all (padrão), project ou conversation' },
     },
     artifact_open: {
       title: 'Abrir artefato',
@@ -497,8 +498,10 @@ export default {
       description:
         'Lê as mensagens ao redor de uma posição do histórico (seq) encontrada com history_search, com saídas de ferramentas encurtadas. Somente leitura.',
       params: {
-        detail: '"full" mostra cada saída de ferramenta com até 8.000 caracteres em vez de 600, dentro do mesmo total de 12.000.',
-        conversationId: 'Outra conversa deste workspace, vinda de um resultado de history_search com scope "workspace".',
+        detail:
+          '"full" mostra cada saída de ferramenta com até 8.000 caracteres em vez de 600, dentro do mesmo total de 12.000.',
+        conversationId:
+          'Outra conversa deste workspace, vinda de um resultado de history_search com scope "workspace".',
       },
     },
     plan_read: {
