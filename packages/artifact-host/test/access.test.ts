@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { gateFor, resolveAccess } from '../src/access.js'
+import { gateFor, isReplaced, resolveAccess, seesHistory } from '../src/access.js'
 import type { SessionRecord, Visibility } from '../src/store/artifact-store.js'
 import type { PrincipalKind, PrincipalRecord, SharingFields } from '../src/store/sharing-store.js'
 
@@ -11,6 +11,8 @@ const sharing = (visibility: Visibility, overrides: Partial<SharingFields> = {})
   accessCodeHash: null,
   commentsEnabled: true,
   responsesEnabled: true,
+  versionsVisible: false,
+  boardEditors: 'owner',
   ...overrides,
 })
 
@@ -89,5 +91,26 @@ describe('gateFor', () => {
       guest: false,
       code: false,
     })
+  })
+})
+
+describe('seesHistory', () => {
+  it('lets only the owner see earlier versions while versionsVisible is off', () => {
+    const ownerAccess = resolveAccess(sharing('link'), session(null), null, NOW)
+    const personAccess = resolveAccess(sharing('link'), session('p1'), person('invited'), NOW)
+    expect(seesHistory(sharing('link'), ownerAccess)).toBe(true)
+    expect(seesHistory(sharing('link'), personAccess)).toBe(false)
+    expect(seesHistory(sharing('link', { versionsVisible: true }), personAccess)).toBe(true)
+  })
+
+  it('counts only an existing earlier version as replaced for someone who cannot see history', () => {
+    const ownerAccess = resolveAccess(sharing('link'), session(null), null, NOW)
+    const personAccess = resolveAccess(sharing('link'), session('p1'), person('invited'), NOW)
+    expect(isReplaced(sharing('link'), personAccess, 2, 3)).toBe(true)
+    expect(isReplaced(sharing('link'), personAccess, 3, 3)).toBe(false)
+    expect(isReplaced(sharing('link'), personAccess, 4, 3)).toBe(false)
+    expect(isReplaced(sharing('link'), personAccess, 1.5, 3)).toBe(false)
+    expect(isReplaced(sharing('link'), ownerAccess, 2, 3)).toBe(false)
+    expect(isReplaced(sharing('link', { versionsVisible: true }), personAccess, 2, 3)).toBe(false)
   })
 })

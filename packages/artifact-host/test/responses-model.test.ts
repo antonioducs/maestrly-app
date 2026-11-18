@@ -5,6 +5,7 @@ describe('responseError', () => {
   it('turns the host’s refusals into what the page learns', () => {
     expect(responseError(403, 'responses_closed')).toBe('closed')
     expect(responseError(409, 'too_many_responses')).toBe('full')
+    expect(responseError(409, 'version_replaced')).toBe('unavailable')
     expect(responseError(413, null)).toBe('too_large')
     expect(responseError(400, 'invalid_response')).toBe('invalid')
     expect(responseError(429, null)).toBe('rate_limited')

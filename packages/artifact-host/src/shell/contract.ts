@@ -48,7 +48,8 @@ export interface ViewerState {
   /** The owner's display name, or an empty string when they did not set one. */
   ownerName: string
   /** `respond`: the page may save the response of the person viewing it. `edit`: they may draw on the whiteboard. */
-  can: { comment: boolean; resolve: boolean; respond: boolean; edit: boolean }
+  /** `history`: whether earlier versions stay open to this viewer, or a new one replaces what is on screen. */
+  can: { comment: boolean; resolve: boolean; respond: boolean; edit: boolean; history: boolean }
   /** Present for the owner only. */
   sharing?: ViewerSharing
 }

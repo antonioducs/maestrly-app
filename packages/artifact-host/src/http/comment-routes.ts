@@ -1,9 +1,9 @@
 // Comments in the viewer: whoever can open the artifact reads them, and writes them while comments are on.
-import type { Access } from '../access.js'
+import { type Access, isReplaced, seesHistory } from '../access.js'
 import type { CommentAuthor, CommentService, CommentView } from '../comments.js'
 import { ArtifactHostError } from '../errors.js'
 import type { CommentPage, PublicComment } from '../shell/contract.js'
-import { type ApiContext, apiForbidden, apiNotFound, json, noContent } from './respond.js'
+import { type ApiContext, apiForbidden, apiNotFound, apiVersionReplaced, json, noContent } from './respond.js'
 
 export interface CommentRouteDeps {
   comments: CommentService
@@ -88,6 +88,7 @@ export function createCommentRoutes(deps: CommentRouteDeps): CommentRoutes {
       if (limit !== null && !LIMIT.test(limit)) return json(ctx.res, 400, { error: 'invalid_comment' })
       attempt(ctx, () => {
         const page = comments.list(ctx.artifactId, {
+          ...(seesHistory(ctx.sharing, access) ? {} : { version: ctx.currentVersion }),
           cursor: ctx.query.get('cursor') ?? undefined,
           limit: limit === null ? undefined : Number(limit),
         })
@@ -104,6 +105,8 @@ export function createCommentRoutes(deps: CommentRouteDeps): CommentRoutes {
       if (!access) return
       attempt(ctx, () => {
         const { version, body, anchor } = ctx.body
+        if (typeof version === 'number' && isReplaced(ctx.sharing, access, version, ctx.currentVersion))
+          return apiVersionReplaced(ctx.res)
         // Only what a new thread takes: a reply goes through its own route.
         const created = comments.add(ctx.artifactId, authorOf(access), {
           version,
@@ -120,6 +123,7 @@ export function createCommentRoutes(deps: CommentRouteDeps): CommentRoutes {
       attempt(ctx, () => {
         const parent = ctx.commentId ? comments.find(ctx.artifactId, ctx.commentId) : null
         if (!parent) return apiNotFound(ctx.res)
+        if (isReplaced(ctx.sharing, access, parent.version, ctx.currentVersion)) return apiVersionReplaced(ctx.res)
         const created = comments.add(ctx.artifactId, authorOf(access), {
           body: ctx.body.body,
           parentId: parent.id,
@@ -147,6 +151,7 @@ export function createCommentRoutes(deps: CommentRouteDeps): CommentRoutes {
       attempt(ctx, () => {
         const comment = ctx.commentId ? comments.find(ctx.artifactId, ctx.commentId) : null
         if (!comment) return apiNotFound(ctx.res)
+        if (isReplaced(ctx.sharing, access, comment.version, ctx.currentVersion)) return apiVersionReplaced(ctx.res)
         if (access.kind !== 'owner' && !isSelf(access, comment)) return apiForbidden(ctx.res)
         comments.remove(ctx.artifactId, comment.id)
         noContent(ctx.res)

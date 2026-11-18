@@ -33,6 +33,7 @@ const sharingPatch = z
     accessCode: z.string().min(MIN_ACCESS_CODE_CHARS).max(MAX_ACCESS_CODE_CHARS).nullable().optional(),
     commentsEnabled: z.boolean().optional(),
     responsesEnabled: z.boolean().optional(),
+    versionsVisible: z.boolean().optional(),
     boardEditors: z.enum(['owner', 'people']).optional(),
   })
   .strict()

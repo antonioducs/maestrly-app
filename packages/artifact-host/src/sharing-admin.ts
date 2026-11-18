@@ -105,6 +105,7 @@ export function createSharingAdmin(deps: SharingAdminDeps): SharingAdmin {
       hasAccessCode: current.accessCodeHash !== null,
       commentsEnabled: current.commentsEnabled,
       responsesEnabled: current.responsesEnabled,
+      versionsVisible: current.versionsVisible,
       ...(store.getArtifact(id)?.kind === 'whiteboard' ? { boardEditors: current.boardEditors } : {}),
       people,
       requests,
@@ -137,6 +138,7 @@ export function createSharingAdmin(deps: SharingAdminDeps): SharingAdmin {
       if (patch.linkExpiresAt !== undefined) next.linkExpiresAt = patch.linkExpiresAt
       if (patch.commentsEnabled !== undefined) next.commentsEnabled = patch.commentsEnabled
       if (patch.responsesEnabled !== undefined) next.responsesEnabled = patch.responsesEnabled
+      if (patch.versionsVisible !== undefined) next.versionsVisible = patch.versionsVisible
       if (patch.boardEditors !== undefined) {
         if (store.getArtifact(id)?.kind !== 'whiteboard')
           throw new ArtifactHostError('invalid_input', 'boardEditors: Only a whiteboard has people who draw on it')

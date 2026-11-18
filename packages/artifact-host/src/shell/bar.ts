@@ -1,5 +1,6 @@
 // The viewer's top bar: what the page is, which version is on screen, how to comment, and who is looking.
 import { avatar } from './avatar.js'
+import { hasVersionChoice } from './bar-model.js'
 import { relativeTime } from './comments-model.js'
 import type { ViewerIdentity, ViewerSharing, ViewerState } from './contract.js'
 import { copyText, h, put, toast } from './dom.js'
@@ -65,6 +66,7 @@ export function createBar(options: BarOptions): { root: HTMLElement; update(mode
   const { t, locale, state } = options
   const { artifact } = state
   const total = artifact.currentVersion
+  const multipleVersions = hasVersionChoice(artifact)
   const isOwner = state.identity.kind === 'owner'
   let model: BarModel | null = null
   const when = (at: number) => relativeTime(locale, at, Date.now(), t('now'))
@@ -187,7 +189,7 @@ export function createBar(options: BarOptions): { root: HTMLElement; update(mode
         el,
         item('reload', t('reloadPage'), options.onReload),
         item('full', t('fullScreen'), options.onFullScreen, 'F'),
-        item('copy', t('copyVersionLink'), options.onCopyVersionLink)
+        multipleVersions && item('copy', t('copyVersionLink'), options.onCopyVersionLink)
       )
       el.addEventListener('keydown', (event) => {
         if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
@@ -242,7 +244,7 @@ export function createBar(options: BarOptions): { root: HTMLElement; update(mode
     'header',
     { class: 'bar' },
     doc,
-    version,
+    multipleVersions && version,
     h('div', { class: 'tools' }, options.comments && segment, comments, share, more, identity)
   )
 
@@ -258,25 +260,27 @@ export function createBar(options: BarOptions): { root: HTMLElement; update(mode
           ? t('metaFrom', { owner: state.ownerName, when: updated })
           : t('metaUpdated', { when: updated })
 
-      versions.update(
-        [...artifact.versions]
-          .sort((a, b) => b.number - a.number)
-          .map((item) => {
-            const open = view.openCounts.get(item.number) ?? 0
-            return {
-              value: String(item.number),
-              badge: `v${item.number}`,
-              label: item.summary || (item.number === 1 ? t('versionFirst') : t('versionNoSummary')),
-              tag: item.number === total ? t('versionCurrent') : undefined,
-              meta: [when(item.createdAt), open ? plural(t, open, 'versionOpenOne', 'versionOpenMany') : '']
-                .filter(Boolean)
-                .join(' · '),
-            }
-          }),
-        String(view.version)
-      )
-      previous.disabled = view.version <= 1
-      following.disabled = view.version >= total
+      if (multipleVersions) {
+        versions.update(
+          [...artifact.versions]
+            .sort((a, b) => b.number - a.number)
+            .map((item) => {
+              const open = view.openCounts.get(item.number) ?? 0
+              return {
+                value: String(item.number),
+                badge: `v${item.number}`,
+                label: item.summary || (item.number === 1 ? t('versionFirst') : t('versionNoSummary')),
+                tag: item.number === total ? t('versionCurrent') : undefined,
+                meta: [when(item.createdAt), open ? plural(t, open, 'versionOpenOne', 'versionOpenMany') : '']
+                  .filter(Boolean)
+                  .join(' · '),
+              }
+            }),
+          String(view.version)
+        )
+        previous.disabled = view.version <= 1
+        following.disabled = view.version >= total
+      }
 
       for (const [index, button] of widths.entries())
         button.setAttribute('aria-pressed', String(VIEWPORTS[index] === view.viewport))

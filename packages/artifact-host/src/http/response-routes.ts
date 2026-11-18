@@ -1,9 +1,9 @@
 // A person's response to an artifact page: the page asks the viewer, and the viewer saves it here as that person.
-import type { Access } from '../access.js'
+import { type Access, isReplaced, seesHistory } from '../access.js'
 import { ArtifactHostError } from '../errors.js'
 import type { ResponseAuthor, ResponseService, ResponseView } from '../responses.js'
 import type { ResponseSnapshot } from '../shell/contract.js'
-import { type ApiContext, apiNotFound, json } from './respond.js'
+import { type ApiContext, apiNotFound, apiVersionReplaced, json } from './respond.js'
 
 /** The key of the owner's own response; people's responses are keyed by their ID. */
 export const OWNER_RESPONDENT = 'owner'
@@ -38,7 +38,8 @@ export function createResponseRoutes(deps: ResponseRouteDeps): ResponseRoutes {
     mine(ctx) {
       if (!ctx.access) return apiNotFound(ctx.res)
       const found = deps.responses.mine(ctx.artifactId, respondentOf(ctx.access))
-      json(ctx.res, 200, { response: found ? snapshot(found) : null })
+      const visible = found && (seesHistory(ctx.sharing, ctx.access) || found.version === ctx.currentVersion)
+      json(ctx.res, 200, { response: visible ? snapshot(found) : null })
     },
 
     save(ctx) {
@@ -46,6 +47,9 @@ export function createResponseRoutes(deps: ResponseRouteDeps): ResponseRoutes {
       if (!access) return apiNotFound(ctx.res)
       if (!ctx.sharing.responsesEnabled) return json(ctx.res, 403, { error: 'responses_closed' })
       if (access.kind === 'person' && !access.principal.name) return json(ctx.res, 409, { error: 'name_required' })
+      const version = ctx.body.version
+      if (typeof version === 'number' && isReplaced(ctx.sharing, access, version, ctx.currentVersion))
+        return apiVersionReplaced(ctx.res)
       try {
         // Only what a response takes; anything else in the body is ignored.
         const { response, created } = deps.responses.save(ctx.artifactId, authorOf(access), {

@@ -106,6 +106,7 @@ describe('sharing admin', () => {
       hasAccessCode: false,
       commentsEnabled: true,
       responsesEnabled: true,
+      versionsVisible: false,
       requests: [],
     })
     expect(view.people).toEqual([
@@ -186,6 +187,7 @@ describe('sharing admin', () => {
       linkExpiresAt: clock.now() + 1000,
       commentsEnabled: false,
       responsesEnabled: false,
+      versionsVisible: true,
     })
     expect(view).toMatchObject({
       visibility: 'link',
@@ -193,9 +195,12 @@ describe('sharing admin', () => {
       linkExpiresAt: clock.now() + 1000,
       commentsEnabled: false,
       responsesEnabled: false,
+      versionsVisible: true,
     })
     expect(sharing.getSharing(id)?.responsesEnabled).toBe(false)
+    expect(sharing.getSharing(id)?.versionsVisible).toBe(true)
     expect((await admin.setSharing(id, { responsesEnabled: true })).responsesEnabled).toBe(true)
+    expect((await admin.setSharing(id, { versionsVisible: false })).versionsVisible).toBe(false)
     expect(JSON.stringify(view)).not.toContain('scrypt')
     expect(sharing.getSharing(id)?.accessCodeHash).toMatch(/^scrypt\$/)
     expect((await admin.get(id))?.visibility).toBe('link')

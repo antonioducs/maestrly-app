@@ -64,6 +64,8 @@ const en = {
   noticeVersion: 'You are viewing version {n} of {total}.',
   noticeVersionSummary: 'You are viewing version {n} of {total}: {summary}.',
   noticeAction: 'Go to the current version',
+  noticeReplaced: 'A new version of this page was published.',
+  noticeReplacedAction: 'Load the new version',
   widthGroup: 'Page width',
   widthDesktop: 'Full width',
   widthTablet: 'Tablet width, 820 px',
@@ -166,6 +168,7 @@ const en = {
   nameNeeded: 'Type your name to comment.',
   commentFailed: 'The comment could not be sent. Try again.',
   commentsFull: 'This page reached its limit of comments.',
+  commentReplaced: 'A new version was published. Load it to comment.',
   actionFailed: 'That did not work. Try again.',
 
   // Authors.
@@ -271,6 +274,8 @@ const ptBR: Record<ShellKey, string> = {
   noticeVersion: 'Você está vendo a versão {n} de {total}.',
   noticeVersionSummary: 'Você está vendo a versão {n} de {total}: {summary}.',
   noticeAction: 'Ir para a versão atual',
+  noticeReplaced: 'Uma nova versão desta página foi publicada.',
+  noticeReplacedAction: 'Carregar a nova versão',
   widthGroup: 'Largura da página',
   widthDesktop: 'Largura total',
   widthTablet: 'Largura de tablet, 820 px',
@@ -369,6 +374,7 @@ const ptBR: Record<ShellKey, string> = {
   nameNeeded: 'Digite seu nome para comentar.',
   commentFailed: 'Não foi possível enviar o comentário. Tente de novo.',
   commentsFull: 'Esta página atingiu o limite de comentários.',
+  commentReplaced: 'Uma nova versão foi publicada. Carregue-a para comentar.',
   actionFailed: 'Não deu certo. Tente de novo.',
 
   you: 'Você',

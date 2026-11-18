@@ -170,16 +170,32 @@ test('comments on a shared artifact reach the owner and the agent', async () => 
     await expect(resolved).toContainText('Confirmed against the ledger.')
     await expect(resolved).toContainText('Antonio’s agent')
 
-    // 6. Version 2 no longer has the passage: the thread stays with the version it was written on.
+    // 6. Earlier versions are hidden from Maria by default: version 2 replaces the one she has open, and once she
+    // loads it she sees neither version 1 nor its comments.
     await page.keyboard.press('Escape')
     await closeCenter()
     await owner.send('UPDATE_ARTIFACT: publish the new numbers.', 'Updated.')
     expect(owner.toolResult('update-1')).toMatchObject({ ok: true, artifact: { version: 2 } })
+    await maria.getByRole('button', { name: 'More actions' }).click()
+    await maria.getByRole('menuitem', { name: 'Reload the page' }).click()
+    await expect(maria.locator('.notice')).toContainText('A new version of this page was published.')
+    await maria.locator('.notice').getByRole('button', { name: 'Load the new version' }).click()
+    await expect(maria.frameLocator('iframe.content').locator('p')).toHaveText('Costs fell by two percent.')
+    await expect(maria.locator('.notice')).toBeHidden()
+    await expect(maria.locator('.bar .version')).toHaveCount(0)
+    await maria.locator('.list-button').click()
+    const list = maria.locator('.list')
+    await list.getByRole('button', { name: /^Resolved/ }).click()
+    await expect(list.locator('.list-section')).toHaveCount(0)
+    await expect(list).not.toContainText('Is twelve percent the final number?')
+    await maria.locator('.list-button').click()
+
+    // With earlier versions shown, version 2 no longer has the passage: the thread stays with its version.
+    await owner.artifacts('setSharing', id, { versionsVisible: true })
     await maria.reload()
     await expect(maria.frameLocator('iframe.content').locator('p')).toHaveText('Costs fell by two percent.')
     await expect(maria.locator('.pin:not([hidden])')).toHaveCount(0)
     await maria.locator('.list-button').click()
-    const list = maria.locator('.list')
     await list.getByRole('button', { name: /^Resolved/ }).click()
     await expect(list.locator('.list-section')).toHaveText('On earlier versions')
     const earlier = list.locator('.item').first()

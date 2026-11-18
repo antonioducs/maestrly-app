@@ -1,6 +1,6 @@
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { canEditBoard, gateFor, resolveAccess } from '../access.js'
+import { canEditBoard, gateFor, isReplaced, resolveAccess, seesHistory } from '../access.js'
 import { type BoardService, createBoardService } from '../boards.js'
 import { isHtmlPath, normalizeBundlePath } from '../bundle-paths.js'
 import { createCommentService } from '../comments.js'
@@ -46,6 +46,7 @@ import {
   type ApiContext,
   apiForbidden,
   apiNotFound,
+  apiVersionReplaced,
   cookie,
   isJsonContent,
   JS_TYPE,
@@ -270,17 +271,21 @@ export function createPublicServer(deps: PublicServerDeps): PublicServer {
           const closed: ViewerGate = { gate: { ...gate, pending: pendingRequest(ctx) }, ownerName }
           return json(ctx.res, 200, closed)
         }
+        const history = seesHistory(ctx.sharing, ctx.access)
         const state: ViewerState = {
           artifact: {
             id: artifact.id,
             kind: artifact.kind,
             title: artifact.title,
             currentVersion: artifact.currentVersion,
-            versions: store.listVersions(artifact.id).map((version) => ({
-              number: version.number,
-              createdAt: version.createdAt,
-              summary: version.summary,
-            })),
+            versions: store
+              .listVersions(artifact.id)
+              .filter((version) => history || version.number === artifact.currentVersion)
+              .map((version) => ({
+                number: version.number,
+                createdAt: version.createdAt,
+                summary: version.summary,
+              })),
           },
           identity: identityOf(ctx),
           ownerName,
@@ -289,6 +294,7 @@ export function createPublicServer(deps: PublicServerDeps): PublicServer {
             resolve: ctx.access?.kind === 'owner',
             respond: ctx.sharing.responsesEnabled,
             edit: artifact.kind === 'whiteboard' && canEditBoard(ctx.sharing, ctx.access),
+            history,
           },
           ...(ctx.access?.kind === 'owner' ? { sharing: sharingSummary(ctx) } : {}),
         }
@@ -303,6 +309,7 @@ export function createPublicServer(deps: PublicServerDeps): PublicServer {
         const version = ctx.body.version
         if (typeof version !== 'number' || !Number.isInteger(version) || version < 1)
           return json(ctx.res, 400, { error: 'invalid_version' })
+        if (isReplaced(ctx.sharing, ctx.access, version, ctx.currentVersion)) return apiVersionReplaced(ctx.res)
         const stored = store.getVersion(ctx.artifactId, version)
         if (!stored) return apiNotFound(ctx.res)
         const expiresAt = ctx.now + CAPABILITY_TTL_MS
@@ -441,6 +448,7 @@ export function createPublicServer(deps: PublicServerDeps): PublicServer {
       req,
       res,
       artifactId: artifact.id,
+      currentVersion: artifact.currentVersion,
       origin,
       now,
       body,
@@ -464,10 +472,13 @@ export function createPublicServer(deps: PublicServerDeps): PublicServer {
     if (!grant) return notFound(res)
     const session = store.findSessionById(grant.s, now)
     if (!session || session.artifactId !== grant.a) return notFound(res)
-    // Checked on every file, so revoking a person or making the artifact private cuts the content at once.
+    // Checked on every file, so revoking a person, making the artifact private, or hiding history cuts access at once.
     const fields = sharing.getSharing(grant.a)
     const principal = session.principalId ? sharing.getPrincipal(session.principalId) : null
-    if (!fields || !resolveAccess(fields, session, principal, now)) return notFound(res)
+    const access = fields ? resolveAccess(fields, session, principal, now) : null
+    const artifact = access ? store.getArtifact(grant.a) : null
+    if (!artifact || !fields || !access) return notFound(res)
+    if (!seesHistory(fields, access) && grant.v !== artifact.currentVersion) return notFound(res)
     if (!store.getVersion(grant.a, grant.v)) return notFound(res)
 
     let filePath: string
@@ -489,7 +500,7 @@ export function createPublicServer(deps: PublicServerDeps): PublicServer {
       return notFound(res)
     }
     // Every whiteboard shows the same canvas, served by the host; the board itself comes through the viewer.
-    if (store.getArtifact(grant.a)?.kind === 'whiteboard') {
+    if (artifact.kind === 'whiteboard') {
       const asset = deps.whiteboardViewer ? await deps.whiteboardViewer.file(filePath) : null
       if (!asset) return notFound(res)
       const body = isHtmlPath(filePath)

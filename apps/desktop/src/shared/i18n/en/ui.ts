@@ -444,6 +444,11 @@ export default {
       allow: 'Responses',
       allowHint: 'The page can save one response from each person who opens it. Only you see them.',
     },
+    versions: {
+      allow: 'Show earlier versions',
+      allowHint:
+        'Anyone who opens the page can browse earlier versions and read their comments. Otherwise, they see only the current version.',
+    },
     whiteboard: {
       allow: 'People with access can edit',
       allowHint: 'They draw on the whiteboard with you and the agent. Otherwise they can only look at it.',

@@ -544,6 +544,7 @@ export class ArtifactsService {
       hasAccessCode: sharing.hasAccessCode,
       commentsEnabled: sharing.commentsEnabled,
       responsesEnabled: sharing.responsesEnabled,
+      ...(typeof sharing.versionsVisible === 'boolean' ? { versionsVisible: sharing.versionsVisible } : {}),
       ...(sharing.boardEditors ? { boardEditors: sharing.boardEditors } : {}),
       people: sharing.people.map((person) => ({
         id: person.id,

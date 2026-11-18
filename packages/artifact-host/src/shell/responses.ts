@@ -34,6 +34,8 @@ export interface ResponsesOptions {
   version: () => number
   /** The guest just named themselves; the comments read the name from `state.identity`. */
   onIdentity: () => void
+  /** The host refused a response because a newer version replaced the one on screen for this reader. */
+  onReplaced: () => void
 }
 
 export function createResponses(options: ResponsesOptions): ResponsesController {
@@ -49,7 +51,9 @@ export function createResponses(options: ResponsesOptions): ResponsesController 
 
   async function refusal(response: Response | null): Promise<ResponseError> {
     if (!response) return 'failed'
-    return responseError(response.status, (await bodyOf(response)).error)
+    const { error } = await bodyOf(response)
+    if (response.status === 409 && error === 'version_replaced') options.onReplaced()
+    return responseError(response.status, error)
   }
 
   async function snapshotOf(response: Response): Promise<Result> {

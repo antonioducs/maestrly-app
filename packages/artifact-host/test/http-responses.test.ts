@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { MAX_RESPONSE_BYTES } from '../src/limits.js'
+import { utf8 } from './helpers.js'
 import { type Browser, type Harness, startHarness } from './http-harness.js'
 
 let h: Harness
@@ -111,6 +112,7 @@ describe('response routes', () => {
       resolve: false,
       respond: false,
       edit: false,
+      history: false,
     })
     const refused = await put(maria, { version: 1, data: { answer: 'b' } })
     expect(refused.status).toBe(403)
@@ -154,6 +156,37 @@ describe('response routes', () => {
       author: { name: 'Maria' },
       data: { answer: 'a' },
     })
+  })
+
+  it('hides an earlier-version response from shared viewers and refuses saves on earlier versions while versionsVisible is off', async () => {
+    expect((await put(maria, { version: 1, data: { answer: 'v1' } })).status).toBe(200)
+    expect((await put(owner, { version: 1, data: { owner: 'v1' } })).status).toBe(200)
+
+    await h.admin.update({
+      id,
+      baseVersion: 1,
+      change: { kind: 'replace', files: [{ path: 'index.html', bytes: utf8('<p>v2</p>') }] },
+    })
+
+    // Visitor's v1 response is hidden on v2; saving for v1 says it was replaced; owner still sees theirs.
+    expect((await mine(maria)).json).toEqual({ response: null })
+    expect(await put(maria, { version: 1, data: { answer: 'old' } })).toMatchObject({
+      status: 409,
+      json: { error: 'version_replaced' },
+    })
+    expect((await mine(owner)).json.response).toMatchObject({ version: 1, data: { owner: 'v1' } })
+
+    // Saving on current version works and becomes visible.
+    expect((await put(maria, { version: 2, data: { answer: 'v2' } })).status).toBe(200)
+    expect((await mine(maria)).json.response).toMatchObject({ version: 2, data: { answer: 'v2' } })
+
+    // When versionsVisible is turned on, earlier-version responses and saves are allowed again.
+    const ana = (await join('Ana')).browser
+    await h.admin.setSharing(id, { versionsVisible: true })
+    expect((await put(ana, { version: 1, data: { answer: 'ana-v1' } })).status).toBe(200)
+    expect((await mine(ana)).json.response).toMatchObject({ version: 1, data: { answer: 'ana-v1' } })
+    await h.admin.setSharing(id, { versionsVisible: false })
+    expect((await mine(ana)).json).toEqual({ response: null })
   })
 })
 

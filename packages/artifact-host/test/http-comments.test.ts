@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { MAX_COMMENT_CHARS } from '../src/limits.js'
+import { utf8 } from './helpers.js'
 import { type Browser, type Harness, startHarness } from './http-harness.js'
 
 let h: Harness
@@ -138,6 +139,7 @@ describe('comment routes', () => {
       resolve: false,
       respond: true,
       edit: false,
+      history: false,
     })
     const refused = await post(maria, 'After')
     expect(refused.status).toBe(403)
@@ -192,5 +194,41 @@ describe('comment routes', () => {
     for (const headers of [withoutOrigin, withoutHeader, { ...base, origin: 'http://evil.test' }])
       expect((await maria.raw('POST', `${api}/comments`, { headers, body })).status).toBe(403)
     expect(await list(owner)).toEqual([])
+  })
+
+  it('hides earlier-version comments from shared viewers and refuses changes to them while versionsVisible is off', async () => {
+    const oldOwn = await post(maria, 'Old from Maria')
+    expect(oldOwn.status).toBe(201)
+    const oldOwner = await post(owner, 'Old from Owner')
+    expect(oldOwner.status).toBe(201)
+
+    await h.admin.update({
+      id,
+      baseVersion: 1,
+      change: { kind: 'replace', files: [{ path: 'index.html', bytes: utf8('<p>v2</p>') }] },
+    })
+    const current = await maria.send('POST', `${api}/comments`, { version: 2, body: 'On current' })
+    expect(current.status).toBe(201)
+
+    // Visitor sees only version 2; owner sees everything.
+    expect((await list(maria)).map((item) => item.body)).toEqual(['On current'])
+    expect((await list(owner)).map((item) => item.body)).toEqual(['Old from Maria', 'Old from Owner', 'On current'])
+
+    // Visitor cannot start a thread, reply to, or delete a thread on version 1: the viewer learns it was replaced.
+    const replaced = { status: 409, json: { error: 'version_replaced' } }
+    expect(await post(maria, 'Forged on v1')).toMatchObject(replaced)
+    expect(await maria.send('POST', `${api}/comments/${oldOwner.json.id}/replies`, { body: 'Reply' })).toMatchObject(
+      replaced
+    )
+    expect(await maria.send('DELETE', `${api}/comments/${oldOwn.json.id}`)).toMatchObject(replaced)
+    expect((await maria.send('POST', `${api}/comments`, { version: 9, body: 'Ahead' })).status).toBe(404)
+
+    // Turning versionsVisible on restores access to version 1 comments.
+    await h.admin.setSharing(id, { versionsVisible: true })
+    expect((await list(maria)).map((item) => item.body)).toEqual(['Old from Maria', 'Old from Owner', 'On current'])
+    expect((await maria.send('POST', `${api}/comments/${oldOwner.json.id}/replies`, { body: 'Reply' })).status).toBe(
+      201
+    )
+    expect((await maria.send('DELETE', `${api}/comments/${oldOwn.json.id}`)).status).toBe(204)
   })
 })

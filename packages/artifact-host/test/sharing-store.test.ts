@@ -98,19 +98,24 @@ describe('SharingStore', () => {
       accessCodeHash: null,
       commentsEnabled: true,
       responsesEnabled: true,
+      versionsVisible: false,
       boardEditors: 'owner',
     })
     sharing.setSharing('A', { visibility: 'link', linkExpiresAt: 5000, accessCodeHash: 'scrypt$a$b' })
     sharing.setSharing('A', { commentsEnabled: false })
     sharing.setSharing('A', { responsesEnabled: false })
+    sharing.setSharing('A', { versionsVisible: true })
     expect(sharing.getSharing('A')).toEqual({
       visibility: 'link',
       linkExpiresAt: 5000,
       accessCodeHash: 'scrypt$a$b',
       commentsEnabled: false,
       responsesEnabled: false,
+      versionsVisible: true,
       boardEditors: 'owner',
     })
+    sharing.setSharing('A', { versionsVisible: false })
+    expect(sharing.getSharing('A')?.versionsVisible).toBe(false)
     sharing.setSharing('A', { responsesEnabled: true })
     expect(sharing.getSharing('A')?.responsesEnabled).toBe(true)
     sharing.setSharing('A', { boardEditors: 'people' })

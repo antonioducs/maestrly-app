@@ -59,6 +59,8 @@ export interface SharingFields {
   commentsEnabled: boolean
   /** Whether the page may save the responses of the people who open it. */
   responsesEnabled: boolean
+  /** Whether people the artifact is shared with may browse earlier versions and their comments. */
+  versionsVisible: boolean
   boardEditors: BoardEditors
 }
 
@@ -70,6 +72,7 @@ const SHARING_COLUMNS: Record<keyof SharingFields, string> = {
   accessCodeHash: 'access_code_hash',
   commentsEnabled: 'comments_enabled',
   responsesEnabled: 'responses_enabled',
+  versionsVisible: 'versions_visible',
   boardEditors: 'board_editors',
 }
 
@@ -124,7 +127,8 @@ export class SharingStore {
   getSharing(artifactId: string): SharingFields | null {
     const row = this.db
       .prepare(
-        `SELECT visibility, link_expires_at, access_code_hash, comments_enabled, responses_enabled, board_editors
+        `SELECT visibility, link_expires_at, access_code_hash, comments_enabled, responses_enabled, versions_visible,
+           board_editors
          FROM artifacts WHERE id = ?`
       )
       .get(artifactId) as Row | undefined
@@ -135,6 +139,7 @@ export class SharingStore {
       accessCodeHash: (row.access_code_hash as string | null) ?? null,
       commentsEnabled: row.comments_enabled === 1,
       responsesEnabled: row.responses_enabled === 1,
+      versionsVisible: row.versions_visible === 1,
       boardEditors: row.board_editors as BoardEditors,
     }
   }
