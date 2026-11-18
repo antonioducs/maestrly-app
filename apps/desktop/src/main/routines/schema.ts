@@ -46,7 +46,9 @@ export function initializeRoutineSchema(db: DatabaseSync): void {
       conversation_id TEXT,
       conversation_deleted INTEGER NOT NULL DEFAULT 0,
       pinned INTEGER NOT NULL DEFAULT 0,
-      unread INTEGER NOT NULL DEFAULT 0
+      unread INTEGER NOT NULL DEFAULT 0,
+      waiting_kind TEXT,
+      waiting_prompt TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_local_routine_runs_routine_sched
       ON local_routine_runs(routine_id, scheduled_at DESC);
@@ -66,6 +68,12 @@ export function initializeRoutineSchema(db: DatabaseSync): void {
       ON local_routine_proposals(conversation_id, created_at);
   `)
 
+  if (!tableHasColumn(db, 'local_routine_runs', 'waiting_kind')) {
+    db.exec('ALTER TABLE local_routine_runs ADD COLUMN waiting_kind TEXT;')
+  }
+  if (!tableHasColumn(db, 'local_routine_runs', 'waiting_prompt')) {
+    db.exec('ALTER TABLE local_routine_runs ADD COLUMN waiting_prompt TEXT;')
+  }
   if (!tableHasColumn(db, 'conversations', 'routine_id')) {
     db.exec('ALTER TABLE conversations ADD COLUMN routine_id TEXT;')
   }

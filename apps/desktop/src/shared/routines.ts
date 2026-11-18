@@ -64,6 +64,13 @@ export type RoutineRunStatus =
 
 export type RoutineRunTrigger = 'schedule' | 'manual' | 'late'
 
+export type RoutineWaitingKind = 'approval' | 'question'
+
+export interface RoutineWaitingDetail {
+  kind: RoutineWaitingKind
+  prompt: string | null
+}
+
 export interface RoutineRunReport {
   outcome: 'notable' | 'nothing_new' | 'done'
   summary: string
@@ -86,6 +93,7 @@ export interface LocalRoutineRun {
   conversationDeleted: boolean
   pinned: boolean
   unread: boolean
+  waiting?: RoutineWaitingDetail | null
 }
 
 export interface RoutineProposal {

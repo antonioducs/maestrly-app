@@ -1020,13 +1020,17 @@ function DesktopShell({
                 : payload.run.status === 'done'
                   ? 'circleCheck'
                   : 'check'
-        const short = i18n.t(`routines:outcome.${payload.run.status}.short` as never).toLowerCase()
+        const outcomeKey =
+          payload.run.status === 'waiting' && payload.run.waiting?.kind === 'question'
+            ? 'waitingQuestion'
+            : payload.run.status
+        const short = i18n.t(`routines:outcome.${outcomeKey}.short` as never).toLowerCase()
         toast({
           id: `routine-result:${payload.run.id}`,
           tone,
           icon,
           title: i18n.t('routines:toasts.resultTitle', { title: payload.routine.title, outcome: short }),
-          description: payload.run.summary ?? i18n.t(`routines:outcome.${payload.run.status}.label` as never),
+          description: payload.run.summary ?? i18n.t(`routines:outcome.${outcomeKey}.label` as never),
           action: { label: i18n.t('routines:toasts.openRunAction'), onClick: openRun },
         })
       }

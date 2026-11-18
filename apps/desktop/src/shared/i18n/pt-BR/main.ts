@@ -178,6 +178,7 @@ export default {
     routinesTray: 'O Maestrly continua na bandeja para rodar suas rotinas.',
     routine: {
       waiting: 'Precisa da sua aprovação para continuar',
+      waitingQuestion: 'Fez uma pergunta',
       failed: 'A execução falhou',
       failedWithError: 'A execução falhou: {{error}}',
       notable: 'Terminou com novidades',

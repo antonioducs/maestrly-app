@@ -178,6 +178,7 @@ export default {
     routinesTray: 'Maestrly stays in the tray to run your routines.',
     routine: {
       waiting: 'Needs your approval to continue',
+      waitingQuestion: 'Asked a question',
       failed: 'The run failed',
       failedWithError: 'The run failed: {{error}}',
       notable: 'Finished with something to check',

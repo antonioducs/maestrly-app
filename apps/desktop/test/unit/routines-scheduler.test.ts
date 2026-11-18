@@ -468,5 +468,43 @@ describe('login item lifecycle and routine OS notices', () => {
     sees = true
     notices.notifyRun(run, routine)
     expect(shown).toHaveLength(1)
+
+    sees = false
+    const approvalRun = insertRun({
+      routineId: routine.id,
+      scheduledAt: 2000,
+      startedAt: 2000,
+      finishedAt: null,
+      trigger: 'schedule',
+      status: 'waiting',
+      summary: null,
+      report: null,
+      error: null,
+      conversationId: 'conv-2',
+      conversationDeleted: false,
+      pinned: false,
+      unread: true,
+      waiting: { kind: 'approval', prompt: 'Delete 3 files' },
+    })
+    const questionRun = insertRun({
+      routineId: routine.id,
+      scheduledAt: 3000,
+      startedAt: 3000,
+      finishedAt: null,
+      trigger: 'schedule',
+      status: 'waiting',
+      summary: null,
+      report: null,
+      error: null,
+      conversationId: 'conv-3',
+      conversationDeleted: false,
+      pinned: false,
+      unread: true,
+      waiting: { kind: 'question', prompt: 'Which environment?' },
+    })
+    notices.notifyRun(approvalRun, routine)
+    notices.notifyRun(questionRun, routine)
+    expect(shown[1].body).toBe('Needs your approval to continue')
+    expect(shown[2].body).toBe('Asked a question')
   })
 })

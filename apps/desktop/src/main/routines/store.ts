@@ -83,6 +83,8 @@ interface RoutineRunRow {
   conversation_deleted: number
   pinned: number
   unread: number
+  waiting_kind: string | null
+  waiting_prompt: string | null
 }
 
 interface ProposalRow {
@@ -142,6 +144,10 @@ function rowToRun(row: RoutineRunRow): LocalRoutineRun {
     conversationDeleted: row.conversation_deleted === 1,
     pinned: row.pinned === 1,
     unread: row.unread === 1,
+    waiting:
+      row.waiting_kind === 'approval' || row.waiting_kind === 'question'
+        ? { kind: row.waiting_kind, prompt: row.waiting_prompt ?? null }
+        : null,
   }
 }
 
@@ -368,10 +374,12 @@ export function insertRun(input: Omit<LocalRoutineRun, 'id'> & { id?: string }):
     .prepare(
       `INSERT INTO local_routine_runs (
         id, routine_id, scheduled_at, started_at, finished_at, trigger, status,
-        summary, report_json, error, conversation_id, conversation_deleted, pinned, unread
+        summary, report_json, error, conversation_id, conversation_deleted, pinned, unread,
+        waiting_kind, waiting_prompt
       ) VALUES (
         @id, @routineId, @scheduledAt, @startedAt, @finishedAt, @trigger, @status,
-        @summary, @reportJson, @error, @conversationId, @conversationDeleted, @pinned, @unread
+        @summary, @reportJson, @error, @conversationId, @conversationDeleted, @pinned, @unread,
+        @waitingKind, @waitingPrompt
       )`
     )
     .run({
@@ -389,6 +397,8 @@ export function insertRun(input: Omit<LocalRoutineRun, 'id'> & { id?: string }):
       conversationDeleted: input.conversationDeleted ? 1 : 0,
       pinned: input.pinned ? 1 : 0,
       unread: input.unread ? 1 : 0,
+      waitingKind: input.waiting?.kind ?? null,
+      waitingPrompt: input.waiting?.prompt ?? null,
     })
   emitRoutinesChanged()
   return getRun(id)!
@@ -412,7 +422,9 @@ export function updateRun(id: string, patch: Partial<Omit<LocalRoutineRun, 'id' 
         conversation_id = @conversationId,
         conversation_deleted = @conversationDeleted,
         pinned = @pinned,
-        unread = @unread
+        unread = @unread,
+        waiting_kind = @waitingKind,
+        waiting_prompt = @waitingPrompt
       WHERE id = @id`
     )
     .run({
@@ -429,6 +441,8 @@ export function updateRun(id: string, patch: Partial<Omit<LocalRoutineRun, 'id' 
       conversationDeleted: next.conversationDeleted ? 1 : 0,
       pinned: next.pinned ? 1 : 0,
       unread: next.unread ? 1 : 0,
+      waitingKind: next.waiting?.kind ?? null,
+      waitingPrompt: next.waiting?.prompt ?? null,
     })
   emitRoutinesChanged()
   return getRun(id)

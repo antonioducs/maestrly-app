@@ -5,13 +5,14 @@ import {
   type LocalRoutine,
   type LocalRoutineRun,
   type RoutineRunTrigger,
+  type RoutineWaitingKind,
 } from '../../shared/routines'
 import type { ChatRoutineRunMeta, InternalTurnHandle, InternalTurnOutcome } from '../../shared/chat'
 import type { StandaloneConversation } from '../../shared/conversation'
 import { permissionScopeKey } from '../../shared/conversation-scope'
 import { getChatMessage } from '../chat/chat-store'
 import { deleteAllSavedPermissions } from '../chat/permission'
-import { primeChatTurnSelection, setChatMode, startExecutorChatTurn } from '../chat/service'
+import { chatPendingInteractions, primeChatTurnSelection, setChatMode, startExecutorChatTurn } from '../chat/service'
 import { holdAwake } from '../power-manager'
 import { createRoutineRunConversation } from '../standalone-conversation-service'
 import { getConversation, getConvUiPrefs, patchConvUiPrefs } from '../store'
@@ -57,6 +58,10 @@ export interface RoutineRunnerDeps {
   onAlert?: (run: LocalRoutineRun, routine: LocalRoutine) => void
   onToast?: (event: RoutineToastEvent) => void
   assistantText?: (conversationId: string, messageId: string | null) => string | null
+  pendingInteractions?: (conversationId: string) => {
+    permissions: Array<{ title: string }>
+    questions: Array<{ questions: Array<{ question: string; header?: string }> }>
+  }
   waitWindowRetryMs?: number
   waitWindowTimeoutMs?: number
   waitSlotTimeoutMs?: number
@@ -146,6 +151,7 @@ export function createRoutineRunner(deps: RoutineRunnerDeps = {}): RoutineRunner
   const onAlert = deps.onAlert
   const onToast = deps.onToast
   const getAssistantText = deps.assistantText ?? defaultAssistantText
+  const getPendingInteractions = deps.pendingInteractions ?? chatPendingInteractions
   const waitWindowRetryMs = deps.waitWindowRetryMs ?? 5_000
   const waitWindowTimeoutMs = deps.waitWindowTimeoutMs ?? 60_000
   const waitSlotTimeoutMs = deps.waitSlotTimeoutMs ?? 15 * 60_000
@@ -231,12 +237,14 @@ export function createRoutineRunner(deps: RoutineRunnerDeps = {}): RoutineRunner
         status: 'skipped_closed',
         finishedAt,
         unread: false,
+        waiting: null,
       })
     } else if (state.stopped || outcome.status === 'cancelled') {
       settled = updateRun(state.runId, {
         status: 'stopped',
         finishedAt,
         unread: false,
+        waiting: null,
       })
     } else if (outcome.status === 'error') {
       settled = updateRun(state.runId, {
@@ -244,6 +252,7 @@ export function createRoutineRunner(deps: RoutineRunnerDeps = {}): RoutineRunner
         error: outcome.error,
         finishedAt,
         unread: true,
+        waiting: null,
       })
     } else {
       const latest = getRun(state.runId)
@@ -260,6 +269,7 @@ export function createRoutineRunner(deps: RoutineRunnerDeps = {}): RoutineRunner
         summary,
         finishedAt,
         unread,
+        waiting: null,
       })
     }
 
@@ -486,29 +496,48 @@ export function createRoutineRunner(deps: RoutineRunnerDeps = {}): RoutineRunner
     state.handle?.cancel()
   }
 
+  function readWaitingDetail(conversationId: string, kind: RoutineWaitingKind): { kind: RoutineWaitingKind; prompt: string | null } {
+    try {
+      const pending = getPendingInteractions(conversationId)
+      if (kind === 'question') {
+        const q = pending.questions[0]?.questions[0]
+        const prompt = q?.question?.trim() || q?.header?.trim() || null
+        return { kind, prompt }
+      }
+      const prompt = pending.permissions[0]?.title?.trim() || null
+      return { kind, prompt }
+    } catch {
+      return { kind, prompt: null }
+    }
+  }
+
   function onConversationStatus(conversationId: string, status: string): void {
     const state = activeByConv.get(conversationId)
     if (!state) return
     const run = getRun(state.runId)
     if (!run || (run.status !== 'running' && run.status !== 'waiting')) return
 
-    if (status === 'waiting') {
+    if (status === 'waiting' || status === 'asking') {
       state.releaseAwake?.()
       state.releaseAwake = null
+      const kind: RoutineWaitingKind = status === 'asking' ? 'question' : 'approval'
+      const waiting = readWaitingDetail(conversationId, kind)
       if (run.status !== 'waiting') {
-        const updated = updateRun(state.runId, { status: 'waiting', unread: true })
+        const updated = updateRun(state.runId, { status: 'waiting', waiting, unread: true })
         const routine = getRoutine(state.routineId)
         if (updated && routine) {
           onAlert?.(updated, routine)
           onToast?.({ kind: 'result', routine, run: updated })
         }
+      } else if (run.waiting?.kind !== waiting.kind || (waiting.prompt && run.waiting?.prompt !== waiting.prompt)) {
+        updateRun(state.runId, { waiting })
       }
       return
     }
 
     if (status === 'working' && run.status === 'waiting') {
       if (!state.releaseAwake) state.releaseAwake = acquireAwake(`routine-run:${state.runId}`)
-      updateRun(state.runId, { status: 'running' })
+      updateRun(state.runId, { status: 'running', waiting: null })
     }
   }
 

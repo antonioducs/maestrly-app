@@ -193,6 +193,8 @@ describe('routine prompt builder', () => {
     expect(first).toContain('Summarize open PRs.')
     expect(first).toContain('This is the first run of this routine.')
     expect(first).not.toContain('This run is late:')
+    expect(first).toContain('Ask the person only when you cannot continue without them')
+    expect(first).toContain('asking pauses the run')
 
     const late = buildRoutinePrompt({
       routine,
@@ -394,8 +396,20 @@ describe('routine runner', () => {
         attempt++
         if (attempt === 1) throw new Error('Provider disconnected')
         const done = deferred<InternalTurnOutcome>()
-        env.startedTurns.push({ conversationId: args.conversationId, prompt: args.prompt, done })
-        return { cancel: () => done.resolve({ status: 'cancelled', assistantMessageId: null }), done: done.promise }
+        env.startedTurns.push({
+          conversationId: args.conversationId,
+          prompt: args.prompt,
+          signal: args.signal,
+          done,
+          assistantMessageId: null,
+        })
+        return {
+          executionId: args.conversationId,
+          conversationId: args.conversationId,
+          assistantMessageId: () => null,
+          cancel: () => done.resolve({ status: 'cancelled', assistantMessageId: null }),
+          done: done.promise,
+        }
       },
     })
     const runner = createRoutineRunner(env.deps)
@@ -432,5 +446,37 @@ describe('routine runner', () => {
     expect(getRun(convFailedRun.id)?.status).toBe('failed')
     expect(convFailRunner.isBusy(routine.id)).toBe(false)
     expect(convFailEnv.alerts).toContainEqual({ runId: convFailedRun.id, status: 'failed' })
+  })
+
+  it('treats asking status like waiting, notifies, releases awake, and resumes on working', async () => {
+    const routine = createRoutine(sampleDraft(), null, 1000)
+    const env = makeDeps({
+      pendingInteractions: () => ({
+        permissions: [],
+        questions: [{ messageId: 'm-1', toolCallId: 'tc-1', questions: [{ header: 'Alvo', question: 'Which environment?', options: [] }] }],
+      }),
+    })
+    const runner = createRoutineRunner(env.deps)
+
+    const run = await runner.start(routine.id, 'schedule', env.now())
+    expect(env.awakeKeys.has(`routine-run:${run.id}`)).toBe(true)
+
+    runner.onConversationStatus(run.conversationId!, 'asking')
+    const paused = getRun(run.id)
+    expect(paused?.status).toBe('waiting')
+    expect(paused?.unread).toBe(true)
+    expect(paused?.waiting).toEqual({ kind: 'question', prompt: 'Which environment?' })
+    expect(env.awakeKeys.has(`routine-run:${run.id}`)).toBe(false)
+    expect(env.alerts).toContainEqual({ runId: run.id, status: 'waiting' })
+    expect(env.toasts.some((t) => t.kind === 'result' && t.runId === run.id)).toBe(true)
+
+    runner.onConversationStatus(run.conversationId!, 'working')
+    const resumed = getRun(run.id)
+    expect(resumed?.status).toBe('running')
+    expect(resumed?.waiting).toBeNull()
+    expect(env.awakeKeys.has(`routine-run:${run.id}`)).toBe(true)
+
+    env.startedTurns[0].done.resolve({ status: 'success', assistantMessageId: null })
+    await runner.waitForRun(run.id)
   })
 })

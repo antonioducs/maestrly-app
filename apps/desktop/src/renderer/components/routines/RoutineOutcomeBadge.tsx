@@ -13,7 +13,7 @@ import {
   Zap,
 } from 'lucide-react'
 import type { ChatPermMode } from '../../../shared/chat'
-import type { RoutineModel, RoutineRunStatus, RoutineSavedPermission } from '../../../shared/routines'
+import type { RoutineModel, RoutineRunStatus, RoutineSavedPermission, RoutineWaitingKind } from '../../../shared/routines'
 import { cn } from '@/lib/utils'
 import { outcomeTone, type RoutineTone } from '@/lib/routines/timeline'
 import { modelDisplayName } from '@/components/chat/model-search'
@@ -56,16 +56,19 @@ export function RoutineDot({
 
 export function RoutineOutcomePill({
   status,
+  waitingKind,
   short = false,
   className,
 }: {
   status: RoutineRunStatus
+  waitingKind?: RoutineWaitingKind | null
   short?: boolean
   className?: string
 }) {
   const { t } = useTranslation('routines')
   const tone = outcomeTone(status)
-  const label = t(`outcome.${status}.${short ? 'short' : 'label'}` as never)
+  const key = status === 'waiting' && waitingKind === 'question' ? 'waitingQuestion' : status
+  const label = t(`outcome.${key}.${short ? 'short' : 'label'}` as never)
   return (
     <span className={cn('routine-pill', toneClass(tone), className)}>
       {outcomeIcon(status)}

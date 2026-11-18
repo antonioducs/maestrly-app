@@ -19,7 +19,7 @@ export class RoutineNotices {
     const t = tMain('main')
     let body: string
     if (run.status === 'waiting') {
-      body = t('notices.routine.waiting')
+      body = run.waiting?.kind === 'question' ? t('notices.routine.waitingQuestion') : t('notices.routine.waiting')
     } else if (run.status === 'failed') {
       body = run.error ? t('notices.routine.failedWithError', { error: run.error }) : t('notices.routine.failed')
     } else if (run.summary) {

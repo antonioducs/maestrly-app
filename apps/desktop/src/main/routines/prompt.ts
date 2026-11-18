@@ -53,7 +53,7 @@ export function buildRoutinePrompt(input: {
   }
 
   parts.push(
-    "This conversation belongs to this run alone. Nobody watches it while it runs: work on your own with your tools; when a tool needs approval, the run waits for the person. Files you write stay in this routine's folder, which every run shares. The person can read this run later and ask you here for changes."
+    "This conversation belongs to this run alone. Nobody watches it while it runs: work on your own with your tools; when a tool needs approval, the run waits for the person. Ask the person only when you cannot continue without them, because asking pauses the run. Files you write stay in this routine's folder, which every run shares. The person can read this run later and ask you here for changes."
   )
 
   parts.push(

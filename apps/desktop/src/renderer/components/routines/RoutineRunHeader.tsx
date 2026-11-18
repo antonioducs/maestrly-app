@@ -84,7 +84,7 @@ export function RoutineRunHeader({
             <span className="min-w-0 truncate text-[13px] font-medium text-foreground">{whenText}</span>
           </>
         )}
-        {run && <RoutineOutcomePill status={run.status} short />}
+        {run && <RoutineOutcomePill status={run.status} waitingKind={run.waiting?.kind} short />}
       </div>
 
       <div className="no-drag flex shrink-0 items-center gap-1.5">

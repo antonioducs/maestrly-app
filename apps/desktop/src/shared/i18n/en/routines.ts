@@ -123,6 +123,7 @@ export default {
     done: { label: 'Completed', short: 'Completed' },
     failed: { label: 'Failed', short: 'Failed' },
     waiting: { label: 'Waiting for you', short: 'Waiting for you' },
+    waitingQuestion: { label: 'Asked a question', short: 'Asked a question' },
     stopped: { label: 'Stopped by you', short: 'Stopped' },
     skipped_asleep: { label: 'Skipped: computer asleep', short: 'Skipped' },
     skipped_closed: { label: 'Skipped: Maestrly closed', short: 'Skipped' },
@@ -335,6 +336,7 @@ export default {
   },
   inbox: {
     waitingDesc: 'Needs your approval to continue',
+    waitingQuestionDesc: 'Asked a question',
     failedDesc: 'The run failed',
     notableDesc: 'Finished with something to check',
     finishedDesc: 'Finished running',

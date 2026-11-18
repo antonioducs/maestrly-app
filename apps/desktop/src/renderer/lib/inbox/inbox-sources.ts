@@ -173,8 +173,9 @@ export function routineObservations(
       let at: number | null = run.finishedAt ?? run.startedAt ?? run.scheduledAt
 
       if (run.status === 'waiting') {
-        active = { kind: 'approval', unread: true }
-        summary = t('inbox.waitingDesc')
+        const isQuestion = run.waiting?.kind === 'question'
+        active = { kind: isQuestion ? 'question' : 'approval', unread: true }
+        summary = isQuestion ? t('inbox.waitingQuestionDesc') : t('inbox.waitingDesc')
         at = run.startedAt ?? run.scheduledAt
       } else if (run.unread) {
         if (run.status === 'failed') {

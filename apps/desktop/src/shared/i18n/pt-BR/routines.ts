@@ -123,6 +123,7 @@ export default {
     done: { label: 'Concluída', short: 'Concluída' },
     failed: { label: 'Falhou', short: 'Falhou' },
     waiting: { label: 'Aguardando você', short: 'Aguardando você' },
+    waitingQuestion: { label: 'Fez uma pergunta', short: 'Fez uma pergunta' },
     stopped: { label: 'Interrompida por você', short: 'Interrompida' },
     skipped_asleep: { label: 'Pulada: computador dormindo', short: 'Pulada' },
     skipped_closed: { label: 'Pulada: Maestrly fechado', short: 'Pulada' },
@@ -335,6 +336,7 @@ export default {
   },
   inbox: {
     waitingDesc: 'Precisa da sua aprovação para continuar',
+    waitingQuestionDesc: 'Fez uma pergunta',
     failedDesc: 'A execução falhou',
     notableDesc: 'Terminou com novidades',
     finishedDesc: 'Execução concluída',

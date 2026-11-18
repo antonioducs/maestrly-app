@@ -141,11 +141,20 @@ describe('RoutinesAgendaView', () => {
   it('renders Precisa de você, Esta semana timeline, A seguir and background banner', () => {
     const routine = makeRoutine()
     const waitingRun = makeRun({ id: 'run-wait', status: 'waiting', summary: 'Aguardando aprovação: npm test' })
+    const questionRun = makeRun({
+      id: 'run-ask',
+      status: 'waiting',
+      summary: null,
+      waiting: { kind: 'question', prompt: 'Qual pasta usar?' },
+    })
     const html = renderToStaticMarkup(
       createElement(RoutinesAgendaView, {
         routines: [routine],
-        runsByRoutine: { 'r-lisboa': [waitingRun] },
-        attentionRuns: [{ routine, run: waitingRun }],
+        runsByRoutine: { 'r-lisboa': [waitingRun, questionRun] },
+        attentionRuns: [
+          { routine, run: waitingRun },
+          { routine, run: questionRun },
+        ],
         settings: { keepRunning: false, openAtLogin: false },
         preventSleepEnabled: true,
         isLinux: false,
@@ -160,6 +169,8 @@ describe('RoutinesAgendaView', () => {
     )
     expect(html).toContain('Rotinas param com o Maestrly fechado.')
     expect(html).toContain('Precisa de você')
+    expect(html).toContain('Aguardando você')
+    expect(html).toContain('Fez uma pergunta')
     expect(html).toContain('Esta semana')
     expect(html).toContain('A seguir')
     expect(html).toContain('Este computador')

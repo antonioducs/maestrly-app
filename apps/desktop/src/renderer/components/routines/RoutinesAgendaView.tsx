@@ -156,7 +156,7 @@ export function RoutinesAgendaView({
                           </span>
                           <span className="routine-att-main min-w-0 flex-1">
                             <span className="font-medium text-foreground">{routine.title}</span>{' '}
-                            <RoutineOutcomePill status={run.status} short className="ml-1" />
+                            <RoutineOutcomePill status={run.status} waitingKind={run.waiting?.kind} short className="ml-1" />
                             {run.summary && (
                               <span className="block truncate text-[12px] text-muted-foreground">{run.summary}</span>
                             )}

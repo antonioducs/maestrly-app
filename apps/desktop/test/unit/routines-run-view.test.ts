@@ -312,6 +312,16 @@ describe('Phase 10 inbox routine integration', () => {
       conversationId: 'conv-wait',
       startedAt: T0 + 50_000,
       finishedAt: null,
+      waiting: { kind: 'approval', prompt: 'Apagar 3 arquivos' },
+    })
+    const questionRun = makeRun({
+      id: 'run-ask',
+      status: 'waiting',
+      unread: true,
+      conversationId: 'conv-ask',
+      startedAt: T0 + 55_000,
+      finishedAt: null,
+      waiting: { kind: 'question', prompt: 'Qual ambiente?' },
     })
     const failedRun = makeRun({ id: 'run-fail', status: 'failed', unread: true, error: 'Erro 429', summary: null })
     const notableRun = makeRun({ id: 'run-notable', status: 'notable', unread: true })
@@ -319,13 +329,14 @@ describe('Phase 10 inbox routine integration', () => {
 
     const obs = routineObservations(
       [routine],
-      { [routine.id]: [waitingRun, failedRun, notableRun, oldReadRun] },
+      { [routine.id]: [waitingRun, questionRun, failedRun, notableRun, oldReadRun] },
       place,
       tRoutines
     )
 
-    expect(obs).toHaveLength(4)
+    expect(obs).toHaveLength(5)
     expect(obs[0].active).toEqual({ kind: 'approval', unread: true })
+    expect(obs[0].view.summary).toBe('Precisa da sua aprovação para continuar')
     expect(obs[0].view.source).toBe('routine')
     expect(obs[0].view.target).toEqual({
       kind: 'routine-run',
@@ -333,14 +344,16 @@ describe('Phase 10 inbox routine integration', () => {
       runId: 'run-wait',
       conversationId: 'conv-wait',
     })
-    expect(obs[1].active).toEqual({ kind: 'error', unread: true })
-    expect(obs[2].active).toEqual({ kind: 'finished', unread: true })
-    expect(obs[3].active).toBeNull()
+    expect(obs[1].active).toEqual({ kind: 'question', unread: true })
+    expect(obs[1].view.summary).toBe('Fez uma pergunta')
+    expect(obs[2].active).toEqual({ kind: 'error', unread: true })
+    expect(obs[3].active).toEqual({ kind: 'finished', unread: true })
+    expect(obs[4].active).toBeNull()
 
     const ledger = reconcileInbox({}, obs, T0 + 60_000)
     const items = inboxItems(ledger, obs, T0 + 60_000)
-    expect(items.map((i) => i.group)).toEqual(['waiting', 'new', 'new'])
-    expect(inboxSourceCounts(items)).toMatchObject({ all: 3, routine: 3, workspace: 0, chat: 0, bot: 0 })
+    expect(items.map((i) => i.group)).toEqual(['waiting', 'waiting', 'new', 'new'])
+    expect(inboxSourceCounts(items)).toMatchObject({ all: 4, routine: 4, workspace: 0, chat: 0, bot: 0 })
 
     const serialized = JSON.stringify(ledger)
     expect(Object.keys(parseInboxLedger(serialized))).toEqual(Object.keys(ledger))
