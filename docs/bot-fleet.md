@@ -190,12 +190,14 @@ and the [Tailscale example](artifacts.md#reach-the-server-from-another-device).
 
 Each bot has a **Publish artifacts** setting. New bots default to whether the
 server has artifact hosting enabled; migrated bots start with it off. Enabled
-bots receive seven artifact tools, excluding `artifact_open`, and can work only
-with their own artifacts. The desktop's bot publication card opens the external
-viewer. Desktop conversations publish on the same server, which is the only place
-artifacts are hosted, and so do the chats of a
+bots receive seven artifact tools, excluding `artifact_open` (plus the
+whiteboard tools except `whiteboard_snapshot`), stamp their own name on new
+artifacts, and can read, update, and collaborate on any artifact on the server,
+while deletion and sharing stay owner-only. The desktop's bot publication card
+opens the external viewer. Desktop conversations publish on the same server,
+which is the only place artifacts are hosted, and so do the chats of a
 [workspaces environment](remote-workspaces.md), with a token the gateway gives
-that environment for artifacts only; **Settings → Artifacts** offers an artifact-only setup when
+that environment for the agent tools only; **Settings → Artifacts** offers an artifact-only setup when
 no server is paired.
 
 Turning hosting off keeps its data. Disconnecting or unpairing this computer

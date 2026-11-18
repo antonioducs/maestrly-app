@@ -136,7 +136,6 @@ describe('artifacts IPC', () => {
     expect(service.thumbnail).toHaveBeenCalledWith(id, 2)
     await call('artifacts:open-in-conversation', 'conversation', id, 3)
     expect(service.openInConversation).toHaveBeenCalledWith('conversation', id, 3, {
-      checkScope: false,
       activate: true,
     })
   })

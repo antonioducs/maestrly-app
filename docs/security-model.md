@@ -338,14 +338,15 @@ results of edits name elements only by ID.
 
 Paired devices use authenticated `/v1/artifacts/admin` and
 `/v1/artifacts/upload` RPC endpoints to manage server artifacts. New desktop
-publications are stamped with the authenticated device's owner ID. Bots use
-`/internal/v1/artifacts/admin` and `/internal/v1/artifacts/upload` with their
-bot credential: both server hosting and the bot's publication flag must be on.
-The gateway enforces bot ownership and a method allowlist, overwrites supplied
-ownership on creation, and permits replies and resolution only in that scope.
-Bots cannot mint owner viewer tickets or administer sharing or deletion. A
-paired desktop may manage all server artifacts, but its conversation tools
-remain scoped to its own device and project or standalone conversation.
+publications are stamped with the authenticated device's owner ID. Bots and
+workspaces environments use `/internal/v1/artifacts/admin` and
+`/internal/v1/artifacts/upload` with their own credentials (for bots, both
+server hosting and the bot's publication flag must be on). The gateway enforces
+a strict agent method allowlist and overwrites supplied ownership on creation,
+while allowing authorized agents to list, read, update, reply to and resolve
+comments, read responses, and edit whiteboards across any artifact on the
+server. Agents cannot mint owner viewer tickets through the internal API or
+administer sharing or deletion.
 
 Moving an earlier local artifact uses three device-only methods: export
 returns an artifact's manifest, blob upload stores content under the SHA-256 the
@@ -426,7 +427,8 @@ An agent receives comments only when it asks for them or when the owner chooses
 outside the conversation and are feedback, not instructions, and carries them as
 JSON inside an envelope in which every `<` is escaped, so a comment cannot close
 it or pose as the host. No comment starts an agent turn by itself, and an agent
-can only reply to and resolve threads of artifacts in its own scope.
+can only reply to existing threads and mark threads resolved, never delete
+comments.
 
 A page can save one response for the person viewing it. It cannot reach the
 host for that: it asks the viewer through `postMessage`, and the viewer checks
@@ -466,10 +468,10 @@ format and size.
 
 The drawer browser partition is shared with the agent's browser tools, so an
 agent browsing there acts with the owner's artifact session. That grants no
-more than the artifact tools already do. Agents can read and write only the
-artifacts of their own project or standalone conversation. No agent tool
-deletes an artifact, shares it, invites people, approves requests, or changes
-who can open it.
+more than the artifact tools already do: agents can read and update artifacts on
+the server, while the viewer itself has no controls to delete an artifact, share
+it, invite people, approve requests, or change who can open it, and no agent
+tool exposes those owner actions.
 
 ## Bot server access
 

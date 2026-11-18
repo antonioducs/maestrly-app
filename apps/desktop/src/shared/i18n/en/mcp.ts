@@ -61,8 +61,9 @@ export default {
     },
     artifact_list: {
       title: 'List artifacts',
-      description: "Lists this conversation's artifacts, or its whole project's with scope=project.",
-      params: { scope: 'conversation (default) or project' },
+      description:
+        'Lists artifacts on the server (pages and whiteboards), or narrows to this project with scope=project or this conversation with scope=conversation.',
+      params: { scope: 'all (default), project, or conversation' },
     },
     artifact_open: {
       title: 'Open artifact',
@@ -109,7 +110,7 @@ export default {
     whiteboard_create: {
       title: 'Create whiteboard',
       description:
-        'Creates a whiteboard on the user\'s bot server: a live board of cards, sections, text and arrows that the user, the people they share it with and you edit at the same time. Draw its first content with `ops`. Use it for plans, diagrams, retrospectives, maps of ideas and anything people should rearrange themselves. After creating it, check `warnings` and fix what reads badly with whiteboard_edit.',
+        "Creates a whiteboard on the user's bot server: a live board of cards, sections, text and arrows that the user, the people they share it with and you edit at the same time. Draw its first content with `ops`. Use it for plans, diagrams, retrospectives, maps of ideas and anything people should rearrange themselves. After creating it, check `warnings` and fix what reads badly with whiteboard_edit.",
       params: {
         title: 'title of the whiteboard',
         description: 'short description',

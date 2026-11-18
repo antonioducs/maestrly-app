@@ -83,10 +83,8 @@ export function registerArtifactsIpc(
   reg.mhandle('artifacts:open-external', async (_e, id: unknown, number: unknown) => {
     await service().openExternal(artifactId.parse(id), version.parse(number))
   })
-  // The owner may open any artifact in any conversation's browser; only agents are limited to their scope.
   reg.mhandle('artifacts:open-in-conversation', async (_e, convId: unknown, id: unknown, number: unknown) => {
     await service().openInConversation(conversationId.parse(convId), artifactId.parse(id), version.parse(number), {
-      checkScope: false,
       activate: true,
     })
   })

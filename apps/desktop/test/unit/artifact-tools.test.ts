@@ -31,7 +31,19 @@ function fakeService() {
     ]),
     readTextForConversation: vi.fn(async () => ({ text: '<p>x</p>', truncated: false })),
     listForConversation: vi.fn(async () => [
-      { ...detail, conversationId: 'c1', updatedAt: 5, versionCount: 2, ownerKind: 'local' },
+      { ...detail, workspaceId: 'ws-1', conversationId: 'c1', updatedAt: 5, versionCount: 2, ownerKind: 'device' },
+      {
+        ...detail,
+        id: 'B'.repeat(22),
+        kind: 'whiteboard' as const,
+        title: 'Board',
+        currentVersion: 1,
+        workspaceId: null,
+        conversationId: 'c2',
+        updatedAt: 3,
+        versionCount: 1,
+        ownerKind: 'bot',
+      },
     ]),
     openInConversation: vi.fn(async () => detail),
   }
@@ -197,25 +209,46 @@ describe('artifact tools', () => {
     expect(service.readTextForConversation).toHaveBeenCalledWith('c1', id, 1, 'index.html')
   })
 
-  it('lists within the requested scope', async () => {
-    const listed = JSON.parse((await call('artifact_list', { scope: 'project' })).text)
-    expect(service.listForConversation).toHaveBeenCalledWith('c1', 'project')
-    expect(listed).toEqual({
-      artifacts: [{ id, title: 'Landing', currentVersion: 2, conversationId: 'c1', updatedAt: 5 }],
+  it('lists all artifacts by default, or narrows to project or conversation', async () => {
+    const all = JSON.parse((await call('artifact_list', {})).text)
+    expect(service.listForConversation).toHaveBeenCalledWith('c1', 'all')
+    expect(all).toEqual({
+      artifacts: [
+        {
+          id,
+          kind: 'page',
+          title: 'Landing',
+          currentVersion: 2,
+          workspaceId: 'ws-1',
+          conversationId: 'c1',
+          updatedAt: 5,
+        },
+        {
+          id: 'B'.repeat(22),
+          kind: 'whiteboard',
+          title: 'Board',
+          currentVersion: 1,
+          workspaceId: null,
+          conversationId: 'c2',
+          updatedAt: 3,
+        },
+      ],
     })
-    await call('artifact_list', {})
+    await call('artifact_list', { scope: 'project' })
+    expect(service.listForConversation).toHaveBeenLastCalledWith('c1', 'project')
+    await call('artifact_list', { scope: 'conversation' })
     expect(service.listForConversation).toHaveBeenLastCalledWith('c1', 'conversation')
   })
 
   it('opens in the drawer, without taking focus from a delegated worker', async () => {
     const opened = await call('artifact_open', { id })
     expect(opened.text).toContain('Landing')
-    expect(service.openInConversation).toHaveBeenCalledWith('c1', id, undefined, { checkScope: true, activate: true })
+    expect(service.openInConversation).toHaveBeenCalledWith('c1', id, undefined, { activate: true })
     await client.close()
     await server.close()
     await connect({ id: 'worker' } as MaestroWorkerScope)
     await call('artifact_open', { id, version: 1 })
-    expect(service.openInConversation).toHaveBeenLastCalledWith('c1', id, 1, { checkScope: true, activate: false })
+    expect(service.openInConversation).toHaveBeenLastCalledWith('c1', id, 1, { activate: false })
   })
 
   it('tells the agent of a workspaces host that the computer showing the conversation opens it', async () => {
