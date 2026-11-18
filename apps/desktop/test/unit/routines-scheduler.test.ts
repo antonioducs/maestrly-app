@@ -98,6 +98,46 @@ describe('decideTick', () => {
       busy: false,
     })
     expect(withinGrace.decision).toEqual({ kind: 'fire', trigger: 'schedule', scheduledAt: base, skipped: [] })
+    expect(withinGrace.nextRunAt).toBe(base + 15 * 60_000)
+  })
+
+  it('keeps interval cadence fixed without accumulating tick delay, while weekly stays anchored', () => {
+    const stepMs = 30 * 60_000
+    const res1 = decideTick({
+      routine: { schedule: { kind: 'interval', everyMinutes: 30 }, missed: 'catchup', enabled: true, nextRunAt: base },
+      now: base + 12_000,
+      processStartedAt: base - 60_000,
+      busy: false,
+    })
+    expect(res1.nextRunAt).toBe(base + stepMs)
+
+    const res2 = decideTick({
+      routine: {
+        schedule: { kind: 'interval', everyMinutes: 30 },
+        missed: 'catchup',
+        enabled: true,
+        nextRunAt: res1.nextRunAt,
+      },
+      now: res1.nextRunAt! + 14_000,
+      processStartedAt: base - 60_000,
+      busy: false,
+    })
+    expect(res2.nextRunAt).toBe(base + 2 * stepMs)
+
+    const weeklySchedule = { kind: 'weekly' as const, time: '09:00', days: [], timezone: 'UTC' }
+    const weeklyTickNow = Date.UTC(2026, 10, 18, 9, 0, 14)
+    const weekly = decideTick({
+      routine: {
+        schedule: weeklySchedule,
+        missed: 'catchup',
+        enabled: true,
+        nextRunAt: Date.UTC(2026, 10, 18, 9, 0),
+      },
+      now: weeklyTickNow,
+      processStartedAt: base - 60_000,
+      busy: false,
+    })
+    expect(weekly.nextRunAt).toBe(Date.UTC(2026, 10, 19, 9, 0))
   })
 
   it('handles late catch-up, beyond window, and skip policy', () => {

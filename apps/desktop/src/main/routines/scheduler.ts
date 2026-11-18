@@ -78,7 +78,15 @@ export function decideTick(input: {
     return { decision: { kind: 'wait' }, nextRunAt: routine.nextRunAt }
   }
 
-  const nextRunAt = Date.parse(nextRun(routine.schedule, new Date(now)))
+  const newest = dueSlots[dueSlots.length - 1]
+  const nextRunAt =
+    routine.schedule.kind === 'interval'
+      ? (() => {
+          const stepMs = routine.schedule.everyMinutes * 60_000
+          const k = Math.floor((now - newest) / stepMs) + 1
+          return newest + k * stepMs
+        })()
+      : Date.parse(nextRun(routine.schedule, new Date(now)))
 
   if (busy) {
     return {
@@ -90,7 +98,6 @@ export function decideTick(input: {
     }
   }
 
-  const newest = dueSlots[dueSlots.length - 1]
   const older = dueSlots.slice(0, -1)
   const age = now - newest
   const olderSkipped: SkippedSlot[] = older.map((scheduledAt) => ({
