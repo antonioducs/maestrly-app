@@ -553,6 +553,7 @@ export function pruneRuns(routineId: string, keep: number): number {
            WHERE routine_id = ?
              AND pinned = 0
              AND status NOT IN ('running', 'waiting')
+             AND (conversation_id IS NULL OR conversation_deleted = 1)
            ORDER BY scheduled_at DESC, rowid DESC
            LIMIT ?`
         )
@@ -563,7 +564,10 @@ export function pruneRuns(routineId: string, keep: number): number {
         getDb()
           .prepare(
             `DELETE FROM local_routine_runs
-             WHERE routine_id = ? AND pinned = 0 AND status NOT IN ('running', 'waiting')`
+             WHERE routine_id = ?
+               AND pinned = 0
+               AND status NOT IN ('running', 'waiting')
+               AND (conversation_id IS NULL OR conversation_deleted = 1)`
           )
           .run(routineId).changes
       )
@@ -577,6 +581,7 @@ export function pruneRuns(routineId: string, keep: number): number {
            WHERE routine_id = ?
              AND pinned = 0
              AND status NOT IN ('running', 'waiting')
+             AND (conversation_id IS NULL OR conversation_deleted = 1)
              AND id NOT IN (${placeholders})`
         )
         .run(routineId, ...keepIds).changes

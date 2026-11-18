@@ -150,7 +150,7 @@ describe('routines store', () => {
       report: { outcome: 'notable', summary: 'Price dropped', pending: 'Book', notes: 'Note 2' },
       error: null,
       conversationId: 'conv-r2',
-      conversationDeleted: false,
+      conversationDeleted: true,
       pinned: false,
       unread: true,
     })
@@ -180,7 +180,7 @@ describe('routines store', () => {
       report: null,
       error: null,
       conversationId: 'conv-r4',
-      conversationDeleted: false,
+      conversationDeleted: true,
       pinned: false,
       unread: false,
     })
@@ -227,6 +227,77 @@ describe('routines store', () => {
     expect(deleted).toBe(2) // r2 and r3 removed; r1 (pinned), r4 (newest unpinned finished), r5 (waiting) kept
     const remainingIds = listRuns({ routineId: routine.id, filter: 'all', limit: 20 }).runs.map((r) => r.id)
     expect(remainingIds).toEqual([r5.id, r4.id, r1.id])
+  })
+
+  it('never prunes runs whose conversation still exists beyond the cap', () => {
+    const routine = createRoutine(sampleDraft(), null, 1000)
+    const liveOld = insertRun({
+      routineId: routine.id,
+      scheduledAt: 1000,
+      startedAt: 1000,
+      finishedAt: 1500,
+      trigger: 'schedule',
+      status: 'done',
+      summary: 'Old live',
+      report: null,
+      error: null,
+      conversationId: 'conv-live-old',
+      conversationDeleted: false,
+      pinned: false,
+      unread: false,
+    })
+    const deletedOld = insertRun({
+      routineId: routine.id,
+      scheduledAt: 2000,
+      startedAt: 2000,
+      finishedAt: 2500,
+      trigger: 'schedule',
+      status: 'done',
+      summary: 'Old deleted',
+      report: null,
+      error: null,
+      conversationId: 'conv-deleted-old',
+      conversationDeleted: true,
+      pinned: false,
+      unread: false,
+    })
+    const skippedNull = insertRun({
+      routineId: routine.id,
+      scheduledAt: 3000,
+      startedAt: null,
+      finishedAt: 3000,
+      trigger: 'schedule',
+      status: 'skipped_closed',
+      summary: null,
+      report: null,
+      error: null,
+      conversationId: null,
+      conversationDeleted: false,
+      pinned: false,
+      unread: false,
+    })
+    const deletedNew = insertRun({
+      routineId: routine.id,
+      scheduledAt: 4000,
+      startedAt: 4000,
+      finishedAt: 4500,
+      trigger: 'schedule',
+      status: 'done',
+      summary: 'New deleted',
+      report: null,
+      error: null,
+      conversationId: 'conv-deleted-new',
+      conversationDeleted: true,
+      pinned: false,
+      unread: false,
+    })
+
+    const pruned = pruneRuns(routine.id, 1)
+    expect(pruned).toBe(2)
+    const remainingIds = listRuns({ routineId: routine.id, filter: 'all', limit: 20 }).runs.map((r) => r.id)
+    expect(remainingIds).toEqual([deletedNew.id, liveOld.id])
+    expect(getRun(deletedOld.id)).toBeNull()
+    expect(getRun(skippedNull.id)).toBeNull()
   })
 
   it('persists proposals and routine settings with defaults across restart', () => {
