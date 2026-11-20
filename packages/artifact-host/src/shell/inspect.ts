@@ -1,5 +1,7 @@
 // Inspect mode UI: hover/selection/match boxes above the stage frame, stage hint, and the Inspect side panel.
-import type { SelectionRect } from './contract.js'
+import type { DesignScreen, InspectHover, SelectionRect } from './contract.js'
+import type { DesignController, DesignSnapshot, ScreenUsage } from './design.js'
+import { classifyTokenValue } from './design-model.js'
 import {
   clampInspectTag,
   formatElementLabel,
@@ -8,14 +10,6 @@ import {
   tokenKey,
   viewportKindOf,
 } from './design-ui-model.js'
-import {
-  classifyTokenValue,
-  type DesignController,
-  type DesignScreen,
-  type DesignSnapshot,
-  type InspectHover,
-  type ScreenUsage,
-} from './design-ui-stub.js'
 import { copyText, h, toast } from './dom.js'
 import type { Translate } from './i18n.js'
 import { icon } from './icons.js'
@@ -30,18 +24,13 @@ export interface InspectViewOptions {
   side: HTMLElement
   /** Called when the user clicks a token in Inspect to jump to that row in Tokens. */
   onOpenToken(name: string): void
-  /** Optional screen to return to via the "Back to {screen}" chip after jumping to a main component. */
-  getBackScreen?: () => DesignScreen | null
-  onBack?: () => void
-  /** Optional click handler for ancestor breadcrumbs when core supports selecting by selector. */
-  onSelectBreadcrumb?: (selector: string) => void
-  /** Optional click handler for usage rows when core supports highlighting matches on a screen. */
-  onShowUses?: (component: string, screenId: string) => void
+  /** Called when opening a screen (for example from Uses or Back) so the stage updates its viewport preset. */
+  onScreenOpened?: (screen: DesignScreen) => void
 }
 
 export interface InspectView {
-  render(snapshot: DesignSnapshot, matchRects?: readonly SelectionRect[]): void
-  renderOverlay(snapshot: DesignSnapshot, matchRects?: readonly SelectionRect[]): void
+  render(snapshot: DesignSnapshot): void
+  renderOverlay(snapshot: DesignSnapshot): void
   renderFloat(snapshot: DesignSnapshot): void
   destroy(): void
 }
@@ -63,12 +52,18 @@ function section(title: string | null, count: number | undefined, ...children: P
 
 function currentScreenOf(snapshot: DesignSnapshot): DesignScreen | null {
   if (!snapshot.design || !snapshot.stagePath) return null
-  return snapshot.design.screens.find((screen) => screen.path === snapshot.stagePath) ?? null
+  if (snapshot.design.componentsPath && snapshot.stagePath === snapshot.design.componentsPath) return null
+  return (
+    snapshot.design.screens.find((screen) => screen.path === snapshot.stagePath) ??
+    snapshot.design.screens.find((screen) => screen.path.split('#')[0] === snapshot.stagePath) ??
+    null
+  )
 }
 
 export function createInspectView(options: InspectViewOptions): InspectView {
   const { t, controller, stage, overlay, float, side } = options
   let activeUsageScreenId: string | null = null
+  let lastPanelKey: string | null = null
 
   function copyable(value: string, withSwatch: boolean): HTMLElement {
     return h(
@@ -87,7 +82,18 @@ export function createInspectView(options: InspectViewOptions): InspectView {
     )
   }
 
-  function renderOverlay(snapshot: DesignSnapshot, matchRects: readonly SelectionRect[] = []): void {
+  function backScreenOf(snapshot: DesignSnapshot): DesignScreen | null {
+    if (!snapshot.backScreenId || !snapshot.design) return null
+    return snapshot.design.screens.find((screen) => screen.id === snapshot.backScreenId) ?? null
+  }
+
+  function returnFromMain(back: DesignScreen): void {
+    activeUsageScreenId = null
+    options.onScreenOpened?.(back)
+    void controller.returnFromMainComponent()
+  }
+
+  function renderOverlay(snapshot: DesignSnapshot): void {
     for (const el of overlay.querySelectorAll('.inspect-box, .inspect-tag')) el.remove()
     if (snapshot.view !== 'page') return
     const bounds = { width: overlay.clientWidth, height: overlay.clientHeight }
@@ -116,13 +122,17 @@ export function createInspectView(options: InspectViewOptions): InspectView {
       el.style.setProperty('--y', `${pos.y}px`)
     }
 
-    for (const at of matchRects) drawBox(at, 'is-match')
-    const hovering = snapshot.inspecting && snapshot.hovered
+    for (const at of snapshot.matchRects) drawBox(at, 'is-match')
+    const hovering =
+      snapshot.inspecting &&
+      snapshot.hovered &&
+      (!snapshot.inspected || snapshot.hovered.selector !== snapshot.inspected.selector)
+        ? snapshot.hovered
+        : null
     if (hovering) drawBox(hovering.rect, 'is-hover')
-    const selectedRect = snapshot.inspected ? (snapshot.inspectedRect ?? snapshot.inspected.rect) : null
-    if (snapshot.inspected && selectedRect) {
-      drawBox(selectedRect, 'is-selected')
-      drawTag(snapshot.inspected, selectedRect)
+    if (snapshot.inspected && snapshot.inspectedRect) {
+      drawBox(snapshot.inspectedRect, 'is-selected')
+      drawTag(snapshot.inspected, snapshot.inspectedRect)
     }
     if (hovering) drawTag(hovering, hovering.rect)
   }
@@ -149,13 +159,13 @@ export function createInspectView(options: InspectViewOptions): InspectView {
       )
     }
 
-    const back = options.getBackScreen?.() ?? null
+    const back = backScreenOf(snapshot)
     const panelOpen = Boolean(snapshot.inspected) && !snapshot.tokensOpen
-    if (back && !panelOpen && options.onBack) {
+    if (back && !panelOpen) {
       float.append(
         h(
           'button',
-          { type: 'button', class: 'page-chip', onclick: () => options.onBack?.() },
+          { type: 'button', class: 'page-chip', onclick: () => returnFromMain(back) },
           icon('left', 15),
           t('inspectBack', { screen: back.name })
         )
@@ -166,16 +176,14 @@ export function createInspectView(options: InspectViewOptions): InspectView {
   function buildUsageSection(snapshot: DesignSnapshot, componentName: string): HTMLElement | null {
     const design = snapshot.design
     if (!design || design.screens.length === 0) return null
-    const countsByScreen = new Map<string, ScreenUsage>()
-    for (const entry of snapshot.componentUsage(componentName)) countsByScreen.set(entry.screenId, entry)
+    const usageByScreen = new Map<string, ScreenUsage>()
+    for (const entry of snapshot.componentUsage(componentName)) usageByScreen.set(entry.screenId, entry)
 
     const rows = design.screens.map((screen) => {
-      const measured = countsByScreen.get(screen.id)
-      const frameState = snapshot.screensState.get(screen.id)
-      if (measured) return { screen, status: 'done' as const, count: measured.count }
-      if (frameState?.status === 'error') return { screen, status: 'failed' as const, count: 0 }
-      if (frameState?.status === 'loading') return { screen, status: 'measuring' as const, count: 0 }
-      return { screen, status: 'queued' as const, count: 0 }
+      const entry = usageByScreen.get(screen.id)
+      const status = entry?.status ?? 'queued'
+      const count = entry?.count ?? 0
+      return { screen, status, count }
     })
 
     const isPending = (status: string) => status === 'queued' || status === 'measuring'
@@ -189,18 +197,22 @@ export function createInspectView(options: InspectViewOptions): InspectView {
       undefined,
       h('p', { class: 'usage-total', role: 'status' }, summary),
       done < rows.length &&
-        h(
-          'div',
-          {
-            class: 'usage-meter',
-            role: 'progressbar',
-            'aria-label': t('inspectUses'),
-            'aria-valuemin': '0',
-            'aria-valuemax': String(rows.length),
-            'aria-valuenow': String(done),
-          },
-          h('span', { style: `width:${(done / rows.length) * 100}%` })
-        ),
+        (() => {
+          const fill = h('span')
+          fill.style.width = `${(done / rows.length) * 100}%`
+          return h(
+            'div',
+            {
+              class: 'usage-meter',
+              role: 'progressbar',
+              'aria-label': t('inspectUses'),
+              'aria-valuemin': '0',
+              'aria-valuemax': String(rows.length),
+              'aria-valuenow': String(done),
+            },
+            fill
+          )
+        })(),
       h(
         'ul',
         { class: 'usage' },
@@ -235,8 +247,8 @@ export function createInspectView(options: InspectViewOptions): InspectView {
                 title: usable ? t('inspectUsesShow', { n: row.count, screen: row.screen.name }) : undefined,
                 onclick: () => {
                   activeUsageScreenId = row.screen.id
-                  if (options.onShowUses) options.onShowUses(componentName, row.screen.id)
-                  else void controller.openScreen(row.screen.id)
+                  options.onScreenOpened?.(row.screen)
+                  void controller.showComponentUses(componentName, row.screen.id)
                 },
               },
               icon(viewport, 14),
@@ -249,9 +261,47 @@ export function createInspectView(options: InspectViewOptions): InspectView {
     )
   }
 
+  function panelSignature(snapshot: DesignSnapshot): string | null {
+    const target = snapshot.inspected
+    if (!target || snapshot.tokensOpen) return null
+    const usage =
+      target.component && target.main
+        ? snapshot
+            .componentUsage(target.component)
+            .map((u) => `${u.screenId}:${u.status}:${u.count ?? ''}`)
+            .join(',')
+        : ''
+    const variants =
+      target.component && target.main ? (target.variants ?? snapshot.componentVariants(target.component)).join('|') : ''
+    const drafts = snapshot.draftChanges.map((d) => `${d.theme ?? ''}:${d.name}=${d.value}`).join(',')
+    return JSON.stringify([
+      snapshot.version,
+      snapshot.stagePath,
+      snapshot.backScreenId,
+      snapshot.activeTheme,
+      Boolean(snapshot.design),
+      activeUsageScreenId,
+      target.selector,
+      target.component,
+      target.main,
+      target.elementLabel,
+      target.props,
+      target.tokens,
+      target.tokensFromManifest,
+      target.chain,
+      target.styles,
+      Math.round(target.rect.width),
+      Math.round(target.rect.height),
+      usage,
+      variants,
+      drafts,
+    ])
+  }
+
   function renderPanel(snapshot: DesignSnapshot): void {
     const target = snapshot.inspected
     if (!target || snapshot.tokensOpen) {
+      lastPanelKey = null
       if (side.classList.contains('inspect-panel')) {
         side.hidden = true
         side.className = 'side'
@@ -259,6 +309,9 @@ export function createInspectView(options: InspectViewOptions): InspectView {
       }
       return
     }
+    const key = panelSignature(snapshot)
+    if (key === lastPanelKey && side.classList.contains('inspect-panel') && !side.hidden) return
+    lastPanelKey = key
 
     const design = snapshot.design
     const kind = target.component ? (target.main ? 'main' : 'component') : 'element'
@@ -292,12 +345,12 @@ export function createInspectView(options: InspectViewOptions): InspectView {
     )
 
     const body = h('div', { class: 'side-body' })
-    const back = options.getBackScreen?.() ?? null
-    if (back && options.onBack) {
+    const back = backScreenOf(snapshot)
+    if (back) {
       body.append(
         h(
           'button',
-          { type: 'button', class: 'link side-back', onclick: () => options.onBack?.() },
+          { type: 'button', class: 'link side-back', onclick: () => returnFromMain(back) },
           icon('left', 14),
           t('inspectBack', { screen: back.name })
         )
@@ -308,34 +361,59 @@ export function createInspectView(options: InspectViewOptions): InspectView {
       body.append(section(null, undefined, h('p', { class: 'side-note' }, t('inspectNoContract'))))
     }
 
-    if (kind === 'component' && target.component) {
-      const hasComponents = Boolean(design?.componentsPath)
-      const componentName = target.component
-      body.append(
-        section(
-          null,
-          undefined,
-          h(
-            'button',
-            {
-              type: 'button',
-              class: 'button go-main',
-              disabled: !hasComponents,
-              title: hasComponents ? undefined : t('inspectNoComponents'),
-              onclick: async () => {
-                const found = await controller.openMainComponent(componentName)
-                if (!found && design?.componentsPath) {
-                  toast(t('inspectMainMissing', { name: componentName, file: design.componentsPath }))
-                }
+    const lead: HTMLElement[] = []
+    if (target.chain?.length) {
+      lead.push(
+        h(
+          'nav',
+          { class: 'inspect-path', 'aria-label': t('inspectPath') },
+          target.chain.flatMap((item) => [
+            h(
+              'button',
+              {
+                type: 'button',
+                class: 'inspect-crumb',
+                onclick: () => {
+                  activeUsageScreenId = null
+                  controller.selectElement(item.selector)
+                },
               },
-            },
-            icon('main', 15),
-            t('inspectGoMain'),
-            icon('arrow', 14)
-          )
+              icon('component', 12),
+              item.component
+            ),
+            icon('right', 12),
+          ]),
+          h('span', { class: 'inspect-crumb', 'aria-current': 'true' }, icon('component', 12), name)
         )
       )
     }
+
+    if (kind === 'component' && target.component) {
+      const hasComponents = Boolean(design?.componentsPath)
+      const componentName = target.component
+      lead.push(
+        h(
+          'button',
+          {
+            type: 'button',
+            class: 'button go-main',
+            disabled: !hasComponents,
+            title: hasComponents ? undefined : t('inspectNoComponents'),
+            onclick: async () => {
+              activeUsageScreenId = null
+              const found = await controller.openMainComponent(componentName)
+              if (!found && design?.componentsPath) {
+                toast(t('inspectMainMissing', { name: componentName, file: design.componentsPath }))
+              }
+            },
+          },
+          icon('main', 15),
+          t('inspectGoMain'),
+          icon('arrow', 14)
+        )
+      )
+    }
+    if (lead.length > 0) body.append(section(null, undefined, lead))
 
     if (kind === 'main' && target.component) {
       const usage = buildUsageSection(snapshot, target.component)
@@ -361,6 +439,27 @@ export function createInspectView(options: InspectViewOptions): InspectView {
       )
     }
 
+    if (kind === 'main' && target.component) {
+      const own = Object.entries(target.props)
+        .map(([k, v]) => `${k}=${v}`)
+        .join(' ')
+      const rawVariants = target.variants ?? snapshot.componentVariants(target.component)
+      const variants = rawVariants.filter((props) => props !== own)
+      if (variants.length > 0) {
+        body.append(
+          section(
+            t('inspectVariants'),
+            variants.length,
+            h(
+              'ul',
+              { class: 'variants' },
+              variants.map((props) => h('li', { class: 'variant' }, props))
+            )
+          )
+        )
+      }
+    }
+
     if (design) {
       const changedKeys = new Set(snapshot.draftChanges.map((change) => tokenKey(change.name, change.theme)))
       const isChanged = (tokenName: string) =>
@@ -371,12 +470,16 @@ export function createInspectView(options: InspectViewOptions): InspectView {
         section(
           t('inspectTokens'),
           target.tokens.length || undefined,
+          target.tokensFromManifest && h('p', { class: 'side-note' }, t('inspectTokensHint')),
           target.tokens.length > 0
             ? h(
                 'ul',
                 { class: 'token-uses' },
                 target.tokens.map((used) => {
                   const tokenKind = classifyTokenValue(used.name, used.value)
+                  const title = used.property
+                    ? `${used.property}: var(${used.name}) — ${t('inspectEditToken', { name: used.name })}`
+                    : t('inspectEditToken', { name: used.name })
                   return h(
                     'li',
                     {},
@@ -385,7 +488,7 @@ export function createInspectView(options: InspectViewOptions): InspectView {
                       {
                         type: 'button',
                         class: `token-use${isChanged(used.name) ? ' is-changed' : ''}`,
-                        title: t('inspectEditToken', { name: used.name }),
+                        title,
                         onclick: () => options.onOpenToken(used.name),
                       },
                       h('span', { class: 'token-use-name' }, used.name),
@@ -426,14 +529,16 @@ export function createInspectView(options: InspectViewOptions): InspectView {
   }
 
   return {
-    render(snapshot, matchRects = []) {
-      renderOverlay(snapshot, matchRects)
+    render(snapshot) {
+      if (snapshot.matchRects.length === 0) activeUsageScreenId = null
+      renderOverlay(snapshot)
       renderFloat(snapshot)
       renderPanel(snapshot)
     },
     renderOverlay,
     renderFloat,
     destroy() {
+      lastPanelKey = null
       stage.classList.remove('is-inspecting')
       for (const el of overlay.querySelectorAll('.inspect-box, .inspect-tag')) el.remove()
       for (const el of float.querySelectorAll('.inspect-hint, .page-chip')) el.remove()

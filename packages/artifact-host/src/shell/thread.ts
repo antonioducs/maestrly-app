@@ -2,9 +2,8 @@
 // viewer, and shown as text; the page never sees them.
 import { avatar } from './avatar.js'
 import { authorLabel, relativeTime, type Thread } from './comments-model.js'
-import type { PublicComment, TextQuote, ViewerState } from './contract.js'
+import type { PublicComment, TextQuote, ViewerDesign, ViewerState } from './contract.js'
 import { type DescribedTokenChange, describeSuggestionChanges } from './design-ui-model.js'
-import type { CommentWithSuggestion, ViewerDesign } from './design-ui-stub.js'
 import { h, put } from './dom.js'
 import { plural, type Translate } from './i18n.js'
 import { icon } from './icons.js'
@@ -173,9 +172,9 @@ export interface ThreadSuggestionOptions {
   design: ViewerDesign | null
   previewingCommentId: string | null
   canApply: boolean
-  onTogglePreview(comment: CommentWithSuggestion): void
-  onApply(comment: CommentWithSuggestion): void
-  onEditInTokens(comment: CommentWithSuggestion): void
+  onTogglePreview(comment: PublicComment): void
+  onApply(comment: PublicComment): void
+  onEditInTokens(comment: PublicComment): void
 }
 
 function message(
@@ -191,8 +190,7 @@ function message(
   const owner = state.ownerName || t('theOwner')
   const verified = !author.self && (author.kind === 'invited' || author.kind === 'approved')
   const at = new Date(comment.createdAt)
-  const withSuggestion = comment as CommentWithSuggestion
-  const suggestion = withSuggestion.suggestion
+  const suggestion = comment.suggestion
   const suggestionBlock =
     suggestion && suggestion.changes.length > 0
       ? suggestionBlockElement({
@@ -201,9 +199,9 @@ function message(
           appliedVersion: suggestion.appliedVersion,
           previewing: suggestionOptions?.previewingCommentId === comment.id,
           canApply: Boolean(suggestionOptions?.canApply),
-          onTogglePreview: () => suggestionOptions?.onTogglePreview(withSuggestion),
-          onApply: () => suggestionOptions?.onApply(withSuggestion),
-          onEditInTokens: () => suggestionOptions?.onEditInTokens(withSuggestion),
+          onTogglePreview: () => suggestionOptions?.onTogglePreview(comment),
+          onApply: () => suggestionOptions?.onApply(comment),
+          onEditInTokens: () => suggestionOptions?.onEditInTokens(comment),
         })
       : null
   const line = h(

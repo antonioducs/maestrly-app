@@ -1,4 +1,9 @@
+import { readdirSync, readFileSync } from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { parseDesignManifest, parseTokensCssWithSpans } from '../src/design.js'
+import type { ViewerDesign } from '../src/shell/contract.js'
 import {
   arrangeScreens,
   clampInspectTag,
@@ -30,11 +35,33 @@ import {
   wrapScreens,
   zoomAtCamera,
 } from '../src/shell/design-ui-model.js'
-import { createStubDesignController, SAMPLE_VIEWER_DESIGN } from '../src/shell/design-ui-stub.js'
 import { format, type ShellKey } from '../src/shell/i18n.js'
 
 const tEn = (key: ShellKey, vars?: Record<string, string | number>) => format('en', key, vars)
 const tPt = (key: ShellKey, vars?: Record<string, string | number>) => format('pt-BR', key, vars)
+
+function loadSampleDesign(): ViewerDesign {
+  const sampleDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures/design-sample')
+  const files = new Set(readdirSync(sampleDir))
+  const manifest = parseDesignManifest(
+    new Uint8Array(readFileSync(path.join(sampleDir, 'maestrly-design.json'))),
+    files
+  )
+  if (!manifest) throw new Error('Expected valid design-sample manifest')
+  const parsed = parseTokensCssWithSpans(readFileSync(path.join(sampleDir, manifest.tokens[0]!), 'utf8'))
+  return {
+    title: manifest.title ?? null,
+    tokenFile: manifest.tokens[0]!,
+    allTokenFiles: manifest.tokens,
+    componentsPath: manifest.components ?? null,
+    screens: manifest.screens,
+    componentTokens: manifest.componentTokens ?? {},
+    tokens: parsed.tokens,
+    themes: parsed.themes,
+  }
+}
+
+const SAMPLE_VIEWER_DESIGN = loadSampleDesign()
 
 describe('screens layout and camera', () => {
   it('wraps screens into rows at rowMax with horizontal and vertical gaps', () => {
@@ -208,6 +235,9 @@ describe('inspect formatting', () => {
       'button.primary'
     )
     expect(formatElementLabel({ tag: 'DIV', selector: '' })).toBe('div')
+    expect(formatElementLabel({ tag: 'H2', selector: 'main > h2:nth-of-type(1)', elementLabel: 'h2.dish' })).toBe(
+      'h2.dish'
+    )
   })
 
   it('places inspect tags above, below, or inside the box within frame bounds', () => {
@@ -252,28 +282,5 @@ describe('inspect formatting', () => {
     expect(formatUsageSummary(tEn, 1, 1, 6, 6)).toBe('1 instance on 1 screen')
     expect(formatUsageSummary(tEn, 5, 1, 6, 6)).toBe('5 instances on 1 screen')
     expect(formatUsageSummary(tEn, 18, 6, 6, 6)).toBe('18 instances on 6 screens')
-  })
-})
-
-describe('Phase A stub design controller', () => {
-  it('supports editing, resetting, discarding, and saving tokens against sample data', async () => {
-    const controller = createStubDesignController()
-    expect(controller.snapshot().design?.tokens).toHaveLength(46)
-    expect(controller.setTokenValue('--color-accent', '#0f766e')).toBe(true)
-    expect(controller.setTokenValue('--color-accent', 'red; evil: 1')).toBe(false)
-    expect(controller.snapshot().draftChanges).toHaveLength(1)
-
-    const saved = await controller.saveTokens()
-    expect(saved.ok).toBe(true)
-    if (saved.ok) {
-      expect(saved.version.number).toBe(4)
-      expect(saved.design.tokens.find((t) => t.name === '--color-accent')?.value).toBe('#0f766e')
-    }
-    expect(controller.snapshot().draftChanges).toHaveLength(0)
-
-    controller.setInspecting(true)
-    expect(controller.snapshot().inspecting).toBe(true)
-    expect(controller.escape()).toBe(true)
-    expect(controller.snapshot().inspecting).toBe(false)
   })
 })

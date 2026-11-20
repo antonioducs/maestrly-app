@@ -11,7 +11,8 @@ import {
   shouldHideScreenSize,
   zoomAtCamera,
 } from './design-ui-model.js'
-import type { DesignController, DesignSnapshot } from './design-ui-stub.js'
+import type { DesignScreen } from './contract.js'
+import type { DesignController, DesignSnapshot } from './design.js'
 import { h } from './dom.js'
 import type { Translate } from './i18n.js'
 import { icon } from './icons.js'
@@ -23,8 +24,8 @@ export interface ScreensSurfaceOptions {
   controller: DesignController
   stage: HTMLElement
   float: HTMLElement
-  /** Optional retry hook when core exposes retrying a failed screen frame. */
-  onRetryScreen?: (screenId: string) => void
+  /** Called when a screen is opened into Page view so the stage adjusts its viewport preset. */
+  onScreenOpened?: (screen: DesignScreen) => void
 }
 
 export interface ScreensSurface {
@@ -84,11 +85,15 @@ export function createScreensSurface(options: ScreensSurfaceOptions): ScreensSur
         'aria-label': fullLabel,
         'aria-pressed': 'false',
         title: fullLabel,
-        style: `left:${item.x}px;top:${item.y}px;width:${width}px;height:${height}px;--w:${width}px`,
       },
       labelEl,
       frameBox
     )
+    el.style.left = `${item.x}px`
+    el.style.top = `${item.y}px`
+    el.style.width = `${width}px`
+    el.style.height = `${height}px`
+    el.style.setProperty('--w', `${width}px`)
     world.append(el)
     items.set(screen.id, {
       ...item,
@@ -144,8 +149,7 @@ export function createScreensSurface(options: ScreensSurfaceOptions): ScreensSur
                   class: 'button',
                   onclick: (event: Event) => {
                     event.stopPropagation()
-                    if (options.onRetryScreen) options.onRetryScreen(entry.screen.id)
-                    else scheduleVisibleSync(true)
+                    controller.retryScreen(entry.screen.id)
                   },
                 },
                 t('retry')
@@ -292,9 +296,15 @@ export function createScreensSurface(options: ScreensSurfaceOptions): ScreensSur
     surface.classList.remove('is-panning')
     if (!moved && id !== currentFocus) setFocus(id)
   })
+  function openScreen(id: string): void {
+    const entry = items.get(id)
+    if (entry) options.onScreenOpened?.(entry.screen)
+    void controller.openScreen(id)
+  }
+
   surface.addEventListener('dblclick', (event) => {
     const id = event.target instanceof Element ? event.target.closest<HTMLElement>('.screen')?.dataset.screen : null
-    if (id) void controller.openScreen(id)
+    if (id) openScreen(id)
   })
   surface.addEventListener(
     'wheel',
@@ -317,7 +327,7 @@ export function createScreensSurface(options: ScreensSurfaceOptions): ScreensSur
     else if (event.key === 'ArrowLeft') step(-1)
     else if (event.key === 'ArrowDown') stepRow(1)
     else if (event.key === 'ArrowUp') stepRow(-1)
-    else if (event.key === 'Enter' && currentFocus) void controller.openScreen(currentFocus)
+    else if (event.key === 'Enter' && currentFocus) openScreen(currentFocus)
     else if (event.key === '+' || event.key === '=') zoomCenter(1.25)
     else if (event.key === '-' || event.key === '_') zoomCenter(0.8)
     else if (event.key === '0') setFocus(null)
@@ -423,7 +433,7 @@ export function createScreensSurface(options: ScreensSurfaceOptions): ScreensSur
             type: 'button',
             class: 'button small primary',
             title: t('screenOpenTitle', { name: focused.screen.name }),
-            onclick: () => void controller.openScreen(focused.screen.id),
+            onclick: () => openScreen(focused.screen.id),
           },
           t('screenOpen'),
           h('kbd', {}, '↵')

@@ -1,5 +1,7 @@
 // Tokens side panel (grouped editors, theme tabs, search filter, pending changes tray) and the Save / Apply modal.
-import type { ViewerState } from './contract.js'
+import { isValidTokenValue, type TokenGroup, type TokenValueKind, type ViewerState } from './contract.js'
+import type { DesignController, DesignSnapshot } from './design.js'
+import { canSaveTokens, canSuggestTokens } from './design-model.js'
 import {
   type DescribedTokenChange,
   describeDraftChanges,
@@ -17,15 +19,6 @@ import {
   tokensForTheme,
   tokenValuesEqual,
 } from './design-ui-model.js'
-import {
-  canSaveTokens,
-  canSuggestTokens,
-  type DesignController,
-  type DesignSnapshot,
-  isValidTokenValue,
-  type TokenGroup,
-  type TokenValueKind,
-} from './design-ui-stub.js'
 import { h, put, toast } from './dom.js'
 import { plural, type Translate } from './i18n.js'
 import { icon } from './icons.js'
@@ -55,12 +48,10 @@ export interface TokensPanelOptions {
   onRequestSave(): void
   /** Called when a non-owner clicks Suggest. */
   onRequestSuggest(): void
-  /** Optional retry hook when loading `GET design` fails. */
-  onRetryLoad?: () => void
 }
 
 export interface TokensPanel {
-  render(snapshot: DesignSnapshot, loadError?: boolean): void
+  render(snapshot: DesignSnapshot): void
   /** Opens the right theme, clears filter, scrolls to `name`, flashes the row, and focuses its input. */
   focusToken(name: string): void
   destroy(): void
@@ -504,7 +495,7 @@ export function createTokensPanel(options: TokensPanelOptions): TokensPanel {
     )
   }
 
-  function render(snapshot: DesignSnapshot, loadError = false): void {
+  function render(snapshot: DesignSnapshot): void {
     if (!snapshot.tokensOpen) {
       if (side.classList.contains('tokens-panel')) {
         side.hidden = true
@@ -529,21 +520,18 @@ export function createTokensPanel(options: TokensPanelOptions): TokensPanel {
           h(
             'div',
             { class: 'tokens-state', role: 'status', 'aria-label': t('tokensLoading') },
-            SKELETON_WIDTHS.map((width) =>
-              h(
-                'div',
-                { class: 'skeleton-row' },
-                h('span', { class: 'skeleton', style: `width:${width}%` }),
-                h('span', { class: 'skeleton' })
-              )
-            )
+            SKELETON_WIDTHS.map((width) => {
+              const bar = h('span', { class: 'skeleton' })
+              bar.style.width = `${width}%`
+              return h('div', { class: 'skeleton-row' }, bar, h('span', { class: 'skeleton' }))
+            })
           )
         )
       )
       return
     }
 
-    if (loadError || !snapshot.design) {
+    if (snapshot.loadError || !snapshot.design) {
       built = null
       side.replaceChildren(
         buildHead(snapshot),
@@ -554,8 +542,7 @@ export function createTokensPanel(options: TokensPanelOptions): TokensPanel {
             'div',
             { class: 'tokens-state' },
             h('p', { class: 'list-empty is-error', role: 'alert' }, t('tokensFailed')),
-            options.onRetryLoad &&
-              h('button', { type: 'button', class: 'button', onclick: () => options.onRetryLoad?.() }, t('retry'))
+            h('button', { type: 'button', class: 'button', onclick: () => void controller.reloadDesign() }, t('retry'))
           )
         )
       )

@@ -2006,6 +2006,7 @@ body.is-full .notice {
   border: 1px solid var(--select);
   border-radius: 2px;
   pointer-events: none;
+  transition-property: none;
   transform: translate(var(--x), var(--y));
 }
 
@@ -2039,6 +2040,7 @@ body.is-full .notice {
   white-space: nowrap;
   pointer-events: none;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
+  transition-property: none;
   transform: translate(var(--x), var(--y));
 }
 

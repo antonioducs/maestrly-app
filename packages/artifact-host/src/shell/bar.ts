@@ -3,7 +3,7 @@ import { avatar } from './avatar.js'
 import { hasVersionChoice } from './bar-model.js'
 import { relativeTime } from './comments-model.js'
 import type { ViewerIdentity, ViewerSharing, ViewerState } from './contract.js'
-import type { DesignView } from './design-ui-stub.js'
+import type { DesignView } from './design.js'
 import { copyText, h, put, toast } from './dom.js'
 import { plural, type Translate } from './i18n.js'
 import { icon } from './icons.js'
@@ -151,7 +151,7 @@ export function createBar(options: BarOptions): { root: HTMLElement; update(mode
   })
   const version = h(
     'div',
-    { class: 'version', role: 'group', 'aria-label': t('versionGroup'), hidden: !hasVersionChoice(artifact) },
+    { class: 'version', role: 'group', 'aria-label': t('versionGroup') },
     previous,
     versions.button,
     following
@@ -289,12 +289,13 @@ export function createBar(options: BarOptions): { root: HTMLElement; update(mode
     })
   )
 
+  const tools = h('div', { class: 'tools' }, options.comments && segment, comments, share, more, identity)
   const root = h(
     'header',
     { class: 'bar' },
     design ? h('div', { class: 'bar-start' }, doc, design) : doc,
-    version,
-    h('div', { class: 'tools' }, options.comments && segment, comments, share, more, identity)
+    hasVersionChoice(artifact) && version,
+    tools
   )
 
   return {
@@ -303,7 +304,8 @@ export function createBar(options: BarOptions): { root: HTMLElement; update(mode
       model = view
       const total = artifact.currentVersion
       const multipleVersions = hasVersionChoice(artifact)
-      version.hidden = !multipleVersions
+      if (multipleVersions && !version.isConnected) tools.before(version)
+      else if (!multipleVersions && version.isConnected) version.remove()
       const current = artifact.versions.find((item) => item.number === total)
       const updated = when(current?.createdAt ?? Date.now())
       meta.textContent = isOwner

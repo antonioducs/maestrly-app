@@ -1,18 +1,17 @@
 // Pure UI model functions for Inspect, Screens, Tokens, and token suggestions: no DOM dependencies, directly testable.
-import type { SelectionRect } from './contract.js'
-import {
-  classifyTokenValue,
-  type DesignScreen,
-  type InspectHover,
-  type InspectTarget,
-  resolveScreenViewport,
-  type ScreenViewport,
-  type TokenChange,
-  type TokenGroup,
-  type TokenSuggestionChange,
-  type TokenValueKind,
-  type ViewerDesign,
-} from './design-ui-stub.js'
+import type {
+  DesignScreen,
+  InspectHover,
+  InspectTarget,
+  ScreenViewport,
+  SelectionRect,
+  TokenChange,
+  TokenGroup,
+  TokenSuggestionChange,
+  TokenValueKind,
+  ViewerDesign,
+} from './contract.js'
+import { classifyTokenValue, resolveScreenViewport } from './design-model.js'
 import type { ShellKey, Translate } from './i18n.js'
 
 // --- Screens layout & camera math ---
@@ -438,7 +437,8 @@ export function splitTokenSummaryParts(text: string): { text: string; nowrap: bo
 // --- Inspect helpers ---
 
 /** Formats a non-component element label like `h2.section-title`, `div#app`, or `button`. */
-export function formatElementLabel(hover: Pick<InspectHover, 'tag' | 'selector'>): string {
+export function formatElementLabel(hover: Pick<InspectHover, 'tag' | 'selector' | 'elementLabel'>): string {
+  if (hover.elementLabel) return hover.elementLabel
   const tag = hover.tag.toLowerCase()
   const tail = hover.selector.split(/\s*>\s*|\s+/).pop() ?? ''
   if (tail.toLowerCase().startsWith(tag)) {

@@ -1111,6 +1111,7 @@ export function createDesignController(options: DesignControllerOptions): Design
         options.onDisableCommenting()
         inspecting = true
       }
+      rawHovered = null
       matchRects = []
       pendingHighlightComponent = null
       pendingSelectSelector = null
@@ -1179,7 +1180,6 @@ export function createDesignController(options: DesignControllerOptions): Design
         inspecting = true
       }
       rawHovered = null
-      rawInspected = null
       inspectedRect = null
       pendingRevealComponent = null
       pendingSelectSelector = null
@@ -1223,7 +1223,7 @@ export function createDesignController(options: DesignControllerOptions): Design
 
     setTokensOpen(open: boolean): void {
       if (open === tokensOpen) return
-      if (open && !design) return
+      if (open && !design && !loading && !loadError) return
       tokensOpen = open
       options.onChange()
     },

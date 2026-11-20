@@ -37,15 +37,12 @@ import {
   type SelectionRect,
   type ShellMessage,
   type TextQuote,
+  type ViewerDesign,
   type ViewerState,
 } from './contract.js'
+import type { SuggestTokensResult } from './design.js'
+import { canApplySuggestion } from './design-model.js'
 import type { DescribedTokenChange } from './design-ui-model.js'
-import {
-  canApplySuggestion,
-  type CommentWithSuggestion,
-  type SuggestTokensResult,
-  type ViewerDesign,
-} from './design-ui-stub.js'
 import { h, put, toast } from './dom.js'
 import { plural, type Translate } from './i18n.js'
 import { icon } from './icons.js'
@@ -61,10 +58,10 @@ export interface CommentsSuggestionOptions {
   getDesign(): ViewerDesign | null
   getPreviewingCommentId(): string | null
   getDraftChanges(): readonly DescribedTokenChange[]
-  onTogglePreview(comment: CommentWithSuggestion): void
-  onApply(comment: CommentWithSuggestion): void
-  onEditInTokens(comment: CommentWithSuggestion): void
-  onSubmitSuggestion(body: string, name: string | null): Promise<SuggestTokensResult>
+  onTogglePreview(comment: PublicComment): void
+  onApply(comment: PublicComment): void
+  onEditInTokens(comment: PublicComment): void
+  onSubmitSuggestion(body: string, guestName?: string | null): Promise<SuggestTokensResult>
 }
 
 export interface CommentsOptions {
@@ -646,7 +643,7 @@ export function createComments(options: CommentsOptions): CommentsController {
   function openThread(id: string, reveal = false): void {
     const thread = threadOf(id)
     if (!thread) return
-    if (thread.comment.version !== version) {
+    if (thread.comment.version !== version && !thread.comment.suggestion) {
       // The other version loads first, which closes whatever was open; its page scrolls to the passage when ready.
       options.onShowVersion(thread.comment.version)
       pendingReveal = hasPin(thread) ? id : null
@@ -697,7 +694,7 @@ export function createComments(options: CommentsOptions): CommentsController {
     const missing = !other && hasPin(thread) && positions[comment.id] === null
     const isUnreadNow = unread(thread)
     const quote = comment.anchor?.quote?.exact
-    const suggestion = (comment as CommentWithSuggestion).suggestion
+    const suggestion = comment.suggestion
     return h(
       'li',
       {},
