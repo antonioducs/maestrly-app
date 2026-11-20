@@ -411,6 +411,7 @@ export default {
       agentUnnamed: 'Seu agente',
       version: 'v{{version}}',
       resolved: 'Resolvido',
+      applied: 'Aplicado na v{{version}}',
       onSpot: 'Num ponto da página',
       onPage: 'Sobre a página inteira',
       reply: 'Responder',
@@ -1070,7 +1071,8 @@ export default {
       shortcut: 'Atalho global',
       recording: 'Pressione o atalho…',
       recordingHint: 'Use ao menos uma tecla além de Shift (⌘, Ctrl, Alt). Esc cancela.',
-      shortcutInvalid: 'Esse atalho não funciona fora do app: use ⌘, Ctrl ou Alt com uma letra, número, F1–F24 ou Espaço.',
+      shortcutInvalid:
+        'Esse atalho não funciona fora do app: use ⌘, Ctrl ou Alt com uma letra, número, F1–F24 ou Espaço.',
       shortcutOff: 'Desligado',
       shortcutDisable: 'Desligar',
       shortcutReset: 'Restaurar',
@@ -1113,7 +1115,8 @@ export default {
         autoSpeakTitle: 'Ler respostas em voz alta',
         autoSpeakDesc: 'A resposta a uma mensagem falada é lida frase a frase enquanto é escrita.',
         shortcutListensTitle: 'O atalho já começa a ouvir',
-        shortcutListensDesc: 'Abrir o assistente pelo atalho já começa a ouvir. Usar o atalho enquanto ele ouve ou lê para.',
+        shortcutListensDesc:
+          'Abrir o assistente pelo atalho já começa a ouvir. Usar o atalho enquanto ele ouve ou lê para.',
         wakeWordTitle: 'Abrir por voz',
         wakeWordDesc:
           'Diga a frase para abrir o assistente já ouvindo. A detecção roda neste computador, e o áudio só sai dele depois da frase. O indicador de microfone do sistema fica aceso enquanto isso estiver ligado.',
@@ -2435,7 +2438,8 @@ export default {
         mic: 'O microfone não abriu. Confira o acesso a ele nas configurações do sistema.',
         'transcribe-model-missing': 'O modelo de voz não está instalado. Instale em Configurações → Ditado.',
         'transcribe-key-missing': 'A transcrição precisa da chave de API. Adicione em Configurações → Ditado.',
-        'transcribe-key-rejected': 'O serviço de transcrição recusou a chave de API. Confira em Configurações → Ditado.',
+        'transcribe-key-rejected':
+          'O serviço de transcrição recusou a chave de API. Confira em Configurações → Ditado.',
         'transcribe-quota': 'A cota do serviço de transcrição acabou.',
         'transcribe-too-long': 'A fala foi longa demais para transcrever.',
         'transcribe-unavailable': 'A transcrição falhou. Toque para tentar de novo.',
@@ -2445,7 +2449,8 @@ export default {
         'speech-too-long': 'Uma frase era longa demais para ler em voz alta; a resposta fica no chat.',
         'speech-network': 'A voz não respondeu; a resposta fica no chat.',
         'speech-cancelled': 'A leitura parou.',
-        'speech-no-voice': 'Este computador não tem voz do sistema. Escolha a voz da OpenAI em Configurações → Assistente.',
+        'speech-no-voice':
+          'Este computador não tem voz do sistema. Escolha a voz da OpenAI em Configurações → Assistente.',
         'speech-playback': 'A resposta não pôde ser tocada; ela fica no chat.',
         'realtime-key-missing': 'O Realtime precisa de uma chave OpenAI. Adicione em Configurações → Ditado.',
         'realtime-key-rejected': 'A OpenAI recusou a chave. Confira em Configurações → Ditado.',

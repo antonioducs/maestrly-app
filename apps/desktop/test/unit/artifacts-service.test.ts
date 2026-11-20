@@ -644,6 +644,7 @@ describe('ArtifactsService', () => {
         body: 'Should the heading change?',
         place: 'passage',
         quote: 'Hello',
+        suggestion: null,
         status: 'open',
         createdAt: expect.any(Number),
       },
