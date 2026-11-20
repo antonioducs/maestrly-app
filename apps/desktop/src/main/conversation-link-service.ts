@@ -282,11 +282,38 @@ export function createConversationLinkService(deps: ConversationLinkServiceDeps)
     const deadline = deps.now() + (input.timeoutSeconds ?? CONVERSATION_WAIT_DEFAULT_SECONDS) * 1000
     const busy = () => deps.isRunning(id) || hasQueuedPeerMessage(caller.conversationId, id)
     const result = () => read(caller, { conversationId: id }) as ConversationReadResult
+    let stalledSlot = false
     while (busy()) {
       if (signal.aborted) throw new Error('The wait was cancelled.')
       const remaining = deadline - deps.now()
       if (remaining <= 0) return { ok: true, status: 'timeout', result: result() }
-      await Promise.race([deps.waitForSlot(id), deps.sleep(Math.min(WAIT_POLL_MS, remaining), signal)])
+      const ms = Math.min(WAIT_POLL_MS, remaining)
+      const running = deps.isRunning(id)
+      // When the target turn has ended and only queued peer messages remain (e.g. during DRAIN_SETTLE_MS),
+      // waitForSlot resolves in a microtask and would starve the event loop if raced unconditionally.
+      const wakeup = running && !stalledSlot ? deps.waitForSlot(id) : !running ? draining.get(id) : undefined
+      if (!wakeup) {
+        stalledSlot = false
+        await deps.sleep(ms, signal)
+        continue
+      }
+      const poll = new AbortController()
+      const onAbort = () => poll.abort()
+      if (signal.aborted) poll.abort()
+      else signal.addEventListener('abort', onAbort, { once: true })
+      let slept = false
+      try {
+        await Promise.race([
+          wakeup,
+          deps.sleep(ms, poll.signal).then(() => {
+            slept = true
+          }),
+        ])
+      } finally {
+        poll.abort()
+        signal.removeEventListener('abort', onAbort)
+      }
+      stalledSlot = running && !slept && deps.isRunning(id)
     }
     if (signal.aborted) throw new Error('The wait was cancelled.')
     return { ok: true, status: 'idle', result: result() }
