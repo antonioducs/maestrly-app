@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Autumn menu</title>
+    <!-- A page without the design contract: no manifest, no tokens file, no data-ds. Inspect shows computed styles only. -->
+    <style>
+      body {
+        margin: 0;
+        background: #fbfaf7;
+        color: #22201c;
+        font: 15px/1.6 Georgia, 'Times New Roman', serif;
+      }
+      .wrap {
+        max-width: 760px;
+        margin: 0 auto;
+        padding: 64px 32px;
+      }
+      .eyebrow {
+        color: #8a5a2b;
+        font: 600 12px/1 ui-sans-serif, system-ui, sans-serif;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+      h1 {
+        margin: 12px 0 16px;
+        font-size: 44px;
+        line-height: 1.1;
+      }
+      .lead {
+        color: #5c564d;
+        font-size: 18px;
+      }
+      .menu {
+        display: grid;
+        gap: 16px;
+        margin-top: 40px;
+      }
+      .dish {
+        display: flex;
+        justify-content: space-between;
+        gap: 24px;
+        padding: 20px 24px;
+        border: 1px solid #e7e1d6;
+        border-radius: 14px;
+        background: #ffffff;
+      }
+      .dish h2 {
+        margin: 0 0 4px;
+        font-size: 19px;
+      }
+      .dish p {
+        margin: 0;
+        color: #6b655b;
+        font-size: 14px;
+      }
+      .price {
+        color: #8a5a2b;
+        font: 600 16px ui-sans-serif, system-ui, sans-serif;
+        white-space: nowrap;
+      }
+      .cta {
+        display: inline-block;
+        margin-top: 32px;
+        padding: 12px 20px;
+        border-radius: 999px;
+        background: #22201c;
+        color: #fbfaf7;
+        font: 600 14px ui-sans-serif, system-ui, sans-serif;
+        text-decoration: none;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="wrap">
+      <p class="eyebrow">Crumb Bakehouse · autumn</p>
+      <h1>The autumn menu</h1>
+      <p class="lead">Six bakes for the colder months, available to wholesale customers from the first week of October.</p>
+      <section class="menu">
+        <article class="dish"><div><h2>Pumpkin seed rye</h2><p>Dark rye, toasted seeds, a long cold proof.</p></div><span class="price">$7.50</span></article>
+        <article class="dish"><div><h2>Apple and cardamom bun</h2><p>Laminated dough, baked apple, cardamom sugar.</p></div><span class="price">$3.80</span></article>
+        <article class="dish"><div><h2>Chestnut sourdough</h2><p>Country loaf with roasted chestnut flour.</p></div><span class="price">$8.20</span></article>
+      </section>
+      <a class="cta" href="#order">Order the autumn box</a>
+    </main>
+  </body>
+</html>

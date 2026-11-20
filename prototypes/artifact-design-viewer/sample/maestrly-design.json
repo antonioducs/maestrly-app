@@ -1,0 +1,18 @@
+{
+  "schema": "maestrly-prototype/v1",
+  "title": "Crumb orders",
+  "tokens": ["tokens.css"],
+  "components": "components.html",
+  "screens": [
+    { "id": "dashboard", "name": "Today", "path": "index.html#/dashboard", "viewport": "desktop" },
+    { "id": "orders", "name": "Orders", "path": "index.html#/orders", "viewport": "desktop" },
+    { "id": "order-detail", "name": "Order detail", "path": "index.html#/orders/1042", "viewport": "desktop" },
+    { "id": "orders-empty", "name": "Orders · empty", "path": "index.html#/orders?state=empty", "viewport": "desktop" },
+    { "id": "order-mobile", "name": "Order · mobile", "path": "index.html#/m/orders/1042", "viewport": "mobile" },
+    { "id": "sync-error", "name": "Orders · offline", "path": "index.html#/m/orders?state=error", "viewport": "mobile" }
+  ],
+  "componentTokens": {
+    "Button": ["--color-accent", "--color-on-accent", "--radius-md", "--text-sm", "--space-4"],
+    "Badge": ["--radius-full", "--text-xs", "--space-2"]
+  }
+}
