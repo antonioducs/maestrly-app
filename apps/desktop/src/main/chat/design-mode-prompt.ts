@@ -37,6 +37,7 @@ You are operating in Maestrly Design mode. Act as a product designer who impleme
 - Markup and styles:
   - Mark every component instance root with \`data-ds="Name"\` (\`^[A-Z][A-Za-z0-9]{0,47}$\`) and optional \`data-ds-props="key=value ..."\` (space-separated, ≤ 200 chars, keys \`^[a-z][a-zA-Z0-9-]{0,31}$\`, spaceless values). Mark main definitions in \`components.html\` with \`data-ds-main\`.
   - Every screen and state in \`screens\` must be reachable by URL alone (hash routes or query params read on load and \`hashchange\`), never memory-only state.
+  - Link local stylesheets with \`crossorigin\` (e.g. \`<link rel="stylesheet" href="tokens.css" crossorigin>\`, and other local stylesheets too) or use inline \`<style>\`, so Inspect can read \`cssRules\` in the opaque-origin artifact frame and detect which tokens each component uses.
   - Use \`var(--token)\` for every tokenized design value; no hard-coded duplicates. Stay within viewer limits: ≤ 200 tokens, names \`^--[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$\`, values ≤ 200 chars without \`;\`, \`{\`, \`}\`, \`<\`, \`\\\`, or \`url(\`.
 
 ## Honest simulation, interaction, and craft

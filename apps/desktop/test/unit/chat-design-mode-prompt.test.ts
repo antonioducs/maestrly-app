@@ -53,6 +53,8 @@ describe('Design mode prompt', () => {
       'data-ds-props',
       'data-ds-main',
       'hashchange',
+      '<link rel="stylesheet" href="tokens.css" crossorigin>',
+      'cssRules',
       'var(--token)',
       '≤ 200 tokens',
       'url(',

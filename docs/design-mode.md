@@ -116,6 +116,11 @@ Key contract rules:
   (space-separated pairs, up to 200 characters, keys `^[a-z][a-zA-Z0-9-]{0,31}$`,
   values without spaces). Main definitions in `components.html` carry
   `data-ds-main`.
+- **Stylesheet linking**: link `tokens.css` and any other local stylesheets
+  with `crossorigin` (`<link rel="stylesheet" href="tokens.css" crossorigin>`),
+  or use inline `<style>`. Because the artifact frame uses an opaque origin,
+  `<link rel="stylesheet">` without `crossorigin` cannot have its `cssRules`
+  read by Inspect to detect which tokens each component uses.
 - **Token usage and limits**: styles use `var(--token)` for tokenized values
   without hard-coded duplicates. Artifacts support up to 200 tokens, with names
   matching `^--[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$` and values up to 200 characters
