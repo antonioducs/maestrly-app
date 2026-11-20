@@ -47,7 +47,6 @@ export interface ScreenUsage {
   screenName: string
   status: ScreenUsageStatus
   count: number | null
-  measuring: boolean
 }
 
 export interface ScreenFrameState {
@@ -701,7 +700,6 @@ export function createDesignController(options: DesignControllerOptions): Design
                 screenName: screen.name,
                 status: 'done',
                 count: Object.hasOwn(counts, component) ? counts[component]! : 0,
-                measuring: false,
               }
             }
             const frameState = screenStates.get(screen.id)
@@ -711,7 +709,6 @@ export function createDesignController(options: DesignControllerOptions): Design
                 screenName: screen.name,
                 status: 'failed',
                 count: null,
-                measuring: false,
               }
             }
             const isMeasuringNow =
@@ -722,7 +719,6 @@ export function createDesignController(options: DesignControllerOptions): Design
               screenName: screen.name,
               status: isMeasuringNow ? 'measuring' : 'queued',
               count: null,
-              measuring: measuringScreenIds.has(screen.id),
             }
           })
         },

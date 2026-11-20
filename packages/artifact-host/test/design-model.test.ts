@@ -794,21 +794,20 @@ describe('createDesignController progressive inventory, pool, preview, save, sug
     await ctrl.setVersion(1, '/c/cap.sig/index.html', Date.now() + 600_000)
     expect(ctrl.snapshot().design?.screens).toHaveLength(8)
 
-    // Before requestInventory: counts are null, status is queued, and measuring is false
+    // Before requestInventory: counts are null and status is 'queued'
     expect(ctrl.snapshot().componentUsage('Button')[0]).toEqual({
       screenId: 'scr-1',
       screenName: 'Screen 1',
       status: 'queued',
       count: null,
-      measuring: false,
     })
 
     ctrl.requestInventory()
     await new Promise((r) => setTimeout(r, 0))
 
-    // All 8 unmeasured screens report measuring: true; up to 2 loading frames report status 'measuring' while queued ones stay 'queued'
+    // Up to 2 loading frames report status 'measuring' while remaining unmeasured screens stay 'queued'
     const duringLoad = ctrl.snapshot().componentUsage('Button')
-    expect(duringLoad.every((u) => u.count === null && u.measuring)).toBe(true)
+    expect(duringLoad.every((u) => u.count === null)).toBe(true)
     expect(duringLoad.filter((u) => u.status === 'measuring').length).toBe(2)
     expect(duringLoad.filter((u) => u.status === 'queued').length).toBe(6)
 
@@ -855,7 +854,6 @@ describe('createDesignController progressive inventory, pool, preview, save, sug
         screenName: s.name,
         status: 'done',
         count: idx + 1,
-        measuring: false,
       }))
     )
 

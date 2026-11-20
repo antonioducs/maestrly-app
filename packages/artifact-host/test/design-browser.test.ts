@@ -207,7 +207,7 @@ describe('real Chromium sandboxed iframe bridge (<link crossorigin> CSSOM + adop
     expect(manifestFallbackTarget.target.tokensFromManifest).toBe(true)
     expect(manifestFallbackTarget.target.tokens).toEqual([{ name: '--opaque-color', value: 'rgb(16, 185, 129)' }])
 
-    // Clicking `#btn-main` (`data-ds-main`) reports normalized variants across all `[data-ds="PrimaryButton"]` elements
+    // Clicking `#btn-main` (`data-ds-main`) reports normalized variants from non-main `[data-ds="PrimaryButton"]` instances
     await page.evaluate(() => {
       ;(window as unknown as { __bridgeMessages: unknown[] }).__bridgeMessages = []
     })
@@ -220,7 +220,7 @@ describe('real Chromium sandboxed iframe bridge (<link crossorigin> CSSOM + adop
       target: { main: boolean; variants?: string[] }
     }
     expect(mainTarget.target.main).toBe(true)
-    expect(mainTarget.target.variants).toEqual(['variant=solid size=lg', 'variant=ghost size=sm'])
+    expect(mainTarget.target.variants).toEqual(['variant=solid size=lg'])
 
     // `inspect-select` selects ancestor `#card` programmatically and `highlight-component` returns instance match rects
     await page.evaluate(() => {

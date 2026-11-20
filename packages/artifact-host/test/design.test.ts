@@ -590,5 +590,13 @@ describe('parseTokensCssWithSpans & buildTokenEdits', () => {
     const desktopParsed = parseTokensCssWithSpans(desktopTokensCss)
     expect(desktopParsed.tokens).toHaveLength(181)
     expect(desktopParsed.themes).toEqual([])
+    for (const tok of [...sampleParsed.tokens, ...desktopParsed.tokens]) {
+      expect(isValidTokenName(tok.name), tok.name).toBe(true)
+      expect(isValidTokenValue(tok.value), `${tok.name}: ${tok.value}`).toBe(true)
+      for (const [themeSel, themeVal] of Object.entries(tok.themes)) {
+        expect(isValidThemeSelector(themeSel), themeSel).toBe(true)
+        expect(isValidTokenValue(themeVal), `${tok.name} (${themeSel}): ${themeVal}`).toBe(true)
+      }
+    }
   })
 })

@@ -415,8 +415,8 @@ owns whiteboard synchronization; user-facing labels follow the UX prototype.
   - When a newly mounted screen frame emits `{ type: 'ready' }`, `DesignController` immediately posts the active
     `token-preview` (if any) and an `inventory-request` if that screen's component counts are not cached yet.
   - `requestInventory()` progressively measures unmeasured screens on demand while respecting `MAX_LIVE_SCREEN_FRAMES`
-    and `MAX_CONCURRENT_FRAME_LOADS`, marking queued/loading screens with `measuring: true` in `ScreenUsage` and
-    publishing per-screen counts incrementally as each `inventory` response arrives.
+    and `MAX_CONCURRENT_FRAME_LOADS`, reporting `status: 'queued' | 'measuring' | 'done' | 'failed'` in `ScreenUsage`
+    and publishing per-screen counts incrementally as each `inventory` response arrives.
 - **Frame routing (`event.source`)**: `viewer.ts` replaces its single-frame `event.source !== frame.contentWindow`
   check with a `FrameRegistry` scanning connected iframes (`el.isConnected && el.contentWindow === event.source` across
   at most `1 + 6` frames):
@@ -716,7 +716,7 @@ export interface InspectTarget extends InspectHover {
   tokens: UsedToken[]
   /** Ancestor `[data-ds]` components from outermost to nearest parent (`<= 8`). */
   chain?: readonly InspectAncestor[]
-  /** Distinct normalized `data-ds-props` strings across `[data-ds="<component>"]` when `main` is true (`<= 32`). */
+  /** Distinct normalized `data-ds-props` strings across non-main `[data-ds="<component>"]` instances when `main` is true (`<= 32`). */
   variants?: readonly string[]
   /** True when the token list came from `manifest.componentTokens`. */
   tokensFromManifest?: boolean
@@ -808,7 +808,6 @@ export interface ScreenUsage {
   screenName: string
   status: ScreenUsageStatus
   count: number | null
-  measuring: boolean
 }
 
 export interface ScreenFrameState {

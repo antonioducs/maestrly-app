@@ -525,7 +525,7 @@
     const limit = Math.min(nodes.length, MAX_INVENTORY_NODES)
     for (let i = 0; i < limit && out.length < MAX_COMPONENT_VARIANTS; i++) {
       const el = nodes[i]!
-      if (el.getAttribute('data-ds') !== component) continue
+      if (el.hasAttribute('data-ds-main') || el.getAttribute('data-ds') !== component) continue
       const norm = normalizeVariantProps(el.getAttribute('data-ds-props'))
       if (norm && !seen.has(norm)) {
         seen.add(norm)
@@ -729,31 +729,31 @@
       const el = nodes[i]!
       const comp = el.getAttribute('data-ds')
       if (!comp || !COMPONENT_NAME_RE.test(comp)) continue
-      const normVariant = normalizeVariantProps(el.getAttribute('data-ds-props'))
-      if (normVariant) {
-        if (!Object.hasOwn(variants, comp)) {
-          if (variantKeys < MAX_INVENTORY_COMPONENTS) {
-            variantKeys++
-            Object.defineProperty(variants, comp, {
-              value: [normVariant],
-              enumerable: true,
-              writable: true,
-              configurable: true,
-            })
-          }
-        } else {
-          const list = variants[comp]!
-          if (list.length < MAX_COMPONENT_VARIANTS && !list.includes(normVariant)) {
-            list.push(normVariant)
-          }
-        }
-      }
       if (el.hasAttribute('data-ds-main')) {
         if (!seenMains.has(comp) && mains.length < MAX_INVENTORY_COMPONENTS) {
           seenMains.add(comp)
           mains.push(comp)
         }
       } else {
+        const normVariant = normalizeVariantProps(el.getAttribute('data-ds-props'))
+        if (normVariant) {
+          if (!Object.hasOwn(variants, comp)) {
+            if (variantKeys < MAX_INVENTORY_COMPONENTS) {
+              variantKeys++
+              Object.defineProperty(variants, comp, {
+                value: [normVariant],
+                enumerable: true,
+                writable: true,
+                configurable: true,
+              })
+            }
+          } else {
+            const list = variants[comp]!
+            if (list.length < MAX_COMPONENT_VARIANTS && !list.includes(normVariant)) {
+              list.push(normVariant)
+            }
+          }
+        }
         const hasKey = Object.hasOwn(instances, comp)
         if (!hasKey) {
           if (instanceKeys >= MAX_INVENTORY_COMPONENTS) continue
