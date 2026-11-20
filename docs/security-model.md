@@ -455,6 +455,24 @@ access is limited
 to its own files and a fixed allowlist of CDNs. Messages from content to the
 viewer are validated, capped, and rendered as text.
 
+For prototype pages that declare `maestrly-design.json`, the viewer reads the
+manifest and token declarations on the host within strict size, path, and count
+bounds, mounts screen frames under the same capability path and sandbox policy
+with a capped pool of live frames, and draws Inspect overlays in the viewer
+shell above the frame rather than inside it. In Inspect mode the bridge blocks
+page clicks at capture phase and reports bounded component metadata, computed
+style values, and token names, which the shell validates and renders as text.
+Live token previews construct a stylesheet inside the frame via
+`adoptedStyleSheets` after rejecting syntax-breaking characters, CSS comments,
+`!important`, and external resource functions (`url()`, `image-set()`, `src()`),
+so previews never mutate the page DOM or trigger network fetches. Saving token
+edits directly as a new version and applying a comment's token suggestion are
+owner-only viewer API writes that rewrite only the matched custom-property value
+spans on a verified base version; non-owners with access may attach bounded,
+server-verified token suggestions to top-level comments when comments are
+enabled, and those suggestions travel inside the same escaped
+`artifact_comments` envelope as plain comment data.
+
 After a local publication, and when a listed server version lacks a preview,
 the desktop renders the new version for a preview, in
 an offscreen window that is never shown. It loads the owner view through a fresh

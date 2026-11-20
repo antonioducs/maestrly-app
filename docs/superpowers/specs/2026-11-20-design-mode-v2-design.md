@@ -99,6 +99,7 @@ Artifacts must be self-contained, so the design system files are copied in, not 
 | Field | Rule |
 | --- | --- |
 | `schema` | Exactly `maestrly-prototype/v1`. |
+| `title` | Optional string, at most 120 characters. |
 | `tokens` | 1 to 8 relative paths of CSS files in the artifact. The first one is where token edits are saved. |
 | `components` | Optional relative path of the components page. |
 | `screens` | 1 to 50 entries. `id` matches `^[a-z0-9][a-z0-9-]{0,47}$` and is unique; `name` is at most 80 characters; `path` is a relative path of an HTML file in the artifact, optionally followed by `?query` and `#fragment`, at most 300 characters; `viewport` is `desktop` (1440×900), `tablet` (834×1112), `mobile` (390×844) or `{ "width": 320–2560, "height": 320–2560 }`. |
@@ -110,12 +111,16 @@ Markup:
 - `data-ds-props="variant=primary size=md"`: space-separated `key=value` pairs, at most 200 characters, keys matching
   `^[a-z][a-zA-Z0-9-]{0,31}$` and values without spaces.
 - `data-ds-main` marks the main component definition, in `components.html`.
+- Local stylesheets are linked with `<link rel="stylesheet" href="…" crossorigin>` so Inspect can read `sheet.cssRules`
+  inside the sandboxed opaque (`"null"`) origin; verified in Chromium that omitting `crossorigin` throws `SecurityError:
+  Cannot access rules` even when the response carries `Access-Control-Allow-Origin: *` (`<style>` blocks and
+  `componentTokens` + `getComputedStyle` remain available as fallback).
 - Every screen and every state named in `screens` is reachable by its URL alone: hash routes or query parameters that
   the prototype reads on load and on `hashchange`. Primary flows never depend on state that exists only in memory.
 - Styles use `var(--token)` for every design value that the tokens file defines; no hard-coded duplicates.
 
 Limits shared by the host, bridge and viewer: 200 tokens per artifact, token names matching
-`^--[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$`, token values at most 200 characters without `;`, `{`, `}`, `<`, `\`, or `url(`.
+`^--[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$`, token values at most 200 characters without `;`, `{`, `}`, `<`, `\`, `/*`, `*/`, `!important`, newlines, `url(`, `image-set(`, `-webkit-image-set(`, or `src(`.
 
 ## Viewer features
 
@@ -382,6 +387,9 @@ owns whiteboard synchronization; user-facing labels follow the UX prototype.
     from the DOM, and deletes it from the registry so its browsing context is reclaimed immediately.
   - When a newly mounted screen frame emits `{ type: 'ready' }`, `DesignController` immediately posts the active
     `token-preview` (if any) and an `inventory-request` if that screen's component counts are not cached yet.
+  - `requestInventory()` progressively measures unmeasured screens on demand while respecting `MAX_LIVE_SCREEN_FRAMES`
+    and `MAX_CONCURRENT_FRAME_LOADS`, marking queued/loading screens with `measuring: true` in `ScreenUsage` and
+    publishing per-screen counts incrementally as each `inventory` response arrives.
 - **Frame routing (`event.source`)**: `viewer.ts` replaces its single-frame `event.source !== frame.contentWindow`
   check with a `FrameRegistry` scanning connected iframes (`el.isConnected && el.contentWindow === event.source` across
   at most `1 + 6` frames):
@@ -740,7 +748,8 @@ export type DesignView = 'page' | 'screens'
 export interface ScreenUsage {
   screenId: string
   screenName: string
-  count: number
+  count: number | null
+  measuring: boolean
 }
 
 export interface ScreenFrameState {
