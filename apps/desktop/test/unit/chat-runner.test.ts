@@ -179,7 +179,7 @@ describe('chat runner helpers', () => {
     const design = SYSTEM_PROMPT('/repo', true, 'design', true)
     const agent = SYSTEM_PROMPT('/repo', true, 'agent', true)
 
-    expect(design.match(/# Maestrly Design mode — design-v1/g)).toHaveLength(1)
+    expect(design.match(/# Maestrly Design mode — design-v2/g)).toHaveLength(1)
     expect(design).toContain('You are operating in Maestrly Design mode')
     expect(design).toContain('ON — you receive them NATIVELY in your tool set')
     expect(design).toContain('terminal_*, browser_*, notes_*, memory_*, debug_*')

@@ -54,7 +54,7 @@ describe('developer instructions subagent catalog', () => {
   it('keeps Design identity exactly once with the Agent subagent catalog', () => {
     const out = maestrlyDeveloperInstructions('design', [], agents)
 
-    expect(out.match(/# Maestrly Design mode — design-v1/g)).toHaveLength(1)
+    expect(out.match(/# Maestrly Design mode — design-v2/g)).toHaveLength(1)
     expect(out).toContain('This turn is Design mode with Agent-equivalent capabilities')
     expect(out).toContain(
       '- general-purpose [generic fallback, worker, inherited profile]: Worker agent with FULL tools.'

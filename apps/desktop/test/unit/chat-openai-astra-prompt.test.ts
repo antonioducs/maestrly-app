@@ -60,7 +60,7 @@ describe('OpenAI Astra prompt profile', () => {
       nativeTools: { localShell: true, applyPatch: true },
     })
 
-    expect(prompt.instructions.match(/# Maestrly Design mode — design-v1/g)).toHaveLength(1)
+    expect(prompt.instructions.match(/# Maestrly Design mode — design-v2/g)).toHaveLength(1)
     expect(prompt.instructions).toContain('Design mode: build a navigable visual prototype')
     expect(prompt.instructions).toContain('executable, interactive visual prototype')
     expect(prompt.instructions).not.toContain('Plan mode: investigate')
