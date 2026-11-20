@@ -1,0 +1,224 @@
+/*
+ * Maestrly desktop design tokens.
+ *
+ * Extracted from apps/desktop/src/renderer/styles.css (the `:root` theme and its `@theme inline` mapping), the
+ * Tailwind CSS v4 defaults the renderer compiles against, and the arbitrary values its components repeat. The renderer
+ * stays the source of truth: when a value here disagrees with it, the renderer wins and this file is updated.
+ *
+ * The desktop app has one theme, dark. There is no light theme to extract, so every token lives on `:root`.
+ * Spacing names follow the Tailwind step they replace: `--space-2-5` is `p-2.5` (10px).
+ */
+:root {
+  color-scheme: dark;
+
+  /* ---------- Color · surfaces ---------- */
+  --color-window: #0a0a0b; /* BrowserWindow background on Linux and Windows; macOS shows vibrancy here */
+  --color-surface: rgba(20, 20, 22, 0.62); /* drawer, terminal tabs */
+  --color-surface-elevated: rgba(30, 30, 33, 0.82); /* cards and inputs; anything floating uses a popover color */
+  --color-sidebar: rgba(16, 16, 18, 0.5);
+  --color-rail: rgba(0, 0, 0, 0.18); /* the icon rail over the sidebar */
+  --color-chat-canvas: #0d0d10; /* the agent chat's black */
+  --color-terminal-bg: rgba(10, 10, 11, 0.82);
+  --color-popover: #1e1e21; /* menus, selects, tooltips, toasts, dialogs */
+  --color-popover-chat: #161618; /* the composer's pickers, plus menu and slash menu */
+  --color-floating: #1a1a1f; /* scroll-to-bottom, chat search bar, activity pills */
+  --color-floating-hover: #26262d;
+  --color-timeline-node: #1a1a1d; /* behind an activity step's icon, over the timeline line */
+  --color-overlay: rgba(0, 0, 0, 0.6); /* dialog backdrop */
+  --color-overlay-confirm: rgba(0, 0, 0, 0.5); /* confirm dialog backdrop */
+
+  /* ---------- Color · text ---------- */
+  --color-foreground: rgba(237, 234, 227, 0.96);
+  --color-foreground-soft: color-mix(in oklab, var(--color-foreground) 90%, transparent); /* view titles, names */
+  --color-sidebar-foreground: rgba(237, 234, 227, 0.92);
+  --color-prose-text: rgba(237, 234, 227, 0.9); /* paragraphs in rendered Markdown, messages included */
+  --color-muted-foreground: rgba(154, 149, 140, 0.85); /* secondary text, idle icons */
+  --color-muted-foreground-soft: color-mix(in oklab, var(--color-muted-foreground) 80%, transparent); /* timestamps */
+  --color-muted-foreground-faint: color-mix(in oklab, var(--color-muted-foreground) 60%, transparent); /* eyebrows */
+
+  /* ---------- Color · brand and actions ---------- */
+  --color-primary: #edeae3; /* warm ivory: the app-wide primary, selection and focus */
+  --color-primary-foreground: #0a0a0b;
+  --color-action: oklch(58.5% 0.233 277.117); /* indigo-500: the chat's send and the chat settings' main action */
+  --color-action-hover: oklch(67.3% 0.182 276.935); /* indigo-400 */
+  --color-action-foreground: #ffffff;
+  --color-destructive: #ff7a85;
+  --color-destructive-foreground: #ffffff;
+
+  /* ---------- Color · fills (white over the dark surfaces) ---------- */
+  --color-secondary: rgba(255, 255, 255, 0.06);
+  --color-muted: rgba(255, 255, 255, 0.05);
+  --color-accent: rgba(255, 255, 255, 0.08); /* hover and highlighted items */
+  --color-sidebar-accent: rgba(237, 234, 227, 0.1); /* selected conversation, chosen choice card */
+  --color-fill-card: rgba(255, 255, 255, 0.02); /* tool cards, settings cards */
+  --color-fill-raised: rgba(255, 255, 255, 0.03); /* composer shell, quick picks */
+  --color-fill-track: rgba(255, 255, 255, 0.035); /* segmented control track */
+  --color-fill-hover: rgba(255, 255, 255, 0.04); /* list row hover */
+  --color-fill-rail-hover: rgba(255, 255, 255, 0.045); /* rail buttons, branch chip */
+  --color-fill-bubble: rgba(255, 255, 255, 0.05); /* user message, picker item hover */
+  --color-fill-active: rgba(255, 255, 255, 0.06); /* settings nav item, chat icon buttons */
+  --color-fill-strong: rgba(255, 255, 255, 0.1); /* active segment */
+  --color-fill-switch-off: rgba(255, 255, 255, 0.15);
+  --color-knob: #ffffff; /* switch thumbs */
+  --color-fill-well: rgba(0, 0, 0, 0.2); /* sidebar search field */
+  --color-fill-code: rgba(0, 0, 0, 0.3); /* tool arguments and results */
+  --color-fill-pre: rgba(10, 12, 17, 0.55); /* code blocks in Markdown */
+  --color-fill-inline-code: rgba(255, 255, 255, 0.07);
+
+  /* ---------- Color · lines ---------- */
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-border-strong: rgba(255, 255, 255, 0.14);
+  --color-border-subtle: rgba(255, 255, 255, 0.06); /* user message, menu dividers */
+  --color-border-chip: rgba(255, 255, 255, 0.07); /* the branch chip's ring */
+  --color-border-floating: rgba(255, 255, 255, 0.1); /* the composer's popovers */
+  --color-border-focus: rgba(255, 255, 255, 0.16); /* composer shell while typing */
+  --color-border-selected: rgba(237, 234, 227, 0.3); /* the selected conversation's inset line */
+  --color-input: rgba(255, 255, 255, 0.1);
+  --color-ring: rgba(237, 234, 227, 0.5);
+  --color-selection: rgba(237, 234, 227, 0.22);
+
+  /* ---------- Color · status ---------- */
+  --color-status-working: #edeae3;
+  --color-status-ready: #5bd6a0;
+  --color-status-waiting: #edeae3;
+  --color-status-error: #ff7a85;
+  --color-attention: oklch(63.7% 0.237 25.331); /* red-500: unread and attention dots */
+  --color-warn: #f2b45c; /* artifact and routine warnings */
+  --color-warn-ink: #f6ddb4;
+  --color-routine: #9db7e8;
+  --color-routine-soft: rgba(157, 183, 232, 0.13);
+  --color-routine-line: rgba(157, 183, 232, 0.32);
+  --color-tool-running: oklch(74.6% 0.16 232.661); /* sky-400 */
+  --color-tool-done: oklch(76.5% 0.177 163.223); /* emerald-400 */
+  --color-success: oklch(69.6% 0.17 162.48); /* emerald-500: success toasts, enabled tool toggles */
+  --color-tool-error: oklch(70.4% 0.191 22.216); /* red-400 */
+  --color-tool-waiting: oklch(82.8% 0.189 84.429); /* amber-400 */
+  --color-caution: oklch(76.9% 0.188 70.08); /* amber-500: permission prompts */
+  --color-caution-ink: oklch(92.4% 0.12 95.746); /* amber-200 */
+  --color-caution-faint: oklch(96.2% 0.059 95.617); /* amber-100: the command a permission prompt shows */
+
+  /* ---------- Color · chat modes ---------- */
+  --color-mode-plan: oklch(78.5% 0.115 274.713); /* indigo-300: Plan and Ask */
+  --color-reasoning: oklch(81.1% 0.111 293.571); /* violet-300 */
+  --color-subagent: oklch(60.6% 0.25 292.717); /* violet-500 */
+  --color-design: oklch(82.8% 0.189 84.429); /* amber-400: Design mode */
+  --color-design-text: oklch(87.9% 0.169 91.605); /* amber-300 */
+  --color-design-edge: oklch(75% 0.183 55.934); /* orange-400: the Design chip's ring */
+
+  /* ---------- Typography ---------- */
+  --font-sans: 'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  --font-mono-prose: 'SF Mono', 'JetBrains Mono', Menlo, monospace; /* code inside rendered Markdown */
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+  --font-tracking-tight: -0.025em;
+  --font-tracking-title: -0.005em; /* the sidebar's view title */
+  --font-tracking-wide: 0.025em; /* uppercase section labels */
+  --font-tracking-wider: 0.05em;
+  --font-tracking-eyebrow: 0.08em;
+
+  /* Sizes. Only the Tailwind steps carry a line height; arbitrary sizes inherit 1.5 from the page. */
+  --text-badge: 9.5px; /* rail counts */
+  --text-micro: 10px; /* uppercase labels, branch chip, counts */
+  --text-tag: 10.5px; /* collapsed counts, eyebrows */
+  --text-meta: 11px; /* timestamps, hints, tool status */
+  --text-note: 11.5px;
+  --text-xs: 12px; /* Tailwind text-xs */
+  --text-xs-leading: 16px;
+  --text-control: 12.5px; /* search fields, toasts */
+  --text-row: 13px; /* sidebar rows, view titles, tool cards, picker items */
+  --text-prose: 13.5px; /* rendered Markdown outside the chat */
+  --text-sm: 14px; /* Tailwind text-sm: buttons, inputs, menus */
+  --text-sm-leading: 20px;
+  --text-chat: 14.5px; /* chat answers at 100% zoom */
+  --text-input: 15px; /* the composer and the person's messages */
+  --text-base: 16px;
+  --text-base-leading: 24px;
+  --text-lg: 18px; /* dialog titles */
+  --text-lg-leading: 28px;
+  --text-display: 19px; /* empty-state headings */
+  --text-leading-none: 1;
+  --text-leading-tight: 1.25;
+  --text-leading-snug: 1.375;
+  --text-leading-normal: 1.5;
+  --text-leading-relaxed: 1.625;
+  --text-leading-prose: 1.65;
+
+  /* ---------- Spacing (Tailwind steps) ---------- */
+  --space-0-5: 2px;
+  --space-1: 4px;
+  --space-1-5: 6px;
+  --space-2: 8px;
+  --space-2-5: 10px;
+  --space-3: 12px;
+  --space-3-5: 14px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 28px;
+  --space-8: 32px;
+
+  /* ---------- Sizes ---------- */
+  --size-header: 40px; /* every view's title bar (h-10) */
+  --size-rail: 48px; /* --rail-width */
+  --size-sidebar: 296px; /* rail included */
+  --size-settings-nav: 192px;
+  --size-chat-column: 768px; /* max-w-3xl */
+  --size-settings-column: 672px; /* max-w-2xl */
+  --size-dialog: 512px; /* max-w-lg */
+  --size-confirm: 400px;
+  --size-popover-chat: 320px; /* w-80 */
+  --size-toast: 360px;
+  --size-control: 36px; /* h-9 */
+  --size-control-sm: 32px; /* h-8 */
+  --size-control-xs: 28px; /* h-7 */
+  --size-control-2xs: 24px; /* h-6 */
+  --size-search: 30px; /* the sidebar search field */
+  --size-icon: 16px;
+  --size-icon-sm: 14px;
+  --size-icon-xs: 12px;
+  --size-icon-rail: 18px;
+
+  /* ---------- Radius (--radius is 0.75rem) ---------- */
+  --radius-xs: 4px; /* rounded */
+  --radius-sm: 8px; /* rounded-sm: menu items */
+  --radius-md: 10px; /* rounded-md: buttons, inputs, menus, rows */
+  --radius-lg: 12px; /* rounded-lg and rounded-xl: cards, dialogs, bubbles */
+  --radius-2xl: 16px; /* the composer shell, empty-state icons */
+  --radius-full: 9999px;
+
+  /* ---------- Shadows and lines ---------- */
+  --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  --shadow-2xl: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+  --shadow-hairline-right: inset -0.5px 0 0 0 var(--color-border);
+  --shadow-hairline-bottom: inset 0 -0.5px 0 0 var(--color-border);
+  --shadow-focus: 0 0 0 1px var(--color-ring);
+  --shadow-focus-soft: 0 0 0 3px rgba(237, 234, 227, 0.07);
+  --shadow-selected: inset 0 0 0 0.5px var(--color-border-selected);
+  --shadow-selected-glow: 0 0 12px rgba(237, 234, 227, 0.45);
+  --shadow-attention: 0 0 8px rgba(239, 68, 68, 0.9);
+  --shadow-badge-ring: 0 0 0 2px #141416; /* cuts a rail badge out of its icon */
+
+  /* ---------- Motion ---------- */
+  --duration-fast: 140ms; /* checkbox, artifact cards */
+  --duration-base: 150ms; /* Tailwind's default transition */
+  --duration-row: 160ms; /* sidebar rows */
+  --duration-overlay: 200ms; /* menus, dialogs, toasts */
+  --duration-panel: 260ms; /* sheets sliding in */
+  --duration-slow: 300ms; /* composer border, rising labels */
+  --duration-breathe: 1.8s; /* a working conversation's glow */
+  --duration-shimmer: 2.4s; /* the live step's light sweep */
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-emphasized: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-rise: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --ease-enter: ease;
+  --ease-in-out: ease-in-out;
+
+  /* ---------- Other ---------- */
+  --blur-glass: blur(30px) saturate(180%);
+}

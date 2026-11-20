@@ -1,0 +1,1302 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Maestrly desktop · components</title>
+<link rel="stylesheet" href="tokens.css" crossorigin>
+<!--
+  Every reusable component of the Maestrly desktop renderer, rebuilt with tokens.css only. The renderer
+  (apps/desktop/src/renderer) is the source of truth; design.json maps each component to its file.
+  Icons are Lucide symbols inlined at the top of the body, with their license notice.
+-->
+<style>
+*,::before,::after{box-sizing:border-box;margin:0;padding:0;border:0 solid var(--color-border)}
+html{line-height:var(--text-leading-normal);-webkit-text-size-adjust:100%}
+body{background:var(--color-window);color:var(--color-foreground);font-family:var(--font-sans);-webkit-font-smoothing:antialiased}
+button,input,select,textarea{font:inherit;color:inherit;letter-spacing:inherit;background:transparent;border-radius:0}
+button{cursor:default;text-align:inherit}
+input::placeholder{color:var(--color-muted-foreground)}
+ul,ol{list-style:none}
+svg{display:block}
+a{color:inherit;text-decoration:inherit}
+::selection{background:var(--color-selection)}
+
+.i{width:var(--size-icon);height:var(--size-icon);flex-shrink:0;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.i-sm{width:var(--size-icon-sm);height:var(--size-icon-sm)}
+.i-xs{width:var(--size-icon-xs);height:var(--size-icon-xs)}
+.i-rail{width:var(--size-icon-rail);height:var(--size-icon-rail)}
+.spin{animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.truncate{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.block{display:block}
+
+/* ---------- page chrome (not part of the system) ---------- */
+.doc-head{padding:var(--space-8) var(--space-8) var(--space-6);box-shadow:var(--shadow-hairline-bottom)}
+.doc-head h1{font-size:var(--text-display);font-weight:var(--font-weight-semibold);letter-spacing:var(--font-tracking-tight)}
+.doc-head p{margin-top:var(--space-1-5);max-width:var(--size-chat-column);font-size:var(--text-row);color:var(--color-muted-foreground)}
+.doc-nav{display:flex;flex-wrap:wrap;gap:var(--space-1-5);margin-top:var(--space-4)}
+.doc-nav a{border-radius:var(--radius-md);border:1px solid var(--color-border);padding:var(--space-1) var(--space-2-5);font-size:var(--text-xs);color:var(--color-muted-foreground)}
+.doc-nav a:hover{background:var(--color-fill-hover);color:var(--color-foreground)}
+.doc-section{padding:var(--space-8);box-shadow:var(--shadow-hairline-bottom)}
+.doc-section>h2{font-size:var(--text-sm);font-weight:var(--font-weight-semibold)}
+.doc-section>.lead{margin-top:var(--space-1);max-width:var(--size-chat-column);font-size:var(--text-xs);line-height:var(--text-xs-leading);color:var(--color-muted-foreground)}
+.doc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(var(--size-popover-chat),1fr));gap:var(--space-4);margin-top:var(--space-4)}
+.doc-grid.mid{grid-template-columns:repeat(auto-fill,minmax(372px,1fr))}
+.doc-grid.wide{grid-template-columns:repeat(auto-fill,minmax(var(--size-dialog),1fr))}
+.spec{min-width:0;border:1px solid var(--color-border);border-radius:var(--radius-lg);background:var(--color-chat-canvas);overflow:hidden}
+.spec.on-window{background:var(--color-window)}
+.spec-label{padding:var(--space-2) var(--space-3);font-family:var(--font-mono);font-size:var(--text-meta);color:var(--color-muted-foreground);box-shadow:var(--shadow-hairline-bottom)}
+.spec-body{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-3);padding:var(--space-5)}
+.spec-body.col{flex-direction:column;align-items:stretch}
+.spec-body.flush{padding:0}
+.swatches{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:var(--space-2);margin-top:var(--space-4)}
+.swatch{border:1px solid var(--color-border);border-radius:var(--radius-md);overflow:hidden;font-size:var(--text-meta)}
+.swatch b{display:block;height:var(--size-control)}
+.swatch span{display:block;padding:var(--space-1-5) var(--space-2);font-family:var(--font-mono);color:var(--color-muted-foreground)}
+.type-row{display:flex;align-items:baseline;gap:var(--space-4);padding:var(--space-1-5) 0;box-shadow:var(--shadow-hairline-bottom)}
+.type-row code{width:var(--size-settings-nav);flex-shrink:0;font-family:var(--font-mono);font-size:var(--text-meta);color:var(--color-muted-foreground)}
+
+/* ---------- Button ---------- */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:var(--space-2);white-space:nowrap;border-radius:var(--radius-md);height:var(--size-control);padding:var(--space-2) var(--space-4);font-size:var(--text-sm);line-height:var(--text-sm-leading);font-weight:var(--font-weight-medium);outline:none;transition:color var(--duration-base) var(--ease-standard),background-color var(--duration-base) var(--ease-standard),border-color var(--duration-base) var(--ease-standard)}
+.btn:focus-visible{box-shadow:var(--shadow-focus)}
+.btn:disabled{pointer-events:none;opacity:.5}
+.btn svg{width:var(--size-icon);height:var(--size-icon);flex-shrink:0;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.btn-default{background:var(--color-primary);color:var(--color-primary-foreground)}
+.btn-default:hover,.btn-default.is-hover{background:color-mix(in oklab,var(--color-primary) 90%,transparent)}
+.btn-destructive{background:var(--color-destructive);color:var(--color-destructive-foreground)}
+.btn-destructive:hover{background:color-mix(in oklab,var(--color-destructive) 90%,transparent)}
+.btn-outline{border:1px solid var(--color-input)}
+.btn-outline:hover,.btn-ghost:hover,.btn-ghost.is-hover{background:var(--color-accent);color:var(--color-foreground)}
+.btn-secondary{background:var(--color-secondary);color:var(--color-foreground)}
+.btn-secondary:hover{background:color-mix(in oklab,var(--color-secondary) 80%,transparent)}
+.btn-link{color:var(--color-primary);text-underline-offset:4px}
+.btn-link:hover{text-decoration:underline}
+.btn-sm{height:var(--size-control-sm);padding:0 var(--space-3);font-size:var(--text-xs);line-height:var(--text-xs-leading)}
+.btn-lg{height:var(--size-header);padding:0 var(--space-6)}
+.btn-icon{width:var(--size-control);padding:0}
+.ib-28{width:var(--size-control-xs);height:var(--size-control-xs);padding:0;flex-shrink:0}
+.ib-26{width:26px;height:26px;padding:0;color:var(--color-muted-foreground)}
+.ib-26:hover{color:var(--color-foreground)}
+.ib-24{width:var(--size-control-2xs);height:var(--size-control-2xs);padding:0}
+.btn-review{height:var(--size-control-xs);gap:var(--space-1-5);padding:0 var(--space-2);font-size:var(--text-meta)}
+.btn-compact{display:inline-flex;align-items:center;gap:var(--space-1-5);border-radius:var(--radius-md);padding:var(--space-1-5) var(--space-3);font-size:var(--text-xs);line-height:var(--text-xs-leading)}
+.btn-compact.is-quiet{color:var(--color-muted-foreground)}
+.btn-compact.is-quiet:hover{color:var(--color-foreground)}
+.btn-compact.is-primary{font-weight:var(--font-weight-medium);background:var(--color-primary);color:var(--color-primary-foreground)}
+.btn-compact.is-destructive{font-weight:var(--font-weight-medium);background:var(--color-destructive);color:var(--color-destructive-foreground)}
+.btn-compact:hover:not(.is-quiet){filter:brightness(1.1)}
+.act{display:inline-flex;align-items:center;gap:var(--space-1-5);border-radius:var(--radius-md);background:var(--color-action);padding:var(--space-1-5) var(--space-2-5);font-size:var(--text-xs);line-height:var(--text-xs-leading);font-weight:var(--font-weight-medium);color:var(--color-action-foreground)}
+.act:hover{background:var(--color-action-hover)}
+.act.is-disabled{background:color-mix(in oklab,var(--color-foreground) 10%,transparent);color:var(--color-muted-foreground)}
+
+/* ---------- Inputs ---------- */
+.label{font-size:var(--text-sm);line-height:var(--text-leading-none);font-weight:var(--font-weight-medium)}
+.field{display:flex;flex-direction:column;gap:var(--space-1-5);width:100%}
+.input{display:flex;height:var(--size-control);width:100%;border-radius:var(--radius-md);border:1px solid var(--color-input);padding:var(--space-1) var(--space-3);font-size:var(--text-sm);line-height:var(--text-sm-leading);box-shadow:var(--shadow-sm);outline:none;transition:color var(--duration-base) var(--ease-standard),border-color var(--duration-base) var(--ease-standard),box-shadow var(--duration-base) var(--ease-standard)}
+.input:focus-visible,.input.is-focus{box-shadow:var(--shadow-sm),var(--shadow-focus)}
+.input:disabled{cursor:not-allowed;opacity:.5}
+.hint{font-size:var(--text-meta);line-height:var(--text-leading-snug);color:var(--color-muted-foreground)}
+.num{width:96px;flex-shrink:0;border-radius:var(--radius-md);border:1px solid var(--color-input);padding:var(--space-1) var(--space-2);font-size:var(--text-sm);line-height:var(--text-sm-leading);color:var(--color-foreground);outline:none}
+.num:focus{border-color:color-mix(in oklab,var(--color-primary) 40%,transparent)}
+.search{display:flex;height:var(--size-search);align-items:center;gap:var(--space-1-5);border-radius:var(--radius-lg);border:1px solid var(--color-border);background:var(--color-fill-well);padding:0 var(--space-1) 0 var(--space-2-5);color:var(--color-muted-foreground);transition:border-color var(--duration-base) var(--ease-standard),box-shadow var(--duration-base) var(--ease-standard)}
+.search:focus-within,.search.is-focus{border-color:var(--color-border-strong);box-shadow:var(--shadow-focus-soft)}
+.search input{height:100%;width:100%;min-width:0;font-size:var(--text-control);color:var(--color-foreground);outline:none}
+.search input::placeholder{color:color-mix(in oklab,var(--color-muted-foreground) 70%,transparent)}
+.search-clear{display:grid;width:18px;height:18px;flex-shrink:0;place-items:center;border-radius:5px;color:var(--color-muted-foreground)}
+.search-clear:hover{background:var(--color-accent);color:var(--color-foreground)}
+.check{appearance:none;-webkit-appearance:none;display:inline-block;width:var(--size-icon);height:var(--size-icon);flex:0 0 auto;border:1px solid var(--color-border-strong);border-radius:0.3rem;background-color:var(--color-fill-track);background-position:center;background-repeat:no-repeat;background-size:0;box-shadow:inset 0 0 0 .5px rgba(255,255,255,.025);vertical-align:middle;cursor:pointer;transition:background-color var(--duration-fast) ease,background-size var(--duration-fast) var(--ease-emphasized),border-color var(--duration-fast) ease,box-shadow var(--duration-fast) ease}
+.check:hover:not(:disabled){border-color:rgba(237,234,227,.46);background-color:rgba(237,234,227,.08)}
+.check:checked{border-color:var(--color-primary);background-color:var(--color-primary);background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='M3.5 8.25 6.6 11.2 12.5 4.9' stroke='%230A0A0B' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-size:0.8rem;box-shadow:0 0 0 1px rgba(237,234,227,.12),0 0 9px rgba(237,234,227,.16)}
+.check:disabled{cursor:not-allowed;opacity:.42}
+.check-row{display:flex;align-items:center;gap:var(--space-2);font-size:var(--text-row)}
+.switch{margin-top:var(--space-0-5);display:flex;height:var(--space-5);width:36px;flex-shrink:0;align-items:center;border-radius:var(--radius-full);padding:var(--space-0-5);background:var(--color-fill-switch-off);transition:background-color var(--duration-base) var(--ease-standard)}
+.switch::after{content:'';width:var(--size-icon);height:var(--size-icon);border-radius:var(--radius-full);background:var(--color-knob);transition:transform var(--duration-base) var(--ease-standard)}
+.switch[aria-checked="true"]{background:var(--color-primary)}
+.switch[aria-checked="true"]::after{transform:translateX(var(--space-4))}
+
+/* ---------- Select and Combobox ---------- */
+.select{display:flex;height:var(--size-control);min-width:0;width:100%;align-items:center;justify-content:space-between;gap:var(--space-2);white-space:nowrap;border-radius:var(--radius-md);border:1px solid var(--color-input);padding:var(--space-2) var(--space-3);font-size:var(--text-sm);line-height:var(--text-sm-leading);box-shadow:var(--shadow-sm);text-align:left}
+.select>svg{opacity:.5}
+.select.is-sm{height:var(--size-control-sm);font-size:var(--text-xs);line-height:var(--text-xs-leading);color:var(--color-foreground)}
+.select.is-sm>svg{width:var(--size-icon-sm);height:var(--size-icon-sm)}
+.select.is-invalid{border-color:color-mix(in oklab,var(--color-tool-waiting) 60%,transparent)}
+.select.is-invalid>span{color:color-mix(in oklab,var(--color-design-text) 90%,transparent)}
+.select.is-invalid>svg{opacity:1;color:color-mix(in oklab,var(--color-design-text) 70%,transparent)}
+.listbox{min-width:128px;overflow:hidden;border-radius:var(--radius-md);border:1px solid var(--color-border);background:var(--color-popover);color:var(--color-foreground);box-shadow:var(--shadow-md);padding:var(--space-1)}
+.listbox.has-search{padding:0}
+.opt{position:relative;display:flex;width:100%;align-items:center;border-radius:var(--radius-sm);padding:var(--space-1-5) var(--space-2) var(--space-1-5) var(--space-8);font-size:var(--text-sm);line-height:var(--text-sm-leading);outline:none;user-select:none}
+.opt:hover,.opt.is-focus{background:var(--color-accent)}
+.opt-check{position:absolute;left:var(--space-2);display:flex;width:var(--size-icon-sm);height:var(--size-icon-sm);align-items:center;justify-content:center}
+.opt-label{padding:var(--space-1-5) var(--space-2);font-size:var(--text-xs);line-height:var(--text-xs-leading);font-weight:var(--font-weight-medium);color:var(--color-muted-foreground)}
+.combo-search{display:flex;align-items:center;gap:var(--space-1-5);border-bottom:1px solid var(--color-border);padding:0 var(--space-2);color:var(--color-muted-foreground)}
+.combo-search input{height:var(--size-control-sm);width:100%;font-size:var(--text-xs);color:var(--color-foreground);outline:none}
+.combo-list{padding:var(--space-1)}
+.copt{display:flex;width:100%;align-items:center;gap:var(--space-1-5);border-radius:var(--radius-sm);padding:var(--space-1-5) var(--space-2);font-size:var(--text-xs);line-height:var(--text-xs-leading);text-align:left}
+.copt:hover,.copt.is-focus{background:var(--color-accent)}
+.copt>.i{opacity:0}
+.copt.is-selected>.i{opacity:1}
+.copt>span{min-width:0;flex:1}
+.copt small{flex-shrink:0;font-size:var(--text-micro);color:var(--color-muted-foreground)}
+
+/* ---------- Chips and badges ---------- */
+.branch{display:inline-flex;min-width:0;max-width:13rem;flex-shrink:0;align-items:center;gap:var(--space-1);border-radius:var(--radius-md);background:var(--color-fill-rail-hover);padding:var(--space-0-5) var(--space-1-5);font-family:var(--font-mono);font-size:var(--text-micro);color:var(--color-muted-foreground);box-shadow:0 0 0 1px var(--color-border-chip)}
+.branch.is-diverged{color:color-mix(in oklab,var(--color-design-text) 80%,transparent);box-shadow:0 0 0 1px color-mix(in oklab,var(--color-design-text) 20%,transparent)}
+.count{flex-shrink:0;border-radius:var(--radius-xs);background:var(--color-muted);padding:0 var(--space-1);font-size:var(--text-micro);color:var(--color-muted-foreground)}
+.rbadge{position:absolute;right:-2px;top:-2px;min-width:var(--size-icon);border-radius:var(--radius-full);padding:0 var(--space-1);text-align:center;font-size:var(--text-badge);font-weight:var(--font-weight-bold);line-height:var(--text-xs-leading);background:var(--color-primary);color:var(--color-primary-foreground);box-shadow:var(--shadow-badge-ring)}
+.rbadge.is-warn{background:var(--color-warn)}
+.rbadge.is-routine{background:var(--color-routine)}
+.rbadge.is-static{position:relative;right:auto;top:auto;display:inline-block}
+.rdot{position:absolute;right:var(--space-1-5);top:var(--space-1-5);width:var(--space-2);height:var(--space-2);border-radius:var(--radius-full);background:var(--color-attention);box-shadow:var(--shadow-attention),var(--shadow-badge-ring)}
+.rflask{position:absolute;bottom:3px;right:3px;display:inline-flex;color:var(--color-caution)}
+.tstatus{display:inline-flex;align-items:center;gap:var(--space-1);font-size:var(--text-meta)}
+.tstatus.is-pending{color:var(--color-muted-foreground)}
+.tstatus.is-awaiting{color:var(--color-tool-waiting)}
+.tstatus.is-running{color:var(--color-tool-running)}
+.tstatus.is-completed{color:var(--color-tool-done)}
+.tstatus.is-error,.tstatus.is-denied{color:var(--color-tool-error)}
+.kbd{border-radius:var(--radius-xs);border:1px solid var(--color-input);background:var(--color-muted);padding:1px var(--space-1);font-family:var(--font-mono);font-size:var(--text-micro);color:var(--color-muted-foreground)}
+.file{display:inline-flex;align-items:center;gap:var(--space-1-5);border-radius:var(--radius-md);border:1px solid var(--color-accent);background:var(--color-fill-hover);padding:var(--space-1) var(--space-2);font-size:var(--text-xs);color:var(--color-foreground)}
+.file>.i{color:var(--color-muted-foreground)}
+.file>span{max-width:180px}
+.file small{font-size:var(--text-micro);font-weight:var(--font-weight-medium);text-transform:uppercase;color:var(--color-muted-foreground)}
+.file-x{color:var(--color-muted-foreground)}
+.file-x:hover{color:var(--color-destructive)}
+.changes{display:inline-flex;align-items:center;gap:var(--space-1-5);border-radius:var(--radius-md);border:1px solid var(--color-border);padding:var(--space-0-5) var(--space-1-5);font-size:var(--text-meta);color:var(--color-muted-foreground)}
+.changes:hover{background:var(--color-fill-active);color:var(--color-foreground)}
+.changes>.i{opacity:.7}
+.changes>.i-xs{opacity:.6}
+.changes .add{font-family:var(--font-mono);font-variant-numeric:tabular-nums;color:var(--color-status-ready)}
+.changes .del{font-family:var(--font-mono);font-variant-numeric:tabular-nums;color:var(--color-destructive)}
+.st-idle{color:var(--color-muted-foreground)}
+.st-ready{color:var(--color-status-ready)}
+.st-waiting{color:var(--color-status-waiting)}
+.st-error{color:var(--color-status-error)}
+.st-working{display:inline-flex;flex-shrink:0;border-radius:var(--radius-full);color:var(--color-status-working);animation:breathe var(--duration-breathe) var(--ease-in-out) infinite}
+@keyframes breathe{0%,100%{box-shadow:0 0 0 0 rgba(237,234,227,0)}50%{box-shadow:0 0 9px 1px rgba(237,234,227,.5)}}
+
+/* ---------- Tabs ---------- */
+.seg{display:flex;width:fit-content;gap:var(--space-1);border-radius:var(--radius-lg);background:var(--color-fill-track);padding:var(--space-1)}
+.seg button{border-radius:var(--radius-md);padding:var(--space-1) var(--space-2-5);font-size:var(--text-xs);color:var(--color-muted-foreground);transition:color var(--duration-base) var(--ease-standard),background-color var(--duration-base) var(--ease-standard)}
+.seg button:hover{color:var(--color-foreground)}
+.seg button[aria-selected="true"]{background:var(--color-fill-strong);color:var(--color-foreground)}
+.seg.is-bar{width:auto;overflow-x:auto;border:1px solid var(--color-border);background:var(--color-popover);box-shadow:var(--shadow-sm)}
+.seg.is-bar button{flex-shrink:0;padding:var(--space-1-5) var(--space-2-5);font-weight:var(--font-weight-medium)}
+.seg.is-bar button:hover{background:var(--color-fill-hover)}
+.seg.is-bar button[aria-selected="true"]{background:var(--color-fill-strong)}
+.utabs{display:flex;width:100%;gap:var(--space-4);border-bottom:1px solid var(--color-border);padding:0 18px}
+.utabs button{position:relative;display:inline-flex;align-items:center;gap:var(--space-1-5);white-space:nowrap;padding:var(--space-2-5) 0;font-size:var(--text-row);color:var(--color-muted-foreground);transition:color var(--duration-base) var(--ease-standard)}
+.utabs button::after{content:'';position:absolute;left:0;right:0;bottom:0;height:var(--space-0-5);border-radius:var(--radius-xs) var(--radius-xs) 0 0;background:var(--color-primary);opacity:0}
+.utabs button:hover,.utabs button[aria-selected="true"]{color:var(--color-foreground)}
+.utabs button[aria-selected="true"]::after{opacity:1}
+.dtab{position:relative;display:flex;height:var(--size-control-xs);flex-shrink:0;align-items:center;gap:var(--space-1-5);white-space:nowrap;border-radius:var(--radius-md);padding:0 var(--space-1) 0 var(--space-2);font-size:var(--text-xs);line-height:var(--text-xs-leading);font-weight:var(--font-weight-medium);color:var(--color-muted-foreground);outline:none;transition:all var(--duration-base) var(--ease-standard)}
+.dtab:hover{background:var(--color-muted);color:var(--color-foreground)}
+.dtab[aria-selected="true"]{background:var(--color-accent);color:var(--color-foreground);box-shadow:var(--shadow-sm),0 0 0 1px var(--color-accent)}
+.dtab[aria-selected="true"]::after{content:'';pointer-events:none;position:absolute;left:var(--space-2);right:var(--space-2);bottom:-5px;height:var(--space-0-5);border-radius:var(--radius-full);background:color-mix(in oklab,var(--color-primary) 90%,transparent)}
+.dtab-x{display:flex;width:var(--size-icon);height:var(--size-icon);align-items:center;justify-content:center;border-radius:var(--radius-xs);color:var(--color-muted-foreground);opacity:0;transition:all var(--duration-base) var(--ease-standard)}
+.dtab:hover .dtab-x,.dtab[aria-selected="true"] .dtab-x{opacity:1}
+.dtab-x:hover{background:rgba(255,255,255,.12);color:var(--color-foreground)}
+.ttab{display:flex;flex-shrink:0;align-items:center;gap:var(--space-1-5);border-radius:var(--radius-md);padding:var(--space-1) var(--space-2);font-size:var(--text-xs);line-height:var(--text-xs-leading);color:var(--color-muted-foreground)}
+.ttab:hover{background:color-mix(in oklab,var(--color-secondary) 50%,transparent)}
+.ttab[aria-selected="true"]{background:var(--color-secondary);color:var(--color-foreground)}
+
+/* ---------- Cards and lists ---------- */
+.card{display:flex;width:100%;align-items:flex-start;gap:var(--space-2-5);border-radius:var(--radius-lg);border:1px solid var(--color-border);background:var(--color-fill-card);padding:var(--space-2-5) var(--space-3);text-align:left;transition:background-color var(--duration-base) var(--ease-standard)}
+.card:hover{background:var(--color-fill-hover)}
+.card-title{display:block;font-size:var(--text-sm);line-height:var(--text-sm-leading);font-weight:var(--font-weight-medium);color:var(--color-foreground)}
+.card-desc{display:block;font-size:var(--text-meta);line-height:var(--text-leading-snug);color:var(--color-muted-foreground)}
+.group{display:flex;width:100%;flex-direction:column;border-radius:var(--radius-lg);border:1px solid var(--color-border);background:var(--color-fill-card);padding:0 var(--space-3)}
+.row{display:flex;align-items:center;gap:var(--space-2-5);padding:var(--space-2-5) 0}
+.group>.row+.row{border-top:1px solid var(--color-border)}
+.row.is-plain{padding:0}
+.row-main{min-width:0;flex:1}
+.row-icon{color:var(--color-muted-foreground)}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-2)}
+.choice{display:flex;flex-direction:column;gap:var(--space-1);border-radius:var(--radius-lg);border:1px solid var(--color-input);padding:var(--space-3);text-align:left;transition:all var(--duration-base) var(--ease-standard)}
+.choice:hover{background:var(--color-muted)}
+.choice[aria-pressed="true"]{border-color:var(--color-ring);background:var(--color-sidebar-accent)}
+.choice b{font-size:var(--text-sm);line-height:var(--text-sm-leading);font-weight:var(--font-weight-medium)}
+.choice span{font-size:var(--text-xs);line-height:var(--text-xs-leading);color:var(--color-muted-foreground)}
+.optbtn{display:inline-flex;align-items:center;gap:var(--space-1-5);border-radius:var(--radius-lg);border:1px solid var(--color-border);background:var(--color-fill-card);padding:var(--space-1-5) var(--space-3);font-size:var(--text-xs);color:var(--color-muted-foreground);transition:color var(--duration-base) var(--ease-standard),background-color var(--duration-base) var(--ease-standard),border-color var(--duration-base) var(--ease-standard)}
+.optbtn:hover{color:var(--color-foreground)}
+.optbtn[aria-pressed="true"]{border-color:color-mix(in oklab,var(--color-primary) 50%,transparent);background:color-mix(in oklab,var(--color-primary) 15%,transparent);color:var(--color-foreground)}
+.hstack{display:flex;gap:var(--space-2)}
+
+/* ---------- Empty states ---------- */
+.empty{display:flex;align-items:center;justify-content:center;padding:var(--space-8);background:radial-gradient(520px 240px at 50% 0%,color-mix(in oklab,var(--color-primary) 5%,transparent),transparent 60%)}
+.empty-in{display:flex;width:100%;max-width:24rem;flex-direction:column;align-items:center;gap:var(--space-3);text-align:center}
+.empty-icon{display:flex;width:56px;height:56px;align-items:center;justify-content:center;border-radius:var(--radius-2xl);border:1px solid var(--color-border-strong);background:var(--color-surface-elevated);color:var(--color-primary);box-shadow:0 20px 25px -5px rgba(0,0,0,.3),0 8px 10px -6px rgba(0,0,0,.3)}
+.empty-icon>.i,.empty-box>.i{width:var(--space-6);height:var(--space-6)}
+.empty h3{margin-top:var(--space-1);font-size:var(--text-base);line-height:var(--text-base-leading);font-weight:var(--font-weight-semibold);letter-spacing:var(--font-tracking-tight)}
+.empty p{font-size:var(--text-sm);line-height:var(--space-5);color:var(--color-muted-foreground)}
+.empty-picks{margin-top:var(--space-2);display:grid;width:100%;grid-template-columns:repeat(3,1fr);gap:var(--space-2)}
+.empty-picks button{display:flex;flex-direction:column;align-items:flex-start;gap:var(--space-2);border-radius:var(--radius-lg);border:1px solid var(--color-border);background:var(--color-fill-raised);padding:var(--space-3);text-align:left;font-size:var(--text-xs);line-height:var(--text-xs-leading);transition:all var(--duration-base) var(--ease-standard)}
+.empty-picks button:hover{transform:translateY(-1px);border-color:var(--color-border-strong);background:var(--color-fill-active)}
+.empty small{font-size:var(--text-meta);color:var(--color-muted-foreground-soft)}
+.empty-simple{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:var(--space-2);padding:var(--space-8) var(--space-6);text-align:center}
+.empty-box{display:flex;width:48px;height:48px;align-items:center;justify-content:center;border-radius:var(--radius-lg);background:var(--color-fill-hover);color:var(--color-muted-foreground)}
+.empty-simple b{display:block;font-size:var(--text-sm);line-height:var(--text-sm-leading);font-weight:var(--font-weight-medium);color:var(--color-foreground-soft)}
+.empty-simple span{display:block;margin-top:var(--space-0-5);font-size:var(--text-xs);line-height:var(--text-xs-leading);color:var(--color-muted-foreground)}
+.empty-chat{display:flex;align-items:center;justify-content:center;padding:var(--space-8) var(--space-6);text-align:center;font-size:var(--text-sm);color:var(--color-muted-foreground)}
+.empty-chat>div{max-width:24rem}
+.empty-chat b{display:block;font-size:var(--text-input);font-weight:var(--font-weight-medium);color:var(--color-foreground)}
+.empty-chat span{display:block;margin-top:var(--space-1-5)}
+
+/* ---------- Overlays ---------- */
+.stage{position:relative;display:flex;min-height:420px;align-items:center;justify-content:center;padding:var(--space-6);background:var(--color-chat-canvas)}
+.stage::before{content:'';position:absolute;inset:0;background:var(--color-overlay)}
+.stage.is-confirm::before{background:var(--color-overlay-confirm)}
+.dialog{position:relative;display:grid;width:100%;max-width:var(--size-dialog);gap:var(--space-4);border:1px solid var(--color-border);border-radius:var(--radius-lg);background:var(--color-popover);padding:var(--space-6);box-shadow:var(--shadow-xl)}
+.dialog-head{display:flex;flex-direction:column;gap:var(--space-1-5)}
+.dialog h3{font-size:var(--text-lg);line-height:var(--text-leading-none);font-weight:var(--font-weight-semibold);letter-spacing:var(--font-tracking-tight)}
+.dialog-desc{font-size:var(--text-sm);line-height:var(--text-sm-leading);color:var(--color-muted-foreground)}
+.dialog-x{position:absolute;right:var(--space-4);top:var(--space-4);border-radius:var(--radius-sm);opacity:.7;transition:opacity var(--duration-base) var(--ease-standard)}
+.dialog-x:hover{opacity:1}
+.dialog-foot{display:flex;justify-content:flex-end;gap:var(--space-2)}
+.confirm{position:relative;width:var(--size-confirm);max-width:92%;border-radius:var(--radius-lg);border:1px solid var(--color-border);background:var(--color-popover);padding:var(--space-5);box-shadow:var(--shadow-2xl)}
+.confirm h3{font-size:var(--text-sm);line-height:var(--text-sm-leading);font-weight:var(--font-weight-semibold)}
+.confirm p{margin-top:var(--space-1-5);font-size:var(--text-xs);line-height:var(--text-leading-relaxed);color:var(--color-muted-foreground)}
+.confirm .warn{margin-top:var(--space-2-5);display:flex;align-items:flex-start;gap:var(--space-2);border-radius:var(--radius-md);background:color-mix(in oklab,var(--color-warn) 8%,transparent);padding:var(--space-2) var(--space-2-5);color:var(--color-foreground)}
+.confirm .warn>.i{margin-top:1px;color:var(--color-warn)}
+.confirm-foot{margin-top:var(--space-4);display:flex;justify-content:flex-end;gap:var(--space-2)}
+.menu{min-width:10rem;overflow:hidden;border-radius:var(--radius-md);border:1px solid var(--color-border);background:var(--color-popover);padding:var(--space-1);color:var(--color-foreground);box-shadow:var(--shadow-md)}
+.mi{position:relative;display:flex;width:100%;cursor:pointer;user-select:none;align-items:center;gap:var(--space-2);border-radius:var(--radius-sm);padding:var(--space-1-5) var(--space-2);font-size:var(--text-sm);line-height:var(--text-sm-leading);outline:none;transition:color var(--duration-base) var(--ease-standard),background-color var(--duration-base) var(--ease-standard)}
+.mi:hover,.mi.is-focus{background:var(--color-accent)}
+.mi.is-destructive{color:var(--color-destructive)}
+.mi.is-destructive:hover,.mi.is-destructive.is-focus{background:color-mix(in oklab,var(--color-destructive) 10%,transparent)}
+.mi>.sub{margin-left:auto}
+.msep{margin:var(--space-1) calc(-1 * var(--space-1));height:1px;background:var(--color-border)}
+.pop{width:var(--size-popover-chat);max-width:100%;flex-shrink:0;overflow:hidden;border-radius:var(--radius-lg);border:1px solid var(--color-border-floating);background:var(--color-popover-chat);padding:var(--space-1);box-shadow:var(--shadow-2xl)}
+.pop-hint{padding:0 var(--space-2-5) var(--space-1);font-size:var(--text-micro);line-height:var(--text-leading-relaxed);color:color-mix(in oklab,var(--color-muted-foreground) 70%,transparent)}
+.pop-label{padding:var(--space-1) var(--space-2-5);font-size:var(--text-micro);text-transform:uppercase;letter-spacing:var(--font-tracking-wide);color:var(--color-muted-foreground-faint)}
+.pop-item{display:flex;width:100%;align-items:flex-start;gap:var(--space-2);border-radius:var(--radius-md);padding:var(--space-2) var(--space-2-5);text-align:left}
+.pop-item:hover,.pop-item.is-focus{background:var(--color-fill-bubble)}
+.pi-icon{margin-top:var(--space-0-5);flex-shrink:0;color:var(--color-muted-foreground)}
+.pi-text{min-width:0;flex:1}
+.pi-text b{display:block;font-size:var(--text-row);font-weight:var(--font-weight-regular);color:var(--color-foreground)}
+.pi-text small{display:block;font-size:var(--text-meta);color:var(--color-muted-foreground)}
+.pi-check{margin-top:var(--space-0-5);opacity:0}
+.pop-item.is-selected>.pi-check{opacity:1}
+.pop-div{margin:var(--space-1) var(--space-2);height:1px;background:var(--color-accent)}
+.pop-item.is-maestro:hover{background:color-mix(in oklab,var(--color-design) 6%,transparent)}
+.pop-item.is-maestro .pi-icon{color:var(--color-design-text)}
+.pop-item.is-maestro b{color:var(--color-caution-faint)}
+.pop.is-list{padding:0}
+.pop-search{display:flex;align-items:center;gap:var(--space-2);border-bottom:1px solid var(--color-accent);padding:var(--space-2) var(--space-2-5);color:var(--color-muted-foreground)}
+.pop-search input{width:100%;font-size:var(--text-row);color:var(--color-foreground);outline:none}
+.pop-rows{padding:var(--space-1) 0}
+.mrow{display:flex;width:100%;align-items:center;gap:var(--space-2);padding:var(--space-1-5) var(--space-3);text-align:left}
+.mrow:hover,.mrow.is-focus{background:var(--color-fill-bubble)}
+.mrow>.i{opacity:0}
+.mrow.is-selected>.i{opacity:1}
+.mrow b{min-width:0;flex:1;font-size:var(--text-row);font-weight:var(--font-weight-regular);color:var(--color-foreground)}
+.mrow small{max-width:40%;flex-shrink:0;font-size:var(--text-meta);color:var(--color-muted-foreground)}
+.tip{max-width:28rem;overflow-wrap:break-word;border-radius:var(--radius-md);border:1px solid var(--color-border-strong);background:var(--color-popover);padding:var(--space-1) var(--space-2);font-size:var(--text-xs);line-height:var(--text-leading-snug);color:var(--color-foreground);box-shadow:var(--shadow-xl)}
+.toast{display:flex;width:var(--size-toast);max-width:100%;align-items:flex-start;gap:var(--space-2-5);border-radius:var(--radius-lg);border:1px solid var(--color-border);background:var(--color-popover);padding:var(--space-2-5) var(--space-3);font-size:var(--text-control);box-shadow:var(--shadow-2xl)}
+.toast-icon{margin-top:var(--space-0-5);display:flex;width:26px;height:26px;flex-shrink:0;align-items:center;justify-content:center;border-radius:var(--radius-md);background:color-mix(in oklab,var(--color-success) 15%,transparent);color:var(--color-tool-done)}
+.toast.is-warn .toast-icon{background:color-mix(in oklab,var(--color-caution) 15%,transparent);color:var(--color-tool-waiting)}
+.toast.is-error .toast-icon{background:color-mix(in oklab,var(--color-destructive) 15%,transparent);color:var(--color-destructive)}
+.toast-main{min-width:0;flex:1}
+.toast-main b{display:block;font-weight:var(--font-weight-semibold);color:var(--color-foreground)}
+.toast-main span{display:block;margin-top:var(--space-0-5);color:var(--color-muted-foreground)}
+.toast-act{margin-top:var(--space-1-5);display:inline-flex;height:var(--size-control-2xs);align-items:center;border-radius:var(--radius-md);border:1px solid var(--color-border);padding:0 var(--space-2);font-size:var(--text-xs);font-weight:var(--font-weight-medium);color:var(--color-foreground)}
+.toast-act:hover{background:var(--color-accent)}
+.toast-x{display:inline-flex;width:var(--size-control-2xs);height:var(--size-control-2xs);flex-shrink:0;align-items:center;justify-content:center;border-radius:var(--radius-md);color:var(--color-muted-foreground)}
+.toast-x:hover{background:var(--color-accent);color:var(--color-foreground)}
+
+/* ---------- Rail and sidebar ---------- */
+.shell{display:flex;height:873px;overflow:hidden;background:var(--color-window)}
+.nav{display:flex;width:var(--size-sidebar);flex-shrink:0;background:var(--color-sidebar);backdrop-filter:var(--blur-glass);-webkit-backdrop-filter:var(--blur-glass);box-shadow:var(--shadow-hairline-right)}
+.nav.is-collapsed{width:var(--size-rail);background:transparent;backdrop-filter:none;-webkit-backdrop-filter:none;box-shadow:none}
+.rail{display:flex;width:var(--size-rail);flex-shrink:0;flex-direction:column}
+.nav.is-collapsed .rail,.rail.is-standalone{background:var(--color-sidebar)}
+.rail-col{display:flex;min-height:0;flex:1;flex-direction:column;align-items:center;background:var(--color-rail);padding:var(--space-0-5) 0 var(--space-2-5);box-shadow:var(--shadow-hairline-right)}
+.nav.is-collapsed .rail-col{box-shadow:inset -0.5px 0 0 0 var(--color-border),inset 0 0.5px 0 0 var(--color-border)}
+.rail-btn{position:relative;display:grid;width:var(--size-control);height:var(--size-control);place-items:center;border-radius:var(--radius-md);color:var(--color-muted-foreground);outline:none;transition:color var(--duration-base) var(--ease-standard),background-color var(--duration-base) var(--ease-standard)}
+.rail-btn:hover,.rail-btn.is-hover{background:var(--color-fill-rail-hover);color:var(--color-foreground)}
+.rail-btn:focus-visible{box-shadow:var(--shadow-focus)}
+.rail-btn[role="tab"]::before{content:'';position:absolute;left:calc(-1 * var(--space-1-5));top:50%;height:var(--space-5);width:3px;transform:translateY(-50%);border-radius:0 3px 3px 0;background:var(--color-primary);opacity:0;transition:opacity var(--duration-base) var(--ease-standard)}
+.rail-btn.is-active{background:var(--color-sidebar-accent);color:var(--color-foreground)}
+.rail-btn.is-active::before{opacity:1}
+.rail-btn.is-small{width:34px;height:var(--size-control-sm)}
+.rail-btn>.i{width:var(--size-icon-rail);height:var(--size-icon-rail)}
+.rail-btn.is-small>.i{width:var(--size-icon);height:var(--size-icon)}
+.rflask>.i{width:10px;height:10px}
+.rail-div{margin:var(--space-1-5) 0;height:1px;width:var(--space-5);background:var(--color-border)}
+.rail-tabs{display:flex;flex-direction:column;align-items:center;gap:var(--space-1)}
+.rail-foot{margin-top:auto;display:flex;flex-direction:column;align-items:center;gap:var(--space-0-5)}
+.sb{display:flex;min-width:0;flex:1;flex-direction:column}
+.sb-head{display:flex;height:var(--size-header);flex-shrink:0;align-items:center;gap:var(--space-1-5);padding:0 var(--space-2) 0 var(--space-3)}
+.sb-title{display:flex;min-width:0;align-items:center;gap:var(--space-2);font-size:var(--text-row);font-weight:var(--font-weight-semibold);letter-spacing:var(--font-tracking-title);color:var(--color-foreground)}
+.sb-actions{margin-left:auto;display:flex;flex-shrink:0;align-items:center;gap:var(--space-0-5)}
+.sb-search{flex-shrink:0;padding:0 var(--space-2) var(--space-2)}
+.sb-body{display:flex;min-height:0;flex:1;flex-direction:column;border-top:1px solid var(--color-border)}
+.sb-list{min-height:0;flex:1;overflow-y:auto;padding:var(--space-1) 0}
+.ws{margin-bottom:var(--space-0-5);border-radius:var(--radius-md)}
+.ws-head{display:flex;align-items:center;padding:var(--space-1) var(--space-2)}
+.ws-toggle{display:flex;min-width:0;flex:1;align-items:center;gap:var(--space-1-5);text-align:left;color:var(--color-muted-foreground)}
+.ws-name{font-size:var(--text-row);font-weight:var(--font-weight-medium);color:var(--color-foreground-soft)}
+.ws-count{margin-left:var(--space-1);flex-shrink:0;font-size:var(--text-tag);font-variant-numeric:tabular-nums;color:var(--color-muted-foreground-soft)}
+.ws-tray{pointer-events:none;max-width:0;flex-shrink:0;overflow:hidden;opacity:0;transition:max-width var(--duration-base) var(--ease-standard),opacity var(--duration-base) var(--ease-standard)}
+.ws-head:hover .ws-tray,.ws-head.is-hover .ws-tray{pointer-events:auto;max-width:9rem;opacity:1}
+.ws-tray>div{margin-left:var(--space-1);display:flex;width:max-content;align-items:center;gap:var(--space-1)}
+.ws-list{position:relative}
+.ws-list::before{content:'';pointer-events:none;position:absolute;bottom:var(--space-1);left:13.5px;top:0;width:1px;background:var(--color-border)}
+.pinned{margin-bottom:var(--space-1);border-bottom:1px solid color-mix(in oklab,var(--color-border) 40%,transparent);padding-bottom:var(--space-1)}
+.pinned-head{display:flex;align-items:center;gap:var(--space-1-5);padding:var(--space-1) var(--space-2);color:var(--color-muted-foreground)}
+.pinned-head>span:first-of-type{font-size:var(--text-meta);font-weight:var(--font-weight-medium)}
+.conv{position:relative;margin:0 var(--space-1-5);display:flex;cursor:pointer;align-items:center;gap:var(--space-2);border-radius:var(--radius-md);padding:var(--space-1-5) var(--space-1) var(--space-1-5) var(--space-6);font-size:var(--text-row);color:var(--color-sidebar-foreground);transition:background-color var(--duration-row) var(--ease-emphasized),color var(--duration-row) var(--ease-emphasized)}
+.conv:hover,.conv.is-hover{background:var(--color-fill-hover)}
+.conv.is-selected{background:var(--color-sidebar-accent);box-shadow:var(--shadow-selected);color:var(--color-foreground)}
+.conv.is-selected::before{content:'';position:absolute;left:3px;top:50%;transform:translateY(-50%);width:2.5px;height:var(--space-4);border-radius:2px;background:var(--color-primary);box-shadow:var(--shadow-selected-glow)}
+.conv.is-archived{opacity:.45}
+.conv-status{display:inline-flex;flex-shrink:0}
+.conv-title{min-width:0;flex:1}
+.conv-meta{display:flex;flex-shrink:0;align-items:center;gap:var(--space-1);font-size:var(--text-meta);font-variant-numeric:tabular-nums;color:var(--color-muted-foreground-soft)}
+.conv>.conv-menu{display:none}
+.conv:hover>.conv-meta,.conv.is-hover>.conv-meta{display:none}
+.conv:hover>.conv-menu,.conv.is-hover>.conv-menu{display:inline-flex}
+.dot{width:var(--space-2);height:var(--space-2);flex-shrink:0;border-radius:var(--radius-full);background:var(--color-attention);box-shadow:var(--shadow-attention)}
+.conv-maestro{display:flex;align-items:center;color:color-mix(in oklab,var(--color-design-text) 80%,transparent)}
+.conv-routine{display:flex;align-items:center;color:var(--color-routine)}
+
+/* ---------- View header, settings, drawer ---------- */
+.main{display:flex;min-width:0;flex:1;flex-direction:column}
+.vh{display:flex;height:var(--size-header);flex-shrink:0;align-items:center;justify-content:space-between;gap:var(--space-2);padding:0 var(--space-2) 0 var(--space-3);box-shadow:var(--shadow-hairline-bottom)}
+.vh-left{display:flex;min-width:0;flex:1;align-items:center;gap:var(--space-1-5);overflow:hidden}
+.vh-title{font-size:var(--text-row);font-weight:var(--font-weight-medium);color:var(--color-foreground-soft)}
+.vh-right{display:flex;min-width:0;align-items:center;gap:var(--space-2)}
+.vh-icon{color:var(--color-muted-foreground)}
+.vh.is-settings{justify-content:flex-start;padding-right:var(--space-3)}
+.vh.is-settings>.vh-left{flex:0 1 auto;gap:var(--space-2)}
+.vh.is-settings>.btn{margin-left:auto}
+.settings{display:flex;min-height:0;flex:1}
+.snav{display:flex;width:var(--size-settings-nav);flex-shrink:0;flex-direction:column;gap:var(--space-0-5);overflow-y:auto;border-right:1px solid var(--color-border);padding:var(--space-2)}
+.snav-item{display:flex;align-items:center;gap:var(--space-2-5);border-radius:var(--radius-lg);padding:var(--space-2) var(--space-3);text-align:left;font-size:var(--text-row);font-weight:var(--font-weight-medium);color:var(--color-muted-foreground);transition:color var(--duration-base) var(--ease-standard),background-color var(--duration-base) var(--ease-standard)}
+.snav-item:hover{background:var(--color-fill-raised);color:var(--color-foreground)}
+.snav-item[aria-current="page"]{background:var(--color-fill-active);color:var(--color-foreground)}
+.snav-item>.i{color:var(--color-muted-foreground)}
+.snav-item>span{min-width:0;flex:1}
+.scontent{min-height:0;flex:1;overflow-y:auto}
+.scol{margin:0 auto;display:flex;width:100%;max-width:var(--size-settings-column);flex-direction:column;gap:var(--space-7);padding:var(--space-6)}
+.ssec{display:flex;flex-direction:column;gap:var(--space-3)}
+.ssec+.ssec{border-top:1px solid var(--color-border);padding-top:var(--space-6)}
+.ssec h4{display:flex;align-items:center;gap:var(--space-1-5);font-size:var(--text-sm);line-height:var(--text-sm-leading);font-weight:var(--font-weight-semibold)}
+.ssec h4>.i{color:var(--color-muted-foreground)}
+.ssec-desc{margin-top:var(--space-0-5);font-size:var(--text-xs);color:var(--color-muted-foreground)}
+.drawer{position:relative;display:flex;min-width:0;flex:1;flex-direction:column;background:var(--color-surface);backdrop-filter:var(--blur-glass);-webkit-backdrop-filter:var(--blur-glass)}
+.drawer-bar{display:flex;height:var(--size-header);align-items:center;gap:var(--space-1);padding:0 var(--space-2);box-shadow:var(--shadow-hairline-bottom)}
+.drawer-tabs{display:flex;min-width:0;align-items:center;gap:var(--space-0-5);overflow-x:auto;padding:var(--space-1) 0}
+.drawer-add{display:flex;width:var(--size-control-xs);height:var(--size-control-xs);flex-shrink:0;align-items:center;justify-content:center;border-radius:var(--radius-md);color:var(--color-muted-foreground);transition:all var(--duration-base) var(--ease-standard)}
+.drawer-add:hover{background:var(--color-fill-active);color:var(--color-foreground)}
+.drawer-add[aria-expanded="true"]{transform:rotate(45deg);background:color-mix(in oklab,var(--color-primary) 15%,transparent);color:var(--color-primary)}
+.drawer-body{position:relative;display:flex;min-height:0;flex:1;flex-direction:column}
+.drawer-body>.empty{flex:1}
+.spacer{flex:1}
+
+/* ---------- Chat ---------- */
+.chat{position:relative;display:flex;min-height:0;flex:1;flex-direction:column;background:var(--color-chat-canvas)}
+.chat-scroll{min-height:0;flex:1;overflow:hidden}
+.msgs{margin:0 auto;display:flex;width:100%;min-width:0;max-width:var(--size-chat-column);flex-direction:column;gap:var(--space-5);padding:var(--space-5) var(--space-3)}
+.umsg{display:flex;width:100%;min-width:0;flex-direction:column;gap:var(--space-1)}
+.msgs>.umsg{margin-bottom:calc(-1 * var(--space-5))}
+.bubble{overflow-wrap:break-word;border-radius:var(--radius-lg);border:1px solid var(--color-border-subtle);background:var(--color-fill-bubble);padding:var(--space-2-5) var(--space-3-5);font-size:var(--text-input);line-height:var(--text-leading-relaxed);color:var(--color-foreground)}
+.bubble p,.bubble li{white-space:pre-wrap}
+.uacts{margin-top:calc(-1 * var(--space-1));display:flex;height:var(--space-5);align-items:center;justify-content:flex-end;gap:var(--space-0-5);opacity:0;transition:opacity var(--duration-base) var(--ease-standard)}
+.umsg:hover .uacts,.umsg.is-hover .uacts{opacity:1}
+.mbtn{border-radius:var(--radius-xs);padding:var(--space-1);color:var(--color-muted-foreground)}
+.uacts .mbtn{padding:3px}
+.mbtn:hover{background:var(--color-fill-active);color:var(--color-foreground)}
+.amsg{display:flex;width:100%;min-width:0;flex-direction:column;gap:var(--space-2-5)}
+.aacts{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-1-5)}
+.aacts>.copy{opacity:0;transition:opacity var(--duration-base) var(--ease-standard)}
+.amsg:hover .aacts>.copy,.amsg.is-hover .aacts>.copy{opacity:1}
+.dur{font-family:var(--font-mono);font-size:var(--text-meta);font-variant-numeric:tabular-nums;color:color-mix(in oklab,var(--color-muted-foreground) 70%,transparent)}
+.prose{min-width:0;font-size:var(--text-chat);line-height:var(--text-leading-prose);color:var(--color-foreground);overflow-wrap:anywhere}
+.prose>:first-child{margin-top:0}
+.prose>:last-child{margin-bottom:0}
+.prose p{margin:.55em 0;line-height:var(--text-leading-prose);color:var(--color-prose-text)}
+.prose ul{margin:.5em 0;padding-left:1.4em;list-style:disc}
+.prose li{margin:.2em 0;line-height:var(--text-leading-prose)}
+.prose strong{font-weight:var(--font-weight-semibold);color:var(--color-foreground)}
+.prose code{font-family:var(--font-mono-prose);font-size:.86em}
+.prose :not(pre)>code{border:1px solid var(--color-border);border-radius:5px;background:var(--color-fill-inline-code);padding:.08em .4em;color:var(--color-primary);overflow-wrap:anywhere}
+.prose pre{margin:.7em 0;overflow:auto;border:1px solid var(--color-border);border-radius:.6rem;background:var(--color-fill-pre);padding:.8em .9em}
+.act-line{display:flex;min-width:0;max-width:100%;flex-direction:column}
+.act-head{margin-left:calc(-1 * var(--space-1-5));display:flex;width:fit-content;min-width:0;max-width:100%;align-items:center;gap:var(--space-2);border-radius:var(--radius-lg);padding:var(--space-1) var(--space-2) var(--space-1) var(--space-1);text-align:left;font-size:var(--text-row);line-height:var(--space-5);color:var(--color-muted-foreground);transition:color var(--duration-base) var(--ease-standard),background-color var(--duration-base) var(--ease-standard)}
+.act-head:hover{background:var(--color-fill-bubble);color:color-mix(in oklab,var(--color-foreground) 80%,transparent)}
+.glyph{position:relative;display:grid;width:18px;height:18px;flex-shrink:0;place-items:center;border-radius:var(--radius-full)}
+.glyph.ring>.i{width:11px;height:11px}
+.act-label{display:flex;min-width:0;align-items:baseline;white-space:nowrap}
+.act-lead{flex-shrink:0;color:color-mix(in oklab,var(--color-foreground) 75%,transparent)}
+.act-head:hover .act-lead{color:var(--color-foreground)}
+.act-chev{color:color-mix(in oklab,var(--color-muted-foreground) 60%,transparent);transition:transform var(--duration-overlay) var(--ease-standard)}
+.act-head[aria-expanded="true"] .act-chev{transform:rotate(90deg)}
+.shimmer{background:linear-gradient(100deg,var(--color-muted-foreground) 0%,var(--color-muted-foreground) 38%,rgba(245,243,238,.95) 50%,var(--color-muted-foreground) 62%,var(--color-muted-foreground) 100%);background-size:260% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:shimmer var(--duration-shimmer) linear infinite}
+@keyframes shimmer{from{background-position:100% 0}to{background-position:-160% 0}}
+.ring::before,.ring::after{content:'';position:absolute;inset:-1px;border-radius:var(--radius-full)}
+.ring::before{background:conic-gradient(from 0deg,transparent 0 62%,currentColor 100%);-webkit-mask:radial-gradient(farthest-side,transparent calc(100% - 1.6px),#000 calc(100% - 1.2px));mask:radial-gradient(farthest-side,transparent calc(100% - 1.6px),#000 calc(100% - 1.2px));animation:spin .9s linear infinite}
+.ring::after{border:1.2px solid currentColor;opacity:.16}
+.tl{position:relative;margin:var(--space-1) 0;display:flex;min-width:0;flex-direction:column}
+.tl::before{content:'';position:absolute;bottom:var(--space-3-5);left:8.5px;top:var(--space-3-5);width:1px;background:var(--color-border-floating)}
+.tl-row{display:grid;width:100%;min-width:0;grid-template-columns:18px minmax(0,1fr) 14px;align-items:center;gap:var(--space-2-5);border-radius:var(--radius-md);padding:var(--space-1) var(--space-1-5) var(--space-1) 0;text-align:left;font-size:var(--text-row);line-height:var(--space-5);color:color-mix(in oklab,var(--color-foreground) 80%,transparent);transition:background-color var(--duration-base) var(--ease-standard)}
+.tl-row:hover{background:var(--color-fill-hover)}
+.tl-node{z-index:1;border:1px solid var(--color-border-strong);background:var(--color-timeline-node);color:var(--color-muted-foreground)}
+.tl-node.is-failed{border-color:color-mix(in oklab,var(--color-tool-error) 40%,transparent);color:var(--color-tool-error)}
+.tl-node>.i{width:10px;height:10px}
+.tl-chev{color:color-mix(in oklab,var(--color-muted-foreground) 50%,transparent);transition:transform var(--duration-overlay) var(--ease-standard)}
+.tl-row[aria-expanded="true"] .tl-chev{transform:rotate(90deg)}
+.tl-flag{margin-left:var(--space-1-5);font-size:var(--text-note);color:color-mix(in oklab,var(--color-tool-error) 85%,transparent)}
+.slot{border-radius:var(--radius-xs);background:var(--color-fill-active);padding:1px var(--space-1);font-family:var(--font-mono);font-size:.92em;color:var(--color-foreground-soft)}
+.tl-detail{margin:var(--space-0-5) 0 var(--space-2) var(--space-7);min-width:0}
+.tdetail{min-width:0;max-width:100%;border-radius:var(--radius-lg);border:1px solid var(--color-border);background:var(--color-fill-card);padding:var(--space-2) var(--space-3);font-size:var(--text-row)}
+.tlabel{margin-bottom:var(--space-1);font-size:var(--text-meta);text-transform:uppercase;letter-spacing:var(--font-tracking-wide);color:var(--color-muted-foreground)}
+.tpre{max-height:12rem;overflow:auto;white-space:pre-wrap;overflow-wrap:break-word;border-radius:var(--radius-xs);background:var(--color-fill-code);padding:var(--space-2);font-family:var(--font-mono);font-size:var(--text-xs);line-height:var(--text-leading-normal);color:var(--color-foreground-soft)}
+.tpre+.tlabel{margin-top:var(--space-2)}
+.tcard{min-width:0;max-width:100%;border-radius:var(--radius-lg);border:1px solid var(--color-border);background:var(--color-fill-card);font-size:var(--text-row)}
+.tcard-head{display:flex;width:100%;align-items:center;gap:var(--space-2);padding:var(--space-2) var(--space-3);text-align:left}
+.tcard-head>.i{color:var(--color-muted-foreground)}
+.tcard-head>.chev{transition:transform var(--duration-base) var(--ease-standard)}
+.tcard.is-open .tcard-head>.chev{transform:rotate(90deg)}
+.tcard-name{min-width:0;font-family:var(--font-mono);color:var(--color-foreground)}
+.tcard-status{margin-left:auto}
+.tcard-body{border-top:1px solid var(--color-border);padding:var(--space-2) var(--space-3)}
+.todo{min-width:0;border-radius:var(--radius-lg);border:1px solid var(--color-border);background:var(--color-fill-card);padding:var(--space-2-5) var(--space-3)}
+.todo-head{margin-bottom:var(--space-2);display:flex;align-items:center;gap:var(--space-1-5);font-size:var(--text-meta);font-weight:var(--font-weight-medium);text-transform:uppercase;letter-spacing:var(--font-tracking-wide);color:color-mix(in oklab,var(--color-muted-foreground) 70%,transparent)}
+.todo-head>span{margin-left:auto;font-variant-numeric:tabular-nums}
+.todo ul{display:flex;flex-direction:column;gap:var(--space-1)}
+.todo li{display:flex;align-items:flex-start;gap:var(--space-2);font-size:var(--text-row)}
+.todo li>.i{margin-top:var(--space-0-5)}
+.todo .is-done{color:var(--color-muted-foreground);text-decoration:line-through}
+.todo .is-done>.i{color:var(--color-tool-done)}
+.todo .is-now{color:var(--color-foreground)}
+.todo .is-now>.i{color:var(--color-tool-waiting);animation:pulse 2s var(--ease-standard) infinite}
+.todo .is-next{color:var(--color-muted-foreground)}
+.todo .is-next>.i{color:color-mix(in oklab,var(--color-muted-foreground) 50%,transparent)}
+@keyframes pulse{50%{opacity:.5}}
+.perm{border-radius:var(--radius-lg);border:1px solid color-mix(in oklab,var(--color-caution) 40%,transparent);background:color-mix(in oklab,var(--color-caution) 10%,transparent);padding:var(--space-2-5) var(--space-3)}
+.perm-top{display:flex;align-items:flex-start;gap:var(--space-2)}
+.perm-top>.i{margin-top:var(--space-0-5);color:var(--color-tool-waiting)}
+.perm-top>div{min-width:0;flex:1}
+.perm b{display:block;font-size:var(--text-row);font-weight:var(--font-weight-medium);color:var(--color-caution-ink)}
+.perm pre{margin-top:var(--space-1-5);overflow:auto;white-space:pre-wrap;border-radius:var(--radius-md);background:var(--color-fill-code);padding:var(--space-1-5) var(--space-2);font-family:var(--font-mono);font-size:var(--text-meta);line-height:1.45;color:color-mix(in oklab,var(--color-caution-faint) 90%,transparent)}
+.perm-acts{margin-top:var(--space-2);display:flex;flex-wrap:wrap;gap:var(--space-2)}
+.perm-acts button{border-radius:var(--radius-md);padding:var(--space-1) var(--space-2-5);font-size:var(--text-xs);font-weight:var(--font-weight-medium)}
+.perm-once{background:var(--color-caution);color:var(--color-primary-foreground)}
+.perm-once:hover{background:var(--color-tool-waiting)}
+.perm-always{border:1px solid color-mix(in oklab,var(--color-caution) 50%,transparent);color:var(--color-caution-ink)}
+.perm-always:hover{background:color-mix(in oklab,var(--color-caution) 15%,transparent)}
+.perm-deny{border:1px solid var(--color-border);color:var(--color-muted-foreground)}
+.perm-deny:hover{background:var(--color-muted)}
+.composer-wrap{padding:var(--space-1) var(--space-3) var(--space-3)}
+.composer{position:relative;margin:0 auto;width:100%;max-width:var(--size-chat-column);border-radius:var(--radius-2xl);border:1px solid var(--color-border);background:var(--color-fill-raised);padding:var(--space-2-5) var(--space-3) var(--space-2);transition:border-color var(--duration-slow) var(--ease-standard),background var(--duration-slow) var(--ease-standard),box-shadow var(--duration-slow) var(--ease-standard)}
+.composer:focus-within,.composer.is-focus{border-color:var(--color-border-focus)}
+.composer-input{min-height:3rem;width:100%;white-space:pre-wrap;overflow-wrap:break-word;padding:var(--space-0-5) var(--space-1);font-size:var(--text-input);line-height:var(--text-leading-relaxed);color:var(--color-foreground);outline:none}
+.composer-input:empty::before{content:attr(data-placeholder);color:var(--color-muted-foreground);pointer-events:none}
+.composer-files{margin-bottom:var(--space-2);display:flex;flex-wrap:wrap;gap:var(--space-2)}
+.composer-bar{margin-top:var(--space-1-5);display:flex;align-items:center;justify-content:space-between;gap:var(--space-2)}
+.composer-left{display:flex;min-width:0;flex:1;align-items:center;gap:var(--space-0-5)}
+.composer-right{display:flex;flex-shrink:0;align-items:center;gap:var(--space-2)}
+.composer-meta{margin:var(--space-1-5) auto 0;display:flex;width:100%;max-width:var(--size-chat-column);align-items:center;justify-content:space-between;gap:var(--space-2);padding:0 var(--space-1)}
+.meter{font-size:var(--text-meta);font-variant-numeric:tabular-nums;color:var(--color-muted-foreground)}
+.plus{display:flex;width:var(--size-control-xs);height:var(--size-control-xs);flex-shrink:0;align-items:center;justify-content:center;border-radius:var(--radius-md);color:var(--color-muted-foreground)}
+.plus:hover{background:var(--color-fill-bubble);color:var(--color-foreground)}
+.cchip{display:flex;min-width:0;align-items:center;gap:var(--space-1);border-radius:var(--radius-md);padding:var(--space-1) var(--space-1-5);font-size:var(--text-xs);color:var(--color-muted-foreground)}
+.cchip:hover{background:var(--color-fill-bubble);color:var(--color-foreground)}
+.cchip>.i:last-child{width:var(--size-icon-xs);height:var(--size-icon-xs)}
+.cchip>.num-label{font-variant-numeric:tabular-nums}
+.cchip.is-skills{height:var(--size-control-xs);padding:0 var(--space-1-5);color:var(--color-reasoning)}
+.cchip.is-skills>.i:last-child{width:var(--size-icon-sm);height:var(--size-icon-sm)}
+.cchip.is-plan{color:var(--color-mode-plan)}
+.cchip.is-reasoning{color:var(--color-reasoning)}
+.cchip.is-design{background:color-mix(in oklab,var(--color-design) 9%,transparent);color:var(--color-design-text);box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--color-design-edge) 20%,transparent)}
+.cchip.is-design:hover{background:color-mix(in oklab,var(--color-design) 14%,transparent);color:var(--color-caution-ink)}
+.cchip.is-danger{color:var(--color-tool-waiting)}
+.round{position:relative;display:flex;width:var(--size-control-sm);height:var(--size-control-sm);flex-shrink:0;align-items:center;justify-content:center;border-radius:var(--radius-full);color:var(--color-muted-foreground)}
+.round:hover{background:var(--color-fill-active);color:var(--color-foreground)}
+.send{position:relative;display:flex;width:var(--size-control-sm);height:var(--size-control-sm);flex-shrink:0;align-items:center;justify-content:center;border-radius:var(--radius-full);background:color-mix(in oklab,var(--color-foreground) 10%,transparent);color:var(--color-muted-foreground);transition:color var(--duration-base) var(--ease-standard),background var(--duration-base) var(--ease-standard),box-shadow var(--duration-base) var(--ease-standard),transform var(--duration-base) var(--ease-standard)}
+.send.is-ready{background:var(--color-action);color:var(--color-action-foreground)}
+.send.is-ready:hover{background:var(--color-action-hover)}
+.send.is-stop{color:var(--color-foreground)}
+.send.is-stop:hover{background:color-mix(in oklab,var(--color-foreground) 20%,transparent)}
+.send.is-stop>.i{width:var(--size-icon-sm);height:var(--size-icon-sm);fill:currentColor}
+.working-ring{pointer-events:none;position:absolute;inset:-3px;border-radius:var(--radius-full);border:2px solid color-mix(in oklab,var(--color-action-hover) 20%,transparent);border-top-color:var(--color-action-hover);animation:spin 1s linear infinite}
+.scroll-wrap{position:relative;width:100%;min-height:84px}
+.scroll-down{position:absolute;bottom:var(--space-3);left:50%;z-index:10;display:flex;width:var(--size-control);height:var(--size-control);transform:translateX(-50%);align-items:center;justify-content:center;border-radius:var(--radius-full);border:1px solid var(--color-border-floating);background:var(--color-floating);color:var(--color-foreground);box-shadow:var(--shadow-lg)}
+.scroll-down:hover{background:var(--color-floating-hover)}
+@media (prefers-reduced-motion:reduce){.spin,.ring::before,.working-ring,.shimmer,.st-working,.todo .is-now>.i{animation:none}.shimmer{background:none;color:inherit}}
+</style>
+</head>
+<body>
+<!--
+  Icon symbols below are from Lucide (lucide-react 1.72.0, https://lucide.dev), the icon set the app uses.
+
+ISC License
+
+Copyright (c) 2026 Lucide Icons and Contributors
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+---
+
+The following Lucide icons are derived from the Feather project:
+
+airplay, alert-circle, alert-octagon, alert-triangle, aperture, arrow-down-circle, arrow-down-left, arrow-down-right, arrow-down, arrow-left-circle, arrow-left, arrow-right-circle, arrow-right, arrow-up-circle, arrow-up-left, arrow-up-right, arrow-up, at-sign, calendar, cast, check, chevron-down, chevron-left, chevron-right, chevron-up, chevrons-down, chevrons-left, chevrons-right, chevrons-up, circle, clipboard, clock, code, columns, command, compass, corner-down-left, corner-down-right, corner-left-down, corner-left-up, corner-right-down, corner-right-up, corner-up-left, corner-up-right, crosshair, database, divide-circle, divide-square, dollar-sign, download, external-link, feather, frown, hash, headphones, help-circle, info, italic, key, layout, life-buoy, link-2, link, loader, lock, log-in, log-out, maximize, meh, minimize, minimize-2, minus-circle, minus-square, minus, monitor, moon, more-horizontal, more-vertical, move, music, navigation-2, navigation, octagon, pause-circle, percent, plus-circle, plus-square, plus, power, radio, rss, search, server, share, shopping-bag, sidebar, smartphone, smile, square, table-2, tablet, target, terminal, trash-2, trash, triangle, tv, type, upload, x-circle, x-octagon, x-square, x, zoom-in, zoom-out
+
+The MIT License (MIT) (for the icons listed above)
+
+Copyright (c) 2013-present Cole Bemis
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+<symbol id="i-activity" viewBox="0 0 24 24"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/></symbol>
+<symbol id="i-app-window" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 4v4"/><path d="M2 8h20"/><path d="M6 4v4"/></symbol>
+<symbol id="i-archive" viewBox="0 0 24 24"><rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></symbol>
+<symbol id="i-arrow-down" viewBox="0 0 24 24"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></symbol>
+<symbol id="i-arrow-up" viewBox="0 0 24 24"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></symbol>
+<symbol id="i-ban" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M4.929 4.929 19.07 19.071"/></symbol>
+<symbol id="i-bell" viewBox="0 0 24 24"><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></symbol>
+<symbol id="i-bot" viewBox="0 0 24 24"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></symbol>
+<symbol id="i-brain" viewBox="0 0 24 24"><path d="M12 18V5"/><path d="M15 13a4.17 4.17 0 01-3-4 4.17 4.17 0 01-3 4"/><path d="M17.707 6.294A3 3 0 1012 5a3 3 0 10-5.707 1.294"/><path d="M17.996 5.125a4 4 0 012.526 5.77"/><path d="M18 18a4 4 0 002-7.465"/><path d="M19.967 17.482a4 4 0 11-7.967.517 4 4 0 11-7.967-.517"/><path d="M6 18a4 4 0 01-2-7.465"/><path d="M6.004 5.125a4 4 0 00-2.526 5.77"/></symbol>
+<symbol id="i-calendar-clock" viewBox="0 0 24 24"><path d="M16 14v2.2l1.6 1"/><path d="M16 2v3"/><path d="M21 7.338V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2h2.338"/><path d="M3 9h5.859"/><path d="M8 2v3"/><circle cx="16" cy="16" r="6"/></symbol>
+<symbol id="i-chart-column" viewBox="0 0 24 24"><path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></symbol>
+<symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+<symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+<symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+<symbol id="i-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></symbol>
+<symbol id="i-circle-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></symbol>
+<symbol id="i-circle-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m16 9-5.5 5.5L8 12"/></symbol>
+<symbol id="i-circle-dot" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="12" r="10"/></symbol>
+<symbol id="i-circle-question-mark" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9 9.5a3 2.5 0 016 0c0 2-2 2-3 3.5"/><path d="M12 17h.01"/></symbol>
+<symbol id="i-clipboard-list" viewBox="0 0 24 24"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/></symbol>
+<symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></symbol>
+<symbol id="i-code-xml" viewBox="0 0 24 24"><path d="m18 16 4-4-4-4"/><path d="m6 8-4 4 4 4"/><path d="m14.5 4-5 16"/></symbol>
+<symbol id="i-copy" viewBox="0 0 24 24"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></symbol>
+<symbol id="i-ellipsis" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></symbol>
+<symbol id="i-external-link" viewBox="0 0 24 24"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></symbol>
+<symbol id="i-file-diff" viewBox="0 0 24 24"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/><path d="M9 10h6"/><path d="M12 13V7"/><path d="M9 17h6"/></symbol>
+<symbol id="i-file-text" viewBox="0 0 24 24"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></symbol>
+<symbol id="i-flask-conical" viewBox="0 0 24 24"><path d="M14 2v6a2 2 0 0 0 .245.96l5.51 10.08A2 2 0 0 1 18 22H6a2 2 0 0 1-1.755-2.96l5.51-10.08A2 2 0 0 0 10 8V2"/><path d="M6.453 15h11.094"/><path d="M8.5 2h7"/></symbol>
+<symbol id="i-folder" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></symbol>
+<symbol id="i-folder-open" viewBox="0 0 24 24"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></symbol>
+<symbol id="i-folder-tree" viewBox="0 0 24 24"><path d="M20 10a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-2.5a1 1 0 0 1-.8-.4l-.9-1.2A1 1 0 0 0 15 3h-2a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z"/><path d="M20 21a1 1 0 0 0 1-1v-3a1 1 0 0 0-1-1h-2.9a1 1 0 0 1-.88-.55l-.42-.85a1 1 0 0 0-.92-.6H13a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z"/><path d="M3 5a2 2 0 0 0 2 2h3"/><path d="M3 3v13a2 2 0 0 0 2 2h3"/></symbol>
+<symbol id="i-git-branch" viewBox="0 0 24 24"><path d="M15 6a9 9 0 0 0-9 9V3"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/></symbol>
+<symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></symbol>
+<symbol id="i-laptop" viewBox="0 0 24 24"><path d="M18 5a2 2 0 0 1 2 2v8.526a2 2 0 0 0 .212.897l1.068 2.127a1 1 0 0 1-.9 1.45H3.62a1 1 0 0 1-.9-1.45l1.068-2.127A2 2 0 0 0 4 15.526V7a2 2 0 0 1 2-2z"/><path d="M20.054 15.987H3.946"/></symbol>
+<symbol id="i-layout-grid" viewBox="0 0 24 24"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></symbol>
+<symbol id="i-lightbulb" viewBox="0 0 24 24"><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/></symbol>
+<symbol id="i-list-checks" viewBox="0 0 24 24"><path d="M13 5h8"/><path d="M13 12h8"/><path d="M13 19h8"/><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/></symbol>
+<symbol id="i-loader-circle" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></symbol>
+<symbol id="i-maximize-2" viewBox="0 0 24 24"><path d="M15 3h6v6"/><path d="m21 3-7 7"/><path d="m3 21 7-7"/><path d="M9 21H3v-6"/></symbol>
+<symbol id="i-messages-square" viewBox="0 0 24 24"><path d="M16 10a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 14.286V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/><path d="M20 9a2 2 0 0 1 2 2v10.286a.71.71 0 0 1-1.212.502l-2.202-2.202A2 2 0 0 0 17.172 19H10a2 2 0 0 1-2-2v-1"/></symbol>
+<symbol id="i-mic" viewBox="0 0 24 24"><path d="M12 19v3"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><rect x="9" y="2" width="6" height="13" rx="3"/></symbol>
+<symbol id="i-mic-off" viewBox="0 0 24 24"><path d="M12 19v3"/><path d="M15 9.34V5a3 3 0 0 0-5.68-1.33"/><path d="M16.95 16.95A7 7 0 0 1 5 12v-2"/><path d="M18.89 13.23A7 7 0 0 0 19 12v-2"/><path d="m2 2 20 20"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12"/></symbol>
+<symbol id="i-palette" viewBox="0 0 24 24"><path d="M12 22a1 1 0 0 1 0-20 10 9 0 0 1 10 9 5 5 0 0 1-5 5h-2.25a1.75 1.75 0 0 0-1.4 2.8l.3.4a1.75 1.75 0 0 1-1.4 2.8z"/><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/></symbol>
+<symbol id="i-panel-left-close" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m16 15-3-3 3-3"/></symbol>
+<symbol id="i-panel-right" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/></symbol>
+<symbol id="i-pencil" viewBox="0 0 24 24"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></symbol>
+<symbol id="i-picture-in-picture-2" viewBox="0 0 24 24"><path d="M21 9V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v10c0 1.1.9 2 2 2h4"/><rect width="10" height="7" x="12" y="13" rx="2"/></symbol>
+<symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></symbol>
+<symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></symbol>
+<symbol id="i-scan-search" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="12" r="3"/><path d="m16 16-1.9-1.9"/></symbol>
+<symbol id="i-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></symbol>
+<symbol id="i-settings" viewBox="0 0 24 24"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/></symbol>
+<symbol id="i-shield-alert" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="M12 8v4"/><path d="M12 16h.01"/></symbol>
+<symbol id="i-shield-check" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></symbol>
+<symbol id="i-shield-question-mark" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 01-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 011-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 011.52 0C14.51 3.81 17 5 19 5a1 1 0 011 1z"/><path d="M9 9.5a3 2.5 0 016 0c0 2-2 2-3 3.5"/><path d="M12 17h.01"/></symbol>
+<symbol id="i-sparkles" viewBox="0 0 24 24"><path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z"/><path d="M20 2v4"/><path d="M22 4h-4"/><circle cx="4" cy="20" r="2"/></symbol>
+<symbol id="i-square" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"/></symbol>
+<symbol id="i-square-terminal" viewBox="0 0 24 24"><path d="m7 11 2-2-2-2"/><path d="M11 13h4"/><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/></symbol>
+<symbol id="i-sticky-note" viewBox="0 0 24 24"><path d="M21 9a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 15 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2z"/><path d="M15 3v5a1 1 0 0 0 1 1h5"/></symbol>
+<symbol id="i-trash-2" viewBox="0 0 24 24"><path d="M10 11v6"/><path d="M14 11v6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></symbol>
+<symbol id="i-triangle-alert" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></symbol>
+<symbol id="i-wrench" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z"/></symbol>
+<symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></symbol>
+</svg>
+
+<header class="doc-head">
+  <h1>Maestrly desktop · components</h1>
+  <p>Every reusable component of the desktop app, rebuilt from tokens.css. The first board is the chat screen at 1440 px; each section below renders a component once as its main definition, then its variants. Hover states are live.</p>
+  <nav class="doc-nav" aria-label="Sections">
+    <a href="#shell">App shell</a><a href="#foundations">Foundations</a><a href="#buttons">Buttons</a><a href="#inputs">Inputs</a><a href="#select">Select</a><a href="#chips">Chips and badges</a><a href="#tabs">Tabs</a><a href="#cards">Cards and lists</a><a href="#empty">Empty states</a><a href="#overlays">Dialogs, menus and toasts</a><a href="#navigation">Rail and sidebar</a><a href="#surfaces">Settings and drawer</a><a href="#chat">Chat</a>
+  </nav>
+</header>
+
+<section id="shell" aria-label="App shell">
+  <div class="shell">
+    <nav class="nav" aria-label="Sidebar">
+      <div class="rail" data-ds="Rail">
+        <div class="rail-col">
+          <button class="rail-btn" aria-label="Collapse sidebar"><svg class="i"><use href="#i-panel-left-close"/></svg></button>
+          <div class="rail-div"></div>
+          <div class="rail-tabs" role="tablist" aria-label="Sidebar views">
+            <button class="rail-btn" role="tab" aria-label="Inbox" data-ds="RailButton"><svg class="i"><use href="#i-bell"/></svg></button>
+            <button class="rail-btn" role="tab" aria-label="Chats" data-ds="RailButton"><svg class="i"><use href="#i-messages-square"/></svg></button>
+            <button class="rail-btn is-active" role="tab" aria-selected="true" aria-label="Workspaces" data-ds="RailButton" data-ds-props="state=active"><svg class="i"><use href="#i-folder-tree"/></svg></button>
+            <button class="rail-btn" role="tab" aria-label="Bots" data-ds="RailButton"><svg class="i"><use href="#i-bot"/></svg><span class="rflask"><svg class="i"><use href="#i-flask-conical"/></svg></span></button>
+            <button class="rail-btn" role="tab" aria-label="Routines" data-ds="RailButton"><svg class="i"><use href="#i-calendar-clock"/></svg></button>
+          </div>
+          <div class="rail-foot">
+            <button class="rail-btn is-small" aria-label="Artifacts" data-ds="RailButton" data-ds-props="size=small"><svg class="i"><use href="#i-app-window"/></svg></button>
+            <button class="rail-btn is-small" aria-label="Settings" data-ds="RailButton" data-ds-props="size=small"><svg class="i"><use href="#i-settings"/></svg></button>
+            <button class="rail-btn is-small" aria-label="Help" data-ds="RailButton" data-ds-props="size=small"><svg class="i"><use href="#i-circle-question-mark"/></svg></button>
+          </div>
+        </div>
+      </div>
+      <div class="sb">
+        <div class="sb-head" data-ds="SidebarHeader">
+          <h2 class="sb-title"><span class="truncate">Workspaces</span></h2>
+          <div class="sb-actions">
+            <button class="btn btn-ghost ib-26" aria-label="Add workspace" data-ds="IconButton" data-ds-props="size=26"><svg><use href="#i-plus"/></svg></button>
+            <button class="btn btn-ghost ib-26" aria-label="View options" data-ds="IconButton" data-ds-props="size=26"><svg><use href="#i-ellipsis"/></svg></button>
+          </div>
+        </div>
+        <div class="sb-search">
+          <label class="search" data-ds="SearchField"><svg class="i i-sm"><use href="#i-search"/></svg><input placeholder="Filter conversations…" aria-label="Filter conversations"></label>
+        </div>
+        <div class="sb-body">
+          <div class="sb-list">
+            <div class="ws">
+              <div class="ws-head" data-ds="WorkspaceHeader">
+                <button class="ws-toggle"><svg class="i i-xs"><use href="#i-chevron-down"/></svg><svg class="i i-sm"><use href="#i-folder-open"/></svg><span class="ws-name truncate">maestrly-demo</span></button>
+                <div class="ws-tray"><div>
+                  <button class="btn btn-ghost ib-24" aria-label="Project notes"><svg><use href="#i-sticky-note"/></svg></button>
+                  <button class="btn btn-ghost ib-24" aria-label="New conversation"><svg><use href="#i-plus"/></svg></button>
+                  <button class="btn btn-ghost ib-24" aria-label="Workspace menu"><svg><use href="#i-ellipsis"/></svg></button>
+                </div></div>
+              </div>
+              <ul class="ws-list">
+                <li class="conv is-selected" data-ds="SidebarItem" data-ds-props="state=selected">
+                  <span class="conv-status st-idle"><svg class="i i-sm"><use href="#i-circle"/></svg></span>
+                  <span class="conv-title"><span class="truncate block">Ship the usage dashboard</span></span>
+                  <span class="conv-meta">now</span>
+                  <button class="btn btn-ghost ib-24 conv-menu" aria-label="Conversation menu"><svg><use href="#i-ellipsis"/></svg></button>
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    </nav>
+    <main class="main">
+      <header class="vh" data-ds="ViewHeader" data-ds-main>
+        <div class="vh-left">
+          <span class="vh-title truncate">Ship the usage dashboard</span>
+          <span class="branch" data-ds="BranchChip"><svg class="i i-xs"><use href="#i-git-branch"/></svg><span class="truncate">main</span></span>
+        </div>
+        <div class="vh-right">
+          <button class="btn btn-ghost ib-28" aria-label="Open in a window" data-ds="IconButton" data-ds-props="size=28"><svg><use href="#i-external-link"/></svg></button>
+          <button class="btn btn-ghost btn-sm btn-review" data-ds="Button" data-ds-props="variant=ghost size=sm"><svg><use href="#i-scan-search"/></svg>Review</button>
+          <button class="btn btn-ghost ib-28" aria-label="Toggle drawer" data-ds="IconButton" data-ds-props="size=28"><svg><use href="#i-panel-right"/></svg></button>
+        </div>
+      </header>
+      <div class="chat">
+        <div class="chat-scroll">
+          <div class="msgs">
+            <div class="umsg" data-ds="UserMessage">
+              <div class="bubble"><div class="prose"><p>Review the usage dashboard and ship the responsive model breakdown. Keep the existing API contract.</p></div></div>
+              <div class="uacts"><button class="mbtn" aria-label="Copy"><svg class="i i-sm"><use href="#i-copy"/></svg></button><button class="mbtn" aria-label="Edit"><svg class="i i-sm"><use href="#i-pencil"/></svg></button></div>
+            </div>
+            <div class="amsg" data-ds="AssistantMessage">
+              <div class="prose"><p>The data path is clean: the dashboard reads the durable local ledger and enriches each row with model metadata. I am updating the layout now.</p></div>
+              <section class="act-line" data-ds="ActivityLine">
+                <button class="act-head" aria-expanded="false"><span class="glyph"><svg class="i i-sm"><use href="#i-list-checks"/></svg></span><span class="act-label truncate"><span class="act-lead">Worked for 18s</span><span class="truncate">&nbsp;· 1 file read · 1 code search</span></span><svg class="i i-sm act-chev"><use href="#i-chevron-right"/></svg></button>
+              </section>
+              <div class="aacts"><span class="copy"><button class="mbtn" aria-label="Copy"><svg class="i i-sm"><use href="#i-copy"/></svg></button></span><span class="dur">18s</span></div>
+            </div>
+            <div class="umsg" data-ds="UserMessage">
+              <div class="bubble"><div class="prose"><p>Looks good. Run the checks and summarize what changed.</p></div></div>
+              <div class="uacts"><button class="mbtn" aria-label="Copy"><svg class="i i-sm"><use href="#i-copy"/></svg></button><button class="mbtn" aria-label="Edit"><svg class="i i-sm"><use href="#i-pencil"/></svg></button></div>
+            </div>
+            <div class="amsg" data-ds="AssistantMessage">
+              <div class="prose"><p>Done. The dashboard now keeps totals visible, adapts the model table to narrow windows, and preserves the existing usage API. Typecheck and 184 unit tests pass.</p></div>
+              <section class="act-line" data-ds="ActivityLine">
+                <button class="act-head" aria-expanded="false"><span class="glyph"><svg class="i i-sm"><use href="#i-list-checks"/></svg></span><span class="act-label truncate"><span class="act-lead">Worked for 12s</span><span class="truncate">&nbsp;· 1 command</span></span><svg class="i i-sm act-chev"><use href="#i-chevron-right"/></svg></button>
+              </section>
+              <div class="aacts"><span class="copy"><button class="mbtn" aria-label="Copy"><svg class="i i-sm"><use href="#i-copy"/></svg></button></span><span class="dur">12s</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="composer-wrap" data-ds="Composer">
+          <div class="composer">
+            <div class="composer-input" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Message" data-placeholder="Ask something or request a task… (@ references files/folders, # references agents, Ctrl+V pastes images)"></div>
+            <div class="composer-bar">
+              <div class="composer-left">
+                <button class="plus" aria-label="More"><svg class="i"><use href="#i-plus"/></svg></button>
+                <button class="cchip is-skills" data-ds="ComposerChip" data-ds-props="kind=skills"><svg class="i i-sm"><use href="#i-sparkles"/></svg><span class="num-label">50</span></button>
+                <button class="cchip" data-ds="ComposerChip" data-ds-props="kind=mode mode=agent"><svg class="i i-sm"><use href="#i-bot"/></svg><span class="truncate">Agent</span><svg class="i"><use href="#i-chevron-down"/></svg></button>
+                <button class="cchip is-reasoning" data-ds="ComposerChip" data-ds-props="kind=reasoning"><svg class="i i-sm"><use href="#i-brain"/></svg><span class="truncate">high</span><svg class="i"><use href="#i-chevron-down"/></svg></button>
+                <button class="cchip" data-ds="ComposerChip" data-ds-props="kind=model"><span class="truncate">OpenAI · gpt-5.2-codex</span><svg class="i"><use href="#i-chevron-down"/></svg></button>
+              </div>
+              <div class="composer-right">
+                <button class="round" aria-label="Dictation unavailable"><svg class="i"><use href="#i-mic-off"/></svg></button>
+                <button class="send" aria-label="Send" disabled data-ds="SendButton" data-ds-props="state=idle"><svg class="i"><use href="#i-arrow-up"/></svg></button>
+              </div>
+            </div>
+          </div>
+          <div class="composer-meta">
+            <button class="cchip" data-ds="ComposerChip" data-ds-props="kind=permission"><svg class="i i-sm"><use href="#i-square-terminal"/></svg><span class="truncate">Approve for me</span><svg class="i"><use href="#i-chevron-down"/></svg></button>
+            <span class="meter">~405/200.0k 0.2% · ~$12.89</span>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</section>
+
+<section id="foundations" class="doc-section">
+  <h2>Foundations</h2>
+  <p class="lead">One dark theme. Warm ivory is the brand and the selection color; white at low opacity builds every fill and line; color is reserved for status and chat modes.</p>
+  <div class="swatches">
+    <div class="swatch"><b style="background:var(--color-window)"></b><span>window</span></div>
+    <div class="swatch"><b style="background:var(--color-chat-canvas)"></b><span>chat-canvas</span></div>
+    <div class="swatch"><b style="background:var(--color-sidebar)"></b><span>sidebar</span></div>
+    <div class="swatch"><b style="background:var(--color-popover)"></b><span>popover</span></div>
+    <div class="swatch"><b style="background:var(--color-popover-chat)"></b><span>popover-chat</span></div>
+    <div class="swatch"><b style="background:var(--color-primary)"></b><span>primary</span></div>
+    <div class="swatch"><b style="background:var(--color-foreground)"></b><span>foreground</span></div>
+    <div class="swatch"><b style="background:var(--color-muted-foreground)"></b><span>muted-foreground</span></div>
+    <div class="swatch"><b style="background:var(--color-action)"></b><span>action</span></div>
+    <div class="swatch"><b style="background:var(--color-destructive)"></b><span>destructive</span></div>
+    <div class="swatch"><b style="background:var(--color-status-ready)"></b><span>status-ready</span></div>
+    <div class="swatch"><b style="background:var(--color-warn)"></b><span>warn</span></div>
+    <div class="swatch"><b style="background:var(--color-routine)"></b><span>routine</span></div>
+    <div class="swatch"><b style="background:var(--color-tool-running)"></b><span>tool-running</span></div>
+    <div class="swatch"><b style="background:var(--color-reasoning)"></b><span>reasoning</span></div>
+    <div class="swatch"><b style="background:var(--color-design)"></b><span>design</span></div>
+  </div>
+  <div style="margin-top:var(--space-6)">
+    <div class="type-row"><code>--text-display 19</code><span style="font-size:var(--text-display);font-weight:var(--font-weight-semibold);letter-spacing:var(--font-tracking-tight)">Nothing published yet</span></div>
+    <div class="type-row"><code>--text-lg 18</code><span style="font-size:var(--text-lg);font-weight:var(--font-weight-semibold);letter-spacing:var(--font-tracking-tight)">New conversation</span></div>
+    <div class="type-row"><code>--text-chat 14.5</code><span style="font-size:var(--text-chat);line-height:var(--text-leading-prose);color:var(--color-prose-text)">The dashboard reads the durable local ledger.</span></div>
+    <div class="type-row"><code>--text-sm 14</code><span style="font-size:var(--text-sm)">Buttons, inputs and menu items</span></div>
+    <div class="type-row"><code>--text-row 13</code><span style="font-size:var(--text-row)">Sidebar rows, view titles, tool cards</span></div>
+    <div class="type-row"><code>--text-xs 12</code><span style="font-size:var(--text-xs);color:var(--color-muted-foreground)">Descriptions and composer chips</span></div>
+    <div class="type-row"><code>--text-meta 11</code><span style="font-size:var(--text-meta);color:var(--color-muted-foreground)">Timestamps, hints, tool status</span></div>
+    <div class="type-row"><code>--text-micro 10</code><span style="font-size:var(--text-micro);text-transform:uppercase;letter-spacing:var(--font-tracking-wide);color:var(--color-muted-foreground-faint)">Section label</span></div>
+    <div class="type-row"><code>--font-mono</code><span style="font-family:var(--font-mono);font-size:var(--text-xs)">npm run typecheck &amp;&amp; npm run test:unit</span></div>
+  </div>
+</section>
+
+<section id="buttons" class="doc-section">
+  <h2>Buttons</h2>
+  <p class="lead">One primary per surface. Ivory everywhere except the chat, whose main action is indigo. Icons inside a Button are always 16 px.</p>
+  <div class="doc-grid">
+    <div class="spec"><div class="spec-label">Button · variant</div><div class="spec-body">
+      <button class="btn btn-default" data-ds="Button" data-ds-main data-ds-props="variant=default size=default">Create chat</button>
+      <button class="btn btn-secondary" data-ds="Button" data-ds-props="variant=secondary">Secondary</button>
+      <button class="btn btn-outline" data-ds="Button" data-ds-props="variant=outline">Outline</button>
+      <button class="btn btn-ghost" data-ds="Button" data-ds-props="variant=ghost">Cancel</button>
+      <button class="btn btn-destructive" data-ds="Button" data-ds-props="variant=destructive">Delete</button>
+      <button class="btn btn-link" data-ds="Button" data-ds-props="variant=link">Learn more</button>
+    </div></div>
+    <div class="spec"><div class="spec-label">Button · size and state</div><div class="spec-body">
+      <button class="btn btn-default btn-sm" data-ds="Button" data-ds-props="size=sm">New branch</button>
+      <button class="btn btn-outline btn-sm" data-ds="Button" data-ds-props="variant=outline size=sm"><svg><use href="#i-plus"/></svg>New terminal</button>
+      <button class="btn btn-default btn-lg" data-ds="Button" data-ds-props="size=lg">Large</button>
+      <button class="btn btn-default" disabled data-ds="Button" data-ds-props="state=disabled">Disabled</button>
+      <button class="btn btn-default is-hover" data-ds="Button" data-ds-props="state=hover">Hover</button>
+    </div></div>
+    <div class="spec"><div class="spec-label">IconButton · ghost icon, sized per place</div><div class="spec-body">
+      <button class="btn btn-ghost btn-icon" aria-label="Close" data-ds="IconButton" data-ds-main data-ds-props="size=36"><svg><use href="#i-x"/></svg></button>
+      <button class="btn btn-ghost ib-28" aria-label="Toggle drawer" data-ds="IconButton" data-ds-props="size=28"><svg><use href="#i-panel-right"/></svg></button>
+      <button class="btn btn-secondary ib-28" aria-label="Drawer open" data-ds="IconButton" data-ds-props="size=28 state=active"><svg><use href="#i-panel-right"/></svg></button>
+      <button class="btn btn-ghost ib-26" aria-label="Add" data-ds="IconButton" data-ds-props="size=26 tone=muted"><svg><use href="#i-plus"/></svg></button>
+      <button class="btn btn-ghost ib-24" aria-label="Menu" data-ds="IconButton" data-ds-props="size=24"><svg><use href="#i-ellipsis"/></svg></button>
+      <button class="btn btn-ghost ib-24 is-hover" aria-label="Menu" data-ds="IconButton" data-ds-props="size=24 state=hover"><svg><use href="#i-ellipsis"/></svg></button>
+    </div></div>
+    <div class="spec"><div class="spec-label">ActionButton · chat surfaces</div><div class="spec-body">
+      <button class="act" data-ds="ActionButton" data-ds-main><svg class="i i-sm"><use href="#i-plus"/></svg>Add account</button>
+      <button class="act is-disabled" data-ds="ActionButton" data-ds-props="state=disabled">Save</button>
+    </div></div>
+    <div class="spec"><div class="spec-label">CompactButton · confirm dialogs and inline actions</div><div class="spec-body">
+      <button class="btn-compact is-quiet" data-ds="CompactButton" data-ds-main data-ds-props="tone=quiet">Cancel</button>
+      <button class="btn-compact is-primary" data-ds="CompactButton" data-ds-props="tone=primary">Confirm</button>
+      <button class="btn-compact is-destructive" data-ds="CompactButton" data-ds-props="tone=destructive">Delete</button>
+    </div></div>
+  </div>
+</section>
+
+<section id="inputs" class="doc-section">
+  <h2>Inputs</h2>
+  <p class="lead">Transparent fields with a 10% white border and a 1 px ivory ring on focus. Labels sit above, hints below in 11 px.</p>
+  <div class="doc-grid">
+    <div class="spec"><div class="spec-label">Input · with Label</div><div class="spec-body col">
+      <div class="field"><label class="label" for="ds-branch">New branch name</label><input id="ds-branch" class="input" placeholder="feature/my-task" data-ds="Input" data-ds-main></div>
+      <div class="field"><label class="label" for="ds-branch2">Focused</label><input id="ds-branch2" class="input is-focus" value="feat/usage-dashboard" data-ds="Input" data-ds-props="state=focus"></div>
+      <div class="field"><label class="label" for="ds-branch3">Disabled</label><input id="ds-branch3" class="input" value="main" disabled data-ds="Input" data-ds-props="state=disabled"></div>
+    </div></div>
+    <div class="spec on-window"><div class="spec-label">SearchField · sidebar filter</div><div class="spec-body col">
+      <label class="search" data-ds="SearchField" data-ds-main><svg class="i i-sm"><use href="#i-search"/></svg><input placeholder="Filter conversations…" aria-label="Filter conversations"></label>
+      <label class="search is-focus" data-ds="SearchField" data-ds-props="state=filled"><svg class="i i-sm"><use href="#i-search"/></svg><input value="usage" aria-label="Filter conversations"><button class="search-clear" aria-label="Clear"><svg class="i i-xs"><use href="#i-x"/></svg></button></label>
+    </div></div>
+    <div class="spec"><div class="spec-label">Checkbox · Switch · NumberField</div><div class="spec-body col">
+      <label class="check-row" data-ds="Checkbox" data-ds-main><input type="checkbox" class="check"> Show archived</label>
+      <label class="check-row" data-ds="Checkbox" data-ds-props="state=checked"><input type="checkbox" class="check" checked> Include drafts</label>
+      <label class="check-row" data-ds="Checkbox" data-ds-props="state=disabled"><input type="checkbox" class="check" disabled> Unavailable</label>
+      <div class="hstack"><button class="switch" role="switch" aria-checked="true" aria-label="On" data-ds="Switch" data-ds-main data-ds-props="state=on"></button><button class="switch" role="switch" aria-checked="false" aria-label="Off" data-ds="Switch" data-ds-props="state=off"></button></div>
+      <div class="row is-plain" style="align-items:flex-start" data-ds="NumberField" data-ds-main><div class="row-main"><span class="card-title">Parallel agents</span><span class="hint">How many run at once.</span></div><input class="num" type="number" value="4" aria-label="Parallel agents"></div>
+    </div></div>
+  </div>
+</section>
+
+<section id="select" class="doc-section">
+  <h2>Select and combobox</h2>
+  <p class="lead">Select for short fixed lists; Combobox (search select) when the list is long or searchable. Popups are opaque popover color with a 10 px radius.</p>
+  <div class="doc-grid">
+    <div class="spec"><div class="spec-label">Select · trigger and list</div><div class="spec-body col">
+      <button class="select" data-ds="Select" data-ds-main><span class="truncate">main</span><svg class="i"><use href="#i-chevron-down"/></svg></button>
+      <div class="listbox" role="listbox" aria-label="Branches" data-ds="SelectList" data-ds-main>
+        <div class="opt-label">Local branches</div>
+        <div class="opt is-focus" role="option" aria-selected="true"><span class="opt-check"><svg class="i"><use href="#i-check"/></svg></span>main</div>
+        <div class="opt" role="option">feat/usage-dashboard</div>
+        <div class="opt" role="option">fix/ledger-rounding</div>
+      </div>
+    </div></div>
+    <div class="spec"><div class="spec-label">Combobox · search select</div><div class="spec-body col">
+      <button class="select is-sm" data-ds="Combobox" data-ds-main><span class="truncate">gpt-5.2-codex</span><svg class="i"><use href="#i-chevron-down"/></svg></button>
+      <button class="select is-sm is-invalid" data-ds="Combobox" data-ds-props="state=invalid"><span class="truncate">Choose a model</span><svg class="i"><use href="#i-chevron-down"/></svg></button>
+      <div class="listbox has-search" data-ds="ComboboxList" data-ds-main>
+        <div class="combo-search"><svg class="i i-sm"><use href="#i-search"/></svg><input placeholder="Search models…" aria-label="Search models"></div>
+        <div class="combo-list" role="listbox" aria-label="Models">
+          <button class="copt is-selected is-focus" role="option" aria-selected="true"><svg class="i i-sm"><use href="#i-check"/></svg><span class="truncate">gpt-5.2-codex</span><small>OpenAI</small></button>
+          <button class="copt" role="option"><svg class="i i-sm"><use href="#i-check"/></svg><span class="truncate">claude-opus-4-6</span><small>Anthropic</small></button>
+          <button class="copt" role="option"><svg class="i i-sm"><use href="#i-check"/></svg><span class="truncate">o3</span><small>OpenAI</small></button>
+        </div>
+      </div>
+    </div></div>
+  </div>
+</section>
+
+<section id="chips" class="doc-section">
+  <h2>Chips and badges</h2>
+  <p class="lead">Small, quiet and mostly monochrome. A colored chip means a state the person should notice.</p>
+  <div class="doc-grid">
+    <div class="spec"><div class="spec-label">BranchChip · Count · Kbd</div><div class="spec-body">
+      <span class="branch" data-ds="BranchChip" data-ds-main><svg class="i i-xs"><use href="#i-git-branch"/></svg><span class="truncate">feat/usage-dashboard</span></span>
+      <span class="branch is-diverged" data-ds="BranchChip" data-ds-props="state=diverged"><svg class="i i-xs"><use href="#i-git-branch"/></svg><span class="truncate">main</span></span>
+      <span class="count" data-ds="Count" data-ds-main>12</span>
+      <span class="kbd" data-ds="Kbd" data-ds-main>⌘K</span>
+    </div></div>
+    <div class="spec on-window"><div class="spec-label">RailBadge · AttentionDot</div><div class="spec-body">
+      <span class="rbadge is-static" data-ds="RailBadge" data-ds-main data-ds-props="tone=primary">3</span>
+      <span class="rbadge is-static is-warn" data-ds="RailBadge" data-ds-props="tone=waiting">1</span>
+      <span class="rbadge is-static is-routine" data-ds="RailBadge" data-ds-props="tone=routine">2</span>
+      <span class="dot" data-ds="AttentionDot" data-ds-main></span>
+    </div></div>
+    <div class="spec"><div class="spec-label">StatusIcon · conversation status</div><div class="spec-body">
+      <span class="st-idle" title="Idle" data-ds="StatusIcon" data-ds-main data-ds-props="status=idle"><svg class="i i-sm"><use href="#i-circle"/></svg></span>
+      <span class="st-working" title="Working" data-ds="StatusIcon" data-ds-props="status=working"><svg class="i i-sm spin"><use href="#i-loader-circle"/></svg></span>
+      <span class="st-ready" title="Ready" data-ds="StatusIcon" data-ds-props="status=ready"><svg class="i i-sm"><use href="#i-circle-dot"/></svg></span>
+      <span class="st-waiting" title="Waiting for permission" data-ds="StatusIcon" data-ds-props="status=waiting"><svg class="i i-sm"><use href="#i-shield-alert"/></svg></span>
+      <span class="st-waiting" title="Asking" data-ds="StatusIcon" data-ds-props="status=asking"><svg class="i i-sm"><use href="#i-circle-question-mark"/></svg></span>
+      <span class="st-error" title="Error" data-ds="StatusIcon" data-ds-props="status=error"><svg class="i i-sm"><use href="#i-circle-dot"/></svg></span>
+    </div></div>
+    <div class="spec"><div class="spec-label">ToolStatus · tool call state</div><div class="spec-body">
+      <span class="tstatus is-pending" data-ds="ToolStatus" data-ds-main data-ds-props="status=pending"><svg class="i i-xs spin"><use href="#i-loader-circle"/></svg>Pending</span>
+      <span class="tstatus is-awaiting" data-ds="ToolStatus" data-ds-props="status=awaiting-permission"><svg class="i i-xs"><use href="#i-shield-question-mark"/></svg>Awaiting permission</span>
+      <span class="tstatus is-running" data-ds="ToolStatus" data-ds-props="status=running"><svg class="i i-xs spin"><use href="#i-loader-circle"/></svg>Running</span>
+      <span class="tstatus is-completed" data-ds="ToolStatus" data-ds-props="status=completed"><svg class="i i-xs"><use href="#i-check"/></svg>Completed</span>
+      <span class="tstatus is-error" data-ds="ToolStatus" data-ds-props="status=error"><svg class="i i-xs"><use href="#i-x"/></svg>Error</span>
+      <span class="tstatus is-denied" data-ds="ToolStatus" data-ds-props="status=denied"><svg class="i i-xs"><use href="#i-ban"/></svg>Denied</span>
+    </div></div>
+    <div class="spec"><div class="spec-label">FileChip · TurnChanges</div><div class="spec-body">
+      <span class="file" data-ds="FileChip" data-ds-main><svg class="i i-sm"><use href="#i-file-text"/></svg><span class="truncate">UsagePanel.tsx</span><button class="file-x" aria-label="Remove"><svg class="i i-xs"><use href="#i-x"/></svg></button></span>
+      <span class="file" data-ds="FileChip" data-ds-props="kind=pdf"><svg class="i i-sm"><use href="#i-file-text"/></svg><small>PDF</small><span class="truncate">spec.pdf</span></span>
+      <button class="changes" data-ds="TurnChanges" data-ds-main><svg class="i i-sm"><use href="#i-file-diff"/></svg>3 files <span class="add">+42</span> <span class="del">−7</span><svg class="i i-xs"><use href="#i-chevron-right"/></svg></button>
+    </div></div>
+  </div>
+</section>
+
+<section id="tabs" class="doc-section">
+  <h2>Tabs</h2>
+  <p class="lead">Segmented controls switch views inside a panel; underline tabs switch a settings page's sections; drawer tabs hold the open tools.</p>
+  <div class="doc-grid">
+    <div class="spec"><div class="spec-label">SegmentedControl</div><div class="spec-body col">
+      <div class="seg" role="tablist" aria-label="Plugins" data-ds="SegmentedControl" data-ds-main><button role="tab" aria-selected="true">Installed</button><button role="tab">Marketplace</button><button role="tab">Sources</button></div>
+      <div class="seg is-bar" role="tablist" aria-label="Chat settings" data-ds="SegmentedControl" data-ds-props="variant=bar"><button role="tab" aria-selected="true">Accounts</button><button role="tab">Models &amp; agents</button><button role="tab">Maestro</button><button role="tab">Tools</button></div>
+    </div></div>
+    <div class="spec"><div class="spec-label">Tabs · underline</div><div class="spec-body flush">
+      <div class="utabs" role="tablist" aria-label="Bot settings" data-ds="Tabs" data-ds-main><button role="tab" aria-selected="true">General</button><button role="tab">Environment</button><button role="tab">Skills</button><button role="tab">Access</button></div>
+    </div></div>
+    <div class="spec on-window"><div class="spec-label">DrawerTab · TerminalTab</div><div class="spec-body">
+      <div class="dtab" role="tab" aria-selected="true" data-ds="DrawerTab" data-ds-main data-ds-props="state=active"><svg class="i"><use href="#i-globe"/></svg>Browser<button class="dtab-x" aria-label="Close Browser"><svg class="i i-xs"><use href="#i-x"/></svg></button></div>
+      <div class="dtab" role="tab" data-ds="DrawerTab" data-ds-props="state=idle"><svg class="i"><use href="#i-square-terminal"/></svg>Terminal<button class="dtab-x" aria-label="Close Terminal"><svg class="i i-xs"><use href="#i-x"/></svg></button></div>
+      <div class="ttab" role="tab" aria-selected="true" data-ds="TerminalTab" data-ds-main>zsh</div>
+      <div class="ttab" role="tab" data-ds="TerminalTab" data-ds-props="state=idle">npm run dev</div>
+    </div></div>
+  </div>
+</section>
+
+<section id="cards" class="doc-section">
+  <h2>Cards and lists</h2>
+  <p class="lead">Cards are 2% white over the canvas with a hairline border. Grouped rows share one card and a divider, never one card per row.</p>
+  <div class="doc-grid">
+    <div class="spec"><div class="spec-label">Card · toggle row</div><div class="spec-body col">
+      <button class="card" data-ds="Card" data-ds-main><span class="row-main"><span class="card-title">Show the tool palette</span><span class="card-desc">Opens the drawer's tool list with ⌘K.</span></span><span class="switch" role="switch" aria-checked="true"></span></button>
+    </div></div>
+    <div class="spec"><div class="spec-label">ListGroup · ListRow</div><div class="spec-body col">
+      <div class="group" data-ds="ListGroup" data-ds-main>
+        <div class="row" data-ds="ListRow" data-ds-main><svg class="i row-icon"><use href="#i-globe"/></svg><div class="row-main"><span class="card-title">Browser</span><span class="hint">Opens pages in the drawer</span></div><span class="switch" role="switch" aria-checked="true"></span></div>
+        <div class="row" data-ds="ListRow"><svg class="i row-icon"><use href="#i-square-terminal"/></svg><div class="row-main"><span class="card-title">Terminal</span><span class="hint">A shell per conversation</span></div><span class="switch" role="switch" aria-checked="false"></span></div>
+        <div class="row" data-ds="ListRow"><svg class="i row-icon"><use href="#i-code-xml"/></svg><div class="row-main"><span class="card-title">Code</span><span class="hint">The worktree's editor</span></div><span class="switch" role="switch" aria-checked="true"></span></div>
+      </div>
+    </div></div>
+    <div class="spec"><div class="spec-label">ChoiceCard · OptionButton</div><div class="spec-body col">
+      <div class="two">
+        <button class="choice" aria-pressed="true" data-ds="ChoiceCard" data-ds-main data-ds-props="state=active"><b>Standard</b><span>Traditional chat. Switch between Agent, Plan and Ask.</span></button>
+        <button class="choice" aria-pressed="false" data-ds="ChoiceCard" data-ds-props="state=idle"><b>Maestro</b><span>Orchestrates agents and automatically routes each step.</span></button>
+      </div>
+      <div class="hstack">
+        <button class="optbtn" aria-pressed="true" data-ds="OptionButton" data-ds-main data-ds-props="state=active">Comfortable</button>
+        <button class="optbtn" aria-pressed="false" data-ds="OptionButton" data-ds-props="state=idle">Compact</button>
+      </div>
+    </div></div>
+  </div>
+</section>
+
+<section id="empty" class="doc-section">
+  <h2>Empty states</h2>
+  <p class="lead">Say what is missing and offer the next step in place. One icon, one title, one sentence.</p>
+  <div class="doc-grid">
+    <div class="spec on-window"><div class="spec-label">EmptyState · panel</div><div class="spec-body flush">
+      <div class="empty" data-ds="EmptyState" data-ds-main data-ds-props="variant=panel">
+        <div class="empty-in">
+          <div class="empty-icon"><svg class="i"><use href="#i-layout-grid"/></svg></div>
+          <h3>No tool open</h3>
+          <p>Open only what you need. Tabs stay up here while in use.</p>
+          <div class="empty-picks"><button><svg class="i i-sm"><use href="#i-globe"/></svg>Browser</button><button><svg class="i i-sm"><use href="#i-square-terminal"/></svg>Terminal</button><button><svg class="i i-sm"><use href="#i-code-xml"/></svg>Code</button></div>
+          <small>or press + to see every tool</small>
+        </div>
+      </div>
+    </div></div>
+    <div class="spec"><div class="spec-label">EmptyState · simple and chat</div><div class="spec-body col flush">
+      <div class="empty-simple" data-ds="EmptyState" data-ds-props="variant=simple"><div class="empty-box"><svg class="i"><use href="#i-file-text"/></svg></div><div><b>No notes yet</b><span>Notes you write here stay with this workspace.</span></div></div>
+      <div class="empty-chat" data-ds="EmptyState" data-ds-props="variant=chat"><div><b>Maestrly Chat</b><span>Ask about this repository, or describe a change to make.</span></div></div>
+    </div></div>
+  </div>
+</section>
+
+<section id="overlays" class="doc-section">
+  <h2>Dialogs, menus and toasts</h2>
+  <p class="lead">Everything that floats is opaque: popover color, a hairline border and a soft shadow. Dialogs sit on a 60% black backdrop.</p>
+  <div class="doc-grid wide">
+    <div class="spec"><div class="spec-label">Dialog</div><div class="stage">
+      <div class="dialog" role="dialog" aria-labelledby="ds-dlg-t" data-ds="Dialog" data-ds-main>
+        <div class="dialog-head"><h3 id="ds-dlg-t">New conversation</h3><p class="dialog-desc">Check 1 or more repositories. With 2+, the conversation works on both end to end.</p></div>
+        <div class="field"><span class="label">Conversation experience</span>
+          <div class="two">
+            <button class="choice" aria-pressed="true" data-ds="ChoiceCard" data-ds-props="state=active"><b>Standard</b><span>Traditional chat.</span></button>
+            <button class="choice" aria-pressed="false" data-ds="ChoiceCard"><b>Maestro</b><span>Orchestrates agents.</span></button>
+          </div>
+        </div>
+        <div class="field"><label class="label" for="ds-dlg-b">New branch name</label><input id="ds-dlg-b" class="input" placeholder="feature/my-task" data-ds="Input"></div>
+        <div class="dialog-foot"><button class="btn btn-ghost" data-ds="Button" data-ds-props="variant=ghost">Cancel</button><button class="btn btn-default" data-ds="Button">Create chat</button></div>
+        <button class="dialog-x" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button>
+      </div>
+    </div></div>
+    <div class="spec"><div class="spec-label">ConfirmDialog · destructive</div><div class="stage is-confirm">
+      <div class="confirm" role="dialog" aria-label="Delete conversation" data-ds="ConfirmDialog" data-ds-main data-ds-props="tone=destructive">
+        <h3>Delete “Ship the usage dashboard”?</h3>
+        <p>The conversation and its history are removed from this computer.</p>
+        <p class="warn"><svg class="i i-sm"><use href="#i-triangle-alert"/></svg><span>Its worktree has 3 uncommitted changes, which are deleted too.</span></p>
+        <div class="confirm-foot"><button class="btn-compact is-quiet" data-ds="CompactButton">Cancel</button><button class="btn-compact is-destructive" data-ds="CompactButton" data-ds-props="tone=destructive">Delete permanently</button></div>
+      </div>
+    </div></div>
+  </div>
+  <div class="doc-grid mid">
+    <div class="spec"><div class="spec-label">Menu · dropdown and context menu</div><div class="spec-body">
+      <div class="menu" role="menu" aria-label="Conversation" data-ds="Menu" data-ds-main>
+        <div class="mi" role="menuitem" data-ds="MenuItem" data-ds-main><svg class="i"><use href="#i-external-link"/></svg>Open chat in new window</div>
+        <div class="mi is-focus" role="menuitem" data-ds="MenuItem" data-ds-props="state=focus"><svg class="i"><use href="#i-pencil"/></svg>Rename</div>
+        <div class="mi" role="menuitem" data-ds="MenuItem"><svg class="i"><use href="#i-pin"/></svg>Pin conversation</div>
+        <div class="mi" role="menuitem" data-ds="MenuItem"><svg class="i"><use href="#i-archive"/></svg>Archive</div>
+        <div class="mi" role="menuitem" aria-haspopup="menu" data-ds="MenuItem" data-ds-props="kind=submenu"><svg class="i"><use href="#i-external-link"/></svg>Open in…<svg class="i sub"><use href="#i-chevron-right"/></svg></div>
+        <div class="msep" role="separator"></div>
+        <div class="mi is-destructive" role="menuitem" data-ds="MenuItem" data-ds-props="tone=destructive"><svg class="i"><use href="#i-trash-2"/></svg>Delete permanently</div>
+      </div>
+    </div></div>
+    <div class="spec"><div class="spec-label">ChatPopover · composer pickers</div><div class="spec-body">
+      <div class="pop" role="menu" aria-label="Chat mode" data-ds="ChatPopover" data-ds-main>
+        <div class="pop-label">Mode</div>
+        <div class="pop-hint">⇧Tab cycles Agent → Design → Plan → Ask → Agent.</div>
+        <button class="pop-item is-selected" role="menuitemradio" aria-checked="true"><span class="pi-icon"><svg class="i i-sm"><use href="#i-bot"/></svg></span><span class="pi-text"><b>Agent</b><small>All tools: reads, edits files and runs commands.</small></span><svg class="i i-sm pi-check"><use href="#i-check"/></svg></button>
+        <button class="pop-item" role="menuitemradio" aria-checked="false"><span class="pi-icon"><svg class="i i-sm"><use href="#i-palette"/></svg></span><span class="pi-text"><b>Design</b><small>Builds navigable visual prototypes focused on UI/UX with mock data.</small></span><svg class="i i-sm pi-check"><use href="#i-check"/></svg></button>
+        <button class="pop-item is-focus" role="menuitemradio" aria-checked="false"><span class="pi-icon"><svg class="i i-sm"><use href="#i-clipboard-list"/></svg></span><span class="pi-text"><b>Plan</b><small>Investigates with restricted tools and proposes a plan for you to approve.</small></span><svg class="i i-sm pi-check"><use href="#i-check"/></svg></button>
+        <div class="pop-div"></div>
+        <button class="pop-item is-maestro" role="menuitem"><span class="pi-icon"><svg class="i i-sm"><use href="#i-sparkles"/></svg></span><span class="pi-text"><b>Use Maestro</b><small>Orchestrate the selected model with the saved Agent Pool.</small></span></button>
+      </div>
+    </div></div>
+    <div class="spec"><div class="spec-label">ChatPopover · model list</div><div class="spec-body">
+      <div class="pop is-list" data-ds="ChatPopover" data-ds-props="variant=search">
+        <div class="pop-search"><svg class="i i-sm"><use href="#i-search"/></svg><input placeholder="Search models…" aria-label="Search models"></div>
+        <div class="pop-rows">
+          <button class="mrow is-selected"><svg class="i i-sm"><use href="#i-check"/></svg><b class="truncate">gpt-5.2-codex</b><small class="truncate">OpenAI</small></button>
+          <button class="mrow is-focus"><svg class="i i-sm"><use href="#i-check"/></svg><b class="truncate">claude-opus-4-6</b><small class="truncate">Anthropic</small></button>
+          <button class="mrow"><svg class="i i-sm"><use href="#i-check"/></svg><b class="truncate">claude-sonnet-4-5</b><small class="truncate">Anthropic</small></button>
+        </div>
+      </div>
+    </div></div>
+    <div class="spec"><div class="spec-label">Tooltip · Toast</div><div class="spec-body col">
+      <div class="hstack"><div class="tip" role="tooltip" data-ds="Tooltip" data-ds-main>Artifacts center</div></div>
+      <div class="toast" role="status" data-ds="Toast" data-ds-main data-ds-props="tone=ok"><span class="toast-icon"><svg class="i i-sm"><use href="#i-check"/></svg></span><div class="toast-main"><b>Branch pushed</b><span>feat/usage-dashboard is on origin.</span></div><button class="toast-x" aria-label="Close"><svg class="i i-sm"><use href="#i-x"/></svg></button></div>
+      <div class="toast is-warn" role="status" data-ds="Toast" data-ds-props="tone=warn"><span class="toast-icon"><svg class="i i-sm"><use href="#i-clock"/></svg></span><div class="toast-main"><b>Routine skipped</b><span>The computer was asleep at 09:00.</span><button class="toast-act">Run now</button></div><button class="toast-x" aria-label="Close"><svg class="i i-sm"><use href="#i-x"/></svg></button></div>
+      <div class="toast is-error" role="status" data-ds="Toast" data-ds-props="tone=error"><span class="toast-icon"><svg class="i i-sm"><use href="#i-circle-alert"/></svg></span><div class="toast-main"><b>Could not archive</b><span>The worktree is locked by another process.</span></div><button class="toast-x" aria-label="Close"><svg class="i i-sm"><use href="#i-x"/></svg></button></div>
+    </div></div>
+  </div>
+</section>
+
+<section id="navigation" class="doc-section">
+  <h2>Rail and sidebar</h2>
+  <p class="lead">The rail switches the sidebar's view; the sidebar lists workspaces and their conversations. Selection is an ivory tint with a glowing 2.5 px bar on the left.</p>
+  <div class="doc-grid">
+    <div class="spec on-window"><div class="spec-label">Rail · RailButton</div><div class="spec-body" style="align-items:stretch">
+      <div class="rail is-standalone" style="height:420px" data-ds="Rail" data-ds-main>
+        <div class="rail-col">
+          <button class="rail-btn" aria-label="Collapse sidebar"><svg class="i"><use href="#i-panel-left-close"/></svg></button>
+          <div class="rail-div"></div>
+          <div class="rail-tabs" role="tablist" aria-label="Sidebar views">
+            <button class="rail-btn" role="tab" aria-label="Inbox" data-ds="RailButton" data-ds-main><svg class="i"><use href="#i-bell"/></svg><span class="rbadge is-warn">1</span></button>
+            <button class="rail-btn is-active" role="tab" aria-selected="true" aria-label="Chats" data-ds="RailButton" data-ds-props="state=active"><svg class="i"><use href="#i-messages-square"/></svg></button>
+            <button class="rail-btn is-hover" role="tab" aria-label="Workspaces" data-ds="RailButton" data-ds-props="state=hover"><svg class="i"><use href="#i-folder-tree"/></svg><span class="rdot"></span></button>
+            <button class="rail-btn" role="tab" aria-label="Bots" data-ds="RailButton"><svg class="i"><use href="#i-bot"/></svg><span class="rflask"><svg class="i"><use href="#i-flask-conical"/></svg></span></button>
+            <button class="rail-btn" role="tab" aria-label="Routines" data-ds="RailButton"><svg class="i"><use href="#i-calendar-clock"/></svg><span class="rbadge is-routine">2</span></button>
+          </div>
+          <div class="rail-foot">
+            <button class="rail-btn is-small" aria-label="Artifacts" data-ds="RailButton" data-ds-props="size=small"><svg class="i"><use href="#i-app-window"/></svg></button>
+            <button class="rail-btn is-small" aria-label="Usage" data-ds="RailButton" data-ds-props="size=small"><svg class="i"><use href="#i-activity"/></svg></button>
+            <button class="rail-btn is-small" aria-label="Settings" data-ds="RailButton" data-ds-props="size=small"><svg class="i"><use href="#i-settings"/></svg></button>
+          </div>
+        </div>
+      </div>
+    </div></div>
+    <div class="spec on-window"><div class="spec-label">SidebarHeader · WorkspaceHeader · SidebarItem</div><div class="spec-body flush" style="background:var(--color-sidebar)">
+      <div class="sb" style="padding-bottom:var(--space-2)">
+        <div class="sb-head" data-ds="SidebarHeader" data-ds-main>
+          <h2 class="sb-title"><span class="truncate">Workspaces</span></h2>
+          <div class="sb-actions"><button class="btn btn-ghost ib-26" aria-label="Add workspace"><svg><use href="#i-plus"/></svg></button><button class="btn btn-ghost ib-26" aria-label="View options"><svg><use href="#i-ellipsis"/></svg></button></div>
+        </div>
+        <div class="sb-body">
+          <div class="sb-list">
+            <div class="pinned">
+              <div class="pinned-head"><svg class="i i-sm"><use href="#i-pin"/></svg><span class="truncate">Pinned</span><span class="count">1</span></div>
+              <ul><li class="conv" data-ds="SidebarItem" data-ds-props="state=ready"><span class="conv-status st-ready"><svg class="i i-sm"><use href="#i-circle-dot"/></svg></span><span class="conv-title"><span class="truncate block">Release checklist</span></span><span class="conv-meta">2h</span><button class="btn btn-ghost ib-24 conv-menu" aria-label="Menu"><svg><use href="#i-ellipsis"/></svg></button></li></ul>
+            </div>
+            <div class="ws">
+              <div class="ws-head is-hover" data-ds="WorkspaceHeader" data-ds-main data-ds-props="state=hover">
+                <button class="ws-toggle"><svg class="i i-xs"><use href="#i-chevron-down"/></svg><svg class="i i-sm"><use href="#i-folder-open"/></svg><span class="ws-name truncate">maestrly-demo</span></button>
+                <div class="ws-tray"><div><button class="btn btn-ghost ib-24" aria-label="Project notes"><svg><use href="#i-sticky-note"/></svg></button><button class="btn btn-ghost ib-24" aria-label="New conversation"><svg><use href="#i-plus"/></svg></button><button class="btn btn-ghost ib-24" aria-label="Menu"><svg><use href="#i-ellipsis"/></svg></button></div></div>
+              </div>
+              <ul class="ws-list">
+                <li class="conv is-selected" data-ds="SidebarItem" data-ds-main data-ds-props="state=selected"><span class="conv-status st-idle"><svg class="i i-sm"><use href="#i-circle"/></svg></span><span class="conv-title"><span class="truncate block">Ship the usage dashboard</span></span><span class="conv-meta">now</span><button class="btn btn-ghost ib-24 conv-menu" aria-label="Menu"><svg><use href="#i-ellipsis"/></svg></button></li>
+                <li class="conv" data-ds="SidebarItem" data-ds-props="state=working"><span class="conv-status st-working"><svg class="i i-sm spin"><use href="#i-loader-circle"/></svg></span><span class="conv-title"><span class="truncate block">Fix ledger rounding</span></span><span class="conv-meta"><span class="conv-maestro"><svg class="i i-xs"><use href="#i-sparkles"/></svg></span>4m</span><button class="btn btn-ghost ib-24 conv-menu" aria-label="Menu"><svg><use href="#i-ellipsis"/></svg></button></li>
+                <li class="conv is-hover" data-ds="SidebarItem" data-ds-props="state=hover"><span class="conv-status st-waiting"><svg class="i i-sm"><use href="#i-shield-alert"/></svg></span><span class="conv-title"><span class="truncate block">Migrate the routines store</span></span><span class="conv-meta">1d</span><button class="btn btn-ghost ib-24 conv-menu" aria-label="Menu"><svg><use href="#i-ellipsis"/></svg></button></li>
+                <li class="conv" data-ds="SidebarItem" data-ds-props="state=unread"><span class="conv-status st-error"><svg class="i i-sm"><use href="#i-circle-dot"/></svg></span><span class="conv-title"><span class="truncate block">Nightly report</span></span><span class="dot"></span><span class="conv-meta"><span class="conv-routine"><svg class="i i-xs"><use href="#i-clock"/></svg></span>3d</span><button class="btn btn-ghost ib-24 conv-menu" aria-label="Menu"><svg><use href="#i-ellipsis"/></svg></button></li>
+                <li class="conv is-archived" data-ds="SidebarItem" data-ds-props="state=archived"><span class="conv-status st-idle"><svg class="i i-sm"><use href="#i-circle"/></svg></span><span class="conv-title"><span class="truncate block">Old spike</span></span><span class="conv-meta">2w</span></li>
+              </ul>
+            </div>
+            <div class="ws"><div class="ws-head" data-ds="WorkspaceHeader" data-ds-props="state=collapsed"><button class="ws-toggle"><svg class="i i-xs"><use href="#i-chevron-right"/></svg><svg class="i i-sm"><use href="#i-folder"/></svg><span class="ws-name truncate">website</span><span class="ws-count">6</span></button></div></div>
+          </div>
+        </div>
+      </div>
+    </div></div>
+  </div>
+</section>
+
+<section id="surfaces" class="doc-section">
+  <h2>Settings and drawer</h2>
+  <p class="lead">Settings replaces the main area: a 192 px nav column and a centered 672 px content column. The drawer is a glass panel on the right whose tabs are the tools in use.</p>
+  <div class="doc-grid wide">
+    <div class="spec on-window"><div class="spec-label">SettingsView · SettingsNavItem · SettingsSection</div><div class="spec-body flush">
+      <div class="main" style="height:520px" data-ds="SettingsView" data-ds-main>
+        <header class="vh is-settings" data-ds="ViewHeader" data-ds-props="variant=settings"><div class="vh-left"><svg class="i vh-icon"><use href="#i-settings"/></svg><h1 class="vh-title truncate">Settings</h1></div><button class="btn btn-ghost ib-28" aria-label="Close"><svg><use href="#i-x"/></svg></button></header>
+        <div class="settings">
+          <nav class="snav" aria-label="Settings sections">
+            <button class="snav-item" aria-current="page" data-ds="SettingsNavItem" data-ds-main data-ds-props="state=active"><svg class="i"><use href="#i-messages-square"/></svg><span class="truncate">Maestrly Chat</span></button>
+            <button class="snav-item" data-ds="SettingsNavItem"><svg class="i"><use href="#i-sparkles"/></svg><span class="truncate">Assistant</span></button>
+            <button class="snav-item" data-ds="SettingsNavItem"><svg class="i"><use href="#i-laptop"/></svg><span class="truncate">Computers</span></button>
+            <button class="snav-item" data-ds="SettingsNavItem"><svg class="i"><use href="#i-chart-column"/></svg><span class="truncate">Usage &amp; cost</span></button>
+            <button class="snav-item" data-ds="SettingsNavItem"><svg class="i"><use href="#i-palette"/></svg><span class="truncate">Appearance</span></button>
+            <button class="snav-item" data-ds="SettingsNavItem"><svg class="i"><use href="#i-panel-right"/></svg><span class="truncate">Tools &amp; drawer</span></button>
+            <button class="snav-item" data-ds="SettingsNavItem"><svg class="i"><use href="#i-shield-check"/></svg><span class="truncate">Privacy</span></button>
+          </nav>
+          <div class="scontent"><div class="scol">
+            <div class="ssec" data-ds="SettingsSection" data-ds-main>
+              <div><h4><svg class="i"><use href="#i-palette"/></svg>Appearance</h4><p class="ssec-desc">How the chat reads. Changes apply to every conversation.</p></div>
+              <div class="hstack"><button class="optbtn" aria-pressed="true" data-ds="OptionButton" data-ds-props="state=active">Comfortable</button><button class="optbtn" aria-pressed="false" data-ds="OptionButton">Compact</button></div>
+              <button class="card" data-ds="Card"><span class="row-main"><span class="card-title">Show response durations</span><span class="card-desc">Under each answer, how long the turn took.</span></span><span class="switch" role="switch" aria-checked="true"></span></button>
+            </div>
+            <div class="ssec" data-ds="SettingsSection">
+              <div><h4><svg class="i"><use href="#i-panel-right"/></svg>Drawer</h4><p class="ssec-desc">Tools a conversation can open.</p></div>
+              <div class="group" data-ds="ListGroup"><div class="row" data-ds="ListRow"><svg class="i row-icon"><use href="#i-globe"/></svg><div class="row-main card-title">Browser</div><span class="switch" role="switch" aria-checked="true"></span></div><div class="row" data-ds="ListRow"><svg class="i row-icon"><use href="#i-square-terminal"/></svg><div class="row-main card-title">Terminal</div><span class="switch" role="switch" aria-checked="true"></span></div></div>
+            </div>
+          </div></div>
+        </div>
+      </div>
+    </div></div>
+    <div class="spec on-window"><div class="spec-label">Drawer</div><div class="spec-body flush">
+      <aside class="drawer" style="height:520px" data-ds="Drawer" data-ds-main>
+        <div class="drawer-bar">
+          <div class="drawer-tabs" role="tablist" aria-label="Open tools">
+            <div class="dtab" role="tab" aria-selected="true" data-ds="DrawerTab" data-ds-props="state=active"><svg class="i"><use href="#i-globe"/></svg>Browser<button class="dtab-x" aria-label="Close Browser"><svg class="i i-xs"><use href="#i-x"/></svg></button></div>
+            <div class="dtab" role="tab" data-ds="DrawerTab"><svg class="i"><use href="#i-square-terminal"/></svg>Terminal<button class="dtab-x" aria-label="Close Terminal"><svg class="i i-xs"><use href="#i-x"/></svg></button></div>
+          </div>
+          <button class="drawer-add" aria-label="Open a tool"><svg class="i"><use href="#i-plus"/></svg></button>
+          <span class="spacer"></span>
+          <button class="btn btn-ghost ib-28" aria-label="Pop out"><svg><use href="#i-picture-in-picture-2"/></svg></button>
+          <button class="btn btn-ghost ib-28" aria-label="Full screen"><svg><use href="#i-maximize-2"/></svg></button>
+        </div>
+        <div class="drawer-body">
+          <div class="empty" data-ds="EmptyState" data-ds-props="variant=panel">
+            <div class="empty-in">
+              <div class="empty-icon"><svg class="i"><use href="#i-layout-grid"/></svg></div>
+              <h3>No tool open</h3>
+              <p>Open only what you need. Tabs stay up here while in use.</p>
+              <div class="empty-picks"><button><svg class="i i-sm"><use href="#i-globe"/></svg>Browser</button><button><svg class="i i-sm"><use href="#i-square-terminal"/></svg>Terminal</button><button><svg class="i i-sm"><use href="#i-code-xml"/></svg>Code</button></div>
+              <small>or press + to see every tool</small>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </div></div>
+  </div>
+</section>
+
+<section id="chat" class="doc-section">
+  <h2>Chat</h2>
+  <p class="lead">The chat is a 768 px column on near-black. The person's messages are tinted bubbles; answers are bare prose; the agent's work folds into one activity line per turn.</p>
+  <div class="doc-grid wide">
+    <div class="spec"><div class="spec-label">UserMessage · AssistantMessage</div><div class="spec-body col" style="gap:var(--space-5)">
+      <div class="umsg is-hover" data-ds="UserMessage" data-ds-main data-ds-props="state=hover">
+        <div class="bubble"><div class="prose"><p>Review the usage dashboard and keep the existing API contract.</p></div></div>
+        <div class="uacts"><button class="mbtn" aria-label="Copy"><svg class="i i-sm"><use href="#i-copy"/></svg></button><button class="mbtn" aria-label="Edit"><svg class="i i-sm"><use href="#i-pencil"/></svg></button></div>
+      </div>
+      <div class="amsg is-hover" data-ds="AssistantMessage" data-ds-main data-ds-props="state=hover">
+        <div class="prose">
+          <p>The dashboard reads the durable ledger in <code>usage-store.ts</code>. Two changes:</p>
+          <ul><li>Totals stay visible while the table scrolls.</li><li>The model column wraps under <strong>720 px</strong>.</li></ul>
+          <pre><code>npm run typecheck &amp;&amp; npm run test:unit</code></pre>
+        </div>
+        <div class="aacts"><span class="copy"><button class="mbtn" aria-label="Copy"><svg class="i i-sm"><use href="#i-copy"/></svg></button></span><span class="dur">18s</span><button class="changes" data-ds="TurnChanges"><svg class="i i-sm"><use href="#i-file-diff"/></svg>2 files <span class="add">+31</span> <span class="del">−4</span><svg class="i i-xs"><use href="#i-chevron-right"/></svg></button></div>
+      </div>
+    </div></div>
+    <div class="spec"><div class="spec-label">ActivityLine · done, live, expanded with ToolDetails</div><div class="spec-body col">
+      <section class="act-line" data-ds="ActivityLine" data-ds-main data-ds-props="state=done">
+        <button class="act-head" aria-expanded="false"><span class="glyph"><svg class="i i-sm"><use href="#i-list-checks"/></svg></span><span class="act-label truncate"><span class="act-lead">Worked for 18s</span><span class="truncate">&nbsp;· 1 file read · 1 code search</span></span><svg class="i i-sm act-chev"><use href="#i-chevron-right"/></svg></button>
+      </section>
+      <section class="act-line" data-ds="ActivityLine" data-ds-props="state=live">
+        <button class="act-head" aria-expanded="false"><span class="glyph ring"><svg class="i"><use href="#i-square-terminal"/></svg></span><span class="act-label truncate"><span class="shimmer">Running npm run test:unit</span></span><svg class="i i-sm act-chev"><use href="#i-chevron-right"/></svg></button>
+      </section>
+      <section class="act-line" data-ds="ActivityLine" data-ds-props="state=expanded">
+        <button class="act-head" aria-expanded="true"><span class="glyph"><svg class="i i-sm"><use href="#i-list-checks"/></svg></span><span class="act-label truncate"><span class="act-lead">Worked for 18s</span><span class="truncate">&nbsp;· 1 file read · 1 code search</span></span><svg class="i i-sm act-chev"><use href="#i-chevron-right"/></svg></button>
+        <ol class="tl">
+          <li><button class="tl-row" aria-expanded="false"><span class="glyph tl-node"><svg class="i"><use href="#i-lightbulb"/></svg></span><span class="truncate">Thought · I will trace the data flow, update the dashboard, and verify the result.</span><svg class="i i-sm tl-chev"><use href="#i-chevron-right"/></svg></button></li>
+          <li><button class="tl-row" aria-expanded="true"><span class="glyph tl-node"><svg class="i"><use href="#i-file-text"/></svg></span><span class="truncate">Read <code class="slot">UsagePanel.tsx</code></span><svg class="i i-sm tl-chev"><use href="#i-chevron-right"/></svg></button>
+            <div class="tl-detail"><div class="tdetail" data-ds="ToolDetails" data-ds-main>
+              <div class="tlabel">Arguments</div>
+              <pre class="tpre">{
+  "path": "src/renderer/components/UsagePanel.tsx",
+  "offset": 1,
+  "limit": 260
+}</pre>
+              <div class="tlabel">Result</div>
+              <pre class="tpre">Loaded UsagePanel.tsx and its aggregation helpers.</pre>
+            </div></div>
+          </li>
+          <li><button class="tl-row" aria-expanded="false"><span class="glyph tl-node"><svg class="i"><use href="#i-search"/></svg></span><span class="truncate">Searched for <code class="slot">usageStats|estimatedCost</code></span><svg class="i i-sm tl-chev"><use href="#i-chevron-right"/></svg></button></li>
+          <li><button class="tl-row" aria-expanded="false"><span class="glyph tl-node is-failed"><svg class="i"><use href="#i-square-terminal"/></svg></span><span class="truncate">Ran <code class="slot">npm run lint</code><span class="tl-flag">failed</span></span><svg class="i i-sm tl-chev"><use href="#i-chevron-right"/></svg></button></li>
+        </ol>
+      </section>
+    </div></div>
+    <div class="spec"><div class="spec-label">ToolCard · collapsed and open</div><div class="spec-body col">
+      <div class="tcard" data-ds="ToolCard" data-ds-main data-ds-props="status=completed">
+        <button class="tcard-head"><svg class="i i-sm chev"><use href="#i-chevron-right"/></svg><svg class="i i-sm"><use href="#i-wrench"/></svg><span class="tcard-name truncate">artifact_create</span><span class="tcard-status"><span class="tstatus is-completed"><svg class="i i-xs"><use href="#i-check"/></svg>Completed</span></span></button>
+      </div>
+      <div class="tcard is-open" data-ds="ToolCard" data-ds-props="status=running open=true">
+        <button class="tcard-head"><svg class="i i-sm chev"><use href="#i-chevron-right"/></svg><svg class="i i-sm"><use href="#i-wrench"/></svg><span class="tcard-name truncate">bash</span><span class="tcard-status"><span class="tstatus is-running"><svg class="i i-xs spin"><use href="#i-loader-circle"/></svg>Running</span></span></button>
+        <div class="tcard-body"><div class="tlabel">Arguments</div><pre class="tpre">{ "command": "npm run typecheck &amp;&amp; npm run test:unit" }</pre><div class="tlabel">Result</div><pre class="tpre">Typecheck passed
+Unit tests: 184 passed</pre></div>
+      </div>
+      <div class="tcard" data-ds="ToolCard" data-ds-props="status=error">
+        <button class="tcard-head"><svg class="i i-sm chev"><use href="#i-chevron-right"/></svg><svg class="i i-sm"><use href="#i-wrench"/></svg><span class="tcard-name truncate">web_fetch</span><span class="tcard-status"><span class="tstatus is-error"><svg class="i i-xs"><use href="#i-x"/></svg>Error</span></span></button>
+      </div>
+    </div></div>
+    <div class="spec"><div class="spec-label">PermissionPrompt · TodoList</div><div class="spec-body col">
+      <div class="perm" role="alert" data-ds="PermissionPrompt" data-ds-main>
+        <div class="perm-top"><svg class="i"><use href="#i-triangle-alert"/></svg><div><b>Run a command?</b><pre>git push origin feat/usage-dashboard</pre>
+          <div class="perm-acts"><button class="perm-once">Allow once</button><button class="perm-always">Always allow</button><button class="perm-deny">Deny</button></div></div></div>
+      </div>
+      <div class="todo" data-ds="TodoList" data-ds-main>
+        <div class="todo-head"><svg class="i i-sm"><use href="#i-list-checks"/></svg>To-do<span>1/3</span></div>
+        <ul>
+          <li class="is-done"><svg class="i i-sm"><use href="#i-circle-check"/></svg><span>Trace the usage aggregation</span></li>
+          <li class="is-now"><svg class="i i-sm"><use href="#i-circle-dot"/></svg><span>Make the model table responsive</span></li>
+          <li class="is-next"><svg class="i i-sm"><use href="#i-circle"/></svg><span>Run typecheck and unit tests</span></li>
+        </ul>
+      </div>
+    </div></div>
+  </div>
+  <div class="doc-grid wide">
+    <div class="spec"><div class="spec-label">Composer · ComposerChip · SendButton</div><div class="spec-body col" style="padding:var(--space-3) 0">
+      <div class="composer-wrap" data-ds="Composer" data-ds-main data-ds-props="state=empty">
+        <div class="composer">
+          <div class="composer-input" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Message" data-placeholder="Ask something or request a task… (@ references files/folders, # references agents, Ctrl+V pastes images)"></div>
+          <div class="composer-bar">
+            <div class="composer-left">
+              <button class="plus" aria-label="More"><svg class="i"><use href="#i-plus"/></svg></button>
+              <button class="cchip" data-ds="ComposerChip" data-ds-main data-ds-props="kind=mode mode=agent"><svg class="i i-sm"><use href="#i-bot"/></svg><span class="truncate">Agent</span><svg class="i"><use href="#i-chevron-down"/></svg></button>
+              <button class="cchip is-reasoning" data-ds="ComposerChip" data-ds-props="kind=reasoning"><svg class="i i-sm"><use href="#i-brain"/></svg><span class="truncate">high</span><svg class="i"><use href="#i-chevron-down"/></svg></button>
+              <button class="cchip" data-ds="ComposerChip" data-ds-props="kind=model"><span class="truncate">OpenAI · gpt-5.2-codex</span><svg class="i"><use href="#i-chevron-down"/></svg></button>
+            </div>
+            <div class="composer-right"><button class="round" aria-label="Dictate"><svg class="i"><use href="#i-mic"/></svg></button><button class="send" disabled aria-label="Send" data-ds="SendButton" data-ds-main data-ds-props="state=idle"><svg class="i"><use href="#i-arrow-up"/></svg></button></div>
+          </div>
+        </div>
+      </div>
+      <div class="composer-wrap" data-ds="Composer" data-ds-props="state=typing">
+        <div class="composer is-focus">
+          <div class="composer-files"><span class="file" data-ds="FileChip"><svg class="i i-sm"><use href="#i-file-text"/></svg><span class="truncate">UsagePanel.tsx</span><button class="file-x" aria-label="Remove"><svg class="i i-xs"><use href="#i-x"/></svg></button></span></div>
+          <div class="composer-input" role="textbox" aria-label="Message">Make the model table wrap on narrow windows.</div>
+          <div class="composer-bar">
+            <div class="composer-left">
+              <button class="plus" aria-label="More"><svg class="i"><use href="#i-plus"/></svg></button>
+              <button class="cchip is-plan" data-ds="ComposerChip" data-ds-props="kind=mode mode=plan"><svg class="i i-sm"><use href="#i-clipboard-list"/></svg><span class="truncate">Plan</span><svg class="i"><use href="#i-chevron-down"/></svg></button>
+              <button class="cchip is-design" data-ds="ComposerChip" data-ds-props="kind=mode mode=design"><svg class="i i-sm"><use href="#i-palette"/></svg><span class="truncate">Design</span><svg class="i"><use href="#i-chevron-down"/></svg></button>
+              <button class="cchip is-danger" data-ds="ComposerChip" data-ds-props="kind=permission level=full"><svg class="i i-sm"><use href="#i-shield-alert"/></svg><span class="truncate">Full access</span><svg class="i"><use href="#i-chevron-down"/></svg></button>
+            </div>
+            <div class="composer-right"><button class="send is-ready" aria-label="Send" data-ds="SendButton" data-ds-props="state=ready"><svg class="i"><use href="#i-arrow-up"/></svg></button><button class="send is-stop" aria-label="Stop" data-ds="SendButton" data-ds-props="state=working"><svg class="i"><use href="#i-square"/></svg><span class="working-ring"></span></button></div>
+          </div>
+        </div>
+      </div>
+    </div></div>
+    <div class="spec"><div class="spec-label">ScrollToBottom</div><div class="spec-body flush"><div class="scroll-wrap"><button class="scroll-down" aria-label="Scroll to the latest message" data-ds="ScrollToBottom" data-ds-main><svg class="i"><use href="#i-arrow-down"/></svg></button></div></div></div>
+  </div>
+</section>
+</body>
+</html>
