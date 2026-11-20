@@ -545,9 +545,10 @@ describe('parseTokensCssWithSpans & buildTokenEdits', () => {
     }
   })
 
-  it('parses the real repository sample prototype and desktop design system tokens cleanly', () => {
-    const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
-    const sampleDir = path.join(repoRoot, 'prototypes/artifact-design-viewer/sample')
+  it('parses the design-sample fixture and desktop design system tokens cleanly', () => {
+    const testDir = path.dirname(fileURLToPath(import.meta.url))
+    const repoRoot = path.resolve(testDir, '../../..')
+    const sampleDir = path.join(testDir, 'fixtures/design-sample')
     const sampleFiles = new Set(readdirSync(sampleDir))
     const sampleManifestBytes = new Uint8Array(readFileSync(path.join(sampleDir, 'maestrly-design.json')))
     const sampleManifest = parseDesignManifest(sampleManifestBytes, sampleFiles)
