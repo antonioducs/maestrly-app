@@ -34,9 +34,16 @@ describe('embedded shell assets', () => {
       'dom.js',
       'responses.js',
       'responses-model.js',
+      'design-ui-model.js',
+      'inspect.js',
+      'screens.js',
+      'tokens.js',
+      'suggestion-ui.js',
       'viewer.css',
     ])
       expect(names).toContain(name)
+    expect(SHELL_FILES['viewer.css'].body).toContain('--select: #2563eb;')
+    expect(SHELL_FILES['viewer.css'].body).toContain('.screen-label.is-compact .screen-size')
     for (const [name, file] of Object.entries(SHELL_FILES)) {
       expect(file.contentType).toBe(
         name.endsWith('.css') ? 'text/css; charset=utf-8' : 'text/javascript; charset=utf-8'
