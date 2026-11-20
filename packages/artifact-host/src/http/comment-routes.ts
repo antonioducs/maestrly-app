@@ -243,23 +243,23 @@ export function createCommentRoutes(deps: CommentRouteDeps): CommentRoutes {
       const loaded = await design.loadEditable(ctx.artifactId, ctx.currentVersion)
       if (!loaded) return json(ctx.res, 409, { error: 'no_design_contract' })
       if (loaded.design.tokenFile !== existing.suggestion.file) {
-        return json(ctx.res, 409, { error: 'suggestion_conflict' })
+        return json(ctx.res, 409, {
+          error: 'suggestion_conflict',
+          staleTokens: [...new Set(existing.suggestion.changes.map((c) => c.name))],
+        })
       }
 
       const pendingChanges: TokenChange[] = []
-      const staleChanges: { name: string; theme?: string }[] = []
       const staleTokenSet = new Set<string>()
       for (const change of existing.suggestion.changes) {
         const key = tokenDraftKey(change.name, change.theme ?? null)
         const span = loaded.parsed.spans.get(key)
         if (!span || !loaded.parsed.canonicalNames.has(change.name)) {
           staleTokenSet.add(change.name)
-          staleChanges.push({ name: change.name, ...(change.theme ? { theme: change.theme } : {}) })
           continue
         }
         if (span.value !== change.from && span.value !== change.to) {
           staleTokenSet.add(change.name)
-          staleChanges.push({ name: change.name, ...(change.theme ? { theme: change.theme } : {}) })
           continue
         }
         if (span.value === change.from) {
@@ -270,11 +270,10 @@ export function createCommentRoutes(deps: CommentRouteDeps): CommentRoutes {
           })
         }
       }
-      if (staleChanges.length > 0) {
+      if (staleTokenSet.size > 0) {
         return json(ctx.res, 409, {
           error: 'suggestion_conflict',
           staleTokens: [...staleTokenSet],
-          staleChanges,
         })
       }
 

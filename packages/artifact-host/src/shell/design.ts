@@ -7,6 +7,7 @@ import {
   isValidThemeSelector,
   isValidTokenName,
   isValidTokenValue,
+  MAX_SELECTOR_CHARS,
   type BridgeMessage,
   type DesignResponse,
   type FrameResponse,
@@ -79,13 +80,15 @@ export interface DesignSnapshot {
   activeTheme: string | null
   /** Pending uncommitted token edits (`key` = `${theme ?? ''}\n${name}`). */
   draftChanges: readonly TokenChange[]
+  /** Keys (`tokenDraftKey(name, theme)`) of preserved drafts whose base value changed when rebasing versions. */
+  staleDraftKeys: ReadonlySet<string>
   /** Comment ID when the active preview comes from previewing a thread's suggestion, otherwise null. */
   previewingCommentId: string | null
   focusedScreenId: string | null
   screensState: ReadonlyMap<string, ScreenFrameState>
   /** Component name -> per-screen instance counts collected so far. */
   componentUsage: (component: string) => ScreenUsage[]
-  /** Distinct normalized `data-ds-props` variant strings seen for `component`. */
+  /** Distinct normalized `data-ds-props` variant strings seen for `component` in `components.html`. */
   componentVariants: (component: string) => readonly string[]
 }
 
@@ -118,7 +121,6 @@ export type ApplySuggestionResult =
       error: DesignWriteError
       currentVersion?: number
       staleTokens?: readonly string[]
-      staleChanges?: readonly { name: string; theme?: string }[]
     }
 
 export interface SetDesignVersionOptions {
@@ -192,8 +194,8 @@ export interface DesignController {
   discardTokens(): void
   /** Previews a comment's suggested changes across all live frames (`null` clears). */
   previewSuggestion(commentId: string | null, changes?: readonly TokenSuggestionChange[]): void
-  /** Rebases pending token drafts onto `version` (refreshing state, frame URL, and `design`). */
-  rebaseTokensToVersion(version: number): Promise<boolean>
+  /** Rebases pending token drafts onto `version` (marking drafts whose origin value changed in `staleDraftKeys`). */
+  rebaseTokensToVersion(version: number): Promise<void>
   /** Loads a suggestion's token changes as editable drafts on the latest version and opens the Tokens panel. */
   editSuggestionInTokens(changes: readonly TokenSuggestionChange[]): Promise<void>
   saveTokens(): Promise<SaveTokensResult>
@@ -278,6 +280,7 @@ export function createDesignController(options: DesignControllerOptions): Design
   let activeTheme: string | null = null
 
   const drafts = new Map<string, TokenChange>()
+  const staleDraftKeys = new Set<string>()
   let previewingCommentId: string | null = null
   let suggestionPreviewChanges: TokenChange[] = []
 
@@ -600,6 +603,7 @@ export function createDesignController(options: DesignControllerOptions): Design
     if (!preserveDrafts) {
       activeTheme = null
       drafts.clear()
+      staleDraftKeys.clear()
     }
     previewingCommentId = null
     suggestionPreviewChanges = []
@@ -619,11 +623,19 @@ export function createDesignController(options: DesignControllerOptions): Design
     evictAllScreenFrames()
   }
 
-  function pruneDraftsAgainstDesign(currentDesign: ViewerDesign): void {
+  function rebaseDraftsOntoDesign(previousDesign: ViewerDesign | null, currentDesign: ViewerDesign): void {
     for (const [key, change] of [...drafts.entries()]) {
-      const base = lookupDesignTokenValue(currentDesign, change.name, change.theme ?? null)
-      if (base === null || base === change.value) {
+      const nextBase = lookupDesignTokenValue(currentDesign, change.name, change.theme ?? null)
+      if (nextBase === null || nextBase === change.value) {
         drafts.delete(key)
+        staleDraftKeys.delete(key)
+        continue
+      }
+      if (previousDesign && previousDesign !== currentDesign) {
+        const prevBase = lookupDesignTokenValue(previousDesign, change.name, change.theme ?? null)
+        if (prevBase !== null && prevBase !== nextBase) {
+          staleDraftKeys.add(key)
+        }
       }
     }
   }
@@ -639,12 +651,15 @@ export function createDesignController(options: DesignControllerOptions): Design
     )
     const knownVariants =
       rawInspected.main && rawInspected.component ? variantsByComponent.get(rawInspected.component) : undefined
+    const tokensFromManifest =
+      rawInspected.tokensFromManifest === true || (rawInspected.tokens.length === 0 && mergedTokens.length > 0)
     return {
       ...rawInspected,
       tokens: mergedTokens,
       ...(knownVariants && (!rawInspected.variants || knownVariants.length > rawInspected.variants.length)
         ? { variants: [...knownVariants] }
         : {}),
+      ...(tokensFromManifest ? { tokensFromManifest: true } : {}),
     }
   }
 
@@ -672,6 +687,7 @@ export function createDesignController(options: DesignControllerOptions): Design
         matchRects: [...matchRects],
         activeTheme,
         draftChanges: [...drafts.values()],
+        staleDraftKeys: new Set(staleDraftKeys),
         previewingCommentId,
         focusedScreenId,
         screensState: new Map(screenStates),
@@ -722,6 +738,7 @@ export function createDesignController(options: DesignControllerOptions): Design
     ): Promise<void> {
       const seq = ++loadSeq
       const preserveDrafts = setOptions?.preserveDrafts === true
+      const previousDesign = design
       if (nextVersion !== version) resetVersionState(nextVersion, preserveDrafts)
       else {
         loadError = false
@@ -777,12 +794,13 @@ export function createDesignController(options: DesignControllerOptions): Design
             screenStates.set(screen.id, { screenId: screen.id, status: 'idle', errorMessage: null })
           }
           if (activeTheme !== null && !design.themes.includes(activeTheme)) activeTheme = null
-          if (preserveDrafts) pruneDraftsAgainstDesign(design)
+          if (preserveDrafts) rebaseDraftsOntoDesign(previousDesign, design)
         } else {
           view = 'page'
           inspecting = false
           tokensOpen = false
           drafts.clear()
+          staleDraftKeys.clear()
         }
         loading = false
         broadcastTokenPreview()
@@ -859,8 +877,8 @@ export function createDesignController(options: DesignControllerOptions): Design
           }
           if (changed) options.onChange()
         } else if (message.type === 'inventory') {
-          mergeInventoryVariants(message.variants)
           if (design?.componentsPath && stagePath === design.componentsPath) {
+            mergeInventoryVariants(message.variants)
             componentMains = new Set(message.mains)
             if (stageInventoryWaiter) {
               const waiter = stageInventoryWaiter
@@ -869,6 +887,7 @@ export function createDesignController(options: DesignControllerOptions): Design
             }
             options.onChange()
           } else if (design && stagePath) {
+            if (!design.componentsPath) mergeInventoryVariants(message.variants)
             const matching = design.screens.find((s) => s.path === stagePath)
             if (matching) {
               inventoryByScreen.set(matching.id, message.instances)
@@ -911,7 +930,7 @@ export function createDesignController(options: DesignControllerOptions): Design
             void pumpScreenLoads()
             options.onChange()
           } else if (message.type === 'inventory') {
-            mergeInventoryVariants(message.variants)
+            if (!design?.componentsPath) mergeInventoryVariants(message.variants)
             inventoryByScreen.set(screenId, message.instances)
             measuringScreenIds.delete(screenId)
             reconcilePool()
@@ -1020,7 +1039,8 @@ export function createDesignController(options: DesignControllerOptions): Design
     },
 
     selectElement(selector: string): void {
-      if (!selector || selector.length > 300) return
+      if (typeof selector !== 'string' || !selector || selector.length > MAX_SELECTOR_CHARS || /\p{Cc}/u.test(selector))
+        return
       matchRects = []
       pendingHighlightComponent = null
       if (!inspecting) {
@@ -1229,6 +1249,7 @@ export function createDesignController(options: DesignControllerOptions): Design
       previewingCommentId = null
       suggestionPreviewChanges = []
       const key = tokenDraftKey(name, normalizedTheme)
+      staleDraftKeys.delete(key)
       const trimmed = value.trim()
       if (trimmed === baseValue) drafts.delete(key)
       else drafts.set(key, { name, value: trimmed, ...(normalizedTheme ? { theme: normalizedTheme } : {}) })
@@ -1239,14 +1260,16 @@ export function createDesignController(options: DesignControllerOptions): Design
 
     resetToken(name: string, theme: string | null = activeTheme): void {
       const key = tokenDraftKey(name, theme ?? null)
+      staleDraftKeys.delete(key)
       if (!drafts.delete(key)) return
       broadcastTokenPreview()
       options.onChange()
     },
 
     discardTokens(): void {
-      if (drafts.size === 0 && previewingCommentId === null) return
+      if (drafts.size === 0 && staleDraftKeys.size === 0 && previewingCommentId === null) return
       drafts.clear()
+      staleDraftKeys.clear()
       previewingCommentId = null
       suggestionPreviewChanges = []
       broadcastTokenPreview()
@@ -1272,7 +1295,7 @@ export function createDesignController(options: DesignControllerOptions): Design
       options.onChange()
     },
 
-    async rebaseTokensToVersion(nextVersion: number): Promise<boolean> {
+    async rebaseTokensToVersion(nextVersion: number): Promise<void> {
       if (
         nextVersion > state.artifact.currentVersion ||
         !state.artifact.versions.some((v) => v.number === nextVersion)
@@ -1289,7 +1312,7 @@ export function createDesignController(options: DesignControllerOptions): Design
       if (frameRes) {
         if (frameRes.status === 409 && (await bodyOf(frameRes)).error === 'version_replaced') {
           options.onReplaced()
-          return false
+          return
         }
         if (frameRes.ok) {
           const frameBody = (await frameRes.json()) as Partial<FrameResponse>
@@ -1302,7 +1325,6 @@ export function createDesignController(options: DesignControllerOptions): Design
       }
       await controller.setVersion(nextVersion, frameUrl, expiresAt, { preserveDrafts: true })
       options.onVersionSynced?.(nextVersion, state.artifact.currentVersion)
-      return !loadError && design !== null
     },
 
     async editSuggestionInTokens(changes: readonly TokenSuggestionChange[]): Promise<void> {
@@ -1315,10 +1337,11 @@ export function createDesignController(options: DesignControllerOptions): Design
       }
       const targetVersion = state.artifact.currentVersion
       if (version !== targetVersion || !design) {
-        const ok = await controller.rebaseTokensToVersion(targetVersion)
-        if (!ok || !design) return
+        await controller.rebaseTokensToVersion(targetVersion)
+        if (!design) return
       }
       drafts.clear()
+      staleDraftKeys.clear()
       let firstTheme: string | null = null
       for (const item of changes) {
         if (!isValidTokenName(item.name) || !isValidTokenValue(item.to)) continue
@@ -1424,6 +1447,7 @@ export function createDesignController(options: DesignControllerOptions): Design
         }
         const comment = (await res.json()) as PublicComment
         drafts.clear()
+        staleDraftKeys.clear()
         broadcastTokenPreview()
         options.onChange()
         return { ok: true, comment }
@@ -1449,22 +1473,11 @@ export function createDesignController(options: DesignControllerOptions): Design
           const staleTokens = Array.isArray(errBody.staleTokens)
             ? errBody.staleTokens.filter((t): t is string => typeof t === 'string')
             : undefined
-          const staleChanges = Array.isArray(errBody.staleChanges)
-            ? errBody.staleChanges.filter(
-                (c): c is { name: string; theme?: string } =>
-                  typeof c === 'object' &&
-                  c !== null &&
-                  typeof (c as { name?: unknown }).name === 'string' &&
-                  ((c as { theme?: unknown }).theme === undefined ||
-                    typeof (c as { theme?: unknown }).theme === 'string')
-              )
-            : undefined
           return {
             ok: false,
             error,
             ...(currentVersion !== undefined ? { currentVersion } : {}),
             ...(staleTokens !== undefined ? { staleTokens } : {}),
-            ...(staleChanges !== undefined ? { staleChanges } : {}),
           }
         }
         const payload = (await res.json()) as {
@@ -1535,6 +1548,7 @@ export function createDesignController(options: DesignControllerOptions): Design
     capabilityUrl = null
     capabilityExpiresAt = 0
     drafts.clear()
+    staleDraftKeys.clear()
     previewingCommentId = null
     suggestionPreviewChanges = []
     inventoryByScreen.clear()

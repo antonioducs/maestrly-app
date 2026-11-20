@@ -56,7 +56,7 @@
   const TOKEN_NAME_RE = /^--[a-zA-Z0-9][a-zA-Z0-9_-]{0,61}$/
   const COMPONENT_NAME_RE = /^[A-Z][A-Za-z0-9]{0,47}$/
   const DS_PROP_KEY_RE = /^[a-z][a-zA-Z0-9-]{0,31}$/
-  const CLASS_NAME_RE = /^[a-zA-Z_-][a-zA-Z0-9_-]{0,63}$/
+  const CLASS_NAME_RE = /^[a-zA-Z_-][a-zA-Z0-9_-]{0,78}$/
   const CSS_PROP_RE = /^(?:--[a-zA-Z0-9][a-zA-Z0-9_-]{0,61}|-?[a-zA-Z][a-zA-Z0-9-]{0,62})$/
   const THEME_SELECTOR_RE =
     /^(?:(?::root|html)?\[data-theme=(?:"[a-zA-Z0-9_-]{1,32}"|'[a-zA-Z0-9_-]{1,32}')\]|(?::root|html)?\.(?:dark|light|theme-[a-zA-Z0-9_-]{1,32})|@media \((?:prefers-color-scheme: (?:dark|light))\))$/
@@ -70,9 +70,9 @@
   const MAX_COMPUTED_STYLE_CHARS = 120
   const MAX_TOKEN_VALUE_CHARS = 200
   const MAX_INSPECTED_TOKENS = 64
-  const MAX_INSPECT_CHAIN = 16
-  const MAX_INSPECT_CLASSES = 3
-  const MAX_ELEMENT_LABEL_CHARS = 120
+  const MAX_INSPECT_CHAIN = 8
+  const MAX_INSPECT_CLASSES = 2
+  const MAX_ELEMENT_LABEL_CHARS = 80
   const MAX_COMPONENT_VARIANTS = 32
   const MAX_MATCH_RECTS = 200
   const MAX_INVENTORY_NODES = 5000
@@ -469,25 +469,22 @@
     const { selector } = pathOf(element)
     const rawComponent = element.getAttribute('data-ds')
     const component = rawComponent && COMPONENT_NAME_RE.test(rawComponent) ? rawComponent : null
-    const tag = element.tagName.toLowerCase()
+    const tag = element.tagName.toLowerCase().slice(0, 64)
     const classes: string[] = []
     for (let i = 0; i < element.classList.length && classes.length < MAX_INSPECT_CLASSES; i++) {
       const cls = element.classList[i]!
       if (CLASS_NAME_RE.test(cls)) classes.push(cls)
     }
     let elementLabel = tag
-    if (classes.length > 0) {
-      const candidate = `${tag}.${classes.join('.')}`
+    for (const cls of classes) {
+      const candidate = `${elementLabel}.${cls}`
       if (candidate.length <= MAX_ELEMENT_LABEL_CHARS) elementLabel = candidate
-    } else if (element.id && CLASS_NAME_RE.test(element.id)) {
-      const candidate = `${tag}#${element.id}`
-      if (candidate.length <= MAX_ELEMENT_LABEL_CHARS) elementLabel = candidate
+      else break
     }
     return {
       selector,
       rect: rectOf(element),
       tag,
-      ...(classes.length > 0 ? { classes } : {}),
       elementLabel,
       component,
       main: component !== null && element.hasAttribute('data-ds-main'),
@@ -670,7 +667,7 @@
     const tokenProps = new Map<string, string | undefined>()
     const inlineStyle = element.getAttribute('style')
     if (inlineStyle) collectDeclarationTokens(inlineStyle, tokenProps)
-    const unreadableSheet = collectCssRuleTokens(element, tokenProps)
+    collectCssRuleTokens(element, tokenProps)
     const cssTokenCount = tokenProps.size
     if (component && Object.hasOwn(componentTokenHints, component)) {
       for (const hint of componentTokenHints[component]!) {
@@ -678,7 +675,7 @@
         if (TOKEN_NAME_RE.test(hint) && !tokenProps.has(hint)) tokenProps.set(hint, undefined)
       }
     }
-    const tokensFromManifest = unreadableSheet && cssTokenCount === 0 && tokenProps.size > 0
+    const tokensFromManifest = cssTokenCount === 0 && tokenProps.size > 0
 
     const tokens: { name: string; value: string; property?: string }[] = []
     for (const [name, property] of tokenProps) {
@@ -854,12 +851,17 @@
     },
     true
   )
+  function isEditableTarget(target: EventTarget | null): boolean {
+    if (target instanceof HTMLElement && target.isContentEditable) return true
+    if (!(target instanceof Element)) return false
+    return target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])') !== null
+  }
+
   window.addEventListener('keydown', (event) => {
     if (event.metaKey || event.ctrlKey || event.altKey) return
     // A canvas such as the whiteboard's uses single keys as its own tools.
     if (document.documentElement.dataset.maestrlyShortcuts === 'none' && event.key !== 'Escape') return
-    const typing =
-      event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable]') !== null
+    const typing = isEditableTarget(event.target)
     const lower = event.key.length === 1 ? event.key.toLowerCase() : event.key
     if (
       event.key === 'Escape' ||
@@ -1016,7 +1018,7 @@
       matchedComponent = null
       layoutSoon()
     } else if (data.type === 'inspect-select' && typeof data.selector === 'string') {
-      if (!data.selector || data.selector.length > MAX_SELECTOR_CHARS) return
+      if (!data.selector || data.selector.length > MAX_SELECTOR_CHARS || CONTROL_CHAR_RE.test(data.selector)) return
       matchedComponent = null
       const target = query(data.selector)
       if (target) {

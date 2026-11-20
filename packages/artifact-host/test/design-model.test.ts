@@ -241,6 +241,346 @@ describe('parseBridgeMessage design protocol validation', () => {
       })
     ).toBeNull()
   })
+
+  it('validates items 1-11 bridge fields across valid, exact-boundary, and over-boundary inputs', () => {
+    // Item 11: forwarded keys include s and t, reject uppercase or unknown keys
+    for (const k of ['Escape', 'c', 'f', 'i', 's', 't'] as const) {
+      expect(parseBridgeMessage({ source: 'maestrly-bridge', type: 'key', key: k })).toEqual({ type: 'key', key: k })
+    }
+    for (const badKey of ['S', 'T', 'I', 'g', '', 12]) {
+      expect(parseBridgeMessage({ source: 'maestrly-bridge', type: 'key', key: badKey })).toBeNull()
+    }
+
+    // Item 2: elementLabel (tag + up to 2 classes, max 80 chars)
+    const exact80Label = `div.${'a'.repeat(76)}`
+    expect(exact80Label).toHaveLength(80)
+    expect(
+      parseBridgeMessage({
+        source: 'maestrly-bridge',
+        type: 'inspect-hover',
+        target: {
+          selector: 'div',
+          rect: validRect,
+          tag: 'div',
+          elementLabel: exact80Label,
+          component: null,
+          main: false,
+        },
+      })
+    ).toEqual({
+      type: 'inspect-hover',
+      target: {
+        selector: 'div',
+        rect: validRect,
+        tag: 'div',
+        elementLabel: exact80Label,
+        component: null,
+        main: false,
+      },
+    })
+    expect(
+      parseBridgeMessage({
+        source: 'maestrly-bridge',
+        type: 'inspect-hover',
+        target: {
+          selector: 'h2',
+          rect: validRect,
+          tag: 'h2',
+          elementLabel: 'h2.hero-title.muted',
+          component: null,
+          main: false,
+        },
+      })
+    ).toEqual({
+      type: 'inspect-hover',
+      target: {
+        selector: 'h2',
+        rect: validRect,
+        tag: 'h2',
+        elementLabel: 'h2.hero-title.muted',
+        component: null,
+        main: false,
+      },
+    })
+    for (const badLabel of [`div.${'a'.repeat(77)}`, 'div.one.two.three', 'div#id', 'div.bad space', '']) {
+      expect(
+        parseBridgeMessage({
+          source: 'maestrly-bridge',
+          type: 'inspect-hover',
+          target: {
+            selector: 'div',
+            rect: validRect,
+            tag: 'div',
+            elementLabel: badLabel,
+            component: null,
+            main: false,
+          },
+        }),
+        badLabel
+      ).toBeNull()
+    }
+
+    // Items 1, 3, 6: chain (max 8), variants (max 32 when main=true), property, tokensFromManifest
+    const chainAtLimit = Array.from({ length: 8 }, (_, i) => ({ component: `Comp${i}`, selector: `#anc-${i}` }))
+    const variantsAtLimit = Array.from({ length: 32 }, (_, i) => `variant=v${i} size=md`)
+    const maxPick = parseBridgeMessage({
+      source: 'maestrly-bridge',
+      type: 'inspect-pick',
+      target: {
+        rect: validRect,
+        selector: '#btn',
+        tag: 'button',
+        elementLabel: 'button.primary',
+        component: 'Button',
+        props: { variant: 'v0' },
+        main: true,
+        styles: validStyles,
+        tokens: [
+          { name: '--btn-bg', value: '#2563eb', property: 'background-color' },
+          { name: '--alias', value: '12px', property: '--local-gap' },
+        ],
+        chain: chainAtLimit,
+        variants: variantsAtLimit,
+        tokensFromManifest: true,
+      },
+    })
+    expect(maxPick).toEqual({
+      type: 'inspect-pick',
+      target: {
+        rect: validRect,
+        selector: '#btn',
+        tag: 'button',
+        elementLabel: 'button.primary',
+        component: 'Button',
+        props: { variant: 'v0' },
+        main: true,
+        styles: validStyles,
+        tokens: [
+          { name: '--btn-bg', value: '#2563eb', property: 'background-color' },
+          { name: '--alias', value: '12px', property: '--local-gap' },
+        ],
+        chain: chainAtLimit,
+        variants: variantsAtLimit,
+        tokensFromManifest: true,
+      },
+    })
+
+    // Non-main target drops variants even if provided; over-limit chain (9) or variants (33) or bad property/tokensFromManifest rejected
+    const nonMainWithVariants = parseBridgeMessage({
+      source: 'maestrly-bridge',
+      type: 'inspect-pick',
+      target: {
+        rect: validRect,
+        selector: '#btn',
+        tag: 'button',
+        component: 'Button',
+        props: {},
+        main: false,
+        styles: validStyles,
+        tokens: [],
+        variants: ['variant=v0'],
+      },
+    })
+    expect(nonMainWithVariants).toEqual({
+      type: 'inspect-pick',
+      target: {
+        rect: validRect,
+        selector: '#btn',
+        tag: 'button',
+        component: 'Button',
+        props: {},
+        main: false,
+        styles: validStyles,
+        tokens: [],
+      },
+    })
+
+    expect(
+      parseBridgeMessage({
+        source: 'maestrly-bridge',
+        type: 'inspect-pick',
+        target: {
+          rect: validRect,
+          selector: '#btn',
+          tag: 'button',
+          component: 'Button',
+          props: {},
+          main: true,
+          styles: validStyles,
+          tokens: [],
+          chain: [...chainAtLimit, { component: 'Comp8', selector: '#anc-8' }],
+        },
+      })
+    ).toBeNull()
+    expect(
+      parseBridgeMessage({
+        source: 'maestrly-bridge',
+        type: 'inspect-pick',
+        target: {
+          rect: validRect,
+          selector: '#btn',
+          tag: 'button',
+          component: 'Button',
+          props: {},
+          main: true,
+          styles: validStyles,
+          tokens: [],
+          chain: [{ component: 'Button', selector: '#bad\u0000' }],
+        },
+      })
+    ).toBeNull()
+    expect(
+      parseBridgeMessage({
+        source: 'maestrly-bridge',
+        type: 'inspect-pick',
+        target: {
+          rect: validRect,
+          selector: '#btn',
+          tag: 'button',
+          component: 'Button',
+          props: {},
+          main: true,
+          styles: validStyles,
+          tokens: [],
+          variants: [...variantsAtLimit, 'variant=v32'],
+        },
+      })
+    ).toBeNull()
+    expect(
+      parseBridgeMessage({
+        source: 'maestrly-bridge',
+        type: 'inspect-pick',
+        target: {
+          rect: validRect,
+          selector: '#btn',
+          tag: 'button',
+          component: 'Button',
+          props: {},
+          main: true,
+          styles: validStyles,
+          tokens: [],
+          variants: ['not-a-prop-pair'],
+        },
+      })
+    ).toBeNull()
+    expect(
+      parseBridgeMessage({
+        source: 'maestrly-bridge',
+        type: 'inspect-pick',
+        target: {
+          rect: validRect,
+          selector: '#btn',
+          tag: 'button',
+          component: 'Button',
+          props: {},
+          main: false,
+          styles: validStyles,
+          tokens: [{ name: '--btn-bg', value: '#000', property: 'color;bad' }],
+        },
+      })
+    ).toBeNull()
+    expect(
+      parseBridgeMessage({
+        source: 'maestrly-bridge',
+        type: 'inspect-pick',
+        target: {
+          rect: validRect,
+          selector: '#btn',
+          tag: 'button',
+          component: 'Button',
+          props: {},
+          main: false,
+          styles: validStyles,
+          tokens: [],
+          tokensFromManifest: 'yes',
+        },
+      })
+    ).toBeNull()
+
+    // Inventory variants: 32 accepted, 33 rejected, prototype keys rejected
+    expect(
+      parseBridgeMessage({
+        source: 'maestrly-bridge',
+        type: 'inventory',
+        requestId: 'r1',
+        instances: { Button: 2 },
+        mains: ['Button'],
+        variants: { Button: variantsAtLimit },
+      })
+    ).toEqual({
+      type: 'inventory',
+      requestId: 'r1',
+      instances: { Button: 2 },
+      mains: ['Button'],
+      variants: { Button: variantsAtLimit },
+    })
+    expect(
+      parseBridgeMessage({
+        source: 'maestrly-bridge',
+        type: 'inventory',
+        requestId: 'r1',
+        instances: {},
+        mains: [],
+        variants: { Button: [...variantsAtLimit, 'variant=extra'] },
+      })
+    ).toBeNull()
+    expect(
+      parseBridgeMessage({
+        source: 'maestrly-bridge',
+        type: 'inventory',
+        requestId: 'r1',
+        instances: {},
+        mains: [],
+        variants: JSON.parse('{"__proto__": ["variant=a"]}'),
+      })
+    ).toBeNull()
+
+    // Item 4: matches and layout.matchRects (0 and 200 accepted, 201 or NaN rejected)
+    const rects200 = Array.from({ length: 200 }, (_, i) => ({ x: i, y: 0, width: 10, height: 10 }))
+    const rects201 = [...rects200, validRect]
+    expect(parseBridgeMessage({ source: 'maestrly-bridge', type: 'matches', rects: [] })).toEqual({
+      type: 'matches',
+      rects: [],
+    })
+    expect(parseBridgeMessage({ source: 'maestrly-bridge', type: 'matches', rects: rects200 })).toEqual({
+      type: 'matches',
+      rects: rects200,
+    })
+    expect(parseBridgeMessage({ source: 'maestrly-bridge', type: 'matches', rects: rects201 })).toBeNull()
+    expect(
+      parseBridgeMessage({
+        source: 'maestrly-bridge',
+        type: 'matches',
+        rects: [{ x: 0, y: 0, width: Number.POSITIVE_INFINITY, height: 10 }],
+      })
+    ).toBeNull()
+    expect(
+      parseBridgeMessage({
+        source: 'maestrly-bridge',
+        type: 'layout',
+        pins: {},
+        width: 800,
+        height: 600,
+        matchRects: rects200,
+      })
+    ).toEqual({
+      type: 'layout',
+      pins: {},
+      width: 800,
+      height: 600,
+      matchRects: rects200,
+    })
+    expect(
+      parseBridgeMessage({
+        source: 'maestrly-bridge',
+        type: 'layout',
+        pins: {},
+        width: 800,
+        height: 600,
+        matchRects: rects201,
+      })
+    ).toBeNull()
+  })
 })
 
 describe('pure design-model helpers', () => {
@@ -636,7 +976,7 @@ describe('createDesignController progressive inventory, pool, preview, save, sug
         { id: 'checkout', name: 'Checkout', path: 'checkout.html', viewport: 'mobile' },
       ],
       tokens: [
-        { name: '--btn-bg', group: 'color', kind: 'color', value: '#1d4ed8', themes: { '.dark': '#60a5fa' } },
+        { name: '--btn-bg', group: 'color', kind: 'color', value: '#1d4ed8', themes: { '.dark': '#3b82f6' } },
         { name: '--space-md', group: 'space', kind: 'length', value: '16px', themes: {} },
       ],
     }
@@ -698,7 +1038,6 @@ describe('createDesignController progressive inventory, pool, preview, save, sug
             error: 'suggestion_conflict',
             currentVersion: 2,
             staleTokens: ['--btn-bg'],
-            staleChanges: [{ name: '--btn-bg', theme: '.dark' }],
           })
         }
         return jsonRes(404, {})
@@ -782,7 +1121,6 @@ describe('createDesignController progressive inventory, pool, preview, save, sug
         selector: '#cta-btn',
         rect: { x: 10, y: 20, width: 100, height: 40 },
         tag: 'button',
-        classes: ['primary'],
         elementLabel: 'button.primary',
         component: 'Button',
         main: false,
@@ -802,6 +1140,11 @@ describe('createDesignController progressive inventory, pool, preview, save, sug
       },
     })
     expect(ctrl.snapshot().inspected?.tokens[0]?.property).toBe('background-color')
+    stage.posted.length = 0
+    ctrl.selectElement('#hero-card')
+    expect(stage.posted).toEqual([{ source: 'maestrly-shell', type: 'inspect-select', selector: '#hero-card' }])
+    ctrl.selectElement('#bad\u0000')
+    expect(stage.posted).toHaveLength(1)
 
     const stageSrcBeforeProbe = stage.src
     const missingPromise = ctrl.openMainComponent('UnknownWidget')
@@ -852,15 +1195,23 @@ describe('createDesignController progressive inventory, pool, preview, save, sug
     expect(ctrl.escape()).toBe(true)
     expect(ctrl.snapshot().matchRects).toEqual([])
 
-    // 6. saveTokens conflict -> rebaseTokensToVersion preserves remaining drafts; applySuggestion conflict surfaces staleTokens; editSuggestionInTokens loads drafts
+    // 6. saveTokens conflict -> rebaseTokensToVersion preserves drafts and marks changed-origin drafts in staleDraftKeys
     expect(ctrl.setTokenValue('--space-md', '24px')).toBe(true)
-    expect(ctrl.setTokenValue('--btn-bg', '#1d4ed8')).toBe(true)
+    expect(ctrl.setTokenValue('--btn-bg', '#ef4444')).toBe(true)
+    expect(ctrl.setTokenValue('--btn-bg', '#3b82f6', '.dark')).toBe(true)
     const conflictSave = await ctrl.saveTokens()
     expect(conflictSave).toEqual({ ok: false, error: 'version_conflict', currentVersion: 2 })
-    expect(await ctrl.rebaseTokensToVersion(2)).toBe(true)
+    await ctrl.rebaseTokensToVersion(2)
     expect(syncedVersions.at(-1)).toEqual({ version: 2, current: 2 })
-    // --btn-bg matched v2's base (#1d4ed8) so it was pruned, while --space-md: 24px remained!
-    expect(ctrl.snapshot().draftChanges).toEqual([{ name: '--space-md', value: '24px' }])
+    // .dark #3b82f6 matched v2's base so it was pruned; --space-md (unchanged origin) kept clean; --btn-bg (:root origin changed #2563eb -> #1d4ed8) marked stale
+    expect(ctrl.snapshot().draftChanges).toEqual([
+      { name: '--space-md', value: '24px' },
+      { name: '--btn-bg', value: '#ef4444' },
+    ])
+    expect([...ctrl.snapshot().staleDraftKeys]).toEqual([tokenDraftKey('--btn-bg', null)])
+    // Editing the stale draft clears its stale flag
+    expect(ctrl.setTokenValue('--btn-bg', '#dc2626')).toBe(true)
+    expect(ctrl.snapshot().staleDraftKeys.size).toBe(0)
 
     const conflictApply = await ctrl.applySuggestion('c'.repeat(22))
     expect(conflictApply).toEqual({
@@ -868,7 +1219,6 @@ describe('createDesignController progressive inventory, pool, preview, save, sug
       error: 'suggestion_conflict',
       currentVersion: 2,
       staleTokens: ['--btn-bg'],
-      staleChanges: [{ name: '--btn-bg', theme: '.dark' }],
     })
 
     await ctrl.editSuggestionInTokens([{ name: '--btn-bg', from: '#2563eb', to: '#93c5fd', theme: '.dark' }])

@@ -65,11 +65,14 @@ describe('real Chromium sandboxed iframe bridge (<link crossorigin> CSSOM + adop
       '</head>',
       '<body>',
       '  <div id="card" data-ds="Card">',
-      '    <button id="btn" class="cors-btn primary" data-ds="PrimaryButton" data-ds-props="variant=solid size=lg">Pay now</button>',
+      '    <button id="btn" class="cors-btn primary extra-ignored" data-ds="PrimaryButton" data-ds-props="variant=solid size=lg">Pay now</button>',
       '  </div>',
       '  <button id="btn-main" class="cors-btn" data-ds="PrimaryButton" data-ds-main data-ds-props="variant=ghost size=sm">Main specimen</button>',
       '  <div id="opaque" class="opaque-box">Opaque stylesheet target</div>',
       '  <div id="opaque-comp" class="opaque-box" data-ds="OpaqueCard">Opaque component</div>',
+      '  <input id="ed-input" type="text" aria-label="Search">',
+      '  <textarea id="ed-textarea" aria-label="Notes"></textarea>',
+      '  <div id="ed-ce" contenteditable="true"><span id="ed-ce-inner">Editable</span></div>',
       '</body>',
       '</html>',
     ].join('\n')
@@ -154,7 +157,7 @@ describe('real Chromium sandboxed iframe bridge (<link crossorigin> CSSOM + adop
       }
     }
     expect(corsTarget.target.component).toBe('PrimaryButton')
-    expect(corsTarget.target.classes).toEqual(['cors-btn', 'primary'])
+    expect('classes' in corsTarget.target).toBe(false)
     expect(corsTarget.target.elementLabel).toBe('button.cors-btn.primary')
     expect(corsTarget.target.props).toEqual({ variant: 'solid', size: 'lg' })
     expect(corsTarget.target.chain).toEqual([{ component: 'Card', selector: '#card' }])
@@ -176,10 +179,10 @@ describe('real Chromium sandboxed iframe bridge (<link crossorigin> CSSOM + adop
       return msgs.find((m) => m.type === 'inspect-pick') ?? null
     })
     const opaqueTarget = (await opaquePick.jsonValue()) as {
-      target: { tag: string; classes?: string[]; elementLabel?: string; tokens: Array<{ name: string; value: string }> }
+      target: { tag: string; elementLabel?: string; tokens: Array<{ name: string; value: string }> }
     }
     expect(opaqueTarget.target.tag).toBe('div')
-    expect(opaqueTarget.target.classes).toEqual(['opaque-box'])
+    expect('classes' in opaqueTarget.target).toBe(false)
     expect(opaqueTarget.target.elementLabel).toBe('div.opaque-box')
     expect(opaqueTarget.target.tokens).toEqual([])
     expect(pageErrors).toEqual([])
@@ -275,10 +278,37 @@ describe('real Chromium sandboxed iframe bridge (<link crossorigin> CSSOM + adop
     await page.evaluate(() => {
       const iframe = document.querySelector('iframe.content') as HTMLIFrameElement
       iframe.contentWindow!.postMessage({ source: 'maestrly-shell', type: 'token-preview-clear' }, '*')
+      iframe.contentWindow!.postMessage({ source: 'maestrly-shell', type: 'inspect-mode', inspecting: false }, '*')
+      ;(window as unknown as { __bridgeMessages: unknown[] }).__bridgeMessages = []
     })
     await childFrame.waitForFunction(
       () => getComputedStyle(document.getElementById('btn')!).backgroundColor === 'rgb(37, 99, 235)'
     )
+
+    // Typing c/f/i/s/t inside input, textarea, and contenteditable never forwards shortcut keys
+    await contentFrameLocator.locator('#ed-input').click()
+    await page.keyboard.type('cfist')
+    await contentFrameLocator.locator('#ed-textarea').click()
+    await page.keyboard.type('cfist')
+    await contentFrameLocator.locator('#ed-ce-inner').click()
+    await page.keyboard.type('cfist')
+
+    const forwardedWhileEditing = await page.evaluate(() => {
+      const msgs = (window as unknown as { __bridgeMessages: Array<Record<string, unknown>> }).__bridgeMessages
+      return msgs.filter((m) => m.type === 'key')
+    })
+    expect(forwardedWhileEditing).toEqual([])
+
+    // Focusing a non-editable element forwards 's' and 't' shortcuts
+    await contentFrameLocator.locator('#btn').focus()
+    await page.keyboard.press('s')
+    await page.keyboard.press('t')
+    const forwardedKeys = await page.waitForFunction(() => {
+      const msgs = (window as unknown as { __bridgeMessages: Array<{ type: string; key?: string }> }).__bridgeMessages
+      const keys = msgs.filter((m) => m.type === 'key').map((m) => m.key)
+      return keys.length >= 2 ? keys : null
+    })
+    expect(await forwardedKeys.jsonValue()).toEqual(['s', 't'])
 
     await context.close()
   }, 30_000)

@@ -305,7 +305,9 @@ function renderViewer(api: ArtifactApi, state: ViewerState, initialVersion: numb
   window.addEventListener('keydown', (event) => {
     if (event.metaKey || event.ctrlKey || event.altKey) return
     const typing =
-      event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable]') !== null
+      (event.target instanceof HTMLElement && event.target.isContentEditable) ||
+      (event.target instanceof Element &&
+        event.target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])') !== null)
     const lower = event.key.length === 1 ? event.key.toLowerCase() : event.key
     if (event.key === 'Escape') onKey('Escape')
     else if (!typing && (lower === 'c' || lower === 'f' || lower === 'i' || lower === 's' || lower === 't'))

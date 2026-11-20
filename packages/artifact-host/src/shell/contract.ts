@@ -99,9 +99,9 @@ export const MAX_DS_PROP_VALUE_CHARS = 120
 export const MAX_COMPUTED_STYLE_CHARS = 120
 export const MAX_INSPECT_TOKENS = 64
 export const MAX_INSPECTED_TOKENS = MAX_INSPECT_TOKENS
-export const MAX_INSPECT_CHAIN = 16
-export const MAX_INSPECT_CLASSES = 3
-export const MAX_ELEMENT_LABEL_CHARS = 120
+export const MAX_INSPECT_CHAIN = 8
+export const MAX_INSPECT_CLASSES = 2
+export const MAX_ELEMENT_LABEL_CHARS = 80
 export const MAX_COMPONENT_VARIANTS = 32
 export const MAX_MATCH_RECTS = 200
 export const MAX_INVENTORY_COMPONENTS = MAX_DESIGN_COMPONENTS
@@ -204,7 +204,6 @@ export interface InspectHover {
   selector: string
   rect: SelectionRect
   tag: string
-  classes?: readonly string[]
   elementLabel?: string
   component: string | null
   main: boolean
@@ -566,7 +565,7 @@ function isBoardBatch(value: unknown): value is unknown[] {
 }
 
 const TAG_PATTERN = /^[a-zA-Z][a-zA-Z0-9:-]{0,63}$/
-const CLASS_NAME_PATTERN = /^[a-zA-Z_-][a-zA-Z0-9_-]{0,63}$/
+const ELEMENT_LABEL_PATTERN = /^[a-zA-Z][a-zA-Z0-9:-]{0,63}(?:\.[a-zA-Z_-][a-zA-Z0-9_-]{0,78}){0,2}$/
 const CSS_PROPERTY_PATTERN = /^(?:--[a-zA-Z0-9][a-zA-Z0-9_-]{0,61}|-?[a-zA-Z][a-zA-Z0-9-]{0,62})$/
 const COMPUTED_STYLE_KEYS: readonly (keyof ComputedStyleSubset)[] = [
   'fontFamily',
@@ -623,23 +622,14 @@ function parseInspectHover(value: unknown): InspectHover | null {
   }
   if (typeof value.main !== 'boolean') return null
 
-  let classes: string[] | undefined
-  if (value.classes !== undefined) {
-    if (!Array.isArray(value.classes) || value.classes.length > MAX_INSPECT_CLASSES) return null
-    classes = []
-    for (const cls of value.classes) {
-      if (typeof cls !== 'string' || !CLASS_NAME_PATTERN.test(cls)) return null
-      classes.push(cls)
-    }
-  }
-
   let elementLabel: string | undefined
   if (value.elementLabel !== undefined) {
     if (
       typeof value.elementLabel !== 'string' ||
       !value.elementLabel ||
       value.elementLabel.length > MAX_ELEMENT_LABEL_CHARS ||
-      CONTROL_CHAR.test(value.elementLabel)
+      CONTROL_CHAR.test(value.elementLabel) ||
+      !ELEMENT_LABEL_PATTERN.test(value.elementLabel)
     )
       return null
     elementLabel = value.elementLabel
@@ -649,7 +639,6 @@ function parseInspectHover(value: unknown): InspectHover | null {
     selector: value.selector,
     rect,
     tag: value.tag.toLowerCase(),
-    ...(classes !== undefined ? { classes } : {}),
     ...(elementLabel !== undefined ? { elementLabel } : {}),
     component,
     main: component !== null && value.main,
@@ -710,7 +699,13 @@ function parseInspectTarget(value: unknown): InspectTarget | null {
     chain = []
     for (const item of value.chain) {
       if (!isRecord(item) || !isValidComponentName(item.component)) return null
-      if (typeof item.selector !== 'string' || !item.selector || item.selector.length > MAX_SELECTOR_CHARS) return null
+      if (
+        typeof item.selector !== 'string' ||
+        !item.selector ||
+        item.selector.length > MAX_SELECTOR_CHARS ||
+        CONTROL_CHAR.test(item.selector)
+      )
+        return null
       chain.push({ component: item.component, selector: item.selector })
     }
   }
@@ -741,7 +736,7 @@ function parseInspectTarget(value: unknown): InspectTarget | null {
     styles,
     tokens,
     ...(chain !== undefined ? { chain } : {}),
-    ...(variants !== undefined ? { variants } : {}),
+    ...(hover.main && variants !== undefined ? { variants } : {}),
     ...(tokensFromManifest !== undefined ? { tokensFromManifest } : {}),
   }
 }

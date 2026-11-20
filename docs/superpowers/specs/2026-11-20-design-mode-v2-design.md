@@ -301,8 +301,9 @@ picked in Inspect mode, the bridge and shell combine three layers:
 
 #### Protocol additions (`contract.ts` / `bridge.ts`)
 
-- `FORWARDED_KEYS` becomes `['Escape', 'c', 'f', 'i'] as const` so the shell can toggle Inspect with `i` when focus is
-  inside a frame (unless `data-maestrly-shortcuts="none"`).
+- `FORWARDED_KEYS` becomes `['Escape', 'c', 'f', 'i', 's', 't'] as const` so the shell can toggle Inspect (`i`),
+  Screens (`s`), and Tokens (`t`) when focus is inside a frame (unless `data-maestrly-shortcuts="none"` or the event
+  originates inside an editable `input`, `textarea`, `select`, or `contenteditable` target).
 - Inspect mode and Comment mode are mutually exclusive in the shell. While `inspecting === true`, `bridge.ts`
   intercepts capture-phase pointer and click events with the same blocker as Comment mode so clicking links or buttons
   selects them instead of navigating or firing page handlers. Hover and selection outlines are drawn in the viewer
@@ -314,13 +315,19 @@ New `ShellMessage` variants (shell → frame, `{ source: 'maestrly-shell', ... }
 
 - `{ type: 'inspect-mode'; inspecting: boolean; componentTokens?: Record<string, string[]> }` — toggles Inspect mode;
   turning it off clears the frame's hover/selection tracking.
-- `{ type: 'inspect-clear' }` — clears the currently inspected element while staying in Inspect mode.
+- `{ type: 'inspect-clear' }` — clears the currently inspected element and component match highlights while staying in
+  Inspect mode.
+- `{ type: 'inspect-select'; selector: string }` — selects a validated CSS selector (`<= 300` chars, no control chars),
+  scrolling it into view if off-screen and replying with `inspect-pick`.
+- `{ type: 'highlight-component'; component: string | null }` — highlights all non-main `[data-ds="<component>"]`
+  instances (or clears when `null`) and replies with `matches` (`<= 200` `SelectionRect`s), keeping `layout.matchRects`
+  updated on scroll/resize so the shell draws match boxes above the frame.
 - `{ type: 'reveal-component'; component: string }` — locates `[data-ds="<component>"][data-ds-main]` (falling back to
-  `[data-ds="<component>"]`), scrolls it smoothly into view, selects it as the inspected element, and replies with
-  `inspect-pick` (`target: null` when absent).
+  `[data-ds="<component>"]`), scrolls it into view, selects it as the inspected element, and replies with `inspect-pick`
+  (`target: null` when absent).
 - `{ type: 'inventory-request'; requestId: string }` — asks the frame to count `[data-ds]` elements currently in its
   DOM (up to `MAX_INVENTORY_NODES = 5000`), separating instances (`:not([data-ds-main])`) from `[data-ds-main]`
-  definitions.
+  definitions and collecting distinct normalized `data-ds-props` variant strings (`<= 32` per component).
 - `{ type: 'token-preview'; tokens: TokenChange[] }` — applies live custom-property overrides via `adoptedStyleSheets`,
   then re-measures layout and re-emits `inspect-pick` if an element is currently selected.
 - `{ type: 'token-preview-clear' }` — empties the preview stylesheet and re-measures.
@@ -329,26 +336,43 @@ New `BridgeMessage` variants (frame → shell, `{ source: 'maestrly-bridge', ...
 `parseBridgeMessage`:
 
 - `{ type: 'inspect-hover'; target: InspectHover | null }` — throttled to once per animation frame during
-  `pointermove` (resolving `hit.closest('[data-ds]') ?? hit`), and `null` on `pointerleave`.
-- `{ type: 'inspect-pick'; target: InspectTarget | null }` — emitted on `click` in Inspect mode, on
-  `reveal-component`, and after `token-preview` / `token-preview-clear` when an element is selected.
-- `{ type: 'inventory'; requestId: string | null; instances: Record<string, number>; mains: string[] }` — answers
+  `pointermove` (resolving `hit.closest('[data-ds]') ?? hit`, computing `elementLabel` from `tag` and up to 2 valid
+  classes capped at `80` chars), and `null` on `pointerleave`.
+- `{ type: 'inspect-pick'; target: InspectTarget | null }` — emitted on `click` in Inspect mode, on `inspect-select` /
+  `reveal-component`, and after `token-preview` / `token-preview-clear` when an element is selected. Includes
+  `chain` (`<= 8` `[data-ds]` ancestors ordered outermost-to-innermost), `variants` (`<= 32` when `main` is `true`),
+  per-token `property` when readable from CSSOM/inline rules, and `tokensFromManifest: true` when the token list came
+  from `manifest.componentTokens`.
+- `{ type: 'matches'; rects: SelectionRect[] }` — answers `highlight-component` with up to `MAX_MATCH_RECTS = 200`
+  instance bounding boxes (also kept fresh in `layout.matchRects`).
+- `{ type: 'inventory'; requestId: string | null; instances: Record<string, number>; mains: string[]; variants?: Record<string, string[]> }` — answers
   `inventory-request` (`parseBridgeMessage` validates `requestId`, caps keys at `200` matching
-  `^[A-Z][A-Za-z0-9]{0,47}$`, and requires integer counts `0..10_000`).
+  `^[A-Z][A-Za-z0-9]{0,47}$`, requires integer counts `0..10_000`, and caps `variants` at `32` validated `data-ds-props`
+  strings per component).
+- `FORWARDED_KEYS` adds `'s'` and `'t'` alongside `'Escape'`, `'c'`, `'f'`, and `'i'`; single-key shortcuts are never
+  forwarded while typing inside editable page targets (`input`, `textarea`, `select`, or `contenteditable`).
 
 Every parsed object in `contract.ts` builds fresh records without copying `__proto__`, `constructor`, or `prototype`,
 validates `data-ds` (`^[A-Z][A-Za-z0-9]{0,47}$`), `data-ds-props` (`<= 32` entries, keys `^[a-z][a-zA-Z0-9-]{0,31}$`,
-values `1..120` chars without whitespace), `selector` (`1..300` chars), finite `SelectionRect`, `styles` fields (`<= 120`
-chars each), and `tokens` (`<= 64` entries with valid `--*` names and `<= 200`-char values).
+values `1..120` chars without whitespace), `selector` (`1..300` chars), `elementLabel` (`1..80` chars, tag + up to 2
+classes), finite `SelectionRect`, `styles` fields (`<= 120` chars each), and `tokens` (`<= 64` entries with valid `--*`
+names, `<= 200`-char values, and optional validated CSS `property`).
 
-#### Applying token previews safely and `bridge.ts` DOM invariant
+#### Applying token and active-theme previews safely (`bridge.ts` zero-DOM-mutation invariant)
 
 `bridge.ts` keeps a second constructable `CSSStyleSheet` (`previewSheet`) appended after its highlight/cursor sheet in
 `document.adoptedStyleSheets`. On `token-preview`, `bridge.ts` independently re-validates every `{ name, value, theme }`
-against `TOKEN_NAME_PATTERN`, the theme-selector allowlist, and the forbidden-character/function rules before grouping
-declarations into `:root{--name:value !important;...}` and optional `<theme>{--name:value !important;...}` (or
-`@media (prefers-color-scheme: ...){:root{...}}`) and calling `previewSheet.replaceSync(css)`. On `token-preview-clear`,
-it calls `previewSheet.replaceSync('')`.
+against `TOKEN_NAME_PATTERN`, the theme-selector allowlist, and the balanced-delimiter / forbidden-character / function
+rules before grouping declarations into `:root{--name:value !important;...}` and optional
+`<theme>{--name:value !important;...}` (or `@media (prefers-color-scheme: ...){:root{...}}`) and calling
+`previewSheet.replaceSync(css)`. On `token-preview-clear`, it calls `previewSheet.replaceSync('')`.
+
+When a non-default `activeTheme` is selected in `DesignController`, the controller projects that theme's effective
+token values (`themedDraft ?? token.themes[activeTheme] ?? rootDraft ?? token.value`) onto `:root` in `token-preview`
+instead of mutating `data-theme` or `class` on `documentElement`. This preserves the zero-DOM-mutation invariant and
+works uniformly for `[data-theme="..."]`, `.dark`/`.light`/`.theme-*`, and `@media (prefers-color-scheme: ...)`.
+**Limitation**: theme rules in the page's stylesheets that set non-custom CSS properties directly (instead of consuming
+`var(--...)` custom properties) do not participate in active-theme preview.
 
 The header comment in `packages/artifact-host/src/shell/bridge.ts` replaces `"Nothing here changes the page's DOM..."`
 with:
@@ -479,9 +503,10 @@ owns whiteboard synchronization; user-facing labels follow the UX prototype.
   - Refuses comments without a suggestion (`400 invalid_comment`) or with `suggestion.appliedVersion !== null` (`409
     already_applied`).
   - Loads `currentVersion`'s `tokens[0]`: verifies every suggested `(name, theme)` still exists and its current value
-    is either `change.from` or `change.to` (returning `409 suggestion_conflict` if a newer version changed that same
-    token to a third value, while allowing apply across intermediate versions that touched other files or other
-    tokens). If at least one token still equals `change.from`, creates a new version via `admin.update`
+    is either `change.from` or `change.to` (returning `409 { error: 'suggestion_conflict', staleTokens: string[] }` —
+    token names only, without values — if a newer version changed that same token to a third value, while allowing apply
+    across intermediate versions that touched other files or other tokens). If at least one token still equals
+    `change.from`, creates a new version via `admin.update`
     (`createdBy: 'owner'`, summary `Applied a token suggestion: --name, …` listing only the validated token names so
     third-party author names and proposed values never enter `artifact_get` version metadata without an untrusted-input
     notice), then atomically sets `suggestion.appliedVersion = newVersion` and `status = 'resolved'` on the thread in
@@ -579,9 +604,9 @@ export const MAX_DESIGN_COMPONENTS = 200
 export const MAX_TOKEN_VALUE_CHARS = 200
 export const MAX_INSPECT_TOKENS = 64
 export const MAX_INSPECT_PROPS = 32
-export const MAX_INSPECT_CHAIN = 16
-export const MAX_INSPECT_CLASSES = 3
-export const MAX_ELEMENT_LABEL_CHARS = 120
+export const MAX_INSPECT_CHAIN = 8
+export const MAX_INSPECT_CLASSES = 2
+export const MAX_ELEMENT_LABEL_CHARS = 80
 export const MAX_COMPONENT_VARIANTS = 32
 export const MAX_MATCH_RECTS = 200
 
@@ -679,7 +704,7 @@ export interface InspectHover {
   selector: string
   rect: SelectionRect
   tag: string
-  classes?: readonly string[]
+  /** Computed in `bridge.ts` from `tag` and up to 2 valid CSS classes (`<= 80` chars). */
   elementLabel?: string
   component: string | null
   main: boolean
@@ -689,11 +714,11 @@ export interface InspectTarget extends InspectHover {
   props: Record<string, string>
   styles: ComputedStyleSubset
   tokens: UsedToken[]
-  /** Ancestor `[data-ds]` components from outermost to nearest parent. */
+  /** Ancestor `[data-ds]` components from outermost to nearest parent (`<= 8`). */
   chain?: readonly InspectAncestor[]
-  /** Distinct normalized `data-ds-props` strings across `[data-ds="<component>"]` when `main` is true. */
+  /** Distinct normalized `data-ds-props` strings across `[data-ds="<component>"]` when `main` is true (`<= 32`). */
   variants?: readonly string[]
-  /** True when stylesheet rules were unreadable (`SecurityError`) and tokens came from `manifest.componentTokens`. */
+  /** True when the token list came from `manifest.componentTokens`. */
   tokensFromManifest?: boolean
 }
 
@@ -816,13 +841,15 @@ export interface DesignSnapshot {
   activeTheme: string | null
   /** Pending uncommitted token edits (`key` = `${theme ?? ''}\n${name}`). */
   draftChanges: readonly TokenChange[]
+  /** Keys (`tokenDraftKey(name, theme)`) of preserved drafts whose base value changed when rebasing versions. */
+  staleDraftKeys: ReadonlySet<string>
   /** Comment ID when the active preview comes from previewing a thread's suggestion, otherwise null. */
   previewingCommentId: string | null
   focusedScreenId: string | null
   screensState: ReadonlyMap<string, ScreenFrameState>
   /** Component name -> per-screen instance counts collected so far. */
   componentUsage: (component: string) => ScreenUsage[]
-  /** Distinct normalized `data-ds-props` variant strings seen for `component`. */
+  /** Distinct normalized `data-ds-props` variant strings seen for `component` in `components.html`. */
   componentVariants: (component: string) => readonly string[]
 }
 
@@ -857,7 +884,6 @@ export type ApplySuggestionResult =
       error: DesignWriteError
       currentVersion?: number
       staleTokens?: readonly string[]
-      staleChanges?: readonly { name: string; theme?: string }[]
     }
 
 export interface SetDesignVersionOptions {
@@ -936,8 +962,8 @@ export interface DesignController {
   discardTokens(): void
   /** Previews a comment's suggested changes across all live frames (`null` clears). */
   previewSuggestion(commentId: string | null, changes?: readonly TokenSuggestionChange[]): void
-  /** Rebases pending token drafts onto `version` (refreshing state, frame URL, and `design`). */
-  rebaseTokensToVersion(version: number): Promise<boolean>
+  /** Rebases pending token drafts onto `version` (marking drafts whose origin value changed in `staleDraftKeys`). */
+  rebaseTokensToVersion(version: number): Promise<void>
   /** Loads a suggestion's token changes as editable drafts on the latest version and opens the Tokens panel. */
   editSuggestionInTokens(changes: readonly TokenSuggestionChange[]): Promise<void>
   saveTokens(): Promise<SaveTokensResult>

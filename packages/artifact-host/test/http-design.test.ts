@@ -400,7 +400,6 @@ describe('token suggestions on comments & POST /a/:id/api/comments/:id/apply', (
     expect(conflictApply.json).toEqual({
       error: 'suggestion_conflict',
       staleTokens: ['--space-md'],
-      staleChanges: [{ name: '--space-md' }],
     })
 
     // Already-matching value case: Maria suggests --space-md: 12px on v4, owner manually saves 12px as v5, then applies Maria's comment -> resolves with appliedVersion=5 without creating v6!
