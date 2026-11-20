@@ -454,10 +454,11 @@ describe('createDesignController progressive inventory, pool, preview, save, sug
     await ctrl.setVersion(1, '/c/cap.sig/index.html', Date.now() + 600_000)
     expect(ctrl.snapshot().design?.screens).toHaveLength(8)
 
-    // Before requestInventory: counts are null and measuring is false
+    // Before requestInventory: counts are null, status is queued, and measuring is false
     expect(ctrl.snapshot().componentUsage('Button')[0]).toEqual({
       screenId: 'scr-1',
       screenName: 'Screen 1',
+      status: 'queued',
       count: null,
       measuring: false,
     })
@@ -465,13 +466,11 @@ describe('createDesignController progressive inventory, pool, preview, save, sug
     ctrl.requestInventory()
     await new Promise((r) => setTimeout(r, 0))
 
-    // All 8 unmeasured screens report measuring: true
-    expect(
-      ctrl
-        .snapshot()
-        .componentUsage('Button')
-        .every((u) => u.count === null && u.measuring)
-    ).toBe(true)
+    // All 8 unmeasured screens report measuring: true; up to 2 loading frames report status 'measuring' while queued ones stay 'queued'
+    const duringLoad = ctrl.snapshot().componentUsage('Button')
+    expect(duringLoad.every((u) => u.count === null && u.measuring)).toBe(true)
+    expect(duringLoad.filter((u) => u.status === 'measuring').length).toBe(2)
+    expect(duringLoad.filter((u) => u.status === 'queued').length).toBe(6)
 
     // At most 2 frames start loading concurrently!
     const liveConnected = () => doc.createdIframes.slice(1).filter((f) => f.isConnected)
@@ -514,6 +513,7 @@ describe('createDesignController progressive inventory, pool, preview, save, sug
       eightScreens.map((s, idx) => ({
         screenId: s.id,
         screenName: s.name,
+        status: 'done',
         count: idx + 1,
         measuring: false,
       }))
@@ -619,6 +619,263 @@ describe('createDesignController progressive inventory, pool, preview, save, sug
         },
       },
     ])
+    ctrl.destroy()
+  })
+
+  it('covers loadError/reloadDesign, retryScreen, activeTheme projection, component uses/return, and rebase/edit hooks', async () => {
+    const doc = new FakeDoc()
+    const stage = doc.createElement('iframe') as FakeIframe
+    doc.body.appendChild(stage)
+
+    let failDesignOnce = true
+    const serverDesignV2: ViewerDesign = {
+      ...sampleDesign,
+      componentsPath: 'components.html',
+      screens: [
+        { id: 'home', name: 'Home', path: 'index.html', viewport: 'desktop' },
+        { id: 'checkout', name: 'Checkout', path: 'checkout.html', viewport: 'mobile' },
+      ],
+      tokens: [
+        { name: '--btn-bg', group: 'color', kind: 'color', value: '#1d4ed8', themes: { '.dark': '#60a5fa' } },
+        { name: '--space-md', group: 'space', kind: 'length', value: '16px', themes: {} },
+      ],
+    }
+
+    const state: ViewerState = {
+      artifact: {
+        id: 'A'.repeat(22),
+        kind: 'page',
+        title: 'App',
+        currentVersion: 1,
+        versions: [{ number: 1, createdAt: 100, summary: 'Init' }],
+      },
+      identity: { kind: 'owner' },
+      ownerName: 'Antonio',
+      can: { comment: true, resolve: true, respond: true, edit: false, history: true },
+    }
+    const syncedVersions: Array<{ version: number; current: number }> = []
+    const api: ArtifactApi = {
+      async read(path) {
+        if (path.startsWith('design?version=')) {
+          if (failDesignOnce) {
+            failDesignOnce = false
+            return jsonRes(500, { error: 'boom' })
+          }
+          const v = Number(path.split('=')[1])
+          return jsonRes(200, {
+            design:
+              v === 2
+                ? serverDesignV2
+                : {
+                    ...sampleDesign,
+                    componentsPath: 'components.html',
+                    screens: serverDesignV2.screens,
+                    tokens: [
+                      {
+                        name: '--btn-bg',
+                        group: 'color',
+                        kind: 'color',
+                        value: '#2563eb',
+                        themes: { '.dark': '#60a5fa' },
+                      },
+                      { name: '--space-md', group: 'space', kind: 'length', value: '16px', themes: {} },
+                    ],
+                  },
+          })
+        }
+        return jsonRes(404, {})
+      },
+      async write(action, _method, body) {
+        if (action === 'frame') {
+          const v = (body as { version: number }).version
+          return jsonRes(200, { url: `/c/cap${v}.sig/index.html`, expiresAt: Date.now() + 600_000 })
+        }
+        if (action === 'tokens') {
+          return jsonRes(409, { error: 'version_conflict', currentVersion: 2 })
+        }
+        if (action.endsWith('/apply')) {
+          return jsonRes(409, {
+            error: 'suggestion_conflict',
+            currentVersion: 2,
+            staleTokens: ['--btn-bg'],
+            staleChanges: [{ name: '--btn-bg', theme: '.dark' }],
+          })
+        }
+        return jsonRes(404, {})
+      },
+      async state() {
+        return {
+          ...state,
+          artifact: {
+            ...state.artifact,
+            currentVersion: 2,
+            versions: [
+              { number: 2, summary: 'v2', createdAt: 2 },
+              { number: 1, summary: null, createdAt: 1 },
+            ],
+          },
+        }
+      },
+    }
+
+    const ctrl = createDesignController({
+      api,
+      state,
+      stageFrame: stage as unknown as HTMLIFrameElement,
+      version: 1,
+      preview: false,
+      onChange: () => {},
+      onDisableCommenting: () => {},
+      onVersionCreated: () => {},
+      onVersionSynced: (v, cur) => syncedVersions.push({ version: v, current: cur }),
+      onReplaced: () => {},
+      onIdentityChanged: () => {},
+    })
+
+    // 1. loadError vs reloadDesign
+    await ctrl.setVersion(1, '/c/cap1.sig/index.html', Date.now() + 600_000)
+    expect(ctrl.snapshot().loadError).toBe(true)
+    expect(ctrl.snapshot().design).toBeNull()
+    await ctrl.reloadDesign()
+    expect(ctrl.snapshot().loadError).toBe(false)
+    expect(ctrl.snapshot().design?.title).toBe('Design System')
+
+    // 2. Active theme projects onto :root in preview tokens without mutating draftChanges
+    ctrl.setActiveTheme('.dark')
+    expect(ctrl.snapshot().draftChanges).toEqual([])
+    expect(stage.posted.at(-1)).toEqual({
+      source: 'maestrly-shell',
+      type: 'token-preview',
+      tokens: [
+        { name: '--btn-bg', value: '#60a5fa' },
+        { name: '--space-md', value: '16px' },
+      ],
+    })
+    ctrl.setActiveTheme(null)
+    expect(stage.posted.at(-1)).toEqual({ source: 'maestrly-shell', type: 'token-preview-clear' })
+
+    // 3. retryScreen recovers a failed screen frame
+    ctrl.setView('screens')
+    ctrl.setVisibleScreens(['home'], 'home')
+    await new Promise((r) => setTimeout(r, 0))
+    const firstHomeFrame = ctrl.screenFrame('home') as unknown as FakeIframe
+    expect(firstHomeFrame).toBeTruthy()
+    ctrl.routeMessage(firstHomeFrame.contentWindow as unknown as MessageEventSource, {
+      type: 'error',
+      message: 'Failed screen',
+    })
+    expect(ctrl.snapshot().screensState.get('home')?.status).toBe('error')
+    expect(ctrl.snapshot().componentUsage('Button')[0]?.status).toBe('failed')
+    ctrl.retryScreen('home')
+    await new Promise((r) => setTimeout(r, 0))
+    const retriedHomeFrame = ctrl.screenFrame('home') as unknown as FakeIframe
+    expect(retriedHomeFrame).toBeTruthy()
+    expect(retriedHomeFrame).not.toBe(firstHomeFrame)
+
+    // 4. openMainComponent probes components.html first: missing component returns false without navigating stageFrame
+    await ctrl.openScreen('home')
+    ctrl.routeMessage(stage.contentWindow as unknown as MessageEventSource, { type: 'ready' })
+    ctrl.setInspecting(true)
+    ctrl.routeMessage(stage.contentWindow as unknown as MessageEventSource, {
+      type: 'inspect-pick',
+      target: {
+        selector: '#cta-btn',
+        rect: { x: 10, y: 20, width: 100, height: 40 },
+        tag: 'button',
+        classes: ['primary'],
+        elementLabel: 'button.primary',
+        component: 'Button',
+        main: false,
+        props: { variant: 'primary' },
+        styles: {
+          fontFamily: 'sans-serif',
+          fontSize: '14px',
+          fontWeight: '600',
+          lineHeight: '20px',
+          color: '#fff',
+          backgroundColor: '#2563eb',
+          borderRadius: '8px',
+          padding: '8px 16px',
+        },
+        tokens: [{ name: '--btn-bg', value: '#2563eb', property: 'background-color' }],
+        chain: [{ component: 'Card', selector: '#hero-card' }],
+      },
+    })
+    expect(ctrl.snapshot().inspected?.tokens[0]?.property).toBe('background-color')
+
+    const stageSrcBeforeProbe = stage.src
+    const missingPromise = ctrl.openMainComponent('UnknownWidget')
+    await new Promise((r) => setTimeout(r, 0))
+    const probeFrame = doc.createdIframes.at(-1)!
+    ctrl.routeMessage(probeFrame.contentWindow as unknown as MessageEventSource, { type: 'ready' })
+    const probeInvReq = probeFrame.posted.find((m) => m.type === 'inventory-request') as { requestId: string }
+    ctrl.routeMessage(probeFrame.contentWindow as unknown as MessageEventSource, {
+      type: 'inventory',
+      requestId: probeInvReq.requestId,
+      instances: {},
+      mains: ['Button'],
+      variants: { Button: ['variant=primary', 'variant=ghost'] },
+    })
+    expect(await missingPromise).toBe(false)
+    expect(stage.src).toBe(stageSrcBeforeProbe)
+    expect(ctrl.componentVariants('Button')).toEqual(['variant=primary', 'variant=ghost'])
+
+    // Existing main component navigates to components.html and tracks backScreenId
+    expect(await ctrl.openMainComponent('Button')).toBe(true)
+    expect(ctrl.snapshot().stagePath).toBe('components.html')
+    expect(ctrl.snapshot().backScreenId).toBe('home')
+
+    // returnFromMainComponent navigates back to 'home' and re-selects '#cta-btn'
+    await ctrl.returnFromMainComponent()
+    expect(ctrl.snapshot().stagePath).toBe('index.html')
+    expect(ctrl.snapshot().backScreenId).toBeNull()
+    stage.posted.length = 0
+    ctrl.routeMessage(stage.contentWindow as unknown as MessageEventSource, { type: 'ready' })
+    expect(stage.posted).toContainEqual({
+      source: 'maestrly-shell',
+      type: 'inspect-select',
+      selector: '#cta-btn',
+    })
+
+    // 5. showComponentUses highlights matches and updates matchRects
+    await ctrl.showComponentUses('Button', 'home')
+    expect(stage.posted.at(-1)).toEqual({
+      source: 'maestrly-shell',
+      type: 'highlight-component',
+      component: 'Button',
+    })
+    ctrl.routeMessage(stage.contentWindow as unknown as MessageEventSource, {
+      type: 'matches',
+      rects: [{ x: 12, y: 24, width: 88, height: 36 }],
+    })
+    expect(ctrl.snapshot().matchRects).toEqual([{ x: 12, y: 24, width: 88, height: 36 }])
+    expect(ctrl.escape()).toBe(true)
+    expect(ctrl.snapshot().matchRects).toEqual([])
+
+    // 6. saveTokens conflict -> rebaseTokensToVersion preserves remaining drafts; applySuggestion conflict surfaces staleTokens; editSuggestionInTokens loads drafts
+    expect(ctrl.setTokenValue('--space-md', '24px')).toBe(true)
+    expect(ctrl.setTokenValue('--btn-bg', '#1d4ed8')).toBe(true)
+    const conflictSave = await ctrl.saveTokens()
+    expect(conflictSave).toEqual({ ok: false, error: 'version_conflict', currentVersion: 2 })
+    expect(await ctrl.rebaseTokensToVersion(2)).toBe(true)
+    expect(syncedVersions.at(-1)).toEqual({ version: 2, current: 2 })
+    // --btn-bg matched v2's base (#1d4ed8) so it was pruned, while --space-md: 24px remained!
+    expect(ctrl.snapshot().draftChanges).toEqual([{ name: '--space-md', value: '24px' }])
+
+    const conflictApply = await ctrl.applySuggestion('c'.repeat(22))
+    expect(conflictApply).toEqual({
+      ok: false,
+      error: 'suggestion_conflict',
+      currentVersion: 2,
+      staleTokens: ['--btn-bg'],
+      staleChanges: [{ name: '--btn-bg', theme: '.dark' }],
+    })
+
+    await ctrl.editSuggestionInTokens([{ name: '--btn-bg', from: '#2563eb', to: '#93c5fd', theme: '.dark' }])
+    expect(ctrl.snapshot().tokensOpen).toBe(true)
+    expect(ctrl.snapshot().activeTheme).toBe('.dark')
+    expect(ctrl.snapshot().draftChanges).toEqual([{ name: '--btn-bg', value: '#93c5fd', theme: '.dark' }])
+
     ctrl.destroy()
   })
 })

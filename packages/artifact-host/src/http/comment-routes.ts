@@ -247,14 +247,20 @@ export function createCommentRoutes(deps: CommentRouteDeps): CommentRoutes {
       }
 
       const pendingChanges: TokenChange[] = []
+      const staleChanges: { name: string; theme?: string }[] = []
+      const staleTokenSet = new Set<string>()
       for (const change of existing.suggestion.changes) {
         const key = tokenDraftKey(change.name, change.theme ?? null)
         const span = loaded.parsed.spans.get(key)
         if (!span || !loaded.parsed.canonicalNames.has(change.name)) {
-          return json(ctx.res, 409, { error: 'suggestion_conflict' })
+          staleTokenSet.add(change.name)
+          staleChanges.push({ name: change.name, ...(change.theme ? { theme: change.theme } : {}) })
+          continue
         }
         if (span.value !== change.from && span.value !== change.to) {
-          return json(ctx.res, 409, { error: 'suggestion_conflict' })
+          staleTokenSet.add(change.name)
+          staleChanges.push({ name: change.name, ...(change.theme ? { theme: change.theme } : {}) })
+          continue
         }
         if (span.value === change.from) {
           pendingChanges.push({
@@ -263,6 +269,13 @@ export function createCommentRoutes(deps: CommentRouteDeps): CommentRoutes {
             ...(change.theme ? { theme: change.theme } : {}),
           })
         }
+      }
+      if (staleChanges.length > 0) {
+        return json(ctx.res, 409, {
+          error: 'suggestion_conflict',
+          staleTokens: [...staleTokenSet],
+          staleChanges,
+        })
       }
 
       if (pendingChanges.length === 0) {

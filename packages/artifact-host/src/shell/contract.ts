@@ -99,6 +99,11 @@ export const MAX_DS_PROP_VALUE_CHARS = 120
 export const MAX_COMPUTED_STYLE_CHARS = 120
 export const MAX_INSPECT_TOKENS = 64
 export const MAX_INSPECTED_TOKENS = MAX_INSPECT_TOKENS
+export const MAX_INSPECT_CHAIN = 16
+export const MAX_INSPECT_CLASSES = 3
+export const MAX_ELEMENT_LABEL_CHARS = 120
+export const MAX_COMPONENT_VARIANTS = 32
+export const MAX_MATCH_RECTS = 200
 export const MAX_INVENTORY_COMPONENTS = MAX_DESIGN_COMPONENTS
 export const MAX_INVENTORY_COUNT = 10_000
 export const MIN_VIEWPORT_DIMENSION = 320
@@ -187,12 +192,20 @@ export interface ComputedStyleSubset {
 export interface UsedToken {
   name: string
   value: string
+  property?: string
+}
+
+export interface InspectAncestor {
+  component: string
+  selector: string
 }
 
 export interface InspectHover {
   selector: string
   rect: SelectionRect
   tag: string
+  classes?: readonly string[]
+  elementLabel?: string
   component: string | null
   main: boolean
 }
@@ -201,6 +214,9 @@ export interface InspectTarget extends InspectHover {
   props: Record<string, string>
   styles: ComputedStyleSubset
   tokens: UsedToken[]
+  chain?: readonly InspectAncestor[]
+  variants?: readonly string[]
+  tokensFromManifest?: boolean
 }
 
 export const TOKEN_NAME_PATTERN = /^--[a-zA-Z0-9][a-zA-Z0-9_-]{0,61}$/
@@ -398,7 +414,7 @@ export type PinPosition = { x: number; y: number } | null
 /** What a comment may be anchored to when the reader places it on the page. */
 export type PickedAnchor = { quote: TextQuote } | { point: PagePoint }
 
-export const FORWARDED_KEYS = ['Escape', 'c', 'f', 'i'] as const
+export const FORWARDED_KEYS = ['Escape', 'c', 'f', 'i', 's', 't'] as const
 export type ForwardedKey = (typeof FORWARDED_KEYS)[number]
 
 export type BridgeMessage =
@@ -413,6 +429,7 @@ export type BridgeMessage =
       width: number
       height: number
       inspectRect?: SelectionRect | null
+      matchRects?: SelectionRect[]
     }
   /** In comment mode, the passage or spot the reader chose. */
   | { type: 'pick'; anchor: PickedAnchor }
@@ -420,8 +437,16 @@ export type BridgeMessage =
   | { type: 'inspect-hover'; target: InspectHover | null }
   /** In inspect mode (or after reveal-component), the selected component or element. */
   | { type: 'inspect-pick'; target: InspectTarget | null }
-  /** Component instance counts and main definitions currently present in the frame's DOM. */
-  | { type: 'inventory'; requestId: string | null; instances: Record<string, number>; mains: string[] }
+  /** Bounding boxes of highlighted component instances on the current screen. */
+  | { type: 'matches'; rects: SelectionRect[] }
+  /** Component instance counts, main definitions, and distinct prop variants currently present in the frame's DOM. */
+  | {
+      type: 'inventory'
+      requestId: string | null
+      instances: Record<string, number>
+      mains: string[]
+      variants?: Record<string, string[]>
+    }
   /** The reader pressed inside the page. */
   | { type: 'pointer' }
   /** A viewer shortcut pressed while the page had the focus. */
@@ -446,7 +471,9 @@ export type ShellMessage =
   | { type: 'anchors'; anchors: ShellAnchor[]; active: string | null }
   | { type: 'mode'; commenting: boolean }
   | { type: 'inspect-mode'; inspecting: boolean; componentTokens?: Record<string, string[]> }
+  | { type: 'inspect-select'; selector: string }
   | { type: 'inspect-clear' }
+  | { type: 'highlight-component'; component: string | null }
   | { type: 'reveal-component'; component: string }
   | { type: 'inventory-request'; requestId: string }
   | { type: 'token-preview'; tokens: TokenChange[] }
@@ -539,6 +566,8 @@ function isBoardBatch(value: unknown): value is unknown[] {
 }
 
 const TAG_PATTERN = /^[a-zA-Z][a-zA-Z0-9:-]{0,63}$/
+const CLASS_NAME_PATTERN = /^[a-zA-Z_-][a-zA-Z0-9_-]{0,63}$/
+const CSS_PROPERTY_PATTERN = /^(?:--[a-zA-Z0-9][a-zA-Z0-9_-]{0,61}|-?[a-zA-Z][a-zA-Z0-9-]{0,62})$/
 const COMPUTED_STYLE_KEYS: readonly (keyof ComputedStyleSubset)[] = [
   'fontFamily',
   'fontSize',
@@ -554,6 +583,33 @@ function setSafeProp<T>(target: Record<string, T>, key: string, value: T): void 
   Object.defineProperty(target, key, { value, enumerable: true, writable: true, configurable: true })
 }
 
+function isValidVariantString(value: unknown): value is string {
+  if (typeof value !== 'string' || !value || value.length > MAX_DS_PROPS_RAW_CHARS || CONTROL_CHAR.test(value))
+    return false
+  const pairs = value.trim().split(/\s+/)
+  if (pairs.length === 0 || pairs.length > MAX_DS_PROPS) return false
+  for (const pair of pairs) {
+    const eq = pair.indexOf('=')
+    if (eq <= 0) return false
+    const key = pair.slice(0, eq)
+    const val = pair.slice(eq + 1)
+    if (key === 'constructor' || key === 'prototype' || !DS_PROP_KEY_PATTERN.test(key)) return false
+    if (!val || val.length > MAX_DS_PROP_VALUE_CHARS) return false
+  }
+  return true
+}
+
+function parseRectList(value: unknown): SelectionRect[] | null {
+  if (!Array.isArray(value) || value.length > MAX_MATCH_RECTS) return null
+  const rects: SelectionRect[] = []
+  for (const item of value) {
+    const rect = parseRect(item)
+    if (!rect) return null
+    rects.push(rect)
+  }
+  return rects
+}
+
 function parseInspectHover(value: unknown): InspectHover | null {
   if (!isRecord(value)) return null
   if (typeof value.selector !== 'string' || !value.selector || value.selector.length > MAX_SELECTOR_CHARS) return null
@@ -566,10 +622,35 @@ function parseInspectHover(value: unknown): InspectHover | null {
     component = value.component
   }
   if (typeof value.main !== 'boolean') return null
+
+  let classes: string[] | undefined
+  if (value.classes !== undefined) {
+    if (!Array.isArray(value.classes) || value.classes.length > MAX_INSPECT_CLASSES) return null
+    classes = []
+    for (const cls of value.classes) {
+      if (typeof cls !== 'string' || !CLASS_NAME_PATTERN.test(cls)) return null
+      classes.push(cls)
+    }
+  }
+
+  let elementLabel: string | undefined
+  if (value.elementLabel !== undefined) {
+    if (
+      typeof value.elementLabel !== 'string' ||
+      !value.elementLabel ||
+      value.elementLabel.length > MAX_ELEMENT_LABEL_CHARS ||
+      CONTROL_CHAR.test(value.elementLabel)
+    )
+      return null
+    elementLabel = value.elementLabel
+  }
+
   return {
     selector: value.selector,
     rect,
     tag: value.tag.toLowerCase(),
+    ...(classes !== undefined ? { classes } : {}),
+    ...(elementLabel !== undefined ? { elementLabel } : {}),
     component,
     main: component !== null && value.main,
   }
@@ -609,17 +690,69 @@ function parseInspectTarget(value: unknown): InspectTarget | null {
   for (const item of value.tokens) {
     if (!isRecord(item) || !isValidTokenName(item.name) || typeof item.value !== 'string') return null
     if (CONTROL_CHAR.test(item.value)) return null
+    let property: string | undefined
+    if (item.property !== undefined) {
+      if (typeof item.property !== 'string' || !CSS_PROPERTY_PATTERN.test(item.property)) return null
+      property = item.property
+    }
     if (seenTokens.has(item.name)) continue
     seenTokens.add(item.name)
-    tokens.push({ name: item.name, value: item.value.slice(0, MAX_TOKEN_VALUE_CHARS) })
+    tokens.push({
+      name: item.name,
+      value: item.value.slice(0, MAX_TOKEN_VALUE_CHARS),
+      ...(property !== undefined ? { property } : {}),
+    })
   }
 
-  return { ...hover, props, styles, tokens }
+  let chain: InspectAncestor[] | undefined
+  if (value.chain !== undefined) {
+    if (!Array.isArray(value.chain) || value.chain.length > MAX_INSPECT_CHAIN) return null
+    chain = []
+    for (const item of value.chain) {
+      if (!isRecord(item) || !isValidComponentName(item.component)) return null
+      if (typeof item.selector !== 'string' || !item.selector || item.selector.length > MAX_SELECTOR_CHARS) return null
+      chain.push({ component: item.component, selector: item.selector })
+    }
+  }
+
+  let variants: string[] | undefined
+  if (value.variants !== undefined) {
+    if (!Array.isArray(value.variants) || value.variants.length > MAX_COMPONENT_VARIANTS) return null
+    variants = []
+    const seenVariants = new Set<string>()
+    for (const item of value.variants) {
+      if (!isValidVariantString(item)) return null
+      if (!seenVariants.has(item)) {
+        seenVariants.add(item)
+        variants.push(item)
+      }
+    }
+  }
+
+  let tokensFromManifest: boolean | undefined
+  if (value.tokensFromManifest !== undefined) {
+    if (typeof value.tokensFromManifest !== 'boolean') return null
+    tokensFromManifest = value.tokensFromManifest
+  }
+
+  return {
+    ...hover,
+    props,
+    styles,
+    tokens,
+    ...(chain !== undefined ? { chain } : {}),
+    ...(variants !== undefined ? { variants } : {}),
+    ...(tokensFromManifest !== undefined ? { tokensFromManifest } : {}),
+  }
 }
 
-function parseInventory(
-  value: Record<string, unknown>
-): { type: 'inventory'; requestId: string | null; instances: Record<string, number>; mains: string[] } | null {
+function parseInventory(value: Record<string, unknown>): {
+  type: 'inventory'
+  requestId: string | null
+  instances: Record<string, number>
+  mains: string[]
+  variants?: Record<string, string[]>
+} | null {
   let requestId: string | null
   if (value.requestId === null) requestId = null
   else if (isRequestId(value.requestId)) requestId = value.requestId
@@ -645,7 +778,29 @@ function parseInventory(
       mains.push(item)
     }
   }
-  return { type: 'inventory', requestId, instances, mains }
+
+  let variants: Record<string, string[]> | undefined
+  if (value.variants !== undefined) {
+    if (!isRecord(value.variants)) return null
+    const variantEntries = Object.entries(value.variants)
+    if (variantEntries.length > MAX_INVENTORY_COMPONENTS) return null
+    variants = {}
+    for (const [comp, rawList] of variantEntries) {
+      if (!isValidComponentName(comp) || !Array.isArray(rawList) || rawList.length > MAX_COMPONENT_VARIANTS) return null
+      const cleanList: string[] = []
+      const seen = new Set<string>()
+      for (const item of rawList) {
+        if (!isValidVariantString(item)) return null
+        if (!seen.has(item)) {
+          seen.add(item)
+          cleanList.push(item)
+        }
+      }
+      setSafeProp(variants, comp, cleanList)
+    }
+  }
+
+  return { type: 'inventory', requestId, instances, mains, ...(variants !== undefined ? { variants } : {}) }
 }
 
 /**
@@ -670,15 +825,24 @@ export function parseBridgeMessage(value: unknown): BridgeMessage | null {
     case 'layout': {
       const pins = parsePins(v.pins)
       if (!pins || !finite(v.width) || !finite(v.height)) return null
-      if (v.inspectRect === undefined) {
-        return { type: 'layout', pins, width: Math.max(0, v.width), height: Math.max(0, v.height) }
+      let matchRects: SelectionRect[] | undefined
+      if (v.matchRects !== undefined) {
+        const parsedMatches = parseRectList(v.matchRects)
+        if (!parsedMatches) return null
+        matchRects = parsedMatches
       }
-      if (v.inspectRect === null) {
-        return { type: 'layout', pins, width: Math.max(0, v.width), height: Math.max(0, v.height), inspectRect: null }
+      const base = {
+        type: 'layout' as const,
+        pins,
+        width: Math.max(0, v.width),
+        height: Math.max(0, v.height),
+        ...(matchRects !== undefined ? { matchRects } : {}),
       }
+      if (v.inspectRect === undefined) return base
+      if (v.inspectRect === null) return { ...base, inspectRect: null }
       const inspectRect = parseRect(v.inspectRect)
       if (!inspectRect) return null
-      return { type: 'layout', pins, width: Math.max(0, v.width), height: Math.max(0, v.height), inspectRect }
+      return { ...base, inspectRect }
     }
     case 'pick': {
       const anchor = parsePicked(v.anchor)
@@ -693,6 +857,10 @@ export function parseBridgeMessage(value: unknown): BridgeMessage | null {
       if (v.target === null) return { type: 'inspect-pick', target: null }
       const target = parseInspectTarget(v.target)
       return target ? { type: 'inspect-pick', target } : null
+    }
+    case 'matches': {
+      const rects = parseRectList(v.rects)
+      return rects ? { type: 'matches', rects } : null
     }
     case 'inventory':
       return parseInventory(v)

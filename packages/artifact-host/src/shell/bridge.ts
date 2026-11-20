@@ -49,12 +49,15 @@
   let commenting = false
   let inspecting = false
   let inspectedElement: Element | null = null
+  let matchedComponent: string | null = null
   let componentTokenHints: Record<string, string[]> = {}
   const ranges = new Map<string, Range>()
 
   const TOKEN_NAME_RE = /^--[a-zA-Z0-9][a-zA-Z0-9_-]{0,61}$/
   const COMPONENT_NAME_RE = /^[A-Z][A-Za-z0-9]{0,47}$/
   const DS_PROP_KEY_RE = /^[a-z][a-zA-Z0-9-]{0,31}$/
+  const CLASS_NAME_RE = /^[a-zA-Z_-][a-zA-Z0-9_-]{0,63}$/
+  const CSS_PROP_RE = /^(?:--[a-zA-Z0-9][a-zA-Z0-9_-]{0,61}|-?[a-zA-Z][a-zA-Z0-9-]{0,62})$/
   const THEME_SELECTOR_RE =
     /^(?:(?::root|html)?\[data-theme=(?:"[a-zA-Z0-9_-]{1,32}"|'[a-zA-Z0-9_-]{1,32}')\]|(?::root|html)?\.(?:dark|light|theme-[a-zA-Z0-9_-]{1,32})|@media \((?:prefers-color-scheme: (?:dark|light))\))$/
   const FORBIDDEN_RAW_TOKEN_VALUE_RE = /[<\\]|\/\*|\*\//
@@ -67,6 +70,11 @@
   const MAX_COMPUTED_STYLE_CHARS = 120
   const MAX_TOKEN_VALUE_CHARS = 200
   const MAX_INSPECTED_TOKENS = 64
+  const MAX_INSPECT_CHAIN = 16
+  const MAX_INSPECT_CLASSES = 3
+  const MAX_ELEMENT_LABEL_CHARS = 120
+  const MAX_COMPONENT_VARIANTS = 32
+  const MAX_MATCH_RECTS = 200
   const MAX_INVENTORY_NODES = 5000
   const MAX_INVENTORY_COMPONENTS = 200
   const MAX_INVENTORY_COUNT = 10_000
@@ -192,6 +200,20 @@
     return { x: box.x, y: box.y, width: box.width, height: box.height }
   }
 
+  function collectMatchRects(component: string): { x: number; y: number; width: number; height: number }[] {
+    const rects: { x: number; y: number; width: number; height: number }[] = []
+    if (!COMPONENT_NAME_RE.test(component)) return rects
+    const nodes = document.querySelectorAll('[data-ds]')
+    const limit = Math.min(nodes.length, MAX_INVENTORY_NODES)
+    for (let i = 0; i < limit && rects.length < MAX_MATCH_RECTS; i++) {
+      const el = nodes[i]!
+      if (el.getAttribute('data-ds') !== component || el.hasAttribute('data-ds-main')) continue
+      const r = rectOf(el)
+      if (r.width > 0 || r.height > 0) rects.push(r)
+    }
+    return rects
+  }
+
   function layout(): void {
     const payload: Record<string, unknown> = {
       type: 'layout',
@@ -206,6 +228,9 @@
       } else {
         payload.inspectRect = rectOf(inspectedElement)
       }
+    }
+    if (matchedComponent !== null) {
+      payload.matchRects = collectMatchRects(matchedComponent)
     }
     post(payload)
     if (selecting) reportSelection()
@@ -444,10 +469,26 @@
     const { selector } = pathOf(element)
     const rawComponent = element.getAttribute('data-ds')
     const component = rawComponent && COMPONENT_NAME_RE.test(rawComponent) ? rawComponent : null
+    const tag = element.tagName.toLowerCase()
+    const classes: string[] = []
+    for (let i = 0; i < element.classList.length && classes.length < MAX_INSPECT_CLASSES; i++) {
+      const cls = element.classList[i]!
+      if (CLASS_NAME_RE.test(cls)) classes.push(cls)
+    }
+    let elementLabel = tag
+    if (classes.length > 0) {
+      const candidate = `${tag}.${classes.join('.')}`
+      if (candidate.length <= MAX_ELEMENT_LABEL_CHARS) elementLabel = candidate
+    } else if (element.id && CLASS_NAME_RE.test(element.id)) {
+      const candidate = `${tag}#${element.id}`
+      if (candidate.length <= MAX_ELEMENT_LABEL_CHARS) elementLabel = candidate
+    }
     return {
       selector,
       rect: rectOf(element),
-      tag: element.tagName.toLowerCase(),
+      tag,
+      ...(classes.length > 0 ? { classes } : {}),
+      elementLabel,
       component,
       main: component !== null && element.hasAttribute('data-ds-main'),
     }
@@ -472,18 +513,108 @@
     return props
   }
 
+  function normalizeVariantProps(raw: string | null): string | null {
+    const parsed = parseDsProps(raw)
+    const keys = Object.keys(parsed)
+    if (keys.length === 0) return null
+    const joined = keys.map((k) => `${k}=${parsed[k]!}`).join(' ')
+    return joined.length <= MAX_DS_PROPS_RAW_CHARS ? joined : null
+  }
+
+  function collectComponentVariantsFor(component: string): string[] {
+    const out: string[] = []
+    const seen = new Set<string>()
+    const nodes = document.querySelectorAll('[data-ds]')
+    const limit = Math.min(nodes.length, MAX_INVENTORY_NODES)
+    for (let i = 0; i < limit && out.length < MAX_COMPONENT_VARIANTS; i++) {
+      const el = nodes[i]!
+      if (el.getAttribute('data-ds') !== component) continue
+      const norm = normalizeVariantProps(el.getAttribute('data-ds-props'))
+      if (norm && !seen.has(norm)) {
+        seen.add(norm)
+        out.push(norm)
+      }
+    }
+    return out
+  }
+
   const VAR_TOKEN_RE = /var\(\s*(--[a-zA-Z0-9][a-zA-Z0-9_-]{0,61})(?=[\s,)])/g
 
-  function collectTokensFromText(cssText: string, into: Set<string>): void {
-    VAR_TOKEN_RE.lastIndex = 0
-    for (let match = VAR_TOKEN_RE.exec(cssText); match; match = VAR_TOKEN_RE.exec(cssText)) {
-      if (into.size >= MAX_INSPECTED_TOKENS) return
-      into.add(match[1]!)
+  function collectDeclarationTokens(rawBlock: string, into: Map<string, string | undefined>): void {
+    let block = rawBlock.trim()
+    if (block.startsWith('{') && block.endsWith('}')) block = block.slice(1, -1)
+    let quote: '"' | "'" | null = null
+    let depth = 0
+    let start = 0
+
+    const processDecl = (segment: string): void => {
+      let dq: '"' | "'" | null = null
+      let dp = 0
+      let colon = -1
+      for (let i = 0; i < segment.length; i++) {
+        const c = segment[i]!
+        if (dq) {
+          if (c === dq) dq = null
+          continue
+        }
+        if (c === '"' || c === "'") {
+          dq = c
+          continue
+        }
+        if (c === '(') dp++
+        else if (c === ')' && dp > 0) dp--
+        else if (c === ':' && dp === 0) {
+          colon = i
+          break
+        }
+      }
+      if (colon <= 0) return
+      const rawProp = segment.slice(0, colon).trim()
+      const prop = CSS_PROP_RE.test(rawProp) ? rawProp : undefined
+      const valText = segment.slice(colon + 1)
+      VAR_TOKEN_RE.lastIndex = 0
+      for (let match = VAR_TOKEN_RE.exec(valText); match; match = VAR_TOKEN_RE.exec(valText)) {
+        const name = match[1]!
+        if (!into.has(name)) {
+          if (into.size >= MAX_INSPECTED_TOKENS) return
+          into.set(name, prop)
+        } else if (into.get(name) === undefined && prop !== undefined) {
+          into.set(name, prop)
+        }
+      }
+    }
+
+    for (let i = 0; i < block.length && into.size < MAX_INSPECTED_TOKENS; i++) {
+      const ch = block[i]!
+      if (quote) {
+        if (ch === quote) quote = null
+        continue
+      }
+      if (ch === '/' && block[i + 1] === '*') {
+        const end = block.indexOf('*/', i + 2)
+        if (end < 0) break
+        i = end + 1
+        continue
+      }
+      if (ch === '"' || ch === "'") {
+        quote = ch
+        continue
+      }
+      if (ch === '(') depth++
+      else if (ch === ')' && depth > 0) depth--
+      else if (ch === ';' && depth === 0) {
+        processDecl(block.slice(start, i))
+        start = i + 1
+      }
+    }
+    if (start < block.length && into.size < MAX_INSPECTED_TOKENS) {
+      processDecl(block.slice(start))
     }
   }
 
-  function collectCssRuleTokens(element: Element, into: Set<string>): void {
+  function collectCssRuleTokens(element: Element, into: Map<string, string | undefined>): boolean {
     let scanned = 0
+    let unreadableSheet = false
     const visitRules = (rules: CSSRuleList): void => {
       for (let i = 0; i < rules.length && scanned < MAX_SCANNED_CSS_RULES && into.size < MAX_INSPECTED_TOKENS; i++) {
         scanned++
@@ -496,13 +627,13 @@
           } catch {
             matched = false
           }
-          if (matched) collectTokensFromText(rule.cssText.slice(rule.selectorText.length), into)
+          if (matched) collectDeclarationTokens(rule.cssText.slice(rule.selectorText.length), into)
         } else if ('cssRules' in rule) {
           try {
             const nested = (rule as CSSGroupingRule).cssRules
             if (nested) visitRules(nested)
           } catch {
-            // Unreadable nested rule list.
+            unreadableSheet = true
           }
         }
       }
@@ -514,8 +645,10 @@
         visitRules(s.cssRules)
       } catch {
         // Stylesheet without CORS (`crossorigin`) in an opaque origin throws SecurityError.
+        unreadableSheet = true
       }
     }
+    return unreadableSheet
   }
 
   function buildInspectTarget(element: Element): Record<string, unknown> {
@@ -534,46 +667,90 @@
       padding: capStyle(computed.padding),
     }
 
-    const tokenNames = new Set<string>()
+    const tokenProps = new Map<string, string | undefined>()
     const inlineStyle = element.getAttribute('style')
-    if (inlineStyle) collectTokensFromText(inlineStyle, tokenNames)
-    collectCssRuleTokens(element, tokenNames)
+    if (inlineStyle) collectDeclarationTokens(inlineStyle, tokenProps)
+    const unreadableSheet = collectCssRuleTokens(element, tokenProps)
+    const cssTokenCount = tokenProps.size
     if (component && Object.hasOwn(componentTokenHints, component)) {
       for (const hint of componentTokenHints[component]!) {
-        if (tokenNames.size >= MAX_INSPECTED_TOKENS) break
-        if (TOKEN_NAME_RE.test(hint)) tokenNames.add(hint)
+        if (tokenProps.size >= MAX_INSPECTED_TOKENS) break
+        if (TOKEN_NAME_RE.test(hint) && !tokenProps.has(hint)) tokenProps.set(hint, undefined)
       }
     }
+    const tokensFromManifest = unreadableSheet && cssTokenCount === 0 && tokenProps.size > 0
 
-    const tokens: { name: string; value: string }[] = []
-    for (const name of tokenNames) {
+    const tokens: { name: string; value: string; property?: string }[] = []
+    for (const [name, property] of tokenProps) {
       const val = computed
         .getPropertyValue(name)
         .trim()
         .replace(/\p{Cc}/gu, '')
         .slice(0, MAX_TOKEN_VALUE_CHARS)
-      tokens.push({ name, value: val })
+      tokens.push({ name, value: val, ...(property !== undefined ? { property } : {}) })
     }
+
+    const chain: { component: string; selector: string }[] = []
+    for (
+      let anc: Element | null = element.parentElement;
+      anc && chain.length < MAX_INSPECT_CHAIN;
+      anc = anc.parentElement
+    ) {
+      const ds = anc.getAttribute('data-ds')
+      if (ds && COMPONENT_NAME_RE.test(ds)) {
+        chain.unshift({ component: ds, selector: pathOf(anc).selector })
+      }
+    }
+
+    const variants = hover.main === true && component ? collectComponentVariantsFor(component) : undefined
 
     return {
       ...hover,
       props: parseDsProps(element.getAttribute('data-ds-props')),
       styles,
       tokens,
+      chain,
+      ...(variants !== undefined ? { variants } : {}),
+      ...(tokensFromManifest ? { tokensFromManifest: true } : {}),
     }
   }
 
-  function collectInventory(): { instances: Record<string, number>; mains: string[] } {
+  function collectInventory(): {
+    instances: Record<string, number>
+    mains: string[]
+    variants: Record<string, string[]>
+  } {
     const instances: Record<string, number> = {}
     const mains: string[] = []
+    const variants: Record<string, string[]> = {}
     const seenMains = new Set<string>()
     let instanceKeys = 0
+    let variantKeys = 0
     const nodes = document.querySelectorAll('[data-ds]')
     const limit = Math.min(nodes.length, MAX_INVENTORY_NODES)
     for (let i = 0; i < limit; i++) {
       const el = nodes[i]!
       const comp = el.getAttribute('data-ds')
       if (!comp || !COMPONENT_NAME_RE.test(comp)) continue
+      const normVariant = normalizeVariantProps(el.getAttribute('data-ds-props'))
+      if (normVariant) {
+        if (!Object.hasOwn(variants, comp)) {
+          if (variantKeys < MAX_INVENTORY_COMPONENTS) {
+            variantKeys++
+            Object.defineProperty(variants, comp, {
+              value: [normVariant],
+              enumerable: true,
+              writable: true,
+              configurable: true,
+            })
+          }
+        } else {
+          const list = variants[comp]!
+          if (list.length < MAX_COMPONENT_VARIANTS && !list.includes(normVariant)) {
+            list.push(normVariant)
+          }
+        }
+      }
       if (el.hasAttribute('data-ds-main')) {
         if (!seenMains.has(comp) && mains.length < MAX_INVENTORY_COMPONENTS) {
           seenMains.add(comp)
@@ -590,7 +767,7 @@
         }
       }
     }
-    return { instances, mains }
+    return { instances, mains, variants }
   }
 
   let hoverQueued = false
@@ -631,6 +808,16 @@
     window.addEventListener(type, onPointer, true)
 
   window.addEventListener(
+    'submit',
+    (event) => {
+      if (!commenting && !inspecting) return
+      event.preventDefault()
+      event.stopImmediatePropagation()
+    },
+    true
+  )
+
+  window.addEventListener(
     'click',
     (event) => {
       if (inspecting) {
@@ -638,6 +825,7 @@
         event.stopImmediatePropagation()
         const hit = event.target instanceof Element ? event.target : document.body
         const candidate = resolveInspectElement(hit)
+        matchedComponent = null
         inspectedElement = candidate
         post({ type: 'inspect-pick', target: candidate ? buildInspectTarget(candidate) : null })
         return
@@ -672,8 +860,12 @@
     if (document.documentElement.dataset.maestrlyShortcuts === 'none' && event.key !== 'Escape') return
     const typing =
       event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable]') !== null
-    if (event.key === 'Escape' || (!typing && (event.key === 'c' || event.key === 'f' || event.key === 'i')))
-      post({ type: 'key', key: event.key })
+    const lower = event.key.length === 1 ? event.key.toLowerCase() : event.key
+    if (
+      event.key === 'Escape' ||
+      (!typing && (lower === 'c' || lower === 'f' || lower === 'i' || lower === 's' || lower === 't'))
+    )
+      post({ type: 'key', key: event.key === 'Escape' ? 'Escape' : lower })
   })
 
   // --- Responses: one per person, kept by the host. The page hands its data to the viewer, which saves it as the
@@ -797,6 +989,7 @@
       if (inspecting) commenting = false
       else {
         inspectedElement = null
+        matchedComponent = null
         lastPointerHit = null
       }
       const nextHints: Record<string, string[]> = {}
@@ -820,13 +1013,50 @@
       style()
     } else if (data.type === 'inspect-clear') {
       inspectedElement = null
+      matchedComponent = null
       layoutSoon()
+    } else if (data.type === 'inspect-select' && typeof data.selector === 'string') {
+      if (!data.selector || data.selector.length > MAX_SELECTOR_CHARS) return
+      matchedComponent = null
+      const target = query(data.selector)
+      if (target) {
+        const box = target.getBoundingClientRect()
+        if (box.bottom < 0 || box.top > window.innerHeight) {
+          target.scrollIntoView({ block: 'center' })
+        }
+        inspectedElement = target
+        post({ type: 'inspect-pick', target: buildInspectTarget(target) })
+        layoutSoon()
+      } else {
+        inspectedElement = null
+        post({ type: 'inspect-pick', target: null })
+      }
+    } else if (data.type === 'highlight-component') {
+      if (typeof data.component === 'string' && COMPONENT_NAME_RE.test(data.component)) {
+        matchedComponent = data.component
+        inspectedElement = null
+        const escaped = CSS.escape(data.component)
+        const first = query(`[data-ds="${escaped}"]:not([data-ds-main])`)
+        if (first) {
+          const box = first.getBoundingClientRect()
+          if (box.bottom < 0 || box.top > window.innerHeight) {
+            first.scrollIntoView({ block: 'nearest' })
+          }
+        }
+        post({ type: 'matches', rects: collectMatchRects(data.component) })
+        layoutSoon()
+      } else if (data.component === null) {
+        matchedComponent = null
+        post({ type: 'matches', rects: [] })
+        layoutSoon()
+      }
     } else if (data.type === 'reveal-component' && typeof data.component === 'string') {
       if (!COMPONENT_NAME_RE.test(data.component)) return
+      matchedComponent = null
       const escaped = CSS.escape(data.component)
       const target = query(`[data-ds="${escaped}"][data-ds-main]`) ?? query(`[data-ds="${escaped}"]`)
       if (target) {
-        target.scrollIntoView({ block: 'center', behavior: 'smooth' })
+        target.scrollIntoView({ block: 'center' })
         inspectedElement = target
         post({ type: 'inspect-pick', target: buildInspectTarget(target) })
         layoutSoon()
@@ -835,8 +1065,8 @@
         post({ type: 'inspect-pick', target: null })
       }
     } else if (data.type === 'inventory-request' && typeof data.requestId === 'string') {
-      const { instances, mains } = collectInventory()
-      post({ type: 'inventory', requestId: data.requestId.slice(0, 32), instances, mains })
+      const { instances, mains, variants } = collectInventory()
+      post({ type: 'inventory', requestId: data.requestId.slice(0, 32), instances, mains, variants })
     } else if (data.type === 'token-preview') {
       applyTokenPreview(data.tokens)
       if (inspectedElement?.isConnected) {

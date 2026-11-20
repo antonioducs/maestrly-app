@@ -39,9 +39,12 @@ import {
 
 export type DesignView = 'page' | 'screens'
 
+export type ScreenUsageStatus = 'queued' | 'measuring' | 'done' | 'failed'
+
 export interface ScreenUsage {
   screenId: string
   screenName: string
+  status: ScreenUsageStatus
   count: number | null
   measuring: boolean
 }
@@ -55,17 +58,23 @@ export interface ScreenFrameState {
 export interface DesignSnapshot {
   version: number
   loading: boolean
+  /** True when `GET design` failed with an HTTP or network error (distinct from `{ design: null }`). */
+  loadError: boolean
   /** Non-null when `version` has a valid `maestrly-design.json`. */
   design: ViewerDesign | null
   view: DesignView
   /** Path currently loaded in the main stage frame (for example `'index.html#/dashboard'` or `'components.html'`). */
   stagePath: string | null
+  /** Origin screen ID when viewing `manifest.components` via `openMainComponent`, otherwise `null`. */
+  backScreenId: string | null
   inspecting: boolean
   tokensOpen: boolean
   hovered: InspectHover | null
   inspected: InspectTarget | null
   /** Live box of `inspected` updated on frame scroll/resize, or null. */
   inspectedRect: SelectionRect | null
+  /** Bounding boxes of highlighted component instances from `showComponentUses`, updated on scroll/resize. */
+  matchRects: readonly SelectionRect[]
   /** Active theme edited in the Tokens panel (`null` = `:root`). */
   activeTheme: string | null
   /** Pending uncommitted token edits (`key` = `${theme ?? ''}\n${name}`). */
@@ -76,6 +85,8 @@ export interface DesignSnapshot {
   screensState: ReadonlyMap<string, ScreenFrameState>
   /** Component name -> per-screen instance counts collected so far. */
   componentUsage: (component: string) => ScreenUsage[]
+  /** Distinct normalized `data-ds-props` variant strings seen for `component`. */
+  componentVariants: (component: string) => readonly string[]
 }
 
 export type DesignWriteError =
@@ -102,7 +113,17 @@ export type SuggestTokensResult = { ok: true; comment: PublicComment } | { ok: f
 
 export type ApplySuggestionResult =
   | { ok: true; version: ViewerVersion; design: ViewerDesign; comment: PublicComment }
-  | { ok: false; error: DesignWriteError; currentVersion?: number }
+  | {
+      ok: false
+      error: DesignWriteError
+      currentVersion?: number
+      staleTokens?: readonly string[]
+      staleChanges?: readonly { name: string; theme?: string }[]
+    }
+
+export interface SetDesignVersionOptions {
+  preserveDrafts?: boolean
+}
 
 export interface DesignControllerOptions {
   api: ArtifactApi
@@ -116,6 +137,8 @@ export interface DesignControllerOptions {
   onDisableCommenting(): void
   /** Called when `saveTokens` or `applySuggestion` creates a new current version. */
   onVersionCreated(version: ViewerVersion, design: ViewerDesign): void
+  /** Called when `rebaseTokensToVersion` or `editSuggestionInTokens` moves the viewer onto an existing version. */
+  onVersionSynced?(version: number, currentVersion: number): void
   /** Called when a write fails with `version_replaced` for a viewer without history access. */
   onReplaced(): void
   /** Called when the guest sets their name during `suggestTokens`. */
@@ -125,7 +148,9 @@ export interface DesignControllerOptions {
 export interface DesignController {
   snapshot(): DesignSnapshot
   /** Records the latest `/c/<cap>/<entry>` returned by `POST frame` for `version` and loads `GET design`. */
-  setVersion(version: number, frameUrl?: string, expiresAt?: number): Promise<void>
+  setVersion(version: number, frameUrl?: string, expiresAt?: number, options?: SetDesignVersionOptions): Promise<void>
+  /** Retries `GET design` for the current version after `loadError`. */
+  reloadDesign(): Promise<void>
   /** Routes `window` `message` events: returns `'stage'`, `'screen'`, or `null` if from an unknown window. */
   routeMessage(source: MessageEventSource | null, message: BridgeMessage): 'stage' | 'screen' | null
 
@@ -135,6 +160,8 @@ export interface DesignController {
   setVisibleScreens(visibleIds: readonly string[], focusedId: string | null): void
   /** Returns the live `<iframe>` for `screenId` when pooled, or `null` when evicted/unmounted. */
   screenFrame(screenId: string): HTMLIFrameElement | null
+  /** Retries loading a screen frame that failed or timed out. */
+  retryScreen(screenId: string): void
   /** Focuses a screen in `screens` view without leaving it. */
   focusScreen(screenId: string | null): void
   /** Switches to `'page'` view and navigates `stageFrame` to `screen.path`. */
@@ -142,9 +169,17 @@ export interface DesignController {
 
   // Inspect & Components (`shell/inspect.ts`)
   setInspecting(on: boolean): void
+  /** Selects a specific element in `stageFrame` by CSS selector (for example an ancestor breadcrumb). */
+  selectElement(selector: string): void
   clearSelection(): void
-  /** Navigates `stageFrame` to `manifest.components`, reveals `[data-ds="<name>"][data-ds-main]`, and gathers counts. */
+  /** Distinct normalized `data-ds-props` variant strings seen for `component`. */
+  componentVariants(component: string): readonly string[]
+  /** Navigates `stageFrame` to `manifest.components` when `[data-ds="<name>"][data-ds-main]` exists, else returns `false`. */
   openMainComponent(component: string): Promise<boolean>
+  /** Returns from `manifest.components` back to the origin screen and re-selects the origin element if known. */
+  returnFromMainComponent(): Promise<void>
+  /** Opens `screenId` in `'page'` view and highlights all instances of `component` on that screen. */
+  showComponentUses(component: string, screenId: string): Promise<void>
   /** Schedules background/live inventory collection for screens whose counts are still unknown. */
   requestInventory(): void
 
@@ -157,6 +192,10 @@ export interface DesignController {
   discardTokens(): void
   /** Previews a comment's suggested changes across all live frames (`null` clears). */
   previewSuggestion(commentId: string | null, changes?: readonly TokenSuggestionChange[]): void
+  /** Rebases pending token drafts onto `version` (refreshing state, frame URL, and `design`). */
+  rebaseTokensToVersion(version: number): Promise<boolean>
+  /** Loads a suggestion's token changes as editable drafts on the latest version and opens the Tokens panel. */
+  editSuggestionInTokens(changes: readonly TokenSuggestionChange[]): Promise<void>
   saveTokens(): Promise<SaveTokensResult>
   suggestTokens(body: string, guestName?: string | null): Promise<SuggestTokensResult>
   applySuggestion(commentId: string): Promise<ApplySuggestionResult>
@@ -217,6 +256,7 @@ export function createDesignController(options: DesignControllerOptions): Design
   let destroyed = false
   let version = options.version
   let loading = false
+  let loadError = false
   let loadSeq = 0
   let design: ViewerDesign | null = null
   let capabilityUrl: string | null = null
@@ -224,6 +264,9 @@ export function createDesignController(options: DesignControllerOptions): Design
   let stagePath: string | null = null
   let stageReady = false
   let pendingRevealComponent: string | null = null
+  let pendingSelectSelector: string | null = null
+  let pendingHighlightComponent: string | null = null
+  let backOrigin: { screenId: string; selector: string | null } | null = null
 
   let view: DesignView = 'page'
   let inspecting = false
@@ -231,6 +274,7 @@ export function createDesignController(options: DesignControllerOptions): Design
   let rawHovered: InspectHover | null = null
   let rawInspected: InspectTarget | null = null
   let inspectedRect: SelectionRect | null = null
+  let matchRects: SelectionRect[] = []
   let activeTheme: string | null = null
 
   const drafts = new Map<string, TokenChange>()
@@ -245,8 +289,17 @@ export function createDesignController(options: DesignControllerOptions): Design
   const pendingScreenLoads: string[] = []
 
   const inventoryByScreen = new Map<string, Record<string, number>>()
+  const variantsByComponent = new Map<string, string[]>()
+  let componentMains: Set<string> | null = null
+  let componentsProbe: {
+    el: HTMLIFrameElement
+    resolve: (ok: boolean) => void
+    timer: ReturnType<typeof setTimeout>
+  } | null = null
+  let stageInventoryWaiter: ((ok: boolean) => void) | null = null
   const measuringScreenIds = new Set<string>()
   const inventoryQueue: string[] = []
+  let inventoryRequested = false
   let inventoryReqSeq = 0
 
   let parkingHost: HTMLElement | null = null
@@ -272,18 +325,93 @@ export function createDesignController(options: DesignControllerOptions): Design
     if (lruScreenIds.length > 50) lruScreenIds.length = 50
   }
 
-  function activePreviewTokens(): TokenChange[] {
+  function rawPreviewChanges(): TokenChange[] {
     if (previewingCommentId !== null) return suggestionPreviewChanges
     return [...drafts.values()]
   }
 
+  function effectivePreviewTokens(): TokenChange[] {
+    const raw = rawPreviewChanges()
+    if (activeTheme === null || !design) return raw
+
+    const byKey = new Map<string, string>()
+    for (const item of raw) {
+      byKey.set(tokenDraftKey(item.name, item.theme ?? null), item.value)
+    }
+
+    const projected: TokenChange[] = []
+    for (const token of design.tokens) {
+      const themedOverride = byKey.get(tokenDraftKey(token.name, activeTheme))
+      const rootOverride = byKey.get(tokenDraftKey(token.name, null))
+      let effective: string
+      if (themedOverride !== undefined) effective = themedOverride
+      else if (Object.hasOwn(token.themes, activeTheme)) effective = token.themes[activeTheme]!
+      else if (rootOverride !== undefined) effective = rootOverride
+      else effective = token.value
+      projected.push({ name: token.name, value: effective })
+    }
+    return projected
+  }
+
   function broadcastTokenPreview(): void {
-    const tokens = activePreviewTokens()
+    const tokens = effectivePreviewTokens()
     const msg: ShellMessage = tokens.length ? { type: 'token-preview', tokens } : { type: 'token-preview-clear' }
     postToFrame(stageFrame, msg)
     for (const entry of pooledFrames.values()) {
       if (entry.status === 'ready') postToFrame(entry.el, msg)
     }
+  }
+
+  function mergeVariants(component: string, incoming: readonly string[] | undefined): void {
+    if (!incoming?.length || !isValidComponentName(component)) return
+    let list = variantsByComponent.get(component)
+    if (!list) {
+      list = []
+      variantsByComponent.set(component, list)
+    }
+    for (const item of incoming) {
+      if (list.length >= 32) break
+      if (!list.includes(item)) list.push(item)
+    }
+  }
+
+  function mergeInventoryVariants(variantsMap: Record<string, string[]> | undefined): void {
+    if (!variantsMap) return
+    for (const [comp, list] of Object.entries(variantsMap)) {
+      mergeVariants(comp, list)
+    }
+  }
+
+  function disposeComponentsProbe(result: boolean): void {
+    if (!componentsProbe) return
+    const current = componentsProbe
+    componentsProbe = null
+    clearTimeout(current.timer)
+    try {
+      current.el.src = 'about:blank'
+      current.el.remove()
+    } catch {
+      // Frame already detached.
+    }
+    current.resolve(result)
+  }
+
+  function probeComponentsPage(url: string): Promise<boolean> {
+    if (componentsProbe) disposeComponentsProbe(false)
+    const doc = stageFrame.ownerDocument ?? (typeof document !== 'undefined' ? document : null)
+    const host = ensureParkingHost()
+    if (!doc || !host) return Promise.resolve(false)
+    return new Promise((resolve) => {
+      const iframe = doc.createElement('iframe')
+      iframe.setAttribute('sandbox', CONTENT_SANDBOX)
+      iframe.setAttribute('referrerpolicy', 'no-referrer')
+      iframe.style.width = '1024px'
+      iframe.style.height = '768px'
+      host.appendChild(iframe)
+      const timer = setTimeout(() => disposeComponentsProbe(false), FRAME_LOAD_FALLBACK_MS)
+      componentsProbe = { el: iframe, resolve, timer }
+      iframe.src = url
+    })
   }
 
   function clearFrameTimer(entry: PooledFrame): void {
@@ -457,21 +585,47 @@ export function createDesignController(options: DesignControllerOptions): Design
     postToFrame(frame, { type: 'inventory-request', requestId: `inv${++inventoryReqSeq}` })
   }
 
-  function resetVersionState(nextVersion: number): void {
+  function resetVersionState(nextVersion: number, preserveDrafts = false): void {
     version = nextVersion
     design = null
+    loadError = false
     rawHovered = null
     rawInspected = null
     inspectedRect = null
-    activeTheme = null
-    drafts.clear()
+    matchRects = []
+    pendingRevealComponent = null
+    pendingSelectSelector = null
+    pendingHighlightComponent = null
+    backOrigin = null
+    if (!preserveDrafts) {
+      activeTheme = null
+      drafts.clear()
+    }
     previewingCommentId = null
     suggestionPreviewChanges = []
     inventoryByScreen.clear()
+    variantsByComponent.clear()
+    componentMains = null
+    disposeComponentsProbe(false)
+    if (stageInventoryWaiter) {
+      const waiter = stageInventoryWaiter
+      stageInventoryWaiter = null
+      waiter(false)
+    }
     measuringScreenIds.clear()
     inventoryQueue.length = 0
+    inventoryRequested = false
     screenStates.clear()
     evictAllScreenFrames()
+  }
+
+  function pruneDraftsAgainstDesign(currentDesign: ViewerDesign): void {
+    for (const [key, change] of [...drafts.entries()]) {
+      const base = lookupDesignTokenValue(currentDesign, change.name, change.theme ?? null)
+      if (base === null || base === change.value) {
+        drafts.delete(key)
+      }
+    }
   }
 
   function decoratedInspected(): InspectTarget | null {
@@ -480,10 +634,23 @@ export function createDesignController(options: DesignControllerOptions): Design
       rawInspected.tokens,
       rawInspected.component,
       design,
-      activePreviewTokens(),
+      rawPreviewChanges(),
       activeTheme
     )
-    return { ...rawInspected, tokens: mergedTokens }
+    const knownVariants =
+      rawInspected.main && rawInspected.component ? variantsByComponent.get(rawInspected.component) : undefined
+    return {
+      ...rawInspected,
+      tokens: mergedTokens,
+      ...(knownVariants && (!rawInspected.variants || knownVariants.length > rawInspected.variants.length)
+        ? { variants: [...knownVariants] }
+        : {}),
+    }
+  }
+
+  function readComponentVariants(component: string): readonly string[] {
+    const list = variantsByComponent.get(component)
+    return list ? [...list] : []
   }
 
   const controller: DesignController = {
@@ -491,14 +658,18 @@ export function createDesignController(options: DesignControllerOptions): Design
       return {
         version,
         loading,
+        loadError,
         design,
         view,
         stagePath,
+        backScreenId:
+          design?.componentsPath && stagePath === design.componentsPath && backOrigin ? backOrigin.screenId : null,
         inspecting,
         tokensOpen,
         hovered: rawHovered,
         inspected: decoratedInspected(),
         inspectedRect,
+        matchRects: [...matchRects],
         activeTheme,
         draftChanges: [...drafts.values()],
         previewingCommentId,
@@ -512,28 +683,59 @@ export function createDesignController(options: DesignControllerOptions): Design
               return {
                 screenId: screen.id,
                 screenName: screen.name,
+                status: 'done',
                 count: Object.hasOwn(counts, component) ? counts[component]! : 0,
                 measuring: false,
               }
             }
+            const frameState = screenStates.get(screen.id)
+            if (frameState?.status === 'error') {
+              return {
+                screenId: screen.id,
+                screenName: screen.name,
+                status: 'failed',
+                count: null,
+                measuring: false,
+              }
+            }
+            const isMeasuringNow =
+              pooledFrames.has(screen.id) ||
+              (stagePath === screen.path && stageReady && measuringScreenIds.has(screen.id))
             return {
               screenId: screen.id,
               screenName: screen.name,
+              status: isMeasuringNow ? 'measuring' : 'queued',
               count: null,
               measuring: measuringScreenIds.has(screen.id),
             }
           })
         },
+        componentVariants: readComponentVariants,
       }
     },
 
-    async setVersion(nextVersion: number, frameUrl?: string, expiresAt?: number): Promise<void> {
+    async setVersion(
+      nextVersion: number,
+      frameUrl?: string,
+      expiresAt?: number,
+      setOptions?: SetDesignVersionOptions
+    ): Promise<void> {
       const seq = ++loadSeq
-      if (nextVersion !== version) resetVersionState(nextVersion)
+      const preserveDrafts = setOptions?.preserveDrafts === true
+      if (nextVersion !== version) resetVersionState(nextVersion, preserveDrafts)
       else {
+        loadError = false
         inventoryByScreen.clear()
+        variantsByComponent.clear()
+        componentMains = null
+        disposeComponentsProbe(false)
         measuringScreenIds.clear()
         inventoryQueue.length = 0
+        inventoryRequested = false
+        if (!preserveDrafts) {
+          matchRects = []
+          backOrigin = null
+        }
       }
       if (frameUrl) {
         capabilityUrl = frameUrl
@@ -544,6 +746,7 @@ export function createDesignController(options: DesignControllerOptions): Design
       if (state.artifact.kind === 'whiteboard') {
         design = null
         loading = false
+        loadError = false
         options.onChange()
         return
       }
@@ -560,32 +763,44 @@ export function createDesignController(options: DesignControllerOptions): Design
         if (!res.ok) {
           design = null
           loading = false
+          loadError = true
           options.onChange()
           return
         }
         const payload = (await res.json()) as Partial<DesignResponse>
         if (seq !== loadSeq || destroyed) return
         design = payload.design ?? null
+        loadError = false
         screenStates.clear()
         if (design) {
           for (const screen of design.screens) {
             screenStates.set(screen.id, { screenId: screen.id, status: 'idle', errorMessage: null })
           }
           if (activeTheme !== null && !design.themes.includes(activeTheme)) activeTheme = null
+          if (preserveDrafts) pruneDraftsAgainstDesign(design)
         } else {
           view = 'page'
           inspecting = false
           tokensOpen = false
+          drafts.clear()
         }
         loading = false
+        broadcastTokenPreview()
         reconcilePool()
         options.onChange()
       } catch {
         if (seq !== loadSeq || destroyed) return
         design = null
         loading = false
+        loadError = true
         options.onChange()
       }
+    },
+
+    async reloadDesign(): Promise<void> {
+      await controller.setVersion(version, capabilityUrl ?? undefined, capabilityExpiresAt || undefined, {
+        preserveDrafts: true,
+      })
     },
 
     routeMessage(source: MessageEventSource | null, message: BridgeMessage): 'stage' | 'screen' | null {
@@ -594,12 +809,26 @@ export function createDesignController(options: DesignControllerOptions): Design
         if (message.type === 'ready') {
           stageReady = true
           sendInspectModeToStage()
-          const active = activePreviewTokens()
+          const active = effectivePreviewTokens()
           if (active.length) postToFrame(stageFrame, { type: 'token-preview', tokens: active })
+          if (design?.componentsPath && stagePath === design.componentsPath) {
+            sendInventoryRequest(stageFrame)
+          } else if (design && stagePath && measuringScreenIds.size > 0) {
+            const matching = design.screens.find((s) => s.path === stagePath)
+            if (matching && !inventoryByScreen.has(matching.id)) sendInventoryRequest(stageFrame)
+          }
           if (pendingRevealComponent) {
             const comp = pendingRevealComponent
             pendingRevealComponent = null
             postToFrame(stageFrame, { type: 'reveal-component', component: comp })
+          } else if (pendingSelectSelector) {
+            const sel = pendingSelectSelector
+            pendingSelectSelector = null
+            postToFrame(stageFrame, { type: 'inspect-select', selector: sel })
+          } else if (pendingHighlightComponent) {
+            const comp = pendingHighlightComponent
+            pendingHighlightComponent = null
+            postToFrame(stageFrame, { type: 'highlight-component', component: comp })
           }
         } else if (message.type === 'inspect-hover') {
           rawHovered = inspecting ? message.target : null
@@ -607,21 +836,63 @@ export function createDesignController(options: DesignControllerOptions): Design
         } else if (message.type === 'inspect-pick') {
           rawInspected = message.target
           inspectedRect = message.target?.rect ?? null
+          if (message.target) {
+            matchRects = []
+            if (message.target.component && message.target.variants) {
+              mergeVariants(message.target.component, message.target.variants)
+            }
+          }
           options.onChange()
-        } else if (message.type === 'layout' && message.inspectRect !== undefined) {
-          inspectedRect = message.inspectRect
-          if (message.inspectRect === null) rawInspected = null
+        } else if (message.type === 'matches') {
+          matchRects = [...message.rects]
           options.onChange()
-        } else if (message.type === 'inventory' && design && stagePath) {
-          const matching = design.screens.find((s) => s.path === stagePath)
-          if (matching) {
-            inventoryByScreen.set(matching.id, message.instances)
-            measuringScreenIds.delete(matching.id)
-            reconcilePool()
+        } else if (message.type === 'layout') {
+          let changed = false
+          if (message.inspectRect !== undefined) {
+            inspectedRect = message.inspectRect
+            if (message.inspectRect === null) rawInspected = null
+            changed = true
+          }
+          if (message.matchRects !== undefined) {
+            matchRects = [...message.matchRects]
+            changed = true
+          }
+          if (changed) options.onChange()
+        } else if (message.type === 'inventory') {
+          mergeInventoryVariants(message.variants)
+          if (design?.componentsPath && stagePath === design.componentsPath) {
+            componentMains = new Set(message.mains)
+            if (stageInventoryWaiter) {
+              const waiter = stageInventoryWaiter
+              stageInventoryWaiter = null
+              waiter(true)
+            }
             options.onChange()
+          } else if (design && stagePath) {
+            const matching = design.screens.find((s) => s.path === stagePath)
+            if (matching) {
+              inventoryByScreen.set(matching.id, message.instances)
+              measuringScreenIds.delete(matching.id)
+              reconcilePool()
+              options.onChange()
+            }
           }
         }
         return 'stage'
+      }
+
+      if (componentsProbe?.el.isConnected && componentsProbe.el.contentWindow === source) {
+        if (message.type === 'ready') {
+          sendInventoryRequest(componentsProbe.el)
+        } else if (message.type === 'inventory') {
+          componentMains = new Set(message.mains)
+          mergeInventoryVariants(message.variants)
+          disposeComponentsProbe(true)
+          options.onChange()
+        } else if (message.type === 'error') {
+          disposeComponentsProbe(false)
+        }
+        return 'screen'
       }
 
       for (const [screenId, entry] of pooledFrames) {
@@ -632,7 +903,7 @@ export function createDesignController(options: DesignControllerOptions): Design
             entry.errorMessage = null
             screenStates.set(screenId, { screenId, status: 'ready', errorMessage: null })
             touchLru(screenId)
-            const active = activePreviewTokens()
+            const active = effectivePreviewTokens()
             if (active.length) postToFrame(entry.el, { type: 'token-preview', tokens: active })
             if (!inventoryByScreen.has(screenId)) {
               sendInventoryRequest(entry.el)
@@ -640,6 +911,7 @@ export function createDesignController(options: DesignControllerOptions): Design
             void pumpScreenLoads()
             options.onChange()
           } else if (message.type === 'inventory') {
+            mergeInventoryVariants(message.variants)
             inventoryByScreen.set(screenId, message.instances)
             measuringScreenIds.delete(screenId)
             reconcilePool()
@@ -682,6 +954,19 @@ export function createDesignController(options: DesignControllerOptions): Design
       return pooledFrames.get(screenId)?.el ?? null
     },
 
+    retryScreen(screenId: string): void {
+      if (!design?.screens.some((s) => s.id === screenId)) return
+      evictScreenFrame(screenId)
+      screenStates.set(screenId, { screenId, status: 'idle', errorMessage: null })
+      if (!inventoryByScreen.has(screenId) && (inventoryRequested || view === 'page')) {
+        measuringScreenIds.add(screenId)
+        if (!inventoryQueue.includes(screenId)) inventoryQueue.push(screenId)
+      }
+      touchLru(screenId)
+      reconcilePool()
+      options.onChange()
+    },
+
     focusScreen(screenId: string | null): void {
       if (screenId !== null && !design?.screens.some((s) => s.id === screenId)) return
       focusedScreenId = screenId
@@ -699,11 +984,16 @@ export function createDesignController(options: DesignControllerOptions): Design
       if (!url) return
       focusedScreenId = screenId
       view = 'page'
+      backOrigin = null
+      pendingRevealComponent = null
+      pendingSelectSelector = null
+      pendingHighlightComponent = null
       stagePath = screen.path
       stageReady = false
       rawHovered = null
       rawInspected = null
       inspectedRect = null
+      matchRects = []
       stageFrame.src = url
       reconcilePool()
       options.onChange()
@@ -721,18 +1011,42 @@ export function createDesignController(options: DesignControllerOptions): Design
       if (!on) {
         rawInspected = null
         inspectedRect = null
+        matchRects = []
+        pendingHighlightComponent = null
       }
       sendInspectModeToStage()
       reconcilePool()
       options.onChange()
     },
 
+    selectElement(selector: string): void {
+      if (!selector || selector.length > 300) return
+      matchRects = []
+      pendingHighlightComponent = null
+      if (!inspecting) {
+        controller.setInspecting(true)
+        if (!inspecting) return
+      }
+      if (stageReady) {
+        postToFrame(stageFrame, { type: 'inspect-select', selector })
+      } else {
+        pendingSelectSelector = selector
+      }
+      options.onChange()
+    },
+
     clearSelection(): void {
-      if (!rawInspected && !inspectedRect) return
+      if (!rawInspected && !inspectedRect && matchRects.length === 0) return
       rawInspected = null
       inspectedRect = null
+      matchRects = []
+      pendingHighlightComponent = null
       postToFrame(stageFrame, { type: 'inspect-clear' })
       options.onChange()
+    },
+
+    componentVariants(component: string): readonly string[] {
+      return readComponentVariants(component)
     },
 
     async openMainComponent(component: string): Promise<boolean> {
@@ -741,17 +1055,56 @@ export function createDesignController(options: DesignControllerOptions): Design
       if (!cap || destroyed) return false
       const url = screenFrameUrl(cap, design.componentsPath)
       if (!url) return false
+
+      const currentDesign = design
+      const wasOnScreen = stagePath !== currentDesign.componentsPath
+      const originScreen = wasOnScreen
+        ? (currentDesign.screens.find((s) => s.path === stagePath) ??
+          (focusedScreenId ? currentDesign.screens.find((s) => s.id === focusedScreenId) : currentDesign.screens[0]) ??
+          null)
+        : null
+      const candidateOrigin = originScreen
+        ? { screenId: originScreen.id, selector: rawInspected?.selector ?? null }
+        : null
+
+      if (componentMains === null) {
+        if (stagePath === currentDesign.componentsPath && stageReady) {
+          await new Promise<boolean>((resolve) => {
+            const timer = setTimeout(() => {
+              if (stageInventoryWaiter === done) stageInventoryWaiter = null
+              resolve(false)
+            }, FRAME_LOAD_FALLBACK_MS)
+            const done = (ok: boolean) => {
+              clearTimeout(timer)
+              resolve(ok)
+            }
+            stageInventoryWaiter = done
+            sendInventoryRequest(stageFrame)
+          })
+        } else {
+          const ok = await probeComponentsPage(url)
+          if (!ok || destroyed || design !== currentDesign) return false
+        }
+      }
+
+      if (!componentMains?.has(component)) return false
+
+      if (candidateOrigin) backOrigin = candidateOrigin
       if (view === 'screens') view = 'page'
       if (!inspecting) {
         options.onDisableCommenting()
         inspecting = true
       }
+      matchRects = []
+      pendingHighlightComponent = null
+      pendingSelectSelector = null
       controller.requestInventory()
-      if (stagePath === design.componentsPath && stageReady) {
+      if (stagePath === currentDesign.componentsPath && stageReady) {
+        sendInspectModeToStage()
         postToFrame(stageFrame, { type: 'reveal-component', component })
       } else {
         pendingRevealComponent = component
-        stagePath = design.componentsPath
+        stagePath = currentDesign.componentsPath
         stageReady = false
         stageFrame.src = url
       }
@@ -760,8 +1113,78 @@ export function createDesignController(options: DesignControllerOptions): Design
       return true
     },
 
+    async returnFromMainComponent(): Promise<void> {
+      if (!backOrigin || !design) return
+      const { screenId, selector } = backOrigin
+      const screen = design.screens.find((s) => s.id === screenId)
+      if (!screen) {
+        backOrigin = null
+        options.onChange()
+        return
+      }
+      const cap = await ensureCapabilityUrl()
+      if (!cap || destroyed) return
+      const url = screenFrameUrl(cap, screen.path)
+      if (!url) return
+      backOrigin = null
+      focusedScreenId = screenId
+      view = 'page'
+      if (!inspecting) {
+        options.onDisableCommenting()
+        inspecting = true
+      }
+      pendingRevealComponent = null
+      pendingHighlightComponent = null
+      pendingSelectSelector = selector
+      stagePath = screen.path
+      stageReady = false
+      rawHovered = null
+      rawInspected = null
+      inspectedRect = null
+      matchRects = []
+      stageFrame.src = url
+      reconcilePool()
+      options.onChange()
+    },
+
+    async showComponentUses(component: string, screenId: string): Promise<void> {
+      if (!design || !isValidComponentName(component)) return
+      const screen = design.screens.find((s) => s.id === screenId)
+      if (!screen) return
+      const cap = await ensureCapabilityUrl()
+      if (!cap || destroyed) return
+      const url = screenFrameUrl(cap, screen.path)
+      if (!url) return
+      focusedScreenId = screenId
+      view = 'page'
+      backOrigin = null
+      if (!inspecting) {
+        options.onDisableCommenting()
+        inspecting = true
+      }
+      rawHovered = null
+      rawInspected = null
+      inspectedRect = null
+      pendingRevealComponent = null
+      pendingSelectSelector = null
+      if (stagePath === screen.path && stageReady) {
+        pendingHighlightComponent = null
+        sendInspectModeToStage()
+        postToFrame(stageFrame, { type: 'highlight-component', component })
+      } else {
+        pendingHighlightComponent = component
+        matchRects = []
+        stagePath = screen.path
+        stageReady = false
+        stageFrame.src = url
+      }
+      reconcilePool()
+      options.onChange()
+    },
+
     requestInventory(): void {
       if (!design || preview) return
+      inventoryRequested = true
       let changed = false
       for (const screen of design.screens) {
         if (inventoryByScreen.has(screen.id)) continue
@@ -793,6 +1216,7 @@ export function createDesignController(options: DesignControllerOptions): Design
       if (theme !== null && !design?.themes.includes(theme)) return
       if (theme === activeTheme) return
       activeTheme = theme
+      broadcastTokenPreview()
       options.onChange()
     },
 
@@ -848,6 +1272,79 @@ export function createDesignController(options: DesignControllerOptions): Design
       options.onChange()
     },
 
+    async rebaseTokensToVersion(nextVersion: number): Promise<boolean> {
+      if (
+        nextVersion > state.artifact.currentVersion ||
+        !state.artifact.versions.some((v) => v.number === nextVersion)
+      ) {
+        const latest = await api.state()
+        if (latest && 'artifact' in latest) {
+          state.artifact.currentVersion = latest.artifact.currentVersion
+          state.artifact.versions = latest.artifact.versions
+        }
+      }
+      let frameUrl: string | undefined
+      let expiresAt: number | undefined
+      const frameRes = await api.write('frame', 'POST', { version: nextVersion }).catch(() => null)
+      if (frameRes) {
+        if (frameRes.status === 409 && (await bodyOf(frameRes)).error === 'version_replaced') {
+          options.onReplaced()
+          return false
+        }
+        if (frameRes.ok) {
+          const frameBody = (await frameRes.json()) as Partial<FrameResponse>
+          if (typeof frameBody.url === 'string' && frameBody.url.startsWith('/c/')) {
+            frameUrl = frameBody.url
+            expiresAt = frameBody.expiresAt
+            stageFrame.src = frameUrl
+          }
+        }
+      }
+      await controller.setVersion(nextVersion, frameUrl, expiresAt, { preserveDrafts: true })
+      options.onVersionSynced?.(nextVersion, state.artifact.currentVersion)
+      return !loadError && design !== null
+    },
+
+    async editSuggestionInTokens(changes: readonly TokenSuggestionChange[]): Promise<void> {
+      previewingCommentId = null
+      suggestionPreviewChanges = []
+      const latest = await api.state()
+      if (latest && 'artifact' in latest) {
+        state.artifact.currentVersion = latest.artifact.currentVersion
+        state.artifact.versions = latest.artifact.versions
+      }
+      const targetVersion = state.artifact.currentVersion
+      if (version !== targetVersion || !design) {
+        const ok = await controller.rebaseTokensToVersion(targetVersion)
+        if (!ok || !design) return
+      }
+      drafts.clear()
+      let firstTheme: string | null = null
+      for (const item of changes) {
+        if (!isValidTokenName(item.name) || !isValidTokenValue(item.to)) continue
+        const normalizedTheme = item.theme ?? null
+        if (
+          normalizedTheme !== null &&
+          (!isValidThemeSelector(normalizedTheme) || !design.themes.includes(normalizedTheme))
+        )
+          continue
+        const base = lookupDesignTokenValue(design, item.name, normalizedTheme)
+        if (base === null) continue
+        const trimmed = item.to.trim()
+        if (trimmed === base) continue
+        drafts.set(tokenDraftKey(item.name, normalizedTheme), {
+          name: item.name,
+          value: trimmed,
+          ...(normalizedTheme ? { theme: normalizedTheme } : {}),
+        })
+        if (normalizedTheme && firstTheme === null) firstTheme = normalizedTheme
+      }
+      if (firstTheme !== null && activeTheme === null) activeTheme = firstTheme
+      tokensOpen = true
+      broadcastTokenPreview()
+      options.onChange()
+    },
+
     async saveTokens(): Promise<SaveTokensResult> {
       if (!design) return { ok: false, error: 'no_design_contract' }
       if (state.identity.kind !== 'owner') return { ok: false, error: 'forbidden' }
@@ -868,6 +1365,9 @@ export function createDesignController(options: DesignControllerOptions): Design
           const body = await bodyOf(res)
           const error = mapWriteError(res.status, body.error)
           const currentVersion = typeof body.currentVersion === 'number' ? body.currentVersion : undefined
+          if (currentVersion !== undefined && currentVersion > state.artifact.currentVersion) {
+            state.artifact.currentVersion = currentVersion
+          }
           return { ok: false, error, ...(currentVersion !== undefined ? { currentVersion } : {}) }
         }
         const payload = (await res.json()) as { version: ViewerVersion; design: ViewerDesign }
@@ -943,7 +1443,29 @@ export function createDesignController(options: DesignControllerOptions): Design
           const errBody = await bodyOf(res)
           const error = mapWriteError(res.status, errBody.error)
           const currentVersion = typeof errBody.currentVersion === 'number' ? errBody.currentVersion : undefined
-          return { ok: false, error, ...(currentVersion !== undefined ? { currentVersion } : {}) }
+          if (currentVersion !== undefined && currentVersion > state.artifact.currentVersion) {
+            state.artifact.currentVersion = currentVersion
+          }
+          const staleTokens = Array.isArray(errBody.staleTokens)
+            ? errBody.staleTokens.filter((t): t is string => typeof t === 'string')
+            : undefined
+          const staleChanges = Array.isArray(errBody.staleChanges)
+            ? errBody.staleChanges.filter(
+                (c): c is { name: string; theme?: string } =>
+                  typeof c === 'object' &&
+                  c !== null &&
+                  typeof (c as { name?: unknown }).name === 'string' &&
+                  ((c as { theme?: unknown }).theme === undefined ||
+                    typeof (c as { theme?: unknown }).theme === 'string')
+              )
+            : undefined
+          return {
+            ok: false,
+            error,
+            ...(currentVersion !== undefined ? { currentVersion } : {}),
+            ...(staleTokens !== undefined ? { staleTokens } : {}),
+            ...(staleChanges !== undefined ? { staleChanges } : {}),
+          }
         }
         const payload = (await res.json()) as {
           version: ViewerVersion
@@ -962,7 +1484,7 @@ export function createDesignController(options: DesignControllerOptions): Design
     },
 
     escape(): boolean {
-      if (rawInspected) {
+      if (rawInspected || matchRects.length > 0) {
         controller.clearSelection()
         return true
       }
@@ -979,6 +1501,10 @@ export function createDesignController(options: DesignControllerOptions): Design
         return true
       }
       if (view === 'screens') {
+        if (focusedScreenId !== null) {
+          controller.focusScreen(null)
+          return true
+        }
         controller.setView('page')
         return true
       }
@@ -987,6 +1513,7 @@ export function createDesignController(options: DesignControllerOptions): Design
 
     destroy(): void {
       destroyed = true
+      disposeComponentsProbe(false)
       evictAllScreenFrames()
       parkingHost?.remove()
       parkingHost = null
@@ -1004,19 +1531,25 @@ export function createDesignController(options: DesignControllerOptions): Design
     }
     version = nextVer.number
     design = nextDesign
+    loadError = false
     capabilityUrl = null
     capabilityExpiresAt = 0
     drafts.clear()
     previewingCommentId = null
     suggestionPreviewChanges = []
     inventoryByScreen.clear()
+    variantsByComponent.clear()
+    componentMains = null
+    disposeComponentsProbe(false)
     measuringScreenIds.clear()
     inventoryQueue.length = 0
+    inventoryRequested = false
     evictAllScreenFrames()
     screenStates.clear()
     for (const screen of nextDesign.screens) {
       screenStates.set(screen.id, { screenId: screen.id, status: 'idle', errorMessage: null })
     }
+    if (activeTheme !== null && !nextDesign.themes.includes(activeTheme)) activeTheme = null
     broadcastTokenPreview()
     options.onVersionCreated(nextVer, nextDesign)
     options.onChange()

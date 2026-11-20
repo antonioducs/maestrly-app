@@ -234,6 +234,12 @@ function renderViewer(api: ArtifactApi, state: ViewerState, initialVersion: numb
         sync()
         void load(nextVersion.number)
       },
+      onVersionSynced: (nextVersion, latestCurrent) => {
+        if (latestCurrent > current) current = latestCurrent
+        version = nextVersion
+        comments?.setVersion(nextVersion)
+        sync()
+      },
       onReplaced: showReplaced,
       onIdentityChanged: sync,
     })
@@ -256,7 +262,13 @@ function renderViewer(api: ArtifactApi, state: ViewerState, initialVersion: numb
       else if (full) setFull(false)
     } else if (key === 'c') toggleCommenting()
     else if (key === 'f') setFull(!full)
-    else if (key === 'i' && design?.snapshot().design) design.setInspecting(!design.snapshot().inspecting)
+    else if (key === 'i' && design) design.setInspecting(!design.snapshot().inspecting)
+    else if (key === 's' && design?.snapshot().design) {
+      const snap = design.snapshot()
+      design.setView(snap.view === 'screens' ? 'page' : 'screens')
+    } else if (key === 't' && design?.snapshot().design) {
+      design.setTokensOpen(!design.snapshot().tokensOpen)
+    }
   }
 
   function onMessage(message: BridgeMessage): void {
@@ -280,16 +292,24 @@ function renderViewer(api: ArtifactApi, state: ViewerState, initialVersion: numb
         ? 'stage'
         : null
     if (target === 'screen') {
-      if (message.type === 'key' && message.key === 'Escape') onKey('Escape')
+      if (
+        message.type === 'key' &&
+        (message.key === 'Escape' || message.key === 's' || message.key === 't' || message.key === 'f')
+      ) {
+        onKey(message.key)
+      }
       return
     }
     if (target === 'stage') onMessage(message)
   })
   window.addEventListener('keydown', (event) => {
     if (event.metaKey || event.ctrlKey || event.altKey) return
-    const typing = event.target instanceof Element && event.target.closest('input, textarea') !== null
+    const typing =
+      event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable]') !== null
+    const lower = event.key.length === 1 ? event.key.toLowerCase() : event.key
     if (event.key === 'Escape') onKey('Escape')
-    else if (!typing && (event.key === 'c' || event.key === 'f' || event.key === 'i')) onKey(event.key)
+    else if (!typing && (lower === 'c' || lower === 'f' || lower === 'i' || lower === 's' || lower === 't'))
+      onKey(lower)
   })
   // A press beside the page, around it, closes the conversation that is open.
   stage.addEventListener('pointerdown', (event) => {

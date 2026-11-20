@@ -315,10 +315,10 @@ export function mergeInspectedTokens(
   draftChanges: readonly TokenChange[],
   activeTheme: string | null
 ): UsedToken[] {
-  const byName = new Map<string, string>()
+  const byName = new Map<string, { value: string; property?: string }>()
   for (const item of reported) {
     if (isValidTokenName(item.name) && !byName.has(item.name)) {
-      byName.set(item.name, item.value)
+      byName.set(item.name, { value: item.value, ...(item.property ? { property: item.property } : {}) })
     }
   }
 
@@ -351,14 +351,18 @@ export function mergeInspectedTokens(
       if (!isValidTokenName(hintName)) continue
       if (!byName.has(hintName)) {
         const fallback = resolveEffective(hintName)
-        if (fallback !== null) byName.set(hintName, fallback)
+        if (fallback !== null) byName.set(hintName, { value: fallback })
       }
     }
   }
 
   const out: UsedToken[] = []
-  for (const [name, value] of byName) {
-    out.push({ name, value: resolveDraft(name) ?? (value || resolveEffective(name) || '') })
+  for (const [name, entry] of byName) {
+    out.push({
+      name,
+      value: resolveDraft(name) ?? (entry.value || resolveEffective(name) || ''),
+      ...(entry.property ? { property: entry.property } : {}),
+    })
   }
   return out
 }

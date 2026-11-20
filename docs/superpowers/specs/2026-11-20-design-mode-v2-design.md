@@ -579,6 +579,11 @@ export const MAX_DESIGN_COMPONENTS = 200
 export const MAX_TOKEN_VALUE_CHARS = 200
 export const MAX_INSPECT_TOKENS = 64
 export const MAX_INSPECT_PROPS = 32
+export const MAX_INSPECT_CHAIN = 16
+export const MAX_INSPECT_CLASSES = 3
+export const MAX_ELEMENT_LABEL_CHARS = 120
+export const MAX_COMPONENT_VARIANTS = 32
+export const MAX_MATCH_RECTS = 200
 
 export type TokenGroup =
   | 'color'
@@ -661,12 +666,21 @@ export interface ComputedStyleSubset {
 export interface UsedToken {
   name: string
   value: string
+  /** First CSS property referencing `var(--name)` in inline or matched CSSOM rules, when readable. */
+  property?: string
+}
+
+export interface InspectAncestor {
+  component: string
+  selector: string
 }
 
 export interface InspectHover {
   selector: string
   rect: SelectionRect
   tag: string
+  classes?: readonly string[]
+  elementLabel?: string
   component: string | null
   main: boolean
 }
@@ -675,6 +689,12 @@ export interface InspectTarget extends InspectHover {
   props: Record<string, string>
   styles: ComputedStyleSubset
   tokens: UsedToken[]
+  /** Ancestor `[data-ds]` components from outermost to nearest parent. */
+  chain?: readonly InspectAncestor[]
+  /** Distinct normalized `data-ds-props` strings across `[data-ds="<component>"]` when `main` is true. */
+  variants?: readonly string[]
+  /** True when stylesheet rules were unreadable (`SecurityError`) and tokens came from `manifest.componentTokens`. */
+  tokensFromManifest?: boolean
 }
 
 export function isValidTokenName(value: unknown): value is string
@@ -756,9 +776,12 @@ import type {
 
 export type DesignView = 'page' | 'screens'
 
+export type ScreenUsageStatus = 'queued' | 'measuring' | 'done' | 'failed'
+
 export interface ScreenUsage {
   screenId: string
   screenName: string
+  status: ScreenUsageStatus
   count: number | null
   measuring: boolean
 }
@@ -772,17 +795,23 @@ export interface ScreenFrameState {
 export interface DesignSnapshot {
   version: number
   loading: boolean
+  /** True when `GET design` failed with an HTTP or network error (distinct from `{ design: null }`). */
+  loadError: boolean
   /** Non-null when `version` has a valid `maestrly-design.json`. */
   design: ViewerDesign | null
   view: DesignView
   /** Path currently loaded in the main stage frame (for example `'index.html#/dashboard'` or `'components.html'`). */
   stagePath: string | null
+  /** Origin screen ID when viewing `manifest.components` via `openMainComponent`, otherwise `null`. */
+  backScreenId: string | null
   inspecting: boolean
   tokensOpen: boolean
   hovered: InspectHover | null
   inspected: InspectTarget | null
   /** Live box of `inspected` updated on frame scroll/resize, or null. */
   inspectedRect: SelectionRect | null
+  /** Bounding boxes of highlighted component instances from `showComponentUses`, updated on scroll/resize. */
+  matchRects: readonly SelectionRect[]
   /** Active theme edited in the Tokens panel (`null` = `:root`). */
   activeTheme: string | null
   /** Pending uncommitted token edits (`key` = `${theme ?? ''}\n${name}`). */
@@ -793,6 +822,8 @@ export interface DesignSnapshot {
   screensState: ReadonlyMap<string, ScreenFrameState>
   /** Component name -> per-screen instance counts collected so far. */
   componentUsage: (component: string) => ScreenUsage[]
+  /** Distinct normalized `data-ds-props` variant strings seen for `component`. */
+  componentVariants: (component: string) => readonly string[]
 }
 
 export type DesignWriteError =
@@ -821,7 +852,17 @@ export type SuggestTokensResult =
 
 export type ApplySuggestionResult =
   | { ok: true; version: ViewerVersion; design: ViewerDesign; comment: PublicComment }
-  | { ok: false; error: DesignWriteError; currentVersion?: number }
+  | {
+      ok: false
+      error: DesignWriteError
+      currentVersion?: number
+      staleTokens?: readonly string[]
+      staleChanges?: readonly { name: string; theme?: string }[]
+    }
+
+export interface SetDesignVersionOptions {
+  preserveDrafts?: boolean
+}
 
 export interface DesignControllerOptions {
   api: ArtifactApi
@@ -835,6 +876,8 @@ export interface DesignControllerOptions {
   onDisableCommenting(): void
   /** Called when `saveTokens` or `applySuggestion` creates a new current version. */
   onVersionCreated(version: ViewerVersion, design: ViewerDesign): void
+  /** Called when `rebaseTokensToVersion` or `editSuggestionInTokens` moves the viewer onto an existing version. */
+  onVersionSynced?(version: number, currentVersion: number): void
   /** Called when a write fails with `version_replaced` for a viewer without history access. */
   onReplaced(): void
   /** Called when the guest sets their name during `suggestTokens`. */
@@ -844,7 +887,14 @@ export interface DesignControllerOptions {
 export interface DesignController {
   snapshot(): DesignSnapshot
   /** Records the latest `/c/<cap>/<entry>` returned by `POST frame` for `version` and loads `GET design`. */
-  setVersion(version: number, frameUrl?: string, expiresAt?: number): Promise<void>
+  setVersion(
+    version: number,
+    frameUrl?: string,
+    expiresAt?: number,
+    options?: SetDesignVersionOptions
+  ): Promise<void>
+  /** Retries `GET design` for the current version after `loadError`. */
+  reloadDesign(): Promise<void>
   /** Routes `window` `message` events: returns `'stage'`, `'screen'`, or `null` if from an unknown window. */
   routeMessage(source: MessageEventSource | null, message: BridgeMessage): 'stage' | 'screen' | null
 
@@ -854,6 +904,8 @@ export interface DesignController {
   setVisibleScreens(visibleIds: readonly string[], focusedId: string | null): void
   /** Returns the live `<iframe>` for `screenId` when pooled, or `null` when evicted/unmounted. */
   screenFrame(screenId: string): HTMLIFrameElement | null
+  /** Retries loading a screen frame that failed or timed out. */
+  retryScreen(screenId: string): void
   /** Focuses a screen in `screens` view without leaving it. */
   focusScreen(screenId: string | null): void
   /** Switches to `'page'` view and navigates `stageFrame` to `screen.path`. */
@@ -861,9 +913,17 @@ export interface DesignController {
 
   // Inspect & Components (`shell/inspect.ts`)
   setInspecting(on: boolean): void
+  /** Selects a specific element in `stageFrame` by CSS selector (for example an ancestor breadcrumb). */
+  selectElement(selector: string): void
   clearSelection(): void
-  /** Navigates `stageFrame` to `manifest.components`, reveals `[data-ds="<name>"][data-ds-main]`, and gathers counts. */
+  /** Distinct normalized `data-ds-props` variant strings seen for `component`. */
+  componentVariants(component: string): readonly string[]
+  /** Navigates `stageFrame` to `manifest.components` when `[data-ds="<name>"][data-ds-main]` exists, else returns `false`. */
   openMainComponent(component: string): Promise<boolean>
+  /** Returns from `manifest.components` back to the origin screen and re-selects the origin element if known. */
+  returnFromMainComponent(): Promise<void>
+  /** Opens `screenId` in `'page'` view and highlights all instances of `component` on that screen. */
+  showComponentUses(component: string, screenId: string): Promise<void>
   /** Schedules background/live inventory collection for screens whose counts are still unknown. */
   requestInventory(): void
 
@@ -876,6 +936,10 @@ export interface DesignController {
   discardTokens(): void
   /** Previews a comment's suggested changes across all live frames (`null` clears). */
   previewSuggestion(commentId: string | null, changes?: readonly TokenSuggestionChange[]): void
+  /** Rebases pending token drafts onto `version` (refreshing state, frame URL, and `design`). */
+  rebaseTokensToVersion(version: number): Promise<boolean>
+  /** Loads a suggestion's token changes as editable drafts on the latest version and opens the Tokens panel. */
+  editSuggestionInTokens(changes: readonly TokenSuggestionChange[]): Promise<void>
   saveTokens(): Promise<SaveTokensResult>
   suggestTokens(body: string, guestName?: string | null): Promise<SuggestTokensResult>
   applySuggestion(commentId: string): Promise<ApplySuggestionResult>

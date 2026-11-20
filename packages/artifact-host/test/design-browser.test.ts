@@ -64,8 +64,12 @@ describe('real Chromium sandboxed iframe bridge (<link crossorigin> CSSOM + adop
       '  <link rel="stylesheet" href="opaque.css">',
       '</head>',
       '<body>',
-      '  <button id="btn" class="cors-btn" data-ds="PrimaryButton" data-ds-props="variant=solid size=lg">Pay now</button>',
+      '  <div id="card" data-ds="Card">',
+      '    <button id="btn" class="cors-btn primary" data-ds="PrimaryButton" data-ds-props="variant=solid size=lg">Pay now</button>',
+      '  </div>',
+      '  <button id="btn-main" class="cors-btn" data-ds="PrimaryButton" data-ds-main data-ds-props="variant=ghost size=sm">Main specimen</button>',
       '  <div id="opaque" class="opaque-box">Opaque stylesheet target</div>',
+      '  <div id="opaque-comp" class="opaque-box" data-ds="OpaqueCard">Opaque component</div>',
       '</body>',
       '</html>',
     ].join('\n')
@@ -75,6 +79,7 @@ describe('real Chromium sandboxed iframe bridge (<link crossorigin> CSSOM + adop
       title: 'Browser Probe',
       tokens: ['tokens.css'],
       screens: [{ id: 'main', name: 'Main', path: 'index.html', viewport: 'desktop' }],
+      componentTokens: { OpaqueCard: ['--opaque-color'] },
     })
 
     const created = await host.admin.create({
@@ -117,10 +122,18 @@ describe('real Chromium sandboxed iframe bridge (<link crossorigin> CSSOM + adop
     const initialBg = await childFrame.evaluate(() => getComputedStyle(document.getElementById('btn')!).backgroundColor)
     expect(initialBg).toBe('rgb(37, 99, 235)')
 
-    // Enable Inspect mode and click `#btn` (styled via `<link crossorigin>`)
+    // Enable Inspect mode with componentTokens and click `#btn` (styled via `<link crossorigin>`)
     await page.evaluate(() => {
       const iframe = document.querySelector('iframe.content') as HTMLIFrameElement
-      iframe.contentWindow!.postMessage({ source: 'maestrly-shell', type: 'inspect-mode', inspecting: true }, '*')
+      iframe.contentWindow!.postMessage(
+        {
+          source: 'maestrly-shell',
+          type: 'inspect-mode',
+          inspecting: true,
+          componentTokens: { OpaqueCard: ['--opaque-color'] },
+        },
+        '*'
+      )
     })
 
     await contentFrameLocator.locator('#btn').click()
@@ -132,16 +145,28 @@ describe('real Chromium sandboxed iframe bridge (<link crossorigin> CSSOM + adop
     const corsTarget = (await corsPick.jsonValue()) as {
       target: {
         component: string | null
+        classes?: string[]
+        elementLabel?: string
         props: Record<string, string>
-        tokens: Array<{ name: string; value: string }>
+        tokens: Array<{ name: string; value: string; property?: string }>
+        chain?: Array<{ component: string; selector: string }>
+        tokensFromManifest?: boolean
       }
     }
     expect(corsTarget.target.component).toBe('PrimaryButton')
+    expect(corsTarget.target.classes).toEqual(['cors-btn', 'primary'])
+    expect(corsTarget.target.elementLabel).toBe('button.cors-btn.primary')
     expect(corsTarget.target.props).toEqual({ variant: 'solid', size: 'lg' })
-    // `<link crossorigin>` allowed CSSOM rule reading inside the opaque-origin sandboxed frame!
-    expect(corsTarget.target.tokens).toContainEqual({ name: '--btn-bg', value: 'rgb(37, 99, 235)' })
+    expect(corsTarget.target.chain).toEqual([{ component: 'Card', selector: '#card' }])
+    expect(corsTarget.target.tokensFromManifest).toBeUndefined()
+    // `<link crossorigin>` allowed CSSOM rule reading with exact CSS property inside the opaque-origin sandboxed frame!
+    expect(corsTarget.target.tokens).toContainEqual({
+      name: '--btn-bg',
+      value: 'rgb(37, 99, 235)',
+      property: 'background-color',
+    })
 
-    // Clicking `#opaque` (styled via `<link>` WITHOUT `crossorigin`) must not throw SecurityError
+    // Clicking `#opaque` (plain element styled via `<link>` WITHOUT `crossorigin`) reports elementLabel and no SecurityError
     await page.evaluate(() => {
       ;(window as unknown as { __bridgeMessages: unknown[] }).__bridgeMessages = []
     })
@@ -151,11 +176,67 @@ describe('real Chromium sandboxed iframe bridge (<link crossorigin> CSSOM + adop
       return msgs.find((m) => m.type === 'inspect-pick') ?? null
     })
     const opaqueTarget = (await opaquePick.jsonValue()) as {
-      target: { tag: string; tokens: Array<{ name: string; value: string }> }
+      target: { tag: string; classes?: string[]; elementLabel?: string; tokens: Array<{ name: string; value: string }> }
     }
     expect(opaqueTarget.target.tag).toBe('div')
+    expect(opaqueTarget.target.classes).toEqual(['opaque-box'])
+    expect(opaqueTarget.target.elementLabel).toBe('div.opaque-box')
     expect(opaqueTarget.target.tokens).toEqual([])
     expect(pageErrors).toEqual([])
+
+    // Clicking `#opaque-comp` falls back to `componentTokens` and flags `tokensFromManifest: true`
+    await page.evaluate(() => {
+      ;(window as unknown as { __bridgeMessages: unknown[] }).__bridgeMessages = []
+    })
+    await contentFrameLocator.locator('#opaque-comp').click()
+    const manifestFallbackPick = await page.waitForFunction(() => {
+      const msgs = (window as unknown as { __bridgeMessages: Array<Record<string, unknown>> }).__bridgeMessages
+      return msgs.find((m) => m.type === 'inspect-pick') ?? null
+    })
+    const manifestFallbackTarget = (await manifestFallbackPick.jsonValue()) as {
+      target: {
+        component: string | null
+        tokens: Array<{ name: string; value: string; property?: string }>
+        tokensFromManifest?: boolean
+      }
+    }
+    expect(manifestFallbackTarget.target.component).toBe('OpaqueCard')
+    expect(manifestFallbackTarget.target.tokensFromManifest).toBe(true)
+    expect(manifestFallbackTarget.target.tokens).toEqual([{ name: '--opaque-color', value: 'rgb(16, 185, 129)' }])
+
+    // Clicking `#btn-main` (`data-ds-main`) reports normalized variants across all `[data-ds="PrimaryButton"]` elements
+    await page.evaluate(() => {
+      ;(window as unknown as { __bridgeMessages: unknown[] }).__bridgeMessages = []
+    })
+    await contentFrameLocator.locator('#btn-main').click()
+    const mainPick = await page.waitForFunction(() => {
+      const msgs = (window as unknown as { __bridgeMessages: Array<Record<string, unknown>> }).__bridgeMessages
+      return msgs.find((m) => m.type === 'inspect-pick') ?? null
+    })
+    const mainTarget = (await mainPick.jsonValue()) as {
+      target: { main: boolean; variants?: string[] }
+    }
+    expect(mainTarget.target.main).toBe(true)
+    expect(mainTarget.target.variants).toEqual(['variant=solid size=lg', 'variant=ghost size=sm'])
+
+    // `inspect-select` selects ancestor `#card` programmatically and `highlight-component` returns instance match rects
+    await page.evaluate(() => {
+      ;(window as unknown as { __bridgeMessages: unknown[] }).__bridgeMessages = []
+      const iframe = document.querySelector('iframe.content') as HTMLIFrameElement
+      iframe.contentWindow!.postMessage({ source: 'maestrly-shell', type: 'inspect-select', selector: '#card' }, '*')
+      iframe.contentWindow!.postMessage(
+        { source: 'maestrly-shell', type: 'highlight-component', component: 'PrimaryButton' },
+        '*'
+      )
+    })
+    const matchesMsg = await page.waitForFunction(() => {
+      const msgs = (window as unknown as { __bridgeMessages: Array<Record<string, unknown>> }).__bridgeMessages
+      return msgs.find((m) => m.type === 'matches') ?? null
+    })
+    const matchesVal = (await matchesMsg.jsonValue()) as { rects: Array<{ width: number; height: number }> }
+    // Only the non-main `#btn` instance is highlighted (1 rect, not `#btn-main`)
+    expect(matchesVal.rects).toHaveLength(1)
+    expect(matchesVal.rects[0]!.width).toBeGreaterThan(0)
 
     // Select `#btn` again, then apply live `token-preview` via `adoptedStyleSheets`
     await contentFrameLocator.locator('#btn').click()
