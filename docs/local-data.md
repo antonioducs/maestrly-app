@@ -20,6 +20,35 @@ deleting the chat removes it. Back up the complete profile before reset.
 Keep exports and project backups independently. Never test a migration or
 recovery against the only copy of real data.
 
+## Usage ledger
+
+`chat_usage_ledger` in the app database keeps token and cost accounting per
+assistant turn and billing-only helper call, without a foreign key to
+conversations or messages so historical consumption survives transcript,
+conversation, and workspace deletion. **Reset local data** deletes the ledger.
+In-app exports include its sanitized entries under `usageHistory` (without
+private `contextIdentity` values or message text).
+
+Each entry records the effective chat `mode` frozen for that work (`agent`,
+`design`, `plan`, `ask`, or `maestro`) in addition to `provider_id`, `model_id`,
+`usage_json`, and `created_at`:
+
+- Assistant turns store `mode` in `chat_messages.meta_json`, and SQLite triggers
+  copy it into `chat_usage_ledger` on insert and update. In-turn subagents and
+  image generation roll into their parent message's usage breakdown under that
+  same mode.
+- Host-managed subagents record the mode they execute with (for example `ask`
+  for read-only code review), and code review billing records `ask`.
+- Compaction (mid-turn, preflight, manual, and background) snapshots the
+  conversation's effective mode at the time the compaction starts.
+- The standalone Maestro Configurator records `maestro`.
+- Background memory extraction and space-wide memory consolidation leave `mode`
+  `NULL` (unattributed), because they operate asynchronously across multi-turn
+  chunks or multiple conversations.
+- Entries written before the `mode` column existed remain `NULL` and are treated
+  as unknown in exports (`mode: null`) and grouped usage aggregation
+  (`'unknown'`).
+
 ## Paired bot servers
 
 `fleet.servers` in `app_settings` lists the bot servers this computer is paired with, in pairing order: this

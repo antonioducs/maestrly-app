@@ -2408,6 +2408,7 @@ export async function runCodexSubscriptionChat(
       role: 'assistant',
       parts: [],
       model: args.selection,
+      mode: args.mode,
       ...(args.messageMeta ?? {}),
       createdAt,
     },

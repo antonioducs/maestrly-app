@@ -272,6 +272,7 @@ export async function runMemoryExtraction(
             agent: 'memory-extraction',
           })
           // The call is billed even when its answer comes after a cancellation; the answer itself is discarded.
+          // Extraction scans multi-turn transcript chunks asynchronously, so mode stays unattributed (NULL).
           recordChatUsageAttempt({
             id: `memory-extraction:${randomUUID()}`,
             conversationId,

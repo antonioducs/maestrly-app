@@ -973,6 +973,7 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
       role: 'assistant',
       parts: [],
       model: args.selection,
+      mode: args.mode,
       ...(args.messageMeta ?? {}),
       createdAt,
     },

@@ -3612,6 +3612,7 @@ async function preflightContext(
     compactReserved(conversationId, {
       allowActive: true,
       signal,
+      mode: claudeTurn?.mode ?? behaviorFor(conversationId),
       contextWindow: window,
       pendingTokens: pending,
       operation,
@@ -5201,6 +5202,7 @@ async function startSendAttempt(
         role: 'assistant',
         parts: [],
         model: selection,
+        mode: turnBehavior,
         createdAt: assistantCreatedAt,
       })
     }
@@ -5374,6 +5376,7 @@ async function startSendAttempt(
         allowActive: true,
         signal: controller.signal,
         persist: false,
+        mode: turnBehavior,
         // The runners reload a committed boundary like a prepared one, keeping recent steps verbatim.
         positional: true,
         // Ending the turn because the summarizer failed loses more than continuing on a mechanical digest.
@@ -5394,6 +5397,7 @@ async function startSendAttempt(
             id: randomUUID(),
             conversationId,
             model: result.billedModel,
+            mode: turnBehavior,
             usage: result.usage ?? { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 },
             runtimeEstimatedCostUsd: result.runtimeEstimatedCostUsd,
           })
@@ -6108,6 +6112,7 @@ async function startSendAttempt(
             role: 'assistant' as const,
             parts: [],
             model: selection ?? undefined,
+            mode: turnBehavior,
             createdAt: assistantCreatedAt,
           }
           upsertChatMessage(applyChatEvent([persisted], ev)[0])
@@ -7224,6 +7229,8 @@ interface CompactOpts {
   allowActive?: boolean
   signal?: AbortSignal
   persist?: boolean
+  /** Effective turn/conversation mode frozen when compaction started. */
+  mode?: ChatBehavior
   contextWindow?: number
   onProgress?: (progress: PortableSummaryProgress) => void
   claudeFailoverChain?: readonly string[]
@@ -7560,6 +7567,7 @@ async function compactReservedWithProgress(conversationId: string, opts: Compact
         parts: [],
         createdAt: Date.now(),
         model: { providerId: billedSelection.providerId, modelId: billedSelection.modelId },
+        mode: opts.mode ?? behaviorFor(conversationId),
         error: result.error,
         usage: {
           usageVersion: 2,
@@ -8295,6 +8303,7 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
                   modelId: opts.summarizerOverride.resolvedModelId ?? opts.summarizerOverride.modelId,
                 }
               : selection,
+            mode: opts.mode ?? behaviorFor(conversationId),
             usage: usage ?? { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 },
             runtimeEstimatedCostUsd: compacted.runtimeEstimatedCostUsd,
           })
@@ -8358,6 +8367,7 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
           },
         ],
         model: opts.summarizerOverride ? (selectionFor(conversationId) ?? selection) : selection,
+        mode: opts.mode ?? behaviorFor(conversationId),
         usage: {
           usageVersion: 2,
           input: opts.summarizerOverride ? 0 : (usage?.input ?? 0),
@@ -8437,7 +8447,7 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
 }
 
 let backgroundCoordinator: ChatBackgroundCompactionCoordinator | null = null
-const backgroundAttemptOwners = new Map<string, string>()
+const backgroundAttemptOwners = new Map<string, { conversationId: string; mode: ChatBehavior }>()
 const backgroundProviderCooldown = new Map<string, number>()
 const backgroundNotificationEpochs = new Map<string, number>()
 
@@ -8589,7 +8599,10 @@ function getBackgroundCoordinator(): ChatBackgroundCompactionCoordinator {
         summaryAttemptId: () => {
           const attempt = input.onAttempt()
           attempts.set(attempt.id, attempt)
-          backgroundAttemptOwners.set(attempt.id, input.conversationId)
+          backgroundAttemptOwners.set(attempt.id, {
+            conversationId: input.conversationId,
+            mode: behaviorFor(input.conversationId),
+          })
           return attempt.id
         },
         onSummaryAttempt: (attempt) => {
@@ -8607,7 +8620,7 @@ function getBackgroundCoordinator(): ChatBackgroundCompactionCoordinator {
       return { summary: result.summary }
     },
     recordAttempt: (id, model, attempt) => {
-      const conversationId = backgroundAttemptOwners.get(id)
+      const owner = backgroundAttemptOwners.get(id)
       backgroundAttemptOwners.delete(id)
       const error = attempt.error as { status?: number; statusCode?: number; message?: string } | undefined
       if (
@@ -8616,12 +8629,14 @@ function getBackgroundCoordinator(): ChatBackgroundCompactionCoordinator {
       ) {
         backgroundProviderCooldown.set(model.providerId, Date.now() + 30_000)
       }
-      if (!conversationId || (!attempt.usage && attempt.runtimeEstimatedCostUsd == null)) return
+      if (!owner || (!attempt.usage && attempt.runtimeEstimatedCostUsd == null)) return
+      const { conversationId, mode } = owner
       const billedModel = { providerId: model.providerId, modelId: model.resolvedModelId ?? model.modelId }
       recordChatUsageAttempt({
         id,
         conversationId,
         model: billedModel,
+        mode,
         usage: attempt.usage ?? { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 },
         runtimeEstimatedCostUsd: attempt.runtimeEstimatedCostUsd,
       })
@@ -9736,6 +9751,7 @@ function persistReviewReport(conversationId: string, report: ChatReviewReport, s
     source: 'maestrly-review',
     executionScope: { kind: 'review-report', reviewId: report.reviewId },
     review: report,
+    mode: 'ask',
     ...(report.model ? { model: { providerId: report.model.providerId, modelId: report.model.modelId } } : {}),
     ...(usage ? { usage } : {}),
     createdAt: Date.now(),
@@ -9777,6 +9793,7 @@ function persistReviewSpend(conversationId: string, spend: ReviewSpend, model?: 
     conversationId,
     role: 'assistant',
     parts: [],
+    mode: 'ask',
     ...(model ? { model: { providerId: model.providerId, modelId: model.modelId } } : {}),
     usage,
     internal: true,

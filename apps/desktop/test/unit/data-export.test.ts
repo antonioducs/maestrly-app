@@ -64,6 +64,7 @@ describe('data export v7', () => {
         messageId: 'usage-1',
         providerId: 'p',
         modelId: 'm',
+        mode: null,
         usage: { usageVersion: 2, input: 10, output: 2, runtimeEstimatedCostUsd: 0.01 },
         createdAt: 123,
       },
@@ -71,6 +72,25 @@ describe('data export v7', () => {
     expect(bundle.usageHistory[0]?.usage).not.toHaveProperty('contextIdentity')
     expect(JSON.stringify(bundle.usageHistory)).not.toContain('parts')
     expect(JSON.stringify(bundle.usageHistory)).not.toContain('tool output')
+  })
+
+  it('exports recorded chat modes and normalizes missing or invalid modes to null', async () => {
+    const insert = getDb().prepare(
+      `INSERT INTO chat_usage_ledger (message_id, provider_id, model_id, mode, usage_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    )
+    insert.run('u-design', 'p', 'm', 'design', JSON.stringify({ usageVersion: 2, input: 10, output: 4 }), 100)
+    insert.run('u-maestro', 'p', 'm', 'maestro', JSON.stringify({ usageVersion: 2, input: 5, output: 2 }), 200)
+    insert.run('u-legacy', 'p', 'm', null, JSON.stringify({ usageVersion: 2, input: 3, output: 1 }), 300)
+    insert.run('u-invalid', 'p', 'm', 'unexpected', JSON.stringify({ usageVersion: 2, input: 2, output: 1 }), 400)
+
+    const bundle = await buildExportBundle()
+    expect(bundle.usageHistory.map((row) => ({ id: row.messageId, mode: row.mode }))).toEqual([
+      { id: 'u-design', mode: 'design' },
+      { id: 'u-maestro', mode: 'maestro' },
+      { id: 'u-legacy', mode: null },
+      { id: 'u-invalid', mode: null },
+    ])
   })
 
   it('reports corrupt usage records as export omissions', async () => {

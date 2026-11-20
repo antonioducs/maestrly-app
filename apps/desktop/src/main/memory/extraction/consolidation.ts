@@ -152,6 +152,7 @@ export async function maybeConsolidate(input: {
       cwd: input.cwd,
       agent: 'memory-consolidation',
     })
+    // Consolidation merges across an entire memory space rather than one turn, so mode stays unattributed (NULL).
     recordChatUsageAttempt({
       id: `memory-consolidation:${randomUUID()}`,
       conversationId: input.conversationId,
