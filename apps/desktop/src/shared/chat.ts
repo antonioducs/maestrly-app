@@ -10,6 +10,7 @@ import type { AppToolGroupState } from './app-tool-groups'
 import type { PluginScope } from './plugins'
 import type { WebSearchConfig } from './web-search'
 import type { ImageGenProvider } from './image-generation'
+import type { ChatBehavior } from './conversation-experience'
 
 export type ChatRole = 'user' | 'assistant'
 
@@ -115,8 +116,24 @@ export interface ChatModelUsage {
   lastAt: number
 }
 
+export type ChatUsageMode = ChatBehavior | 'unknown'
+
+export interface ChatModeUsage {
+  mode: ChatUsageMode
+  perModel: ChatModelUsage[]
+  turns: number
+  input: number
+  output: number
+  cacheRead: number
+  cacheCreate: number
+  runtimeEstimatedCostUsd?: number
+  firstAt: number | null
+  lastAt: number | null
+}
+
 export interface ChatUsageStats {
   perModel: ChatModelUsage[]
+  perMode?: ChatModeUsage[]
   totalTurns: number
   firstAt: number | null
   lastAt: number | null
@@ -1044,6 +1061,8 @@ export interface ChatMessage {
   role: ChatRole
   parts: MessagePart[]
   model?: ChatModelRef
+  /** Effective turn mode frozen when this assistant message was produced. */
+  mode?: ChatBehavior
 
   source?: ChatMessageSource
   /** Present with source `conversation-message`. */

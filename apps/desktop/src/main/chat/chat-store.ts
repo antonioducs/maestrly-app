@@ -18,14 +18,18 @@ import type {
   ChatMessage,
   ChatModelRef,
   ChatModelUsage,
+  ChatModeUsage,
   ChatPerModelUsage,
   ChatReviewLoopMeta,
   ChatRoutineRunMeta,
   ChatSearchHit,
   ChatUsage,
+  ChatUsageMode,
   ChatUsageStats,
   MessagePart,
 } from "../../shared/chat";
+import { CHAT_BEHAVIORS, isChatBehavior } from "../../shared/chat-mode";
+import type { ChatBehavior } from "../../shared/conversation-experience";
 import {
   abortOpenToolParts,
   totalTokensOf,
@@ -104,6 +108,7 @@ export interface VisibleConversationMessageRow {
 
 interface MetaJson {
   model?: ChatModelRef;
+  mode?: ChatBehavior;
   providerFingerprint?: string;
   source?: ChatMessage["source"];
   peer?: ChatMessage["peer"];
@@ -535,12 +540,14 @@ function rowToMessage(r: any): StoredChatMessage {
     source === "maestrly-review"
       ? parseChatReviewReport(meta.review)
       : undefined;
+  const mode = isChatBehavior(meta.mode) ? meta.mode : undefined;
   return {
     id: r.id,
     conversationId: r.conversation_id,
     role: r.role === "assistant" ? "assistant" : "user",
     parts: parseParts(r.parts_json ?? "[]"),
     model: meta.model,
+    ...(mode ? { mode } : {}),
     // Defensive: non-string or empty/corrupt value is absent (untrusted origin).
     ...(typeof meta.providerFingerprint === "string" &&
     meta.providerFingerprint.length > 0
@@ -576,6 +583,7 @@ function rowToMessage(r: any): StoredChatMessage {
 function metaOf(m: StoredChatMessage): string {
   const meta: MetaJson = {};
   if (m.model) meta.model = m.model;
+  if (isChatBehavior(m.mode)) meta.mode = m.mode;
   if (
     typeof m.providerFingerprint === "string" &&
     m.providerFingerprint.length > 0
@@ -2114,6 +2122,7 @@ export function getChatBytesSaved(conversationId: string): number {
 export function recordStandaloneChatUsage(args: {
   id: string;
   model: ChatModelRef;
+  mode?: ChatBehavior | null;
   usage: {
     input: number;
     output: number;
@@ -2143,14 +2152,16 @@ export function recordStandaloneChatUsage(args: {
       ? { runtimeEstimatedCostUsd }
       : {}),
   };
+  const mode = isChatBehavior(args.mode) ? args.mode : null;
   getDb()
     .prepare(
       `INSERT INTO chat_usage_ledger
-         (message_id, conversation_id, provider_id, model_id, usage_json, created_at)
-       VALUES (?, NULL, ?, ?, ?, ?)
+         (message_id, conversation_id, provider_id, model_id, mode, usage_json, created_at)
+       VALUES (?, NULL, ?, ?, ?, ?, ?)
        ON CONFLICT(message_id) DO UPDATE SET
          provider_id = excluded.provider_id,
          model_id = excluded.model_id,
+         mode = COALESCE(excluded.mode, chat_usage_ledger.mode),
          usage_json = excluded.usage_json,
          created_at = excluded.created_at`,
     )
@@ -2158,6 +2169,7 @@ export function recordStandaloneChatUsage(args: {
       args.id,
       args.model.providerId,
       args.model.modelId,
+      mode,
       JSON.stringify(usage),
       args.createdAt ?? Date.now(),
     );
@@ -2168,6 +2180,7 @@ export function recordChatUsageAttempt(args: {
   id: string;
   conversationId: string;
   model: ChatModelRef;
+  mode?: ChatBehavior | null;
   usage: {
     input: number;
     output: number;
@@ -2198,18 +2211,20 @@ export function recordChatUsageAttempt(args: {
       ? { runtimeEstimatedCostUsd }
       : {}),
   };
+  const mode = isChatBehavior(args.mode) ? args.mode : null;
   const usageJson = JSON.stringify(usage);
   const inserted = getDb()
     .prepare(
       `INSERT OR IGNORE INTO chat_usage_ledger
-         (message_id, conversation_id, provider_id, model_id, usage_json, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+         (message_id, conversation_id, provider_id, model_id, mode, usage_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       args.id,
       args.conversationId,
       args.model.providerId,
       args.model.modelId,
+      mode,
       usageJson,
       args.createdAt ?? Date.now(),
     );
@@ -2231,16 +2246,32 @@ export function recordChatUsageAttempt(args: {
   else noteHistoryStatsLedger(args.conversationId);
 }
 
+export interface AggregateChatUsageOptions {
+  since?: number;
+  until?: number;
+  /** Filter ledger rows by effective mode; `'unknown'` (or `null`) matches legacy/unattributed rows. */
+  mode?: ChatUsageMode | null | ReadonlyArray<ChatUsageMode | null>;
+  /** Include `perMode` breakdown grouped by effective mode (each with its own `perModel` list for catalog pricing). */
+  groupByMode?: boolean;
+}
+
 /**
- * GLOBAL chat usage (all conversations) aggregated by provider+model. Subagents use effective models
- * with v2 breakdowns; legacy records stay on parent model. On demand (full ledger
- * scan); renderer calculates cost (requires models.dev per-model prices).
+ * GLOBAL chat usage (all conversations) aggregated by provider+model, optionally filtered and/or
+ * grouped by effective chat mode. Subagents use effective models with v2 breakdowns; legacy records
+ * stay on parent model. On demand (full ledger scan); renderer calculates cost (requires models.dev
+ * per-model prices).
  */
 export function aggregateChatUsage(
-  opts: { since?: number; until?: number } = {},
+  opts: AggregateChatUsageOptions & { groupByMode: true },
+): ChatUsageStats & { perMode: ChatModeUsage[] };
+export function aggregateChatUsage(
+  opts?: AggregateChatUsageOptions,
+): ChatUsageStats;
+export function aggregateChatUsage(
+  opts: AggregateChatUsageOptions = {},
 ): ChatUsageStats {
   const where: string[] = [];
-  const params: number[] = [];
+  const params: SQLInputValue[] = [];
   if (typeof opts.since === "number") {
     where.push("created_at >= ?");
     params.push(opts.since);
@@ -2249,18 +2280,117 @@ export function aggregateChatUsage(
     where.push("created_at <= ?");
     params.push(opts.until);
   }
+  if (opts.mode !== undefined) {
+    const rawModes = Array.isArray(opts.mode) ? opts.mode : [opts.mode];
+    const knownModes = new Set<ChatBehavior>();
+    let includeUnknown = false;
+    for (const candidate of rawModes) {
+      if (candidate === null || candidate === "unknown") includeUnknown = true;
+      else if (isChatBehavior(candidate)) knownModes.add(candidate);
+    }
+    if (!includeUnknown && knownModes.size === 0) {
+      return {
+        perModel: [],
+        ...(opts.groupByMode ? { perMode: [] } : {}),
+        totalTurns: 0,
+        firstAt: null,
+        lastAt: null,
+      };
+    }
+    const modePredicates: string[] = [];
+    if (knownModes.size > 0) {
+      const list = [...knownModes];
+      modePredicates.push(`mode IN (${list.map(() => "?").join(", ")})`);
+      params.push(...list);
+    }
+    if (includeUnknown) {
+      modePredicates.push(
+        `mode IS NULL OR mode NOT IN (${CHAT_BEHAVIORS.map(() => "?").join(", ")})`,
+      );
+      params.push(...CHAT_BEHAVIORS);
+    }
+    where.push(`(${modePredicates.join(" OR ")})`);
+  }
   const rows = getDb()
     .prepare(
-      `SELECT provider_id, model_id, usage_json, created_at
+      `SELECT provider_id, model_id, mode, usage_json, created_at
        FROM chat_usage_ledger${where.length ? ` WHERE ${where.join(" AND ")}` : ""}`,
     )
     .all(...params) as Array<{
     provider_id: string;
     model_id: string;
+    mode: string | null;
     usage_json: string;
     created_at: number;
   }>;
   const byModel = new Map<string, ChatModelUsage>();
+  const byMode = opts.groupByMode
+    ? new Map<
+        ChatUsageMode,
+        {
+          mode: ChatUsageMode;
+          byModel: Map<string, ChatModelUsage>;
+          turns: number;
+          input: number;
+          output: number;
+          cacheRead: number;
+          cacheCreate: number;
+          runtimeEstimatedCostUsd?: number;
+          firstAt: number;
+          lastAt: number;
+        }
+      >()
+    : null;
+  const accumulateModelSlice = (
+    target: Map<string, ChatModelUsage>,
+    slice: ReturnType<typeof usageSlices>[number],
+    billingOnly: boolean | undefined,
+    at: number,
+  ): void => {
+    const key = `${slice.providerId}\0${slice.modelId}`;
+    const agg =
+      target.get(key) ??
+      ({
+        providerId: slice.providerId,
+        modelId: slice.modelId,
+        turns: 0,
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheCreate: 0,
+        catalogInput: 0,
+        catalogOutput: 0,
+        catalogCacheRead: 0,
+        catalogCacheCreate: 0,
+        firstAt: at,
+        lastAt: at,
+      } satisfies ChatModelUsage);
+    // Turn belongs to main model; subagents contribute usage/cost, not extra interactions.
+    if (!slice.subagent && !billingOnly) agg.turns++;
+    agg.input += slice.input;
+    agg.output += slice.output;
+    agg.cacheRead += slice.cacheRead;
+    agg.cacheCreate += slice.cacheCreate;
+    if (slice.runtimeEstimatedCostUsd != null) {
+      agg.runtimeEstimatedCostUsd =
+        (agg.runtimeEstimatedCostUsd ?? 0) + slice.runtimeEstimatedCostUsd;
+      agg.catalogInput = (agg.catalogInput ?? 0) + slice.catalogInput;
+      agg.catalogOutput = (agg.catalogOutput ?? 0) + slice.catalogOutput;
+      agg.catalogCacheRead =
+        (agg.catalogCacheRead ?? 0) + slice.catalogCacheRead;
+      agg.catalogCacheCreate =
+        (agg.catalogCacheCreate ?? 0) + slice.catalogCacheCreate;
+    } else {
+      agg.catalogInput = (agg.catalogInput ?? 0) + slice.input;
+      agg.catalogOutput = (agg.catalogOutput ?? 0) + slice.output;
+      agg.catalogCacheRead = (agg.catalogCacheRead ?? 0) + slice.cacheRead;
+      agg.catalogCacheCreate =
+        (agg.catalogCacheCreate ?? 0) + slice.cacheCreate;
+    }
+    agg.firstAt = Math.min(agg.firstAt, at);
+    agg.lastAt = Math.max(agg.lastAt, at);
+    target.set(key, agg);
+  };
   let totalTurns = 0;
   let firstAt: number | null = null;
   let lastAt: number | null = null;
@@ -2276,60 +2406,84 @@ export function aggregateChatUsage(
     const parent = { providerId: r.provider_id, modelId: r.model_id };
     const slices = usageSlices(u, parent).filter((slice) => !!slice.modelId);
     if (slices.length === 0) continue;
-    if (parent.modelId && !u.billingOnly) totalTurns++;
+    const isTurn = Boolean(parent.modelId && !u.billingOnly);
+    if (isTurn) totalTurns++;
     const at = r.created_at;
     firstAt = firstAt == null ? at : Math.min(firstAt, at);
     lastAt = lastAt == null ? at : Math.max(lastAt, at);
+    let modeBucket:
+      | {
+          mode: ChatUsageMode;
+          byModel: Map<string, ChatModelUsage>;
+          turns: number;
+          input: number;
+          output: number;
+          cacheRead: number;
+          cacheCreate: number;
+          runtimeEstimatedCostUsd?: number;
+          firstAt: number;
+          lastAt: number;
+        }
+      | undefined;
+    if (byMode) {
+      const rowMode: ChatUsageMode = isChatBehavior(r.mode)
+        ? r.mode
+        : "unknown";
+      modeBucket = byMode.get(rowMode) ?? {
+        mode: rowMode,
+        byModel: new Map<string, ChatModelUsage>(),
+        turns: 0,
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheCreate: 0,
+        firstAt: at,
+        lastAt: at,
+      };
+      if (isTurn) modeBucket.turns++;
+      modeBucket.firstAt = Math.min(modeBucket.firstAt, at);
+      modeBucket.lastAt = Math.max(modeBucket.lastAt, at);
+      byMode.set(rowMode, modeBucket);
+    }
     for (const slice of slices) {
-      const key = `${slice.providerId}\0${slice.modelId}`;
-      const agg =
-        byModel.get(key) ??
-        ({
-          providerId: slice.providerId,
-          modelId: slice.modelId,
-          turns: 0,
-          input: 0,
-          output: 0,
-          cacheRead: 0,
-          cacheCreate: 0,
-          catalogInput: 0,
-          catalogOutput: 0,
-          catalogCacheRead: 0,
-          catalogCacheCreate: 0,
-          firstAt: at,
-          lastAt: at,
-        } satisfies ChatModelUsage);
-      // Turn belongs to main model; subagents contribute usage/cost, not extra interactions.
-      if (!slice.subagent && !u.billingOnly) agg.turns++;
-      agg.input += slice.input;
-      agg.output += slice.output;
-      agg.cacheRead += slice.cacheRead;
-      agg.cacheCreate += slice.cacheCreate;
-      if (slice.runtimeEstimatedCostUsd != null) {
-        agg.runtimeEstimatedCostUsd =
-          (agg.runtimeEstimatedCostUsd ?? 0) + slice.runtimeEstimatedCostUsd;
-        agg.catalogInput = (agg.catalogInput ?? 0) + slice.catalogInput;
-        agg.catalogOutput = (agg.catalogOutput ?? 0) + slice.catalogOutput;
-        agg.catalogCacheRead =
-          (agg.catalogCacheRead ?? 0) + slice.catalogCacheRead;
-        agg.catalogCacheCreate =
-          (agg.catalogCacheCreate ?? 0) + slice.catalogCacheCreate;
-      } else {
-        agg.catalogInput = (agg.catalogInput ?? 0) + slice.input;
-        agg.catalogOutput = (agg.catalogOutput ?? 0) + slice.output;
-        agg.catalogCacheRead = (agg.catalogCacheRead ?? 0) + slice.cacheRead;
-        agg.catalogCacheCreate =
-          (agg.catalogCacheCreate ?? 0) + slice.cacheCreate;
+      accumulateModelSlice(byModel, slice, u.billingOnly, at);
+      if (modeBucket) {
+        accumulateModelSlice(modeBucket.byModel, slice, u.billingOnly, at);
+        modeBucket.input += slice.input;
+        modeBucket.output += slice.output;
+        modeBucket.cacheRead += slice.cacheRead;
+        modeBucket.cacheCreate += slice.cacheCreate;
+        if (slice.runtimeEstimatedCostUsd != null) {
+          modeBucket.runtimeEstimatedCostUsd =
+            (modeBucket.runtimeEstimatedCostUsd ?? 0) +
+            slice.runtimeEstimatedCostUsd;
+        }
       }
-      agg.firstAt = Math.min(agg.firstAt, at);
-      agg.lastAt = Math.max(agg.lastAt, at);
-      byModel.set(key, agg);
     }
   }
   const perModel = [...byModel.values()]
     .map(persistedAggregate)
     .sort((a, b) => totalTokensOf(b) - totalTokensOf(a));
-  return { perModel, totalTurns, firstAt, lastAt };
+  if (!byMode) return { perModel, totalTurns, firstAt, lastAt };
+  const perMode: ChatModeUsage[] = [...byMode.values()]
+    .map((bucket) => ({
+      mode: bucket.mode,
+      perModel: [...bucket.byModel.values()]
+        .map(persistedAggregate)
+        .sort((a, b) => totalTokensOf(b) - totalTokensOf(a)),
+      turns: bucket.turns,
+      input: bucket.input,
+      output: bucket.output,
+      cacheRead: bucket.cacheRead,
+      cacheCreate: bucket.cacheCreate,
+      ...(bucket.runtimeEstimatedCostUsd != null
+        ? { runtimeEstimatedCostUsd: bucket.runtimeEstimatedCostUsd }
+        : {}),
+      firstAt: bucket.firstAt,
+      lastAt: bucket.lastAt,
+    }))
+    .sort((a, b) => totalTokensOf(b) - totalTokensOf(a));
+  return { perModel, perMode, totalTurns, firstAt, lastAt };
 }
 
 /** Artifacts and ephemeral tool-image refs owned by rows that are about to be removed. */

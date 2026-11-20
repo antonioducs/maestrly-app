@@ -541,6 +541,10 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   const model = resolvedModel.model
   const assistantId = assistantMessageId
   const createdAt = assistantCreatedAt
+  // Mode is a per-turn snapshot. Plan/ask receive read-only built-ins and filtered MCP/app catalogs;
+  // plan adds review_plan + skills; ask omits these extra actions.
+  const mode: ChatBehavior =
+    args.behaviorOverride ?? args.modeOverride ?? getConvUiPrefs(conversationId).chat?.mode ?? 'agent'
   let msgs: StoredChatMessage[] = [
     {
       id: assistantId,
@@ -548,6 +552,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       role: 'assistant',
       parts: [],
       model: selection,
+      mode,
       // Immutable during turn: persisted reasoning replay requires the SAME backend (URL/kind/key)
       // that produced the message — retries/continuations never recompute this identity.
       providerFingerprint: resolvedModel.providerFingerprint,
@@ -627,10 +632,6 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     ...(args.messageMeta?.reviewLoop ? { reviewLoop: args.messageMeta.reviewLoop } : {}),
   })
 
-  // Mode is a per-turn snapshot. Plan/ask receive read-only built-ins and filtered MCP/app catalogs;
-  // plan adds review_plan + skills; ask omits these extra actions.
-  const mode: ChatBehavior =
-    args.behaviorOverride ?? args.modeOverride ?? getConvUiPrefs(conversationId).chat?.mode ?? 'agent'
   const capabilityMode = capabilityBehaviorFor(mode)
   const conversation = getConversation(conversationId)
   const hasNotesTab = Boolean(conversation)

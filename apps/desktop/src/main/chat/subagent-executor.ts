@@ -885,6 +885,7 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
       conversationId: args.conversationId,
       messageId: args.parentMessageId,
       model: { providerId: effective.providerId, modelId: effective.modelId },
+      mode: args.mode,
       ownership: args.parentMessageOwnership,
       execute: runOnModelChain,
     })

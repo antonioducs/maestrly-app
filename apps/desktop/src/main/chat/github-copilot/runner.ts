@@ -938,6 +938,7 @@ export async function runGitHubCopilotChat(args: RunGitHubCopilotChatArgs): Prom
       role: 'assistant',
       parts: [],
       model: args.selection,
+      mode: args.mode,
       ...(args.messageMeta ?? {}),
       createdAt,
     },

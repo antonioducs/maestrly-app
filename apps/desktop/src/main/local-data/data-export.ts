@@ -3,6 +3,8 @@ import { listAllConversations, listWorkspaces, getDb } from '../store'
 import { readNotebookReadOnly, type ExportedNotePage } from '../notes/notes-service'
 import { listChatMessages, toPublicChatMessages, toPublicChatUsage, type StoredChatUsage } from '../chat/chat-store'
 import type { ChatUsage } from '../../shared/chat'
+import { isChatBehavior } from '../../shared/chat-mode'
+import type { ChatBehavior } from '../../shared/conversation-experience'
 import type { LocalMemory } from '../../shared/memory'
 import { listLocalMemories } from '../memory/local-memory-service'
 
@@ -49,6 +51,7 @@ export interface ExportedUsageHistory {
   messageId: string
   providerId: string
   modelId: string
+  mode: ChatBehavior | null
   usage: ChatUsage
   createdAt: number
 }
@@ -78,7 +81,7 @@ function listUsageHistory(omissions: string[]): ExportedUsageHistory[] {
   try {
     const rows = getDb()
       .prepare(
-        `SELECT message_id, provider_id, model_id, usage_json, created_at
+        `SELECT message_id, provider_id, model_id, mode, usage_json, created_at
          FROM chat_usage_ledger
          ORDER BY created_at ASC, message_id ASC`
       )
@@ -86,6 +89,7 @@ function listUsageHistory(omissions: string[]): ExportedUsageHistory[] {
       message_id: string
       provider_id: string
       model_id: string
+      mode: string | null
       usage_json: string
       created_at: number
     }>
@@ -100,6 +104,7 @@ function listUsageHistory(omissions: string[]): ExportedUsageHistory[] {
           messageId: row.message_id,
           providerId: row.provider_id,
           modelId: row.model_id,
+          mode: isChatBehavior(row.mode) ? row.mode : null,
           usage,
           createdAt: row.created_at,
         })

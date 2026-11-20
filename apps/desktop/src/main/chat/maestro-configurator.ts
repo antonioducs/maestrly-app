@@ -920,6 +920,7 @@ export class MaestroConfiguratorService {
         recordStandaloneChatUsage({
           id: active.id,
           model: message.model!,
+          mode: 'maestro',
           usage,
           runtimeEstimatedCostUsd: usage.runtimeEstimatedCostUsd,
           createdAt: message.createdAt,
@@ -941,6 +942,7 @@ export class MaestroConfiguratorService {
             providerId: args.profile.providerId,
             modelId: args.profile.modelId,
           },
+          mode: 'maestro',
           usage: measured.subagentUsage ?? { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 },
           runtimeEstimatedCostUsd: measured.subagentRuntimeEstimatedCostUsd,
           createdAt: this.now(),

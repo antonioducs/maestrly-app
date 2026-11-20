@@ -3,8 +3,14 @@ import type { ChatBehavior } from './conversation-experience'
 
 export type ChatCapabilityBehavior = Exclude<ChatBehavior, 'design'>
 
+export const CHAT_BEHAVIORS = ['agent', 'design', 'plan', 'ask', 'maestro'] as const
+
 export function isChatMode(value: unknown): value is ChatMode {
   return value === 'agent' || value === 'design' || value === 'plan' || value === 'ask'
+}
+
+export function isChatBehavior(value: unknown): value is ChatBehavior {
+  return value === 'agent' || value === 'design' || value === 'plan' || value === 'ask' || value === 'maestro'
 }
 
 export function normalizeChatMode(value: unknown): ChatMode {
