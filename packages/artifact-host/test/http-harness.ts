@@ -96,6 +96,7 @@ export async function startHarness(
     boards,
     whiteboardViewer: options.whiteboardViewer,
     boardPollMs: options.boardPollMs,
+    admin,
   })
   const port = await server.listen()
   const origin = `http://127.0.0.1:${port}`

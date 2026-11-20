@@ -130,6 +130,7 @@ CREATE TABLE IF NOT EXISTS comments (
   author_name TEXT NOT NULL,
   body TEXT NOT NULL,
   anchor_json TEXT,
+  suggestion_json TEXT,
   status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved')),
   created_at INTEGER NOT NULL,
   deleted_at INTEGER
@@ -155,10 +156,16 @@ CREATE TABLE IF NOT EXISTS owner_tickets (
 ${BOARD_ELEMENTS}`
 
 /** Bumped with every change that tables created by an earlier build need applied through `MIGRATIONS`. */
-export const SCHEMA_VERSION = 4
+export const SCHEMA_VERSION = 5
+
+const hasColumn = (db: DatabaseSync, table: string, column: string): boolean =>
+  db
+    .prepare(`PRAGMA table_info(${table})`)
+    .all()
+    .some((row) => row.name === column)
 
 /** What brings tables created at version N - 1 to N. A new database is created current by `SCHEMA`. */
-const MIGRATIONS: Record<number, string> = {
+const MIGRATIONS: Record<number, string | ((db: DatabaseSync) => void)> = {
   // Responses can be turned off per artifact, and a new one is an event for the owner.
   2: `
 ALTER TABLE artifacts ADD COLUMN responses_enabled INTEGER NOT NULL DEFAULT 1;
@@ -184,6 +191,10 @@ ${BOARD_ELEMENTS}`,
   // Earlier versions and their comments are hidden from people the artifact is shared with by default.
   4: `
 ALTER TABLE artifacts ADD COLUMN versions_visible INTEGER NOT NULL DEFAULT 0;`,
+  // Comments on design prototypes can carry a structured token suggestion.
+  5: (db) => {
+    if (!hasColumn(db, 'comments', 'suggestion_json')) db.exec('ALTER TABLE comments ADD COLUMN suggestion_json TEXT;')
+  },
 }
 
 export function transaction<T>(db: DatabaseSync, fn: () => T): T {
@@ -210,8 +221,11 @@ export function openDatabase(file: string): DatabaseSync {
         | { value: string }
         | undefined
       // Without a version, `SCHEMA` has just created every table as this build defines it.
-      for (let version = row ? Number(row.value) : SCHEMA_VERSION; version < SCHEMA_VERSION; version++)
-        db.exec(MIGRATIONS[version + 1]!)
+      for (let version = row ? Number(row.value) : SCHEMA_VERSION; version < SCHEMA_VERSION; version++) {
+        const step = MIGRATIONS[version + 1]!
+        if (typeof step === 'string') db.exec(step)
+        else step(db)
+      }
       // A database from a newer host keeps its version: this build never lowers it.
       db.prepare(
         `INSERT INTO host_meta (key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value

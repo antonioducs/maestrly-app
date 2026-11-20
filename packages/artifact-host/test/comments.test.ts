@@ -87,6 +87,7 @@ describe('comments', () => {
       author: { kind: 'owner', name: 'Antonio', verified: true, principalId: null },
       body: 'Is this right?',
       anchor: { quote, hint: { selector: 'p:nth-of-type(1)' } },
+      suggestion: null,
       status: 'open',
       createdAt: clock.now(),
     })

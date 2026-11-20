@@ -17,6 +17,8 @@ export interface CommentRecord {
   body: string
   /** The anchor as stored JSON; the comments module validates it on the way in and out. */
   anchorJson: string | null
+  /** Optional structured token suggestion as stored JSON. */
+  suggestionJson?: string | null
   status: CommentStatus
   createdAt: number
 }
@@ -42,6 +44,7 @@ const toComment = (row: Row): CommentRecord => ({
   authorName: row.author_name as string,
   body: row.body as string,
   anchorJson: (row.anchor_json as string | null) ?? null,
+  suggestionJson: (row.suggestion_json as string | null) ?? null,
   status: row.status as CommentStatus,
   createdAt: row.created_at as number,
 })
@@ -54,7 +57,7 @@ export class CommentStore {
     this.db
       .prepare(
         `INSERT INTO comments (id, artifact_id, version, parent_id, author_kind, principal_id, author_name, body,
-           anchor_json, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           anchor_json, suggestion_json, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         comment.id,
@@ -66,6 +69,7 @@ export class CommentStore {
         comment.authorName,
         comment.body,
         comment.anchorJson,
+        comment.suggestionJson ?? null,
         comment.status,
         comment.createdAt
       )
@@ -128,6 +132,10 @@ export class CommentStore {
 
   setStatus(id: string, status: CommentStatus): void {
     this.db.prepare('UPDATE comments SET status = ? WHERE id = ?').run(status, id)
+  }
+
+  setSuggestionAndStatus(id: string, suggestionJson: string, status: CommentStatus): void {
+    this.db.prepare('UPDATE comments SET suggestion_json = ?, status = ? WHERE id = ?').run(suggestionJson, status, id)
   }
 
   /** Deletes a comment and, when it starts a thread, the replies with it. */

@@ -468,4 +468,108 @@ describe('artifact transfer', () => {
     expect(error.code).toBe('already_exists')
     expect(routes).toEqual(expect.arrayContaining(['admin:exportArtifact', 'upload:putBlobs', 'upload:importArtifact']))
   })
+
+  it('exports and imports token suggestions, detects stripped suggestions in sameContent, and validates appliedVersion', async () => {
+    const source = host()
+    const target = host()
+    const html = utf8('<!doctype html><html><body>Hi</body></html>')
+    const created = await source.admin.create({
+      title: 'Design prototype',
+      owner: DEVICE,
+      origin: { workspaceId: null, conversationId: null, conversationTitle: null },
+      files: [{ path: 'index.html', bytes: html }],
+    })
+    await source.admin.update({
+      id: created.id,
+      baseVersion: 1,
+      summary: 'Apply brand token',
+      createdBy: 'owner',
+      change: { kind: 'files', files: [{ path: 'tokens.css', bytes: utf8(':root { --color-brand: #0055ff; }') }] },
+    })
+
+    const plainThread = await source.admin.addComment(created.id, {
+      author: 'owner',
+      version: 1,
+      body: 'Plain thread without suggestion',
+    })
+    const suggestedThread = await source.admin.addComment(created.id, {
+      author: 'owner',
+      version: 1,
+      body: 'Tokens: --color-brand #112233 → #0055ff',
+      suggestion: {
+        file: 'tokens.css',
+        changes: [
+          { name: '--color-brand', from: '#112233', to: '#0055ff' },
+          { name: '--color-bg', theme: '[data-theme="dark"]', from: '#111111', to: '#0a0a0a' },
+        ],
+        appliedVersion: 2,
+      },
+    })
+    await source.admin.addComment(created.id, {
+      author: 'agent',
+      parentId: suggestedThread.id,
+      body: 'Looks good',
+    })
+
+    const manifest = await source.admin.exportArtifact(created.id)
+    expect(manifest.comments.find((c) => c.id === plainThread.id)?.suggestion).toBeNull()
+    expect(manifest.comments.find((c) => c.id === suggestedThread.id)?.suggestion).toEqual({
+      file: 'tokens.css',
+      changes: [
+        { name: '--color-brand', from: '#112233', to: '#0055ff' },
+        { name: '--color-bg', theme: '[data-theme="dark"]', from: '#111111', to: '#0a0a0a' },
+      ],
+      appliedVersion: 2,
+    })
+
+    // Older hosts without suggestions compare equal when all suggestions are null/absent,
+    // but fail `sameContent` if a non-null suggestion was stripped on import.
+    const legacyManifestNoSuggestions = structuredClone(manifest)
+    legacyManifestNoSuggestions.comments = legacyManifestNoSuggestions.comments
+      .filter((c) => c.id === plainThread.id)
+      .map(({ suggestion: _, ...rest }) => rest)
+    const modernManifestNoSuggestions = structuredClone(manifest)
+    modernManifestNoSuggestions.comments = modernManifestNoSuggestions.comments.filter((c) => c.id === plainThread.id)
+    expect(sameContent(legacyManifestNoSuggestions, modernManifestNoSuggestions)).toBe(true)
+
+    const strippedSuggestionManifest = structuredClone(manifest)
+    strippedSuggestionManifest.comments = strippedSuggestionManifest.comments.map((c) => ({ ...c, suggestion: null }))
+    expect(sameContent(strippedSuggestionManifest, manifest)).toBe(false)
+
+    // Store blobs and verify invalid suggestion imports are rejected.
+    await target.admin.putBlobs([html, utf8(':root { --color-brand: #0055ff; }')])
+    const badReplySuggestion = structuredClone(manifest)
+    badReplySuggestion.comments[2]!.suggestion = {
+      file: 'tokens.css',
+      changes: [{ name: '--color-brand', from: '#112233', to: '#0055ff' }],
+      appliedVersion: null,
+    }
+    expect((await errorOf(target.admin.importArtifact({ ...badReplySuggestion, owner: DEVICE }))).code).toBe(
+      'invalid_input'
+    )
+
+    const badAppliedVersion = structuredClone(manifest)
+    badAppliedVersion.comments[1]!.suggestion = {
+      file: 'tokens.css',
+      changes: [{ name: '--color-brand', from: '#112233', to: '#0055ff' }],
+      appliedVersion: 99,
+    }
+    expect((await errorOf(target.admin.importArtifact({ ...badAppliedVersion, owner: DEVICE }))).code).toBe(
+      'invalid_input'
+    )
+
+    // Valid import preserves suggestion round-trip.
+    await target.admin.importArtifact({ ...manifest, owner: DEVICE })
+    const exportedTarget = await target.admin.exportArtifact(created.id)
+    expect(sameContent(exportedTarget, manifest)).toBe(true)
+    const importedComments = (await target.admin.listComments(created.id, { status: 'all' })).comments
+    expect(importedComments.find((c) => c.id === suggestedThread.id)?.suggestion).toEqual({
+      file: 'tokens.css',
+      changes: [
+        { name: '--color-brand', from: '#112233', to: '#0055ff' },
+        { name: '--color-bg', theme: '[data-theme="dark"]', from: '#111111', to: '#0a0a0a' },
+      ],
+      appliedVersion: 2,
+    })
+  })
 })

@@ -4,7 +4,10 @@
 // which passage or spot the reader chose. The shell draws the pins above the frame and treats every message from here
 // as an untrusted hint. What the shell sends in is only the page's own text and places in it, and the response of the
 // person viewing the page, never names, comments or other people's responses.
-// Nothing here changes the page's DOM: the active passage is painted with the CSS Custom Highlight API.
+// Nothing here mutates the page's DOM tree (no elements, attributes or text nodes are added, edited or removed):
+// the active passage is painted with the CSS Custom Highlight API, inspect outlines are drawn by the shell above the
+// frame, and cursors and live token previews are applied only through constructable stylesheets in
+// `document.adoptedStyleSheets`.
 //
 // It also gives the page `window.maestrly`: `submit(data)` saves a JSON object as the response of the person viewing
 // the page, replacing the one they sent before, and `getResponse()` returns it, or null. Both reject with an error
@@ -44,7 +47,28 @@
   let anchors: Anchor[] = []
   let activeId: string | null = null
   let commenting = false
+  let inspecting = false
+  let inspectedElement: Element | null = null
+  let componentTokenHints: Record<string, string[]> = {}
   const ranges = new Map<string, Range>()
+
+  const TOKEN_NAME_RE = /^--[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$/
+  const COMPONENT_NAME_RE = /^[A-Z][A-Za-z0-9]{0,47}$/
+  const DS_PROP_KEY_RE = /^[a-z][a-zA-Z0-9-]{0,31}$/
+  const THEME_SELECTOR_RE =
+    /^(?:(?::root|html)?\[data-theme=(?:"[a-zA-Z0-9_-]{1,32}"|'[a-zA-Z0-9_-]{1,32}')\]|(?::root|html)?\.theme-[a-zA-Z0-9_-]{1,32}|@media \((?:prefers-color-scheme: (?:dark|light))\))$/
+  const FORBIDDEN_TOKEN_VALUE_RE = /[;{}<\\]|\/\*|\*\/|!\s*important\b|(?:url|-webkit-image-set|image-set|src)\s*\(/i
+  const CONTROL_CHAR_RE = /\p{Cc}/u
+  const MAX_DS_PROPS = 32
+  const MAX_DS_PROPS_RAW_CHARS = 200
+  const MAX_DS_PROP_VALUE_CHARS = 120
+  const MAX_COMPUTED_STYLE_CHARS = 120
+  const MAX_TOKEN_VALUE_CHARS = 200
+  const MAX_INSPECTED_TOKENS = 64
+  const MAX_INVENTORY_NODES = 5000
+  const MAX_INVENTORY_COMPONENTS = 200
+  const MAX_INVENTORY_COUNT = 10_000
+  const MAX_SCANNED_CSS_RULES = 2000
 
   // --- Finding quoted passages again, whatever the whitespace around them.
 
@@ -161,8 +185,27 @@
     return pins
   }
 
+  function rectOf(element: Element): { x: number; y: number; width: number; height: number } {
+    const box = element.getBoundingClientRect()
+    return { x: box.x, y: box.y, width: box.width, height: box.height }
+  }
+
   function layout(): void {
-    post({ type: 'layout', pins: positions(), width: window.innerWidth, height: window.innerHeight })
+    const payload: Record<string, unknown> = {
+      type: 'layout',
+      pins: positions(),
+      width: window.innerWidth,
+      height: window.innerHeight,
+    }
+    if (inspectedElement) {
+      if (!inspectedElement.isConnected) {
+        inspectedElement = null
+        payload.inspectRect = null
+      } else {
+        payload.inspectRect = rectOf(inspectedElement)
+      }
+    }
+    post(payload)
     if (selecting) reportSelection()
   }
 
@@ -179,12 +222,13 @@
     setTimeout(run, FRAME_FALLBACK_MS)
   }
 
-  // --- The active passage, and the comment-mode cursor, painted without touching the DOM.
+  // --- The active passage, the mode cursor, and live token previews, painted without touching the DOM.
 
   type HighlightRegistryLike = { set(name: string, highlight: unknown): unknown; delete(name: string): unknown }
   const registry = (globalThis as { CSS?: { highlights?: HighlightRegistryLike } }).CSS?.highlights
   const HighlightClass = (globalThis as { Highlight?: new (...ranges: Range[]) => unknown }).Highlight
   let sheet: CSSStyleSheet | null = null
+  let previewSheet: CSSStyleSheet | null = null
 
   function style(): void {
     try {
@@ -192,12 +236,63 @@
         sheet = new CSSStyleSheet()
         document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet]
       }
-      sheet.replaceSync(
-        `::highlight(${HIGHLIGHT}){background-color:rgba(255,204,64,.55);color:inherit}` +
-          (commenting ? `*{cursor:${COMMENT_CURSOR} !important}` : '')
-      )
+      const cursorRule = commenting
+        ? `*{cursor:${COMMENT_CURSOR} !important}`
+        : inspecting
+          ? '*{cursor:crosshair !important}'
+          : ''
+      sheet.replaceSync(`::highlight(${HIGHLIGHT}){background-color:rgba(255,204,64,.55);color:inherit}${cursorRule}`)
     } catch {
       // Without constructable style sheets the page keeps its own cursor and nothing is painted.
+    }
+  }
+
+  function validPreviewTokenValue(value: unknown): value is string {
+    if (typeof value !== 'string') return false
+    if (value.length > MAX_TOKEN_VALUE_CHARS || CONTROL_CHAR_RE.test(value)) return false
+    const trimmed = value.trim()
+    if (!trimmed || trimmed.length > MAX_TOKEN_VALUE_CHARS) return false
+    return !FORBIDDEN_TOKEN_VALUE_RE.test(value)
+  }
+
+  function applyTokenPreview(rawTokens: unknown): void {
+    try {
+      if (!Array.isArray(rawTokens) || rawTokens.length === 0) {
+        previewSheet?.replaceSync('')
+        return
+      }
+      const rootDecls: string[] = []
+      const themedDecls = new Map<string, string[]>()
+      for (const item of rawTokens.slice(0, 200)) {
+        if (typeof item !== 'object' || item === null) continue
+        const rec = item as { name?: unknown; value?: unknown; theme?: unknown }
+        if (typeof rec.name !== 'string' || !TOKEN_NAME_RE.test(rec.name)) continue
+        if (!validPreviewTokenValue(rec.value)) continue
+        const decl = `${rec.name}:${rec.value.trim()} !important;`
+        if (rec.theme === null || rec.theme === undefined) {
+          rootDecls.push(decl)
+        } else if (typeof rec.theme === 'string' && rec.theme.length <= 120 && THEME_SELECTOR_RE.test(rec.theme)) {
+          let list = themedDecls.get(rec.theme)
+          if (!list) {
+            list = []
+            themedDecls.set(rec.theme, list)
+          }
+          list.push(decl)
+        }
+      }
+      const blocks: string[] = []
+      if (rootDecls.length) blocks.push(`:root{${rootDecls.join('')}}`)
+      for (const [theme, decls] of themedDecls) {
+        if (theme.startsWith('@media ')) blocks.push(`${theme}{:root{${decls.join('')}}}`)
+        else blocks.push(`${theme}{${decls.join('')}}`)
+      }
+      if (!previewSheet) {
+        previewSheet = new CSSStyleSheet()
+        document.adoptedStyleSheets = [...document.adoptedStyleSheets, previewSheet]
+      }
+      previewSheet.replaceSync(blocks.join('\n'))
+    } catch {
+      // Constructable stylesheets unavailable.
     }
   }
 
@@ -303,9 +398,200 @@
     true
   )
 
+  function resolveInspectElement(hit: Element | null): Element | null {
+    if (!hit) return null
+    for (let node: Element | null = hit; node; node = node.parentElement) {
+      const ds = node.getAttribute('data-ds')
+      if (ds && COMPONENT_NAME_RE.test(ds)) return node
+    }
+    return hit
+  }
+
+  function buildInspectHover(element: Element): Record<string, unknown> {
+    const { selector } = pathOf(element)
+    const rawComponent = element.getAttribute('data-ds')
+    const component = rawComponent && COMPONENT_NAME_RE.test(rawComponent) ? rawComponent : null
+    return {
+      selector,
+      rect: rectOf(element),
+      tag: element.tagName.toLowerCase(),
+      component,
+      main: component !== null && element.hasAttribute('data-ds-main'),
+    }
+  }
+
+  function parseDsProps(raw: string | null): Record<string, string> {
+    const props: Record<string, string> = {}
+    if (!raw) return props
+    const parts = raw.slice(0, MAX_DS_PROPS_RAW_CHARS).trim().split(/\s+/)
+    let count = 0
+    for (const part of parts) {
+      if (!part || count >= MAX_DS_PROPS) break
+      const eq = part.indexOf('=')
+      if (eq <= 0) continue
+      const key = part.slice(0, eq)
+      const val = part.slice(eq + 1)
+      if (!DS_PROP_KEY_RE.test(key) || key === 'constructor' || key === 'prototype') continue
+      if (!val || val.length > MAX_DS_PROP_VALUE_CHARS || CONTROL_CHAR_RE.test(val)) continue
+      Object.defineProperty(props, key, { value: val, enumerable: true, writable: true, configurable: true })
+      count++
+    }
+    return props
+  }
+
+  const VAR_TOKEN_RE = /var\(\s*(--[a-zA-Z0-9][a-zA-Z0-9_-]{0,62})(?=[\s,)])/g
+
+  function collectTokensFromText(cssText: string, into: Set<string>): void {
+    VAR_TOKEN_RE.lastIndex = 0
+    for (let match = VAR_TOKEN_RE.exec(cssText); match; match = VAR_TOKEN_RE.exec(cssText)) {
+      if (into.size >= MAX_INSPECTED_TOKENS) return
+      into.add(match[1]!)
+    }
+  }
+
+  function collectCssRuleTokens(element: Element, into: Set<string>): void {
+    let scanned = 0
+    const visitRules = (rules: CSSRuleList): void => {
+      for (let i = 0; i < rules.length && scanned < MAX_SCANNED_CSS_RULES && into.size < MAX_INSPECTED_TOKENS; i++) {
+        scanned++
+        const rule = rules[i]
+        if (!rule) continue
+        if (typeof CSSStyleRule !== 'undefined' && rule instanceof CSSStyleRule) {
+          let matched = false
+          try {
+            matched = element.matches(rule.selectorText)
+          } catch {
+            matched = false
+          }
+          if (matched) collectTokensFromText(rule.cssText.slice(rule.selectorText.length), into)
+        } else if ('cssRules' in rule) {
+          try {
+            const nested = (rule as CSSGroupingRule).cssRules
+            if (nested) visitRules(nested)
+          } catch {
+            // Unreadable nested rule list.
+          }
+        }
+      }
+    }
+    for (let i = 0; i < document.styleSheets.length && into.size < MAX_INSPECTED_TOKENS; i++) {
+      const s = document.styleSheets[i]
+      if (!s) continue
+      try {
+        visitRules(s.cssRules)
+      } catch {
+        // Stylesheet without CORS (`crossorigin`) in an opaque origin throws SecurityError.
+      }
+    }
+  }
+
+  function buildInspectTarget(element: Element): Record<string, unknown> {
+    const hover = buildInspectHover(element)
+    const component = hover.component as string | null
+    const computed = getComputedStyle(element)
+    const capStyle = (val: string) => val.replace(/\p{Cc}/gu, '').slice(0, MAX_COMPUTED_STYLE_CHARS)
+    const styles = {
+      fontFamily: capStyle(computed.fontFamily),
+      fontSize: capStyle(computed.fontSize),
+      fontWeight: capStyle(computed.fontWeight),
+      lineHeight: capStyle(computed.lineHeight),
+      color: capStyle(computed.color),
+      backgroundColor: capStyle(computed.backgroundColor),
+      borderRadius: capStyle(computed.borderRadius),
+      padding: capStyle(computed.padding),
+    }
+
+    const tokenNames = new Set<string>()
+    const inlineStyle = element.getAttribute('style')
+    if (inlineStyle) collectTokensFromText(inlineStyle, tokenNames)
+    collectCssRuleTokens(element, tokenNames)
+    if (component && Object.hasOwn(componentTokenHints, component)) {
+      for (const hint of componentTokenHints[component]!) {
+        if (tokenNames.size >= MAX_INSPECTED_TOKENS) break
+        if (TOKEN_NAME_RE.test(hint)) tokenNames.add(hint)
+      }
+    }
+
+    const tokens: { name: string; value: string }[] = []
+    for (const name of tokenNames) {
+      const val = computed
+        .getPropertyValue(name)
+        .trim()
+        .replace(/\p{Cc}/gu, '')
+        .slice(0, MAX_TOKEN_VALUE_CHARS)
+      tokens.push({ name, value: val })
+    }
+
+    return {
+      ...hover,
+      props: parseDsProps(element.getAttribute('data-ds-props')),
+      styles,
+      tokens,
+    }
+  }
+
+  function collectInventory(): { instances: Record<string, number>; mains: string[] } {
+    const instances: Record<string, number> = {}
+    const mains: string[] = []
+    const seenMains = new Set<string>()
+    let instanceKeys = 0
+    const nodes = document.querySelectorAll('[data-ds]')
+    const limit = Math.min(nodes.length, MAX_INVENTORY_NODES)
+    for (let i = 0; i < limit; i++) {
+      const el = nodes[i]!
+      const comp = el.getAttribute('data-ds')
+      if (!comp || !COMPONENT_NAME_RE.test(comp)) continue
+      if (el.hasAttribute('data-ds-main')) {
+        if (!seenMains.has(comp) && mains.length < MAX_INVENTORY_COMPONENTS) {
+          seenMains.add(comp)
+          mains.push(comp)
+        }
+      } else {
+        const hasKey = Object.hasOwn(instances, comp)
+        if (!hasKey) {
+          if (instanceKeys >= MAX_INVENTORY_COMPONENTS) continue
+          instanceKeys++
+          Object.defineProperty(instances, comp, { value: 1, enumerable: true, writable: true, configurable: true })
+        } else if (instances[comp]! < MAX_INVENTORY_COUNT) {
+          instances[comp]!++
+        }
+      }
+    }
+    return { instances, mains }
+  }
+
+  let hoverQueued = false
+  let lastPointerHit: Element | null = null
+  function reportHoverSoon(hit: Element | null): void {
+    lastPointerHit = hit
+    if (hoverQueued) return
+    hoverQueued = true
+    const flush = () => {
+      if (!hoverQueued) return
+      hoverQueued = false
+      if (!inspecting) return
+      const candidate = resolveInspectElement(lastPointerHit)
+      post({ type: 'inspect-hover', target: candidate ? buildInspectHover(candidate) : null })
+    }
+    requestAnimationFrame(flush)
+    setTimeout(flush, FRAME_FALLBACK_MS)
+  }
+
+  window.addEventListener(
+    'pointermove',
+    (event) => {
+      if (!inspecting) return
+      reportHoverSoon(event.target instanceof Element ? event.target : null)
+    },
+    true
+  )
+  document.documentElement.addEventListener('pointerleave', () => {
+    if (inspecting) post({ type: 'inspect-hover', target: null })
+  })
+
   function onPointer(event: Event): void {
-    if (!commenting) return
-    // The page does not learn about clicks meant for comments; the default stays, so text can still be selected.
+    if (!commenting && !inspecting) return
+    // The page does not learn about clicks meant for comments or inspect; default stays for text selection.
     event.stopImmediatePropagation()
   }
   for (const type of ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'dblclick', 'auxclick'])
@@ -314,6 +600,15 @@
   window.addEventListener(
     'click',
     (event) => {
+      if (inspecting) {
+        event.preventDefault()
+        event.stopImmediatePropagation()
+        const hit = event.target instanceof Element ? event.target : document.body
+        const candidate = resolveInspectElement(hit)
+        inspectedElement = candidate
+        post({ type: 'inspect-pick', target: candidate ? buildInspectTarget(candidate) : null })
+        return
+      }
       if (!commenting) return
       event.preventDefault()
       event.stopImmediatePropagation()
@@ -344,7 +639,7 @@
     if (document.documentElement.dataset.maestrlyShortcuts === 'none' && event.key !== 'Escape') return
     const typing =
       event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable]') !== null
-    if (event.key === 'Escape' || (!typing && (event.key === 'c' || event.key === 'f')))
+    if (event.key === 'Escape' || (!typing && (event.key === 'c' || event.key === 'f' || event.key === 'i')))
       post({ type: 'key', key: event.key })
   })
 
@@ -462,7 +757,65 @@
       layout()
     } else if (data.type === 'mode') {
       commenting = data.commenting === true
+      if (commenting) inspecting = false
       style()
+    } else if (data.type === 'inspect-mode') {
+      inspecting = data.inspecting === true
+      if (inspecting) commenting = false
+      else {
+        inspectedElement = null
+        lastPointerHit = null
+      }
+      const nextHints: Record<string, string[]> = {}
+      if (
+        typeof data.componentTokens === 'object' &&
+        data.componentTokens !== null &&
+        !Array.isArray(data.componentTokens)
+      ) {
+        for (const [comp, list] of Object.entries(data.componentTokens as Record<string, unknown>)) {
+          if (!COMPONENT_NAME_RE.test(comp) || !Array.isArray(list)) continue
+          const filtered = list.filter((t): t is string => typeof t === 'string' && TOKEN_NAME_RE.test(t)).slice(0, 64)
+          Object.defineProperty(nextHints, comp, {
+            value: filtered,
+            enumerable: true,
+            writable: true,
+            configurable: true,
+          })
+        }
+      }
+      componentTokenHints = nextHints
+      style()
+    } else if (data.type === 'inspect-clear') {
+      inspectedElement = null
+      layoutSoon()
+    } else if (data.type === 'reveal-component' && typeof data.component === 'string') {
+      if (!COMPONENT_NAME_RE.test(data.component)) return
+      const escaped = CSS.escape(data.component)
+      const target = query(`[data-ds="${escaped}"][data-ds-main]`) ?? query(`[data-ds="${escaped}"]`)
+      if (target) {
+        target.scrollIntoView({ block: 'center', behavior: 'smooth' })
+        inspectedElement = target
+        post({ type: 'inspect-pick', target: buildInspectTarget(target) })
+        layoutSoon()
+      } else {
+        inspectedElement = null
+        post({ type: 'inspect-pick', target: null })
+      }
+    } else if (data.type === 'inventory-request' && typeof data.requestId === 'string') {
+      const { instances, mains } = collectInventory()
+      post({ type: 'inventory', requestId: data.requestId.slice(0, 32), instances, mains })
+    } else if (data.type === 'token-preview') {
+      applyTokenPreview(data.tokens)
+      if (inspectedElement?.isConnected) {
+        post({ type: 'inspect-pick', target: buildInspectTarget(inspectedElement) })
+      }
+      layoutSoon()
+    } else if (data.type === 'token-preview-clear') {
+      previewSheet?.replaceSync('')
+      if (inspectedElement?.isConnected) {
+        post({ type: 'inspect-pick', target: buildInspectTarget(inspectedElement) })
+      }
+      layoutSoon()
     } else if (data.type === 'reveal' && typeof data.id === 'string') {
       const anchor = anchors.find((item) => item.id === data.id)
       const target = anchor?.quote
