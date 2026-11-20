@@ -463,15 +463,18 @@ shell above the frame rather than inside it. In Inspect mode the bridge blocks
 page clicks at capture phase and reports bounded component metadata, computed
 style values, and token names, which the shell validates and renders as text.
 Live token previews construct a stylesheet inside the frame via
-`adoptedStyleSheets` after rejecting syntax-breaking characters, CSS comments,
-`!important`, and external resource functions (`url()`, `image-set()`, `src()`),
+`adoptedStyleSheets` after rejecting syntax-breaking characters, unbalanced
+quotes or `()`/`[]` delimiters, CSS comments, `!important`, `@import`, and
+external or script functions (`url()`, `image-set()`, `src()`, `expression()`),
 so previews never mutate the page DOM or trigger network fetches. Saving token
 edits directly as a new version and applying a comment's token suggestion are
 owner-only viewer API writes that rewrite only the matched custom-property value
-spans on a verified base version; non-owners with access may attach bounded,
-server-verified token suggestions to top-level comments when comments are
-enabled, and those suggestions travel inside the same escaped
-`artifact_comments` envelope as plain comment data.
+spans on a verified base version (with suggestion-apply version summaries
+recording only the validated token names, never third-party author names or
+proposed values); non-owners with access may attach bounded, server-verified
+token suggestions to top-level comments when comments are enabled, and those
+suggestions travel inside the same escaped `artifact_comments` envelope as plain
+comment data.
 
 After a local publication, and when a listed server version lacks a preview,
 the desktop renders the new version for a preview, in

@@ -3,9 +3,15 @@ import { z } from 'zod'
 import { type Access, isReplaced, seesHistory } from '../access.js'
 import type { ArtifactAdmin } from '../admin.js'
 import type { CommentAuthor, CommentService, CommentView, TokenSuggestion } from '../comments.js'
-import { buildTokenEdits, DesignActionError, type DesignService, formatTokenSummary } from '../design.js'
+import {
+  buildTokenEdits,
+  DesignActionError,
+  type DesignService,
+  formatAppliedSuggestionSummary,
+  formatTokenSummary,
+} from '../design.js'
 import { ArtifactHostError } from '../errors.js'
-import { MAX_SUGGESTION_CHANGES, MAX_SUMMARY_CHARS } from '../limits.js'
+import { MAX_SUGGESTION_CHANGES } from '../limits.js'
 import type { CommentPage, PublicComment, TokenChange, ViewerVersion } from '../shell/contract.js'
 import { tokenDraftKey } from '../shell/design-model.js'
 import { tokenChangeInputSchema } from './design-routes.js'
@@ -286,8 +292,7 @@ export function createCommentRoutes(deps: CommentRouteDeps): CommentRoutes {
         throw error
       }
 
-      const diffText = formatTokenSummary(built.appliedChanges).replace(/^Tokens:\s*/, '')
-      const summary = `Tokens (suggested by ${existing.author.name}): ${diffText}`.slice(0, MAX_SUMMARY_CHARS)
+      const summary = formatAppliedSuggestionSummary(built.appliedChanges.map((c) => c.name))
       try {
         const updated = await admin.update({
           id: ctx.artifactId,

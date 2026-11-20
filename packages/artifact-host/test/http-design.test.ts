@@ -361,10 +361,13 @@ describe('token suggestions on comments & POST /a/:id/api/comments/:id/apply', (
     })
 
     // Apply on currentVersion=2 -> 200 creates v3, marks suggestion appliedVersion=3 and status='resolved'
+    // Version summary lists only validated token names — never third-party author names or proposed values!
     const applied = await owner.send('POST', `${api}/comments/${created.json.id}/apply`, { baseVersion: 2 })
     expect(applied.status).toBe(200)
     expect(applied.json.version.number).toBe(3)
-    expect(applied.json.version.summary).toContain('Tokens (suggested by Ana):')
+    expect(applied.json.version.summary).toBe('Applied a token suggestion: --color-brand')
+    expect(applied.json.version.summary).not.toContain('Ana')
+    expect(applied.json.version.summary).not.toContain('#e11d48')
     expect(applied.json.comment).toMatchObject({
       id: created.json.id,
       status: 'resolved',

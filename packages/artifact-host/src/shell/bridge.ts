@@ -52,12 +52,14 @@
   let componentTokenHints: Record<string, string[]> = {}
   const ranges = new Map<string, Range>()
 
-  const TOKEN_NAME_RE = /^--[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$/
+  const TOKEN_NAME_RE = /^--[a-zA-Z0-9][a-zA-Z0-9_-]{0,61}$/
   const COMPONENT_NAME_RE = /^[A-Z][A-Za-z0-9]{0,47}$/
   const DS_PROP_KEY_RE = /^[a-z][a-zA-Z0-9-]{0,31}$/
   const THEME_SELECTOR_RE =
-    /^(?:(?::root|html)?\[data-theme=(?:"[a-zA-Z0-9_-]{1,32}"|'[a-zA-Z0-9_-]{1,32}')\]|(?::root|html)?\.theme-[a-zA-Z0-9_-]{1,32}|@media \((?:prefers-color-scheme: (?:dark|light))\))$/
-  const FORBIDDEN_TOKEN_VALUE_RE = /[;{}<\\]|\/\*|\*\/|!\s*important\b|(?:url|-webkit-image-set|image-set|src)\s*\(/i
+    /^(?:(?::root|html)?\[data-theme=(?:"[a-zA-Z0-9_-]{1,32}"|'[a-zA-Z0-9_-]{1,32}')\]|(?::root|html)?\.(?:dark|light|theme-[a-zA-Z0-9_-]{1,32})|@media \((?:prefers-color-scheme: (?:dark|light))\))$/
+  const FORBIDDEN_RAW_TOKEN_VALUE_RE = /[<\\]|\/\*|\*\//
+  const FORBIDDEN_UNQUOTED_TOKEN_VALUE_RE =
+    /!\s*important\b|@import\b|(?:url|-webkit-image-set|image-set|src|expression)\s*\(/i
   const CONTROL_CHAR_RE = /\p{Cc}/u
   const MAX_DS_PROPS = 32
   const MAX_DS_PROPS_RAW_CHARS = 200
@@ -252,7 +254,38 @@
     if (value.length > MAX_TOKEN_VALUE_CHARS || CONTROL_CHAR_RE.test(value)) return false
     const trimmed = value.trim()
     if (!trimmed || trimmed.length > MAX_TOKEN_VALUE_CHARS) return false
-    return !FORBIDDEN_TOKEN_VALUE_RE.test(value)
+    if (FORBIDDEN_RAW_TOKEN_VALUE_RE.test(value)) return false
+
+    let quote: '"' | "'" | null = null
+    const stack: ('(' | '[')[] = []
+    let unquoted = ''
+    for (let i = 0; i < trimmed.length; i++) {
+      const ch = trimmed[i]!
+      if (quote !== null) {
+        if (ch === quote) quote = null
+        continue
+      }
+      if (ch === '"' || ch === "'") {
+        quote = ch
+        unquoted += '""'
+        continue
+      }
+      if (ch === ';' || ch === '{' || ch === '}') return false
+      if (ch === '(' || ch === '[') {
+        stack.push(ch)
+        unquoted += ch
+      } else if (ch === ')') {
+        if (stack.pop() !== '(') return false
+        unquoted += ch
+      } else if (ch === ']') {
+        if (stack.pop() !== '[') return false
+        unquoted += ch
+      } else {
+        unquoted += ch
+      }
+    }
+    if (quote !== null || stack.length > 0) return false
+    return !FORBIDDEN_UNQUOTED_TOKEN_VALUE_RE.test(unquoted)
   }
 
   function applyTokenPreview(rawTokens: unknown): void {
@@ -439,7 +472,7 @@
     return props
   }
 
-  const VAR_TOKEN_RE = /var\(\s*(--[a-zA-Z0-9][a-zA-Z0-9_-]{0,62})(?=[\s,)])/g
+  const VAR_TOKEN_RE = /var\(\s*(--[a-zA-Z0-9][a-zA-Z0-9_-]{0,61})(?=[\s,)])/g
 
   function collectTokensFromText(cssText: string, into: Set<string>): void {
     VAR_TOKEN_RE.lastIndex = 0

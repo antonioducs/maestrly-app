@@ -86,17 +86,20 @@ export const DESIGN_SCHEMA = 'maestrly-prototype/v1'
 export const MAX_DESIGN_TOKENS = 200
 export const MAX_DESIGN_TOKEN_FILES = 8
 export const MAX_DESIGN_SCREENS = 50
+export const MAX_DESIGN_COMPONENTS = 200
 export const MAX_DESIGN_TITLE_CHARS = 120
 export const MAX_DESIGN_SCREEN_NAME_CHARS = 80
 export const MAX_DESIGN_SCREEN_PATH_CHARS = 300
 export const MAX_TOKEN_VALUE_CHARS = 200
 export const MAX_THEME_SELECTOR_CHARS = 120
-export const MAX_DS_PROPS = 32
+export const MAX_INSPECT_PROPS = 32
+export const MAX_DS_PROPS = MAX_INSPECT_PROPS
 export const MAX_DS_PROPS_RAW_CHARS = 200
 export const MAX_DS_PROP_VALUE_CHARS = 120
 export const MAX_COMPUTED_STYLE_CHARS = 120
-export const MAX_INSPECTED_TOKENS = 64
-export const MAX_INVENTORY_COMPONENTS = 200
+export const MAX_INSPECT_TOKENS = 64
+export const MAX_INSPECTED_TOKENS = MAX_INSPECT_TOKENS
+export const MAX_INVENTORY_COMPONENTS = MAX_DESIGN_COMPONENTS
 export const MAX_INVENTORY_COUNT = 10_000
 export const MIN_VIEWPORT_DIMENSION = 320
 export const MAX_VIEWPORT_DIMENSION = 2560
@@ -208,7 +211,7 @@ const THEME_SELECTOR_PATTERN =
   /^(?:(?::root|html)?\[data-theme=(?:"[a-zA-Z0-9_-]{1,32}"|'[a-zA-Z0-9_-]{1,32}')\]|(?::root|html)?\.(?:dark|light|theme-[a-zA-Z0-9_-]{1,32})|@media \((?:prefers-color-scheme: (?:dark|light))\))$/
 const FORBIDDEN_RAW_TOKEN_VALUE = /[<\\]|\/\*|\*\//
 const FORBIDDEN_UNQUOTED_TOKEN_VALUE =
-  /[;{}]|!\s*important\b|@import\b|(?:url|-webkit-image-set|image-set|src|expression)\s*\(/i
+  /!\s*important\b|@import\b|(?:url|-webkit-image-set|image-set|src|expression)\s*\(/i
 const CONTROL_CHAR = /\p{Cc}/u
 
 export function isValidTokenName(value: unknown): value is string {
@@ -221,7 +224,36 @@ export function isValidTokenValue(value: unknown): value is string {
   const trimmed = value.trim()
   if (!trimmed || trimmed.length > MAX_TOKEN_VALUE_CHARS) return false
   if (FORBIDDEN_RAW_TOKEN_VALUE.test(value)) return false
-  const unquoted = value.replace(/"[^"]*"|'[^']*'/g, '""')
+
+  let quote: '"' | "'" | null = null
+  const stack: ('(' | '[')[] = []
+  let unquoted = ''
+  for (let i = 0; i < trimmed.length; i++) {
+    const ch = trimmed[i]!
+    if (quote !== null) {
+      if (ch === quote) quote = null
+      continue
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch
+      unquoted += '""'
+      continue
+    }
+    if (ch === ';' || ch === '{' || ch === '}') return false
+    if (ch === '(' || ch === '[') {
+      stack.push(ch)
+      unquoted += ch
+    } else if (ch === ')') {
+      if (stack.pop() !== '(') return false
+      unquoted += ch
+    } else if (ch === ']') {
+      if (stack.pop() !== '[') return false
+      unquoted += ch
+    } else {
+      unquoted += ch
+    }
+  }
+  if (quote !== null || stack.length > 0) return false
   return !FORBIDDEN_UNQUOTED_TOKEN_VALUE.test(unquoted)
 }
 

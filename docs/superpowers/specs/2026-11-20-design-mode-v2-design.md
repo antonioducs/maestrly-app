@@ -213,22 +213,25 @@ scans it in a single `O(N)` character pass (no regex backtracking) while recordi
      `@media (prefers-color-scheme: dark | light) { ... }` are inspected; `@keyframes`, `@font-face`, and other
      at-rules are skipped.
    - Each rule's selector (comments stripped, whitespace collapsed) is classified into:
-     - **Base scope (`theme: null`)**: `:root` (or a selector list containing bare `:root`, outside `@media`), or
+     - **Base scope (`theme: null`)**: `:root` (or a selector list of `:root` / `html` / `:host` containing `:root`,
+       outside `@media`), or
      - **Theme scope (`theme: string`)**: matches the closed theme-selector allowlist:
-       - `^(?::root|html)?\[data-theme=["'][a-zA-Z0-9_-]{1,32}["']\]$` (for example `[data-theme="dark"]`),
-       - `^(?::root|html)?\.theme-[a-zA-Z0-9_-]{1,32}$` (for example `.theme-light`), or
+       - `^(?::root|html)?\[data-theme=["'][a-zA-Z0-9_-]{1,32}["']\]$` (for example `[data-theme="dark"]` or
+         `[data-theme='dark']`),
+       - `^(?::root|html)?\.(?:dark|light|theme-[a-zA-Z0-9_-]{1,32})$` (for example `.theme-light` or `.dark`), or
        - `@media (prefers-color-scheme: dark)` / `@media (prefers-color-scheme: light)` wrapping `:root`.
    - Component or arbitrary selectors in `tokens[0]` are ignored, ensuring theme selectors echoed into preview
      stylesheets can never carry arbitrary CSS selectors.
 3. **Declarations, duplicates, and limits**:
    - Inside a recognized scope, declarations whose property matches
-     `TOKEN_NAME_PATTERN = /^--[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$/` are parsed. A trailing `!important` is stripped from
-     the exposed value (`valueStart..valueEnd` covers only the value before any `!important` and trailing whitespace)
-     while `hadImportant` remembers whether `!important` was present in source.
+     `TOKEN_NAME_PATTERN = /^--[a-zA-Z0-9][a-zA-Z0-9_-]{0,61}$/` (`<= 64` chars total) are parsed. A trailing
+     `!important` is stripped from the exposed value (`valueStart..valueEnd` covers only the value before any
+     `!important` and trailing whitespace) while `hadImportant` remembers whether `!important` was present in source.
    - Values must validate under `isValidTokenValue`: trimmed length `1..200`, single-line (`/^\P{Cc}+$/u`), containing
-     none of `;`, `{`, `}`, `<`, `\`, `/*`, `*/`, `!important`, or case-insensitive external resource functions
-     `/\b(?:url|image-set|-webkit-image-set|src)\s*\(/i` (blocking CSS Images 4 bare-string `image-set("https://...")`
-     in addition to `url(`). Invalid declarations are skipped.
+     no raw `<`, `\`, `/*`, or `*/`, with balanced `"`/`'` string quotes, no unquoted `;`, `{`, or `}`, balanced `()`
+     and `[]` outside quotes, and no unquoted `!important`, `@import`, or case-insensitive external/script functions
+     `/(?:url|-webkit-image-set|image-set|src|expression)\s*\(/i` (blocking CSS Images 4 bare-string
+     `image-set("https://...")` in addition to `url(`). Invalid declarations are skipped.
    - **Duplicates**: within the same `(name, theme)` scope, CSS cascade order applies—the **last** valid declaration in
      file order wins both for the value shown in the viewer and as the target span rewritten on save; earlier shadowed
      duplicates remain untouched.
@@ -479,10 +482,11 @@ owns whiteboard synchronization; user-facing labels follow the UX prototype.
     is either `change.from` or `change.to` (returning `409 suggestion_conflict` if a newer version changed that same
     token to a third value, while allowing apply across intermediate versions that touched other files or other
     tokens). If at least one token still equals `change.from`, creates a new version via `admin.update`
-    (`createdBy: 'owner'`, summary `Tokens (suggested by <authorName>): …`), then atomically sets
-    `suggestion.appliedVersion = newVersion` and `status = 'resolved'` on the thread in `CommentStore`. If all tokens
-    already equal `change.to`, marks `appliedVersion = currentVersion` and `status = 'resolved'` without creating an
-    empty version. Returns `200 { version, design, comment }`.
+    (`createdBy: 'owner'`, summary `Applied a token suggestion: --name, …` listing only the validated token names so
+    third-party author names and proposed values never enter `artifact_get` version metadata without an untrusted-input
+    notice), then atomically sets `suggestion.appliedVersion = newVersion` and `status = 'resolved'` on the thread in
+    `CommentStore`. If all tokens already equal `change.to`, marks `appliedVersion = currentVersion` and
+    `status = 'resolved'` without creating an empty version. Returns `200 { version, design, comment }`.
 - **Agents, Desktop details, and artifact transfer**:
   - `artifact_comments` (`apps/desktop/src/main/mcp/tools/artifact-comments.ts`): `EnvelopeThread` includes optional
     `suggestion` inside the `<`-escaped `<artifact-comments>` envelope after the untrusted-feedback notice, giving
@@ -676,6 +680,7 @@ export interface InspectTarget extends InspectHover {
 export function isValidTokenName(value: unknown): value is string
 export function isValidTokenValue(value: unknown): value is string
 export function isValidThemeSelector(value: unknown): value is string
+export function isValidComponentName(value: unknown): value is string
 ```
 
 ```ts
@@ -684,10 +689,11 @@ export function isValidThemeSelector(value: unknown): value is string
 import type {
   DesignScreen,
   DesignToken,
-  InspectTarget,
   ScreenViewport,
+  ScreenViewportPreset,
   TokenChange,
   TokenGroup,
+  TokenSuggestionChange,
   TokenValueKind,
   UsedToken,
   ViewerDesign,
@@ -696,12 +702,15 @@ import type {
 
 export const MAX_LIVE_SCREEN_FRAMES = 6
 export const MAX_CONCURRENT_FRAME_LOADS = 2
+export const VIEWPORT_PRESETS: Readonly<Record<ScreenViewportPreset, { width: number; height: number }>>
 
 export function groupOfToken(name: string): TokenGroup
 export function classifyTokenValue(name: string, value: string): TokenValueKind
 export function groupTokens(tokens: readonly DesignToken[]): ReadonlyMap<TokenGroup, DesignToken[]>
 export function resolveScreenViewport(viewport: ScreenViewport): { width: number; height: number }
-export function screenFrameUrl(capabilityBase: string, screenPath: string): string | null
+export function screenFrameUrl(capabilityUrl: string, screenPath: string): string | null
+export function tokenDraftKey(name: string, theme?: string | null): string
+export function lookupDesignTokenValue(design: ViewerDesign | null, name: string, theme: string | null): string | null
 export function mergeInspectedTokens(
   reported: readonly UsedToken[],
   component: string | null,
@@ -723,6 +732,8 @@ export function selectLiveScreens(options: {
 export function canSaveTokens(state: ViewerState, version: number, design: ViewerDesign | null): boolean
 export function canSuggestTokens(state: ViewerState, design: ViewerDesign | null): boolean
 export function canApplySuggestion(state: ViewerState, design: ViewerDesign | null): boolean
+export function formatTokenSummary(changes: readonly TokenSuggestionChange[], prefix?: string): string
+export function formatAppliedSuggestionSummary(names: readonly string[]): string
 ```
 
 ```ts

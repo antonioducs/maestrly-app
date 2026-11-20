@@ -1,11 +1,11 @@
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { canEditBoard, gateFor, isReplaced, resolveAccess, seesHistory } from '../access.js'
-import { type ArtifactAdmin, createArtifactAdmin } from '../admin.js'
+import type { ArtifactAdmin } from '../admin.js'
 import { type BoardService, createBoardService } from '../boards.js'
 import { isHtmlPath, normalizeBundlePath } from '../bundle-paths.js'
 import { createCommentService } from '../comments.js'
-import { createDesignService, type DesignService } from '../design.js'
+import type { DesignService } from '../design.js'
 import { createResponseService } from '../responses.js'
 import { ArtifactHostError } from '../errors.js'
 import { BRIDGE_SCRIPT, SHELL_FILES, SHELL_VERSION } from '../generated/shell-assets.js'
@@ -90,10 +90,10 @@ export interface PublicServerDeps {
   whiteboardViewer?: WhiteboardViewer | null
   /** How long a request for a whiteboard's changes waits; shorter in tests. */
   boardPollMs?: number
-  /** Shared with the host so owner token saves serialize with agent updates. */
-  admin?: ArtifactAdmin
+  /** Shared with the host so owner token saves serialize with agent updates and respect quota. */
+  admin: ArtifactAdmin
   /** Cached manifest/token loader shared with the host. */
-  design?: DesignService
+  design: DesignService
 }
 
 export interface PublicServer {
@@ -164,7 +164,7 @@ interface Route {
 const routeKey = (method: string, action: string): string => `${method} ${action}`
 
 export function createPublicServer(deps: PublicServerDeps): PublicServer {
-  const { store, blobs, clock } = deps
+  const { store, blobs, clock, admin, design } = deps
   const publicOrigins = deps.publicOrigins ?? []
   const publicBase = originOf(publicOrigins[0])
   const sharing = deps.sharing ?? new SharingStore(store.db)
@@ -173,21 +173,6 @@ export function createPublicServer(deps: PublicServerDeps): PublicServer {
   const record = deps.recordActivity ?? createActivityRecorder({ sharing, clock, onChange })
   const limiter = createRateLimiter(clock)
   const boards = deps.boards ?? createBoardService({ store: new BoardStore(store.db) })
-  const admin =
-    deps.admin ??
-    createArtifactAdmin({
-      store,
-      blobs,
-      clock,
-      quotaBytes: 500 * 1024 * 1024,
-      sharing,
-      onChange,
-      ownerName,
-      maxComments: deps.maxComments,
-      boards,
-      whiteboardViewer: deps.whiteboardViewer,
-    })
-  const design = deps.design ?? createDesignService({ store, blobs })
   let port = deps.port
 
   function currentSession(req: http.IncomingMessage, id: string, now: number): SessionRecord | null {

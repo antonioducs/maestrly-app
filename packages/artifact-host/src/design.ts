@@ -35,11 +35,17 @@ import {
   type TokenSuggestionChange,
   type ViewerDesign,
 } from './shell/contract.js'
-import { classifyTokenValue, formatTokenSummary, groupOfToken, tokenDraftKey } from './shell/design-model.js'
+import {
+  classifyTokenValue,
+  formatAppliedSuggestionSummary,
+  formatTokenSummary,
+  groupOfToken,
+  tokenDraftKey,
+} from './shell/design-model.js'
 import type { ArtifactStore } from './store/artifact-store.js'
 import type { BlobStore } from './store/blobs.js'
 
-export { formatTokenSummary }
+export { formatAppliedSuggestionSummary, formatTokenSummary }
 
 export type DesignErrorCode = 'no_design_contract' | 'invalid_tokens' | 'unknown_token' | 'no_changes'
 

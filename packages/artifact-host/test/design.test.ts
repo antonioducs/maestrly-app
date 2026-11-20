@@ -1,10 +1,13 @@
+import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { createArtifactAdmin } from '../src/admin.js'
 import {
   buildTokenEdits,
   createDesignService,
   DesignActionError,
+  formatAppliedSuggestionSummary,
   formatTokenSummary,
   parseDesignManifest,
   parseTokensCssWithSpans,
@@ -180,6 +183,9 @@ describe('token value & selector security validators', () => {
       'clamp(1rem, 2vw + 0.5rem, 2.25rem)',
       'calc(var(--space-4) * 2)',
       '"Geist Sans", system-ui, -apple-system, sans-serif',
+      '"Inter (Display); SemiBold", sans-serif',
+      'calc("a(b" + 1px)',
+      '[line-start] 1fr [line-end]',
       '0 12px 32px -8px rgba(0, 0, 0, 0.32)',
       'cubic-bezier(0.2, 0, 0, 1)',
     ]) {
@@ -203,6 +209,19 @@ describe('token value & selector security validators', () => {
       '-webkit-image-set("a.png" 1x)',
       'expression(alert(1))',
       '@import "evil.css"',
+      '"abc',
+      "'abc",
+      '"Inter", "unclosed',
+      "'SF Pro', 'unclosed",
+      'calc(1px',
+      '1px)',
+      'rgb(0, 0, 0',
+      '[a',
+      'a]',
+      'calc([1px)]',
+      '([)]',
+      'calc("a)b" + 1px',
+      '"Inter"; color: red',
     ]) {
       expect(isValidTokenValue(bad), bad).toBe(false)
     }
@@ -432,5 +451,144 @@ describe('parseTokensCssWithSpans & buildTokenEdits', () => {
       store.close()
       tmp.cleanup()
     }
+
+    expect(formatAppliedSuggestionSummary(['--color-accent', '--radius-md', '--color-accent'])).toBe(
+      'Applied a token suggestion: --color-accent, --radius-md'
+    )
+  })
+
+  it('property: saving any set of valid token values preserves exact token names and theme keys on re-parse', () => {
+    let seed = 0x9e3779b9
+    const rand = () => {
+      seed = (seed + 0x6d2b79f5) | 0
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed)
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+    }
+    const pick = <T>(arr: readonly T[]): T => arr[Math.floor(rand() * arr.length)]!
+
+    const validGenerators = [
+      (n: number) => `#${((n * 2654435761) >>> 8).toString(16).padStart(6, '0').slice(0, 6)}`,
+      (n: number) => `rgba(${n % 255}, ${(n * 7) % 255}, ${(n * 13) % 255}, 0.${(n % 9) + 1})`,
+      (n: number) =>
+        `oklch(${(40 + (n % 50)).toFixed(1)}% 0.${(n % 25).toString().padStart(2, '0')} ${(n * 19) % 360})`,
+      (n: number) => `calc((100% - ${(n % 32) + 1}px) / ${(n % 4) + 1})`,
+      (n: number) => `color-mix(in oklab, var(--tok-${n % 6}) ${(n % 80) + 10}%, transparent)`,
+      (n: number) => `"Font; (${n}) [Display]", 'Fallback (${n})', sans-serif`,
+      (n: number) => `[col-${n % 5}] ${(n % 24) + 4}px [col-end]`,
+      (n: number) => `cubic-bezier(0.${n % 9}, 0, 0.${(n + 3) % 9}, 1)`,
+      (n: number) => `  ${(n % 64) + 1}px  `,
+    ]
+
+    const baseCss = [
+      '/* Property fixture with comments: --fake: 1px; */',
+      ':root {',
+      '  --tok-0: #111111;',
+      '  --tok-1: 8px !important;',
+      '  --tok-2: "Inter; Bold", sans-serif;',
+      '  --tok-3: calc(10px + 2px);',
+      '  --tok-4: rgba(0, 0, 0, 0.5);',
+      '  --tok-5: 16px;',
+      '}',
+      '[data-theme="dark"] {',
+      '  --tok-0: #eeeeee;',
+      '  --tok-3: calc(12px + 4px);',
+      '}',
+      '@media (prefers-color-scheme: dark) {',
+      '  :root {',
+      '    --tok-4: rgba(255, 255, 255, 0.5);',
+      '  }',
+      '}',
+      '',
+    ].join('\n')
+
+    const initial = parseTokensCssWithSpans(baseCss)
+    const initialNames = initial.tokens.map((t) => t.name)
+    const initialThemeKeys = initial.tokens.map((t) => Object.keys(t.themes).sort())
+
+    const allSlots: Array<{ name: string; theme?: string }> = [
+      ...initial.tokens.map((t) => ({ name: t.name })),
+      { name: '--tok-0', theme: '[data-theme="dark"]' },
+      { name: '--tok-3', theme: '[data-theme="dark"]' },
+      { name: '--tok-4', theme: '@media (prefers-color-scheme: dark)' },
+    ]
+
+    let currentCss = baseCss
+    for (let round = 0; round < 120; round++) {
+      const before = parseTokensCssWithSpans(currentCss)
+      const count = 1 + Math.floor(rand() * allSlots.length)
+      const shuffled = [...allSlots].sort(() => rand() - 0.5).slice(0, count)
+      const changes: Array<{ name: string; theme?: string; value: string }> = []
+
+      for (let idx = 0; idx < shuffled.length; idx++) {
+        const slot = shuffled[idx]!
+        const val = pick(validGenerators)(round * 31 + idx + 1)
+        expect(isValidTokenValue(val), val).toBe(true)
+        const existingSpan = before.spans.get(tokenDraftKey(slot.name, slot.theme ?? null))!
+        if (existingSpan.value !== val.trim()) {
+          changes.push({ ...slot, value: val })
+        }
+      }
+      if (changes.length === 0) continue
+
+      const { edits } = buildTokenEdits('tokens.css', currentCss, before, changes)
+      currentCss = text(applyEdits(new Map([['tokens.css', utf8(currentCss)]]), edits).get('tokens.css')!)
+      const after = parseTokensCssWithSpans(currentCss)
+
+      expect(after.tokens.map((t) => t.name)).toEqual(initialNames)
+      expect(after.themes).toEqual(initial.themes)
+      expect(after.tokens.map((t) => Object.keys(t.themes).sort())).toEqual(initialThemeKeys)
+      for (const ch of changes) {
+        const span = after.spans.get(tokenDraftKey(ch.name, ch.theme ?? null))!
+        expect(span.value).toBe(ch.value.trim())
+      }
+    }
+  })
+
+  it('parses the real repository sample prototype and desktop design system tokens cleanly', () => {
+    const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
+    const sampleDir = path.join(repoRoot, 'prototypes/artifact-design-viewer/sample')
+    const sampleFiles = new Set(readdirSync(sampleDir))
+    const sampleManifestBytes = new Uint8Array(readFileSync(path.join(sampleDir, 'maestrly-design.json')))
+    const sampleManifest = parseDesignManifest(sampleManifestBytes, sampleFiles)
+    expect(sampleManifest).not.toBeNull()
+    expect(sampleManifest?.title).toBe('Crumb orders')
+    expect(sampleManifest?.tokens).toEqual(['tokens.css'])
+    expect(sampleManifest?.components).toBe('components.html')
+    expect(sampleManifest?.screens).toHaveLength(6)
+    expect(Object.keys(sampleManifest?.componentTokens ?? {})).toEqual(['Button', 'Badge'])
+
+    const sampleTokensCss = readFileSync(path.join(sampleDir, 'tokens.css'), 'utf8')
+    const sampleParsed = parseTokensCssWithSpans(sampleTokensCss)
+    expect(sampleParsed.themes).toEqual(["[data-theme='dark']"])
+    expect(sampleParsed.tokens.length).toBeGreaterThan(30)
+    const sampleAccent = sampleParsed.tokens.find((t) => t.name === '--color-accent')
+    expect(sampleAccent).toEqual({
+      name: '--color-accent',
+      group: 'color',
+      kind: 'color',
+      value: '#b4532a',
+      themes: { "[data-theme='dark']": '#e07a4b' },
+    })
+
+    // Round-trip a root + dark theme token edit on sample/tokens.css
+    const sampleEdit = buildTokenEdits('tokens.css', sampleTokensCss, sampleParsed, [
+      { name: '--color-accent', value: '#c2410c' },
+      { name: '--color-accent', theme: "[data-theme='dark']", value: '#fb923c' },
+    ])
+    const updatedSampleCss = text(
+      applyEdits(new Map([['tokens.css', utf8(sampleTokensCss)]]), sampleEdit.edits).get('tokens.css')!
+    )
+    const reparsedSample = parseTokensCssWithSpans(updatedSampleCss)
+    expect(reparsedSample.tokens.map((t) => t.name)).toEqual(sampleParsed.tokens.map((t) => t.name))
+    expect(reparsedSample.tokens.find((t) => t.name === '--color-accent')?.themes).toEqual({
+      "[data-theme='dark']": '#fb923c',
+    })
+
+    // Desktop design system (`design/tokens.css` — 181 `:root` tokens)
+    const desktopTokensCss = readFileSync(path.join(repoRoot, 'design/tokens.css'), 'utf8')
+    const desktopParsed = parseTokensCssWithSpans(desktopTokensCss)
+    expect(desktopParsed.tokens).toHaveLength(181)
+    expect(desktopParsed.themes).toEqual([])
   })
 })

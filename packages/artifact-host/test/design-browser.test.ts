@@ -166,7 +166,12 @@ describe('real Chromium sandboxed iframe bridge (<link crossorigin> CSSOM + adop
         {
           source: 'maestrly-shell',
           type: 'token-preview',
-          tokens: [{ name: '--btn-bg', value: 'rgb(225, 29, 72)' }],
+          tokens: [
+            { name: '--opaque-color', value: '"unclosed' },
+            { name: '--opaque-color', value: 'calc(1px' },
+            { name: '--opaque-color', value: '[broken' },
+            { name: '--btn-bg', value: 'rgb(225, 29, 72)' },
+          ],
         },
         '*'
       )

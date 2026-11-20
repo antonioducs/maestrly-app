@@ -457,3 +457,35 @@ export function formatTokenSummary(changes: readonly TokenSuggestionChange[], pr
   const remaining = parts.length - shown
   return remaining > 0 ? `${acc}, +${remaining} more` : acc
 }
+
+/**
+ * Formats a version summary when applying a third-party token suggestion: includes only validated token names
+ * (never the commenter's name or suggested values, which are untrusted external input).
+ */
+export function formatAppliedSuggestionSummary(names: readonly string[]): string {
+  const prefix = 'Applied a token suggestion'
+  const unique: string[] = []
+  const seen = new Set<string>()
+  for (const name of names) {
+    if (isValidTokenName(name) && !seen.has(name)) {
+      seen.add(name)
+      unique.push(name)
+    }
+  }
+  if (unique.length === 0) return prefix
+  const full = `${prefix}: ${unique.join(', ')}`
+  if (full.length <= MAX_SUMMARY_CHARS) return full
+  let acc = `${prefix}: `
+  let shown = 0
+  for (const name of unique) {
+    const sep = shown === 0 ? '' : ', '
+    const restCount = unique.length - (shown + 1)
+    const tail = restCount > 0 ? `, +${restCount} more` : ''
+    if (acc.length + sep.length + name.length + tail.length > MAX_SUMMARY_CHARS) break
+    acc += sep + name
+    shown++
+  }
+  if (shown === 0) return prefix
+  const remaining = unique.length - shown
+  return remaining > 0 ? `${acc}, +${remaining} more` : acc
+}
