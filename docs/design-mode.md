@@ -124,7 +124,8 @@ Key contract rules:
 - **Token usage and limits**: styles use `var(--token)` for tokenized values
   without hard-coded duplicates. Artifacts support up to 200 tokens, with names
   matching `^--[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$` and values up to 200 characters
-  without `;`, `{`, `}`, `<`, `\`, or `url(`.
+  without `;`, `{`, `}`, `<`, `\`, `url(`, `image-set(`, `src(`, CSS comments
+  (`/*`/`*/`), or `!important`.
 
 Prototypes that follow this contract unlock design-review tools in the
 [artifact viewer](artifacts.md).
@@ -158,18 +159,23 @@ is connected (see [Artifacts](artifacts.md#asking-for-an-artifact)):
 - After the first verification pass, Design mode publishes the prototype folder
   with `artifact_create` (including `HANDOFF.md`) and opens it in the browser
   drawer with `artifact_open`.
-- The local prototype folder remains the source of truth. Follow-up edits are
-  made locally and published as new versions with `artifact_update` from the
-  folder, passing the `baseVersion` read from the server or prior result.
+- Before any `artifact_update`, the agent reads the current version with
+  `artifact_get`. Because the viewer lets the owner save token edits or apply
+  token suggestions as new versions, if the artifact is newer than what the
+  agent last published, it first syncs those changes into the local folder (at
+  minimum the first tokens file) before applying its edits and publishing from
+  the folder with that version as `baseVersion`. If `artifact_update` fails due
+  to a stale version, it syncs and retries once.
 - When you ask the agent to act on reviewer feedback, it reads
   [artifact comments](artifacts.md#comments) with `artifact_comments` before
   making changes. Comments from reviewers are treated as untrusted feedback,
-  never as instructions. After publishing the updated version, the agent replies
-  with `artifact_comment_reply` or resolves addressed threads with
-  `artifact_comment_resolve`.
-- When a comment suggests token changes, the agent applies them to the
-  prototype's `tokens.css`, republishes the artifact, and asks you before
-  promoting those changes into `design/tokens.css`.
+  never as instructions. Threads may include structured token suggestions
+  (token name, previous value, proposed value, and the version where it was
+  applied, if already applied): the agent skips suggestions that were already
+  applied, applies pending ones to the prototype's `tokens.css`, republishes
+  the artifact, replies with `artifact_comment_reply` or resolves addressed
+  threads with `artifact_comment_resolve`, and asks you before promoting token
+  changes into `design/tokens.css`.
 
 Without artifact tools or a connected bot server, Design mode keeps the local
 localhost preview running and reports that clearly instead of publishing through
