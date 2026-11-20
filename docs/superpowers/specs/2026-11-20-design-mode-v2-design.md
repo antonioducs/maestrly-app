@@ -588,7 +588,8 @@ owns whiteboard synchronization; user-facing labels follow the UX prototype.
     screens surface mounting `controller.screenFrame(id)`), `shell/tokens.ts` (grouped token editors, diff list, Save /
     Suggest actions), suggestion preview/apply controls in `shell/thread.ts` / `shell/comments.ts`, top-bar controls in
     `shell/bar.ts`, layout wiring in `shell/viewer.ts`, styles in `shell/viewer.css`, icons in `shell/icons.ts`, and
-    `en`/`pt-BR` strings in `shell/i18n.ts` following `prototypes/artifact-design-viewer/`.
+    `en`/`pt-BR` strings in `shell/i18n.ts` following the approved UX prototype, whose sample app lives on as the
+    `packages/artifact-host/test/fixtures/design-sample/` test fixture.
 
 #### Concrete TypeScript interfaces (`shell/contract.ts`, `shell/design-model.ts`, `shell/design.ts`)
 
