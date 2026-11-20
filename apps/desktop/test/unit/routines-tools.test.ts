@@ -6,7 +6,8 @@ import { ALL_TOOL_NAMES, builtinToolNamesForMode, isOptInToolName, selectSubagen
 import { insertConversation, patchConvUiPrefs } from '../../src/main/store'
 import { registerRemoteChatPolicy } from '../../src/main/chat/remote-policy'
 import { registerAutonomousConversation } from '../../src/main/chat/autonomous'
-import { createRoutine, getProposal, getRun, insertRun } from '../../src/main/routines/store'
+import { createRoutine, getProposal, getRun, insertRun, setRoutineOwnerTimeZone } from '../../src/main/routines/store'
+import { shouldRunLocalRoutines } from '../../src/main/routines/lifecycle'
 import { routineProposeTool, enableRoutineTools } from '../../src/main/chat/tools/routine-propose'
 import { routineRunReportTool } from '../../src/main/chat/tools/routine-run-report'
 import type { ToolContext } from '../../src/main/chat/tools/util'
@@ -230,5 +231,108 @@ describe('routine agent tools registration & gates', () => {
       ctx(normal.id)
     )
     expect(refused).toMatchObject({ reported: false })
+  })
+
+  it('enables local routines and tools in desktop and server mode, but blocks them in bot mode', async () => {
+    // Desktop mode (default)
+    vi.stubEnv('MAESTRLY_SERVER_MODE', '')
+    vi.stubEnv('MAESTRLY_BOT_MODE', '')
+    expect(shouldRunLocalRoutines()).toBe(true)
+
+    // Server mode (workspaces environment container)
+    vi.stubEnv('MAESTRLY_SERVER_MODE', '1')
+    vi.stubEnv('MAESTRLY_BOT_MODE', '')
+    expect(shouldRunLocalRoutines()).toBe(true)
+
+    const serverConv = makeConv({ id: 'conv-server-mode' })
+    patchConvUiPrefs(serverConv.id, {
+      chat: {
+        mode: 'agent',
+        permMode: 'auto',
+        providerId: 'openai',
+        modelId: 'gpt-5',
+        reasoning: 'medium',
+        fastMode: false,
+      },
+    })
+    const serverEnabled = builtinToolNamesForMode('agent')
+    enableRoutineTools(serverEnabled, serverConv.id)
+    expect(serverEnabled.has('routine_propose')).toBe(true)
+    const serverProposal = await routineProposeTool.execute(
+      {
+        title: 'Server monitor',
+        instruction: 'Check services hourly.',
+        schedule: { kind: 'interval', every_minutes: 60 },
+      },
+      ctx(serverConv.id)
+    )
+    expect(serverProposal.ok).toBe(true)
+
+    // A server runs in its own zone: weekly proposals there default to the zone of the computer that connected.
+    setRoutineOwnerTimeZone('America/Sao_Paulo')
+    const weekly = await routineProposeTool.execute(
+      {
+        title: 'Morning digest',
+        instruction: 'Summarize overnight alerts.',
+        schedule: { kind: 'weekly', time: '09:00', days: [1, 2, 3, 4, 5] },
+      },
+      ctx(serverConv.id)
+    )
+    expect(weekly.ok).toBe(true)
+    if (!weekly.ok) throw new Error('expected a proposal')
+    expect(getProposal(weekly.proposalId)?.draft.schedule).toMatchObject({ timezone: 'America/Sao_Paulo' })
+
+    const routine = createRoutine(sampleDraft(), null)
+    const run = insertRun({
+      routineId: routine.id,
+      scheduledAt: 1000,
+      startedAt: 1000,
+      finishedAt: null,
+      trigger: 'schedule',
+      status: 'running',
+      summary: null,
+      report: null,
+      error: null,
+      conversationId: 'conv-server-run',
+      conversationDeleted: false,
+      pinned: false,
+      unread: false,
+    })
+    makeConv({ id: 'conv-server-run', routineId: routine.id, routineRunId: run.id })
+    const serverRunEnabled = builtinToolNamesForMode('agent')
+    enableRoutineTools(serverRunEnabled, 'conv-server-run')
+    expect(serverRunEnabled.has('routine_run_report')).toBe(true)
+    const serverReport = await routineRunReportTool.execute(
+      { outcome: 'done', summary: 'All green on server.' },
+      ctx('conv-server-run')
+    )
+    expect(serverReport).toEqual({ reported: true })
+
+    // Bot mode
+    vi.stubEnv('MAESTRLY_SERVER_MODE', '')
+    vi.stubEnv('MAESTRLY_BOT_MODE', '1')
+    expect(shouldRunLocalRoutines()).toBe(false)
+
+    const botEnabled = builtinToolNamesForMode('agent')
+    enableRoutineTools(botEnabled, serverConv.id)
+    expect(botEnabled.has('routine_propose')).toBe(false)
+    const botDenied = await routineProposeTool.execute(
+      {
+        title: 'Bot monitor',
+        instruction: 'Should be blocked.',
+        schedule: { kind: 'interval', every_minutes: 60 },
+      },
+      ctx(serverConv.id)
+    )
+    expect(botDenied.ok).toBe(false)
+
+    const botRunEnabled = builtinToolNamesForMode('agent')
+    enableRoutineTools(botRunEnabled, 'conv-server-run')
+    expect(botRunEnabled.has('routine_run_report')).toBe(false)
+    const botReportDenied = await routineRunReportTool.execute(
+      { outcome: 'done', summary: 'Blocked in bot mode.' },
+      ctx('conv-server-run')
+    )
+    expect(botReportDenied).toMatchObject({ reported: false })
   })
 })

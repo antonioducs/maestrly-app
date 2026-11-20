@@ -758,7 +758,7 @@ export default {
       hours_other: 'After {{count}} hours',
     },
     idleStopNote:
-      'Once no computer is connected and no chat runs for that long, it stops to free the server. Its terminals and background processes stop with it.',
+      'Once no computer is connected and no chat runs for that long, it stops to free the server. Its terminals and background processes stop with it. It does not stop while it has a routine turned on.',
     scopesNote: 'One per scope of your work. Each starts with no accounts of its own.',
     limitReached: 'This server hosts as many workspaces environments as it can. Archive one to add another.',
     scopesUnsupported: 'Update the server to run more than one workspaces environment on it.',
@@ -1989,9 +1989,9 @@ export default {
       memoryKey: 'The server access key is only in memory. Sign in again after restarting Maestrly.',
       disconnect: 'Disconnect this computer',
       disconnectConfirm: {
-        local: 'Disconnect this computer? The bot server and its bots will keep running.',
+        local: 'Disconnect this computer? The bot server, its bots, and its routines will keep running.',
         remote:
-          'Disconnect this computer? Maestrly will remove its access key from the server. The bots will keep running.',
+          'Disconnect this computer? Maestrly will remove its access key from the server. Bots and routines on the server will keep running.',
       },
       remove: 'Remove bot server',
       removeConfirm: {
@@ -2250,7 +2250,7 @@ export default {
     tailscale: 'For a private connection, use Tailscale between this computer and the server.',
     memoryToken: 'Secure token storage is unavailable. This pairing will be lost when Maestrly closes.',
     disconnect: 'Disconnect',
-    disconnectConfirm: 'Disconnect this computer from the bot server?',
+    disconnectConfirm: 'Disconnect this computer from the bot server? Bots and routines on the server will keep running.',
   },
   move: {
     action: 'Move to…',

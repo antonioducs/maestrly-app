@@ -1,8 +1,9 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { AlertTriangle, Clock, Hand, Loader2, ShieldAlert, TerminalSquare, X } from 'lucide-react'
-import type { ChatModelMeta, ChatModelRef, ChatPermMode, ChatReasoningEffort } from '../../../shared/chat'
-import { LOCAL_HOST_ID } from '../../../shared/host-key'
+import { AlertTriangle, Clock, Hand, Loader2, Play, ShieldAlert, TerminalSquare, X } from 'lucide-react'
+import type { ChatConfig, ChatModelMeta, ChatModelRef, ChatPermMode, ChatReasoningEffort } from '../../../shared/chat'
+import { type HostId, LOCAL_HOST_ID } from '../../../shared/host-key'
+import type { HostView } from '../../../shared/hosts'
 import type {
   LocalRoutine,
   RoutineDraft,
@@ -13,7 +14,9 @@ import type {
   RoutineSavedPermission,
   RoutineUpdatePatch,
 } from '../../../shared/routines'
-import { hostApi } from '@/lib/hosts/host-context'
+import { hostApi, HostProvider } from '@/lib/hosts/host-context'
+import { hostOfKey, rawId } from '@/lib/hosts/shell-keys'
+import { useHosts } from '@/lib/hosts/use-hosts'
 import {
   draftFromForm,
   formFromDraft,
@@ -21,21 +24,28 @@ import {
   validateEditorForm,
   type RoutineEditorForm,
 } from '@/lib/routines/editor-form'
+import {
+  isRoutineHostCapable,
+  routineHostDisplay,
+  routineHostStatusLabel,
+  validateRoutineModelForHost,
+} from '@/lib/routines/host-routines'
 import { formatHHMM, formatUpcomingDay } from '@/lib/routines/relative-time'
 import { upcomingRunDates } from '@/lib/routines/schedule-text'
 import { cn } from '@/lib/utils'
 import { ChatModelChip } from '@/components/chat/ChatModelChip'
 import { ChatReasoningPicker } from '@/components/chat/ChatReasoningPicker'
 import { FastModeChip } from '@/components/chat/ChatFastModeToggle'
-import { loadModelPickerRows } from '@/components/chat/model-picker-rows'
+import { loadModelPickerRows, type ModelPickerRow } from '@/components/chat/model-picker-rows'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { SearchSelect, type SearchOption } from '@/components/ui/search-select'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { RoutineSavedPermissionLabel } from './RoutineOutcomeBadge'
+import { RoutineHostBadge, RoutineSavedPermissionLabel } from './RoutineOutcomeBadge'
 
 export type RoutineEditorTarget =
   | {
       kind: 'new'
+      initialHostId?: HostId
       initialInstruction?: string
       initialModel?: RoutineModel
       initialPermMode?: ChatPermMode
@@ -45,9 +55,10 @@ export type RoutineEditorTarget =
     }
   | {
       kind: 'proposal'
+      initialHostId?: HostId
       draft: RoutineDraft
       originTitle?: string
-      onConfirmDraft: (draft: RoutineDraft) => Promise<void> | void
+      onConfirmDraft: (draft: RoutineDraft, targetHostId: HostId) => Promise<void> | void
     }
   | {
       kind: 'edit'
@@ -90,6 +101,13 @@ function initialFormForTarget(target: RoutineEditorTarget): RoutineEditorForm {
   })
 }
 
+function initialHostForTarget(target: RoutineEditorTarget): HostId {
+  if (target.kind === 'edit') return hostOfKey(target.routine.id)
+  if (target.initialHostId) return target.initialHostId
+  if (target.kind === 'new' && target.sourceConversationId) return hostOfKey(target.sourceConversationId)
+  return LOCAL_HOST_ID
+}
+
 function buildTimezoneOptions(): SearchOption[] {
   const zones =
     typeof Intl !== 'undefined' && typeof Intl.supportedValuesOf === 'function'
@@ -103,18 +121,24 @@ const PERM_OPTIONS: readonly ChatPermMode[] = ['ask', 'auto', 'full']
 
 export function RoutineEditorFormBody({
   target,
+  hosts = [],
+  startingHostIds,
   savedPermissions,
   onClose,
   onSaveNew,
   onSaveEdit,
   onRemoveSavedPermission,
+  onStartHostEnvironment,
 }: {
   target: RoutineEditorTarget
+  hosts?: readonly HostView[]
+  startingHostIds?: ReadonlySet<HostId>
   savedPermissions: readonly RoutineSavedPermission[]
   onClose: () => void
-  onSaveNew: (draft: RoutineDraft, sourceConversationId?: string) => Promise<void>
+  onSaveNew: (draft: RoutineDraft, sourceConversationId?: string, targetHostId?: HostId) => Promise<void>
   onSaveEdit: (routineId: string, patch: RoutineUpdatePatch) => Promise<void>
   onRemoveSavedPermission: (routineId: string, permId: string) => Promise<void> | void
+  onStartHostEnvironment?: (hostId: HostId) => void
 }) {
   const { t } = useTranslation('routines')
   const { t: tChat } = useTranslation('chat')
@@ -122,6 +146,7 @@ export function RoutineEditorFormBody({
 
   const titleId = useId()
   const descId = useId()
+  const hostInputId = useId()
   const modelLabelId = useId()
   const titleInputId = useId()
   const instructionInputId = useId()
@@ -131,12 +156,25 @@ export function RoutineEditorFormBody({
   const notifyInputId = useId()
   const retentionInputId = useId()
 
+  const [selectedHostId, setSelectedHostId] = useState<HostId>(() => initialHostForTarget(target))
   const [form, setForm] = useState<RoutineEditorForm>(() => initialFormForTarget(target))
   const [tried, setTried] = useState(false)
   const [saving, setSaving] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [meta, setMeta] = useState<{ key: string; value: ChatModelMeta | null } | null>(null)
+  const [hostChatConfig, setHostChatConfig] = useState<ChatConfig | null>(null)
+  const [hostModelRows, setHostModelRows] = useState<ModelPickerRow[] | null>(null)
+  const [hostRowsPending, setHostRowsPending] = useState(0)
   const metaGenRef = useRef(0)
+
+  const selectableHosts = useMemo(() => hosts.filter(isRoutineHostCapable), [hosts])
+  const selectedHost = useMemo(() => hosts.find((h) => h.id === selectedHostId), [hosts, selectedHostId])
+  const hostInfo = useMemo(
+    () => routineHostDisplay(selectedHost, selectedHostId, tr),
+    [selectedHost, selectedHostId, t]
+  )
+  const hostOnline = !hostInfo.isRemote || hostInfo.online
+  const hostEpoch = selectedHost?.epoch ?? 0
 
   const timezoneOptions = useMemo(() => {
     const base = buildTimezoneOptions()
@@ -149,6 +187,8 @@ export function RoutineEditorFormBody({
   // Reset form when target changes and resolve initial chat/default settings for brand-new routines.
   useEffect(() => {
     const base = initialFormForTarget(target)
+    const initHost = initialHostForTarget(target)
+    setSelectedHostId(initHost)
     setForm(base)
     setTried(false)
     setSubmitError(null)
@@ -156,21 +196,25 @@ export function RoutineEditorFormBody({
 
     if (target.kind !== 'new') return
     let alive = true
-    const localApi = hostApi(LOCAL_HOST_ID)
-    const convId = target.sourceConversationId
+    const convKey = target.sourceConversationId
+    const convHostId = convKey ? hostOfKey(convKey) : initHost
+    const convApi = hostApi(convHostId)
+    const convId = convKey ? rawId(convKey) : undefined
 
     void (async () => {
       try {
         const [permMode, selection, reasoning, fastMode] = await Promise.all([
-          convId ? localApi.chatGetPermMode(convId).catch(() => null) : localApi.getDefaultPermissionMode().catch(() => null),
-          convId ? localApi.chatGetSelection(convId).catch(() => null) : Promise.resolve(null),
-          convId ? localApi.chatGetReasoning(convId).catch(() => null) : Promise.resolve(null),
-          convId ? localApi.chatGetFastMode(convId).catch(() => false) : Promise.resolve(false),
+          convId
+            ? convApi.chatGetPermMode(convId).catch(() => null)
+            : hostApi(initHost).getDefaultPermissionMode().catch(() => null),
+          convId ? convApi.chatGetSelection(convId).catch(() => null) : Promise.resolve(null),
+          convId ? convApi.chatGetReasoning(convId).catch(() => null) : Promise.resolve(null),
+          convId ? convApi.chatGetFastMode(convId).catch(() => false) : Promise.resolve(false),
         ])
 
         let resolvedSelection = selection?.providerId && selection.modelId ? selection : null
         if (!resolvedSelection) {
-          await loadModelPickerRows(localApi, LOCAL_HOST_ID, (update) => {
+          await loadModelPickerRows(hostApi(initHost), initHost, (update) => {
             if (!resolvedSelection && update.rows.length > 0) {
               const first = update.rows[0]
               resolvedSelection = { providerId: first.providerId, modelId: first.modelId }
@@ -201,12 +245,42 @@ export function RoutineEditorFormBody({
     }
   }, [target])
 
-  const modelKey = form.model.providerId && form.model.modelId ? `${form.model.providerId}\0${form.model.modelId}` : ''
+  // Load target host's chatConfig and available model rows so model availability is validated on host switches.
   useEffect(() => {
-    if (!modelKey) return
+    setHostChatConfig(null)
+    setHostModelRows(null)
+    setHostRowsPending(0)
+    if (!hostOnline) return
+
+    let alive = true
+    const api = hostApi(selectedHostId)
+    void api
+      .chatConfig()
+      .then((cfg) => {
+        if (alive) setHostChatConfig(cfg)
+      })
+      .catch(() => {})
+    void loadModelPickerRows(api, selectedHostId, (update) => {
+      if (!alive) return
+      setHostChatConfig(update.config)
+      setHostModelRows(update.rows)
+      setHostRowsPending(update.pending)
+    }).catch(() => {})
+
+    return () => {
+      alive = false
+    }
+  }, [selectedHostId, hostOnline, hostEpoch])
+
+  const modelKey =
+    form.model.providerId && form.model.modelId
+      ? `${selectedHostId}\0${form.model.providerId}\0${form.model.modelId}`
+      : ''
+  useEffect(() => {
+    if (!modelKey || !hostOnline) return
     const generation = ++metaGenRef.current
     const { providerId, modelId } = form.model
-    void hostApi(LOCAL_HOST_ID)
+    void hostApi(selectedHostId)
       .chatModelMeta(modelId, providerId)
       .catch(() => null)
       .then((value) => {
@@ -214,7 +288,7 @@ export function RoutineEditorFormBody({
           setMeta({ key: modelKey, value })
         }
       })
-  }, [modelKey, form.model.providerId, form.model.modelId])
+  }, [modelKey, selectedHostId, hostOnline, form.model.providerId, form.model.modelId])
 
   const currentMeta = meta?.key === modelKey ? meta.value : null
   const metaReady = Boolean(modelKey) && meta?.key === modelKey
@@ -240,6 +314,23 @@ export function RoutineEditorFormBody({
       return changed ? { ...prev, model: nextModel } : prev
     })
   }, [efforts.length, fastAvailable, metaReady])
+
+  const modelValidation = useMemo(
+    () =>
+      hostOnline
+        ? validateRoutineModelForHost(form.model, hostChatConfig, hostModelRows, hostRowsPending)
+        : { status: 'unknown' as const },
+    [hostOnline, form.model, hostChatConfig, hostModelRows, hostRowsPending]
+  )
+  const modelInvalidMessage =
+    modelValidation.status === 'missing-provider'
+      ? t('host.modelMissingProvider', {
+          provider: modelValidation.providerName ?? form.model.providerId,
+          host: hostInfo.fullLabel,
+        })
+      : modelValidation.status === 'missing-model' && form.model.providerId && form.model.modelId
+        ? t('host.modelMissingModel', { host: hostInfo.fullLabel })
+        : null
 
   const validation = useMemo(() => validateEditorForm(form, tr), [form, t])
   const previewValidation = useMemo(
@@ -267,6 +358,9 @@ export function RoutineEditorFormBody({
       ? { providerId: form.model.providerId, modelId: form.model.modelId }
       : null
 
+  const showHostField = selectableHosts.length > 1 || hostInfo.isRemote
+  const hostStarting = Boolean(startingHostIds?.has(selectedHostId)) || hostInfo.starting
+
   const toggleDay = (day: number) => {
     setForm((prev) => ({
       ...prev,
@@ -277,10 +371,23 @@ export function RoutineEditorFormBody({
   const handleSubmit = async () => {
     setTried(true)
     setSubmitError(null)
+    if (!hostOnline) {
+      setSubmitError(
+        t('host.hostUnavailableSelect', {
+          host: hostInfo.fullLabel,
+          status: routineHostStatusLabel(hostInfo.status, tr).toLowerCase(),
+        })
+      )
+      return
+    }
     const check = validateEditorForm(form, tr)
     if (!check.ok) return
     if (!check.draft.model.providerId || !check.draft.model.modelId) {
       setSubmitError(tChat('plan.handoff.noModel'))
+      return
+    }
+    if (modelInvalidMessage) {
+      setSubmitError(modelInvalidMessage)
       return
     }
     setSaving(true)
@@ -289,9 +396,9 @@ export function RoutineEditorFormBody({
       if (target.kind === 'edit') {
         await onSaveEdit(target.routine.id, draft)
       } else if (target.kind === 'proposal') {
-        await target.onConfirmDraft(draft)
+        await target.onConfirmDraft(draft, selectedHostId)
       } else {
-        await onSaveNew(draft, target.sourceConversationId)
+        await onSaveNew(draft, target.sourceConversationId, selectedHostId)
         target.onCreated?.()
       }
       onClose()
@@ -312,12 +419,108 @@ export function RoutineEditorFormBody({
           {heading}
         </h2>
         <p id={descId} className="mt-1 text-[12.5px] text-muted-foreground">
-          {t('editor.subtitleBase')}
+          {hostInfo.isRemote
+            ? t('host.editorSubtitleRemote', { host: hostInfo.fullLabel })
+            : t('editor.subtitleBase')}
           {originSuffix}.
         </p>
       </div>
 
       <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto px-[18px] pb-1.5 pt-2">
+        {showHostField && (
+          <div className="grid content-start gap-[5px]">
+            <label htmlFor={hostInputId} className="text-[12.5px] font-medium text-foreground/78">
+              {t('host.runsOn')}
+            </label>
+            {target.kind === 'edit' ? (
+              <div>
+                <RoutineHostBadge host={selectedHost} hostId={selectedHostId} showLocal />
+              </div>
+            ) : (
+              <Select
+                value={selectedHostId}
+                onValueChange={(value) => {
+                  setSelectedHostId(value)
+                  setSubmitError(null)
+                  setMeta(null)
+                }}
+              >
+                <SelectTrigger id={hostInputId} className={cn(inputClass, 'h-[34px] shadow-none')}>
+                  <SelectValue>
+                    <span className="inline-flex items-center gap-2 truncate">
+                      <span
+                        aria-hidden="true"
+                        className="size-[7px] shrink-0 rounded-full"
+                        style={{
+                          backgroundColor: `rgb(${hostInfo.tintRgb[0]}, ${hostInfo.tintRgb[1]}, ${hostInfo.tintRgb[2]})`,
+                          opacity: hostInfo.online ? 1 : 0.45,
+                        }}
+                      />
+                      <span className="truncate">{hostInfo.fullLabel}</span>
+                      {hostInfo.isRemote && !hostInfo.online && (
+                        <span className="text-[11.5px] text-[var(--artifact-warn)]">
+                          · {routineHostStatusLabel(hostInfo.status, tr)}
+                        </span>
+                      )}
+                    </span>
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {selectableHosts.map((host) => {
+                    const info = routineHostDisplay(host, host.id, tr)
+                    return (
+                      <SelectItem key={host.id} value={host.id} className="text-[13px]">
+                        <span className="inline-flex items-center gap-2">
+                          <span
+                            aria-hidden="true"
+                            className="size-[7px] shrink-0 rounded-full"
+                            style={{
+                              backgroundColor: `rgb(${info.tintRgb[0]}, ${info.tintRgb[1]}, ${info.tintRgb[2]})`,
+                              opacity: info.online ? 1 : 0.45,
+                            }}
+                          />
+                          <span>{info.fullLabel}</span>
+                          {info.isRemote && !info.online && (
+                            <span className="text-[11.5px] text-muted-foreground">
+                              · {routineHostStatusLabel(info.status, tr)}
+                            </span>
+                          )}
+                        </span>
+                      </SelectItem>
+                    )
+                  })}
+                </SelectContent>
+              </Select>
+            )}
+            {!hostOnline && (
+              <div className="mt-1 flex flex-wrap items-center gap-2 rounded-[8px] border border-[rgba(242,180,92,0.22)] bg-[rgba(242,180,92,0.08)] px-2.5 py-2 text-[12px] text-[#f6ddb4]">
+                <AlertTriangle aria-hidden="true" className="size-3.5 shrink-0 text-[var(--artifact-warn)]" />
+                <span className="min-w-0 flex-1">
+                  {t('host.hostUnavailableSelect', {
+                    host: hostInfo.fullLabel,
+                    status: routineHostStatusLabel(hostInfo.status, tr).toLowerCase(),
+                  })}
+                </span>
+                {hostInfo.canStart && onStartHostEnvironment && (
+                  <button
+                    type="button"
+                    disabled={hostStarting}
+                    onClick={() => onStartHostEnvironment(selectedHostId)}
+                    className="inline-flex h-[24px] shrink-0 items-center gap-1 rounded-[6px] border border-border-strong bg-white/[0.04] px-2 text-[11.5px] font-medium text-foreground hover:bg-white/[0.09] disabled:opacity-50"
+                  >
+                    {hostStarting ? (
+                      <Loader2 aria-hidden="true" className="size-3 animate-spin" />
+                    ) : (
+                      <Play aria-hidden="true" className="size-3" />
+                    )}
+                    <span>{hostStarting ? t('host.startingAction') : t('host.startAction')}</span>
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="grid content-start gap-[5px]">
           <label htmlFor={titleInputId} className="text-[12.5px] font-medium text-foreground/78">
             {t('editor.titleLabel')}
@@ -490,7 +693,9 @@ export function RoutineEditorFormBody({
         </div>
 
         <fieldset className="m-0 grid gap-1.5 border-0 p-0">
-          <legend className="mb-1.5 text-[12.5px] font-medium text-foreground/78">{t('editor.missedLegend')}</legend>
+          <legend className="mb-1.5 text-[12.5px] font-medium text-foreground/78">
+            {hostInfo.isRemote ? t('host.editorMissedLegendRemote') : t('editor.missedLegend')}
+          </legend>
           <div className="routine-seg" role="radiogroup" aria-label={t('editor.missedLegend')}>
             {(
               [
@@ -562,13 +767,17 @@ export function RoutineEditorFormBody({
               )
             })}
           </div>
-          <div className={cn('routine-mode-note', form.permMode === 'full' && 'risk')}>
+          <div className={cn('routine-mode-note', form.permMode === 'full' && !hostInfo.isRemote && 'risk')}>
             {form.permMode === 'full' ? (
               <AlertTriangle aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-[var(--artifact-warn)]" />
             ) : (
               <Clock aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-[rgba(154,149,140,0.58)]" />
             )}
-            <span>{t(`permMode.${form.permMode}Routine` as never)}</span>
+            <span>
+              {hostInfo.isRemote && form.permMode === 'full'
+                ? t('host.fullRoutineRemote')
+                : t(`permMode.${form.permMode}Routine` as never)}
+            </span>
           </div>
 
           {target.kind === 'edit' && form.permMode !== 'full' && savedPermissions.length > 0 && (
@@ -601,53 +810,68 @@ export function RoutineEditorFormBody({
           <span id={modelLabelId} className="text-[12.5px] font-medium text-foreground/78">
             {t('editor.modelLabel')}
           </span>
-          <div
-            role="group"
-            aria-labelledby={modelLabelId}
-            className="flex min-w-0 flex-wrap items-center gap-1.5 rounded-[8px] border border-border bg-black/20 p-1.5"
-          >
-            <ChatModelChip
-              value={selection}
-              avoidOverflow
-              onSelect={(next) => {
-                setMeta(null)
-                setForm((prev) => ({
-                  ...prev,
-                  model: {
-                    ...prev.model,
-                    providerId: next.providerId,
-                    modelId: next.modelId,
-                  },
-                }))
-              }}
-            />
-            {metaReady && efforts.length > 0 && (
-              <ChatReasoningPicker
-                value={(form.model.reasoning ?? 'off') as ChatReasoningEffort}
-                efforts={efforts}
-                nativeUltraMode={currentMeta?.nativeUltraMode === true}
+          <HostProvider hostId={selectedHostId}>
+            <div
+              role="group"
+              aria-labelledby={modelLabelId}
+              className="flex min-w-0 flex-wrap items-center gap-1.5 rounded-[8px] border border-border bg-black/20 p-1.5"
+            >
+              <ChatModelChip
+                key={selectedHostId}
+                value={selection}
                 avoidOverflow
-                onChange={(effort) =>
+                onSelect={(next) => {
+                  setMeta(null)
+                  setSubmitError(null)
                   setForm((prev) => ({
                     ...prev,
-                    model: { ...prev.model, reasoning: effort },
+                    model: {
+                      ...prev.model,
+                      providerId: next.providerId,
+                      modelId: next.modelId,
+                    },
                   }))
-                }
+                }}
               />
-            )}
-            {metaReady && fastAvailable && (
-              <FastModeChip
-                enabled={Boolean(form.model.fastMode)}
-                onToggle={() =>
-                  setForm((prev) => ({
-                    ...prev,
-                    model: { ...prev.model, fastMode: !prev.model.fastMode },
-                  }))
-                }
-              />
-            )}
-            {selection && !metaReady && <Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
-          </div>
+              {metaReady && efforts.length > 0 && (
+                <ChatReasoningPicker
+                  value={(form.model.reasoning ?? 'off') as ChatReasoningEffort}
+                  efforts={efforts}
+                  nativeUltraMode={currentMeta?.nativeUltraMode === true}
+                  avoidOverflow
+                  onChange={(effort) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      model: { ...prev.model, reasoning: effort },
+                    }))
+                  }
+                />
+              )}
+              {metaReady && fastAvailable && (
+                <FastModeChip
+                  enabled={Boolean(form.model.fastMode)}
+                  onToggle={() =>
+                    setForm((prev) => ({
+                      ...prev,
+                      model: { ...prev.model, fastMode: !prev.model.fastMode },
+                    }))
+                  }
+                />
+              )}
+              {selection && hostOnline && !metaReady && (
+                <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+              )}
+            </div>
+          </HostProvider>
+          {modelInvalidMessage && (
+            <div
+              role="alert"
+              className="mt-0.5 flex items-start gap-2 rounded-[8px] border border-[rgba(242,180,92,0.22)] bg-[rgba(242,180,92,0.08)] px-2.5 py-2 text-[12px] text-[#f6ddb4]"
+            >
+              <AlertTriangle aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-[var(--artifact-warn)]" />
+              <span>{modelInvalidMessage}</span>
+            </div>
+          )}
           <span className="text-[11.5px] text-[rgba(154,149,140,0.58)]">
             {target.originTitle ? t('editor.modelHintOrigin', { title: target.originTitle }) : ''}
             {t('editor.modelHintAll')}
@@ -744,7 +968,7 @@ export function RoutineEditorFormBody({
         <button
           type="button"
           onClick={() => void handleSubmit()}
-          disabled={saving}
+          disabled={saving || !hostOnline}
           className="inline-flex h-[30px] items-center justify-center gap-1.5 rounded-[8px] border border-transparent bg-primary px-3 text-[12.5px] font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
         >
           {saving && <Loader2 className="size-3.5 animate-spin" />}
@@ -757,20 +981,28 @@ export function RoutineEditorFormBody({
 
 export function RoutineEditorDialog({
   target,
+  hosts,
+  startingHostIds,
   savedPermissions = [],
   onClose,
   onSaveNew,
   onSaveEdit,
   onRemoveSavedPermission,
+  onStartHostEnvironment,
 }: {
   target: RoutineEditorTarget | null
+  hosts?: readonly HostView[]
+  startingHostIds?: ReadonlySet<HostId>
   savedPermissions?: readonly RoutineSavedPermission[]
   onClose: () => void
-  onSaveNew: (draft: RoutineDraft, sourceConversationId?: string) => Promise<void>
+  onSaveNew: (draft: RoutineDraft, sourceConversationId?: string, targetHostId?: HostId) => Promise<void>
   onSaveEdit: (routineId: string, patch: RoutineUpdatePatch) => Promise<void>
   onRemoveSavedPermission: (routineId: string, permId: string) => Promise<void> | void
+  onStartHostEnvironment?: (hostId: HostId) => void
 }) {
   const { t } = useTranslation('routines')
+  const liveHosts = useHosts()
+  const resolvedHosts = hosts ?? liveHosts
   const heading =
     target?.kind === 'edit'
       ? t('editor.editTitle')
@@ -789,11 +1021,14 @@ export function RoutineEditorDialog({
         {target && (
           <RoutineEditorFormBody
             target={target}
+            hosts={resolvedHosts}
+            startingHostIds={startingHostIds}
             savedPermissions={savedPermissions}
             onClose={onClose}
             onSaveNew={onSaveNew}
             onSaveEdit={onSaveEdit}
             onRemoveSavedPermission={onRemoveSavedPermission}
+            onStartHostEnvironment={onStartHostEnvironment}
           />
         )}
       </DialogContent>

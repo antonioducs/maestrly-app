@@ -576,6 +576,12 @@ export const FLEET_ORDER_FEATURE = 'fleet-order'
 export const FLEET_ORDER_IDS_MAX = 500
 
 /**
+ * Instance capability (`capabilities` of instance health/status): a workspaces host runs scheduled chat routines
+ * inside its container and answers `routines:*` over the bridge.
+ */
+export const FLEET_HOST_ROUTINES_FEATURE = 'host-routines'
+
+/**
  * Gateway feature (`moreFeatures` of `/v1/meta`): the server backs up environments to storage the owner chooses and
  * restores them as new environments.
  */

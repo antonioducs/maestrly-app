@@ -8,6 +8,7 @@ import {
   routineIdSchema,
   routineListRunsSchema,
   routineOriginSchema,
+  routinePlaceSchema,
   routineRunsInRangeSchema,
   routineSettingsSchema,
   routineUpdateSchema,
@@ -183,6 +184,19 @@ export function registerRoutinesIpc(reg: IpcRegistrar, deps: RoutinesIpcDeps = {
     deps.onEnabledChanged?.()
     return routine
   })
+
+  reg.mhandle(
+    'routines:markProposalCreated',
+    (_event, proposalId: unknown, routineId: unknown, place?: unknown) => {
+      const id = routineIdSchema.parse(proposalId)
+      const createdRoutineId = routineIdSchema.parse(routineId)
+      const parsedPlace = place != null ? routinePlaceSchema.parse(place) : null
+      const proposal = getProposal(id)
+      if (!proposal) throw new Error('Routine proposal not found.')
+      if (proposal.state !== 'pending') throw new Error('Routine proposal is not pending.')
+      return setProposalState(proposal.id, 'created', createdRoutineId, Date.now(), parsedPlace)
+    }
+  )
 
   reg.mhandle('routines:discardProposal', (_event, proposalId: unknown) => {
     const id = routineIdSchema.parse(proposalId)

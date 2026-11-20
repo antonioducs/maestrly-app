@@ -94,6 +94,7 @@ export type { OpenTargets, OpenExternalTarget }
 export interface SidebarRoutinesProps {
   routines: readonly LocalRoutine[]
   runsByRoutine: Record<string, readonly LocalRoutineRun[]>
+  hosts: readonly HostView[]
   attentionCount: number
   railDot: boolean
   view: RoutinesMainView | null
@@ -1379,6 +1380,7 @@ export function Sidebar({
               <RoutinesSidebarPanel
                 routines={routines.routines}
                 runsByRoutine={routines.runsByRoutine}
+                hosts={routines.hosts}
                 query={query}
                 view={routines.view}
                 activeConversationId={activeId}

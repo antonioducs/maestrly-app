@@ -85,6 +85,7 @@ export function registerHostsIpc(reg: IpcRegistrar): void {
       deviceName: os.hostname().slice(0, 128),
       os: localOs(),
       locale: getLocale(),
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     }),
     openSocket: (url) => new WebSocket(url),
     direct: direct && { host: direct, openSocket: openDirectSocket },

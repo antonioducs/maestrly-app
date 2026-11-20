@@ -23,6 +23,7 @@ function localHost(): HostView {
     browser: true,
     computer: false,
     folderTransfers: false,
+    routines: true,
     environment: null,
     peer: null,
     hostVersion: null,

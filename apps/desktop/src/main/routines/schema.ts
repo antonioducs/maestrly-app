@@ -26,6 +26,8 @@ export function initializeRoutineSchema(db: DatabaseSync): void {
       origin_conversation_id TEXT,
       origin_title TEXT,
       origin_via TEXT,
+      origin_host_id TEXT,
+      origin_device_id TEXT,
       folder TEXT NOT NULL,
       next_run_at INTEGER,
       created_at INTEGER NOT NULL,
@@ -61,6 +63,8 @@ export function initializeRoutineSchema(db: DatabaseSync): void {
       draft_json TEXT NOT NULL,
       state TEXT NOT NULL,
       routine_id TEXT,
+      routine_host_id TEXT,
+      routine_device_id TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
@@ -68,6 +72,18 @@ export function initializeRoutineSchema(db: DatabaseSync): void {
       ON local_routine_proposals(conversation_id, created_at);
   `)
 
+  if (!tableHasColumn(db, 'local_routines', 'origin_host_id')) {
+    db.exec('ALTER TABLE local_routines ADD COLUMN origin_host_id TEXT;')
+  }
+  if (!tableHasColumn(db, 'local_routines', 'origin_device_id')) {
+    db.exec('ALTER TABLE local_routines ADD COLUMN origin_device_id TEXT;')
+  }
+  if (!tableHasColumn(db, 'local_routine_proposals', 'routine_host_id')) {
+    db.exec('ALTER TABLE local_routine_proposals ADD COLUMN routine_host_id TEXT;')
+  }
+  if (!tableHasColumn(db, 'local_routine_proposals', 'routine_device_id')) {
+    db.exec('ALTER TABLE local_routine_proposals ADD COLUMN routine_device_id TEXT;')
+  }
   if (!tableHasColumn(db, 'local_routine_runs', 'waiting_kind')) {
     db.exec('ALTER TABLE local_routine_runs ADD COLUMN waiting_kind TEXT;')
   }

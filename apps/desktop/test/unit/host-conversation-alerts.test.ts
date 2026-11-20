@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { HostConversationAlerts } from '../../src/main/notifications/host-conversations'
 import type { ConversationNoticeKind } from '../../src/main/notifications/conversation-notices'
+import { LOCAL_HOST_ID } from '../../src/shared/host-key'
 
 const HOST = 'aaaaaaaa-0000-4000-8000-000000000001/env-1'
 const KEY = `${HOST}#chat-1`
@@ -63,5 +64,103 @@ describe('HostConversationAlerts', () => {
     s.alerts.event(HOST, 'agent:status', [null])
     s.alerts.event(HOST, 'agent:status', [{ agentId: 1, status: 'ready' }])
     expect(s.calls).toEqual([['seen', KEY]])
+  })
+
+  it('forwards remote routines:toast events to RoutineNotices with host label and deduplicates repeated deliveries', () => {
+    const routineToasts: Array<{ run: unknown; routine: unknown; host: unknown }> = []
+    const play = vi.fn()
+    const alerts = new HostConversationAlerts({
+      notices: {
+        status: () => null,
+        plan: () => 'plan' as ConversationNoticeKind,
+        seen: () => undefined,
+      },
+      routines: {
+        notifyRun: (run, routine, host) => routineToasts.push({ run, routine, host }),
+        seen: () => undefined,
+      },
+      hostLabel: (hostId) => (hostId === HOST ? 'Workspaces · vps-1' : null),
+      play,
+    })
+
+    const toast = {
+      kind: 'result',
+      routine: { id: 'r-1', title: 'Daily digest' },
+      run: {
+        id: 'run-1',
+        routineId: 'r-1',
+        scheduledAt: 1000,
+        startedAt: 1000,
+        finishedAt: 2000,
+        trigger: 'schedule',
+        status: 'notable',
+        summary: '2 PRs need review',
+        report: null,
+        error: null,
+        conversationId: 'conv-1',
+        conversationDeleted: false,
+        pinned: false,
+        unread: true,
+      },
+    }
+
+    alerts.event(HOST, 'routines:toast', [toast])
+    alerts.event(HOST, 'routines:toast', [toast])
+    expect(routineToasts).toHaveLength(1)
+    expect(routineToasts[0]).toMatchObject({
+      host: { hostId: HOST, label: 'Workspaces · vps-1' },
+      routine: { id: 'r-1', title: 'Daily digest' },
+    })
+    expect(play).toHaveBeenCalledTimes(1)
+    expect(play).toHaveBeenLastCalledWith(`${HOST}#conv-1`, 'ready')
+
+    // A later status transition on the same run notifies again.
+    alerts.event(HOST, 'routines:toast', [{ ...toast, run: { ...toast.run, status: 'failed' } }])
+    expect(routineToasts).toHaveLength(2)
+    expect(play).toHaveBeenCalledTimes(2)
+    expect(play).toHaveBeenLastCalledWith(`${HOST}#conv-1`, 'error')
+  })
+
+  it('alerts each request a remote run makes of the owner, and dismisses the run once the host says it was seen', () => {
+    const notified: string[] = []
+    const seen: string[] = []
+    const alerts = new HostConversationAlerts({
+      notices: { status: () => null, plan: () => 'plan' as ConversationNoticeKind, seen: () => undefined },
+      routines: {
+        notifyRun: (run) => notified.push(`${run.status}:${run.waiting?.prompt ?? ''}`),
+        seen: (runId) => seen.push(runId),
+      },
+      play: vi.fn(),
+    })
+    const run = {
+      id: 'run-2',
+      routineId: 'r-1',
+      scheduledAt: 1000,
+      startedAt: 1000,
+      finishedAt: null,
+      trigger: 'schedule',
+      status: 'waiting',
+      summary: null,
+      report: null,
+      error: null,
+      conversationId: 'conv-2',
+      conversationDeleted: false,
+      pinned: false,
+      unread: true,
+    }
+    const waiting = (prompt: string) => ({
+      kind: 'result',
+      routine: { id: 'r-1', title: 'Deploy' },
+      run: { ...run, waiting: { kind: 'approval', prompt } },
+    })
+    alerts.event(HOST, 'routines:toast', [waiting('git push')])
+    alerts.event(HOST, 'routines:toast', [waiting('git push')])
+    alerts.event(HOST, 'routines:toast', [waiting('npm publish')])
+    expect(notified).toEqual(['waiting:git push', 'waiting:npm publish'])
+
+    alerts.event(HOST, 'routines:seen', [{ runId: 'run-2' }])
+    alerts.event(LOCAL_HOST_ID, 'routines:seen', [{ runId: 'run-2' }])
+    alerts.event(HOST, 'routines:seen', [{ runId: 7 }])
+    expect(seen).toEqual([`${HOST}#run-2`])
   })
 })

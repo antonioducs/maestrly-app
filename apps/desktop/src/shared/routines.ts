@@ -7,6 +7,7 @@ import {
 } from '@maestrly/bot-fleet-protocol'
 import type { ChatPermMode, ChatReasoningEffort } from './chat'
 import type { StandaloneConversation } from './conversation'
+import { type HostId, isRemoteHostId, isValidHostId, LOCAL_HOST_ID, parseRemoteHostId } from './host-key'
 
 export type RoutineSchedule = FleetRoutineSchedule
 export type RoutineNotify = 'notable' | 'all' | 'none'
@@ -20,7 +21,50 @@ export interface RoutineModel {
   fastMode: boolean
 }
 
-export interface RoutineOrigin {
+/**
+ * Where a record stored on one host points at another host. Host ids depend on the computer that reads them (`local`
+ * is whichever computer reads), so a record keeps only what every reader resolves alike: a server's workspaces host,
+ * or the device id a computer has on the server that stores the record. Neither means the host that stores it.
+ */
+export interface RoutinePlace {
+  hostId?: HostId | null
+  deviceId?: string | null
+}
+
+/** Stands for a computer whose device id on the storing server was not known: no reader resolves it. */
+const UNKNOWN_DEVICE = 'unknown'
+
+/** What a record stored on `storeHostId` keeps to point at `targetHostId`, both as this computer names them. */
+export function storedRoutinePlace(
+  storeHostId: HostId,
+  targetHostId: HostId,
+  deviceIdOn: (serverId: string) => string | null
+): RoutinePlace {
+  if (targetHostId === storeHostId) return {}
+  if (isRemoteHostId(targetHostId)) return { hostId: targetHostId }
+  const server = parseRemoteHostId(storeHostId)?.serverId
+  return { deviceId: (server && deviceIdOn(server)) || UNKNOWN_DEVICE }
+}
+
+/** The host, as this computer names it, a record stored on `storeHostId` points at; null when it is not reachable. */
+export function resolveRoutinePlace(
+  storeHostId: HostId,
+  place: RoutinePlace | null | undefined,
+  deviceIdOn: (serverId: string) => string | null
+): HostId | null {
+  if (place?.hostId) {
+    if (isRemoteHostId(place.hostId)) return place.hostId
+    return storeHostId === LOCAL_HOST_ID ? LOCAL_HOST_ID : null
+  }
+  if (place?.deviceId) {
+    const server = parseRemoteHostId(storeHostId)?.serverId
+    return server && deviceIdOn(server) === place.deviceId ? LOCAL_HOST_ID : null
+  }
+  return storeHostId
+}
+
+export interface RoutineOrigin extends RoutinePlace {
+  /** The conversation's id on its own host (see `RoutinePlace`): an empty id is an origin no longer reachable. */
   conversationId: string
   title: string
   via: 'proposal' | 'menu'
@@ -102,6 +146,8 @@ export interface RoutineProposal {
   draft: RoutineDraft
   state: 'pending' | 'created' | 'discarded'
   routineId: string | null
+  /** Where the created routine lives when another host runs it (see `RoutinePlace`). */
+  routinePlace?: RoutinePlace
   createdAt: number
 }
 
@@ -153,11 +199,26 @@ export const routineModelSchema = z
   })
   .strict()
 
+// A stored place never names `local`: every computer reads it as itself (see `RoutinePlace`).
+const routinePlaceFields = {
+  hostId: z
+    .string()
+    .min(1)
+    .max(200)
+    .refine((v) => isValidHostId(v) && isRemoteHostId(v), 'Invalid host id')
+    .nullable()
+    .optional(),
+  deviceId: z.string().min(1).max(200).nullable().optional(),
+}
+
+export const routinePlaceSchema = z.object(routinePlaceFields).strict()
+
 export const routineOriginSchema = z
   .object({
     conversationId: z.string().min(1).max(200),
     title: z.string().min(1).max(300),
     via: z.enum(['proposal', 'menu']),
+    ...routinePlaceFields,
   })
   .strict()
 

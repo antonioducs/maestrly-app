@@ -37,6 +37,7 @@ const hostInfo: RemoteHostInfo = {
   browser: false,
   computer: false,
   folderTransfers: false,
+  routines: false,
 }
 const hello: BridgeClientFrame = {
   t: 'hello',
@@ -48,7 +49,15 @@ const hello: BridgeClientFrame = {
 function setup() {
   const table = new IpcHandlerTable()
   const applyLocale = vi.fn()
-  const hub = new RemoteUiHub({ table, appVersion: '1.2.3', hostInfo: () => hostInfo, applyLocale, log: vi.fn() })
+  const applyTimeZone = vi.fn()
+  const hub = new RemoteUiHub({
+    table,
+    appVersion: '1.2.3',
+    hostInfo: () => hostInfo,
+    applyLocale,
+    applyTimeZone,
+    log: vi.fn(),
+  })
   const socket = new FakeSocket()
   hub.attach(socket)
   const frame = (value: BridgeClientFrame) => socket.emit('message', encodeBridgeFrame(value))
@@ -56,7 +65,7 @@ function setup() {
   const last = (): BridgeHostFrame => frames().at(-1)!
   /** Lets the hub answer an invoke: it runs the handler after a microtask. */
   const settle = () => new Promise<void>((resolve) => setImmediate(resolve))
-  return { table, hub, socket, frame, frames, last, settle, applyLocale }
+  return { table, hub, socket, frame, frames, last, settle, applyLocale, applyTimeZone }
 }
 function connected() {
   const h = setup()
@@ -92,8 +101,16 @@ describe('remote UI hub', () => {
     h.frame(hello)
     expect(h.last()).toEqual({ t: 'welcome', protocol: 1, appVersion: '1.2.3', host: hostInfo })
     expect(h.applyLocale).toHaveBeenCalledWith('pt-BR')
+    expect(h.applyTimeZone).not.toHaveBeenCalled()
     expect(h.socket.closed).toBeNull()
     expect(h.hub.sessionCount()).toBe(1)
+  })
+
+  it('takes the time zone a computer sends, for the routines the host schedules on its behalf', () => {
+    const h = setup()
+    h.frame({ ...hello, client: { ...hello.client, timeZone: 'America/Sao_Paulo' } } as BridgeClientFrame)
+    expect(h.last()).toMatchObject({ t: 'welcome' })
+    expect(h.applyTimeZone).toHaveBeenCalledWith('America/Sao_Paulo')
   })
 
   it('runs a recorded handler for an invoke, with the origin as its sender', async () => {

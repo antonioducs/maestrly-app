@@ -1,6 +1,7 @@
 import type { BrowserWindow } from 'electron'
 import { chatWindowKey, parseChatWindowKey } from '../../shared/chat-window'
 import type { FleetServerId } from '../../shared/fleet-servers'
+import type { HostId } from '../../shared/host-key'
 import type { NotificationTarget } from '../../shared/notifications'
 import type { SoundEvent } from '../../shared/sound'
 import type { ChatWindowManager } from '../chat-window-manager'
@@ -25,6 +26,8 @@ export interface AppNotificationsDeps {
   botName(serverId: FleetServerId, botId: string): string | null
   /** The server's name when the owner pairs several, to tell their bots apart; null otherwise. */
   serverName(serverId: FleetServerId): string | null
+  /** Display label for a remote host (used on remote routine run notifications). */
+  hostLabel?: (hostId: HostId) => string | null
   botAttention: Omit<FleetBotAttentionDeps, 'max'>
   badge: Omit<AppBadgeDeps, 'mainWindow'>
 }
@@ -55,7 +58,17 @@ export class AppNotifications {
       label: deps.conversationLabel,
       open: (id) => this.open({ kind: 'conversation', conversationId: id }),
     })
-    this.hosts = new HostConversationAlerts({ notices: this.conversations, play: deps.playHostAlert })
+    this.routines = new RoutineNotices({
+      notices: this.notices,
+      sees: (id) => this.presence.seesConversation(id),
+      open: (target) => this.open(target),
+    })
+    this.hosts = new HostConversationAlerts({
+      notices: this.conversations,
+      routines: this.routines,
+      hostLabel: deps.hostLabel,
+      play: deps.playHostAlert,
+    })
     this.botAttention = new FleetBotAttention(deps.botAttention)
     this.bots = new FleetBotNotices({
       notices: this.notices,
@@ -68,11 +81,6 @@ export class AppNotifications {
     this.backups = new FleetBackupNotices({
       notices: this.notices,
       serverName: deps.serverName,
-      open: (target) => this.open(target),
-    })
-    this.routines = new RoutineNotices({
-      notices: this.notices,
-      sees: (id) => this.presence.seesConversation(id),
       open: (target) => this.open(target),
     })
   }

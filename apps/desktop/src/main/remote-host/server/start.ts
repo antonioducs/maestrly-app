@@ -26,6 +26,7 @@ import { watchChatAttention } from './chat-attention'
 import type { HostBotAccess } from './bot-access'
 import { getChatPermissionBroker, getChatQuestionBroker } from '../../chat/service'
 import { getPending as getPendingPlan } from '../../plan-broker'
+import { getRoutine, getRoutineHealthSummary, getRun } from '../../routines/store'
 
 /** What server mode needs from the main process. */
 export interface ServerHostDeps {
@@ -145,6 +146,17 @@ export async function startServerHostMode(window: BrowserWindow, deps: ServerHos
       watchStatuses: deps.watchStatuses,
       conversation: (id) => getConversation(id),
       hasPendingPlan: (id) => getPendingPlan(id) !== null,
+      routineRun: (id) => {
+        const conv = getConversation(id)
+        if (conv?.scope !== 'standalone' || !conv.routineRunId) return null
+        const run = getRun(conv.routineRunId)
+        if (!run) return null
+        const routine = getRoutine(run.routineId)
+        if (!routine) return null
+        const outcome =
+          run.report?.outcome ?? (run.status === 'notable' || run.status === 'nothing_new' ? run.status : 'done')
+        return { notify: routine.notify, outcome, active: run.status === 'running' || run.status === 'waiting' }
+      },
       publish: (event) => runtime.events.publish({ type: 'chat.attention', botId: null, ...event }),
     })
     // Computers move files of the host's folders, and read the copies it makes of PDF attachments for them.
@@ -176,7 +188,8 @@ export async function startServerHostMode(window: BrowserWindow, deps: ServerHos
         conversationExists: (id) => getConversation(id) !== undefined,
       },
       deps.bots.available,
-      config.workspacesRoot
+      config.workspacesRoot,
+      () => getRoutineHealthSummary()
     )
     const server = createInstanceControlServer(config, host, {
       bridge: deps.hub,

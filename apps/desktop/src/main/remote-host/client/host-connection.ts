@@ -40,7 +40,7 @@ export interface HostConnectionDeps {
   /** Opens a socket to the host's bridge: with a ticket of the gateway, or straight to a development host. */
   connect: () => Promise<BridgeClientSocket>
   appVersion: string
-  client: () => { deviceName: string; os: RemoteOs; locale: string }
+  client: () => { deviceName: string; os: RemoteOs; locale: string; timeZone?: string }
   onChange: (snapshot: HostConnectionSnapshot) => void
   /** What the host pushes to one of this computer's renderers. */
   onEvent: (origin: number, channel: string, args: unknown[]) => void

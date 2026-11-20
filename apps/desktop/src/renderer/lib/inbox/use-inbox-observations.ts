@@ -143,16 +143,16 @@ export function useInboxObservations(sources: InboxObservationSources): InboxObs
     [botServers, sources.botMarks, sources.botEvents]
   )
 
-  const localPlace = useMemo(
-    () => hostPlace(hosts.find((host) => host.id === LOCAL_HOST_ID), LOCAL_HOST_ID, t),
-    [hosts, t]
-  )
+  const placeForHost = useMemo(() => {
+    const byId = new Map(hosts.map((host) => [host.id, host]))
+    return (hostId: HostId): InboxPlace => hostPlace(byId.get(hostId), hostId, t)
+  }, [hosts, t])
   const routineItems = useMemo(
     () =>
       sources.routines && sources.runsByRoutine && sources.tRoutines
-        ? routineObservations(sources.routines, sources.runsByRoutine, localPlace, sources.tRoutines)
+        ? routineObservations(sources.routines, sources.runsByRoutine, placeForHost, sources.tRoutines)
         : [],
-    [sources.routines, sources.runsByRoutine, localPlace, sources.tRoutines]
+    [sources.routines, sources.runsByRoutine, placeForHost, sources.tRoutines]
   )
 
   return useMemo(() => [...conversationItems, ...botItems, ...routineItems], [conversationItems, botItems, routineItems])

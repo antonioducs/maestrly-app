@@ -13,7 +13,8 @@ import { requestMainNavigation } from './main-navigation'
 import { SETTINGS_NAV, type SettingsSection } from '@/components/settings/nav'
 import type { OpenSettingsOptions, SettingsRequest } from './use-settings'
 import { hostApi } from '@/lib/hosts/host-context'
-import { type HostId, LOCAL_HOST_ID, parseHostKey } from '../../shared/host-key'
+import { hostTarget, shellConversation } from '@/lib/hosts/shell-keys'
+import { type HostId, hostKey, LOCAL_HOST_ID, parseHostKey } from '../../shared/host-key'
 import { memoryKeyFor, memoryTargetOf, type OpenMemoryRequest, personalMemoryKey } from './memory-target'
 import type { EnvironmentSettingsSection } from '@/components/fleet/environment-settings/sections'
 
@@ -343,15 +344,16 @@ export function useMainPanels({
     const onOpenRun = async (event: Event) => {
       const detail = (event as CustomEvent<{ routineId?: string; runId?: string }>).detail
       if (!detail?.runId) return
+      const { hostId, id, api } = hostTarget(detail.runId)
       try {
-        await window.api.routinesMarkRunSeen?.(detail.runId)
+        await api.routinesMarkRunSeen?.(id)
       } catch {}
       let details = null
       try {
-        details = await window.api.routinesGetRun?.(detail.runId)
+        details = await api.routinesGetRun?.(id)
       } catch {}
       if (details?.conversation) {
-        const conversation = details.conversation
+        const conversation = shellConversation(hostId, details.conversation)
         requestMainNavigation(() => {
           setProjectNotesWs(null)
           setProjectMemoryWs(null)
@@ -368,7 +370,7 @@ export function useMainPanels({
       if (details) {
         openRoutinesView({
           kind: 'run-gone',
-          routineId: detail.routineId ?? details.run.routineId,
+          routineId: detail.routineId ?? hostKey(hostId, details.run.routineId),
           runId: detail.runId,
         })
         return

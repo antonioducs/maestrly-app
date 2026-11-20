@@ -15,6 +15,7 @@ import {
   deleteRoutine,
   getProposal,
   getRoutine,
+  getRoutineHealthSummary,
   getRoutineSettings,
   getRun,
   insertRun,
@@ -345,5 +346,45 @@ describe('routines store', () => {
     expect(isAlerting({ status: 'done' }, 'all')).toBe(true)
     expect(isAlerting({ status: 'skipped_closed' }, 'all')).toBe(false)
     expect(isAlerting({ status: 'stopped' }, 'all')).toBe(false)
+  })
+
+  it('persists origin and proposal places, and computes routine health summary', () => {
+    expect(getRoutineHealthSummary()).toEqual({ enabled: 0, nextRunAt: null })
+
+    const routine = createRoutine(sampleDraft(), {
+      conversationId: 'conv-origin',
+      title: 'Origin chat',
+      via: 'proposal',
+      deviceId: 'device-1',
+    })
+    expect(getRoutine(routine.id)?.origin).toEqual({
+      conversationId: 'conv-origin',
+      title: 'Origin chat',
+      via: 'proposal',
+      deviceId: 'device-1',
+    })
+
+    const second = createRoutine(
+      { ...sampleDraft(), title: 'Earlier routine' },
+      null
+    )
+    setNextRunAt(routine.id, 20_000)
+    setNextRunAt(second.id, 10_000)
+    expect(getRoutineHealthSummary()).toEqual({ enabled: 2, nextRunAt: 10_000 })
+
+    setRoutineEnabled(second.id, false)
+    expect(getRoutineHealthSummary()).toEqual({ enabled: 1, nextRunAt: 20_000 })
+
+    setRoutineEnabled(routine.id, false)
+    expect(getRoutineHealthSummary()).toEqual({ enabled: 0, nextRunAt: null })
+
+    insertConversation(makeStandalone('conv-origin'))
+    const proposal = createProposal('conv-origin', sampleDraft())
+    const updated = setProposalState(proposal.id, 'created', routine.id, Date.now(), { hostId: 'server-1/workspaces' })
+    expect(updated?.state).toBe('created')
+    expect(updated?.routineId).toBe(routine.id)
+    expect(getProposal(proposal.id)?.routinePlace).toEqual({ hostId: 'server-1/workspaces' })
+    setProposalState(proposal.id, 'created', routine.id, Date.now(), { deviceId: 'device-1' })
+    expect(getProposal(proposal.id)?.routinePlace).toEqual({ deviceId: 'device-1' })
   })
 })

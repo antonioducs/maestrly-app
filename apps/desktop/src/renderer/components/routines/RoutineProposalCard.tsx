@@ -8,12 +8,14 @@ import {
   Clock,
   Loader2,
   Pencil,
+  Play,
   Trash2,
   X,
 } from 'lucide-react'
 import type { ChatConfig, ChatMessage, MessagePart, ToolOutput } from '../../../shared/chat'
 import { toolOutputText } from '../../../shared/chat'
-import { LOCAL_HOST_ID } from '../../../shared/host-key'
+import { type HostId, hostKey, LOCAL_HOST_ID } from '../../../shared/host-key'
+import type { HostView } from '../../../shared/hosts'
 import {
   isRoutineRunSkipped,
   type LocalRoutine,
@@ -21,12 +23,28 @@ import {
   type RoutineDraft,
   type RoutineModel,
   type RoutineProposal,
+  resolveRoutinePlace,
 } from '../../../shared/routines'
-import { hostApi, useHostId } from '@/lib/hosts/host-context'
+import { hostApi, HostProvider, useHostId } from '@/lib/hosts/host-context'
+import { hostOfKey, hostTarget, rawId } from '@/lib/hosts/shell-keys'
+import { useHosts } from '@/lib/hosts/use-hosts'
+import { createRoutineFromProposalOnHost, useFleetDeviceIds } from '@/lib/routines/cross-host'
 import { chatProviderChoices } from '@/components/chat/account-pool'
+import { ChatModelChip } from '@/components/chat/ChatModelChip'
+import { loadModelPickerRows, type ModelPickerRow } from '@/components/chat/model-picker-rows'
 import { modelDisplayName } from '@/components/chat/model-search'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { toast } from '@/components/ui/toaster'
 import { ToolCallCard } from '@/components/chat/ToolCallCard'
+import {
+  isRoutineHostCapable,
+  routineHostDisplay,
+  routineHostStatusLabel,
+  shellRoutine,
+  shellRoutineRun,
+  validateRoutineModelForHost,
+  type RoutineModelValidation,
+} from '@/lib/routines/host-routines'
 import {
   formatHHMM,
   formatRelative,
@@ -42,6 +60,7 @@ import {
 } from '@/lib/routines/schedule-text'
 import type { RoutineModelDisplayInfo } from '@/lib/routines/use-routines'
 import {
+  RoutineHostBadge,
   RoutineModelLine,
   RoutineOutcomePill,
   RoutinePermBadge,
@@ -122,6 +141,16 @@ export function RoutineProposalCardBody({
   readOnly = false,
   busy = false,
   modelInfo,
+  hosts = [],
+  targetHostId = LOCAL_HOST_ID,
+  routineHostId,
+  routineElsewhere = false,
+  modelValidation,
+  overrideModel,
+  startingTargetHost = false,
+  onChangeTargetHost,
+  onStartTargetHost,
+  onChangeOverrideModel,
   onEnableBackground,
   onCreate,
   onAdjust,
@@ -137,6 +166,17 @@ export function RoutineProposalCardBody({
   readOnly?: boolean
   busy?: boolean
   modelInfo: RoutineModelDisplayInfo
+  hosts?: readonly HostView[]
+  targetHostId?: HostId
+  routineHostId?: HostId
+  /** The routine was created on a computer other than this one, which cannot show it. */
+  routineElsewhere?: boolean
+  modelValidation?: RoutineModelValidation
+  overrideModel?: RoutineModel | null
+  startingTargetHost?: boolean
+  onChangeTargetHost?: (hostId: HostId) => void
+  onStartTargetHost?: (hostId: HostId) => void
+  onChangeOverrideModel?: (model: RoutineModel) => void
   onEnableBackground: () => void
   onCreate: () => void
   onAdjust: () => void
@@ -148,6 +188,7 @@ export function RoutineProposalCardBody({
   const { t: tChat } = useTranslation('chat')
   const tr: RoutineTranslator = (key, opts) => String(t(key as never, opts as never))
   const now = Date.now()
+  const hostById = new Map(hosts.map((h) => [h.id, h]))
 
   if (proposal.state === 'discarded') {
     return (
@@ -173,6 +214,16 @@ export function RoutineProposalCardBody({
   }
 
   if (proposal.state === 'created') {
+    if (!routine && routineElsewhere) {
+      return (
+        <div className="routine-rcard discarded" data-testid="routine-proposal-elsewhere">
+          <div className="routine-rcard-min">
+            <Check aria-hidden="true" className="size-3.5 shrink-0" />
+            <span>{t('proposal.createdElsewhere')}</span>
+          </div>
+        </div>
+      )
+    }
     if (!routine) {
       return (
         <div className="routine-rcard discarded" data-testid="routine-proposal-deleted">
@@ -185,6 +236,8 @@ export function RoutineProposalCardBody({
     }
 
     const nextWhen = routine.enabled && routine.nextRunAt ? routine.nextRunAt : null
+    const resolvedRoutineHostId = routineHostId ?? hostOfKey(routine.id)
+    const resolvedRoutineHost = hostById.get(resolvedRoutineHostId)
 
     return (
       <div className="routine-rcard created" data-testid="routine-proposal-created">
@@ -199,6 +252,7 @@ export function RoutineProposalCardBody({
           </div>
           <div className="routine-rcard-title">{routine.title}</div>
           <div className="routine-rcard-next">
+            <RoutineHostBadge host={resolvedRoutineHost} hostId={resolvedRoutineHostId} compact />
             <RoutinePermBadge mode={routine.permMode} />
             <span className="routine-tag">
               {modelTagText(routine.model, modelInfo, (k) => String(tChat(k as never)))}
@@ -239,6 +293,7 @@ export function RoutineProposalCardBody({
   }
 
   const draft = proposal.draft
+  const effectiveModel = overrideModel ?? draft.model
   const firstLine = draft.instruction.split('\n')[0] ?? draft.instruction
   const isLong = draft.instruction.includes('\n') || draft.instruction.length > 140
   const nextDates = upcomingRunDates(draft.schedule, 3, now)
@@ -246,6 +301,16 @@ export function RoutineProposalCardBody({
     draft.schedule.kind === 'weekly' ? t('proposal.kindWeekly') : t('proposal.kindInterval')
   const tzSuffix =
     draft.schedule.kind === 'weekly' && draft.schedule.timezone ? ` · ${draft.schedule.timezone}` : ''
+
+  const selectableHosts = hosts.filter(isRoutineHostCapable)
+  const selectedHost = hostById.get(targetHostId)
+  const targetInfo = routineHostDisplay(selectedHost, targetHostId, tr)
+  const showHostSelector = !readOnly && (selectableHosts.length > 1 || targetInfo.isRemote) && Boolean(onChangeTargetHost)
+  const hostUnavailable = targetInfo.isRemote && !targetInfo.online
+  const modelInvalid =
+    !hostUnavailable &&
+    (modelValidation?.status === 'missing-provider' || modelValidation?.status === 'missing-model')
+  const createDisabled = busy || hostUnavailable || modelInvalid
 
   return (
     <div
@@ -281,6 +346,63 @@ export function RoutineProposalCardBody({
       </div>
 
       <dl className="routine-facts">
+        {showHostSelector && (
+          <>
+            <dt>{t('host.runsOn')}</dt>
+            <dd>
+              <Select value={targetHostId} onValueChange={(value) => onChangeTargetHost?.(value)} disabled={busy}>
+                <SelectTrigger
+                  aria-label={t('host.runsOn')}
+                  className="h-[28px] w-auto min-w-[190px] max-w-full rounded-[7px] border border-border-strong bg-white/[0.03] px-2 text-[12px] shadow-none"
+                >
+                  <SelectValue>
+                    <span className="inline-flex items-center gap-1.5 truncate">
+                      <span
+                        aria-hidden="true"
+                        className="size-[6px] shrink-0 rounded-full"
+                        style={{
+                          backgroundColor: `rgb(${targetInfo.tintRgb[0]}, ${targetInfo.tintRgb[1]}, ${targetInfo.tintRgb[2]})`,
+                          opacity: targetInfo.online ? 1 : 0.45,
+                        }}
+                      />
+                      <span className="truncate">{targetInfo.fullLabel}</span>
+                      {targetInfo.isRemote && !targetInfo.online && (
+                        <span className="text-[11px] text-[var(--artifact-warn)]">
+                          · {routineHostStatusLabel(targetInfo.status, tr)}
+                        </span>
+                      )}
+                    </span>
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {selectableHosts.map((host) => {
+                    const info = routineHostDisplay(host, host.id, tr)
+                    return (
+                      <SelectItem key={host.id} value={host.id} className="text-[12.5px]">
+                        <span className="inline-flex items-center gap-1.5">
+                          <span
+                            aria-hidden="true"
+                            className="size-[6px] shrink-0 rounded-full"
+                            style={{
+                              backgroundColor: `rgb(${info.tintRgb[0]}, ${info.tintRgb[1]}, ${info.tintRgb[2]})`,
+                              opacity: info.online ? 1 : 0.45,
+                            }}
+                          />
+                          <span>{info.fullLabel}</span>
+                          {info.isRemote && !info.online && (
+                            <span className="text-[11px] text-muted-foreground">
+                              · {routineHostStatusLabel(info.status, tr)}
+                            </span>
+                          )}
+                        </span>
+                      </SelectItem>
+                    )
+                  })}
+                </SelectContent>
+              </Select>
+            </dd>
+          </>
+        )}
         <dt>{t('proposal.factInstruction')}</dt>
         <dd>
           {isLong ? (
@@ -298,12 +420,16 @@ export function RoutineProposalCardBody({
         <dt>{t('proposal.factPermissions')}</dt>
         <dd>
           <RoutinePermBadge mode={draft.permMode} />
-          <span className="routine-sub">{t(`permMode.${draft.permMode}Routine` as never)}</span>
+          <span className="routine-sub">
+            {targetInfo.isRemote && draft.permMode === 'full'
+              ? t('host.fullRoutineRemote')
+              : t(`permMode.${draft.permMode}Routine` as never)}
+          </span>
         </dd>
         <dt>{t('proposal.factModel')}</dt>
         <dd>
           <RoutineModelLine
-            model={draft.model}
+            model={effectiveModel}
             modelName={modelInfo.name}
             providerName={modelInfo.providerName}
           />
@@ -312,7 +438,68 @@ export function RoutineProposalCardBody({
         <dd>{tr(notifyKey(draft.notify))}</dd>
       </dl>
 
-      {!backgroundEnabled && !readOnly && (
+      {hostUnavailable && !readOnly && (
+        <div className="routine-rcard-warn" data-testid="routine-proposal-host-unavailable">
+          <AlertTriangle aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-[var(--artifact-warn)]" />
+          <span className="min-w-0 flex-1">
+            {t('host.hostUnavailableSelect', {
+              host: targetInfo.fullLabel,
+              status: routineHostStatusLabel(targetInfo.status, tr).toLowerCase(),
+            })}
+          </span>
+          {targetInfo.canStart && onStartTargetHost && (
+            <button
+              type="button"
+              disabled={busy || startingTargetHost}
+              onClick={() => onStartTargetHost(targetHostId)}
+              className="inline-flex shrink-0 items-center gap-1 rounded-[7px] border border-border-strong bg-white/[0.04] px-2.5 py-1 text-[12px] font-medium text-foreground transition-colors hover:bg-white/[0.09] disabled:opacity-50"
+            >
+              {startingTargetHost ? (
+                <Loader2 aria-hidden="true" className="size-3 animate-spin" />
+              ) : (
+                <Play aria-hidden="true" className="size-3" />
+              )}
+              <span>{startingTargetHost ? t('host.startingAction') : t('host.startAction')}</span>
+            </button>
+          )}
+        </div>
+      )}
+
+      {modelInvalid && !readOnly && (
+        <div className="routine-rcard-warn flex-wrap" data-testid="routine-proposal-model-warning">
+          <AlertTriangle aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-[var(--artifact-warn)]" />
+          <span className="min-w-0 flex-1">
+            {modelValidation.status === 'missing-provider'
+              ? t('host.modelMissingProvider', {
+                  provider: modelValidation.providerName ?? effectiveModel.providerId,
+                  host: targetInfo.fullLabel,
+                })
+              : t('host.modelMissingModel', { host: targetInfo.fullLabel })}
+          </span>
+          {onChangeOverrideModel && (
+            <div className="shrink-0">
+              <HostProvider hostId={targetHostId}>
+                <ChatModelChip
+                  key={targetHostId}
+                  value={null}
+                  avoidOverflow
+                  onSelect={(next) =>
+                    onChangeOverrideModel({
+                      ...effectiveModel,
+                      providerId: next.providerId,
+                      modelId: next.modelId,
+                      reasoning: 'off',
+                      fastMode: false,
+                    })
+                  }
+                />
+              </HostProvider>
+            </div>
+          )}
+        </div>
+      )}
+
+      {!targetInfo.isRemote && !backgroundEnabled && !readOnly && (
         <div className="routine-rcard-warn">
           <AlertTriangle aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-[var(--artifact-warn)]" />
           <span className="min-w-0 flex-1">{t('proposal.bgWarning')}</span>
@@ -334,7 +521,7 @@ export function RoutineProposalCardBody({
           <>
             <button
               type="button"
-              disabled={busy}
+              disabled={createDisabled}
               onClick={onCreate}
               className="inline-flex items-center gap-1.5 rounded-[7px] bg-primary px-3 py-1.5 text-[12.5px] font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
             >
@@ -358,7 +545,11 @@ export function RoutineProposalCardBody({
             >
               <span>{t('proposal.discardAction')}</span>
             </button>
-            <span className="routine-note">{t('proposal.footerNote')}</span>
+            <span className="routine-note">
+              {targetInfo.isRemote
+                ? t('host.proposalFooterRemote', { host: targetInfo.fullLabel })
+                : t('proposal.footerNote')}
+            </span>
           </>
         )}
       </div>
@@ -370,12 +561,14 @@ export function RoutineCreatedNotice({
   routine,
   lastRun,
   modelInfo,
+  hosts = [],
   readOnly = false,
   onOpenRoutine,
 }: {
   routine: LocalRoutine
   lastRun: LocalRoutineRun | null
   modelInfo: RoutineModelDisplayInfo
+  hosts?: readonly HostView[]
   readOnly?: boolean
   onOpenRoutine: (routineId: string) => void
 }) {
@@ -406,6 +599,8 @@ export function RoutineCreatedNotice({
       viaMenu={true}
       readOnly={readOnly}
       modelInfo={modelInfo}
+      hosts={hosts}
+      routineHostId={hostOfKey(routine.id)}
       onEnableBackground={noop}
       onCreate={noop}
       onAdjust={noop}
@@ -436,7 +631,9 @@ export function RoutineProposalCard({
 }) {
   const { t } = useTranslation('routines')
   const hostId = useHostId()
-  const readOnly = hostId !== LOCAL_HOST_ID
+  const hosts = useHosts()
+  const currentHost = hosts.find((h) => h.id === hostId)
+  const readOnly = hostId !== LOCAL_HOST_ID && (!currentHost || !isRoutineHostCapable(currentHost))
 
   if (
     part.state.status === 'pending' ||
@@ -457,42 +654,70 @@ export function RoutineProposalCard({
     return <ToolCallCard part={part} conversationId={conversationId} messageId={messageId} />
   }
 
-  return <LiveRoutineProposalCard proposalId={proposalId} readOnly={readOnly} />
+  return (
+    <LiveRoutineProposalCard
+      proposalId={proposalId}
+      proposalHostId={hostId}
+      conversationId={conversationId}
+      readOnly={readOnly}
+    />
+  )
 }
 
 function LiveRoutineProposalCard({
   proposalId,
+  proposalHostId,
+  conversationId,
   readOnly,
 }: {
   proposalId: string
+  proposalHostId: HostId
+  conversationId: string
   readOnly: boolean
 }) {
   const { t } = useTranslation('routines')
+  const hosts = useHosts()
+  const deviceIdOn = useFleetDeviceIds()
   const [proposal, setProposal] = useState<RoutineProposal | null>(null)
   const [routine, setRoutine] = useState<LocalRoutine | null>(null)
   const [lastRun, setLastRun] = useState<LocalRoutineRun | null>(null)
   const [backgroundEnabled, setBackgroundEnabled] = useState(true)
-  const [chatConfig, setChatConfig] = useState<ChatConfig | null>(null)
+  const [targetHostId, setTargetHostId] = useState<HostId>(proposalHostId)
+  const [targetChatConfig, setTargetChatConfig] = useState<ChatConfig | null>(null)
+  const [targetModelRows, setTargetModelRows] = useState<ModelPickerRow[] | null>(null)
+  const [targetRowsPending, setTargetRowsPending] = useState(0)
+  const [overrideModel, setOverrideModel] = useState<RoutineModel | null>(null)
+  const [startingTargetHost, setStartingTargetHost] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [busy, setBusy] = useState(false)
 
+  const targetHost = hosts.find((h) => h.id === targetHostId)
+  const targetOnline = !targetHost?.remote || targetHost.state === 'online'
+  const targetEpoch = targetHost?.epoch ?? 0
+
   const load = useCallback(async () => {
     try {
-      const [nextProposal, settings, cfg] = await Promise.all([
-        window.api.routinesGetProposal(proposalId),
-        window.api.routinesGetSettings(),
-        hostApi(LOCAL_HOST_ID).chatConfig(),
+      const proposalApi = hostApi(proposalHostId)
+      const [nextProposal, localSettings] = await Promise.all([
+        proposalApi.routinesGetProposal(proposalId),
+        hostApi(LOCAL_HOST_ID).routinesGetSettings().catch(() => ({ keepRunning: true, openAtLogin: false })),
       ])
       setProposal(nextProposal)
-      setBackgroundEnabled(settings.keepRunning)
-      setChatConfig(cfg)
-      if (nextProposal?.state === 'created' && nextProposal.routineId) {
+      setBackgroundEnabled(localSettings.keepRunning)
+      const destHostId =
+        nextProposal?.state === 'created' && nextProposal.routineId
+          ? resolveRoutinePlace(proposalHostId, nextProposal.routinePlace, deviceIdOn)
+          : null
+      // A routine another computer runs is not this computer's to show: the card says it was created.
+      if (nextProposal?.routineId && destHostId) {
+        const destApi = hostApi(destHostId)
         const [nextRoutine, runPage] = await Promise.all([
-          window.api.routinesGet(nextProposal.routineId),
-          window.api.routinesListRuns({ routineId: nextProposal.routineId, filter: 'all', limit: 20 }),
+          destApi.routinesGet(nextProposal.routineId),
+          destApi.routinesListRuns({ routineId: nextProposal.routineId, filter: 'all', limit: 20 }),
         ])
-        setRoutine(nextRoutine)
-        setLastRun(runPage.runs.find((r) => !isRoutineRunSkipped(r)) ?? null)
+        setRoutine(nextRoutine ? shellRoutine(destHostId, nextRoutine, deviceIdOn) : null)
+        const latest = runPage.runs.find((r) => !isRoutineRunSkipped(r)) ?? null
+        setLastRun(latest ? shellRoutineRun(destHostId, latest) : null)
       } else {
         setRoutine(null)
         setLastRun(null)
@@ -502,30 +727,69 @@ function LiveRoutineProposalCard({
     } finally {
       setLoaded(true)
     }
-  }, [proposalId])
+  }, [deviceIdOn, proposalHostId, proposalId])
+
+  const destHostId =
+    proposal?.state === 'created' ? resolveRoutinePlace(proposalHostId, proposal.routinePlace, deviceIdOn) : null
 
   useEffect(() => {
     void load()
-    return window.api.onRoutinesChanged(() => {
-      void load()
-    })
-  }, [load])
+    const offProposalHost = hostApi(proposalHostId).onRoutinesChanged?.(() => void load())
+    const offDestHost =
+      destHostId && destHostId !== proposalHostId ? hostApi(destHostId).onRoutinesChanged?.(() => void load()) : undefined
+    return () => {
+      offProposalHost?.()
+      offDestHost?.()
+    }
+  }, [load, proposalHostId, destHostId])
 
-  const modelInfo = useMemo(() => {
-    const model = routine?.model ?? proposal?.draft.model
-    return model ? resolveModelInfo(model, chatConfig) : { name: '', providerName: '' }
-  }, [routine?.model, proposal?.draft.model, chatConfig])
+  // Load target host's chatConfig and available model rows whenever targetHostId changes or reconnects.
+  useEffect(() => {
+    setTargetChatConfig(null)
+    setTargetModelRows(null)
+    setTargetRowsPending(0)
+    if (!targetOnline) return
+
+    let alive = true
+    const api = hostApi(targetHostId)
+    void api
+      .chatConfig()
+      .then((cfg) => {
+        if (alive) setTargetChatConfig(cfg)
+      })
+      .catch(() => {})
+    void loadModelPickerRows(api, targetHostId, (update) => {
+      if (!alive) return
+      setTargetChatConfig(update.config)
+      setTargetModelRows(update.rows)
+      setTargetRowsPending(update.pending)
+    }).catch(() => {})
+
+    return () => {
+      alive = false
+    }
+  }, [targetHostId, targetOnline, targetEpoch])
+
+  const effectiveModel = routine?.model ?? overrideModel ?? proposal?.draft.model ?? null
+  const modelInfo = useMemo(
+    () => (effectiveModel ? resolveModelInfo(effectiveModel, targetChatConfig) : { name: '', providerName: '' }),
+    [effectiveModel, targetChatConfig]
+  )
+  const modelValidation = useMemo(() => {
+    if (!effectiveModel || proposal?.state !== 'pending') return undefined
+    return validateRoutineModelForHost(effectiveModel, targetChatConfig, targetModelRows, targetRowsPending)
+  }, [effectiveModel, proposal?.state, targetChatConfig, targetModelRows, targetRowsPending])
 
   if (!loaded || !proposal) return null
 
-  const openRoutine = (routineId: string) => {
-    window.dispatchEvent(new CustomEvent('maestrly:open-routine', { detail: { routineId } }))
+  const openRoutine = (routineKey: string) => {
+    window.dispatchEvent(new CustomEvent('maestrly:open-routine', { detail: { routineId: routineKey } }))
   }
 
   const handleEnableBackground = async () => {
     setBusy(true)
     try {
-      await window.api.routinesSetSettings({ keepRunning: true })
+      await hostApi(LOCAL_HOST_ID).routinesSetSettings({ keepRunning: true })
       setBackgroundEnabled(true)
       toast({
         id: 'routine-bg-enabled',
@@ -539,23 +803,63 @@ function LiveRoutineProposalCard({
     }
   }
 
+  const handleStartTargetHost = async (hostId: HostId) => {
+    const host = hosts.find((h) => h.id === hostId)
+    if (!host?.serverId || !host.environment) return
+    setStartingTargetHost(true)
+    try {
+      await window.api.fleetEnvironmentAction(host.serverId, host.environment.id, 'start')
+    } catch (err) {
+      toast({
+        id: `routine-host-start-err:${hostId}`,
+        tone: 'error',
+        icon: 'alert',
+        title: t('host.startFailed'),
+        description: err instanceof Error ? err.message : undefined,
+      })
+    } finally {
+      setStartingTargetHost(false)
+    }
+  }
+
   const handleCreate = async () => {
     setBusy(true)
     try {
-      const created = await window.api.routinesCreateFromProposal(proposal.id)
+      const effectiveDraft: RoutineDraft = overrideModel
+        ? { ...proposal.draft, model: overrideModel }
+        : proposal.draft
+      let created: LocalRoutine
+      if (targetHostId === proposalHostId) {
+        created = await hostApi(proposalHostId).routinesCreateFromProposal(
+          proposal.id,
+          overrideModel ? effectiveDraft : undefined
+        )
+      } else {
+        created = await createRoutineFromProposalOnHost({
+          proposalHostId,
+          targetHostId,
+          proposalId: proposal.id,
+          draft: effectiveDraft,
+          originConversationId: rawId(conversationId),
+          originTitle: '',
+          deviceIdOn,
+        })
+      }
+
+      const keyedId = hostKey(targetHostId, created.id)
       const tr: RoutineTranslator = (key, opts) => String(t(key as never, opts as never))
       const nextText = created.nextRunAt
         ? t('toasts.createdNext', { when: formatWhen(created.nextRunAt, Date.now(), tr) })
         : ''
       toast({
-        id: `routine-created:${created.id}`,
+        id: `routine-created:${keyedId}`,
         tone: 'ok',
         icon: 'check',
         title: t('toasts.createdTitle'),
         description: `${created.title}${nextText}`,
         action: {
           label: t('toasts.createdAction'),
-          onClick: () => openRoutine(created.id),
+          onClick: () => openRoutine(keyedId),
         },
       })
       await load()
@@ -565,9 +869,18 @@ function LiveRoutineProposalCard({
   }
 
   const handleAdjust = () => {
+    const effectiveDraft: RoutineDraft = overrideModel
+      ? { ...proposal.draft, model: overrideModel }
+      : proposal.draft
     window.dispatchEvent(
       new CustomEvent('maestrly:adjust-routine-proposal', {
-        detail: { proposalId: proposal.id, draft: proposal.draft },
+        detail: {
+          proposalId: proposal.id,
+          proposalHostId,
+          targetHostId,
+          conversationId: rawId(conversationId),
+          draft: effectiveDraft,
+        },
       })
     )
   }
@@ -575,7 +888,7 @@ function LiveRoutineProposalCard({
   const handleDiscard = async () => {
     setBusy(true)
     try {
-      await window.api.routinesDiscardProposal(proposal.id)
+      await hostApi(proposalHostId).routinesDiscardProposal(proposal.id)
       await load()
     } finally {
       setBusy(false)
@@ -585,7 +898,7 @@ function LiveRoutineProposalCard({
   const handleRestore = async () => {
     setBusy(true)
     try {
-      await window.api.routinesRestoreProposal(proposal.id)
+      await hostApi(proposalHostId).routinesRestoreProposal(proposal.id)
       await load()
     } finally {
       setBusy(false)
@@ -601,6 +914,19 @@ function LiveRoutineProposalCard({
       readOnly={readOnly}
       busy={busy}
       modelInfo={modelInfo}
+      hosts={hosts}
+      targetHostId={targetHostId}
+      routineHostId={destHostId ?? undefined}
+      routineElsewhere={proposal.state === 'created' && destHostId === null}
+      modelValidation={modelValidation}
+      overrideModel={overrideModel}
+      startingTargetHost={startingTargetHost}
+      onChangeTargetHost={(next) => {
+        setTargetHostId(next)
+        setOverrideModel(null)
+      }}
+      onStartTargetHost={(id) => void handleStartTargetHost(id)}
+      onChangeOverrideModel={setOverrideModel}
       onEnableBackground={() => void handleEnableBackground()}
       onCreate={() => void handleCreate()}
       onAdjust={handleAdjust}
@@ -612,8 +938,10 @@ function LiveRoutineProposalCard({
 }
 
 export function LiveRoutineCreatedNotice({ routine }: { routine: LocalRoutine }) {
-  const hostId = useHostId()
-  const readOnly = hostId !== LOCAL_HOST_ID
+  const hosts = useHosts()
+  const { hostId, id, api } = hostTarget(routine.id)
+  const host = hosts.find((h) => h.id === hostId)
+  const readOnly = hostId !== LOCAL_HOST_ID && (!host || !isRoutineHostCapable(host))
   const [lastRun, setLastRun] = useState<LocalRoutineRun | null>(null)
   const [chatConfig, setChatConfig] = useState<ChatConfig | null>(null)
 
@@ -623,23 +951,24 @@ export function LiveRoutineCreatedNotice({ routine }: { routine: LocalRoutine })
     const load = async () => {
       try {
         const [runPage, cfg] = await Promise.all([
-          window.api.routinesListRuns({ routineId: routine.id, filter: 'all', limit: 20 }),
-          hostApi(LOCAL_HOST_ID).chatConfig(),
+          api.routinesListRuns({ routineId: id, filter: 'all', limit: 20 }),
+          api.chatConfig(),
         ])
         if (!alive) return
-        setLastRun(runPage.runs.find((r) => !isRoutineRunSkipped(r)) ?? null)
+        const latest = runPage.runs.find((r) => !isRoutineRunSkipped(r)) ?? null
+        setLastRun(latest ? shellRoutineRun(hostId, latest) : null)
         setChatConfig(cfg)
       } catch {
-        /* Safe fallback to basic model name when local config is unavailable. */
+        /* Safe fallback to basic model name when host config is unavailable. */
       }
     }
     void load()
-    const off = window.api.onRoutinesChanged(() => void load())
+    const off = api.onRoutinesChanged?.(() => void load())
     return () => {
       alive = false
-      off()
+      off?.()
     }
-  }, [routine.id, readOnly])
+  }, [api, hostId, id, readOnly])
 
   const modelInfo = useMemo(() => resolveModelInfo(routine.model, chatConfig), [routine.model, chatConfig])
 
@@ -648,9 +977,10 @@ export function LiveRoutineCreatedNotice({ routine }: { routine: LocalRoutine })
       routine={routine}
       lastRun={lastRun}
       modelInfo={modelInfo}
+      hosts={hosts}
       readOnly={readOnly}
-      onOpenRoutine={(routineId) =>
-        window.dispatchEvent(new CustomEvent('maestrly:open-routine', { detail: { routineId } }))
+      onOpenRoutine={(routineKey) =>
+        window.dispatchEvent(new CustomEvent('maestrly:open-routine', { detail: { routineId: routineKey } }))
       }
     />
   )

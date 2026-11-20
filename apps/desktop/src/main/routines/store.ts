@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { app } from 'electron'
-import { nextRun } from '@maestrly/bot-fleet-protocol'
+import { isValidTimeZone, nextRun } from '@maestrly/bot-fleet-protocol'
 import {
   parseRoutineSettings,
   ROUTINE_LIMITS,
@@ -12,6 +12,7 @@ import {
   type LocalRoutineRun,
   type RoutineDraft,
   type RoutineOrigin,
+  type RoutinePlace,
   type RoutineProposal,
   type RoutineRunReport,
   type RoutineRunStatus,
@@ -24,6 +25,7 @@ import { getAppSetting, setAppSetting } from '../store/app-settings'
 import { getDb, transaction } from '../store/db'
 
 const SETTINGS_KEY = 'routines.settings'
+const OWNER_TIME_ZONE_KEY = 'routines.ownerTimeZone'
 
 const changeListeners = new Set<() => void>()
 
@@ -62,6 +64,8 @@ interface RoutineRow {
   origin_conversation_id: string | null
   origin_title: string | null
   origin_via: string | null
+  origin_host_id: string | null
+  origin_device_id: string | null
   folder: string
   next_run_at: number | null
   created_at: number
@@ -93,6 +97,8 @@ interface ProposalRow {
   draft_json: string
   state: string
   routine_id: string | null
+  routine_host_id: string | null
+  routine_device_id: string | null
   created_at: number
   updated_at: number
 }
@@ -101,7 +107,13 @@ function rowToRoutine(row: RoutineRow): LocalRoutine {
   const schedule = JSON.parse(row.schedule_json) as RoutineSchedule
   const origin: RoutineOrigin | null =
     row.origin_conversation_id && row.origin_title && (row.origin_via === 'proposal' || row.origin_via === 'menu')
-      ? { conversationId: row.origin_conversation_id, title: row.origin_title, via: row.origin_via }
+      ? {
+          conversationId: row.origin_conversation_id,
+          title: row.origin_title,
+          via: row.origin_via,
+          ...(row.origin_host_id ? { hostId: row.origin_host_id } : {}),
+          ...(row.origin_device_id ? { deviceId: row.origin_device_id } : {}),
+        }
       : null
   return {
     id: row.id,
@@ -158,6 +170,14 @@ function rowToProposal(row: ProposalRow): RoutineProposal {
     draft: JSON.parse(row.draft_json) as RoutineDraft,
     state: row.state as RoutineProposal['state'],
     routineId: row.routine_id,
+    ...(row.routine_host_id || row.routine_device_id
+      ? {
+          routinePlace: {
+            ...(row.routine_host_id ? { hostId: row.routine_host_id } : {}),
+            ...(row.routine_device_id ? { deviceId: row.routine_device_id } : {}),
+          },
+        }
+      : {}),
     createdAt: row.created_at,
   }
 }
@@ -189,11 +209,11 @@ export function createRoutine(
       `INSERT INTO local_routines (
         id, title, instruction, schedule_json, enabled, paused_at, perm_mode,
         provider_id, model_id, reasoning, fast_mode, notify, missed, retention_days,
-        origin_conversation_id, origin_title, origin_via, folder, next_run_at, created_at, updated_at
+        origin_conversation_id, origin_title, origin_via, origin_host_id, origin_device_id, folder, next_run_at, created_at, updated_at
       ) VALUES (
         @id, @title, @instruction, @scheduleJson, 1, NULL, @permMode,
         @providerId, @modelId, @reasoning, @fastMode, @notify, @missed, @retentionDays,
-        @originConversationId, @originTitle, @originVia, @folder, @nextRunAt, @createdAt, @updatedAt
+        @originConversationId, @originTitle, @originVia, @originHostId, @originDeviceId, @folder, @nextRunAt, @createdAt, @updatedAt
       )`
     )
     .run({
@@ -212,6 +232,8 @@ export function createRoutine(
       originConversationId: origin?.conversationId ?? null,
       originTitle: origin?.title ?? null,
       originVia: origin?.via ?? null,
+      originHostId: origin?.hostId ?? null,
+      originDeviceId: origin?.deviceId ?? null,
       folder,
       nextRunAt,
       createdAt: now,
@@ -624,15 +646,41 @@ export function setProposalState(
   id: string,
   state: RoutineProposal['state'],
   routineId: string | null = null,
-  now = Date.now()
+  now = Date.now(),
+  routinePlace: RoutinePlace | null = null
 ): RoutineProposal | null {
   const existing = getProposal(id)
   if (!existing) return null
   getDb()
-    .prepare('UPDATE local_routine_proposals SET state = ?, routine_id = ?, updated_at = ? WHERE id = ?')
-    .run(state, routineId, now, id)
+    .prepare('UPDATE local_routine_proposals SET state = ?, routine_id = ?, routine_host_id = ?, routine_device_id = ?, updated_at = ? WHERE id = ?')
+    .run(state, routineId, routinePlace?.hostId ?? null, routinePlace?.deviceId ?? null, now, id)
   emitRoutinesChanged()
   return getProposal(id)
+}
+
+/** Summary reported on a workspaces host's `/v1/health` so the gateway keeps environments with active routines running. */
+export function getRoutineHealthSummary(): { enabled: number; nextRunAt: number | null } {
+  const row = getDb()
+    .prepare('SELECT COUNT(*) AS enabled, MIN(next_run_at) AS nextRunAt FROM local_routines WHERE enabled = 1')
+    .get() as { enabled: number; nextRunAt: number | null } | undefined
+  return {
+    enabled: Number(row?.enabled ?? 0),
+    nextRunAt: row?.nextRunAt != null ? Number(row.nextRunAt) : null,
+  }
+}
+
+/**
+ * The time zone of the computer that connected to this host last. A server's clock runs in the server's zone, so the
+ * routines its chats propose default to the owner's instead.
+ */
+export function getRoutineOwnerTimeZone(): string | null {
+  const value = getAppSetting(OWNER_TIME_ZONE_KEY)
+  return value && isValidTimeZone(value) ? value : null
+}
+
+export function setRoutineOwnerTimeZone(timeZone: string): void {
+  if (!isValidTimeZone(timeZone) || getAppSetting(OWNER_TIME_ZONE_KEY) === timeZone) return
+  setAppSetting(OWNER_TIME_ZONE_KEY, timeZone)
 }
 
 export function getRoutineSettings(): RoutineSettings {

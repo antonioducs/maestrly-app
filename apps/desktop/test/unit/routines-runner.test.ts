@@ -1,6 +1,5 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import os from 'node:os'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { closeDb, freshDb } from '../helpers/db'
 import {
@@ -20,6 +19,7 @@ import { upsertChatMessage } from '../../src/main/chat/chat-store'
 import { createRoutine, getRun, insertRun, updateRun } from '../../src/main/routines/store'
 import { buildRoutinePrompt } from '../../src/main/routines/prompt'
 import { createRoutineRunner, type RoutineRunnerDeps } from '../../src/main/routines/runner'
+import { recoverInterruptedRoutineRuns } from '../../src/main/routines/scheduler'
 import { keepRoutineRunFiles } from '../../src/main/routines/run-files'
 
 beforeEach(freshDb)
@@ -540,5 +540,28 @@ describe('routine runner', () => {
     await Promise.all([r1, r3, r4, r5, r6].map((r) => runner.waitForRun(r.id)))
     expect(getRun(r1.id)?.status).toBe('done')
     expect(getRun(r4.id)?.status).toBe('done')
+  })
+
+  it('runs cleanly with server-mode deps (no-op holdAwake, hidden window) and recovers interrupted runs on restart', async () => {
+    const routine = createRoutine(sampleDraft(), null, 1000)
+    const releaseNoop = vi.fn()
+    const env = makeDeps({
+      holdAwake: () => releaseNoop,
+    })
+    const runner = createRoutineRunner(env.deps)
+
+    const run = await runner.start(routine.id, 'schedule', env.now())
+    expect(run.status).toBe('running')
+    expect(env.startedTurns).toHaveLength(1)
+
+    // Simulate container restart / update interrupting the in-flight run.
+    const recovered = recoverInterruptedRoutineRuns(env.now() + 5000)
+    expect(recovered).toBe(1)
+    expect(getRun(run.id)?.status).toBe('failed')
+    expect(getRun(run.id)?.finishedAt).toBe(env.now() + 5000)
+
+    env.startedTurns[0].done.resolve({ status: 'cancelled', assistantMessageId: null })
+    await runner.waitForRun(run.id)
+    expect(releaseNoop).toHaveBeenCalled()
   })
 })

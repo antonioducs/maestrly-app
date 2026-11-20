@@ -23,7 +23,7 @@ import { scrollChatSearchResult } from '@/lib/chat-search-scroll'
 import { subscribeSubagentProfilesChanged } from '@/lib/subagent-catalog-events'
 import { useHostApi, useHostId } from '@/lib/hosts/host-context'
 import { useTurnChangesState } from './TurnChanges'
-import { isRemoteHostId } from '../../../shared/host-key'
+import { hostKey, isRemoteHostId } from '../../../shared/host-key'
 import {
   composeReviewHandoff,
   lastAgentText,
@@ -92,7 +92,6 @@ import {
 } from '@/lib/chat-history-window'
 import { boundDraftAttachments } from '@/lib/draft-attachment-budget'
 import { useChatOwnerWindow, useChatSourceConversation } from '@/lib/chat-window-context'
-import { LOCAL_HOST_ID } from '../../../shared/host-key'
 import { draftAttachmentKind, hasArtifactAttachment } from '@/lib/attachment-kind'
 import {
   MAX_ATTACHMENT_IMAGE_BYTES,
@@ -1777,7 +1776,9 @@ export function ChatView({
   }, [reloadSubagents, visible])
 
   // A file chip opens the file in the conversation's editor: this computer's, or a remote host's when it serves one.
+  const currentHostInfo = useHostInfo()
   const opensFiles = useHostInfo().editor
+  const hostSupportsRoutines = !currentHostInfo.remote || (currentHostInfo.routines && currentHostInfo.peer === null)
   const openMention = useCallback(
     (relPath: string, startLine?: number, endLine?: number) => {
       if (!opensFiles) return
@@ -2602,7 +2603,7 @@ export function ChatView({
                         fontScale={fontScale}
                         onFontScale={setFontScale}
                         onScheduleRoutine={
-                          !botManaged && !botConversation && hostId === LOCAL_HOST_ID && !isRoutineRun
+                          !botManaged && !botConversation && hostSupportsRoutines && !isRoutineRun
                             ? () => {
                                 void Promise.all([
                                   api.chatGetPermMode(conversationId).catch(() => 'auto' as const),
@@ -2611,7 +2612,8 @@ export function ChatView({
                                   window.dispatchEvent(
                                     new CustomEvent('maestrly:schedule-from-chat', {
                                       detail: {
-                                        sourceConversationId: conversationId,
+                                        sourceHostId: hostId,
+                                        sourceConversationId: hostKey(hostId, conversationId),
                                         originTitle: conversationName ?? '',
                                         initialInstruction: draft,
                                         initialPermMode,

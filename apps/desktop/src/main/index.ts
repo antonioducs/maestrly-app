@@ -6,11 +6,22 @@ import { validateStandaloneConversationDirectory } from './standalone-conversati
 import { ensureAppOwnedExcludes } from './git-service'
 import { isBotMode } from './fleet/instance/config'
 import { startBotInstanceMode } from './fleet/instance'
-import { applyRoutineLoginItem, isLoginItemSupported, wasOpenedAtLoginForRoutines } from './routines/lifecycle'
+import {
+  applyRoutineLoginItem,
+  isLoginItemSupported,
+  shouldRunLocalRoutines,
+  wasOpenedAtLoginForRoutines,
+} from './routines/lifecycle'
 import { registerRoutinesIpc } from './routines/ipc'
 import { createRoutineRunner, type RoutineRunner } from './routines/runner'
 import { createRoutineScheduler, type RoutineScheduler } from './routines/scheduler'
-import { getRoutineSettings, listActiveRuns, listRoutines, subscribeRoutinesChanged } from './routines/store'
+import {
+  getRoutineSettings,
+  listActiveRuns,
+  listRoutines,
+  setRoutineOwnerTimeZone,
+  subscribeRoutinesChanged,
+} from './routines/store'
 import { hostGatewayAccess, isHeadlessInstance, isServerMode } from './remote-host/server/config'
 import {
   ENVIRONMENT_BOT_ACCESS_CHANGED,
@@ -710,15 +721,17 @@ async function applyVSCodeUpdateOnIdle(): Promise<void> {
 }
 
 function broadcastStatus(payload: { agentId: string; status: string; alert?: boolean }): void {
+  const isRoutineRun = routineRunner?.handlesConversation(payload.agentId) === true
   // The registry emits ready/error only when a turn ends, asking once per question, and waiting once per approval the
   // turn needs: each needs the person. The host keeps the mark so that seeing it on one computer clears it on every
-  // other.
+  // other. Routine runs are notified through `routines:toast`, not generic conversation alerts.
   let attention = false
   if (
-    payload.status === 'ready' ||
-    payload.status === 'error' ||
-    payload.status === 'asking' ||
-    payload.status === 'waiting'
+    !isRoutineRun &&
+    (payload.status === 'ready' ||
+      payload.status === 'error' ||
+      payload.status === 'asking' ||
+      payload.status === 'waiting')
   ) {
     try {
       attention = markConversationAttention(payload.agentId)
@@ -726,8 +739,9 @@ function broadcastStatus(payload: { agentId: string; status: string; alert?: boo
       /* The conversation may no longer exist in the store. */
     }
   }
-  sendToWindow('agent:status', payload)
-  if (assistantWindow?.conversationId() === payload.agentId) assistantWindow.send('agent:status', payload)
+  const outgoing = isRoutineRun ? { ...payload, alert: false } : payload
+  sendToWindow('agent:status', outgoing)
+  if (assistantWindow?.conversationId() === payload.agentId) assistantWindow.send('agent:status', outgoing)
   if (attention) sendToWindow('conversation:attention', { conversationId: payload.agentId, attention: true })
 
   onAgentStatus(payload.agentId, payload.status)
@@ -1298,10 +1312,16 @@ function registerIpc(): void {
   registerRoutinesIpc(reg, {
     getRunner: () => routineRunner,
     applyLoginItem: (openAtLogin) => {
-      if (!isE2E()) applyRoutineLoginItem(openAtLogin)
+      if (!isServerMode() && !isE2E()) applyRoutineLoginItem(openAtLogin)
     },
-    onEnabledChanged: () => rebuildTrayMenu(),
-    onRunSeen: (runId) => appNotifications?.routines.seen(runId),
+    onEnabledChanged: () => {
+      if (!isServerMode()) rebuildTrayMenu()
+    },
+    onRunSeen: (runId) => {
+      appNotifications?.routines.seen(runId)
+      // Computers connected to this host dismiss their notices of the run too.
+      broadcast('routines:seen', { runId })
+    },
   })
 }
 
@@ -1446,6 +1466,11 @@ app.whenReady().then(async () => {
           .bots.find((bot) => bot.id === botId)?.name ?? null,
       serverName: (serverId) =>
         fleetServers.list().length > 1 ? (fleetServers.get(serverId)?.getConnection().hostname ?? null) : null,
+      hostLabel: (hostId) => {
+        const host = hostRegistry()?.list().find((item) => item.id === hostId)
+        if (!host?.remote) return null
+        return host.server ? `${host.label} · ${host.server}` : host.label || null
+      },
       botAttention: {
         load: () => getAppSetting(BOT_ATTENTION_KEY),
         save: (value) => setAppSetting(BOT_ATTENTION_KEY, value),
@@ -1480,17 +1505,22 @@ app.whenReady().then(async () => {
   setupApplicationMenu()
   await createWindow()
 
-  if (!isHeadlessInstance() && !isBotMode()) {
-    if (!isE2E()) applyRoutineLoginItem(getRoutineSettings().openAtLogin)
+  if (shouldRunLocalRoutines()) {
+    const serverMode = isServerMode()
+    if (!serverMode && !isE2E()) applyRoutineLoginItem(getRoutineSettings().openAtLogin)
     routineRunner = createRoutineRunner({
+      ...(serverMode ? { holdAwake: () => () => {} } : {}),
       onAlert: (run, routine) => {
-        appNotifications?.routines.notifyRun(run, routine)
+        if (!serverMode) appNotifications?.routines.notifyRun(run, routine)
       },
       onToast: (event) => {
         broadcast('routines:toast', event)
       },
     })
-    routineScheduler = createRoutineScheduler({ runner: routineRunner })
+    routineScheduler = createRoutineScheduler({
+      runner: routineRunner,
+      ...(serverMode ? { subscribePower: () => () => {} } : {}),
+    })
     routineScheduler.start()
     disposeRoutinesChanged = subscribeRoutinesChanged(() => broadcast('routines:changed'))
   }
@@ -1583,6 +1613,7 @@ app.whenReady().then(async () => {
         browser: true,
         computer: serverComputers() !== null,
         folderTransfers: true,
+        routines: true,
       }),
       // Prompts and tool descriptions follow the stored locale, native strings the main locale: both take the
       // language of the computer that connected last.
@@ -1590,6 +1621,7 @@ app.whenReady().then(async () => {
         if (!isSupportedLocale(locale) || locale === getLocale()) return
         setMainLocale(setLocaleSetting(locale))
       },
+      applyTimeZone: (timeZone) => setRoutineOwnerTimeZone(timeZone),
       log: (level, message) => console.error(JSON.stringify({ component: 'remote-host', level, message })),
     })
     try {
@@ -1656,6 +1688,8 @@ app.whenReady().then(async () => {
         browser: process.platform !== 'linux',
         computer: false,
         folderTransfers: true,
+        // Its routines are its owner's to manage at it: another computer neither lists nor creates them.
+        routines: false,
       }),
     })
     void hosting.start().catch((error) => console.error('[peer] hosting failed to start:', error))

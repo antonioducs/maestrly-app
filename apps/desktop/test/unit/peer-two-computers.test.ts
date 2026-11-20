@@ -38,6 +38,7 @@ function computer(identity: PeerIdentity, name: string) {
     browser: true,
     computer: false,
     folderTransfers: true,
+    routines: false,
   }
   const hosting = new PeerHosting({
     storage: memoryPeerStorage(),

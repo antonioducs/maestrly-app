@@ -1356,6 +1356,11 @@ export const fleetInstanceEventSchema = z.discriminatedUnion('type', [
   }),
 ])
 export type FleetInstanceEvent = z.infer<typeof fleetInstanceEventSchema>
+export const fleetInstanceHealthRoutinesSchema = z.object({
+  enabled: z.number().int().nonnegative(),
+  nextRunAt: z.number().int().nonnegative().nullable(),
+})
+export type FleetInstanceHealthRoutines = z.infer<typeof fleetInstanceHealthRoutinesSchema>
 export const fleetInstanceHealthSchema = z.object({
   ok: z.literal(true),
   appVersion: z.string(),
@@ -1364,6 +1369,8 @@ export const fleetInstanceHealthSchema = z.object({
   capabilities: fleetFeaturesSchema,
   /** A workspaces environment with chat turns running; its scheduled update waits. Absent when unknown. */
   busy: z.boolean().optional(),
+  /** Enabled local routines on a workspaces host; prevents idle stop while enabled > 0. Absent when unknown. */
+  routines: fleetInstanceHealthRoutinesSchema.optional(),
 })
 export type FleetInstanceHealth = z.infer<typeof fleetInstanceHealthSchema>
 export const fleetInstanceHoldRequestSchema = z.object({ reason: z.enum(['takeover', 'paused']) })

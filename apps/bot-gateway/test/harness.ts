@@ -168,6 +168,8 @@ async function fake(
     results: { results: [{ index: 0, target: 'prov_test', outcome: 'added', error: null }] } as FleetImportResults,
     /** What a workspaces host says about its running chats on a health check; null says nothing. */
     busy: null as boolean | null,
+    /** What a workspaces host says about its enabled local routines on a health check; null says nothing. */
+    routines: null as { enabled: number; nextRunAt: number | null } | null,
     skill: { name: 'x', outcome: 'added' },
     failure: null as { code: string; message: string } | null,
     login: {
@@ -370,6 +372,7 @@ async function fake(
           ready: true,
           ...(environments ? { capabilities: provisioning.capabilities } : {}),
           ...(provisioning.busy === null ? {} : { busy: provisioning.busy }),
+          ...(provisioning.routines === null ? {} : { routines: provisioning.routines }),
         })
       if (req.url === '/v1/status') return send(200, status)
       if (req.url === '/v1/accounts/api-key' && req.method === 'POST') {

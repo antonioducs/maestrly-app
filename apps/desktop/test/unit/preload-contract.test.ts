@@ -476,7 +476,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(734)
+    expect(keys).toHaveLength(735)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -512,6 +512,7 @@ describe('preload API — exposure', () => {
     await api.routinesOpenFolder('r-1')
     await api.routinesGetProposal('prop-1')
     await api.routinesCreateFromProposal('prop-1', draft)
+    await api.routinesMarkProposalCreated('prop-1', 'r-remote', { hostId: 'server-1/workspaces' })
     await api.routinesDiscardProposal('prop-1')
     await api.routinesRestoreProposal('prop-1')
     await api.routinesGetSettings()
@@ -537,6 +538,7 @@ describe('preload API — exposure', () => {
       ['routines:openFolder', 'r-1'],
       ['routines:getProposal', 'prop-1'],
       ['routines:createFromProposal', 'prop-1', draft],
+      ['routines:markProposalCreated', 'prop-1', 'r-remote', { hostId: 'server-1/workspaces' }],
       ['routines:discardProposal', 'prop-1'],
       ['routines:restoreProposal', 'prop-1'],
       ['routines:getSettings'],
