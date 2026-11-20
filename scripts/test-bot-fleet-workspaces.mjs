@@ -544,6 +544,7 @@ async function main() {
       browser: true,
       computer: true,
       folderTransfers: true,
+      routines: true,
     }
   )
   bridge.open(1, { role: 'main' })
