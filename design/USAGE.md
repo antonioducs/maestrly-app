@@ -6,8 +6,10 @@
 2. [`DESIGN.md`](DESIGN.md): direction and the do and don't rules, including the surface patterns (rail, sidebar,
    Settings, dialogs, drawer).
 3. [`tokens.css`](tokens.css): every value. Use the tokens; do not copy hex codes or pixel sizes out of it.
-4. [`components.html`](components.html): open it in a browser. The first board is the chat screen at 1440 px; the
-   sections below show each component once with `data-ds-main`, then its variants with `data-ds-props`.
+4. [`components.html`](components.html): open it through a local server (`python3 -m http.server -d design`), not
+   from the disk: its stylesheet link is `crossorigin`, which a `file://` page cannot load. The first board is the chat
+   screen at 1440 px; the sections below show each component once with `data-ds-main`, then its variants with
+   `data-ds-props`.
 5. The real component in the renderer, from the table below, when the detail matters (states, behavior, copy).
 
 ## Composing a new screen
@@ -16,7 +18,9 @@ Start from the app shell on the first board of `components.html` and change only
 
 1. Copy [`tokens.css`](tokens.css) and the parts of [`components.html`](components.html) you need (its `<style>` block,
    the icon sprite at the top of `<body>`, and the markup of each component) into the prototype folder. Prototypes are
-   self-contained artifacts, so copy rather than link.
+   self-contained artifacts, so copy rather than link. Link every stylesheet with `crossorigin`, as `components.html`
+   does (`<link rel="stylesheet" href="tokens.css" crossorigin>`): without it, the artifact frame's opaque origin keeps
+   the viewer's Inspect from reading the rules.
 2. Keep the frame: the 48 px `Rail`, the 248 px sidebar panel with `SidebarHeader`, `SearchField`, `WorkspaceHeader`
    and `SidebarItem` rows, and a 40 px `ViewHeader` above the main area.
 3. Pick the main-area pattern from `DESIGN.md`: the chat canvas (messages column plus `Composer`), a Settings page
@@ -32,6 +36,13 @@ Start from the app shell on the first board of `components.html` and change only
 
 Keep these from the app: one ivory primary per surface, indigo only on the chat surface, opaque popovers, 13 px rows,
 sentence-case copy without exclamation marks, and realistic data.
+
+### Token budget
+
+An artifact's tokens file holds at most 200 tokens, and `tokens.css` already declares 181. Before adding a token, reuse
+an existing one, including a tint derived with `color-mix(in oklab, var(--token) N%, transparent)`. When a prototype
+needs more room, its copy of `tokens.css` may drop whole groups it does not use; it never changes a value without
+recording the change in the prototype's `HANDOFF.md`.
 
 ## Component map
 
