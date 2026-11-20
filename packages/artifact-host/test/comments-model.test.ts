@@ -33,6 +33,7 @@ function comment(overrides: Partial<PublicComment> = {}): PublicComment {
     author: { kind: 'invited', name: 'Maria', verified: true, self: false },
     body: `Comment ${sequence}`,
     anchor: { quote: { exact: `passage ${sequence}`, prefix: '', suffix: '' } },
+    suggestion: null,
     status: 'open',
     createdAt: sequence * 10,
     canDelete: false,

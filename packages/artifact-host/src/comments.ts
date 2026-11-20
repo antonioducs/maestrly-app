@@ -1,16 +1,32 @@
 import { z } from 'zod'
+import { normalizeBundlePath } from './bundle-paths.js'
 import { ArtifactHostError } from './errors.js'
 import { isArtifactId, randomId } from './ids.js'
-import { COMMENTS_PAGE_SIZE, MAX_COMMENT_CHARS, MAX_COMMENTS_PER_ARTIFACT } from './limits.js'
+import {
+  COMMENTS_PAGE_SIZE,
+  MAX_COMMENT_CHARS,
+  MAX_COMMENTS_PER_ARTIFACT,
+  MAX_PATH_CHARS,
+  MAX_SUGGESTION_CHANGES,
+} from './limits.js'
 import { parseInput } from './schemas.js'
 import type { ActivityRecorder } from './sharing-admin.js'
-import { type CommentAnchor, MAX_QUOTE_CHARS, MAX_QUOTE_CONTEXT_CHARS, MAX_SELECTOR_CHARS } from './shell/contract.js'
+import {
+  type CommentAnchor,
+  isValidThemeSelector,
+  isValidTokenName,
+  isValidTokenValue,
+  MAX_QUOTE_CHARS,
+  MAX_QUOTE_CONTEXT_CHARS,
+  MAX_SELECTOR_CHARS,
+  type TokenSuggestion,
+} from './shell/contract.js'
 import type { ArtifactStore } from './store/artifact-store.js'
 import type { CommentAuthorKind, CommentRecord, CommentStore } from './store/comment-store.js'
 
 export type { CommentAuthorKind } from './store/comment-store.js'
 
-export type { CommentAnchor } from './shell/contract.js'
+export type { CommentAnchor, TokenSuggestion } from './shell/contract.js'
 
 export interface CommentView {
   id: string
@@ -21,6 +37,7 @@ export interface CommentView {
   author: { kind: CommentAuthorKind; name: string; verified: boolean; principalId: string | null }
   body: string
   anchor: CommentAnchor | null
+  suggestion: TokenSuggestion | null
   status: 'open' | 'resolved'
   createdAt: number
 }
@@ -43,6 +60,7 @@ export interface NewComment {
   version?: number
   body: string
   anchor?: CommentAnchor
+  suggestion?: TokenSuggestion
   parentId?: string
 }
 
@@ -70,6 +88,41 @@ export const commentAnchorSchema: z.ZodType<CommentAnchor> = z
   .strict()
   .refine((anchor) => !(anchor.quote && anchor.point), 'Anchor a comment to a passage or to a spot, not both')
 
+const tokenSuggestionChangeSchema = z
+  .object({
+    name: z.string().refine(isValidTokenName, 'Invalid token name'),
+    theme: z.string().refine(isValidThemeSelector, 'Invalid theme selector').optional(),
+    from: z.string().refine(isValidTokenValue, 'Invalid token value'),
+    to: z.string().refine(isValidTokenValue, 'Invalid token value'),
+  })
+  .strict()
+  .refine((change) => change.from !== change.to, 'Token suggestion must change value')
+
+export const tokenSuggestionSchema: z.ZodType<TokenSuggestion> = z
+  .object({
+    file: z
+      .string()
+      .min(1)
+      .max(MAX_PATH_CHARS)
+      .refine((value) => {
+        try {
+          return normalizeBundlePath(value) === value && value.endsWith('.css')
+        } catch {
+          return false
+        }
+      }, 'Invalid tokens file path'),
+    changes: z
+      .array(tokenSuggestionChangeSchema)
+      .min(1)
+      .max(MAX_SUGGESTION_CHANGES)
+      .refine(
+        (changes) => new Set(changes.map((c) => `${c.theme ?? ''}\0${c.name}`)).size === changes.length,
+        'Duplicate token in suggestion'
+      ),
+    appliedVersion: z.number().int().min(1).nullable(),
+  })
+  .strict()
+
 export const commentBody = z.string().trim().min(1).max(MAX_COMMENT_CHARS)
 
 const newComment = z
@@ -77,6 +130,7 @@ const newComment = z
     version: z.number().int().min(1).optional(),
     body: commentBody,
     anchor: commentAnchorSchema.optional(),
+    suggestion: tokenSuggestionSchema.optional(),
     parentId: z.string().optional(),
   })
   .strict()
@@ -103,6 +157,16 @@ function parseAnchor(json: string | null): CommentAnchor | null {
   }
 }
 
+function parseSuggestion(json: string | null | undefined): TokenSuggestion | null {
+  if (!json) return null
+  try {
+    const parsed = tokenSuggestionSchema.safeParse(JSON.parse(json))
+    return parsed.success ? parsed.data : null
+  } catch {
+    return null
+  }
+}
+
 export const toCommentView = (comment: CommentRecord): CommentView => ({
   id: comment.id,
   version: comment.version,
@@ -115,6 +179,7 @@ export const toCommentView = (comment: CommentRecord): CommentView => ({
   },
   body: comment.body,
   anchor: parseAnchor(comment.anchorJson),
+  suggestion: parseSuggestion(comment.suggestionJson),
   status: comment.status,
   createdAt: comment.createdAt,
 })
@@ -125,6 +190,7 @@ export interface CommentService {
   find(artifactId: string, commentId: string): CommentView | null
   add(artifactId: string, author: CommentAuthor, input: NewComment): CommentView
   setResolved(artifactId: string, commentId: string, resolved: boolean): void
+  markSuggestionApplied(artifactId: string, commentId: string, appliedVersion: number): CommentView
   remove(artifactId: string, commentId: string): void
 }
 
@@ -190,6 +256,7 @@ export function createCommentService(deps: CommentServiceDeps): CommentService {
         // Threads are one level deep: a reply answers the comment that started the thread.
         if (!parent || parent.artifactId !== artifactId || parent.parentId !== null) throw notFound('Comment')
         if (input.anchor) throw new ArtifactHostError('invalid_input', 'A reply has no anchor of its own')
+        if (input.suggestion) throw new ArtifactHostError('invalid_input', 'A reply has no suggestion of its own')
         version = parent.version
         parentId = parent.id
       } else {
@@ -209,6 +276,7 @@ export function createCommentService(deps: CommentServiceDeps): CommentService {
         authorName: author.name,
         body: input.body,
         anchorJson: input.anchor && Object.keys(input.anchor).length ? JSON.stringify(input.anchor) : null,
+        suggestionJson: input.suggestion ? JSON.stringify(input.suggestion) : null,
         status: 'open',
         createdAt: clock(),
       }
@@ -226,6 +294,20 @@ export function createCommentService(deps: CommentServiceDeps): CommentService {
       if (typeof resolved !== 'boolean') throw new ArtifactHostError('invalid_input', 'resolved: Expected a boolean')
       comments.setStatus(comment.id, resolved ? 'resolved' : 'open')
       deps.onChange?.(artifactId)
+    },
+
+    markSuggestionApplied(artifactId, commentId, appliedVersion) {
+      const comment = existing(artifactId, commentId)
+      if (comment.parentId !== null) throw new ArtifactHostError('invalid_input', 'Only a thread has a suggestion')
+      const suggestion = parseSuggestion(comment.suggestionJson)
+      if (!suggestion) throw new ArtifactHostError('invalid_input', 'Comment has no token suggestion')
+      if (!Number.isInteger(appliedVersion) || appliedVersion < 1 || !store.getVersion(artifactId, appliedVersion))
+        throw notFound(`Version ${appliedVersion}`)
+      const updated: TokenSuggestion = { ...suggestion, appliedVersion }
+      const suggestionJson = JSON.stringify(updated)
+      comments.setSuggestionAndStatus(comment.id, suggestionJson, 'resolved')
+      deps.onChange?.(artifactId)
+      return toCommentView({ ...comment, suggestionJson, status: 'resolved' })
     },
 
     remove(artifactId, commentId) {

@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Components · Crumb</title>
+    <link rel="stylesheet" href="tokens.css" crossorigin />
+    <link rel="stylesheet" href="app.css" crossorigin />
+    <style>
+      .sheet {
+        display: grid;
+        gap: var(--space-6);
+        max-width: 1040px;
+        margin: 0 auto;
+        padding: var(--space-7) var(--space-6);
+      }
+      .sheet-head p {
+        margin-top: var(--space-2);
+        color: var(--color-text-muted);
+      }
+      .spec {
+        display: grid;
+        grid-template-columns: 200px minmax(0, 1fr);
+        gap: var(--space-5);
+        padding-top: var(--space-5);
+        border-top: 1px solid var(--color-border);
+      }
+      .spec h2 {
+        font-size: var(--text-md);
+        font-weight: var(--font-weight-bold);
+      }
+      .spec code {
+        color: var(--color-text-muted);
+        font: var(--text-xs) var(--font-mono);
+      }
+      .row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: var(--space-3);
+      }
+      .col {
+        display: grid;
+        gap: var(--space-3);
+        max-width: 520px;
+      }
+      .spec .sidebar {
+        width: var(--layout-sidebar);
+        min-height: 360px;
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-lg);
+      }
+    </style>
+  </head>
+  <body>
+    <main class="sheet">
+      <header class="sheet-head">
+        <h1 class="page-title">Crumb components</h1>
+        <p>Every reusable component, its main definition first, then its variants.</p>
+      </header>
+
+      <section class="spec" id="button">
+        <div><h2>Button</h2><code>variant · size</code></div>
+        <div class="row">
+          <button type="button" class="btn btn-primary" data-ds="Button" data-ds-main data-ds-props="variant=primary size=md">New order</button>
+          <button type="button" class="btn btn-secondary" data-ds="Button" data-ds-props="variant=secondary size=md">Export</button>
+          <button type="button" class="btn btn-ghost" data-ds="Button" data-ds-props="variant=ghost size=md">View all</button>
+          <button type="button" class="btn btn-primary btn-sm" data-ds="Button" data-ds-props="variant=primary size=sm">Small</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-ds="Button" data-ds-props="variant=ghost size=sm">Small ghost</button>
+        </div>
+      </section>
+
+      <section class="spec" id="badge">
+        <div><h2>Badge</h2><code>tone</code></div>
+        <div class="row">
+          <span class="badge badge-success" data-ds="Badge" data-ds-main data-ds-props="tone=success">Delivered</span>
+          <span class="badge badge-warning" data-ds="Badge" data-ds-props="tone=warning">Out for delivery</span>
+          <span class="badge badge-danger" data-ds="Badge" data-ds-props="tone=danger">Running late</span>
+          <span class="badge badge-neutral" data-ds="Badge" data-ds-props="tone=neutral">In the oven</span>
+        </div>
+      </section>
+
+      <section class="spec" id="avatar">
+        <div><h2>Avatar</h2><code>size</code></div>
+        <div class="row">
+          <span class="avatar" data-ds="Avatar" data-ds-main data-ds-props="size=md">LC</span>
+          <span class="avatar avatar-sm" data-ds="Avatar" data-ds-props="size=sm">RC</span>
+        </div>
+      </section>
+
+      <section class="spec" id="stat-card">
+        <div><h2>StatCard</h2><code>trend</code></div>
+        <div class="grid-4">
+          <div class="stat stat-up" data-ds="StatCard" data-ds-main data-ds-props="trend=up"><span class="stat-label">Orders today</span><span class="stat-value">38</span><span class="stat-trend">▲ 12% vs last Thursday</span></div>
+          <div class="stat stat-down" data-ds="StatCard" data-ds-props="trend=down"><span class="stat-label">Late deliveries</span><span class="stat-value">2</span><span class="stat-trend">▲ 1 vs yesterday</span></div>
+        </div>
+      </section>
+
+      <section class="spec" id="order-row">
+        <div><h2>OrderRow</h2><code>layout</code></div>
+        <div class="panel">
+          <a class="order-row" href="#order-row" data-ds="OrderRow" data-ds-main data-ds-props="layout=compact">
+            <span class="avatar avatar-sm" data-ds="Avatar" data-ds-props="size=sm">LC</span>
+            <span class="order-main"><b>Lindenhof Café</b><span>#1042 · Due 7:40</span></span>
+            <span class="badge badge-warning" data-ds="Badge" data-ds-props="tone=warning">Out for delivery</span><span class="order-total">$486.00</span>
+          </a>
+          <a class="order-row order-wide" href="#order-row" data-ds="OrderRow" data-ds-props="layout=table">
+            <span class="avatar avatar-sm" data-ds="Avatar" data-ds-props="size=sm">BB</span>
+            <span class="order-main"><b>Barra Bistro</b><span>#1041 · 18 baguettes · 12 focaccia</span></span>
+            <span class="order-cell">Thu, Nov 19</span><span class="order-cell">7:15</span>
+            <span class="badge badge-success" data-ds="Badge" data-ds-props="tone=success">Delivered</span><span class="order-total">$212.40</span>
+          </a>
+        </div>
+      </section>
+
+      <section class="spec" id="tab">
+        <div><h2>Tab</h2><code>selected</code></div>
+        <div class="row">
+          <div class="tabs" role="tablist">
+            <button type="button" class="tab" role="tab" aria-selected="true" data-ds="Tab" data-ds-main data-ds-props="selected=true">All</button>
+            <button type="button" class="tab" role="tab" aria-selected="false" data-ds="Tab" data-ds-props="selected=false">Due today</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="spec" id="search-field">
+        <div><h2>SearchField</h2></div>
+        <div class="row">
+          <label class="search" data-ds="SearchField" data-ds-main><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input type="search" placeholder="Search orders" aria-label="Search orders"></label>
+        </div>
+      </section>
+
+      <section class="spec" id="nav-item">
+        <div><h2>NavItem</h2><code>active</code></div>
+        <div class="col">
+          <a class="nav-item" href="#nav-item" aria-current="page" data-ds="NavItem" data-ds-main data-ds-props="active=true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg><span>Orders</span><span class="nav-count">38</span></a>
+          <a class="nav-item" href="#nav-item" data-ds="NavItem" data-ds-props="active=false"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5M12 13v8"/></svg><span>Products</span></a>
+        </div>
+      </section>
+
+      <section class="spec" id="timeline-step">
+        <div><h2>TimelineStep</h2><code>state</code></div>
+        <ol class="timeline col">
+          <li class="step step-done" data-ds="TimelineStep" data-ds-main data-ds-props="state=done"><span class="step-dot"></span><span class="step-text"><b>Order confirmed</b><span>Wed, Nov 18 · 16:20</span></span></li>
+          <li class="step step-current" data-ds="TimelineStep" data-ds-props="state=current"><span class="step-dot"></span><span class="step-text"><b>Out for delivery</b><span>Driver: Joana</span></span></li>
+          <li class="step step-next" data-ds="TimelineStep" data-ds-props="state=next"><span class="step-dot"></span><span class="step-text"><b>Delivered</b><span>Signature on arrival</span></span></li>
+        </ol>
+      </section>
+
+      <section class="spec" id="banner">
+        <div><h2>Banner</h2><code>tone</code></div>
+        <div class="col">
+          <div class="banner banner-info" role="status" data-ds="Banner" data-ds-main data-ds-props="tone=info"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg><span>Leave at the back door before 8:00.</span></div>
+          <div class="banner banner-danger" role="alert" data-ds="Banner" data-ds-props="tone=danger"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg><span>You are offline. Changes sync when you reconnect.</span></div>
+        </div>
+      </section>
+
+      <section class="spec" id="empty-state">
+        <div><h2>EmptyState</h2><code>tone</code></div>
+        <div class="panel">
+          <div class="empty" data-ds="EmptyState" data-ds-main data-ds-props="tone=neutral">
+            <span class="empty-mark"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg></span>
+            <h2 class="empty-title">No orders yet</h2><p class="empty-text">Orders your customers place show up here.</p>
+            <div class="page-actions"><button type="button" class="btn btn-primary" data-ds="Button" data-ds-props="variant=primary size=md">New order</button></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="spec" id="sidebar">
+        <div><h2>Sidebar</h2></div>
+        <aside class="sidebar" data-ds="Sidebar" data-ds-main>
+          <div class="brand"><span class="brand-mark">C</span>Crumb</div>
+          <nav class="nav" aria-label="Example">
+            <a class="nav-item" href="#sidebar" aria-current="page" data-ds="NavItem" data-ds-props="active=true"><span>Today</span></a>
+            <a class="nav-item" href="#sidebar" data-ds="NavItem" data-ds-props="active=false"><span>Orders</span></a>
+          </nav>
+          <div class="sidebar-foot"><span class="avatar avatar-sm" data-ds="Avatar" data-ds-props="size=sm">RC</span><div><b>Rafa Costa</b><span>Crumb Bakehouse</span></div></div>
+        </aside>
+      </section>
+    </main>
+  </body>
+</html>

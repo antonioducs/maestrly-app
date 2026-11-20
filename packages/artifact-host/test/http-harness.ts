@@ -3,6 +3,7 @@ import path from 'node:path'
 import { vi } from 'vitest'
 import { type ArtifactAdmin, createArtifactAdmin } from '../src/admin.js'
 import { createBoardService } from '../src/boards.js'
+import { createDesignService } from '../src/design.js'
 import { createPublicServer, type PublicServer } from '../src/http/server.js'
 import { createActivityRecorder } from '../src/sharing-admin.js'
 import { ArtifactStore } from '../src/store/artifact-store.js'
@@ -82,6 +83,7 @@ export async function startHarness(
     onActivity,
     ownerName,
   })
+  const design = createDesignService({ store, blobs })
   const server = createPublicServer({
     store,
     blobs,
@@ -96,6 +98,8 @@ export async function startHarness(
     boards,
     whiteboardViewer: options.whiteboardViewer,
     boardPollMs: options.boardPollMs,
+    admin,
+    design,
   })
   const port = await server.listen()
   const origin = `http://127.0.0.1:${port}`

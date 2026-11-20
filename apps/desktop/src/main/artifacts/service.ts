@@ -116,6 +116,7 @@ const toCommentView = (comment: CommentView): ArtifactCommentView => ({
   body: comment.body,
   place: comment.anchor?.quote ? 'passage' : comment.anchor?.point ? 'spot' : 'page',
   quote: comment.anchor?.quote?.exact ?? null,
+  suggestion: comment.suggestion ?? null,
   status: comment.status,
   createdAt: comment.createdAt,
 })

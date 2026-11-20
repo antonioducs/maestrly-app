@@ -3,6 +3,7 @@ import path from 'node:path'
 import { z } from 'zod'
 import { type ArtifactAdmin, createArtifactAdmin } from './admin.js'
 import { createBoardService } from './boards.js'
+import { createDesignService } from './design.js'
 import { createPublicServer } from './http/server.js'
 import { MAX_NAME_CHARS } from './limits.js'
 import { parseInput } from './schemas.js'
@@ -109,6 +110,7 @@ export async function openArtifactHost(
       boards,
       whiteboardViewer,
     })
+    const design = createDesignService({ store, blobs })
     const server = createPublicServer({
       store,
       blobs,
@@ -125,6 +127,8 @@ export async function openArtifactHost(
       onChange,
       boards,
       whiteboardViewer,
+      admin,
+      design,
     })
     const boundPort = await server.listen()
     let closed = false

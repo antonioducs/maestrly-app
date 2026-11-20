@@ -1,9 +1,11 @@
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { canEditBoard, gateFor, isReplaced, resolveAccess, seesHistory } from '../access.js'
+import type { ArtifactAdmin } from '../admin.js'
 import { type BoardService, createBoardService } from '../boards.js'
 import { isHtmlPath, normalizeBundlePath } from '../bundle-paths.js'
 import { createCommentService } from '../comments.js'
+import type { DesignService } from '../design.js'
 import { createResponseService } from '../responses.js'
 import { ArtifactHostError } from '../errors.js'
 import { BRIDGE_SCRIPT, SHELL_FILES, SHELL_VERSION } from '../generated/shell-assets.js'
@@ -37,6 +39,7 @@ import type { WhiteboardViewer } from '../whiteboard-viewer.js'
 import { createBoardRoutes } from './board-routes.js'
 import { signCapability, verifyCapability } from './capability.js'
 import { createCommentRoutes } from './comment-routes.js'
+import { createDesignRoutes } from './design-routes.js'
 import { deviceInfo } from './device-info.js'
 import { contentHeaders, shellHeaders } from './headers.js'
 import { injectBridge } from './inject-bridge.js'
@@ -87,6 +90,10 @@ export interface PublicServerDeps {
   whiteboardViewer?: WhiteboardViewer | null
   /** How long a request for a whiteboard's changes waits; shorter in tests. */
   boardPollMs?: number
+  /** Shared with the host so owner token saves serialize with agent updates and respect quota. */
+  admin: ArtifactAdmin
+  /** Cached manifest/token loader shared with the host. */
+  design: DesignService
 }
 
 export interface PublicServer {
@@ -97,7 +104,7 @@ export interface PublicServer {
 const SHELL_ASSET = /^\/_maestrly\/shell\/([0-9a-f]{16})\/([a-z0-9-]+\.(?:js|css))$/
 const VIEWER = /^\/a\/([A-Za-z0-9_-]{22})$/
 const API = /^\/a\/([A-Za-z0-9_-]{22})\/api\/([a-z]+(?:[/-][a-z]+)*)$/
-const COMMENT_API = /^\/a\/([A-Za-z0-9_-]{22})\/api\/comments\/([A-Za-z0-9_-]{22})(?:\/(replies|resolve))?$/
+const COMMENT_API = /^\/a\/([A-Za-z0-9_-]{22})\/api\/comments\/([A-Za-z0-9_-]{22})(?:\/(replies|resolve|apply))?$/
 const CONTENT = /^\/c\/([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\/(.*)$/
 const LOOPBACK_NAMES = ['127.0.0.1', 'localhost', '[::1]']
 /** People listed by name in the owner's viewer; the rest are counted. */
@@ -150,14 +157,14 @@ interface Route {
   bodyBytes?: number
   /** Whiteboard routes count against their own request budget. */
   scope?: 'board'
-  handle: (ctx: ApiContext) => void
+  handle: (ctx: ApiContext) => void | Promise<void>
 }
 
 /** Routes by method and action, such as `POST frame`. */
 const routeKey = (method: string, action: string): string => `${method} ${action}`
 
 export function createPublicServer(deps: PublicServerDeps): PublicServer {
-  const { store, blobs, clock } = deps
+  const { store, blobs, clock, admin, design } = deps
   const publicOrigins = deps.publicOrigins ?? []
   const publicBase = originOf(publicOrigins[0])
   const sharing = deps.sharing ?? new SharingStore(store.db)
@@ -362,6 +369,10 @@ export function createPublicServer(deps: PublicServerDeps): PublicServer {
   for (const [action, method] of Object.entries(visitorMethods))
     route(method, action, visitorRoutes[action]!, action === 'access-requests/current')
 
+  const designRoutes = createDesignRoutes({ design, admin, limiter })
+  route('GET', 'design', designRoutes.get, true)
+  route('POST', 'tokens', designRoutes.saveTokens)
+
   const commentRoutes = createCommentRoutes({
     comments: createCommentService({
       store,
@@ -371,12 +382,16 @@ export function createPublicServer(deps: PublicServerDeps): PublicServer {
       onChange,
       record,
     }),
+    design,
+    admin,
+    limiter,
     ownerName,
   })
   route('GET', 'comments', commentRoutes.list)
   route('POST', 'comments', commentRoutes.create)
   route('POST', 'comments/:id/replies', commentRoutes.reply)
   route('POST', 'comments/:id/resolve', commentRoutes.resolve)
+  route('POST', 'comments/:id/apply', commentRoutes.apply)
   route('DELETE', 'comments/:id', commentRoutes.remove)
 
   const responseRoutes = createResponseRoutes({
@@ -444,7 +459,7 @@ export function createPublicServer(deps: PublicServerDeps): PublicServer {
     if (access && now - access.session.lastSeenAt > SESSION_TOUCH_INTERVAL_MS)
       store.touchSession(access.session.id, now, lifetime(principal, fields, now).expiresAt)
 
-    found.handle({
+    await found.handle({
       req,
       res,
       artifactId: artifact.id,

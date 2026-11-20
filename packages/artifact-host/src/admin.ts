@@ -16,6 +16,8 @@ import {
   commentAnchorSchema,
   commentBody,
   createCommentService,
+  type TokenSuggestion,
+  tokenSuggestionSchema,
   toCommentView,
 } from './comments.js'
 import { applyEdits } from './edits.js'
@@ -90,7 +92,14 @@ export interface ArtifactAdmin extends SharingAdmin, BoardAdmin {
   /** A comment by the owner or, on the owner's behalf, by an agent. With `parentId` it is a reply. */
   addComment(
     id: string,
-    input: { author: 'owner' | 'agent'; version?: number; body: string; anchor?: CommentAnchor; parentId?: string }
+    input: {
+      author: 'owner' | 'agent'
+      version?: number
+      body: string
+      anchor?: CommentAnchor
+      suggestion?: TokenSuggestion
+      parentId?: string
+    }
   ): Promise<CommentView>
   setCommentResolved(id: string, commentId: string, resolved: boolean): Promise<void>
   /** Deletes a comment; deleting the one that starts a thread deletes its replies too. */
@@ -141,6 +150,7 @@ const adminComment = z
     version: z.number().int().min(1).optional(),
     body: commentBody,
     anchor: commentAnchorSchema.optional(),
+    suggestion: tokenSuggestionSchema.optional(),
     parentId: z.string().optional(),
   })
   .strict()
@@ -209,6 +219,7 @@ const importInput = z.object({
         authorName: importedName,
         body: commentBody,
         anchor: commentAnchorSchema.nullable(),
+        suggestion: tokenSuggestionSchema.nullable().default(null),
         status: z.enum(['open', 'resolved']),
         createdAt: timestamp,
       })
@@ -375,6 +386,7 @@ export function createArtifactAdmin(deps: ArtifactAdminDeps): ArtifactAdmin {
           authorName: view.author.name,
           body: view.body,
           anchor: view.anchor,
+          suggestion: view.suggestion,
           status: view.status,
           createdAt: view.createdAt,
         }
@@ -447,7 +459,14 @@ export function createArtifactAdmin(deps: ArtifactAdminDeps): ArtifactAdmin {
         // Threads are one level deep, and a reply carries its thread's version.
         if (threads.get(comment.parentId) !== comment.version) throw invalidImport('comments: Unknown thread')
         if (comment.anchor) throw invalidImport('comments: A reply has no anchor of its own')
+        if (comment.suggestion) throw invalidImport('comments: A reply has no suggestion of its own')
       } else threads.set(comment.id, comment.version)
+      if (
+        comment.suggestion &&
+        comment.suggestion.appliedVersion !== null &&
+        !numbers.has(comment.suggestion.appliedVersion)
+      )
+        throw invalidImport(`comments: Version ${comment.suggestion.appliedVersion} does not exist`)
       if (imported.some((other) => other.id === comment.id) || commentStore.exists(comment.id))
         throw new ArtifactHostError('already_exists', 'A comment with this ID already exists')
       imported.push({
@@ -461,6 +480,7 @@ export function createArtifactAdmin(deps: ArtifactAdminDeps): ArtifactAdmin {
         authorName: comment.authorName,
         body: comment.body,
         anchorJson: comment.anchor && Object.keys(comment.anchor).length ? JSON.stringify(comment.anchor) : null,
+        suggestionJson: comment.suggestion ? JSON.stringify(comment.suggestion) : null,
         status: comment.status,
         createdAt: comment.createdAt,
       })

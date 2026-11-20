@@ -21,6 +21,7 @@ function comment(overrides: Partial<CommentView> = {}): CommentView {
     author: { kind: 'invited', name: 'Maria', verified: true, principalId: 'secret-principal' },
     body: 'The total looks wrong.',
     anchor: { quote: { exact: 'Total: 40', prefix: 'rows. ', suffix: ' items' } },
+    suggestion: null,
     status: 'open',
     createdAt: 1000,
     ...overrides,
@@ -153,6 +154,39 @@ describe('artifact comment tools', () => {
       element: '#chart > rect:nth-of-type(3)',
     })
     expect(payload(commentsEnvelope(id, 3, [comment()], null, NOTICE)).comments[0]).not.toHaveProperty('element')
+  })
+
+  it('includes structured token suggestions on threads and escapes angle brackets', () => {
+    const withSuggestion = comment({
+      anchor: null,
+      body: 'Tokens: --color-brand #112233 → #0055ff',
+      suggestion: {
+        file: 'tokens.css',
+        changes: [
+          { name: '--color-brand', from: '#112233', to: '#0055ff' },
+          { name: '--font-sans', theme: '[data-theme="dark"]', from: '"<Inter>"', to: '"Geist"' },
+        ],
+        appliedVersion: 4,
+      },
+    })
+    const envelope = commentsEnvelope(id, 4, [withSuggestion], null, NOTICE)
+    const inside = envelope.slice(
+      envelope.indexOf('\n', envelope.indexOf('<artifact-comments')) + 1,
+      envelope.lastIndexOf('</artifact-comments>')
+    )
+    expect(inside).not.toContain('<')
+    expect(payload(envelope).comments[0]).toMatchObject({
+      quote: null,
+      suggestion: {
+        file: 'tokens.css',
+        changes: [
+          { name: '--color-brand', from: '#112233', to: '#0055ff' },
+          { name: '--font-sans', theme: '[data-theme="dark"]', from: '"<Inter>"', to: '"Geist"' },
+        ],
+        appliedVersion: 4,
+      },
+    })
+    expect(payload(commentsEnvelope(id, 4, [comment()], null, NOTICE)).comments[0]).not.toHaveProperty('suggestion')
   })
 
   it('shows a reply whose thread is on another page on its own', () => {

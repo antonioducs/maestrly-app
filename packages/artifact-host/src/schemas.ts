@@ -22,7 +22,7 @@ import {
   MAX_TITLE_CHARS,
   MIN_ACCESS_CODE_CHARS,
 } from './limits.js'
-import type { CommentAnchor, CommentAuthorKind, ResponseData } from './shell/contract.js'
+import type { CommentAnchor, CommentAuthorKind, ResponseData, TokenSuggestion } from './shell/contract.js'
 import type { ArtifactKind, ArtifactRecord, VersionAuthor, Visibility } from './store/artifact-store.js'
 import type { ResponseAuthorKind } from './store/response-store.js'
 import type { ArtifactEventKind, BoardEditors, EventData, PrincipalKind } from './store/sharing-store.js'
@@ -309,6 +309,8 @@ export interface ArtifactExport {
     authorName: string
     body: string
     anchor: CommentAnchor | null
+    /** Absent in exports from hosts older than token suggestions. */
+    suggestion?: TokenSuggestion | null
     status: 'open' | 'resolved'
     createdAt: number
   }[]
@@ -385,6 +387,7 @@ export function sameContent(a: ArtifactContent, b: ArtifactContent): boolean {
         comment.authorName,
         comment.body,
         comment.anchor,
+        comment.suggestion ?? null,
         comment.status,
         comment.createdAt,
       ]),

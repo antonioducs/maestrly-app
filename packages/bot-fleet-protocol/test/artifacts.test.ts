@@ -8,6 +8,7 @@ const artifactId = 'A'.repeat(18) + '_-12'
 describe('artifact contracts', () => {
   it('exports the feature, body limit, port and environment keys', () => {
     expect(fleet.FLEET_ARTIFACTS_FEATURE).toBe('artifacts')
+    expect(fleet.FLEET_ARTIFACTS_DESIGN_FEATURE).toBe('artifacts-design')
     expect(fleet.FLEET_ARTIFACT_BODY_MAX).toBe(72 * 1024 * 1024)
     expect(fleet.FLEET_PORTS.artifacts).toBe(4010)
     expect(fleet.FLEET_GATEWAY_ENV.artifactsPort).toBe('MAESTRLY_GATEWAY_ARTIFACTS_PORT')
@@ -15,12 +16,7 @@ describe('artifact contracts', () => {
   })
 
   it('accepts only exact normalized HTTP origins', () => {
-    for (const origin of [
-      'http://localhost:4010',
-      'https://example.com',
-      'http://127.0.0.1',
-      'http://[::1]:4010',
-    ])
+    for (const origin of ['http://localhost:4010', 'https://example.com', 'http://127.0.0.1', 'http://[::1]:4010'])
       expect(fleet.fleetHttpOriginSchema.parse(origin)).toBe(origin)
     for (const origin of [
       '',
@@ -45,9 +41,7 @@ describe('artifact contracts', () => {
 
   it('bounds settings and allows independent partial updates', () => {
     expect(fleet.fleetArtifactSettingsSchema.parse(settings)).toEqual(settings)
-    expect(fleet.fleetArtifactSettingsSchema.parse({ ...settings, ownerName: '  Owner  ' }).ownerName).toBe(
-      'Owner'
-    )
+    expect(fleet.fleetArtifactSettingsSchema.parse({ ...settings, ownerName: '  Owner  ' }).ownerName).toBe('Owner')
     expect(fleet.fleetArtifactSettingsPatchSchema.parse({})).toEqual({})
     for (const patch of [
       { enabled: true },
@@ -100,9 +94,9 @@ describe('artifact contracts', () => {
       { quotaBytes: -1 },
       { quotaBytes: 1.5 },
     ])
-      expect(
-        fleet.fleetArtifactHostSchema.safeParse({ settings, status: { ...status, ...change } }).success
-      ).toBe(false)
+      expect(fleet.fleetArtifactHostSchema.safeParse({ settings, status: { ...status, ...change } }).success).toBe(
+        false
+      )
   })
 
   it('bounds calls and structured errors without restricting successful values', () => {
@@ -171,13 +165,7 @@ describe('artifact contracts', () => {
   it('validates artifact notifications and their IDs', () => {
     const events = [
       { type: 'artifact.changed', at, artifactId },
-      ...[
-        'device_added',
-        'access_requested',
-        'invite_declined',
-        'comment_added',
-        'response_submitted',
-      ].map((kind) => ({
+      ...['device_added', 'access_requested', 'invite_declined', 'comment_added', 'response_submitted'].map((kind) => ({
         type: 'artifact.activity',
         at,
         artifactId,
@@ -194,17 +182,12 @@ describe('artifact contracts', () => {
         'a'.repeat(21) + '/',
         'a'.repeat(21) + '+',
       ])
-        expect(fleet.fleetGatewayEventSchema.safeParse({ ...event, artifactId: invalidId }).success).toBe(
-          false
-        )
+        expect(fleet.fleetGatewayEventSchema.safeParse({ ...event, artifactId: invalidId }).success).toBe(false)
       expect(fleet.fleetGatewayEventSchema.safeParse({ ...event, at: 'yesterday' }).success).toBe(false)
     }
     expect(
-      fleet.fleetGatewayEventSchema.safeParse({ type: 'artifact.activity', at, artifactId, kind: 'unknown' })
-        .success
+      fleet.fleetGatewayEventSchema.safeParse({ type: 'artifact.activity', at, artifactId, kind: 'unknown' }).success
     ).toBe(false)
-    expect(
-      fleet.fleetGatewayEventSchema.safeParse({ type: 'artifact.activity', at, artifactId }).success
-    ).toBe(false)
+    expect(fleet.fleetGatewayEventSchema.safeParse({ type: 'artifact.activity', at, artifactId }).success).toBe(false)
   })
 })

@@ -1,4 +1,4 @@
-import { type CommentView, MAX_COMMENT_CHARS } from '@maestrly/artifact-host'
+import { type CommentView, MAX_COMMENT_CHARS, type TokenSuggestion } from '@maestrly/artifact-host'
 import { z } from 'zod'
 import { getArtifactsService } from '../../artifacts'
 import type { ArtifactsService } from '../../artifacts/service'
@@ -21,6 +21,8 @@ interface EnvelopeThread extends Omit<EnvelopeReply, 'replyTo'> {
   quote: string | null
   /** For a comment placed on a spot of the page: the element it was placed on, as a CSS selector. */
   element?: string
+  /** Structured token changes attached to the thread when suggested from Design mode. */
+  suggestion?: TokenSuggestion
   replies: EnvelopeReply[]
 }
 
@@ -57,6 +59,7 @@ export function commentsEnvelope(
       status: comment.status,
       quote: comment.anchor?.quote?.exact ?? null,
       ...(comment.anchor?.point ? { element: comment.anchor.point.selector } : {}),
+      ...(comment.suggestion ? { suggestion: comment.suggestion } : {}),
       body,
       replies: [],
     }

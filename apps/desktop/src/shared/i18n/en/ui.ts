@@ -406,6 +406,7 @@ export default {
       agentUnnamed: 'Your agent',
       version: 'v{{version}}',
       resolved: 'Resolved',
+      applied: 'Applied in v{{version}}',
       onSpot: 'On a spot of the page',
       onPage: 'About the whole page',
       reply: 'Reply',
@@ -1065,17 +1066,20 @@ export default {
       shortcut: 'Global shortcut',
       recording: 'Press the shortcut…',
       recordingHint: 'Use at least one key besides Shift (⌘, Ctrl, Alt). Esc cancels.',
-      shortcutInvalid: 'That shortcut cannot work outside the app: use ⌘, Ctrl or Alt with a letter, digit, F1–F24 or Space.',
+      shortcutInvalid:
+        'That shortcut cannot work outside the app: use ⌘, Ctrl or Alt with a letter, digit, F1–F24 or Space.',
       shortcutOff: 'Off',
       shortcutDisable: 'Turn off',
       shortcutReset: 'Restore',
       shortcutConflict: 'Another app already uses that shortcut; the previous one still works.',
       shortcutUnsupported: 'That shortcut cannot be registered on this system.',
-      wayland: 'On Wayland, global shortcuts may not work. Create a system shortcut that runs “maestrly --toggle-assistant”.',
+      wayland:
+        'On Wayland, global shortcuts may not work. Create a system shortcut that runs “maestrly --toggle-assistant”.',
       hideOnBlurTitle: 'Hide when it loses focus',
       hideOnBlurDesc: 'The window goes away when you click elsewhere, unless it is waiting for your answer.',
       keepRunningTitle: 'Keep running in the background',
-      keepRunningDesc: 'Closing the main window only hides it; the app stays in the tray and the shortcut keeps working.',
+      keepRunningDesc:
+        'Closing the main window only hides it; the app stays in the tray and the shortcut keeps working.',
       model: 'Model',
       modelDesc: 'The model of the assistant conversation. A fast one keeps replies quick.',
       open: 'Open assistant',
@@ -1107,7 +1111,8 @@ export default {
         autoSpeakTitle: 'Read answers aloud',
         autoSpeakDesc: 'An answer to a message you spoke is read sentence by sentence while it is written.',
         shortcutListensTitle: 'The shortcut starts listening',
-        shortcutListensDesc: 'Opening the assistant with the shortcut starts listening at once. Pressing it while it listens or reads stops it.',
+        shortcutListensDesc:
+          'Opening the assistant with the shortcut starts listening at once. Pressing it while it listens or reads stops it.',
         wakeWordTitle: 'Open by voice',
         wakeWordDesc:
           'Say the phrase to open the assistant listening. It is detected on this computer, and audio leaves it only after the phrase. The system microphone indicator stays on while this is on.',

@@ -11,6 +11,7 @@ import {
   parseBridgeMessage,
   type ViewerState,
 } from './contract.js'
+import { createDesignController, type DesignController } from './design.js'
 import { copyText, h, toast } from './dom.js'
 import { showEntry } from './gate.js'
 import { entryScreen, hasAccess, type LinkFragment, parseFragment } from './gate-model.js'
@@ -37,11 +38,12 @@ const unavailable = () => showMessage(t('notAvailable'), t('notAvailableDetail')
 
 function renderViewer(api: ArtifactApi, state: ViewerState, initialVersion: number, preview: boolean): void {
   const { artifact } = state
-  const current = artifact.currentVersion
+  let current = artifact.currentVersion
   let version = initialVersion
   let viewport: Viewport = 'desktop'
   let full = false
   let comments: CommentsController | null = null
+  let design: DesignController | null = null
   // A newer version replaced the one on screen for a reader who cannot open earlier ones: only reloading shows it.
   let replaced = false
   // A whiteboard's canvas fills the frame: comments are about the whole board, never a spot in it.
@@ -152,6 +154,7 @@ function renderViewer(api: ArtifactApi, state: ViewerState, initialVersion: numb
       const body = (await response.json()) as Partial<FrameResponse>
       if (typeof body.url !== 'string' || !body.url.startsWith('/c/')) throw new Error('Unexpected frame response')
       frame.src = body.url
+      void design?.setVersion(number, body.url, body.expiresAt)
     } catch {
       failure.hidden = false
     }
@@ -215,19 +218,57 @@ function renderViewer(api: ArtifactApi, state: ViewerState, initialVersion: numb
     ? createBoardSync({ api, frame, preview, onLost: () => showMessage(t('boardLost'), t('boardLostDetail')) })
     : null
 
+  if (!whiteboard && !preview)
+    design = createDesignController({
+      api,
+      state,
+      stageFrame: frame,
+      version,
+      preview,
+      onChange: sync,
+      onDisableCommenting: () => comments?.setCommenting(false),
+      onVersionCreated: (nextVersion) => {
+        current = nextVersion.number
+        version = nextVersion.number
+        comments?.setVersion(nextVersion.number)
+        sync()
+        void load(nextVersion.number)
+      },
+      onVersionSynced: (nextVersion, latestCurrent) => {
+        if (latestCurrent > current) current = latestCurrent
+        version = nextVersion
+        comments?.setVersion(nextVersion)
+        sync()
+      },
+      onReplaced: showReplaced,
+      onIdentityChanged: sync,
+    })
+
   function toggleCommenting(): void {
     if (!comments) return
     if (whiteboard) comments.setList(!comments.listOpen)
-    else comments.setCommenting(!comments.commenting)
+    else {
+      const next = !comments.commenting
+      if (next) design?.setInspecting(false)
+      comments.setCommenting(next)
+    }
   }
 
   function onKey(key: string): void {
     if (key === 'Escape') {
       if (popoverOpen()) closePopover()
+      else if (design?.escape()) return
       else if (comments?.escape()) return
       else if (full) setFull(false)
     } else if (key === 'c') toggleCommenting()
     else if (key === 'f') setFull(!full)
+    else if (key === 'i' && design) design.setInspecting(!design.snapshot().inspecting)
+    else if (key === 's' && design?.snapshot().design) {
+      const snap = design.snapshot()
+      design.setView(snap.view === 'screens' ? 'page' : 'screens')
+    } else if (key === 't' && design?.snapshot().design) {
+      design.setTokensOpen(!design.snapshot().tokensOpen)
+    }
   }
 
   function onMessage(message: BridgeMessage): void {
@@ -243,15 +284,34 @@ function renderViewer(api: ArtifactApi, state: ViewerState, initialVersion: numb
   }
 
   window.addEventListener('message', (event) => {
-    if (event.source !== frame.contentWindow) return
     const message = parseBridgeMessage(event.data)
-    if (message) onMessage(message)
+    if (!message) return
+    const target = design
+      ? design.routeMessage(event.source, message)
+      : event.source === frame.contentWindow
+        ? 'stage'
+        : null
+    if (target === 'screen') {
+      if (
+        message.type === 'key' &&
+        (message.key === 'Escape' || message.key === 's' || message.key === 't' || message.key === 'f')
+      ) {
+        onKey(message.key)
+      }
+      return
+    }
+    if (target === 'stage') onMessage(message)
   })
   window.addEventListener('keydown', (event) => {
     if (event.metaKey || event.ctrlKey || event.altKey) return
-    const typing = event.target instanceof Element && event.target.closest('input, textarea') !== null
+    const typing =
+      (event.target instanceof HTMLElement && event.target.isContentEditable) ||
+      (event.target instanceof Element &&
+        event.target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])') !== null)
+    const lower = event.key.length === 1 ? event.key.toLowerCase() : event.key
     if (event.key === 'Escape') onKey('Escape')
-    else if (!typing && (event.key === 'c' || event.key === 'f')) onKey(event.key)
+    else if (!typing && (lower === 'c' || lower === 'f' || lower === 'i' || lower === 's' || lower === 't'))
+      onKey(lower)
   })
   // A press beside the page, around it, closes the conversation that is open.
   stage.addEventListener('pointerdown', (event) => {

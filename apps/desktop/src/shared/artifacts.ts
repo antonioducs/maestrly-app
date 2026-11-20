@@ -45,6 +45,19 @@ export const MAX_ARTIFACT_COMMENT_CHARS = 4000
 
 export type ArtifactCommentAuthorKind = 'owner' | 'agent' | 'invited' | 'approved' | 'guest'
 
+export interface ArtifactTokenSuggestionChange {
+  name: string
+  from: string
+  to: string
+  theme?: string
+}
+
+export interface ArtifactTokenSuggestion {
+  file: string
+  changes: ArtifactTokenSuggestionChange[]
+  appliedVersion: number | null
+}
+
 /** A comment as the owner sees it in the app. A reply carries its thread's ID and version. */
 export interface ArtifactCommentView {
   id: string
@@ -57,6 +70,8 @@ export interface ArtifactCommentView {
   place: 'passage' | 'spot' | 'page'
   /** The passage the thread is about, when it is anchored to one. */
   quote: string | null
+  /** Token edits suggested on this thread, or null when it is a plain comment. */
+  suggestion: ArtifactTokenSuggestion | null
   status: 'open' | 'resolved'
   createdAt: number
 }

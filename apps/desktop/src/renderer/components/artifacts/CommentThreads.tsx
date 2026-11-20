@@ -79,6 +79,11 @@ function ThreadCard({
             {t('artifacts.comments.resolved')}
           </span>
         )}
+        {comment.suggestion?.appliedVersion !== null && comment.suggestion?.appliedVersion !== undefined && (
+          <span className="rounded-full bg-white/[0.06] px-1.5 text-[11px] leading-[18px] text-muted-foreground">
+            {t('artifacts.comments.applied', { version: comment.suggestion.appliedVersion })}
+          </span>
+        )}
       </div>
       {comment.quote && (
         <blockquote className="line-clamp-3 break-words border-l-[3px] border-artifact-warn/80 pl-2 text-xs leading-snug text-muted-foreground">
@@ -91,6 +96,19 @@ function ThreadCard({
         </p>
       )}
       <CommentBody comment={comment} />
+      {comment.suggestion && (
+        <dl className="grid gap-0.5 text-[12.5px] text-foreground/80">
+          {comment.suggestion.changes.map((change) => {
+            const label = change.theme ? `${change.name} (${change.theme})` : change.name
+            return (
+              <div key={`${change.theme ?? ''}\n${change.name}`} className="flex min-w-0 gap-1.5">
+                <dt className="shrink-0 text-muted-foreground">{label}:</dt>
+                <dd className="min-w-0 truncate">{`${change.from} → ${change.to}`}</dd>
+              </div>
+            )
+          })}
+        </dl>
+      )}
       {replies.map((reply) => (
         <div key={reply.id}>
           <CommentBody comment={reply} reply />

@@ -81,6 +81,8 @@ export const FLEET_ARTIFACTS_FEATURE = 'artifacts'
 export const FLEET_ARTIFACTS_GATEWAY_VIEWER_FEATURE = 'artifacts-gateway-viewer'
 /** A paired device can move an artifact in with its ID, history and comments (`exportArtifact`, `importArtifact`). */
 export const FLEET_ARTIFACTS_TRANSFER_FEATURE = 'artifacts-transfer'
+/** The artifact viewer and comment store support Design mode v2 manifests, token edits and token suggestions. */
+export const FLEET_ARTIFACTS_DESIGN_FEATURE = 'artifacts-design'
 /** JSON body limit for artifact uploads, including base64 encoding. */
 export const FLEET_ARTIFACT_BODY_MAX = 72 * 1024 * 1024
 
