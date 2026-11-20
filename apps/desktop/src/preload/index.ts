@@ -21,7 +21,6 @@ import { artifactsApi } from './api-artifacts'
 import { transfersApi } from './api-transfers'
 import { conversationMoveApi } from './api-conversation-move'
 import { assistantApi } from './api-assistant'
-import { routinesApi } from './api-routines'
 
 export type * from '../shared/chat-window'
 
@@ -158,7 +157,6 @@ const localApi = {
   ...transfersApi,
   ...conversationMoveApi,
   ...assistantApi,
-  ...routinesApi,
 }
 const api = { ...localHostApi, ...localApi }
 

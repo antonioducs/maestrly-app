@@ -186,6 +186,8 @@ export class Lifecycle {
   >()
   /** Whether each workspaces environment had chat turns running at its last health check. */
   private readonly hostBusy = new Map<string, boolean>()
+  /** Whether each workspaces environment reported active chat routines at its last health check. */
+  private readonly hostHasRoutines = new Map<string, boolean>()
   /** One event stream per environment, fanned out to its bots. */
   private readonly links = new Map<string, AbortController>()
   private readonly pendingSeen = new Map<string, Set<string>>()
@@ -1741,9 +1743,12 @@ export class Lifecycle {
    */
   private async refreshHostBusy(id: string): Promise<void> {
     try {
-      this.hostBusy.set(id, (await this.client(id).health()).busy === true)
+      const health = await this.client(id).health()
+      this.hostBusy.set(id, health.busy === true)
+      this.hostHasRoutines.set(id, (health.routines?.enabled ?? 0) > 0)
     } catch {
       this.hostBusy.set(id, true)
+      this.hostHasRoutines.set(id, true)
     }
   }
   private readyToUpdate(id: string): boolean {
@@ -3126,8 +3131,8 @@ export class Lifecycle {
   }
   /**
    * Stops the running workspaces environments idle for longer than their idle stop: no device holds a bridge, an editor
-   * connection or a file transfer to them, and no chat turn runs there (one that does not answer counts as busy). The
-   * timer calls it, and so can tests.
+   * connection or a file transfer to them, no chat turn runs there, and no active chat routines are scheduled (one that
+   * does not answer counts as busy). The timer calls it, and so can tests.
    */
   async checkIdle(at = Date.now()): Promise<void> {
     const environments = this.store.listEnvironments()
@@ -3136,12 +3141,13 @@ export class Lifecycle {
       const id = environment.id
       if (environment.kind !== 'workspaces' || !environment.idleStopMinutes || environment.lifecycle !== 'running') {
         this.lastUsed.delete(id)
+        this.hostHasRoutines.delete(id)
         continue
       }
       let used = this.hostConnections(id) > 0
       if (!used) {
         await this.refreshHostBusy(id)
-        used = this.hostBusy.get(id) !== false
+        used = this.hostBusy.get(id) !== false || this.hostHasRoutines.get(id) === true
       }
       const last = this.lastUsed.get(id)
       if (used || last === undefined) {
@@ -3154,7 +3160,13 @@ export class Lifecycle {
         await this.exclusive(id, async () => {
           // Checked again in the environment's turn: someone may have connected or started it meanwhile.
           const current = this.store.getEnvironment(id)
-          if (current?.lifecycle !== 'running' || current.archivedAt || this.hostConnections(id) > 0) return
+          if (
+            current?.lifecycle !== 'running' ||
+            current.archivedAt ||
+            this.hostConnections(id) > 0 ||
+            this.hostHasRoutines.get(id) === true
+          )
+            return
           this.logger.info('Environment idle; stopping', { environmentId: id })
           await this.halt(id, null, { idle: true })
         })

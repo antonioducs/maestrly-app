@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron'
+import type { IpcMainInvokeEvent } from 'electron'
 import { closeDb, freshDb } from '../helpers/db'
 import type { IpcRegistrar } from '../../src/main/ipc-registrar'
-import type { LocalRoutineRun, RoutineDraft, RoutineRunTrigger } from '../../src/shared/routines'
+import type { LocalRoutineRun, RoutineDraft, RoutineProposal, RoutineRunTrigger } from '../../src/shared/routines'
 import { permissionScopeKey } from '../../src/shared/conversation-scope'
 import type { StandaloneConversation } from '../../src/shared/conversation'
 import { insertConversation, getDb } from '../../src/main/store'
@@ -281,5 +281,38 @@ describe('registerRoutinesIpc', () => {
     )
     expect(deletedDetails.run.conversationDeleted).toBe(true)
     expect(deletedDetails.conversation).toBeNull()
+  })
+
+  it('marks a proposal as created on another host via routines:markProposalCreated', async () => {
+    const h = makeHarness()
+    const conv = makeConv('conv-cross-host')
+    const proposal = createProposal(conv.id, sampleDraft())
+
+    const marked = await h.invoke<RoutineProposal | null>(
+      'routines:markProposalCreated',
+      proposal.id,
+      'remote-routine-42',
+      { hostId: 'server-1/workspaces' }
+    )
+    expect(marked).toMatchObject({
+      id: proposal.id,
+      state: 'created',
+      routineId: 'remote-routine-42',
+      routinePlace: { hostId: 'server-1/workspaces' },
+    })
+    expect(getProposal(proposal.id)?.routinePlace).toEqual({ hostId: 'server-1/workspaces' })
+  })
+
+  it('refuses to store `local` as another host: every computer would read it as itself', async () => {
+    const h = makeHarness()
+    const conv = makeConv('conv-local-place')
+    const proposal = createProposal(conv.id, sampleDraft())
+    await expect(
+      h.invoke('routines:markProposalCreated', proposal.id, 'r-1', { hostId: 'local' })
+    ).rejects.toThrow()
+    await expect(
+      h.invoke('routines:create', sampleDraft(), { conversationId: 'c', title: 'Chat', via: 'menu', hostId: 'local' })
+    ).rejects.toThrow()
+    expect(getProposal(proposal.id)?.state).toBe('pending')
   })
 })

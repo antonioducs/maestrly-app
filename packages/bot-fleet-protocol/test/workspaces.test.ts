@@ -7,6 +7,7 @@ import {
   FLEET_CONVERSATION_COMPUTER_LIMITS,
   FLEET_CONVERSATION_COMPUTERS_FEATURE,
   FLEET_GATEWAY_ENV,
+  FLEET_HOST_ROUTINES_FEATURE,
   FLEET_WORKSPACES_ENVIRONMENTS_FEATURE,
   FLEET_GATEWAY_ROUTES,
   FLEET_INSTANCE_BRIDGE_PATH,
@@ -120,6 +121,32 @@ describe('workspaces environments', () => {
     expect(fleetBridgeTicketResponseSchema.parse(ticket)).toEqual(ticket)
     for (const path of ['/v1/screen?ticket=t', '/v1/bridge?ticket=t&x=1', 'https://elsewhere/v1/bridge?ticket=t'])
       expect(fleetBridgeTicketResponseSchema.safeParse({ ...ticket, path }).success).toBe(false)
+  })
+
+  it('parses optional routines health summary and keeps older health payloads valid', () => {
+    expect(FLEET_HOST_ROUTINES_FEATURE).toBe('host-routines')
+    const base = { ok: true, appVersion: '0.39.0', protocol: 1, ready: true, busy: false }
+    expect(fleetInstanceHealthSchema.parse(base)).toEqual({ ...base, capabilities: [] })
+    expect(
+      fleetInstanceHealthSchema.parse({
+        ...base,
+        capabilities: [FLEET_WORKSPACES_HOST_FEATURE, FLEET_HOST_ROUTINES_FEATURE],
+        routines: { enabled: 2, nextRunAt: 1_795_000_000_000 },
+      })
+    ).toMatchObject({ routines: { enabled: 2, nextRunAt: 1_795_000_000_000 } })
+    expect(
+      fleetInstanceHealthSchema.parse({
+        ...base,
+        routines: { enabled: 0, nextRunAt: null },
+      })
+    ).toMatchObject({ routines: { enabled: 0, nextRunAt: null } })
+    for (const bad of [
+      { enabled: -1, nextRunAt: null },
+      { enabled: 1.5, nextRunAt: null },
+      { enabled: 1, nextRunAt: -5 },
+      { enabled: 1 },
+    ])
+      expect(fleetInstanceHealthSchema.safeParse({ ...base, routines: bad }).success).toBe(false)
   })
 })
 

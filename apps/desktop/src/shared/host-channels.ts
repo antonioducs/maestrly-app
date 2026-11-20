@@ -87,6 +87,7 @@ export const HOST_DESKTOP_EFFECT_CHANNELS: ReadonlySet<string> = new Set([
   'workspace:pick',
   'project-setup:pick-directory',
   'project-setup:projects-directory-pick',
+  'routines:openFolder',
 ])
 
 /**

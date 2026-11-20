@@ -1,6 +1,12 @@
 import { app } from 'electron'
+import { isBotMode } from '../fleet/instance/config'
 
 export const ROUTINE_LOGIN_ARG = '--routines-background'
+
+/** Local routines run on the desktop and in server mode (workspaces environments), never in bot mode. */
+export function shouldRunLocalRoutines(env: NodeJS.ProcessEnv = process.env): boolean {
+  return !isBotMode(env)
+}
 
 export function isLoginItemSupported(platform: NodeJS.Platform = process.platform): boolean {
   return platform === 'darwin' || platform === 'win32'

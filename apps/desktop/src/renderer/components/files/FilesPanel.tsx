@@ -25,16 +25,22 @@ const evictable = () => ({ safe: true })
  * The files of a host, for a conversation that runs there: browse, preview, rename, delete, and move files and whole
  * folders.
  */
-export function FilesPanel({ conv }: { conv: string }) {
+export function FilesPanel({ conv, initialPath }: { conv?: string; initialPath?: string }) {
   const { t } = useTranslation('ui')
   const api = useHostApi()
   const hostId = useHostId()
   const folders = useHostInfo(hostId).folderTransfers
-  usePanelMemoryEviction(conv, 'files', evictable)
+  usePanelMemoryEviction(conv ?? '', 'files', evictable)
   const start = useCallback(
-    async (roots: Parameters<typeof defaultRoot>[0]) =>
-      (await api.hostFsConversationFolder(conv).catch(() => null)) ?? defaultRoot(roots),
-    [api, conv]
+    async (roots: Parameters<typeof defaultRoot>[0]) => {
+      if (initialPath) return initialPath
+      if (conv) {
+        const folder = await api.hostFsConversationFolder(conv).catch(() => null)
+        if (folder) return folder
+      }
+      return defaultRoot(roots)
+    },
+    [api, conv, initialPath]
   )
   const directory = useHostDirectory({ includeFiles: true, start })
   const { roots, listing, loading, go, reload } = directory

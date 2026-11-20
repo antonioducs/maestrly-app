@@ -107,11 +107,29 @@ describe('workspaces host environment', () => {
         'host-files-folders',
         'host-editor',
         'mobile-api',
+        'host-routines',
       ],
       busy: false,
     })
     state.busy = true
     expect(environment.health().busy).toBe(true)
+  })
+
+  it('includes enabled routines summary in health when provided', () => {
+    const { runtime } = setup()
+    const routinesState = { enabled: 2, nextRunAt: 1_795_000_000_000 as number | null }
+    const environment = new HostEnvironment(
+      runtime as unknown as EnvironmentRuntime,
+      () => false,
+      null,
+      false,
+      null,
+      () => routinesState
+    )
+    expect(environment.health().routines).toEqual({ enabled: 2, nextRunAt: 1_795_000_000_000 })
+    routinesState.enabled = 0
+    routinesState.nextRunAt = null
+    expect(environment.health().routines).toEqual({ enabled: 0, nextRunAt: null })
   })
 
   it('says it takes the calls of the bots it gives access to only when it can link itself to them', async () => {
@@ -133,6 +151,7 @@ describe('workspaces host environment', () => {
         'host-files-folders',
         'host-editor',
         'mobile-api',
+        'host-routines',
       ],
       bots: [],
     })

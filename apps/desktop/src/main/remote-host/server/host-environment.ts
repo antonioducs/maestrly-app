@@ -1,6 +1,7 @@
 import {
   type FleetAccountImportRequest,
   type FleetAddApiKeyAccountRequest,
+  type FleetInstanceHealthRoutines,
   type FleetLoginCallbackRequest,
   type FleetLoginStartRequest,
   type FleetMcpImportRequest,
@@ -11,6 +12,7 @@ import {
   FLEET_HOST_FILES_FEATURE,
   FLEET_HOST_FILES_FOLDERS_FEATURE,
   FLEET_HOST_DESKTOP_CALLS_FEATURE,
+  FLEET_HOST_ROUTINES_FEATURE,
   FLEET_MOBILE_HOST_FEATURE,
   FLEET_WORKSPACES_HOST_FEATURE,
   type ScreenMode,
@@ -47,7 +49,9 @@ export class HostEnvironment implements InstanceEnvironment {
     /** Whether it takes the calls of the bots it gives access to (`host-desktop-calls`): it has a host token. */
     private readonly desktopCalls = false,
     /** The workspaces folder it mounts (`MAESTRLY_WORKSPACES_ROOT`): its own, or the server's shared one. */
-    private readonly folder: string | null = null
+    private readonly folder: string | null = null,
+    /** Enabled local routines summary reported on `/v1/health` so the gateway keeps the environment running. */
+    private readonly routines: (() => FleetInstanceHealthRoutines) | null = null
   ) {
     this.events = runtime.events
     this.settings = runtime.settings
@@ -55,7 +59,12 @@ export class HostEnvironment implements InstanceEnvironment {
 
   health() {
     const health = this.runtime.health()
-    return { ...health, capabilities: [...health.capabilities, ...this.hostCapabilities()], busy: this.busy() }
+    return {
+      ...health,
+      capabilities: [...health.capabilities, ...this.hostCapabilities()],
+      busy: this.busy(),
+      ...(this.routines ? { routines: this.routines() } : {}),
+    }
   }
   async environmentStatus() {
     const status = await this.runtime.environmentStatus()
@@ -79,6 +88,7 @@ export class HostEnvironment implements InstanceEnvironment {
       FLEET_HOST_FILES_FOLDERS_FEATURE,
       FLEET_HOST_EDITOR_FEATURE,
       FLEET_MOBILE_HOST_FEATURE,
+      FLEET_HOST_ROUTINES_FEATURE,
       ...(this.computers ? [FLEET_CONVERSATION_COMPUTERS_FEATURE] : []),
       ...(this.desktopCalls ? [FLEET_HOST_DESKTOP_CALLS_FEATURE] : []),
     ]

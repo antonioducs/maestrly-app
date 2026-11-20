@@ -10,10 +10,13 @@ import {
   Pencil,
   Pin,
   Play,
+  Server,
   Square,
   Trash2,
   X,
 } from 'lucide-react'
+import type { HostId } from '../../../shared/host-key'
+import type { HostView } from '../../../shared/hosts'
 import {
   isRoutineRunSkipped,
   type LocalRoutine,
@@ -21,6 +24,8 @@ import {
   type RoutineRunFilter,
   type RoutineSavedPermission,
 } from '../../../shared/routines'
+import { hostOfKey } from '@/lib/hosts/shell-keys'
+import { routineHostDisplay } from '@/lib/routines/host-routines'
 import { formatDuration, formatHHMM, formatRelative, formatRunDay, formatWhen } from '@/lib/routines/relative-time'
 import { daysSummary, scheduleBigTime, scheduleSummary } from '@/lib/routines/schedule-text'
 import { runTimestamp } from '@/lib/routines/timeline'
@@ -34,6 +39,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import {
+  RoutineHostBadge,
   RoutineModelLine,
   RoutineOutcomePill,
   RoutinePermBadge,
@@ -43,6 +49,8 @@ import { RoutineTimeline } from './RoutineTimeline'
 
 export function RoutineDetailView({
   routine,
+  hosts = [],
+  startingHostIds,
   runs,
   totalRuns,
   hasMoreRuns,
@@ -63,8 +71,11 @@ export function RoutineDetailView({
   onRemoveSavedPermission,
   onOpenFolder,
   onOpenOriginChat,
+  onStartHostEnvironment,
 }: {
   routine: LocalRoutine
+  hosts?: readonly HostView[]
+  startingHostIds?: ReadonlySet<HostId>
   runs: readonly LocalRoutineRun[]
   totalRuns: number
   hasMoreRuns: boolean
@@ -85,12 +96,19 @@ export function RoutineDetailView({
   onRemoveSavedPermission: (permId: string) => void
   onOpenFolder: () => void
   onOpenOriginChat: (conversationId: string) => void
+  onStartHostEnvironment?: (hostId: HostId) => void
 }) {
   const { t } = useTranslation('routines')
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const nowMs = Date.now()
   const tr = (key: string, opts?: Record<string, unknown>): string => String(t(key as never, opts as never))
+
+  const routineHostId = hostOfKey(routine.id)
+  const routineHost = hosts.find((h) => h.id === routineHostId)
+  const hostInfo = routineHostDisplay(routineHost, routineHostId, tr)
+  const hostOffline = hostInfo.isRemote && !hostInfo.online
+  const hostStarting = Boolean(startingHostIds?.has(routineHostId)) || hostInfo.starting
 
   const running =
     runs.find((run) => run.status === 'running') ?? timelineRuns.find((run) => run.status === 'running') ?? null
@@ -136,10 +154,45 @@ export function RoutineDetailView({
         </button>
         <ChevronRight aria-hidden="true" className="size-[11px] shrink-0 text-[rgba(154,149,140,0.58)]" />
         <span className="min-w-0 truncate text-[13px] font-medium text-foreground">{routine.title}</span>
+        <RoutineHostBadge host={routineHost} hostId={routineHostId} compact />
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
         <div className="mx-auto max-w-[820px] px-7 pb-20 pt-7 max-[900px]:px-4 max-[900px]:py-5 max-[900px]:pb-20">
+          {hostOffline && (
+            <div
+              role="status"
+              className="mb-4 flex flex-wrap items-center gap-2.5 rounded-[10px] border border-[rgba(242,180,92,0.22)] bg-[rgba(242,180,92,0.08)] px-3 py-2.5 text-[12.5px] text-foreground/90"
+            >
+              <Server aria-hidden="true" className="size-4 shrink-0 text-[var(--artifact-warn)]" />
+              <span className="min-w-0 flex-1">
+                <b>
+                  {hostInfo.stopped
+                    ? t('host.stoppedBannerTitle', { host: hostInfo.fullLabel })
+                    : t('host.offlineBannerTitle', { host: hostInfo.fullLabel })}
+                </b>{' '}
+                <span className="text-muted-foreground">
+                  {hostInfo.stopped ? t('host.stoppedBannerBody') : t('host.offlineBannerBody')}
+                </span>
+              </span>
+              {hostInfo.canStart && onStartHostEnvironment && (
+                <button
+                  type="button"
+                  disabled={hostStarting}
+                  onClick={() => onStartHostEnvironment(routineHostId)}
+                  className="ml-auto inline-flex h-[26px] shrink-0 items-center gap-1.5 rounded-[8px] border border-border-strong px-[9px] text-[12px] font-medium text-foreground transition-colors hover:bg-white/[0.06] disabled:opacity-50"
+                >
+                  {hostStarting ? (
+                    <Loader2 aria-hidden="true" className="size-3 animate-spin" />
+                  ) : (
+                    <Play aria-hidden="true" className="size-3" />
+                  )}
+                  <span>{hostStarting ? t('host.startingAction') : t('host.startAction')}</span>
+                </button>
+              )}
+            </div>
+          )}
+
           <div className="mb-[18px] flex flex-wrap items-end gap-x-[18px] gap-y-2">
             <div
               className={cn(
@@ -186,16 +239,18 @@ export function RoutineDetailView({
                   role="switch"
                   aria-checked={routine.enabled}
                   aria-label={t('detail.toggleAria')}
+                  disabled={hostOffline}
                   onClick={onToggleEnabled}
-                  className="routine-switch"
+                  className="routine-switch disabled:opacity-40"
                 />
               </span>
 
               {running ? (
                 <button
                   type="button"
+                  disabled={hostOffline}
                   onClick={() => onStopRun(running.id)}
-                  className="inline-flex h-[30px] items-center gap-1.5 rounded-[8px] border border-border-strong px-3 text-[12.5px] font-medium text-foreground transition-colors hover:bg-white/[0.06]"
+                  className="inline-flex h-[30px] items-center gap-1.5 rounded-[8px] border border-border-strong px-3 text-[12.5px] font-medium text-foreground transition-colors hover:bg-white/[0.06] disabled:opacity-40"
                 >
                   <Square aria-hidden="true" className="size-3.5" />
                   <span>{t('detail.stop')}</span>
@@ -203,8 +258,9 @@ export function RoutineDetailView({
               ) : (
                 <button
                   type="button"
+                  disabled={hostOffline}
                   onClick={onRunNow}
-                  className="inline-flex h-[30px] items-center gap-1.5 rounded-[8px] border border-border-strong px-3 text-[12.5px] font-medium text-foreground transition-colors hover:bg-white/[0.06]"
+                  className="inline-flex h-[30px] items-center gap-1.5 rounded-[8px] border border-border-strong px-3 text-[12.5px] font-medium text-foreground transition-colors hover:bg-white/[0.06] disabled:opacity-40"
                 >
                   <Play aria-hidden="true" className="size-3.5" />
                   <span>{t('detail.runNow')}</span>
@@ -215,8 +271,9 @@ export function RoutineDetailView({
                 <DropdownMenuTrigger asChild>
                   <button
                     type="button"
+                    disabled={hostOffline}
                     aria-label={t('detail.moreActions')}
-                    className="grid size-7 place-items-center rounded-[7px] text-muted-foreground transition-colors hover:bg-white/[0.06] hover:text-foreground data-[state=open]:bg-white/[0.06] data-[state=open]:text-foreground"
+                    className="grid size-7 place-items-center rounded-[7px] text-muted-foreground transition-colors hover:bg-white/[0.06] hover:text-foreground disabled:opacity-40 data-[state=open]:bg-white/[0.06] data-[state=open]:text-foreground"
                   >
                     <MoreHorizontal aria-hidden="true" className="size-4" />
                   </button>
@@ -374,8 +431,9 @@ export function RoutineDetailView({
               <h2 className="m-0 text-[13px] font-semibold text-foreground">{t('detail.configTitle')}</h2>
               <button
                 type="button"
+                disabled={hostOffline}
                 onClick={onEdit}
-                className="ml-auto inline-flex h-[26px] items-center gap-1.5 rounded-[8px] border border-border-strong px-[9px] text-[12px] font-medium text-foreground transition-colors hover:bg-white/[0.06]"
+                className="ml-auto inline-flex h-[26px] items-center gap-1.5 rounded-[8px] border border-border-strong px-[9px] text-[12px] font-medium text-foreground transition-colors hover:bg-white/[0.06] disabled:opacity-40"
               >
                 <Pencil aria-hidden="true" className="size-3.5" />
                 <span>{t('detail.edit')}</span>
@@ -383,6 +441,13 @@ export function RoutineDetailView({
             </div>
 
             <dl className="m-0 rounded-[var(--radius)] border border-border bg-white/[0.02]">
+              <div className="routine-set-row">
+                <dt className="text-[12.5px] text-muted-foreground">{t('host.runsOn')}</dt>
+                <dd className="m-0 flex min-w-0 flex-wrap items-center gap-1.5 text-[12.5px] text-foreground/78">
+                  <RoutineHostBadge host={routineHost} hostId={routineHostId} showLocal />
+                </dd>
+              </div>
+
               <div className="routine-set-row">
                 <dt className="text-[12.5px] text-muted-foreground">{t('detail.configInstruction')}</dt>
                 <dd className="m-0 min-w-0 whitespace-pre-wrap text-[12.5px] text-foreground/78">
@@ -405,7 +470,7 @@ export function RoutineDetailView({
                 <dd className="m-0 flex min-w-0 flex-wrap items-center gap-1.5 text-[12.5px] text-foreground/78">
                   <span>{routine.missed === 'catchup' ? t('schedule.missedCatchup') : t('schedule.missedSkip')}</span>
                   <span className="w-full text-[11.5px] text-[rgba(154,149,140,0.58)]">
-                    {t('detail.configMissedNote')}
+                    {hostInfo.isRemote ? t('host.configMissedNoteRemote') : t('detail.configMissedNote')}
                   </span>
                 </dd>
               </div>
@@ -415,7 +480,9 @@ export function RoutineDetailView({
                 <dd className="m-0 flex min-w-0 flex-wrap items-center gap-1.5 text-[12.5px] text-foreground/78">
                   <RoutinePermBadge mode={routine.permMode} />
                   <span className="w-full text-[11.5px] text-[rgba(154,149,140,0.58)]">
-                    {t(`permMode.${routine.permMode}Routine` as never)}
+                    {hostInfo.isRemote && routine.permMode === 'full'
+                      ? t('host.fullRoutineRemote')
+                      : t(`permMode.${routine.permMode}Routine` as never)}
                   </span>
                 </dd>
               </div>
@@ -469,11 +536,16 @@ export function RoutineDetailView({
                 <dt className="text-[12.5px] text-muted-foreground">{t('detail.configFiles')}</dt>
                 <dd className="m-0 flex min-w-0 flex-wrap items-center gap-1.5 text-[12.5px] text-foreground/78">
                   <Folder aria-hidden="true" className="size-[13px] text-[rgba(154,149,140,0.58)]" />
-                  <span>{t('detail.configFilesDesc')}</span>
+                  <span>
+                    {hostInfo.isRemote
+                      ? t('host.configFilesDescRemote', { host: hostInfo.fullLabel })
+                      : t('detail.configFilesDesc')}
+                  </span>
                   <button
                     type="button"
+                    disabled={hostOffline}
                     onClick={onOpenFolder}
-                    className="inline-flex h-[26px] items-center rounded-[8px] px-[9px] text-[12px] font-medium text-muted-foreground hover:bg-white/[0.06] hover:text-foreground"
+                    className="inline-flex h-[26px] items-center rounded-[8px] px-[9px] text-[12px] font-medium text-muted-foreground hover:bg-white/[0.06] hover:text-foreground disabled:opacity-40"
                   >
                     {t('detail.openFolder')}
                   </button>
@@ -506,13 +578,18 @@ export function RoutineDetailView({
             {routine.origin ? (
               <>
                 <span>{t('detail.originChat')}</span>
-                <button
-                  type="button"
-                  onClick={() => onOpenOriginChat(routine.origin!.conversationId)}
-                  className="text-foreground/78 underline decoration-border-strong underline-offset-[3px] hover:text-foreground"
-                >
-                  {routine.origin.title}
-                </button>
+                {/* A chat on another of the owner's computers keeps its title but cannot be opened from here. */}
+                {routine.origin.conversationId ? (
+                  <button
+                    type="button"
+                    onClick={() => onOpenOriginChat(routine.origin!.conversationId)}
+                    className="text-foreground/78 underline decoration-border-strong underline-offset-[3px] hover:text-foreground"
+                  >
+                    {routine.origin.title}
+                  </button>
+                ) : (
+                  <span className="text-foreground/78">{routine.origin.title}</span>
+                )}
                 <span>· {formatWhen(routine.createdAt, nowMs, tr)}</span>
               </>
             ) : (

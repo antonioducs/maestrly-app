@@ -1,7 +1,9 @@
 import { useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronRight, MoreHorizontal, Pin, Square, Trash2 } from 'lucide-react'
+import type { HostView } from '../../../shared/hosts'
 import type { LocalRoutine, LocalRoutineRun } from '../../../shared/routines'
+import { hostOfKey } from '@/lib/hosts/shell-keys'
 import { formatWhen } from '@/lib/routines/relative-time'
 import type { RoutineTranslator } from '@/lib/routines/schedule-text'
 import { runTimestamp } from '@/lib/routines/timeline'
@@ -13,11 +15,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { RoutineOutcomePill } from './RoutineOutcomeBadge'
+import { RoutineHostBadge, RoutineOutcomePill } from './RoutineOutcomeBadge'
 
 export function RoutineRunHeader({
   routine,
   run,
+  hosts = [],
   titleFallback,
   onOpenAgenda,
   onOpenRoutine,
@@ -28,6 +31,7 @@ export function RoutineRunHeader({
 }: {
   routine: LocalRoutine | null
   run: LocalRoutineRun | null
+  hosts?: readonly HostView[]
   titleFallback?: string
   onOpenAgenda: () => void
   onOpenRoutine: (routineId: string) => void
@@ -42,6 +46,8 @@ export function RoutineRunHeader({
   const tr: RoutineTranslator = (key, opts) => String(t(key as never, opts as never))
 
   const routineId = routine?.id ?? run?.routineId ?? null
+  const runHostId = run ? hostOfKey(run.id) : routineId ? hostOfKey(routineId) : null
+  const runHost = runHostId ? hosts.find((h) => h.id === runHostId) : undefined
   const routineTitle = routine?.title ?? titleFallback ?? ''
   const whenText = run ? formatWhen(runTimestamp(run), Date.now(), tr) : ''
 
@@ -85,6 +91,7 @@ export function RoutineRunHeader({
           </>
         )}
         {run && <RoutineOutcomePill status={run.status} waitingKind={run.waiting?.kind} short />}
+        {runHostId && <RoutineHostBadge host={runHost} hostId={runHostId} compact />}
       </div>
 
       <div className="no-drag flex shrink-0 items-center gap-1.5">

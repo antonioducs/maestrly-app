@@ -19,8 +19,9 @@ import { GenUiContext, type GenUiHost } from '@/genui/context'
 import { genUiPreviewsOf } from '../../../shared/genui-widget'
 import { cn } from '@/lib/utils'
 import { useSettings } from '@/lib/use-settings'
-import { useHostId } from '@/lib/hosts/host-context'
-import { LOCAL_HOST_ID } from '../../../shared/host-key'
+import { hostApi, useHostId } from '@/lib/hosts/host-context'
+import { useHosts } from '@/lib/hosts/use-hosts'
+import { isRoutineHostCapable, shellRoutine } from '@/lib/routines/host-routines'
 import { useAgentActivityMode } from '@/lib/agent-activity-preference'
 import { baseToolName, chatActivitySegments, isSharedScreenshot } from '@/lib/agent-activity'
 import { MemorySourcesChip } from './MemorySourcesChip'
@@ -931,35 +932,57 @@ export const ChatMessageList = memo(function ChatMessageList({
   const closeImage = useCallback(() => setLightbox(null), [])
 
   const hostId = useHostId()
+  const hosts = useHosts()
   const activeConversationId = providedConversationId ?? messages[0]?.conversationId ?? null
   const [menuRoutines, setMenuRoutines] = useState<LocalRoutine[]>([])
 
+  const onlineRoutineHostIds = useMemo(
+    () =>
+      hosts
+        .filter((h) => isRoutineHostCapable(h) && (!h.remote || h.state === 'online'))
+        .map((h) => h.id),
+    [hosts]
+  )
+  const onlineRoutineHostKey = onlineRoutineHostIds.join('|')
+
   useEffect(() => {
-    if (!activeConversationId || isRoutineRun || hostId !== LOCAL_HOST_ID) {
+    if (!activeConversationId || isRoutineRun || onlineRoutineHostIds.length === 0) {
       setMenuRoutines([])
       return
     }
     let alive = true
     const load = async () => {
       try {
-        const list = await window.api.routinesList()
-        if (!alive) return
-        setMenuRoutines(
-          list.filter(
-            (r) => r.origin?.conversationId === activeConversationId && r.origin.via === 'menu'
-          )
+        const lists = await Promise.all(
+          onlineRoutineHostIds.map(async (hId) => {
+            try {
+              const list = await hostApi(hId).routinesList()
+              return list
+                .filter(
+                  (r) =>
+                    r.origin?.via === 'menu' &&
+                    r.origin.conversationId === activeConversationId &&
+                    (r.origin.hostId ?? hId) === hostId
+                )
+                .map((r) => shellRoutine(hId, r))
+            } catch {
+              return []
+            }
+          })
         )
+        if (!alive) return
+        setMenuRoutines(lists.flat())
       } catch {
         /* Ignore when routines API is unavailable in isolated contexts. */
       }
     }
     void load()
-    const off = window.api.onRoutinesChanged(() => void load())
+    const unsubs = onlineRoutineHostIds.map((hId) => hostApi(hId).onRoutinesChanged?.(() => void load()))
     return () => {
       alive = false
-      off()
+      for (const off of unsubs) off?.()
     }
-  }, [activeConversationId, isRoutineRun, hostId])
+  }, [activeConversationId, isRoutineRun, hostId, onlineRoutineHostKey])
 
   const visibleMessages = useMemo(() => messages.filter((m) => !m.internal), [messages])
   const timeline = useMemo(

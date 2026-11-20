@@ -38,6 +38,8 @@ export interface RemoteHostInfo {
   computer: boolean
   /** Whether whole folders move to and from the host (`FLEET_HOST_FILES_FOLDERS_FEATURE`), not only files. */
   folderTransfers: boolean
+  /** Whether the host runs scheduled chat routines (`FLEET_HOST_ROUTINES_FEATURE`). */
+  routines: boolean
 }
 
 /** Which of this computer's renderers an origin is: the main window, or a drawer panel of one conversation. */
@@ -52,6 +54,8 @@ export type BridgeClientFrame =
         deviceName: string
         os: RemoteClientOs
         locale: string
+        /** The computer's IANA time zone, which a host's routines default to; absent from phones and older builds. */
+        timeZone?: string
         /** Absent: a computer. */
         kind?: RemoteClientKind
         /** A phone's mobile API version. */

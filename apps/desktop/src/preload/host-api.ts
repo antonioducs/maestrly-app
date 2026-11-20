@@ -12,6 +12,7 @@ import { makePluginsApi, pluginsApi } from './api-plugins'
 import { makeProjectSetupApi, projectSetupApi } from './api-project-setup'
 import { makePtyApi, ptyApi } from './api-pty'
 import { makeReviewApi, reviewApi } from './api-review'
+import { makeRoutinesApi, routinesApi } from './api-routines'
 import { makeRuntimeAssetsApi, runtimeAssetsApi } from './api-runtime-assets'
 import { makeSettingsHostApi, settingsHostApi } from './api-settings'
 import { makeTurnSnapshotsApi, turnSnapshotsApi } from './api-turn-snapshots'
@@ -32,6 +33,7 @@ export function makeHostApi(ipcRenderer: IpcTransport) {
     ...makeAppHostApi(ipcRenderer),
     ...makeLocalDataApi(ipcRenderer),
     ...makeReviewApi(ipcRenderer),
+    ...makeRoutinesApi(ipcRenderer),
     ...makeSettingsHostApi(ipcRenderer),
     ...makeRuntimeAssetsApi(ipcRenderer),
     ...makeChatApi(ipcRenderer),
@@ -56,6 +58,7 @@ export const localHostApi: HostApi = {
   ...appHostApi,
   ...localDataApi,
   ...reviewApi,
+  ...routinesApi,
   ...settingsHostApi,
   ...runtimeAssetsApi,
   ...chatApi,

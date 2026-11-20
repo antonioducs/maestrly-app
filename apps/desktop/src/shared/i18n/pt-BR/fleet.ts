@@ -768,7 +768,7 @@ export default {
       hours_other: 'Depois de {{count}} horas',
     },
     idleStopNote:
-      'Quando nenhum computador fica conectado e nenhum chat roda por esse tempo, ele para para liberar o servidor. Os terminais e processos em segundo plano dele param junto.',
+      'Quando nenhum computador fica conectado e nenhum chat roda por esse tempo, ele para para liberar o servidor. Os terminais e processos em segundo plano dele param junto. Enquanto houver uma rotina ativa nele, ele não para.',
     scopesNote: 'Um para cada escopo do seu trabalho. Cada um começa sem contas próprias.',
     limitReached: 'Este servidor já roda o máximo de ambientes de workspaces. Arquive um para criar outro.',
     scopesUnsupported: 'Atualize o servidor para rodar mais de um ambiente de workspaces nele.',
@@ -2008,9 +2008,9 @@ export default {
       memoryKey: 'A chave de acesso ao servidor está só na memória. Entre de novo após reiniciar o Maestrly.',
       disconnect: 'Desconectar este computador',
       disconnectConfirm: {
-        local: 'Desconectar este computador? O servidor de bots e os bots continuarão rodando.',
+        local: 'Desconectar este computador? O servidor de bots, os bots e as rotinas continuarão rodando.',
         remote:
-          'Desconectar este computador? O Maestrly removerá sua chave de acesso do servidor. Os bots continuarão rodando.',
+          'Desconectar este computador? O Maestrly removerá sua chave de acesso do servidor. Os bots e as rotinas do servidor continuarão rodando.',
       },
       remove: 'Remover servidor de bots',
       removeConfirm: {
@@ -2275,7 +2275,7 @@ export default {
     memoryToken:
       'O armazenamento seguro de tokens não está disponível. Este pareamento será perdido ao fechar o Maestrly.',
     disconnect: 'Desconectar',
-    disconnectConfirm: 'Desconectar este computador do servidor de bots?',
+    disconnectConfirm: 'Desconectar este computador do servidor de bots? Os bots e as rotinas do servidor continuarão rodando.',
   },
   move: {
     action: 'Mover para…',

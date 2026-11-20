@@ -52,6 +52,7 @@ class FakeSocket extends EventEmitter {
         browser: false,
         computer: false,
         folderTransfers: false,
+        routines: false,
       },
     })
   }
@@ -213,6 +214,7 @@ describe('host registry', () => {
         browser: true,
         computer: false,
         folderTransfers: false,
+        routines: true,
         environment: null,
         peer: null,
         hostVersion: null,
@@ -261,6 +263,7 @@ describe('host registry', () => {
       browser: false,
       computer: false,
       folderTransfers: false,
+      routines: false,
       environment: { id: 'workspaces', lifecycle: 'running', updateAvailable: false },
       peer: null,
       hostVersion: null,

@@ -1,3 +1,4 @@
+import { hostKey, type HostId } from '../../shared/host-key'
 import type { NotificationTarget } from '../../shared/notifications'
 import type { LocalRoutine, LocalRoutineRun } from '../../shared/routines'
 import { tMain } from '../i18n'
@@ -9,13 +10,29 @@ export interface RoutineNoticesDeps {
   open(target: NotificationTarget): void
 }
 
+export interface RoutineNoticeHost {
+  hostId: HostId
+  label?: string | null
+}
+
 const noticeKey = (runId: string) => `routine-run:${runId}`
 
 export class RoutineNotices {
   constructor(private readonly deps: RoutineNoticesDeps) {}
 
-  notifyRun(run: LocalRoutineRun, routine: Pick<LocalRoutine, 'id' | 'title'>): void {
-    if (run.conversationId && this.deps.sees(run.conversationId)) return
+  notifyRun(
+    run: LocalRoutineRun,
+    routine: Pick<LocalRoutine, 'id' | 'title'>,
+    host?: RoutineNoticeHost
+  ): void {
+    const routineId = host ? hostKey(host.hostId, routine.id) : routine.id
+    const runId = host ? hostKey(host.hostId, run.id) : run.id
+    const conversationId = run.conversationId
+      ? host
+        ? hostKey(host.hostId, run.conversationId)
+        : run.conversationId
+      : null
+    if (conversationId && this.deps.sees(conversationId)) return
     const t = tMain('main')
     let body: string
     if (run.status === 'waiting') {
@@ -30,16 +47,19 @@ export class RoutineNotices {
       body = t('notices.routine.finished')
     }
 
+    const hostLabel = host?.label?.trim()
+    const title = hostLabel ? `${routine.title} · ${hostLabel}` : routine.title
+
     this.deps.notices.show({
-      key: noticeKey(run.id),
-      title: routine.title,
+      key: noticeKey(runId),
+      title,
       body,
       onClick: () =>
         this.deps.open({
           kind: 'routine-run',
-          routineId: routine.id,
-          runId: run.id,
-          conversationId: run.conversationId,
+          routineId,
+          runId,
+          conversationId,
         }),
     })
   }

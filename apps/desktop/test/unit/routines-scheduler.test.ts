@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { closeDb, freshDb } from '../helpers/db'
 import { ROUTINE_LIMITS, type RoutineDraft } from '../../src/shared/routines'
 import { getConversation, getDb, insertConversation, setAppSetting } from '../../src/main/store'

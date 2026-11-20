@@ -1,4 +1,4 @@
-import type { FleetEnvironment } from '@maestrly/bot-fleet-protocol'
+import { FLEET_HOST_ROUTINES_FEATURE, type FleetEnvironment } from '@maestrly/bot-fleet-protocol'
 import type { FleetServerId } from '../../../shared/fleet-servers'
 import { type HostId, isValidHostId, LOCAL_HOST_ID, remoteHostId } from '../../../shared/host-key'
 import type { HostView } from '../../../shared/hosts'
@@ -50,7 +50,7 @@ export interface HostRegistryDeps {
   servers: HostRegistryServers
   appVersion: string
   local: { os: RemoteOs; homeDir: string }
-  client: () => { deviceName: string; os: RemoteOs; locale: string }
+  client: () => { deviceName: string; os: RemoteOs; locale: string; timeZone?: string }
   openSocket: (url: string) => BridgeClientSocket
   direct?: { host: DirectHost; openSocket: (host: DirectHost) => BridgeClientSocket } | null
   /** The owner's other computers this one paired with, reached straight over the network. */
@@ -140,6 +140,7 @@ export class HostRegistry {
       browser: true,
       computer: false,
       folderTransfers: false,
+      routines: true,
       environment: null,
       peer: null,
       hostVersion: null,
@@ -171,6 +172,7 @@ export class HostRegistry {
       browser: info?.browser ?? false,
       computer: info?.computer ?? false,
       folderTransfers: info?.folderTransfers ?? false,
+      routines: info?.routines ?? (environment?.capabilities?.includes(FLEET_HOST_ROUTINES_FEATURE) ?? false),
       environment: environment && {
         id: environment.id,
         lifecycle: environment.lifecycle,

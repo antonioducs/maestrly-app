@@ -1,16 +1,20 @@
 import { useTranslation } from 'react-i18next'
 import { AlertTriangle, CalendarClock, ChevronRight } from 'lucide-react'
+import type { HostView } from '../../../shared/hosts'
 import { isRoutineRunSkipped, type LocalRoutine, type LocalRoutineRun } from '../../../shared/routines'
+import { hostOfKey, isRemoteKey } from '@/lib/hosts/shell-keys'
+import { routineHostDisplay, routineHostStatusLabel } from '@/lib/routines/host-routines'
 import type { RoutinesMainView } from '@/lib/use-main-panels'
 import { formatHHMM, formatRunDay, formatShortIn } from '@/lib/routines/relative-time'
 import { daysSummary, scheduleSummary } from '@/lib/routines/schedule-text'
 import { outcomeTone, runTimestamp } from '@/lib/routines/timeline'
 import { cn } from '@/lib/utils'
-import { RoutineDot } from './RoutineOutcomeBadge'
+import { RoutineDot, RoutineHostBadge } from './RoutineOutcomeBadge'
 
 export function RoutinesSidebarPanel({
   routines,
   runsByRoutine,
+  hosts = [],
   query,
   view,
   activeConversationId,
@@ -25,6 +29,7 @@ export function RoutinesSidebarPanel({
 }: {
   routines: readonly LocalRoutine[]
   runsByRoutine: Record<string, readonly LocalRoutineRun[]>
+  hosts?: readonly HostView[]
   query: string
   view: RoutinesMainView | null
   activeConversationId: string | null
@@ -42,20 +47,29 @@ export function RoutinesSidebarPanel({
   const nowMs = Date.now()
   const q = query.trim().toLowerCase()
   const tr = (key: string, opts?: Record<string, unknown>): string => String(t(key as never, opts as never))
+  const hostById = new Map(hosts.map((host) => [host.id, host]))
 
   const filtered = q
-    ? routines.filter(
-        (r) =>
+    ? routines.filter((r) => {
+        const hostId = hostOfKey(r.id)
+        const hostInfo = routineHostDisplay(hostById.get(hostId), hostId, tr)
+        return (
           r.title.toLowerCase().includes(q) ||
           r.instruction.toLowerCase().includes(q) ||
-          scheduleSummary(r.schedule, tr).toLowerCase().includes(q)
-      )
+          scheduleSummary(r.schedule, tr).toLowerCase().includes(q) ||
+          hostInfo.fullLabel.toLowerCase().includes(q)
+        )
+      })
     : routines
 
   const active = filtered.filter((r) => r.enabled)
   const paused = filtered.filter((r) => !r.enabled)
 
   const renderRoutineRow = (routine: LocalRoutine) => {
+    const routineHostId = hostOfKey(routine.id)
+    const routineHost = hostById.get(routineHostId)
+    const hostInfo = routineHostDisplay(routineHost, routineHostId, tr)
+    const hostOffline = hostInfo.isRemote && !hostInfo.online
     const isOpen = expandedIds.has(routine.id)
     const allRuns = runsByRoutine[routine.id] ?? []
     const running = allRuns.find((run) => run.status === 'running')
@@ -63,7 +77,7 @@ export function RoutinesSidebarPanel({
     const isCurrentRoutine = view?.kind === 'routine' && view.id === routine.id
     const hasUnread = allRuns.some((run) => run.unread)
     const tone = running ? 'run' : last ? outcomeTone(last.status) : 'skip'
-    const nextMs = routine.enabled ? routine.nextRunAt : null
+    const nextMs = routine.enabled && !hostOffline ? routine.nextRunAt : null
 
     const visibleRuns = allRuns.slice(0, 5)
     const activeRun =
@@ -79,7 +93,7 @@ export function RoutinesSidebarPanel({
     return (
       <div
         key={routine.id}
-        className={cn('rounded-[8px]', flashRoutineId === routine.id && 'routine-flash')}
+        className={cn('rounded-[8px]', flashRoutineId === routine.id && 'routine-flash', hostOffline && 'opacity-65')}
       >
         <div
           aria-current={isCurrentRoutine ? 'true' : undefined}
@@ -129,10 +143,19 @@ export function RoutinesSidebarPanel({
               </span>
               {routine.schedule.kind === 'weekly' && ` · ${daysSummary(routine.schedule.days, tr)}`}
             </span>
+            {hostInfo.isRemote && (
+              <span className="mt-0.5 block">
+                <RoutineHostBadge host={routineHost} hostId={routineHostId} compact showStatus={false} />
+              </span>
+            )}
           </button>
 
           <span className="mt-0.5 flex shrink-0 items-center gap-1.5 text-[11px] text-[rgba(154,149,140,0.58)]">
-            {running ? (
+            {hostOffline ? (
+              <span className={hostInfo.stopped ? 'text-[var(--artifact-warn)]' : undefined}>
+                {routineHostStatusLabel(hostInfo.status, tr)}
+              </span>
+            ) : running ? (
               <span className="text-foreground">{t('list.running')}</span>
             ) : nextMs ? (
               <span>{t('list.inShort', { time: formatShortIn(nextMs, nowMs, tr) })}</span>
@@ -204,11 +227,11 @@ export function RoutinesSidebarPanel({
     )
   }
 
-  const hasEnabledRoutine = routines.some((r) => r.enabled)
+  const hasEnabledLocalRoutine = routines.some((r) => r.enabled && !isRemoteKey(r.id))
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-1.5 pb-4">
-      {!backgroundEnabled && hasEnabledRoutine && view?.kind !== 'agenda' && (
+      {!backgroundEnabled && hasEnabledLocalRoutine && view?.kind !== 'agenda' && (
         <div
           role="status"
           className="mx-1 mb-2 flex flex-col items-start gap-1.5 rounded-[10px] border border-[rgba(242,180,92,0.22)] bg-[rgba(242,180,92,0.08)] px-3 py-2.5 text-[12px] text-[#f6ddb4]"

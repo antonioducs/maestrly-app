@@ -13,8 +13,11 @@ import {
   Zap,
 } from 'lucide-react'
 import type { ChatPermMode } from '../../../shared/chat'
+import type { HostId } from '../../../shared/host-key'
+import type { HostView } from '../../../shared/hosts'
 import type { RoutineModel, RoutineRunStatus, RoutineSavedPermission, RoutineWaitingKind } from '../../../shared/routines'
 import { cn } from '@/lib/utils'
+import { routineHostDisplay, routineHostStatusLabel } from '@/lib/routines/host-routines'
 import { outcomeTone, type RoutineTone } from '@/lib/routines/timeline'
 import { modelDisplayName } from '@/components/chat/model-search'
 
@@ -152,5 +155,63 @@ export function RoutineSavedPermissionLabel({ perm }: { perm: Pick<RoutineSavedP
         {perm.resource}
       </code>
     </>
+  )
+}
+
+export function RoutineHostBadge({
+  host,
+  hostId,
+  compact = false,
+  showLocal = false,
+  showStatus = true,
+  className,
+}: {
+  host: HostView | undefined
+  hostId: HostId
+  compact?: boolean
+  showLocal?: boolean
+  showStatus?: boolean
+  className?: string
+}) {
+  const { t } = useTranslation('routines')
+  const tr = (key: string, opts?: Record<string, unknown>): string => String(t(key as never, opts as never))
+  const info = routineHostDisplay(host, hostId, tr)
+  if (!info.isRemote && !showLocal) return null
+
+  const [r, g, b] = info.tintRgb
+  const statusText = showStatus && info.isRemote && !info.online ? routineHostStatusLabel(info.status, tr) : null
+  const label = compact ? info.label : info.fullLabel
+  const title = statusText ? `${info.fullLabel} · ${statusText}` : info.fullLabel
+
+  return (
+    <span
+      title={title}
+      className={cn(
+        'inline-flex max-w-full items-center gap-1.5 rounded-[6px] border px-1.5 py-[1px] text-[11px] font-medium leading-[1.35]',
+        info.isRemote
+          ? info.online
+            ? 'border-white/[0.08] bg-white/[0.04] text-foreground/85'
+            : 'border-white/[0.06] bg-white/[0.02] text-muted-foreground'
+          : 'border-white/[0.08] bg-white/[0.04] text-muted-foreground',
+        className
+      )}
+    >
+      <span
+        aria-hidden="true"
+        className="size-[6px] shrink-0 rounded-full"
+        style={{ backgroundColor: `rgb(${r}, ${g}, ${b})`, opacity: info.online ? 1 : 0.45 }}
+      />
+      <span className="truncate">{label}</span>
+      {statusText && (
+        <span
+          className={cn(
+            'shrink-0 text-[10.5px]',
+            info.stopped ? 'text-[var(--artifact-warn)]' : 'text-muted-foreground/80'
+          )}
+        >
+          · {statusText}
+        </span>
+      )}
+    </span>
   )
 }

@@ -493,6 +493,44 @@ describe('environment resources and idle stop', () => {
     expect(h.lifecycle.environment(plain)?.lifecycle).toBe('running')
     expect(h.lifecycle.environment(silent.id)?.lifecycle).toBe('running')
   })
+
+  it('keeps a workspaces environment running while it has enabled routines, and stops once none remain', async () => {
+    const h = await setup()
+    const created = h.lifecycle.createEnvironment({
+      name: 'Routines host',
+      memoryLimitBytes: null,
+      kind: 'workspaces',
+      idleStopMinutes: 15,
+    })
+    await settled(h, created.id, 'running')
+    h.lifecycle.hostConnections = () => 0
+    h.instance.provisioning.busy = false
+    h.instance.provisioning.routines = { enabled: 1, nextRunAt: Date.now() + 3_600_000 }
+    const minute = 60_000
+    const start = Date.now()
+    await h.lifecycle.checkIdle(start)
+    await h.lifecycle.checkIdle(start + 60 * minute)
+    expect(h.lifecycle.environment(created.id)?.lifecycle).toBe('running')
+
+    // Scheduled updates still wait while a routine run is busy, and proceed once idle even with routines enabled.
+    const before = containerOf(h, created.id)!
+    h.docker.setImage(h.lifecycle.config.botImage, NEW_IMAGE)
+    h.instance.provisioning.busy = true
+    await h.lifecycle.scheduleUpdate(created.id)
+    await h.lifecycle.checkUpdates()
+    expect(containerOf(h, created.id)).toBe(before)
+
+    h.instance.provisioning.busy = false
+    await h.lifecycle.checkUpdates()
+    expect(containerOf(h, created.id)).not.toBe(before)
+    expect(h.lifecycle.environment(created.id)?.lifecycle).toBe('running')
+
+    // Once the last routine is disabled, normal idle stop resumes.
+    h.instance.provisioning.routines = { enabled: 0, nextRunAt: null }
+    await h.lifecycle.checkIdle(start + 61 * minute)
+    await h.lifecycle.checkIdle(start + 77 * minute)
+    expect(h.lifecycle.environment(created.id)?.lifecycle).toBe('stopped')
+  })
 })
 
 describe('workspaces environment routes', () => {

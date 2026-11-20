@@ -33,6 +33,8 @@ export interface RemoteUiHubDeps {
   hostInfo: () => RemoteHostInfo
   /** The locale of the computer that connected, for the strings this host's main process writes. */
   applyLocale: (locale: string) => void
+  /** The time zone of the computer that connected, for what the host schedules on its behalf. */
+  applyTimeZone?: (timeZone: string) => void
   log: (level: 'info' | 'warn' | 'error', message: string) => void
   /** A session was added or ended: what `tags()` lists may have changed. */
   onSessionsChanged?: () => void
@@ -199,6 +201,7 @@ class Session {
     }
     this.welcomed = true
     this.deps.applyLocale(frame.client.locale)
+    if (frame.client.timeZone) this.deps.applyTimeZone?.(frame.client.timeZone)
     this.write({ t: 'welcome', protocol: REMOTE_BRIDGE_PROTOCOL, appVersion, host: this.deps.hostInfo() })
   }
 

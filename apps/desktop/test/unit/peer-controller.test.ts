@@ -44,6 +44,7 @@ function computer(identity: PeerIdentity, options: { version?: string; available
         browser: false,
         computer: false,
         folderTransfers: false,
+        routines: false,
       }),
       log: vi.fn(),
     },

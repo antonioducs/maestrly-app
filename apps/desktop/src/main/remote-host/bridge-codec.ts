@@ -84,6 +84,7 @@ const clientFrame = z.discriminatedUnion('t', [
       deviceName: z.string().max(128),
       os: z.enum(['mac', 'win', 'linux', 'ios', 'android']),
       locale: z.string().max(16),
+      timeZone: z.string().min(1).max(64).optional(),
       kind: z.enum(['desktop', 'mobile']).optional(),
       mobileApi: z.int().optional(),
     }),
@@ -114,6 +115,8 @@ const hostInfo = z.object({
   computer: z.boolean().default(false),
   // Nor do hosts from before folder transfers.
   folderTransfers: z.boolean().default(false),
+  // Nor do hosts from before remote chat routines.
+  routines: z.boolean().default(false),
 })
 const hostFrame = z.union([
   z.object({

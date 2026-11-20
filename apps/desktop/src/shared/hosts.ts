@@ -45,6 +45,8 @@ export interface HostView {
   computer: boolean
   /** Whether whole folders move to and from the host in its Files tab, not only files. */
   folderTransfers: boolean
+  /** Whether the host runs scheduled chat routines. */
+  routines: boolean
   environment: HostEnvironmentView | null
   /** Another computer of the owner this one paired with; null for this computer and a server's hosts. */
   peer: PeerHostView | null

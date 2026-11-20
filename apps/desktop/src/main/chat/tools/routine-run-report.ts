@@ -2,7 +2,6 @@ import { FLEET_ROUTINE_RUN_LIMITS } from '@maestrly/bot-fleet-protocol'
 import { z } from 'zod'
 import { routineRunReportSchema } from '../../../shared/routines'
 import { isBotMode } from '../../fleet/instance/config'
-import { isHeadlessInstance } from '../../remote-host/server/config'
 import { getRun, runByConversation, updateRun } from '../../routines/store'
 import { getConversation } from '../../store'
 import { ROUTINE_RUN_REPORT_TOOL_NAME } from '../tool-policy'
@@ -26,7 +25,7 @@ function resolveRunForConversation(conversationId: string) {
 }
 
 export function routineRunReportToolAllowed(conversationId: string): boolean {
-  if (isBotMode() || isHeadlessInstance()) return false
+  if (isBotMode()) return false
   return resolveRunForConversation(conversationId) !== null
 }
 
@@ -38,6 +37,9 @@ export const routineRunReportTool = defineTool<typeof parameters, RoutineRunRepo
     'to completion. Include concise notes_for_next_run when useful for future runs.',
   parameters,
   execute: async (args, ctx) => {
+    if (isBotMode()) {
+      return { reported: false, error: 'routine_run_report is not available in bot mode.' }
+    }
     const run = resolveRunForConversation(ctx.conversationId)
     if (!run) {
       return { reported: false, error: 'routine_run_report is only available inside a routine run conversation.' }

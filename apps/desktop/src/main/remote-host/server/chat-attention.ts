@@ -1,4 +1,5 @@
 import type { FleetChatAttentionKind } from '@maestrly/bot-fleet-protocol'
+import { isAlerting, type RoutineNotify } from '../../../shared/routines'
 
 type Emitter = {
   on(event: 'asked', listener: (payload: { conversationId: string }) => void): unknown
@@ -15,6 +16,13 @@ export interface ChatAttentionDeps {
   conversation(id: string): { name: string } | undefined
   /** Whether the conversation's turn ended with a plan to decide. */
   hasPendingPlan(id: string): boolean
+  /**
+   * The routine run a conversation belongs to: what its routine notifies, what the run found, and whether the run is
+   * still going (running or waiting for the owner). Null for any other conversation.
+   */
+  routineRun?(
+    conversationId: string
+  ): { notify: RoutineNotify; outcome: 'notable' | 'nothing_new' | 'done'; active: boolean } | null
   publish(event: { conversationId: string; name: string; kind: FleetChatAttentionKind }): void
 }
 
@@ -25,6 +33,8 @@ export interface ChatAttentionDeps {
  */
 export function watchChatAttention(deps: ChatAttentionDeps): () => void {
   const statuses = new Map<string, string>()
+  /** Conversations whose current turn is a routine run's own, told when the turn starts. */
+  const runTurns = new Set<string>()
   const publish = (conversationId: string, kind: FleetChatAttentionKind) => {
     const conversation = deps.conversation(conversationId)
     // A bot's conversation needs the owner as any chat does: its approvals and plans are theirs to decide.
@@ -40,8 +50,21 @@ export function watchChatAttention(deps: ChatAttentionDeps): () => void {
     statuses.set(conversationId, status)
     // Questions and approvals said so when they were asked; only a turn's end is news here.
     if (status === previous) return
-    if (status === 'ready') publish(conversationId, deps.hasPendingPlan(conversationId) ? 'plan' : 'finished')
-    else if (status === 'error') publish(conversationId, 'failed')
+    // A run may settle before or after its turn reports ready, so whose turn it is is decided when the turn starts: the
+    // owner continuing a finished run's conversation hears of each answer as in any chat.
+    if (status === 'working') {
+      if (deps.routineRun?.(conversationId)?.active) runTurns.add(conversationId)
+      else runTurns.delete(conversationId)
+      return
+    }
+    if (status === 'ready') {
+      const routine = runTurns.delete(conversationId) ? (deps.routineRun?.(conversationId) ?? null) : null
+      if (routine && !isAlerting({ status: routine.outcome }, routine.notify)) return
+      publish(conversationId, deps.hasPendingPlan(conversationId) ? 'plan' : 'finished')
+    } else if (status === 'error') {
+      runTurns.delete(conversationId)
+      publish(conversationId, 'failed')
+    }
   })
   return () => {
     deps.permissions.off('asked', asked)

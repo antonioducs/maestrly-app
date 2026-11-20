@@ -3,7 +3,9 @@ import type { TFunction } from 'i18next'
 import type { Conversation, ConversationStatus } from '../../../shared/conversation'
 import { type FleetServerId, fleetKey } from '../../../shared/fleet-servers'
 import type { FleetBotAttentionEvent, FleetBotAttentionKind } from '../../../shared/notifications'
+import { type HostId, LOCAL_HOST_ID } from '../../../shared/host-key'
 import type { LocalRoutine, LocalRoutineRun } from '../../../shared/routines'
+import { hostOfKey } from '../hosts/shell-keys'
 import type { InboxKind, InboxLane, InboxObservation, InboxPlace } from './inbox-model'
 import { botRequestKind, botRequestSummary, conversationKind } from '../../../shared/inbox-kind'
 
@@ -162,11 +164,13 @@ export function botObservations(
 export function routineObservations(
   routines: readonly LocalRoutine[],
   runsByRoutine: Readonly<Record<string, readonly LocalRoutineRun[]>>,
-  place: InboxPlace,
+  place: InboxPlace | ((hostId: HostId) => InboxPlace),
   t: TFunction<'routines'>
 ): InboxObservation[] {
+  const resolvePlace = typeof place === 'function' ? place : (_hostId: HostId) => place
   const observations: InboxObservation[] = []
   for (const routine of routines) {
+    const routinePlace = resolvePlace(hostOfKey(routine.id) ?? LOCAL_HOST_ID)
     for (const run of runsByRoutine[routine.id] ?? []) {
       let active: InboxObservation['active'] = null
       let summary: string | null = run.summary
@@ -196,7 +200,7 @@ export function routineObservations(
           source: 'routine',
           title: routine.title,
           summary,
-          place,
+          place: routinePlace,
           target: {
             kind: 'routine-run',
             routineId: routine.id,

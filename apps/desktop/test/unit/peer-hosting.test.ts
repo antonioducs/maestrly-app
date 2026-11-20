@@ -26,6 +26,7 @@ const hostInfo: RemoteHostInfo = {
   browser: true,
   computer: false,
   folderTransfers: true,
+  routines: false,
 }
 
 const closers: Array<() => Promise<void> | void> = []

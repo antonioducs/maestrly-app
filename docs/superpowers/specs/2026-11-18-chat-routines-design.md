@@ -14,7 +14,7 @@ see images and files, and keep talking to the agent there.
 | Topic | Decision |
 | --- | --- |
 | What runs | An agent turn every time (no deterministic scripts). The run prompt carries the instruction and the previous runs' reports. |
-| Where | Always this computer, in the desktop main process. No per-routine workspace or worktree: every run of a routine works in the routine's own folder, `userData/routines/<routineId>`. An instruction that needs a project names its path; the permission mode decides the access. |
+| Where | This computer or any connected server `workspaces` environment that advertises `host-routines` (chosen with the "Runs on" host selector, defaulting to the source chat's host). Each host stores its own definitions and runs in its own SQLite database; the desktop UI aggregates routines across hosts. No per-routine workspace or worktree: every run still works in the routine's own folder, `userData/routines/<routineId>`, inside the chosen host. An instruction that needs a project names its path; the permission mode decides the access. |
 | Permissions | The app's three modes (`ask`, `auto`, `full`) with their existing labels and descriptions, plus a note on what each means when nobody is watching. "Always allow" during a run saves to the routine (`routine:<id>`), so every later run reuses it. No per-tool switches. |
 | Model | Provider, model, reasoning effort and Fast, chosen with the composer's own pickers. A new routine inherits the source chat's selection and permission mode. |
 | Creation | Agent-proposed from chat (a card the person must confirm), the composer's + menu ("Schedule as routine…"), or the Routines section. Nothing runs before the person creates it; an agent can never create or change a routine by itself. |
@@ -24,14 +24,20 @@ see images and files, and keep talking to the agent there.
 | Background | A routines setting keeps Maestrly in the tray when the window closes while any routine is enabled (default on), and an optional "open at login" (macOS and Windows). |
 | Alerts | Failures and approval requests always alert. `notify`: `notable` (default) also alerts runs with news, `all` alerts every finished run, `none` alerts nothing else. |
 | Retention | Per routine, 30 (default), 60 or 90 days, or always. Deleting a run's conversation keeps its files in the routine folder and its report in the history. Pinned runs are never deleted automatically. |
-| Hosts | The local computer only in this version. |
+| Hosts | This computer and server `workspaces` environments advertising `host-routines` (excluding legacy containers without the feature and peer computers). The gateway keeps environments with enabled routines (`health.routines.enabled > 0`) from idle-stopping while still applying scheduled updates once `busy === false`. |
 
-## Non-goals (v1)
+## Multi-host server execution (v2)
 
-- Routines on connected computers or on mobile. The Routines section lists this computer's routines. A proposal card
-  rendered for a conversation of another host shows a read-only notice instead of its buttons.
+- **Server-mode scheduling**: Server `workspaces` environments run the same desktop main-process routines stack (`shouldRunLocalRoutines()` enables desktop and server modes while keeping bot mode blocked). `holdAwake`, tray keep-running, and login items do not apply in server mode; `recoverInterruptedRoutineRuns` marks in-flight runs as failed after container restarts or updates.
+- **Capability & health**: Server hosts advertise `host-routines` (`FLEET_HOST_ROUTINES_FEATURE`) and `hostInfo.routines = true`, and report `routines: { enabled, nextRunAt }` on `/v1/health`. The gateway's `checkIdle` skips idle stop while `routines.enabled > 0`.
+- **Notifications without desktop open**: Server `chat-attention` respects the routine's `notify` policy (`notable` / `all` / `none`) for finished routine runs, while approvals, questions, and failures always notify. When the desktop is connected, remote `routines:toast` events are forwarded to `RoutineNotices` with the host label and deduplicated.
+- **Desktop multi-host UI**: Routines are keyed as `hostKey(hostId, routineId)`. Proposal cards and the editor dialog offer a "Runs on" host selector (defaulting to the source chat's host), validate provider/model availability against the destination host's `chatConfig`, support cross-host creation (`routines:create` on target + `routines:markProposalCreated` on origin, storing `origin_host_id` / `routine_host_id`), and open remote routine folders in a file-browser dialog. Moving existing routines between hosts and mobile routine management UI remain follow-up work.
+
+## Non-goals (v1 / follow-ups)
+
+- Peer computers, moving existing routines between hosts, and mobile routine management UI (mobile receives server push notifications for alerts).
 - Agent tools that list, change or delete routines. The agent proposes, and it reports a run.
-- Changing bot routines, the gateway or the bot UI, apart from sharing the schedule math.
+- Changing bot routines or the bot UI, apart from sharing schedule math and gateway idle-stop awareness via `health.routines`.
 - The prototype's demo aids: the Demo button and panel, the fictional data, the simulated agent, the composer's
   suggestion chips and its alternative placeholder.
 

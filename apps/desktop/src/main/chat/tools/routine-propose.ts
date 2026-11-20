@@ -9,8 +9,8 @@ import {
 } from '../../../shared/routines'
 import type { ChatBehavior } from '../../../shared/conversation-experience'
 import { isBotMode } from '../../fleet/instance/config'
-import { isHeadlessInstance } from '../../remote-host/server/config'
-import { createProposal } from '../../routines/store'
+import { isServerMode } from '../../remote-host/server/config'
+import { createProposal, getRoutineOwnerTimeZone } from '../../routines/store'
 import { getConversation } from '../../store'
 import { autonomousPolicy } from '../autonomous'
 import { remoteChatPolicy } from '../remote-policy'
@@ -49,12 +49,12 @@ export type RoutineProposeResult =
   | { ok: false; error: string }
 
 /**
- * Only local desktop conversations (standalone or project) that are not routine runs, not bot/headless instances,
- * not remote web chats, and not unattended autonomous turns may propose routines.
+ * Only desktop or workspaces-server conversations (standalone or project) that are not routine runs, not bot
+ * instances, not remote web chats, and not unattended autonomous turns may propose routines.
  */
 export function routineProposeToolAllowed(conversationId: string, mode?: ChatBehavior): boolean {
   if (mode && !conversationDispatchToolsAllowed(mode)) return false
-  if (isBotMode() || isHeadlessInstance()) return false
+  if (isBotMode()) return false
   if (autonomousPolicy(conversationId) || remoteChatPolicy(conversationId)) return false
   const conversation = getConversation(conversationId)
   if (!conversation) return false
@@ -94,7 +94,10 @@ export const routineProposeTool = defineTool<typeof parameters, RoutineProposeRe
 
     const timezone =
       args.schedule.kind === 'weekly'
-        ? args.schedule.timezone?.trim() || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+        ? args.schedule.timezone?.trim() ||
+          (isServerMode() ? getRoutineOwnerTimeZone() : null) ||
+          Intl.DateTimeFormat().resolvedOptions().timeZone ||
+          'UTC'
         : undefined
     if (args.schedule.kind === 'weekly' && timezone && !isValidTimeZone(timezone)) {
       return { ok: false, error: `Invalid time zone: ${timezone}` }
