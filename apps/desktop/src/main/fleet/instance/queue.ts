@@ -696,10 +696,10 @@ export function botCompactionFocus(botName: string, kind: 'primary' | 'routine')
     kind === 'primary'
       ? `This is the long-running conversation of the bot "${botName}" (the assistant) with its owner.`
       : `This is a run of a scheduled routine of the bot "${botName}" (the assistant); later runs start from your summary.`,
-    'Besides the usual, keep in the summary, verbatim where exact wording matters:',
-    '- how the assistant did each non-trivial task that worked: the steps in order, with the commands, tool calls, parameters, paths, file names and values it used;',
+    'Besides the usual, keep concisely in the summary (exact names/commands/values, deduplicated rather than repeating every tool call):',
+    '- how the assistant did each non-trivial task that worked: the steps in order, with the commands, tool calls, parameters, paths, file names and values it used (once per distinct recipe);',
     '- settings, accounts, sites and configurations it learned or set up, and what the owner corrected;',
-    '- what failed and why, next to what worked instead;',
+    '- what failed and why, next to what worked instead (one bullet per distinct failure);',
     '- the skills it created, updated or loaded, by name;',
     '- commitments, pending follow-ups and the state of long-running work it must continue or must not repeat.',
   ].join('\n')

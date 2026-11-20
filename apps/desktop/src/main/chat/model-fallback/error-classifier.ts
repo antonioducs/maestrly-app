@@ -5,6 +5,18 @@
  *
  * Only transport diagnostics and the provider's response are read, never the request, the prompt or model output.
  */
+import { AcpProcessExitedError } from '../acp/client'
+import {
+  AntigravityAccountChangedError,
+  AntigravityApiError,
+  AntigravityModelUnavailableError,
+  AntigravityPromptTooLargeError,
+  AntigravityRuntimeStoppedError,
+  AntigravityToolsUnavailableError,
+  isAntigravityAuthRequired,
+  isAntigravityHarnessLost,
+  isAntigravityPeriodQuotaError,
+} from '../antigravity-subscription/errors'
 import {
   isClaudeAuthenticationRequired,
   isClaudeModelUnavailable,
@@ -126,6 +138,68 @@ function isAbortError(error: unknown): boolean {
   return any.name === 'AbortError' || any.code === 'ABORT_ERR'
 }
 
+function classifySingleAntigravityFailure(failure: unknown, retryAt?: number): ModelFailureClassification | null {
+  if (isAntigravityAuthRequired(failure) || failure instanceof AntigravityAccountChangedError) {
+    return shaped('auth', { retryInPlace: false })
+  }
+  if (failure instanceof AntigravityModelUnavailableError) {
+    return shaped('model_not_found')
+  }
+  if (failure instanceof AntigravityPromptTooLargeError) {
+    return failure.overflow === 'conversation'
+      ? shaped('context_overflow')
+      : shaped('payload_too_large', { compact: false })
+  }
+  if (
+    failure instanceof AntigravityRuntimeStoppedError ||
+    failure instanceof AntigravityToolsUnavailableError ||
+    failure instanceof AcpProcessExitedError ||
+    isAntigravityHarnessLost(failure)
+  ) {
+    return shaped('server_error')
+  }
+  if (failure instanceof AntigravityApiError) {
+    switch (failure.status) {
+      case 'INTERNAL':
+        return shaped('server_error')
+      case 'UNAVAILABLE':
+        return shaped('overloaded', retryAt ? { retryAt } : {})
+      case 'DEADLINE_EXCEEDED':
+        return shaped('timeout')
+      case 'RESOURCE_EXHAUSTED':
+        return isAntigravityPeriodQuotaError(failure)
+          ? shaped('quota', retryAt ? { retryAt } : {})
+          : shaped('rate_limit', retryAt ? { retryAt } : {})
+      case 'UNAUTHENTICATED':
+      case 'PERMISSION_DENIED':
+        return shaped('auth', { retryInPlace: false })
+      case 'NOT_FOUND':
+        return shaped('model_not_found')
+      case 'TOKEN_LIMIT': {
+        const hint = parseContextLimitFromError(failure.message)
+        return shaped('context_overflow', { contextLimit: hint.limit, observedTokens: hint.observed })
+      }
+      case 'INVALID_ARGUMENT':
+      case 'FAILED_PRECONDITION':
+        return shaped('format')
+    }
+  }
+  return null
+}
+
+function classifyAntigravityFailure(error: unknown, retryAt?: number): ModelFailureClassification | null {
+  let current = error
+  const seen = new Set<unknown>()
+  for (let depth = 0; depth <= 4 && current != null && typeof current === 'object' && !seen.has(current); depth++) {
+    seen.add(current)
+    const classified = classifySingleAntigravityFailure(current, retryAt)
+    if (classified) return classified
+    const wrapper = current as ErrorLike
+    current = wrapper.lastError ?? wrapper.cause
+  }
+  return null
+}
+
 function resetsAtOf(error: unknown): number | undefined {
   const value = (error as { resetsAt?: unknown } | null)?.resetsAt
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return undefined
@@ -185,6 +259,9 @@ export function classifyModelFailure(
   const retryAt = timing?.retryAt
   const withStatus = (reason: ModelFailureReason, extra: Partial<ModelFailureClassification> = {}) =>
     shaped(reason, { status, ...extra })
+
+  const antigravity = classifyAntigravityFailure(failure, retryAt) ?? classifyAntigravityFailure(error, retryAt)
+  if (antigravity) return antigravity
 
   if (CONTENT_REJECTED.test(text)) return withStatus('content_rejected')
 

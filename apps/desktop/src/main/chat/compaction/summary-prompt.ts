@@ -57,8 +57,9 @@ export function compactionSummaryTargetTokens(sourceTokens: number, contextWindo
 
 export function compactionTargetInstruction(targetTokens: number): string {
   return (
-    `Aim for about ${targetTokens} tokens in the summary. Pending requests, exact identifiers and errors take ` +
-    'priority over brevity.'
+    `Aim for about ${targetTokens} tokens (~${targetTokens * 3} characters) in the summary. Pending requests, ` +
+    'exact identifiers and unresolved errors take priority over completed history; deduplicate repeated commands, ' +
+    'paths and tool calls instead of listing every invocation.'
   )
 }
 

@@ -126,3 +126,48 @@ it('redacts credentials from public helper diagnostics', async () => {
     message: 'Authorization: Bearer [REDACTED]',
   })
 })
+
+it('disables thinking, background SDK features and multi-turn execution when effort is omitted or off', async () => {
+  const f = fixture([{ type: 'result', subtype: 'success', result: 'summary', usage: {}, total_cost_usd: 0 }])
+  await summarizeWithClaudeRuntime({ ...f.args, effort: 'off' })
+
+  expect(f.manager.createQuery).toHaveBeenCalledWith(
+    expect.objectContaining({
+      options: expect.objectContaining({
+        maxTurns: 1,
+        thinking: { type: 'disabled' },
+        settings: {
+          promptSuggestionEnabled: false,
+          autoMemoryEnabled: false,
+          autoCompactEnabled: false,
+          precomputeCompactionEnabled: false,
+        },
+      }),
+    })
+  )
+  const passedOptions = (
+    f.manager.createQuery.mock.calls as unknown as Array<[{ options: Record<string, unknown> }]>
+  )[0]?.[0].options
+  expect(passedOptions).not.toHaveProperty('effort')
+})
+
+it('passes explicit effort without disabling thinking and preserves fastMode settings', async () => {
+  const f = fixture([{ type: 'result', subtype: 'success', result: 'summary', usage: {}, total_cost_usd: 0 }])
+  await summarizeWithClaudeRuntime({ ...f.args, effort: 'medium', fastMode: true })
+
+  const passedOptions = (
+    f.manager.createQuery.mock.calls as unknown as Array<[{ options: Record<string, unknown> }]>
+  )[0]?.[0].options
+  expect(passedOptions).toMatchObject({
+    effort: 'medium',
+    maxTurns: 1,
+    settings: {
+      fastMode: true,
+      promptSuggestionEnabled: false,
+      autoMemoryEnabled: false,
+      autoCompactEnabled: false,
+      precomputeCompactionEnabled: false,
+    },
+  })
+  expect(passedOptions).not.toHaveProperty('thinking')
+})

@@ -205,6 +205,14 @@ export function isAntigravityQuotaError(error: unknown): boolean {
   return error instanceof Error && QUOTA_PATTERN.test(error.message)
 }
 
+export function isAntigravityPeriodQuotaError(error: unknown): boolean {
+  return (
+    error instanceof AntigravityApiError &&
+    error.status === 'RESOURCE_EXHAUSTED' &&
+    error.message.startsWith(QUOTA_MESSAGE)
+  )
+}
+
 export function antigravityErrorMessage(error: unknown): { message: string; code?: ChatErrorCode } {
   if (
     isAntigravityAuthRequired(error) ||

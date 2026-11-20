@@ -115,6 +115,8 @@ export interface BackgroundCompactionDiagnostic {
   reason?: string
   /** For `summarizer-invalid-output`: `empty` or `oversized`. */
   detail?: string
+  /** Single-line, credential-redacted summary of an unexpected runtime error (`kind: 'failed'`). */
+  errorMessage?: string
 }
 
 export interface BackgroundCompactionCoordinatorDeps {

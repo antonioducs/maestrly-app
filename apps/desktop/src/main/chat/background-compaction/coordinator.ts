@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto'
+import { redactAntigravityCredentials } from '../antigravity-subscription/errors'
+import { redactClaudeCredentials } from '../claude-agent-sdk/errors'
+import { classifyModelFailure } from '../model-fallback/error-classifier'
 import { estimateTextTokens, PORTABLE_SUMMARY_MAX_RETRIES, PORTABLE_SUMMARY_STEP_TIMEOUT_MS } from '../portable-context'
 import {
   backgroundCompactionConfigIdentity,
@@ -24,8 +27,32 @@ import {
   type BackgroundCompactionWork,
 } from './types'
 
-const MAX_SUMMARY_TOKENS = 8_000
+const MAX_SUMMARY_TOKENS = 12_000
 const RETRY_DELAY_MS = 30_000
+export const BACKGROUND_COMPACTION_FAILURE_COOLDOWN_MS = 5 * 60_000
+
+const AUTO_RECOVERABLE_FAILURE_CODES = new Set([
+  'background-compaction-failed',
+  'summarizer-timeout',
+  'summarizer-invalid-output',
+])
+
+function isAutoRecoverableFailureCode(code: string | undefined): boolean {
+  return typeof code === 'string' && AUTO_RECOVERABLE_FAILURE_CODES.has(code)
+}
+
+function sanitizedFailureMessage(error: unknown): string | undefined {
+  if (error instanceof BackgroundCompactionInvariantError) return undefined
+  const raw = error instanceof Error ? error.message : typeof error === 'string' ? error : ''
+  if (!raw.trim()) return undefined
+  const redacted = redactAntigravityCredentials(redactClaudeCredentials(raw))
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [redacted]')
+    .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, '[redacted]')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!redacted) return undefined
+  return redacted.length > 240 ? `${redacted.slice(0, 237)}...` : redacted
+}
 
 class BackgroundCompactionInvariantError extends Error {
   constructor(
@@ -58,14 +85,26 @@ function failureCode(error: unknown): string {
   const detail = error as { name?: string; message?: string; status?: unknown; statusCode?: unknown } | null
   const message = `${detail?.name ?? ''} ${detail?.message ?? String(error)}`.toLowerCase()
   const status = Number(detail?.statusCode ?? detail?.status)
-  if (status === 401 || status === 403 || /auth|credential|unauthorized|forbidden|no[ -]key/.test(message)) {
+  if (/identity|account changed|fingerprint/.test(message)) return 'summarizer-identity-changed'
+  const classified = classifyModelFailure(error)
+  if (classified.reason === 'auth_transient') return 'background-compaction-failed'
+  if (
+    classified.reason === 'auth' ||
+    status === 401 ||
+    status === 403 ||
+    /auth|credential|unauthorized|forbidden|permission|no[ -]key/.test(message)
+  ) {
     return 'summarizer-authentication-required'
   }
-  if (/identity|account changed|fingerprint/.test(message)) return 'summarizer-identity-changed'
-  if (/model.+(?:missing|unknown|unsupported|unavailable|not found)/.test(message)) {
+  if (
+    classified.reason === 'model_not_found' ||
+    /model.*(?:missing|unknown|unsupported|unavailable|not available|not found)|\bno[ -]model\b/.test(message)
+  ) {
     return 'summarizer-model-unavailable'
   }
-  if (/timed out|timeout|time budget/.test(message)) return 'summarizer-timeout'
+  if (classified.reason === 'timeout' || /timed out|timeout|time budget/.test(message)) {
+    return 'summarizer-timeout'
+  }
   if (/empty|oversized|invalid output/.test(message)) return 'summarizer-invalid-output'
   return 'background-compaction-failed'
 }
@@ -148,12 +187,36 @@ export class ChatBackgroundCompactionCoordinator {
     }
     const config = parseBackgroundCompactionConfig(this.deps.getConfig(conversationId))
     if (!config?.enabled) return
-    if (
-      record?.state.status === 'failed' ||
-      record?.pauseReason === 'selection' ||
-      record?.pauseReason === 'disabled'
-    ) {
+    if (record?.pauseReason === 'selection' || record?.pauseReason === 'disabled') {
       return
+    }
+    if (record?.state.status === 'failed') {
+      const now = this.now()
+      if (
+        !isAutoRecoverableFailureCode(record.state.error) ||
+        now - record.updatedAt < BACKGROUND_COMPACTION_FAILURE_COOLDOWN_MS
+      ) {
+        return
+      }
+      const configIdentity = backgroundCompactionConfigIdentity(config)
+      const identityChanged = Boolean(
+        (record.work && !this.deps.revalidate(record.work.selection)) ||
+          (record.ready && !this.deps.revalidate(record.ready.selection))
+      )
+      const reset = identityChanged || record.configIdentity !== configIdentity
+      const recovered = this.store.write(
+        conversationId,
+        {
+          generation: record.generation + (reset ? 1 : 0),
+          configIdentity,
+          conversationWindow: Math.max(1, Math.floor(notification.conversationWindow)),
+          status: reset ? 'idle' : record.work ? 'queued' : record.ready ? 'ready' : 'idle',
+          ready: reset ? null : record.ready,
+          work: reset ? null : record.work,
+        },
+        now
+      )
+      this.deps.publish(conversationId, recovered.state)
     }
     this.enqueue(conversationId)
   }
@@ -897,12 +960,14 @@ export class ChatBackgroundCompactionCoordinator {
       const restart = error instanceof BackgroundCompactionInvariantError && code === 'summarizer-invalid-output'
       this.markFailed(conversationId, restart ? { ...current, work: null } : current, code)
       const detail = failureDetail(error, code)
+      const errorMessage = sanitizedFailureMessage(error)
       this.deps.diagnostic?.({
         kind: 'failed',
         conversationId,
         durationMs: Math.max(0, this.now() - startedAt),
         reason: code,
         ...(detail ? { detail } : {}),
+        ...(errorMessage ? { errorMessage } : {}),
       })
       return false
     }
@@ -1000,8 +1065,15 @@ export class ChatBackgroundCompactionCoordinator {
         this.now()
       )
     }
-    this.markFailed(conversationId, record, failureCode(error))
-    this.deps.diagnostic?.({ kind: 'failed', conversationId, reason: failureCode(error) })
+    const code = failureCode(error)
+    const errorMessage = sanitizedFailureMessage(error)
+    this.markFailed(conversationId, record, code)
+    this.deps.diagnostic?.({
+      kind: 'failed',
+      conversationId,
+      reason: code,
+      ...(errorMessage ? { errorMessage } : {}),
+    })
   }
 }
 
