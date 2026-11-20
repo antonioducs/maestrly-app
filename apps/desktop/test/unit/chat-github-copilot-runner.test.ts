@@ -523,7 +523,7 @@ describe('GitHub Copilot official runner', () => {
     expect(started.systemMessage).toMatchObject({ mode: 'replace' })
     expect(started.systemMessage?.content).not.toContain('# Maestrly Design mode')
     expect(designResume.systemMessage).toMatchObject({ mode: 'replace' })
-    expect(designPrompt.match(/# Maestrly Design mode — design-v1/g)).toHaveLength(1)
+    expect(designPrompt.match(/# Maestrly Design mode — design-v2/g)).toHaveLength(1)
     expect(designPrompt).toContain('## Design + Ultra guidance')
     expect(designPrompt).not.toContain('Stay read-only')
     expect(designResume.availableTools).toEqual(started.availableTools)

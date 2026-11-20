@@ -8,8 +8,9 @@ branch and worktree workflows; standalone chats do not join a project or inherit
 its instructions, memory or saved permissions.
 
 New standalone chats start in Standard with Ask mode and Ask permissions. Saved
-“always allow” decisions belong to that chat alone. Agent, Plan and Design can
-use their usual generic capabilities under the selected permission policy.
+“always allow” decisions belong to that chat alone. Agent, Plan and
+[Design](design-mode.md) can use their usual generic capabilities under the
+selected permission policy.
 Maestro, Git review, branch operations and project-memory tools require a project.
 Browser, MCPs and other optional tools retain their existing enablement settings.
 Models search the web with `web_search` when web search is enabled in

@@ -2825,7 +2825,7 @@ describe('Codex subscription runner', () => {
     expect(started.environments).toBeUndefined()
     expect(designStart.config).toEqual(started.config)
     expect(designStart.environments).toBeUndefined()
-    expect(designStart.developerInstructions.match(/# Maestrly Design mode — design-v1/g)).toHaveLength(1)
+    expect(designStart.developerInstructions.match(/# Maestrly Design mode — design-v2/g)).toHaveLength(1)
     expect(designStart.dynamicTools.map((tool) => tool.name)).toEqual(started.dynamicTools.map((tool) => tool.name))
     expect(agentRestart.config).toEqual(started.config)
     expect(agentRestart.environments).toBeUndefined()
@@ -2875,7 +2875,7 @@ describe('Codex subscription runner', () => {
       developerInstructions: string
       dynamicTools: Array<{ name: string }>
     }
-    expect(started.developerInstructions.match(/# Maestrly Design mode — design-v1/g)).toHaveLength(1)
+    expect(started.developerInstructions.match(/# Maestrly Design mode — design-v2/g)).toHaveLength(1)
     expect(started.developerInstructions).toContain('Design mode has Agent-equivalent capabilities')
     expect(started.dynamicTools.map((tool) => tool.name)).toContain('bash')
     expect((await hostMcpTools(started)).map((tool) => tool.name)).toEqual(['generate_image', 'task'])

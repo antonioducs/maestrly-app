@@ -1189,7 +1189,7 @@ describe('Claude official chat runner', () => {
         expect(allowed(restricted)).not.toContain(toolName)
       }
     }
-    expect(designPrompt.match(/# Maestrly Design mode — design-v1/g)).toHaveLength(1)
+    expect(designPrompt.match(/# Maestrly Design mode — design-v2/g)).toHaveLength(1)
     expect(designPrompt).toContain('## Design + Ultra guidance')
     expect(designPrompt).not.toContain('Stay read-only, investigate deeply')
     expect(agent.options.systemPrompt).not.toContain('# Maestrly Design mode')

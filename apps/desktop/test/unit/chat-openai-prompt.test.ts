@@ -65,7 +65,7 @@ describe('OpenAI Codex prompt port', () => {
     const agentAfter = compileOpenAIPrompt(input({ mode: 'agent' }))
 
     expect(design.stablePrefix).not.toBe(agentBefore.stablePrefix)
-    expect(design.stablePrefix.match(/# Maestrly Design mode — design-v1/g)).toHaveLength(1)
+    expect(design.stablePrefix.match(/# Maestrly Design mode — design-v2/g)).toHaveLength(1)
     expect(agentAfter.stablePrefix).toBe(agentBefore.stablePrefix)
     expect(agentAfter.stablePrefix).not.toContain('# Maestrly Design mode')
   })
@@ -93,7 +93,7 @@ describe('OpenAI Codex prompt port', () => {
 
     expect(agent).toContain('AGENT MODE')
     expect(agent).toContain('todo_write')
-    expect(design.match(/# Maestrly Design mode — design-v1/g)).toHaveLength(1)
+    expect(design.match(/# Maestrly Design mode — design-v2/g)).toHaveLength(1)
     expect(design).toContain('DESIGN MODE uses Agent-equivalent capabilities')
     expect(design).toContain('todo_write')
     expect(design).toContain('notes_*')
