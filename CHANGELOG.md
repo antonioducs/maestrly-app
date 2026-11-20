@@ -5,6 +5,25 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.40.0] - 2026-11-20
+
+### Added
+
+- **Scheduled chat routines on workspaces servers**: routines can now run on
+  a bot server's workspaces environment so schedules continue running when this
+  computer is off, and the gateway keeps environments with active routines from
+  idle-stopping. Desktop aggregates routines across capable hosts with a
+  **Runs on** selector in proposal cards and the routine editor, host badges,
+  push alerts for the routine's own run turns according to its notification
+  setting, and weekly schedules proposed on a server defaulting to the
+  connecting computer's time zone.
+
+### Fixed
+
+- **Routines refresh and alert accuracy**: resolved a refresh loop in the
+  routines view, duplicate approval alerts, and false new-routine indicators
+  when connecting to a host.
+
 ## [0.39.0] - 2026-11-18
 
 ### Added
