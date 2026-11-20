@@ -2,10 +2,12 @@
 // viewer, and shown as text; the page never sees them.
 import { avatar } from './avatar.js'
 import { authorLabel, relativeTime, type Thread } from './comments-model.js'
-import type { PublicComment, TextQuote, ViewerState } from './contract.js'
+import type { PublicComment, TextQuote, ViewerDesign, ViewerState } from './contract.js'
+import { type DescribedTokenChange, describeSuggestionChanges } from './design-ui-model.js'
 import { h, put } from './dom.js'
-import type { Translate } from './i18n.js'
+import { plural, type Translate } from './i18n.js'
 import { icon } from './icons.js'
+import { suggestionBlockElement } from './suggestion-ui.js'
 
 const MAX_COMMENT_CHARS = 4000
 const MAX_NAME_CHARS = 60
@@ -49,6 +51,7 @@ export function composer(
     placeholder: string
     submitLabel: string
     value: string
+    allowEmpty?: boolean
     withFoot?: { onCancel(): void }
     onInput(value: string): void
     onSubmit(body: string, name: string | null, composer: Composer): void
@@ -91,6 +94,7 @@ export function composer(
         h('button', { type: 'button', class: 'link', onclick: options.withFoot.onCancel }, t('cancel'))
       )
   )
+  const allowEmpty = options.allowEmpty === true
   const result: Composer = {
     form,
     area,
@@ -101,12 +105,12 @@ export function composer(
     },
     busy(on) {
       sending = on
-      send.disabled = on || !area.value.trim()
+      send.disabled = on || (!allowEmpty && !area.value.trim())
     },
   }
   let sending = false
   const sync = () => {
-    send.disabled = !area.value.trim()
+    send.disabled = sending || (!allowEmpty && !area.value.trim())
   }
   area.addEventListener('input', () => {
     options.onInput(area.value)
@@ -123,7 +127,7 @@ export function composer(
   form.addEventListener('submit', (event) => {
     event.preventDefault()
     const body = area.value.trim()
-    if (!body || sending) return
+    if ((!allowEmpty && !body) || sending) return
     const typed = name ? name.value.trim() : null
     if (name && !typed) {
       result.fail(t('nameNeeded'))
@@ -164,18 +168,42 @@ function deleteButton(t: Translate, first: boolean, withReplies: boolean, onDele
   return control
 }
 
+export interface ThreadSuggestionOptions {
+  design: ViewerDesign | null
+  previewingCommentId: string | null
+  canApply: boolean
+  onTogglePreview(comment: PublicComment): void
+  onApply(comment: PublicComment): void
+  onEditInTokens(comment: PublicComment): void
+}
+
 function message(
   ctx: CardContext,
   comment: PublicComment,
   first: boolean,
   withReplies: boolean,
-  onDelete: () => void
+  onDelete: () => void,
+  suggestionOptions?: ThreadSuggestionOptions
 ): HTMLElement {
   const { t, state } = ctx
   const { author } = comment
   const owner = state.ownerName || t('theOwner')
   const verified = !author.self && (author.kind === 'invited' || author.kind === 'approved')
   const at = new Date(comment.createdAt)
+  const suggestion = comment.suggestion
+  const suggestionBlock =
+    suggestion && suggestion.changes.length > 0
+      ? suggestionBlockElement({
+          t,
+          changes: describeSuggestionChanges(suggestionOptions?.design ?? null, suggestion.changes),
+          appliedVersion: suggestion.appliedVersion,
+          previewing: suggestionOptions?.previewingCommentId === comment.id,
+          canApply: Boolean(suggestionOptions?.canApply),
+          onTogglePreview: () => suggestionOptions?.onTogglePreview(comment),
+          onApply: () => suggestionOptions?.onApply(comment),
+          onEditInTokens: () => suggestionOptions?.onEditInTokens(comment),
+        })
+      : null
   const line = h(
     'div',
     { class: 'entry' },
@@ -208,7 +236,8 @@ function message(
         )
       ),
       // People outside the app wrote this: it is plain text, never markup.
-      h('p', { class: 'entry-body' }, comment.body)
+      h('p', { class: 'entry-body' }, comment.body),
+      suggestionBlock
     )
   )
   if (comment.canDelete) line.append(deleteButton(t, first, withReplies, onDelete))
@@ -222,6 +251,7 @@ export interface ThreadCardOptions {
   /** Whether the passage or spot is missing from the version on screen; null while that is not known. */
   missing: boolean | null
   replyText: string
+  suggestion?: ThreadSuggestionOptions
   onReplyInput(value: string): void
   onReply(body: string, name: string | null, composer: Composer): void
   onResolve(resolved: boolean): void
@@ -306,7 +336,7 @@ export function threadCard(
     resolved && h('p', { class: 'card-note' }, t('resolved'))
   )
   const withReplies = thread.replies.length > 0
-  body.append(message(ctx, comment, true, withReplies, () => options.onDelete(comment)))
+  body.append(message(ctx, comment, true, withReplies, () => options.onDelete(comment), options.suggestion))
   for (const reply of thread.replies) body.append(message(ctx, reply, false, false, () => options.onDelete(reply)))
   el.append(head, body)
 
@@ -365,6 +395,62 @@ export function draftCard(
       )
     ),
     options.quote && h('blockquote', { class: 'card-quote' }, options.quote.exact),
+    form.form
+  )
+  return { el, composer: form }
+}
+
+/** Draft card for suggesting token edits as a page comment (an empty note is allowed). */
+export function suggestDraftCard(
+  ctx: CardContext,
+  options: {
+    changes: readonly DescribedTokenChange[]
+    text: string
+    onInput(value: string): void
+    onSubmit(body: string, name: string | null, composer: Composer): void
+    onCancel(): void
+  }
+): { el: HTMLElement; composer: Composer } {
+  const { t, state } = ctx
+  const owner = state.ownerName || t('theOwner')
+  const ownerFirst = owner.split(' ')[0] || owner
+  const title = plural(t, options.changes.length, 'suggestTitleOne', 'suggestTitleMany')
+  const el = h('section', {
+    class: 'card is-draft suggest-card',
+    tabindex: '-1',
+    role: 'dialog',
+    'aria-label': title,
+  })
+  const form = composer(ctx, {
+    placeholder: t('suggestPlaceholder', { owner: ownerFirst }),
+    submitLabel: t('suggestSend'),
+    value: options.text,
+    allowEmpty: true,
+    withFoot: { onCancel: options.onCancel },
+    onInput: options.onInput,
+    onSubmit: options.onSubmit,
+  })
+  const draftChanges = options.changes.map((change) => ({ ...change, now: change.from, stale: false }))
+  put(
+    el,
+    h(
+      'header',
+      { class: 'card-head' },
+      h('span', { class: 'card-title' }, title),
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'icon-button',
+          'aria-label': t('cancel'),
+          title: t('cancel'),
+          onclick: options.onCancel,
+        },
+        icon('close', 15)
+      )
+    ),
+    suggestionBlockElement({ t, changes: draftChanges, appliedVersion: null, draft: true }),
+    h('p', { class: 'suggest-auto' }, t('suggestAutoHint')),
     form.form
   )
   return { el, composer: form }

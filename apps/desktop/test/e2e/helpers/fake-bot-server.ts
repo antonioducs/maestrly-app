@@ -99,6 +99,13 @@ export class FakeGateway {
     return this.artifactHost?.port ?? null
   }
 
+  /** Mints a single-use owner viewer URL through the gateway's port. */
+  async ownerViewerUrl(id: string): Promise<string> {
+    if (!this.artifactHost) throw new Error('Artifact host is not running')
+    const { ticket } = await this.artifactHost.admin.mintOwnerTicket(id)
+    return `http://127.0.0.1:${this.port}/a/${id}#o=${ticket}`
+  }
+
   /** Final cleanup, unlike stop(), which preserves the simulated gateway volume. */
   async close(): Promise<void> {
     await this.stop()

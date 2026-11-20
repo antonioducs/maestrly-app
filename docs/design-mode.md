@@ -127,8 +127,9 @@ Key contract rules:
   without `;`, `{`, `}`, `<`, `\`, `url(`, `image-set(`, `src(`, CSS comments
   (`/*`/`*/`), or `!important`.
 
-Prototypes that follow this contract unlock design-review tools in the
-[artifact viewer](artifacts.md).
+Prototypes that follow this contract unlock design-review tools (Inspect,
+Screens, Tokens with themes, version saving, and token suggestions) in the
+[artifact viewer](artifacts.md#design-tools).
 
 ## Verification budget
 

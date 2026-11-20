@@ -37,18 +37,32 @@ import {
   type SelectionRect,
   type ShellMessage,
   type TextQuote,
+  type ViewerDesign,
   type ViewerState,
 } from './contract.js'
+import type { SuggestTokensResult } from './design.js'
+import { canApplySuggestion } from './design-model.js'
+import type { DescribedTokenChange } from './design-ui-model.js'
 import { h, put, toast } from './dom.js'
 import { plural, type Translate } from './i18n.js'
 import { icon } from './icons.js'
-import { type CardContext, type Composer, draftCard, threadCard } from './thread.js'
+import { type CardContext, type Composer, draftCard, suggestDraftCard, threadCard } from './thread.js'
 
 /** Pages of 200 comments: enough for every comment an artifact can hold. */
 const MAX_PAGES = 10
 const REFRESH_MS = 30_000
 const PREVIEW_CHARS = 110
 const LIST_CHARS = 140
+
+export interface CommentsSuggestionOptions {
+  getDesign(): ViewerDesign | null
+  getPreviewingCommentId(): string | null
+  getDraftChanges(): readonly DescribedTokenChange[]
+  onTogglePreview(comment: PublicComment): void
+  onApply(comment: PublicComment): void
+  onEditInTokens(comment: PublicComment): void
+  onSubmitSuggestion(body: string, guestName?: string | null): Promise<SuggestTokensResult>
+}
 
 export interface CommentsOptions {
   api: ArtifactApi
@@ -70,14 +84,23 @@ export interface CommentsOptions {
   onShowVersion(version: number): void
   /** The host refused a change because a newer version replaced the one on screen for this reader. */
   onReplaced(): void
+  /** Optional design-mode token suggestion hooks. */
+  suggestions?: CommentsSuggestionOptions
 }
 
 export interface CommentsController {
   readonly commenting: boolean
   readonly listOpen: boolean
+  readonly hasCard: boolean
   openCounts(): Map<number, number>
   setCommenting(on: boolean): void
   setList(open: boolean): void
+  /** Opens the token suggestion draft card above the stage. */
+  openSuggestDraft(): void
+  /** Adds or updates a comment created/modified by a design write and optionally opens its thread. */
+  ingestComment(comment: PublicComment, open?: boolean): void
+  /** Re-renders open cards and the list after external design state changes (e.g. suggestion preview toggle). */
+  refreshView(): void
   /** A new version is being loaded into the frame. */
   setVersion(version: number): void
   handle(message: BridgeMessage): void
@@ -90,6 +113,8 @@ export interface CommentsController {
 interface Draft {
   /** Null for a comment about the whole page. */
   anchor: PickedAnchor | null
+  /** True when composing a token-change suggestion card. */
+  suggest?: boolean
 }
 
 export function createComments(options: CommentsOptions): CommentsController {
@@ -476,7 +501,23 @@ export function createComments(options: CommentsOptions): CommentsController {
     card?.remove()
     card = null
     const active = threadOf(activeId)
-    if (draft) {
+    if (draft?.suggest && options.suggestions) {
+      const changes = options.suggestions.getDraftChanges()
+      if (changes.length > 0) {
+        const built = suggestDraftCard(ctx(), {
+          changes,
+          text: draftText,
+          onInput: (value) => {
+            draftText = value
+          },
+          onSubmit: (body, name, comp) => void submitSuggest(body, name, comp),
+          onCancel: cancelDraft,
+        })
+        card = built.el
+      } else {
+        draft = null
+      }
+    } else if (draft) {
       const built = draftCard(ctx(), {
         quote: draft.anchor && 'quote' in draft.anchor ? draft.anchor.quote : null,
         onPage: draft.anchor === null,
@@ -493,11 +534,22 @@ export function createComments(options: CommentsOptions): CommentsController {
       const at = order.findIndex((thread) => thread.comment.id === active.comment.id)
       const anchored = hasPin(active)
       const known = active.comment.version === version && anchored && active.comment.id in positions
+      const design = options.suggestions?.getDesign() ?? null
       const built = threadCard(ctx(), {
         thread: active,
         position: { at: Math.max(0, at), total: order.length },
         missing: known ? positions[active.comment.id] === null : null,
         replyText,
+        suggestion: options.suggestions
+          ? {
+              design,
+              previewingCommentId: options.suggestions.getPreviewingCommentId(),
+              canApply: canApplySuggestion(state, design),
+              onTogglePreview: options.suggestions.onTogglePreview,
+              onApply: options.suggestions.onApply,
+              onEditInTokens: options.suggestions.onEditInTokens,
+            }
+          : undefined,
         onReplyInput: (value) => {
           replyText = value
         },
@@ -512,6 +564,7 @@ export function createComments(options: CommentsOptions): CommentsController {
       })
       card = built.el
     }
+    stage.parentElement?.classList.toggle('has-card', Boolean(card))
     if (!card) return
     float.append(card)
     positionCard()
@@ -548,10 +601,49 @@ export function createComments(options: CommentsOptions): CommentsController {
     card.style.transformOrigin = `${placed.originX} ${placed.originY}px`
   }
 
+  async function submitSuggest(body: string, name: string | null, comp: Composer): Promise<void> {
+    if (!options.suggestions) return
+    comp.busy(true)
+    const result = await options.suggestions.onSubmitSuggestion(body, name).catch(
+      (): SuggestTokensResult => ({
+        ok: false,
+        error: 'failed',
+      })
+    )
+    comp.busy(false)
+    if (!result.ok) {
+      if (result.error === 'version_replaced') {
+        options.onReplaced()
+        return comp.fail(t('commentReplaced'))
+      }
+      if (result.error === 'name_required') return comp.fail(t('nameNeeded'))
+      if (result.error === 'comments_disabled') return comp.fail(t('commentsOff'))
+      return comp.fail(t('commentFailed'))
+    }
+    draft = null
+    draftText = ''
+    ingestComment(result.comment, false)
+    const owner = state.ownerName || t('theOwner')
+    toast(t('suggestSent', { owner }), {
+      label: t('suggestView'),
+      run: () => {
+        listOpen = true
+        openThread(result.comment.id, true)
+      },
+    })
+  }
+
+  function ingestComment(comment: PublicComment, open = false): void {
+    const exists = comments.some((item) => item.id === comment.id)
+    setComments(exists ? comments.map((item) => (item.id === comment.id ? comment : item)) : [...comments, comment])
+    if (open) openThread(comment.id, true)
+    else refresh()
+  }
+
   function openThread(id: string, reveal = false): void {
     const thread = threadOf(id)
     if (!thread) return
-    if (thread.comment.version !== version) {
+    if (thread.comment.version !== version && !thread.comment.suggestion) {
       // The other version loads first, which closes whatever was open; its page scrolls to the passage when ready.
       options.onShowVersion(thread.comment.version)
       pendingReveal = hasPin(thread) ? id : null
@@ -562,6 +654,8 @@ export function createComments(options: CommentsOptions): CommentsController {
     draft = null
     replyText = ''
     activeId = id
+    // On a phone the list covers the stage, so opening a thread gives way to the conversation sheet.
+    if (typeof matchMedia === 'function' && matchMedia('(max-width: 720px)').matches) listOpen = false
     seeThread(thread)
     refresh()
     focusCard()
@@ -600,6 +694,7 @@ export function createComments(options: CommentsOptions): CommentsController {
     const missing = !other && hasPin(thread) && positions[comment.id] === null
     const isUnreadNow = unread(thread)
     const quote = comment.anchor?.quote?.exact
+    const suggestion = comment.suggestion
     return h(
       'li',
       {},
@@ -629,6 +724,15 @@ export function createComments(options: CommentsOptions): CommentsController {
             { class: 'item-meta' },
             other && h('span', { class: 'tag' }, t('tagVersion', { n: comment.version })),
             !hasPin(thread) && h('span', { class: 'tag' }, t('tagPage')),
+            suggestion &&
+              suggestion.changes.length > 0 &&
+              h(
+                'span',
+                { class: 'tag' },
+                suggestion.appliedVersion !== null
+                  ? t('suggestionApplied', { n: suggestion.appliedVersion })
+                  : plural(t, suggestion.changes.length, 'suggestionOne', 'suggestionMany')
+              ),
             missing && h('span', { class: 'tag is-warn' }, t('tagMissing')),
             replies.length > 0 && h('span', {}, plural(t, replies.length, 'repliesOne', 'repliesMany'))
           )
@@ -764,6 +868,9 @@ export function createComments(options: CommentsOptions): CommentsController {
     get listOpen() {
       return listOpen
     },
+    get hasCard() {
+      return Boolean(card)
+    },
     openCounts: () => openCounts(threads),
 
     setCommenting(on) {
@@ -781,6 +888,24 @@ export function createComments(options: CommentsOptions): CommentsController {
       listOpen = open
       if (open && !loaded) void load()
       refresh()
+    },
+
+    openSuggestDraft() {
+      if (!canComment || !options.suggestions) return
+      if (options.suggestions.getDraftChanges().length === 0) return
+      draft = { anchor: null, suggest: true }
+      draftText = ''
+      activeId = null
+      selection = null
+      refresh()
+      focusCard()
+    },
+
+    ingestComment,
+
+    refreshView() {
+      renderCard()
+      renderList()
     },
 
     setVersion(next) {
