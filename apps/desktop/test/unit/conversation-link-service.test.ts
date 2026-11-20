@@ -1,3 +1,4 @@
+import { getEventListeners } from 'node:events'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
@@ -504,6 +505,77 @@ describe('waiting for a conversation', () => {
     expect(
       await service.wait(linked(child, source, 1), { conversationId: other }, new AbortController().signal)
     ).toMatchObject({ code: 'not-linked' })
+  })
+
+  it('does not starve the event loop or leak abort listeners while a queued message settles between turns', async () => {
+    dispatch(source, child)
+    let releaseFirstTurn!: () => void
+    let activeTurn: Promise<void> | null = new Promise<void>((resolve) => {
+      releaseFirstTurn = resolve
+    })
+    const realSleep = vi.fn(
+      (ms: number, signal?: AbortSignal) =>
+        new Promise<void>((resolve) => {
+          if (signal?.aborted) return resolve()
+          const timer = setTimeout(done, Math.min(ms, 30))
+          function done() {
+            clearTimeout(timer)
+            signal?.removeEventListener('abort', done)
+            resolve()
+          }
+          signal?.addEventListener('abort', done, { once: true })
+        })
+    )
+    const { deps, service } = harness({
+      isRunning: vi.fn((id) => (id === child ? activeTurn !== null : false)),
+      waitForSlot: vi.fn((id) => (id === child && activeTurn ? activeTurn : Promise.resolve())),
+      startPeerTurn: vi.fn(async () => {
+        if (activeTurn) return { ok: false as const, error: 'busy' }
+        activeTurn = new Promise<void>((resolve) => {
+          setTimeout(() => {
+            say(child, 'assistant', 'Handled queued message.')
+            activeTurn = null
+            resolve()
+          }, 10)
+        })
+        return { ok: true as const }
+      }),
+      sleep: realSleep,
+      now: Date.now,
+    })
+
+    const queued = await service.send(human(), { conversationId: child, message: 'follow up' }, async () => true)
+    expect(queued).toMatchObject({ status: 'queued' })
+
+    const controller = new AbortController()
+    const waiting = service.wait(human(), { conversationId: child, timeoutSeconds: 5 }, controller.signal)
+    setTimeout(() => {
+      const done = releaseFirstTurn
+      activeTurn = null
+      done()
+    }, 10)
+
+    const result = await waiting
+    expect(result).toMatchObject({
+      ok: true,
+      status: 'idle',
+      result: { lastReply: { text: 'Handled queued message.' } },
+    })
+    expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0)
+    expect(vi.mocked(deps.waitForSlot).mock.calls.length).toBeLessThan(10)
+  })
+
+  it('yields to sleep instead of spinning if waitForSlot resolves while isRunning stays true', async () => {
+    dispatch(source, child)
+    const controller = new AbortController()
+    const { deps, service } = harness({
+      isRunning: vi.fn(() => true),
+      waitForSlot: vi.fn(async () => undefined),
+    })
+    const result = await service.wait(human(), { conversationId: child, timeoutSeconds: 5 }, controller.signal)
+    expect(result).toMatchObject({ ok: true, status: 'timeout' })
+    expect(vi.mocked(deps.waitForSlot).mock.calls.length).toBeLessThanOrEqual(10)
+    expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0)
   })
 })
 
