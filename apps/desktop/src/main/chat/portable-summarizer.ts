@@ -167,20 +167,17 @@ export async function summarizeWithClaudeRuntime(args: {
         abortController,
         cwd: args.cwd,
         model: args.modelId,
-        ...(effort ? { effort } : {}),
+        maxTurns: 1,
+        ...(effort ? { effort } : { thinking: { type: 'disabled' as const } }),
         systemPrompt: args.system,
         settingSources: [],
-        ...(typeof args.fastMode === 'boolean'
-          ? {
-              settings: {
-                ...buildClaudeFastModeSettings(args.fastMode),
-                promptSuggestionEnabled: false,
-                autoMemoryEnabled: false,
-                autoCompactEnabled: false,
-                precomputeCompactionEnabled: false,
-              },
-            }
-          : {}),
+        settings: {
+          ...(typeof args.fastMode === 'boolean' ? buildClaudeFastModeSettings(args.fastMode) : {}),
+          promptSuggestionEnabled: false,
+          autoMemoryEnabled: false,
+          autoCompactEnabled: false,
+          precomputeCompactionEnabled: false,
+        },
         strictMcpConfig: true,
         mcpServers: {},
         tools: [],
@@ -389,7 +386,14 @@ export async function summarizeWithCodexRuntime(args: {
           ...(runtimeProfile.declaresExperimentalContext
             ? { 'features.context_management.experimental_mode': runtimeProfile.experimentalContextEnabled }
             : {}),
-          ...(args.conversationScope === 'standalone' ? { project_doc_max_bytes: 0, 'features.skill_search': false, 'skills.include_instructions': false, 'features.skill_mcp_dependency_install': false } : {}),
+          ...(args.conversationScope === 'standalone'
+            ? {
+                project_doc_max_bytes: 0,
+                'features.skill_search': false,
+                'skills.include_instructions': false,
+                'features.skill_mcp_dependency_install': false,
+              }
+            : {}),
           'features.multi_agent': false,
           'features.multi_agent_v2': false,
           'features.shell_tool': false,

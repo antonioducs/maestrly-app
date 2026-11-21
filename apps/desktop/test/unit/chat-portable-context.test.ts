@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ChatMessage } from '../../src/shared/chat'
 import {
+  AntigravityApiError,
+  AntigravityAuthRequiredError,
+  AntigravityRuntimeStoppedError,
+} from '../../src/main/chat/antigravity-subscription/errors'
+import {
   estimateNativeSeedContextTokens,
   estimatePortableContextTokens,
   estimatePortablePartsTokens,
@@ -351,8 +356,11 @@ describe('portable context', () => {
       expect(result).toMatchObject({ summary: 'bounded', calls: 4 })
       const prompts = summarize.mock.calls.map(([prompt]) => prompt as string)
       expect(prompts[0]).toContain('source text')
+      expect(prompts[0]).toContain('300 characters')
       expect(prompts[1]).toContain('about 200 portable tokens')
       expect(prompts[1]).toContain('limit of 100')
+      expect(prompts[1]).toContain('300 characters')
+      expect(prompts[1]).toContain('150 characters')
       expect(prompts[1]).toContain(long)
       expect(prompts[1]).not.toContain('source text')
       expect(prompts[2]).toContain(shorter)
@@ -374,6 +382,25 @@ describe('portable context', () => {
         'Unexpected provider response'
       )
       expect(summarize).toHaveBeenCalledTimes(1)
+    })
+
+    it('retries transient Antigravity gRPC and runtime-stopped failures but fails fast on Antigravity auth errors', async () => {
+      const transient = vi
+        .fn()
+        .mockRejectedValueOnce(new AntigravityApiError('Internal error encountered.', 'INTERNAL'))
+        .mockRejectedValueOnce(new AntigravityRuntimeStoppedError())
+        .mockResolvedValueOnce(measured('recovered summary'))
+
+      await expect(summarizePortableTranscript('source text', 1_000, transient)).resolves.toMatchObject({
+        summary: 'recovered summary',
+        calls: 3,
+      })
+
+      const authFail = vi.fn().mockRejectedValue(new AntigravityAuthRequiredError())
+      await expect(summarizePortableTranscript('source text', 1_000, authFail)).rejects.toThrow(
+        AntigravityAuthRequiredError
+      )
+      expect(authFail).toHaveBeenCalledTimes(1)
     })
 
     it('lets the caller veto transient retries while retaining failed-attempt billing', async () => {
@@ -470,43 +497,43 @@ describe('portable context', () => {
       expect(summarize).toHaveBeenCalledTimes(3)
     })
 
-    it.each([
-      'timeout',
-      'cancel',
-    ] as const)('retains usage published by provider abort handling on %s', async (mode) => {
-      const controller = new AbortController()
-      const summarize = vi.fn(
-        (_prompt: string, _phase: string, signal?: AbortSignal) =>
-          new Promise<PortableSummaryCallResult>((_resolve, reject) => {
-            signal!.addEventListener(
-              'abort',
-              () =>
-                reject(
-                  Object.assign(new Error('Aborted'), {
-                    partialUsage: attemptUsage,
-                    runtimeEstimatedCostUsd: 0.02,
-                  })
-                ),
-              { once: true }
-            )
-          })
-      )
-      const pending = summarizePortableTranscript('source', 1_000, summarize, {
-        signal: controller.signal,
-        stepTimeoutMs: 100,
-        maxRetries: 0,
-      })
-      const failure = pending.catch((error: unknown) => error)
-      await vi.advanceTimersByTimeAsync(0)
-      if (mode === 'cancel') controller.abort()
-      else await vi.advanceTimersByTimeAsync(100)
-      expect(await failure).toMatchObject({
-        name: mode === 'cancel' ? 'AbortError' : 'TimeoutError',
-        partialUsage: attemptUsage,
-        runtimeEstimatedCostUsd: 0.02,
-      })
-      expect(summarize).toHaveBeenCalledTimes(1)
-    })
+    it.each(['timeout', 'cancel'] as const)(
+      'retains usage published by provider abort handling on %s',
+      async (mode) => {
+        const controller = new AbortController()
+        const summarize = vi.fn(
+          (_prompt: string, _phase: string, signal?: AbortSignal) =>
+            new Promise<PortableSummaryCallResult>((_resolve, reject) => {
+              signal!.addEventListener(
+                'abort',
+                () =>
+                  reject(
+                    Object.assign(new Error('Aborted'), {
+                      partialUsage: attemptUsage,
+                      runtimeEstimatedCostUsd: 0.02,
+                    })
+                  ),
+                { once: true }
+              )
+            })
+        )
+        const pending = summarizePortableTranscript('source', 1_000, summarize, {
+          signal: controller.signal,
+          stepTimeoutMs: 100,
+          maxRetries: 0,
+        })
+        const failure = pending.catch((error: unknown) => error)
+        await vi.advanceTimersByTimeAsync(0)
+        if (mode === 'cancel') controller.abort()
+        else await vi.advanceTimersByTimeAsync(100)
+        expect(await failure).toMatchObject({
+          name: mode === 'cancel' ? 'AbortError' : 'TimeoutError',
+          partialUsage: attemptUsage,
+          runtimeEstimatedCostUsd: 0.02,
+        })
+        expect(summarize).toHaveBeenCalledTimes(1)
+      }
+    )
 
     it('can disable retries without losing failed-attempt billing', async () => {
       const error = Object.assign(new Error('network error'), {

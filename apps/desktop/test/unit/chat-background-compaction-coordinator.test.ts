@@ -1,8 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ChatMessage, FrozenChatSelection } from '../../src/shared/chat'
 import {
+  AntigravityAccountChangedError,
+  AntigravityApiError,
+  AntigravityModelUnavailableError,
+} from '../../src/main/chat/antigravity-subscription/errors'
+import {
   ChatBackgroundCompactionCoordinator,
   type BackgroundCompactionCoordinatorDeps,
+  type BackgroundCompactionDiagnostic,
   type BackgroundCompactionSummarizeInput,
 } from '../../src/main/chat/background-compaction'
 import type { PortableSummaryCheckpoint } from '../../src/main/chat/portable-context'
@@ -484,5 +490,147 @@ describe('chat background compaction coordinator', () => {
       )
     expect(() => test.coordinator.record(id)).not.toThrow()
     expect(test.coordinator.record(id)?.ready).toBeNull()
+  })
+
+  it('caps maxSummaryTokens at 12,000 on large windows and 10% on smaller windows', async () => {
+    const id = createConversation()
+    const test = harness()
+    test.messages.set(id, [assistant(id, 'source')])
+    test.coordinator.notify(id, { conversationWindow: 200_000 })
+    await test.coordinator.settled()
+    expect(test.summarize).toHaveBeenLastCalledWith(expect.objectContaining({ maxSummaryTokens: 12_000 }))
+
+    const smallId = createConversation()
+    test.messages.set(smallId, [assistant(smallId, 'source')])
+    test.deps.resolveSelection = async () => ({ selection: frozen, contextWindow: 80_000 })
+    test.coordinator.notify(smallId, { conversationWindow: 80_000 })
+    await test.coordinator.settled()
+    expect(test.summarize).toHaveBeenLastCalledWith(expect.objectContaining({ maxSummaryTokens: 8_000 }))
+  })
+
+  it('auto-recovers transient or oversized failures only after the failure cooldown while preserving checkpoints', async () => {
+    const id = createConversation()
+    let now = 1_000_000
+    const diagnostics: BackgroundCompactionDiagnostic[] = []
+    const test = harness()
+    test.deps.now = () => now
+    test.deps.diagnostic = (event) => diagnostics.push(event)
+    test.messages.set(id, [assistant(id, 'source')])
+    const checkpoint: PortableSummaryCheckpoint = {
+      version: 1,
+      sourceHash: 'hash-1',
+      maxChunkBytes: 50_000,
+      phase: 'chunk',
+      level: 0,
+      inputHash: 'input-1',
+      completed: ['chunk-1'],
+    }
+    test.summarize.mockImplementationOnce(async (input) => {
+      input.onCheckpoint(checkpoint)
+      throw new Error('Internal error encountered. Bearer ya29.secret_token_value sk-ant-secret123456')
+    })
+
+    test.coordinator.notify(id, { conversationWindow: 200_000 })
+    await test.coordinator.settled()
+    expect(test.coordinator.status(id)).toMatchObject({
+      status: 'failed',
+      error: 'background-compaction-failed',
+    })
+    const failedDiag = diagnostics.find((entry) => entry.kind === 'failed')
+    expect(failedDiag?.errorMessage).toContain('Internal error encountered.')
+    expect(failedDiag?.errorMessage).not.toContain('ya29.secret_token_value')
+    expect(failedDiag?.errorMessage).not.toContain('sk-ant-secret123456')
+
+    // Within the 5-minute cooldown, notifications remain ignored.
+    now += 4 * 60_000
+    test.coordinator.notify(id, { conversationWindow: 200_000 })
+    await test.coordinator.settled()
+    expect(test.summarize).toHaveBeenCalledTimes(1)
+    expect(test.coordinator.status(id).status).toBe('failed')
+
+    // Past the 5-minute cooldown, a new turn notification resumes from the saved checkpoint.
+    test.summarize.mockResolvedValueOnce({ summary: 'recovered summary' })
+    now += 60_001
+    test.coordinator.notify(id, { conversationWindow: 200_000 })
+    await test.coordinator.settled()
+    expect(test.summarize).toHaveBeenCalledTimes(2)
+    expect(test.summarize).toHaveBeenLastCalledWith(expect.objectContaining({ resume: checkpoint }))
+    expect(test.coordinator.status(id).status).toBe('ready')
+  })
+
+  it('keeps authentication, identity and model-unavailable failures latched even after the cooldown', async () => {
+    const cases: Array<{ error: Error; expectedCode: string }> = [
+      {
+        error: new AntigravityApiError('The caller does not have permission', 'PERMISSION_DENIED'),
+        expectedCode: 'summarizer-authentication-required',
+      },
+      {
+        error: new AntigravityAccountChangedError(),
+        expectedCode: 'summarizer-identity-changed',
+      },
+      {
+        error: new AntigravityModelUnavailableError('gemini-4-hydrogen'),
+        expectedCode: 'summarizer-model-unavailable',
+      },
+      {
+        error: new AntigravityApiError('Requested entity was not found.', 'NOT_FOUND'),
+        expectedCode: 'summarizer-model-unavailable',
+      },
+    ]
+
+    for (const { error, expectedCode } of cases) {
+      const id = createConversation()
+      let now = 1_000_000
+      const test = harness()
+      test.deps.now = () => now
+      test.messages.set(id, [assistant(id, 'source')])
+      test.summarize.mockRejectedValueOnce(error)
+
+      test.coordinator.notify(id, { conversationWindow: 200_000 })
+      await test.coordinator.settled()
+      expect(test.coordinator.status(id)).toMatchObject({
+        status: 'failed',
+        error: expectedCode,
+      })
+
+      now += 10 * 60_000
+      test.coordinator.notify(id, { conversationWindow: 200_000 })
+      await test.coordinator.settled()
+      expect(test.summarize).toHaveBeenCalledTimes(1)
+      expect(test.coordinator.status(id).status).toBe('failed')
+    }
+  })
+
+  it('resets stale work cleanly when configIdentity changed before cooldown auto-recovery', async () => {
+    const id = createConversation()
+    let now = 1_000_000
+    let intervalTokens = 1
+    const diagnostics: BackgroundCompactionDiagnostic[] = []
+    const test = harness()
+    test.deps.now = () => now
+    test.deps.diagnostic = (event) => diagnostics.push(event)
+    test.deps.hasConfigOverride = () => true
+    test.deps.getConfig = () => ({
+      enabled: true,
+      intervalTokens,
+      selection: { providerId: 'provider', modelId: 'summarizer', effort: 'off', fastMode: false },
+    })
+    test.messages.set(id, [assistant(id, 'source')])
+    test.summarize.mockRejectedValueOnce(new Error('Internal error encountered.'))
+
+    test.coordinator.notify(id, { conversationWindow: 200_000 })
+    await test.coordinator.settled()
+    const failedGeneration = test.coordinator.record(id)!.generation
+    expect(test.coordinator.status(id).status).toBe('failed')
+
+    intervalTokens = 2
+    test.summarize.mockResolvedValueOnce({ summary: 'fresh summary' })
+    now += 5 * 60_000 + 1
+    test.coordinator.notify(id, { conversationWindow: 200_000 })
+    await test.coordinator.settled()
+
+    expect(test.coordinator.status(id).status).toBe('ready')
+    expect(diagnostics.filter((entry) => entry.kind === 'discarded')).toEqual([])
+    expect(test.coordinator.record(id)!.generation).toBe(failedGeneration + 2)
   })
 })

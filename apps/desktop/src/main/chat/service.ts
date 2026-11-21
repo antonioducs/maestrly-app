@@ -2047,14 +2047,18 @@ function defaultSelection(): ChatModelRef | null {
 
 /** A saved provider is still selectable: an existing account, or the active account of an existing provider. */
 function selectableProviderExists(providers: readonly { id: string }[], providerId: string): boolean {
-  return providers.some((p) => p.id === providerId) || (isActiveAccountProviderId(providerId) && !!getProvider(providerId))
+  return (
+    providers.some((p) => p.id === providerId) || (isActiveAccountProviderId(providerId) && !!getProvider(providerId))
+  )
 }
 
 /** The default model chosen in Settings, while its account still exists. */
 function configuredDefaultSelection(providers: readonly { id: string }[]): ChatModelRef | null {
   const savedP = getAppSetting(CHAT_DEFAULT_PROVIDER_KEY)
   const savedM = getAppSetting(CHAT_DEFAULT_MODEL_KEY)
-  return savedP && savedM && selectableProviderExists(providers, savedP) ? { providerId: savedP, modelId: savedM } : null
+  return savedP && savedM && selectableProviderExists(providers, savedP)
+    ? { providerId: savedP, modelId: savedM }
+    : null
 }
 
 /**
@@ -2652,9 +2656,7 @@ function toRequestPayload(req: PermissionRequest): Extract<ChatPermissionEvent, 
       title: req.title,
       resources: req.resources,
       ...(req.preview ? { preview: req.preview } : {}),
-      ...(req.save?.length && !remoteChatPolicy(req.conversationId)
-        ? { allowAlways: true }
-        : {}),
+      ...(req.save?.length && !remoteChatPolicy(req.conversationId) ? { allowAlways: true } : {}),
     },
   }
 }
@@ -7800,7 +7802,7 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
     // the limit itself would reject a summary that followed the instruction.
     const summaryTargetTokens = Math.min(
       compactionSummaryTargetTokens(estimateTextTokens(transcript), contextWindow),
-      opts.summaryMaxTokens ? Math.max(1, Math.floor(opts.summaryMaxTokens / 2)) : Number.POSITIVE_INFINITY
+      opts.summaryMaxTokens ? Math.max(1, Math.floor(opts.summaryMaxTokens / 3)) : Number.POSITIVE_INFINITY
     )
     const compactSystem = `${compactBaseSystem}\n\n${compactionTargetInstruction(summaryTargetTokens)}`
     if (opts.summaryMaxTokens && !contextWindow) throw new Error('summarizer-context-window-unknown')
@@ -11437,23 +11439,38 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
   // Selection (provider/model): global and conversation defaults.
   deps.mhandle('chat:set-default', async (_e, sel: ChatModelRef & { reasoning?: string; fastMode?: boolean }) => {
     if (isGitHubCopilotSubscriptionProvider(sel?.providerId) && sel?.modelId) {
-      const validated = await validateGitHubCopilotModelSelection(sel.modelId, subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId)))
+      const validated = await validateGitHubCopilotModelSelection(
+        sel.modelId,
+        subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId))
+      )
       if (!validated.ok) return validated
     }
     if (isClaudeSubscriptionProvider(sel?.providerId) && sel?.modelId) {
-      const validated = await validateClaudeModelSelection(sel.modelId, subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId)))
+      const validated = await validateClaudeModelSelection(
+        sel.modelId,
+        subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId))
+      )
       if (!validated.ok) return validated
     }
     if (isCursorSubscriptionProvider(sel?.providerId)) {
-      const validated = await validateCursorModelSelection(sel.modelId, subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId)))
+      const validated = await validateCursorModelSelection(
+        sel.modelId,
+        subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId))
+      )
       if (!validated.ok) return validated
     }
     if (isAntigravitySubscriptionProvider(sel?.providerId) && sel?.modelId) {
-      const validated = await validateAntigravityModelSelection(sel.modelId, subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId)))
+      const validated = await validateAntigravityModelSelection(
+        sel.modelId,
+        subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId))
+      )
       if (!validated.ok) return validated
     }
     if (isGrokSubscriptionProvider(sel?.providerId) && sel?.modelId) {
-      const validated = await validateGrokModelSelection(sel.modelId, subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId)))
+      const validated = await validateGrokModelSelection(
+        sel.modelId,
+        subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId))
+      )
       if (!validated.ok) return validated
     }
     if (sel?.providerId) setAppSetting(CHAT_DEFAULT_PROVIDER_KEY, sel.providerId)
@@ -11468,23 +11485,38 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
   deps.mhandle('chat:set-selection', async (_e, conversationId: string, sel: ChatModelRef) => {
     if (typeof conversationId === 'string' && sel?.providerId && sel?.modelId) {
       if (isGitHubCopilotSubscriptionProvider(sel.providerId)) {
-        const validated = await validateGitHubCopilotModelSelection(sel.modelId, subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId)))
+        const validated = await validateGitHubCopilotModelSelection(
+          sel.modelId,
+          subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId))
+        )
         if (!validated.ok) return validated
       }
       if (isClaudeSubscriptionProvider(sel.providerId)) {
-        const validated = await validateClaudeModelSelection(sel.modelId, subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId)))
+        const validated = await validateClaudeModelSelection(
+          sel.modelId,
+          subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId))
+        )
         if (!validated.ok) return validated
       }
       if (isCursorSubscriptionProvider(sel.providerId)) {
-        const validated = await validateCursorModelSelection(sel.modelId, subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId)))
+        const validated = await validateCursorModelSelection(
+          sel.modelId,
+          subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId))
+        )
         if (!validated.ok) return validated
       }
       if (isAntigravitySubscriptionProvider(sel.providerId)) {
-        const validated = await validateAntigravityModelSelection(sel.modelId, subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId)))
+        const validated = await validateAntigravityModelSelection(
+          sel.modelId,
+          subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId))
+        )
         if (!validated.ok) return validated
       }
       if (isGrokSubscriptionProvider(sel.providerId)) {
-        const validated = await validateGrokModelSelection(sel.modelId, subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId)))
+        const validated = await validateGrokModelSelection(
+          sel.modelId,
+          subscriptionAccountId(resolveAccountPoolProviderId(sel.providerId))
+        )
         if (!validated.ok) return validated
       }
       const previous = getConvUiPrefs(conversationId).chat
@@ -11886,9 +11918,7 @@ export async function startConversationDispatchTurn(input: {
       ...(input.visible ? {} : { internal: true }),
       ...(reportBack
         ? {
-            hiddenParts: [
-              conversationLinkFramingPart(tFor(getLocale(), 'prompts')('conversationLink.seedReportBack')),
-            ],
+            hiddenParts: [conversationLinkFramingPart(tFor(getLocale(), 'prompts')('conversationLink.seedReportBack'))],
             // Lazy: the link service depends on this module.
             onOutcome: (outcome: InternalTurnOutcome) =>
               void import('../conversation-link-service')

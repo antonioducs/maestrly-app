@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import { APICallError } from '@ai-sdk/provider'
+import { AcpProcessExitedError } from '../../src/main/chat/acp/client'
+import {
+  AntigravityAccountChangedError,
+  AntigravityApiError,
+  AntigravityAuthRequiredError,
+  AntigravityExecutionError,
+  AntigravityModelUnavailableError,
+  AntigravityPromptTooLargeError,
+  AntigravityRuntimeStoppedError,
+  AntigravityToolsUnavailableError,
+  antigravityApiErrorText,
+} from '../../src/main/chat/antigravity-subscription/errors'
 import { classifyModelFailure, type ModelFailureReason } from '../../src/main/chat/model-fallback/error-classifier'
 import { isContextOverflowText, parseContextLimitFromError } from '../../src/main/chat/model-fallback/overflow'
 import { ClaudeAccountsExhaustedError } from '../../src/main/chat/subscription-failover/claude-ephemeral'
@@ -204,5 +216,134 @@ describe('context overflow detection', () => {
     expect(parseContextLimitFromError('This model has max_model_len=32768')).toEqual({ limit: 32_768 })
     expect(parseContextLimitFromError('max_output_tokens must be at most 4096')).toEqual({})
     expect(parseContextLimitFromError('limit 12 tokens')).toEqual({})
+  })
+})
+
+describe('Antigravity ACP and gRPC failure classification', () => {
+  it('marks transient gRPC statuses and ACP/harness crashes as retryable in place', () => {
+    expect(classifyModelFailure(new AntigravityApiError('Internal error encountered.', 'INTERNAL'))).toMatchObject({
+      reason: 'server_error',
+      retryInPlace: true,
+      fallback: true,
+    })
+    expect(
+      classifyModelFailure(new AntigravityApiError('The service is currently unavailable.', 'UNAVAILABLE'))
+    ).toMatchObject({
+      reason: 'overloaded',
+      retryInPlace: true,
+      fallback: true,
+    })
+    expect(
+      classifyModelFailure(
+        new AntigravityApiError('Deadline expired before operation could complete.', 'DEADLINE_EXCEEDED')
+      )
+    ).toMatchObject({
+      reason: 'timeout',
+      retryInPlace: true,
+      fallback: true,
+    })
+    expect(classifyModelFailure(new AntigravityRuntimeStoppedError())).toMatchObject({
+      reason: 'server_error',
+      retryInPlace: true,
+      fallback: true,
+    })
+    expect(classifyModelFailure(new AntigravityToolsUnavailableError())).toMatchObject({
+      reason: 'server_error',
+      retryInPlace: true,
+      fallback: true,
+    })
+    expect(classifyModelFailure(new AcpProcessExitedError(1, null, 'ACP exited with code 1'))).toMatchObject({
+      reason: 'server_error',
+      retryInPlace: true,
+      fallback: true,
+    })
+    expect(
+      classifyModelFailure(new AntigravityExecutionError('Agent execution error: Harness process exited with code 1'))
+    ).toMatchObject({
+      reason: 'server_error',
+      retryInPlace: true,
+      fallback: true,
+    })
+  })
+
+  it('distinguishes upstream Gemini RESOURCE_EXHAUSTED bursts from exhausted Antigravity period quota', () => {
+    const upstream429 = antigravityApiErrorText('Resource has been exhausted (e.g. check quota).')!
+    expect(classifyModelFailure(upstream429)).toMatchObject({
+      reason: 'rate_limit',
+      retryInPlace: true,
+      fallback: true,
+    })
+
+    const periodQuota = antigravityApiErrorText(
+      'Usage Limit Reached\n\nYou have reached your current quota for this period.'
+    )!
+    expect(classifyModelFailure(periodQuota)).toMatchObject({
+      reason: 'quota',
+      retryInPlace: false,
+      fallback: true,
+    })
+  })
+
+  it('classifies Antigravity auth, model, token-limit and prompt-limit errors accurately', () => {
+    expect(classifyModelFailure(new AntigravityAuthRequiredError())).toMatchObject({
+      reason: 'auth',
+      retryInPlace: false,
+      fallback: true,
+    })
+    expect(classifyModelFailure(new AntigravityAccountChangedError())).toMatchObject({
+      reason: 'auth',
+      retryInPlace: false,
+      fallback: true,
+    })
+    expect(classifyModelFailure(new AntigravityModelUnavailableError('gemini-4-hydrogen'))).toMatchObject({
+      reason: 'model_not_found',
+      retryInPlace: false,
+      fallback: true,
+    })
+    expect(
+      classifyModelFailure(
+        new AntigravityApiError(
+          'The input token count (210000) exceeds the maximum number of tokens allowed (200000).',
+          'TOKEN_LIMIT'
+        )
+      )
+    ).toMatchObject({
+      reason: 'context_overflow',
+      compact: true,
+      retryInPlace: false,
+    })
+    expect(classifyModelFailure(new AntigravityPromptTooLargeError(195_000, 'conversation'))).toMatchObject({
+      reason: 'context_overflow',
+      compact: true,
+      retryInPlace: false,
+    })
+    expect(classifyModelFailure(new AntigravityPromptTooLargeError(195_000, 'setup'))).toMatchObject({
+      reason: 'payload_too_large',
+      compact: false,
+      retryInPlace: false,
+    })
+    expect(
+      classifyModelFailure(new AntigravityApiError('Request contains an invalid argument.', 'INVALID_ARGUMENT'))
+    ).toMatchObject({
+      reason: 'format',
+      retryInPlace: false,
+      fallback: false,
+    })
+    expect(
+      classifyModelFailure(
+        new Error('Compaction wrapper', {
+          cause: new AntigravityApiError('Internal error encountered.', 'INTERNAL'),
+        })
+      )
+    ).toMatchObject({
+      reason: 'server_error',
+      retryInPlace: true,
+      fallback: true,
+    })
+    expect(classifyModelFailure({ lastError: new AntigravityAuthRequiredError() })).toMatchObject({
+      reason: 'auth',
+      retryInPlace: false,
+      fallback: true,
+    })
   })
 })

@@ -324,7 +324,13 @@ function isTerminalSummaryError(error: unknown): boolean {
   const detail = error as { name?: string; status?: unknown; statusCode?: unknown; message?: string } | null
   const status = Number(detail?.statusCode ?? detail?.status)
   if (status >= 400 && status < 500 && ![408, 409, 425, 429].includes(status)) return true
-  if (/AbortError|Config|Authentication|Authorization|Permission|LoadAPIKey/i.test(detail?.name ?? '')) return true
+  if (
+    /AbortError|Config|Auth(?:entication|orization|Required)|AccountChanged|ModelUnavailable|Permission|LoadAPIKey/i.test(
+      detail?.name ?? ''
+    )
+  ) {
+    return true
+  }
   const message = detail?.message ?? String(error)
   return (
     /\b(?:unauthorized|forbidden|not authenticated|no[ -]key|no[ -]model)\b/i.test(message) ||
@@ -362,11 +368,14 @@ function shortenSummaryPrompt(
   maxSummaryTokens: number
 ): string {
   const target = Math.max(1, Math.floor(maxSummaryTokens / 2))
+  const maxChars = maxSummaryTokens * 3
+  const targetChars = target * 3
   return (
-    `${label}: your summary below has about ${oversized.tokens} portable tokens (conservative UTF-8 estimate), ` +
-    `over the limit of ${maxSummaryTokens}. Rewrite it as one shorter summary with the same headings, aiming for ` +
-    `about ${target} and never more than ${maxSummaryTokens} portable tokens. Merge related bullets and drop ` +
-    'low-value detail first; keep pending requests, exact identifiers and errors.\n\n' +
+    `${label}: your summary below has about ${oversized.tokens} portable tokens (${Buffer.byteLength(oversized.text, 'utf8')} UTF-8 bytes), ` +
+    `over the hard limit of ${maxSummaryTokens} portable tokens (${maxChars} characters). Rewrite it as one shorter summary ` +
+    `with the same headings, aiming for about ${target} portable tokens (${targetChars} characters) and strictly under ` +
+    `${maxChars} characters total. Staying under ${maxChars} characters overrides completeness and verbatim quoting: ` +
+    'merge related bullets, deduplicate commands/paths and drop older resolved history first; keep pending requests, exact identifiers and active errors.\n\n' +
     oversized.text
   )
 }
@@ -581,7 +590,7 @@ export async function summarizePortableTranscript(
         })
         let text: string
         const limitInstruction = maxSummaryTokens
-          ? `\nReturn no more than ${maxSummaryTokens} portable tokens (conservative UTF-8 estimate).`
+          ? `\nHard output ceiling: ${maxSummaryTokens} portable tokens (${maxSummaryTokens * 3} characters max).`
           : ''
         const prompt = `${label}:${limitInstruction}\n\n${source[index]}`
         const request =

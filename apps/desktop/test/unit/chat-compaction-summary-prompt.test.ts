@@ -4,6 +4,7 @@ import {
   COMPACTION_SUMMARY_SECTIONS,
   COMPACTION_SYSTEM_PROMPT,
   compactionSummaryTargetTokens,
+  compactionTargetInstruction,
 } from '../../src/main/chat/compaction/summary-prompt'
 import { summarizePortableTranscript, type PortableSummaryCallResult } from '../../src/main/chat/portable-context'
 
@@ -48,6 +49,13 @@ describe('structured compaction summary', () => {
     expect(compactionSummaryTargetTokens(500_000, 100_000)).toBe(5_000)
     expect(compactionSummaryTargetTokens(500_000, 32_000)).toBe(1_600)
     expect(compactionSummaryTargetTokens(500_000)).toBe(10_000)
+  })
+
+  it('expresses target size in both tokens and approximate characters while discouraging duplicate dumps', () => {
+    const instruction = compactionTargetInstruction(4_000)
+    expect(instruction).toContain('4000 tokens')
+    expect(instruction).toContain('12000 characters')
+    expect(instruction).toMatch(/deduplicate/i)
   })
 })
 
