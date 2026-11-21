@@ -1,7 +1,20 @@
 export type { Access, Gate } from './access.js'
 export { type ArtifactAdmin, thumbnailContentType } from './admin.js'
 export * from './bundle-paths.js'
-export type { CommentAnchor, CommentAuthorKind, CommentListInput, CommentView } from './comments.js'
+export type { CommentAnchor, CommentAuthorKind, CommentListInput, CommentView, TokenSuggestion } from './comments.js'
+export {
+  buildTokenEdits,
+  createDesignService,
+  DesignActionError,
+  type DesignErrorCode,
+  type DesignService,
+  formatTokenSummary,
+  type LoadedEditableDesign,
+  type ParsedTokensCss,
+  type ParsedTokenSpan,
+  parseDesignManifest,
+  parseTokensCssWithSpans,
+} from './design.js'
 export { readBundleDirectory } from './directory.js'
 export type { TextEdit } from './edits.js'
 export * from './errors.js'
@@ -23,7 +36,19 @@ export {
   serveAdmin,
 } from './rpc.js'
 export type { ResponseAuthorKind, ResponseData, ResponseListInput, ResponseView } from './responses.js'
-export { ARTIFACT_HEADER, isResponseData } from './shell/contract.js'
+export {
+  ARTIFACT_HEADER,
+  type DesignManifest,
+  type DesignScreen,
+  type DesignToken,
+  isResponseData,
+  type ScreenViewport,
+  type TokenChange,
+  type TokenGroup,
+  type TokenSuggestionChange,
+  type TokenValueKind,
+  type ViewerDesign,
+} from './shell/contract.js'
 export { sameContent } from './schemas.js'
 export type {
   ApplyBoardInput,

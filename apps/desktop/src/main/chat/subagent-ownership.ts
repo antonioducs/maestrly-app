@@ -1,4 +1,5 @@
 import type { ChatExecutionScope, ChatModelRef, ChatUsage } from '../../shared/chat'
+import type { ChatBehavior } from '../../shared/conversation-experience'
 import { getDb } from '../store'
 import { deleteChatMessage, upsertChatMessage } from './chat-store'
 import type { NormalizedAiUsage } from './subagent-runner'
@@ -14,6 +15,7 @@ interface HostManagedMessageArgs {
   conversationId: string
   messageId: string
   model: ChatModelRef
+  mode?: ChatBehavior
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -89,6 +91,7 @@ function persistHostManagedMessage(args: HostManagedMessageArgs): void {
     role: 'assistant',
     parts: [],
     model: args.model,
+    ...(args.mode ? { mode: args.mode } : {}),
     internal: true,
     executionScope,
     createdAt: Date.now(),
@@ -104,6 +107,7 @@ function persistHostManagedBilling(args: HostManagedMessageArgs, outcome: unknow
     role: 'assistant',
     parts: [],
     model: modelOf(outcome, args.model),
+    ...(args.mode ? { mode: args.mode } : {}),
     usage,
     internal: true,
     executionScope: { kind: 'host', executionId: args.messageId },
@@ -116,6 +120,7 @@ export async function withSubagentMessageOwnership<T>(args: {
   conversationId: string
   messageId: string
   model: ChatModelRef
+  mode?: ChatBehavior
   ownership?: SubagentMessageOwnership
   execute: () => Promise<T>
 }): Promise<T> {

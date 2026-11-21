@@ -34,9 +34,16 @@ describe('embedded shell assets', () => {
       'dom.js',
       'responses.js',
       'responses-model.js',
+      'design-ui-model.js',
+      'inspect.js',
+      'screens.js',
+      'tokens.js',
+      'suggestion-ui.js',
       'viewer.css',
     ])
       expect(names).toContain(name)
+    expect(SHELL_FILES['viewer.css'].body).toContain('--select: #2563eb;')
+    expect(SHELL_FILES['viewer.css'].body).toContain('.screen-label.is-compact .screen-size')
     for (const [name, file] of Object.entries(SHELL_FILES)) {
       expect(file.contentType).toBe(
         name.endsWith('.css') ? 'text/css; charset=utf-8' : 'text/javascript; charset=utf-8'
@@ -181,8 +188,13 @@ describe('parseBridgeMessage', () => {
     expect(key('Escape')).toEqual({ type: 'key', key: 'Escape' })
     expect(key('c')).toEqual({ type: 'key', key: 'c' })
     expect(key('f')).toEqual({ type: 'key', key: 'f' })
+    expect(key('i')).toEqual({ type: 'key', key: 'i' })
+    expect(key('s')).toEqual({ type: 'key', key: 's' })
+    expect(key('t')).toEqual({ type: 'key', key: 't' })
     expect(key('Enter')).toBeNull()
     expect(key('C')).toBeNull()
+    expect(key('S')).toBeNull()
+    expect(key('T')).toBeNull()
     expect(parseBridgeMessage({ source: 'maestrly-bridge', type: 'pointer', extra: 1 })).toEqual({ type: 'pointer' })
   })
 

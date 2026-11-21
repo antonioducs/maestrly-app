@@ -9,6 +9,7 @@ const REQUESTS_PER_MINUTE = {
   host: 600,
   artifact: 300,
   session: 120,
+  tokenSave: 20,
   boardHost: 2400,
   boardArtifact: 1200,
   boardSession: 240,

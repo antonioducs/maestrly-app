@@ -47,6 +47,10 @@ jobs:
         run: node scripts/check-commits.mjs --subject-env PR_TITLE
       - name: Test repository policies and documentation
         run: npm run test:policy && npm run test:docs
+      # The artifact host tests the viewer bridge in a real Chromium. Linux runners already ship one.
+      - name: Install the browser for the artifact host tests
+        if: runner.os != 'Linux'
+        run: npm exec --workspace @maestrly/desktop -- playwright install chromium
       - name: Check application
         run: npm run check
 
@@ -125,6 +129,10 @@ jobs:
       - name: Test the Codex runtime integration
         if: matrix.shard == 1
         run: npm run test:unit:codex --workspace @maestrly/desktop
+      # The artifact host tests the viewer bridge in a real Chromium. Linux runners already ship one.
+      - name: Install the browser for the artifact host tests
+        if: matrix.shard == 2 && runner.os != 'Linux'
+        run: npm exec --workspace @maestrly/desktop -- playwright install chromium
       - name: Test the other workspaces and repository policies
         if: matrix.shard == 2
         run: npm test --workspace @maestrly/protocol --workspace @maestrly/bot-fleet-protocol --workspace @maestrly/artifact-host --workspace @maestrly/whiteboard --workspace @maestrly/bot-gateway --workspace @maestrly/mobile && npm run test:policy

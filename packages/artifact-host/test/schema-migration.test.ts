@@ -60,6 +60,39 @@ CREATE INDEX board_elements_rev ON board_elements (artifact_id, rev);
 INSERT INTO artifacts (id, title, owner_kind, owner_id, current_version, created_at, updated_at)
   VALUES ('AAAAAAAAAAAAAAAAAAAAAA', 'Old', 'local', 'local', 1, 1, 1);`
 
+/** A version 4 database with its `comments` table (before `suggestion_json`) and an existing comment row. */
+const V4 = `
+CREATE TABLE host_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+INSERT INTO host_meta VALUES ('schema_version', '4'), ('capability_key', 'a2V5');
+CREATE TABLE artifacts (
+  id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+  owner_kind TEXT NOT NULL CHECK (owner_kind IN ('local', 'device', 'bot')), owner_id TEXT NOT NULL,
+  workspace_id TEXT, conversation_id TEXT, conversation_title TEXT, current_version INTEGER NOT NULL,
+  visibility TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('private', 'people', 'link')),
+  link_expires_at INTEGER, access_code_hash TEXT, comments_enabled INTEGER NOT NULL DEFAULT 1,
+  responses_enabled INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'page' CHECK (kind IN ('page', 'whiteboard')),
+  board_revision INTEGER NOT NULL DEFAULT 0,
+  board_editors TEXT NOT NULL DEFAULT 'owner' CHECK (board_editors IN ('owner', 'people')),
+  versions_visible INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE principals (
+  id TEXT PRIMARY KEY, artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('invited', 'approved', 'guest')),
+  name TEXT NOT NULL DEFAULT '', invite_token_hash TEXT UNIQUE, invite_expires_at INTEGER,
+  created_at INTEGER NOT NULL, revoked_at INTEGER);
+CREATE TABLE comments (
+  id TEXT PRIMARY KEY, artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
+  version INTEGER NOT NULL, parent_id TEXT REFERENCES comments(id) ON DELETE CASCADE,
+  author_kind TEXT NOT NULL CHECK (author_kind IN ('owner', 'agent', 'invited', 'approved', 'guest')),
+  principal_id TEXT REFERENCES principals(id) ON DELETE SET NULL,
+  author_name TEXT NOT NULL, body TEXT NOT NULL, anchor_json TEXT,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved')),
+  created_at INTEGER NOT NULL, deleted_at INTEGER);
+INSERT INTO artifacts (id, title, owner_kind, owner_id, current_version, created_at, updated_at)
+  VALUES ('AAAAAAAAAAAAAAAAAAAAAA', 'Old', 'local', 'local', 1, 1, 1);
+INSERT INTO comments (id, artifact_id, version, parent_id, author_kind, principal_id, author_name, body, anchor_json, status, created_at)
+  VALUES ('CCCCCCCCCCCCCCCCCCCCCC', 'AAAAAAAAAAAAAAAAAAAAAA', 1, NULL, 'owner', NULL, 'Antonio', 'Pre-v5 comment', NULL, 'open', 100);`
+
 let cleanup = () => {}
 afterEach(() => cleanup())
 const fileIn = () => {
@@ -163,6 +196,56 @@ describe('host schema', () => {
         .map(({ cid: _, ...row }) => row)
         .sort((a, b) => String(a.name).localeCompare(String(b.name)))
     expect(columns(db, 'artifacts')).toEqual(columns(fresh, 'artifacts'))
+    fresh.close()
+    other.cleanup()
+    db.close()
+  })
+
+  it('migrates a version 4 database to schema 5, preserving existing comments and adding suggestion_json', () => {
+    const file = fileIn()
+    const old = new DatabaseSync(file)
+    old.exec(V4)
+    old.close()
+    const db = openDatabase(file)
+    expect(meta(db, 'schema_version')).toBe('5')
+    expect(meta(db, 'schema_version')).toBe(String(SCHEMA_VERSION))
+
+    const existing = db
+      .prepare('SELECT id, body, suggestion_json FROM comments WHERE id = ?')
+      .get('CCCCCCCCCCCCCCCCCCCCCC') as Record<string, unknown>
+    expect({ ...existing }).toEqual({
+      id: 'CCCCCCCCCCCCCCCCCCCCCC',
+      body: 'Pre-v5 comment',
+      suggestion_json: null,
+    })
+
+    const suggestionJson = JSON.stringify({
+      file: 'tokens.css',
+      changes: [{ name: '--color-bg', from: '#ffffff', to: '#000000' }],
+      appliedVersion: null,
+    })
+    db.prepare(
+      `INSERT INTO comments (id, artifact_id, version, parent_id, author_kind, principal_id, author_name, body, anchor_json, suggestion_json, status, created_at)
+       VALUES ('DDDDDDDDDDDDDDDDDDDDDD', 'AAAAAAAAAAAAAAAAAAAAAA', 1, NULL, 'invited', NULL, 'Maria', 'Try dark', NULL, ?, 'open', 200)`
+    ).run(suggestionJson)
+    const inserted = db.prepare('SELECT suggestion_json FROM comments WHERE id = ?').get('DDDDDDDDDDDDDDDDDDDDDD') as {
+      suggestion_json: string
+    }
+    expect(JSON.parse(inserted.suggestion_json)).toEqual({
+      file: 'tokens.css',
+      changes: [{ name: '--color-bg', from: '#ffffff', to: '#000000' }],
+      appliedVersion: null,
+    })
+
+    const other = tempDir()
+    const fresh = openDatabase(path.join(other.dir, 'artifacts.sqlite'))
+    const columns = (target: DatabaseSync, table: string) =>
+      target
+        .prepare(`PRAGMA table_info(${table})`)
+        .all()
+        .map(({ cid: _, ...row }) => row)
+        .sort((a, b) => String(a.name).localeCompare(String(b.name)))
+    expect(columns(db, 'comments')).toEqual(columns(fresh, 'comments'))
     fresh.close()
     other.cleanup()
     db.close()

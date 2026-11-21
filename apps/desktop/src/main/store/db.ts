@@ -10,6 +10,7 @@ import { initializeHistoryIndexQueue } from '../chat/history-index/schema'
 import { initializeTurnSnapshotSchema } from '../turn-snapshots/schema'
 import { initializePlanSchema } from '../chat/plans/schema'
 import { initializeRoutineSchema } from '../routines/schema'
+import { isChatBehavior } from '../../shared/chat-mode'
 
 // Use built-in node:sqlite available in the Electron runtime, avoiding an additional native module or ABI
 // rebuild.
@@ -336,6 +337,10 @@ function initializeSchema(): void {
     // its transcript anchor is deleted without making usage depend on conversation lifetime.
     db.exec('ALTER TABLE chat_usage_ledger ADD COLUMN conversation_id TEXT;')
   }
+  if (usageLedgerCols.length > 0 && !usageLedgerCols.some((column) => column.name === 'mode')) {
+    // Nullable so pre-existing ledger entries stay unattributed (unknown) rather than inheriting a mutable preference.
+    db.exec('ALTER TABLE chat_usage_ledger ADD COLUMN mode TEXT;')
+  }
   db.exec(`
     CREATE TABLE IF NOT EXISTS workspaces (
       id            TEXT PRIMARY KEY,
@@ -594,11 +599,13 @@ function initializeSchema(): void {
       conversation_id TEXT,
       provider_id TEXT NOT NULL DEFAULT '',
       model_id    TEXT NOT NULL DEFAULT '',
+      mode        TEXT,
       usage_json  TEXT NOT NULL,
       created_at  INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_chat_usage_ledger_created ON chat_usage_ledger(created_at);
     CREATE INDEX IF NOT EXISTS idx_chat_usage_ledger_conversation ON chat_usage_ledger(conversation_id);
+    CREATE INDEX IF NOT EXISTS idx_chat_usage_ledger_mode ON chat_usage_ledger(mode);
 
     -- SQLite is the persistence boundary: repeated streaming checkpoints upsert snapshots; absent usage
     -- does not create or erase billing. Strip private contextIdentity and guard corrupt JSON in triggers.
@@ -610,7 +617,7 @@ function initializeSchema(): void {
       AND json_type(CASE WHEN json_valid(COALESCE(NEW.meta_json, '')) THEN NEW.meta_json ELSE '{}' END, '$.usage.input') IN ('integer', 'real')
       AND json_type(CASE WHEN json_valid(COALESCE(NEW.meta_json, '')) THEN NEW.meta_json ELSE '{}' END, '$.usage.output') IN ('integer', 'real')
     BEGIN
-      INSERT INTO chat_usage_ledger (message_id, conversation_id, provider_id, model_id, usage_json, created_at)
+      INSERT INTO chat_usage_ledger (message_id, conversation_id, provider_id, model_id, mode, usage_json, created_at)
       VALUES (
         NEW.id,
         NEW.conversation_id,
@@ -624,6 +631,12 @@ function initializeSchema(): void {
           THEN json_extract(NEW.meta_json, '$.model.modelId')
           ELSE ''
         END,
+        CASE
+          WHEN json_type(NEW.meta_json, '$.mode') = 'text'
+            AND json_extract(NEW.meta_json, '$.mode') IN ('agent', 'design', 'plan', 'ask', 'maestro')
+          THEN json_extract(NEW.meta_json, '$.mode')
+          ELSE NULL
+        END,
         json_remove(json_extract(NEW.meta_json, '$.usage'), '$.contextIdentity'),
         NEW.created_at
       )
@@ -631,6 +644,7 @@ function initializeSchema(): void {
         conversation_id = excluded.conversation_id,
         provider_id = excluded.provider_id,
         model_id = excluded.model_id,
+        mode = COALESCE(excluded.mode, chat_usage_ledger.mode),
         usage_json = excluded.usage_json,
         created_at = excluded.created_at;
     END;
@@ -643,7 +657,7 @@ function initializeSchema(): void {
       AND json_type(CASE WHEN json_valid(COALESCE(NEW.meta_json, '')) THEN NEW.meta_json ELSE '{}' END, '$.usage.input') IN ('integer', 'real')
       AND json_type(CASE WHEN json_valid(COALESCE(NEW.meta_json, '')) THEN NEW.meta_json ELSE '{}' END, '$.usage.output') IN ('integer', 'real')
     BEGIN
-      INSERT INTO chat_usage_ledger (message_id, conversation_id, provider_id, model_id, usage_json, created_at)
+      INSERT INTO chat_usage_ledger (message_id, conversation_id, provider_id, model_id, mode, usage_json, created_at)
       VALUES (
         NEW.id,
         NEW.conversation_id,
@@ -657,6 +671,12 @@ function initializeSchema(): void {
           THEN json_extract(NEW.meta_json, '$.model.modelId')
           ELSE ''
         END,
+        CASE
+          WHEN json_type(NEW.meta_json, '$.mode') = 'text'
+            AND json_extract(NEW.meta_json, '$.mode') IN ('agent', 'design', 'plan', 'ask', 'maestro')
+          THEN json_extract(NEW.meta_json, '$.mode')
+          ELSE NULL
+        END,
         json_remove(json_extract(NEW.meta_json, '$.usage'), '$.contextIdentity'),
         NEW.created_at
       )
@@ -664,6 +684,7 @@ function initializeSchema(): void {
         conversation_id = excluded.conversation_id,
         provider_id = excluded.provider_id,
         model_id = excluded.model_id,
+        mode = COALESCE(excluded.mode, chat_usage_ledger.mode),
         usage_json = excluded.usage_json,
         created_at = excluded.created_at;
     END;
@@ -1380,12 +1401,13 @@ function backfillChatUsageLedger(): void {
   if (!rows.length) return
 
   const upsert = db.prepare(
-    `INSERT INTO chat_usage_ledger (message_id, conversation_id, provider_id, model_id, usage_json, created_at)
-     VALUES (?, ?, ?, ?, ?, ?)
+    `INSERT INTO chat_usage_ledger (message_id, conversation_id, provider_id, model_id, mode, usage_json, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(message_id) DO UPDATE SET
        conversation_id = excluded.conversation_id,
        provider_id = excluded.provider_id,
        model_id = excluded.model_id,
+       mode = COALESCE(excluded.mode, chat_usage_ledger.mode),
        usage_json = excluded.usage_json,
        created_at = excluded.created_at`
   )
@@ -1402,6 +1424,7 @@ function backfillChatUsageLedger(): void {
       if (!meta || typeof meta !== 'object' || Array.isArray(meta)) continue
       const source = meta as {
         model?: { providerId?: unknown; modelId?: unknown }
+        mode?: unknown
         usage?: { input?: unknown; output?: unknown }
       }
       const usage = source.usage
@@ -1418,8 +1441,9 @@ function backfillChatUsageLedger(): void {
       }
       const providerId = typeof source.model?.providerId === 'string' ? source.model.providerId : ''
       const modelId = typeof source.model?.modelId === 'string' ? source.model.modelId : ''
+      const mode = isChatBehavior(source.mode) ? source.mode : null
       const { contextIdentity: _private, ...accountingUsage } = usage as Record<string, unknown>
-      upsert.run(row.id, row.conversation_id, providerId, modelId, JSON.stringify(accountingUsage), row.created_at)
+      upsert.run(row.id, row.conversation_id, providerId, modelId, mode, JSON.stringify(accountingUsage), row.created_at)
     }
   })
 }

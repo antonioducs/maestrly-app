@@ -2,6 +2,7 @@ import http from 'node:http'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { type ArtifactAdmin, createArtifactAdmin } from '../src/admin.js'
+import { createDesignService, type DesignService } from '../src/design.js'
 import { ArtifactHostError } from '../src/errors.js'
 import { BRIDGE_SCRIPT, SHELL_VERSION } from '../src/generated/shell-assets.js'
 import { contentHeaders } from '../src/http/headers.js'
@@ -22,6 +23,7 @@ let cleanup: () => void
 let store: ArtifactStore
 let blobs: BlobStore
 let admin: ArtifactAdmin
+let design: DesignService
 let server: PublicServer
 let clock: ReturnType<typeof testClock>
 let port: number
@@ -82,7 +84,16 @@ beforeEach(async () => {
   blobs = new BlobStore(path.join(temp.dir, 'blobs'))
   clock = testClock()
   admin = createArtifactAdmin({ store, blobs, clock: clock.now, quotaBytes: 10 * 1024 * 1024 })
-  server = createPublicServer({ store, blobs, capabilityKey: store.capabilityKey(), clock: clock.now, port: 0 })
+  design = createDesignService({ store, blobs })
+  server = createPublicServer({
+    store,
+    blobs,
+    capabilityKey: store.capabilityKey(),
+    clock: clock.now,
+    port: 0,
+    admin,
+    design,
+  })
   port = await server.listen()
   origin = `http://127.0.0.1:${port}`
   ;({ id } = await admin.create({
@@ -267,6 +278,8 @@ describe('public server', () => {
       capabilityKey: store.capabilityKey(),
       clock: clock.now,
       port,
+      admin,
+      design,
     })
     const error = await second.listen().catch((reason: unknown) => reason)
     expect(error).toBeInstanceOf(ArtifactHostError)

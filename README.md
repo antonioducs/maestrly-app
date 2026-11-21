@@ -119,6 +119,7 @@ To contribute, read [CONTRIBUTING.md](CONTRIBUTING.md) and the
 - [Releasing](docs/releasing.md)
 - [Local data and recovery](docs/local-data.md)
 - [Artifacts](docs/artifacts.md)
+- [Design mode](docs/design-mode.md)
 - [Routines](docs/routines.md)
 - [Context usage and compaction](docs/chat-context.md)
 - [Plugins](docs/plugins.md)

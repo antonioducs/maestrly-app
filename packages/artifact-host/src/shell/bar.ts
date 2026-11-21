@@ -3,6 +3,7 @@ import { avatar } from './avatar.js'
 import { hasVersionChoice } from './bar-model.js'
 import { relativeTime } from './comments-model.js'
 import type { ViewerIdentity, ViewerSharing, ViewerState } from './contract.js'
+import type { DesignView } from './design.js'
 import { copyText, h, put, toast } from './dom.js'
 import { plural, type Translate } from './i18n.js'
 import { icon } from './icons.js'
@@ -12,12 +13,28 @@ import { closePopover, togglePopover } from './popover.js'
 export type Viewport = 'desktop' | 'tablet' | 'phone'
 export const VIEWPORTS: readonly Viewport[] = ['desktop', 'tablet', 'phone']
 
+export interface BarDesignOptions {
+  onToggleScreens(): void
+  onToggleInspect(): void
+  onToggleTokens(): void
+}
+
+export interface BarDesignModel {
+  hasContract: boolean
+  view: DesignView
+  inspecting: boolean
+  tokensOpen: boolean
+  pendingChanges: number
+}
+
 export interface BarOptions {
   t: Translate
   locale: string
   state: ViewerState
   /** False for previews, which show the page alone. */
   comments: boolean
+  /** Present on page artifacts to expose Screens, Inspect, and Tokens in the bar. */
+  design?: BarDesignOptions
   onVersion(version: number): void
   onViewport(viewport: Viewport): void
   onToggleCommenting(): void
@@ -34,6 +51,7 @@ export interface BarModel {
   commenting: boolean
   listOpen: boolean
   openCounts: ReadonlyMap<number, number>
+  design?: BarDesignModel
 }
 
 const iconButton = (name: Parameters<typeof icon>[0], label: string, props: Record<string, string> = {}) => {
@@ -65,9 +83,8 @@ const faceOf = (state: ViewerState, size: number): HTMLElement => {
 export function createBar(options: BarOptions): { root: HTMLElement; update(model: BarModel): void } {
   const { t, locale, state } = options
   const { artifact } = state
-  const total = artifact.currentVersion
-  const multipleVersions = hasVersionChoice(artifact)
   const isOwner = state.identity.kind === 'owner'
+  const showDesign = artifact.kind !== 'whiteboard' && Boolean(options.design)
   let model: BarModel | null = null
   const when = (at: number) => relativeTime(locale, at, Date.now(), t('now'))
 
@@ -81,6 +98,35 @@ export function createBar(options: BarOptions): { root: HTMLElement; update(mode
     h('div', { class: 'doc-text' }, title, meta)
   )
 
+  // Design tools: Screens, Inspect, and Tokens (Inspect stays available on plain pages; whiteboards are unchanged).
+  const designButton = (kind: string, name: Parameters<typeof icon>[0], label: string, onclick: () => void) =>
+    h(
+      'button',
+      { type: 'button', class: `button design-button ${kind}-button`, 'aria-pressed': 'false', onclick },
+      icon(name, 15),
+      h('span', { class: 'button-label' }, label)
+    )
+  const screensButton = showDesign
+    ? designButton('screens', 'screens', t('screens'), () => options.design?.onToggleScreens())
+    : null
+  const inspectButton = showDesign
+    ? designButton('inspect', 'inspect', t('inspect'), () => options.design?.onToggleInspect())
+    : null
+  const pending = h('span', { class: 'count is-pending', hidden: true })
+  const tokensButton = showDesign
+    ? designButton('tokens', 'tokens', t('tokens'), () => options.design?.onToggleTokens())
+    : null
+  if (tokensButton) tokensButton.append(pending)
+  const design =
+    showDesign &&
+    h(
+      'div',
+      { class: 'design', role: 'group', 'aria-label': t('designGroup') },
+      screensButton,
+      inspectButton,
+      tokensButton
+    )
+
   // Which version: step back and forth, or choose from the list.
   const previous = iconButton('left', t('versionPrevious'), { class: 'version-step' })
   const following = iconButton('right', t('versionNext'), { class: 'version-step' })
@@ -89,15 +135,18 @@ export function createBar(options: BarOptions): { root: HTMLElement; update(mode
   const versions = createListbox({
     label: t('versionList'),
     className: 'version-current',
-    trigger: (item) => [
-      h('span', { class: 'version-number' }, item?.badge ?? ''),
-      h(
-        'span',
-        { class: 'version-tag' },
-        item?.value === String(total) ? t('versionCurrent') : t('versionOf', { total })
-      ),
-    ],
-    triggerLabel: (item) => t('versionTrigger', { n: item?.value ?? '', total }),
+    trigger: (item) => {
+      const total = artifact.currentVersion
+      return [
+        h('span', { class: 'version-number' }, item?.badge ?? ''),
+        h(
+          'span',
+          { class: 'version-tag' },
+          item?.value === String(total) ? t('versionCurrent') : t('versionOf', { total })
+        ),
+      ]
+    },
+    triggerLabel: (item) => t('versionTrigger', { n: item?.value ?? '', total: artifact.currentVersion }),
     onChange: (value) => options.onVersion(Number(value)),
   })
   const version = h(
@@ -189,7 +238,7 @@ export function createBar(options: BarOptions): { root: HTMLElement; update(mode
         el,
         item('reload', t('reloadPage'), options.onReload),
         item('full', t('fullScreen'), options.onFullScreen, 'F'),
-        multipleVersions && item('copy', t('copyVersionLink'), options.onCopyVersionLink)
+        hasVersionChoice(artifact) && item('copy', t('copyVersionLink'), options.onCopyVersionLink)
       )
       el.addEventListener('keydown', (event) => {
         if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
@@ -240,19 +289,24 @@ export function createBar(options: BarOptions): { root: HTMLElement; update(mode
     })
   )
 
+  const tools = h('div', { class: 'tools' }, options.comments && segment, comments, share, more, identity)
   const root = h(
     'header',
     { class: 'bar' },
-    doc,
-    multipleVersions && version,
-    h('div', { class: 'tools' }, options.comments && segment, comments, share, more, identity)
+    design ? h('div', { class: 'bar-start' }, doc, design) : doc,
+    hasVersionChoice(artifact) && version,
+    tools
   )
 
   return {
     root,
     update(view) {
       model = view
-      const current = artifact.versions.find((item) => item.number === artifact.currentVersion)
+      const total = artifact.currentVersion
+      const multipleVersions = hasVersionChoice(artifact)
+      if (multipleVersions && !version.isConnected) tools.before(version)
+      else if (!multipleVersions && version.isConnected) version.remove()
+      const current = artifact.versions.find((item) => item.number === total)
       const updated = when(current?.createdAt ?? Date.now())
       meta.textContent = isOwner
         ? t('metaOwner', { when: updated })
@@ -282,9 +336,34 @@ export function createBar(options: BarOptions): { root: HTMLElement; update(mode
         following.disabled = view.version >= total
       }
 
+      const designState = view.design
+      const screensView = designState?.view === 'screens'
+      if (screensButton && inspectButton && tokensButton) {
+        const hasContract = Boolean(designState?.hasContract)
+        screensButton.hidden = !hasContract
+        tokensButton.hidden = !hasContract
+        screensButton.setAttribute('aria-pressed', String(screensView))
+        screensButton.title = t('screensTitle')
+        inspectButton.setAttribute('aria-pressed', String(Boolean(designState?.inspecting) && !screensView))
+        inspectButton.disabled = screensView
+        inspectButton.title = screensView ? t('inspectOffScreens') : t('inspectTitle')
+        tokensButton.setAttribute('aria-pressed', String(Boolean(designState?.tokensOpen)))
+        const changes = designState?.pendingChanges ?? 0
+        pending.hidden = changes === 0
+        pending.textContent = String(changes)
+        tokensButton.title = changes ? plural(t, changes, 'tokensPendingOne', 'tokensPendingMany') : t('tokensTitle')
+      }
+
+      segment.hidden = screensView
       for (const [index, button] of widths.entries())
         button.setAttribute('aria-pressed', String(VIEWPORTS[index] === view.viewport))
-      commentButton.setAttribute('aria-pressed', String(view.commenting))
+      commentButton.setAttribute('aria-pressed', String(view.commenting && !screensView))
+      commentButton.disabled = !state.can.comment || screensView
+      commentButton.title = !state.can.comment
+        ? t('commentsOff')
+        : screensView
+          ? t('commentOffScreens')
+          : t('commentModeTitle')
       listButton.setAttribute('aria-pressed', String(view.listOpen))
       const open = view.openCounts.get(view.version) ?? 0
       count.textContent = String(open)

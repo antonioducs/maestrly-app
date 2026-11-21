@@ -7,16 +7,23 @@ import { type CommentsController, createComments } from './comments.js'
 import {
   type BridgeMessage,
   CONTENT_SANDBOX,
+  type DesignScreen,
   type FrameResponse,
   parseBridgeMessage,
+  type PublicComment,
   type ViewerState,
 } from './contract.js'
+import { createDesignController, type DesignController } from './design.js'
+import { describeDraftChanges, describeSuggestionChanges, viewportKindOf } from './design-ui-model.js'
 import { copyText, h, toast } from './dom.js'
 import { showEntry } from './gate.js'
 import { entryScreen, hasAccess, type LinkFragment, parseFragment } from './gate-model.js'
 import { format, pickLocale, type ShellKey } from './i18n.js'
+import { createInspectView, type InspectView } from './inspect.js'
 import { closePopover, popoverOpen } from './popover.js'
 import { createResponses } from './responses.js'
+import { createScreensSurface, type ScreensSurface } from './screens.js'
+import { createTokensPanel, openTokenSaveDialog, type TokenSaveDialog, type TokensPanel } from './tokens.js'
 
 const VIEWER_PATH = /^\/a\/([A-Za-z0-9_-]{22})$/
 /** How often a reader without earlier versions checks whether a newer one replaced the page on screen. */
@@ -37,11 +44,18 @@ const unavailable = () => showMessage(t('notAvailable'), t('notAvailableDetail')
 
 function renderViewer(api: ArtifactApi, state: ViewerState, initialVersion: number, preview: boolean): void {
   const { artifact } = state
-  const current = artifact.currentVersion
+  let current = artifact.currentVersion
   let version = initialVersion
   let viewport: Viewport = 'desktop'
   let full = false
   let comments: CommentsController | null = null
+  let design: DesignController | null = null
+  let inspectView: InspectView | null = null
+  let tokensPanel: TokensPanel | null = null
+  let screensSurface: ScreensSurface | null = null
+  let screensSurfaceVersion = -1
+  let activeDialog: TokenSaveDialog | null = null
+  let lastInspectedSelector: string | null = null
   // A newer version replaced the one on screen for a reader who cannot open earlier ones: only reloading shows it.
   let replaced = false
   // A whiteboard's canvas fills the frame: comments are about the whole board, never a spot in it.
@@ -73,13 +87,54 @@ function renderViewer(api: ArtifactApi, state: ViewerState, initialVersion: numb
   float.append(exitFull)
   const stage = h('main', { class: 'stage', 'data-viewport': viewport }, device, float)
   const list = h('aside', { class: 'list', 'aria-label': t('listTitle'), hidden: true })
+  const side = h('aside', { class: 'side', hidden: true })
   const notice = h('div', { class: 'notice', role: 'status', hidden: true })
+
+  function applyScreenViewport(screen: DesignScreen): void {
+    const next = viewportKindOf(screen.viewport)
+    if (next === viewport) return
+    viewport = next
+    stage.dataset.viewport = next
+  }
+
+  function toggleScreens(): void {
+    if (!design) return
+    const snap = design.snapshot()
+    if (!snap.design) return
+    const entering = snap.view !== 'screens'
+    if (entering) {
+      comments?.setCommenting(false)
+      comments?.escape()
+    }
+    design.setView(entering ? 'screens' : 'page')
+    if (entering) screensSurface?.surface.focus({ preventScroll: true })
+  }
+
+  function toggleInspect(): void {
+    if (!design) return
+    const snap = design.snapshot()
+    if (snap.view === 'screens') return
+    design.setInspecting(!snap.inspecting)
+  }
+
+  function toggleTokens(): void {
+    if (!design) return
+    const snap = design.snapshot()
+    if (!snap.design && !snap.loading && !snap.loadError) return
+    const opening = !snap.tokensOpen
+    if (opening) comments?.setList(false)
+    design.setTokensOpen(opening)
+  }
 
   const bar = createBar({
     t,
     locale,
     state,
     comments: !preview,
+    design:
+      !whiteboard && !preview
+        ? { onToggleScreens: toggleScreens, onToggleInspect: toggleInspect, onToggleTokens: toggleTokens }
+        : undefined,
     onVersion: (next) => setVersion(next),
     onViewport: (next) => {
       viewport = next
@@ -87,7 +142,15 @@ function renderViewer(api: ArtifactApi, state: ViewerState, initialVersion: numb
       sync()
     },
     onToggleCommenting: () => toggleCommenting(),
-    onToggleList: () => comments?.setList(!comments.listOpen),
+    onToggleList: () => {
+      if (!comments) return
+      const opening = !comments.listOpen
+      if (opening) {
+        design?.setTokensOpen(false)
+        design?.clearSelection()
+      }
+      comments.setList(opening)
+    },
     onReload: () => void load(version),
     onFullScreen: () => setFull(true),
     onCopyVersionLink: async () => {
@@ -100,15 +163,64 @@ function renderViewer(api: ArtifactApi, state: ViewerState, initialVersion: numb
     },
   })
 
-  app.replaceChildren(bar.root, notice, h('div', { class: 'workspace' }, stage, list))
+  app.replaceChildren(bar.root, notice, h('div', { class: 'workspace' }, stage, list, side))
 
   function sync(): void {
+    const snap = design?.snapshot() ?? null
+    if (snap) {
+      const nextSel = snap.inspected ? `${snap.inspected.selector}\n${snap.inspected.component ?? ''}` : null
+      if (nextSel !== lastInspectedSelector) {
+        lastInspectedSelector = nextSel
+        if (nextSel !== null) {
+          if (comments?.listOpen) comments.setList(false)
+          if (snap.tokensOpen) design?.setTokensOpen(false)
+        }
+      }
+      const isScreens = snap.view === 'screens' && Boolean(snap.design)
+      device.hidden = isScreens
+      if (isScreens) {
+        if (!screensSurface || screensSurfaceVersion !== snap.version) {
+          screensSurface?.destroy()
+          screensSurface = createScreensSurface({
+            t,
+            controller: design!,
+            stage,
+            float,
+            onScreenOpened: applyScreenViewport,
+          })
+          screensSurfaceVersion = snap.version
+        }
+        screensSurface.sync(snap)
+        screensSurface.renderControls(snap)
+      } else if (screensSurface) {
+        screensSurface.destroy()
+        screensSurface = null
+        screensSurfaceVersion = -1
+      }
+      if (snap.tokensOpen) {
+        inspectView?.render(snap)
+        tokensPanel?.render(snap)
+      } else {
+        tokensPanel?.render(snap)
+        inspectView?.render(snap)
+      }
+      comments?.refreshView()
+    }
     bar.update({
       version,
       viewport,
       commenting: comments?.commenting ?? false,
       listOpen: comments?.listOpen ?? false,
       openCounts: comments?.openCounts() ?? new Map(),
+      design: snap
+        ? {
+            hasContract: Boolean(snap.design || snap.tokensOpen || snap.loadError),
+            view: snap.view,
+            inspecting: snap.inspecting,
+            tokensOpen: snap.tokensOpen,
+            pendingChanges: snap.draftChanges.length,
+          }
+        : undefined,
     })
     notice.hidden = !replaced && version === current
     if (notice.hidden) return
@@ -152,6 +264,7 @@ function renderViewer(api: ArtifactApi, state: ViewerState, initialVersion: numb
       const body = (await response.json()) as Partial<FrameResponse>
       if (typeof body.url !== 'string' || !body.url.startsWith('/c/')) throw new Error('Unexpected frame response')
       frame.src = body.url
+      void design?.setVersion(number, body.url, body.expiresAt)
     } catch {
       failure.hidden = false
     }
@@ -184,6 +297,92 @@ function renderViewer(api: ArtifactApi, state: ViewerState, initialVersion: numb
     void load(next)
   }
 
+  async function editSuggestion(comment: PublicComment): Promise<void> {
+    if (!design || !comment.suggestion) return
+    comments?.escape()
+    comments?.setList(false)
+    await design.editSuggestionInTokens(comment.suggestion.changes)
+    toast(t('suggestionEdited', { author: comment.author.name.split(' ')[0] || comment.author.name }))
+  }
+
+  function openSaveDialog(): void {
+    if (!design) return
+    const snap = design.snapshot()
+    if (!snap.design) return
+    const changes = describeDraftChanges(snap.design, snap.draftChanges)
+    if (changes.length === 0) return
+    activeDialog?.close()
+    activeDialog = openTokenSaveDialog({
+      t,
+      kind: 'save',
+      nextVersion: current + 1,
+      tokenFile: snap.design.tokenFile,
+      changes,
+      onConfirm: async () => {
+        const res = await design!.saveTokens()
+        if (res.ok) return { outcome: 'done', savedVersion: res.version.number }
+        if (res.error === 'version_conflict' && res.currentVersion !== undefined) {
+          if (res.currentVersion > current) {
+            current = res.currentVersion
+            sync()
+          }
+          return { outcome: 'conflict', currentVersion: res.currentVersion }
+        }
+        return { outcome: 'failed' }
+      },
+      onRebase: async (nextVersion) => {
+        await design!.rebaseTokensToVersion(nextVersion)
+      },
+      onClose: () => {
+        activeDialog = null
+      },
+    })
+  }
+
+  function openApplyDialog(comment: PublicComment): void {
+    if (!design || !comment.suggestion) return
+    const snap = design.snapshot()
+    if (!snap.design) return
+    const changes = describeSuggestionChanges(snap.design, comment.suggestion.changes)
+    if (changes.length === 0) return
+    activeDialog?.close()
+    activeDialog = openTokenSaveDialog({
+      t,
+      kind: 'apply',
+      nextVersion: current + 1,
+      tokenFile: snap.design.tokenFile,
+      authorName: comment.author.name,
+      changes,
+      onConfirm: async () => {
+        const res = await design!.applySuggestion(comment.id)
+        if (res.ok) {
+          comments?.ingestComment(res.comment, true)
+          return { outcome: 'done', savedVersion: res.version.number }
+        }
+        if (res.error === 'suggestion_conflict') {
+          return { outcome: 'stale', staleNames: res.staleTokens ? [...res.staleTokens] : undefined }
+        }
+        if (res.error === 'version_conflict' && res.currentVersion !== undefined) {
+          if (res.currentVersion > current) {
+            current = res.currentVersion
+            sync()
+          }
+          return { outcome: 'conflict', currentVersion: res.currentVersion }
+        }
+        return { outcome: 'failed' }
+      },
+      onRebase: async (nextVersion) => {
+        await design!.rebaseTokensToVersion(nextVersion)
+      },
+      onEditInTokens: () => {
+        void editSuggestion(comment)
+      },
+      onClose: () => {
+        activeDialog = null
+      },
+    })
+  }
+
   if (!preview)
     comments = createComments({
       api,
@@ -199,6 +398,27 @@ function renderViewer(api: ArtifactApi, state: ViewerState, initialVersion: numb
       onChange: sync,
       onShowVersion: setVersion,
       onReplaced: showReplaced,
+      suggestions: !whiteboard
+        ? {
+            getDesign: () => design?.snapshot().design ?? null,
+            getPreviewingCommentId: () => design?.snapshot().previewingCommentId ?? null,
+            getDraftChanges: () => {
+              const snap = design?.snapshot()
+              return snap?.design ? describeDraftChanges(snap.design, snap.draftChanges) : []
+            },
+            onTogglePreview: (comment) => {
+              if (!design || !comment.suggestion) return
+              const previewing = design.snapshot().previewingCommentId === comment.id
+              design.previewSuggestion(
+                previewing ? null : comment.id,
+                previewing ? undefined : comment.suggestion.changes
+              )
+            },
+            onApply: (comment) => openApplyDialog(comment),
+            onEditInTokens: (comment) => void editSuggestion(comment),
+            onSubmitSuggestion: (body, guestName) => design!.suggestTokens(body, guestName),
+          }
+        : undefined,
     })
 
   const responses = createResponses({
@@ -215,19 +435,82 @@ function renderViewer(api: ArtifactApi, state: ViewerState, initialVersion: numb
     ? createBoardSync({ api, frame, preview, onLost: () => showMessage(t('boardLost'), t('boardLostDetail')) })
     : null
 
+  if (!whiteboard && !preview) {
+    design = createDesignController({
+      api,
+      state,
+      stageFrame: frame,
+      version,
+      preview,
+      onChange: sync,
+      onDisableCommenting: () => comments?.setCommenting(false),
+      onVersionCreated: (nextVersion) => {
+        current = nextVersion.number
+        version = nextVersion.number
+        comments?.setVersion(nextVersion.number)
+        sync()
+        void load(nextVersion.number)
+      },
+      onVersionSynced: (nextVersion, latestCurrent) => {
+        if (latestCurrent > current) current = latestCurrent
+        version = nextVersion
+        comments?.setVersion(nextVersion)
+        sync()
+      },
+      onReplaced: showReplaced,
+      onIdentityChanged: sync,
+    })
+    inspectView = createInspectView({
+      t,
+      controller: design,
+      stage,
+      overlay,
+      float,
+      side,
+      onOpenToken: (name) => {
+        comments?.setList(false)
+        tokensPanel?.focusToken(name)
+      },
+      onScreenOpened: applyScreenViewport,
+    })
+    tokensPanel = createTokensPanel({
+      t,
+      state,
+      controller: design,
+      side,
+      onRequestSave: openSaveDialog,
+      onRequestSuggest: () => {
+        comments?.openSuggestDraft()
+      },
+    })
+  }
+
   function toggleCommenting(): void {
     if (!comments) return
+    if (design?.snapshot().view === 'screens') return
     if (whiteboard) comments.setList(!comments.listOpen)
-    else comments.setCommenting(!comments.commenting)
+    else {
+      const next = !comments.commenting
+      if (next) design?.setInspecting(false)
+      comments.setCommenting(next)
+    }
   }
 
   function onKey(key: string): void {
     if (key === 'Escape') {
       if (popoverOpen()) closePopover()
+      else if (design?.snapshot().view === 'screens' && design.snapshot().focusedScreenId && screensSurface) {
+        screensSurface.focus(null)
+      } else if (comments?.hasCard) {
+        comments.escape()
+      } else if (design?.escape()) return
       else if (comments?.escape()) return
       else if (full) setFull(false)
     } else if (key === 'c') toggleCommenting()
     else if (key === 'f') setFull(!full)
+    else if (key === 'i') toggleInspect()
+    else if (key === 's') toggleScreens()
+    else if (key === 't') toggleTokens()
   }
 
   function onMessage(message: BridgeMessage): void {
@@ -243,23 +526,48 @@ function renderViewer(api: ArtifactApi, state: ViewerState, initialVersion: numb
   }
 
   window.addEventListener('message', (event) => {
-    if (event.source !== frame.contentWindow) return
     const message = parseBridgeMessage(event.data)
-    if (message) onMessage(message)
+    if (!message) return
+    const target = design
+      ? design.routeMessage(event.source, message)
+      : event.source === frame.contentWindow
+        ? 'stage'
+        : null
+    if (target === 'screen') {
+      if (
+        message.type === 'key' &&
+        (message.key === 'Escape' || message.key === 's' || message.key === 't' || message.key === 'f')
+      ) {
+        onKey(message.key)
+      }
+      return
+    }
+    if (target === 'stage') onMessage(message)
   })
   window.addEventListener('keydown', (event) => {
     if (event.metaKey || event.ctrlKey || event.altKey) return
-    const typing = event.target instanceof Element && event.target.closest('input, textarea') !== null
+    const typing =
+      (event.target instanceof HTMLElement && event.target.isContentEditable) ||
+      (event.target instanceof Element &&
+        event.target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])') !== null)
+    const lower = event.key.length === 1 ? event.key.toLowerCase() : event.key
     if (event.key === 'Escape') onKey('Escape')
-    else if (!typing && (event.key === 'c' || event.key === 'f')) onKey(event.key)
+    else if (!typing && (lower === 'c' || lower === 'f' || lower === 'i' || lower === 's' || lower === 't'))
+      onKey(lower)
   })
   // A press beside the page, around it, closes the conversation that is open.
   stage.addEventListener('pointerdown', (event) => {
     if (event.target === stage || event.target === float) comments?.escape()
   })
   // The page measures itself when its frame changes size; asking again covers a frame the browser is not painting.
-  new ResizeObserver(() => comments?.relayout()).observe(device)
-  device.addEventListener('transitionend', () => comments?.relayout())
+  const relayoutOverlays = () => {
+    comments?.relayout()
+    if (design) inspectView?.renderOverlay(design.snapshot())
+  }
+  new ResizeObserver(relayoutOverlays).observe(device)
+  device.addEventListener('transitionend', (event) => {
+    if (event.target === device) relayoutOverlays()
+  })
 
   sync()
   void load(version)

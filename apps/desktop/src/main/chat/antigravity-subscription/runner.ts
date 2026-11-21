@@ -241,6 +241,7 @@ export async function runAntigravitySubscriptionChat(
       role: 'assistant',
       parts: [],
       model: args.selection,
+      mode: args.mode,
       ...(args.messageMeta ?? {}),
       createdAt,
     },

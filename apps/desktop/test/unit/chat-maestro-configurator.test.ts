@@ -269,10 +269,11 @@ describe('Maestro configurator service', () => {
         expect.objectContaining({ kind: 'completed' }),
       ])
     )
-    expect(getDb().prepare('SELECT conversation_id, provider_id, model_id FROM chat_usage_ledger').get()).toEqual({
+    expect(getDb().prepare('SELECT conversation_id, provider_id, model_id, mode FROM chat_usage_ledger').get()).toEqual({
       conversation_id: null,
       provider_id: 'provider-1',
       model_id: 'fable',
+      mode: 'maestro',
     })
     expect(getDb().prepare('SELECT COUNT(*) AS count FROM conversations').get()).toEqual({ count: 0 })
     expect(aggregateChatUsage()).toMatchObject({

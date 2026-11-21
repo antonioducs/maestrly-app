@@ -359,6 +359,95 @@ never starts an agent by itself.
 readable and nobody can add more from the viewer. An artifact holds up to 2,000
 comments of up to 4,000 characters each.
 
+## Design tools
+
+Page artifacts whose current version includes a valid `maestrly-design.json`
+manifest (see [Design mode](design-mode.md#prototype-contract)) unlock three
+design-review tools in the viewer's top bar: **Screens** (**S**), **Inspect**
+(**I**), and **Tokens** (**T**). **Inspect** is also available on plain HTML
+artifacts without a manifest, showing computed styles for any element on the
+page.
+
+### Inspect
+
+Turn on **Inspect** (or press **I**) to hover and select elements on the page
+without triggering links or buttons; **Esc** clears the selection or leaves
+Inspect mode. When an element belongs to a component (`data-ds`), the side panel
+shows its name, whether it is an instance or the main component, parent
+component breadcrumbs, declared properties (`data-ds-props`), the CSS tokens it
+reads, and its computed styles. Clicking any token jumps straight to that token
+in the **Tokens** panel.
+
+From a component instance, **Go to main component** opens the artifact's
+`components` page, scrolls to the main definition, lists its variants, and
+counts how many times the component is used on each declared screen. Clicking a
+screen in the usage list highlights every matching instance on that screen;
+**Back to …** returns to the screen and element you came from.
+
+> Local stylesheets must load with `crossorigin`
+> (`<link rel="stylesheet" href="…" crossorigin>`), or inline `<style>`. Because
+> the artifact frame runs in an opaque sandbox origin, Inspect cannot read
+> `cssRules` from local `<link rel="stylesheet">` tags without `crossorigin` to
+> detect which tokens an element uses.
+
+### Screens
+
+Turn on **Screens** (or press **S**) to view every screen listed in
+`maestrly-design.json` on a pannable, zoomable canvas at its declared desktop,
+tablet, or mobile viewport size. Click a screen to focus it, double-click or
+press **Enter** to open it on the main stage, and use the zoom controls or
+**Fit all** to navigate. Live token edits and theme switches update the visible
+screens on the canvas at the same time as the main stage.
+
+### Tokens and themes
+
+Open **Tokens** (or press **T**) to browse and edit the CSS custom properties
+defined in the artifact's first tokens stylesheet, grouped by category (color,
+font, text, spacing, radius, shadow, duration, easing, other) with search,
+inline color pickers, and arrow-key numeric stepping. When the tokens file
+declares theme overrides (such as `[data-theme="dark"]`, `.theme-dark`, or
+`@media (prefers-color-scheme: dark)`), a theme selector switches between the
+base tokens and each theme, previewing the theme's effective values live on the
+page and across Screens. Changes remain local to your browser until you save or
+suggest them, and can be reset individually or discarded all at once.
+
+### Saving token edits as a version
+
+As the artifact owner, **Save as version N** writes your edited token values
+back into the tokens stylesheet and creates a new immutable artifact version
+without leaving the viewer. Saving checks that you are still on the latest
+version: if a newer version was published meanwhile, the viewer lets you rebase
+your draft onto the latest version and marks any tokens whose underlying value
+changed since you started editing.
+
+### Token suggestions
+
+People who have access to a shared artifact (when comments are enabled) can
+also try token edits live and click **Suggest changes** to attach their diff to
+a comment thread. Leaving the comment text empty automatically creates the body
+`Tokens: --name old → new` summarizing the proposed changes.
+
+In the comment thread, anyone can toggle **Preview** to test the suggested
+values live on the page without changing the artifact. The owner can click
+**Apply** to save the suggestion as a new version and automatically resolve the
+thread. If a newer version already changed one of the suggested tokens to a
+different value, the viewer flags the stale token and offers **Edit in Tokens**
+so the owner can reconcile and save manually.
+
+When an agent reads threads via `artifact_comments`, root comments that carry a
+token suggestion expose a structured `suggestion` field:
+
+```json
+{
+  "file": "tokens.css",
+  "changes": [{ "name": "--color-accent", "from": "#B4532A", "to": "#0F766E", "theme": "dark" }],
+  "appliedVersion": 4
+}
+```
+
+`theme` is present only for theme-scoped token changes, and `appliedVersion` is
+`null` until the suggestion has been applied.
+
 ## Responses
 
 A page can collect one response from each person who opens it, such as the

@@ -1918,6 +1918,1457 @@ body.is-full .notice {
   gap: 8px;
 }
 
+/* Design mode v2 in the viewer: Inspect, Screens and Tokens. Only new rules; everything else comes from viewer.css,
+   whose variables and conventions these follow. Ready to be appended to packages/artifact-host/src/shell/viewer.css. */
+:root {
+  /* What Inspect points at and selects: readable on light and dark pages, and white text on it passes 4.5:1. */
+  --select: #2563eb;
+  --select-ink: #8fb3ff;
+  --select-soft: rgba(37, 99, 235, 0.14);
+  /* Token changes that are only a preview. */
+  --pending: rgba(242, 180, 92, 0.18);
+}
+
+/* ---------------------------------------------------------------- top bar: the design tools */
+.bar-start {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.bar-start .doc {
+  flex: 0 1 auto;
+}
+
+.design {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  padding-left: 10px;
+  border-left: 1px solid var(--line);
+}
+
+.design-button.button {
+  gap: 6px;
+  padding: 0 9px;
+  border-color: transparent;
+  color: var(--ink-2);
+}
+
+.design-button.button:hover:not(:disabled) {
+  color: var(--ink);
+}
+
+.design-button[aria-pressed='true'] {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--ink);
+}
+
+/* Inspect is a mode, like Comment: on, it is filled. */
+.inspect-button[aria-pressed='true'] {
+  border-color: var(--cream);
+  background: var(--cream);
+  color: var(--on-cream);
+}
+
+.inspect-button[aria-pressed='true']:hover:not(:disabled) {
+  background: #fffdf8;
+  color: var(--on-cream);
+}
+
+.count.is-pending {
+  background: var(--pending);
+  color: var(--warn);
+}
+
+/* ---------------------------------------------------------------- Inspect on the page */
+.stage.is-inspecting .device::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 2px var(--select);
+}
+
+.inspect-box {
+  --x: 0px;
+  --y: 0px;
+  --w: 0px;
+  --h: 0px;
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: var(--w);
+  height: var(--h);
+  border: 1px solid var(--select);
+  border-radius: 2px;
+  pointer-events: none;
+  transition-property: none;
+  transform: translate(var(--x), var(--y));
+}
+
+.inspect-box.is-selected {
+  border-width: 2px;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.75);
+}
+
+.inspect-box.is-match {
+  border-style: dashed;
+  background: var(--select-soft);
+}
+
+.inspect-tag {
+  --x: 0px;
+  --y: 0px;
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--select);
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
+  transition-property: none;
+  transform: translate(var(--x), var(--y));
+}
+
+.inspect-tag-size {
+  color: rgba(255, 255, 255, 0.78);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.inspect-tag.is-element {
+  background: var(--bar);
+  color: var(--cream);
+}
+
+.inspect-tag.is-element .inspect-tag-size {
+  color: var(--mute);
+}
+
+/* Back to the screen the main component was reached from. */
+.page-chip {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px 0 8px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--bar);
+  color: var(--cream);
+  font-weight: 500;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+  animation: fade 0.16s var(--ease);
+}
+
+.page-chip:hover {
+  background: #2a2b2f;
+}
+
+/* ---------------------------------------------------------------- side panels: Inspect and Tokens */
+.side {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  width: 340px;
+  min-height: 0;
+  border-left: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.side-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  min-height: 56px;
+  padding: 8px 8px 8px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.side-mark {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--select-soft);
+  color: var(--select-ink);
+}
+
+.side-mark.is-element {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--ink-2);
+}
+
+.side-mark.is-tokens {
+  background: rgba(237, 234, 227, 0.09);
+  color: var(--cream);
+}
+
+.side-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.side-title h2 {
+  margin: 0;
+  overflow: hidden;
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.005em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.side-sub {
+  margin: 1px 0 0;
+  overflow: hidden;
+  color: var(--mute);
+  font-size: 11.5px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.side-body {
+  flex: 1;
+  min-height: 0;
+  padding-bottom: 14px;
+  overflow-y: auto;
+}
+
+.side-section {
+  padding: 14px 14px 2px;
+}
+
+.side-section + .side-section {
+  margin-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.side-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+  color: var(--mute);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.side-heading .tab-count {
+  margin-left: auto;
+}
+
+.side-note {
+  margin: 0 0 10px;
+  color: var(--mute);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.side-note.is-warn {
+  color: var(--warn);
+}
+
+.side-foot {
+  flex: none;
+  margin: 0;
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+  color: var(--mute);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.side-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 12px 0 0 10px;
+  font-size: 12px;
+}
+
+/* Components around the selection, outermost first. */
+.inspect-path {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  margin: 0 0 12px -6px;
+  color: var(--mute);
+  font-size: 12px;
+}
+
+.inspect-crumb {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--ink-2);
+  font-weight: 500;
+}
+
+.inspect-crumb:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.inspect-crumb[aria-current='true'] {
+  color: var(--ink);
+  font-weight: 600;
+  cursor: default;
+}
+
+.inspect-crumb[aria-current='true']:hover {
+  background: none;
+}
+
+.go-main.button {
+  width: 100%;
+  justify-content: flex-start;
+}
+
+.go-main svg:first-child {
+  color: var(--select-ink);
+}
+
+.go-main svg:last-child {
+  margin-left: auto;
+  color: var(--mute);
+}
+
+/* Properties and computed styles: a name and a value to copy. */
+.props {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+}
+
+.prop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 28px;
+}
+
+.prop dt {
+  flex: none;
+  color: var(--ink-2);
+  font-size: 12.5px;
+}
+
+.prop dd {
+  display: flex;
+  flex: 1;
+  justify-content: flex-end;
+  min-width: 0;
+  margin: 0;
+}
+
+.prop-chip {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--ink);
+  font: 500 11.5px/18px var(--mono);
+}
+
+.value {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  max-width: 100%;
+  height: 24px;
+  margin-right: -7px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--ink);
+  font: 11.5px var(--mono);
+}
+
+.value:hover {
+  background: var(--hover);
+}
+
+.value-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.swatch {
+  --swatch: transparent;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  background: var(--swatch);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2);
+}
+
+.swatch.is-clear {
+  background: repeating-conic-gradient(#3a3b40 0 25%, #26272b 0 50%) 0 0 / 8px 8px;
+}
+
+/* The tokens an element uses; each opens in Tokens. */
+.token-uses {
+  display: grid;
+  gap: 1px;
+  margin: 0 -8px;
+  padding: 0;
+  list-style: none;
+}
+
+.token-use {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  text-align: left;
+}
+
+.token-use:hover {
+  background: var(--hover);
+}
+
+.token-use-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font: 11.5px var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.token-use-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 132px;
+  color: var(--mute);
+  font: 11.5px var(--mono);
+}
+
+.token-use.is-changed .token-use-value {
+  color: var(--warn);
+}
+
+/* How many times a main component is used, per screen. */
+.usage-total {
+  margin: 0 0 8px;
+  color: var(--ink-2);
+  font-size: 12.5px;
+}
+
+.usage {
+  display: grid;
+  gap: 1px;
+  margin: 0 -8px;
+  padding: 0;
+  list-style: none;
+}
+
+.usage-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 34px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  text-align: left;
+}
+
+.usage-row:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.usage-row:disabled {
+  opacity: 1;
+}
+
+.usage-row > svg {
+  color: var(--mute);
+}
+
+.usage-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-count {
+  min-width: 22px;
+  font-weight: 600;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-row.is-zero .usage-count {
+  color: var(--mute);
+  font-weight: 500;
+}
+
+/* A screen still being measured, or waiting for its turn: two load at a time. */
+.usage-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink-2);
+  font-size: 11.5px;
+}
+
+.usage-state.is-queued {
+  color: var(--mute);
+}
+
+.usage-row.is-measuring .usage-name {
+  color: var(--ink-2);
+}
+
+.usage-meter {
+  height: 3px;
+  margin: -2px 0 10px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--line);
+}
+
+.usage-meter > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--select);
+  transition: width 0.24s var(--ease);
+}
+
+.usage-row.is-failed .usage-count {
+  color: var(--warn);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.usage-row[aria-current='true'] {
+  background: rgba(237, 234, 227, 0.1);
+  box-shadow: inset 2px 0 0 var(--cream);
+}
+
+.variants {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.variant {
+  padding: 2px 8px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  color: var(--ink-2);
+  font: 11px/16px var(--mono);
+}
+
+.spinner {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.14);
+  border-top-color: var(--ink-2);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.skeleton {
+  display: block;
+  height: 10px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.07);
+  animation: pulse 1.1s ease-in-out infinite alternate;
+}
+
+@keyframes pulse {
+  to {
+    opacity: 0.45;
+  }
+}
+
+/* ---------------------------------------------------------------- Tokens */
+.tokens-filter {
+  position: relative;
+  flex: none;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* Themes: shown only when the tokens file declares one. The theme picked is the one every frame shows. */
+.theme-tabs {
+  padding-top: 10px;
+}
+
+.theme-tabs + .tokens-filter {
+  border-bottom: 1px solid var(--line);
+}
+
+.theme-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warn);
+}
+
+.theme-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--ink-2);
+  font:
+    500 10.5px/16px ui-sans-serif,
+    system-ui,
+    sans-serif;
+  vertical-align: 1px;
+}
+
+.tokens-inherit {
+  margin: 6px 14px 12px;
+  color: var(--mute);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.tokens-filter svg {
+  position: absolute;
+  top: 50%;
+  left: 22px;
+  color: var(--mute);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.tokens-filter .input {
+  height: 30px;
+  padding-left: 30px;
+}
+
+.token-group {
+  padding: 4px 0;
+}
+
+.token-group + .token-group {
+  border-top: 1px solid var(--line);
+}
+
+.token-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 34px;
+  padding: 0 14px 0 10px;
+  border: 0;
+  background: none;
+  font-size: 12.5px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.token-group-head svg {
+  color: var(--mute);
+  transition: transform 0.16s var(--ease);
+}
+
+.token-group-head[aria-expanded='false'] svg {
+  transform: rotate(-90deg);
+}
+
+.token-group-head .tab-count {
+  margin-left: auto;
+}
+
+.token-list {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+  padding: 0 8px 4px;
+  list-style: none;
+}
+
+.token-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 124px 24px;
+  align-items: center;
+  gap: 4px 6px;
+  min-height: 34px;
+  padding: 3px 2px 3px 6px;
+  border-radius: 8px;
+  transition: background-color 0.4s;
+}
+
+.token-row:hover,
+.token-row:focus-within {
+  background: rgba(255, 255, 255, 0.035);
+}
+
+/* Long values (font stacks, shadows, curves) get a line of their own. */
+.token-row.is-text {
+  grid-template-columns: minmax(0, 1fr) 24px;
+}
+
+.token-row.is-text .token-field {
+  grid-row: 2;
+  grid-column: 1 / -1;
+  margin-right: 4px;
+}
+
+.token-row.is-found {
+  background: var(--select-soft);
+  box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.55);
+}
+
+.token-name {
+  overflow: hidden;
+  color: var(--ink-2);
+  font: 11.5px var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: text;
+}
+
+.token-row.is-changed .token-name {
+  color: var(--ink);
+}
+
+.token-row.is-changed .token-name::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin: 0 6px 1px 0;
+  border-radius: 50%;
+  background: var(--warn);
+}
+
+.token-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.token-input {
+  width: 100%;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: var(--field);
+  color: var(--ink);
+  font: 11.5px var(--mono);
+  outline: none;
+}
+
+.token-row:hover .token-input {
+  border-color: var(--line-2);
+}
+
+.token-input:focus {
+  border-color: var(--ring);
+}
+
+.token-field.has-swatch .token-input {
+  padding-left: 30px;
+}
+
+.token-swatch {
+  --swatch: transparent;
+  position: absolute;
+  top: 50%;
+  left: 6px;
+  width: 18px;
+  height: 18px;
+  overflow: hidden;
+  border-radius: 5px;
+  background: var(--swatch);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
+  transform: translateY(-50%);
+  cursor: pointer;
+}
+
+.token-swatch input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.token-swatch:focus-within {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+
+.token-reset.icon-button {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+}
+
+.token-row:not(.is-changed) .token-reset {
+  visibility: hidden;
+}
+
+.token-row.is-invalid .token-input {
+  border-color: var(--bad);
+}
+
+.token-error {
+  grid-column: 1 / -1;
+  margin: 0 0 3px;
+  color: var(--bad);
+  font-size: 11.5px;
+}
+
+.tokens-state {
+  display: grid;
+  gap: 14px;
+  padding: 16px 14px;
+}
+
+.tokens-state .list-empty {
+  margin: 0;
+}
+
+.tokens-state .button {
+  justify-self: start;
+}
+
+.skeleton-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 120px;
+  gap: 18px;
+  align-items: center;
+  height: 26px;
+}
+
+/* The changes that are only a preview, and what to do with them. */
+.tray {
+  flex: none;
+  border-top: 1px solid var(--line-2);
+  background: var(--pop);
+}
+
+.tray-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 42px;
+  padding: 0 8px 0 14px;
+}
+
+.tray-head::before {
+  content: '';
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--warn);
+}
+
+.tray-head b {
+  flex: 1;
+  font-weight: 600;
+}
+
+.change-list {
+  display: grid;
+  gap: 1px;
+  max-height: 150px;
+  margin: 0;
+  padding: 0 8px;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.change {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 24px;
+  align-items: center;
+  gap: 2px 6px;
+  padding: 5px 2px 5px 6px;
+  border-radius: 8px;
+}
+
+.change:hover {
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.change-name {
+  overflow: hidden;
+  color: var(--ink);
+  font: 11.5px var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.change-values {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  grid-column: 1;
+  min-width: 0;
+  color: var(--mute);
+  font: 11.5px var(--mono);
+}
+
+.change-values > svg {
+  flex: none;
+}
+
+.change-from,
+.change-to {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.change-from .value-text {
+  text-decoration: line-through;
+  text-decoration-color: rgba(160, 155, 146, 0.7);
+}
+
+.change-to {
+  color: var(--ink);
+}
+
+.change .token-reset {
+  grid-row: 1 / 3;
+  grid-column: 2;
+}
+
+.suggest-auto {
+  margin: -4px 12px 10px;
+  color: var(--mute);
+  font-size: 12px;
+}
+
+.tray-note {
+  margin: 8px 14px 0;
+  color: var(--mute);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.tray-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 12px 12px;
+}
+
+/* ---------------------------------------------------------------- saving a version */
+.save-dialog {
+  width: min(400px, calc(100vw - 32px));
+}
+
+.save-dialog .dialog-meta {
+  color: var(--mute);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.dialog-meta .nowrap {
+  white-space: nowrap;
+}
+
+.dialog-changes {
+  display: grid;
+  gap: 8px;
+  max-height: 200px;
+  margin: 0;
+  padding: 10px 12px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--field);
+  list-style: none;
+}
+
+.dialog-changes li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.dialog-changes .change-name {
+  flex: 1;
+}
+
+.dialog-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 122, 133, 0.1);
+  color: var(--bad);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.dialog-error svg {
+  margin-top: 2px;
+}
+
+.dialog-error.is-warn {
+  background: rgba(242, 180, 92, 0.12);
+  color: var(--warn);
+}
+
+.button .spinner {
+  width: 13px;
+  height: 13px;
+  border-color: rgba(0, 0, 0, 0.18);
+  border-top-color: var(--on-cream);
+}
+
+/* ---------------------------------------------------------------- a suggestion attached to a comment */
+.suggestion {
+  margin-top: 8px;
+  overflow: hidden;
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  background: var(--field);
+}
+
+.card.is-draft .suggestion {
+  margin: 0 12px 10px;
+}
+
+.suggestion-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.suggestion-head svg {
+  color: var(--cream);
+}
+
+.suggestion.is-applied .suggestion-head,
+.suggestion.is-applied .suggestion-head svg {
+  color: var(--ok);
+}
+
+.suggestion-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 10px;
+  list-style: none;
+}
+
+.suggestion-list li {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.suggestion-stale {
+  color: var(--warn);
+  font-size: 11.5px;
+}
+
+.suggestion-actions {
+  display: flex;
+  gap: 6px;
+  padding: 0 10px 10px;
+}
+
+.suggestion-actions .button[aria-pressed='true'] {
+  border-color: var(--select);
+  background: var(--select-soft);
+}
+
+/* ---------------------------------------------------------------- Screens */
+.screens {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background-color: var(--stage);
+  background-image: radial-gradient(rgba(255, 255, 255, 0.055) 1px, transparent 1.2px);
+  background-size: 22px 22px;
+  outline: none;
+  cursor: grab;
+  touch-action: none;
+}
+
+.screens.is-panning {
+  cursor: grabbing;
+}
+
+.screens-world {
+  --zoom: 1;
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+}
+
+.screens-world.is-moving {
+  transition: transform 0.32s var(--ease);
+}
+
+.screen {
+  position: absolute;
+  top: 0;
+  left: 0;
+  outline: none;
+}
+
+.screen-frame {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: calc(6px / var(--zoom));
+  background: #ffffff;
+  box-shadow:
+    0 0 0 calc(1px / var(--zoom)) var(--line-2),
+    0 calc(14px / var(--zoom)) calc(40px / var(--zoom)) rgba(0, 0, 0, 0.45);
+}
+
+.screen-frame iframe {
+  display: block;
+  border: 0;
+  background: #ffffff;
+  pointer-events: none;
+}
+
+.screen:hover .screen-frame {
+  box-shadow:
+    0 0 0 calc(1.5px / var(--zoom)) var(--ring),
+    0 calc(14px / var(--zoom)) calc(40px / var(--zoom)) rgba(0, 0, 0, 0.45);
+}
+
+.screen.is-focused .screen-frame,
+.screen:focus-visible .screen-frame {
+  box-shadow:
+    0 0 0 calc(2px / var(--zoom)) var(--select),
+    0 calc(14px / var(--zoom)) calc(40px / var(--zoom)) rgba(0, 0, 0, 0.45);
+}
+
+/* Names keep their size whatever the zoom, and never run past their screen: the size gives way first. */
+.screen-label {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  max-width: calc(var(--w) * var(--zoom));
+  padding-bottom: 8px;
+  overflow: hidden;
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  transform: scale(calc(1 / var(--zoom)));
+  transform-origin: 0 100%;
+  pointer-events: none;
+}
+
+.screen-label b {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+}
+
+.screen.is-focused .screen-label {
+  color: var(--select-ink);
+}
+
+.screen-size {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--mute);
+  font: 11px var(--mono);
+}
+
+.screen-label .screen-size {
+  flex: 0 1000 auto;
+}
+
+.screen-label.is-compact .screen-size {
+  display: none;
+}
+
+.screen-placeholder {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: #1c1d20;
+}
+
+.screen-placeholder-body {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  max-width: calc(var(--w) * var(--zoom) - 16px);
+  color: var(--mute);
+  font-size: 12px;
+  text-align: center;
+  transform: scale(calc(1 / var(--zoom)));
+}
+
+.screen-placeholder-body p {
+  margin: 0;
+}
+
+.screen-placeholder.is-failed .screen-placeholder-body {
+  color: var(--ink-2);
+  cursor: default;
+}
+
+/* Zoom, bottom left, as on the whiteboards. */
+.zoom {
+  position: absolute;
+  bottom: 14px;
+  left: 14px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 36px;
+  padding: 0 4px;
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  background: var(--bar);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+}
+
+.zoom-level,
+.zoom-fit {
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.zoom-level {
+  min-width: 50px;
+  font-variant-numeric: tabular-nums;
+}
+
+.zoom-level:hover,
+.zoom-fit:hover {
+  background: var(--hover);
+}
+
+.zoom-divider {
+  width: 1px;
+  height: 18px;
+  margin: 0 3px;
+  background: var(--line-2);
+}
+
+/* The screen in focus: step through them, or open one in the page view. */
+.screen-focus {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 42px;
+  padding: 0 6px;
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  background: var(--bar);
+  white-space: nowrap;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  transform: translateX(-50%);
+  animation: rise 0.18s var(--ease);
+}
+
+.screen-focus .stepper {
+  margin-left: 0;
+}
+
+.screen-focus-name {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 0 8px 0 6px;
+  border-left: 1px solid var(--line);
+}
+
+.screen-focus-name b {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+}
+
+.screen-focus .button kbd {
+  border-color: rgba(0, 0, 0, 0.25);
+  color: rgba(0, 0, 0, 0.55);
+}
+
+/* ---------------------------------------------------------------- narrow windows */
+@media (max-width: 1180px) {
+  .design .button-label {
+    display: none;
+  }
+
+  .design-button.button {
+    padding: 0 8px;
+  }
+}
+
+@media (max-width: 720px) {
+  /* The design tools move to the second row, beside the version. */
+  .bar-start {
+    display: contents;
+  }
+
+  .design {
+    grid-row: 2;
+    grid-column: 2;
+    justify-self: end;
+    padding-left: 0;
+    border-left: 0;
+  }
+
+  .version {
+    grid-column: 1;
+  }
+
+  /* Panels become sheets at the bottom; Inspect leaves the page in sight above it. */
+  .side {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 20;
+    width: auto;
+    max-height: 80%;
+    border-top: 1px solid var(--line-2);
+    border-left: 0;
+    border-radius: 14px 14px 0 0;
+    box-shadow: var(--shadow);
+    animation: sheet 0.22s var(--ease);
+  }
+
+  .side.inspect-panel {
+    max-height: 58%;
+  }
+
+  .side::before {
+    content: '';
+    position: absolute;
+    top: 6px;
+    left: 50%;
+    width: 36px;
+    height: 4px;
+    margin-left: -18px;
+    border-radius: 2px;
+    background: var(--line-2);
+  }
+
+  .side-head {
+    min-height: 60px;
+    padding-top: 14px;
+  }
+
+  .workspace.has-card .side {
+    display: none;
+  }
+
+  .screen-focus {
+    right: 8px;
+    left: 8px;
+    justify-content: space-between;
+    transform: none;
+    animation-name: fade;
+  }
+
+  .screen-focus .screen-size,
+  .screen-focus .button kbd {
+    display: none;
+  }
+
+  .zoom {
+    bottom: 10px;
+    left: 10px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

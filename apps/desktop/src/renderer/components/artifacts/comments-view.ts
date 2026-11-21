@@ -60,6 +60,12 @@ export function draftFromComments(t: TFn, title: string, comments: readonly Arti
         ? t('artifacts.comments.draft.threadSpot', { author, version: comment.version })
         : t('artifacts.comments.draft.thread', { author, version: comment.version })
     const lines = [`${index + 1}. ${heading}`, indent(comment.body, '   ')]
+    if (comment.suggestion) {
+      for (const change of comment.suggestion.changes) {
+        const label = change.theme ? `${change.name} (${change.theme})` : change.name
+        lines.push(`   ${label}: ${change.from} → ${change.to}`)
+      }
+    }
     for (const reply of replies)
       lines.push(
         `   - ${t('artifacts.comments.draft.reply', { author: draftAuthor(t, reply.author) })}`,

@@ -19,6 +19,7 @@ function comment(overrides: Partial<ArtifactCommentView> = {}): ArtifactCommentV
     body: `Comment ${sequence}`,
     place: 'page',
     quote: null,
+    suggestion: null,
     status: 'open',
     createdAt: sequence,
     ...overrides,
@@ -90,5 +91,32 @@ describe('draftFromComments', () => {
   it('is empty when nothing is open', () => {
     expect(draftFromComments(t, 'Report', [comment({ status: 'resolved' })])).toBe('')
     expect(draftFromComments(t, 'Report', [])).toBe('')
+  })
+
+  it('appends suggested token changes under open threads', () => {
+    const suggested = comment({
+      version: 3,
+      body: 'Warmer palette please.',
+      suggestion: {
+        file: 'tokens.css',
+        changes: [
+          { name: '--color-brand', from: '#112233', to: '#ff6600' },
+          { name: '--color-bg', theme: '[data-theme="dark"]', from: '#111111', to: '#1a1410' },
+        ],
+        appliedVersion: null,
+      },
+    })
+    expect(draftFromComments(t, 'Brand study', [suggested])).toBe(
+      [
+        'draft.intro{"title":"Brand study"}',
+        '',
+        '1. draft.thread{"author":"Maria","version":3}',
+        '   Warmer palette please.',
+        '   --color-brand: #112233 → #ff6600',
+        '   --color-bg ([data-theme="dark"]): #111111 → #1a1410',
+        '',
+        'draft.outro',
+      ].join('\n')
+    )
   })
 })

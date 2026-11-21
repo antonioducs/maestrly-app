@@ -7,6 +7,7 @@ import type net from 'node:net'
 import { DatabaseSync } from 'node:sqlite'
 import { randomUUID } from 'node:crypto'
 import {
+  FLEET_ARTIFACTS_DESIGN_FEATURE,
   FLEET_ARTIFACTS_FEATURE,
   FLEET_ARTIFACTS_GATEWAY_VIEWER_FEATURE,
   FLEET_ARTIFACTS_TRANSFER_FEATURE,
@@ -829,6 +830,9 @@ describe('artifact viewer', () => {
       ])
     )
     await h.artifacts.update({ enabled: true })
-    expect(await features()).toContain(FLEET_ARTIFACTS_GATEWAY_VIEWER_FEATURE)
+    const meta = await (await h.request('GET', '/v1/meta')).json()
+    expect(meta.features).toContain(FLEET_ARTIFACTS_GATEWAY_VIEWER_FEATURE)
+    expect(meta.features.length).toBeLessThanOrEqual(20)
+    expect(meta.moreFeatures).toContain(FLEET_ARTIFACTS_DESIGN_FEATURE)
   })
 })

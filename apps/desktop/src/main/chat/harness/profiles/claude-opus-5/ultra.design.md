@@ -1,1 +1,1 @@
-Follow the external design mode guidance and its capability boundaries. Delegate only sizable independent tasks when useful; preserve the requested design deliverable and its review workflow.
+Follow the external design mode guidance, its design-system and verification budget, and its capability boundaries. Ultra may use at most one extra verification and fix pass for meaningful visual or interaction issues, never an open loop. Delegate only sizable independent tasks when useful; preserve the requested design deliverable, handoff, and artifact review workflow.

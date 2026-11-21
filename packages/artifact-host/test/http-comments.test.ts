@@ -45,6 +45,7 @@ describe('comment routes', () => {
       author: { kind: 'invited', name: 'Maria', verified: true, self: true },
       body: 'Is this right?',
       anchor: { quote },
+      suggestion: null,
       status: 'open',
       createdAt: h.clock.now(),
       canDelete: true,
