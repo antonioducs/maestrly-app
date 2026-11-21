@@ -5,6 +5,42 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.41.0] - 2026-11-21
+
+### Added
+
+- **Design mode v2 with workspace design systems**: Design mode now reads or
+  extracts a shared `design/` system (`DESIGN.md`, `tokens.css`,
+  `components.html`, `design.json`), builds self-contained prototypes with
+  `maestrly-design.json`, URL-addressable screens, `data-ds` component markers,
+  and `HANDOFF.md`, verifies within a fixed screenshot budget, and syncs viewer
+  token edits before updating published artifacts. See
+  [Design mode](docs/design-mode.md).
+- **Artifact design review tools**: page artifacts declaring
+  `maestrly-design.json` unlock **Screens** (`S`), **Inspect** (`I` — also
+  available on plain HTML artifacts for computed styles), and **Tokens** (`T`)
+  with live theme switching in the viewer. Owners can save token edits as a new
+  artifact version, and reviewers can submit structured token suggestions to
+  preview live and apply in one click. The artifact host database moves to
+  schema 5 for token suggestions (moving an artifact with suggestions to an
+  older gateway fails pre-delete verification). See
+  [Artifacts](docs/artifacts.md#design-tools).
+- **Per-mode usage tracking**: the local usage ledger now records the active
+  chat mode (`agent`, `design`, `plan`, `ask`, or `maestro`) for new turns,
+  compactions, and helper runs; pre-existing entries remain unattributed. See
+  [Local data](docs/local-data.md#usage-ledger).
+
+### Fixed
+
+- **Auto-compaction reliability on Antigravity and Claude**: classified
+  Antigravity gRPC and ACP transient vs. terminal errors, disabled implicit
+  thinking in the Claude isolated summarizer when effort is off or unset,
+  calibrated summary character budgets, and added a 5-minute cooldown
+  auto-recovery after transient or oversized failures.
+- **CPU spin-loop in `wait_conversation`**: avoided microtask busy-waiting
+  during the queued-message settle window so the desktop event loop and
+  WebSockets stay responsive.
+
 ## [0.40.0] - 2026-11-20
 
 ### Added
