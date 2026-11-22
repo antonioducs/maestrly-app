@@ -6,6 +6,9 @@ import {
   CHROMIUM_ENCRYPTED_SESSIONS_FOLDER,
   CHROMIUM_SESSIONS_FOLDER,
   COOKIES_IMPORTED_MARKER,
+  IDLE_SWEEP_MS,
+  IDLE_TAB_MS,
+  MAX_TABS_PER_OWNER,
   type BotChromiumFs,
 } from '../../src/main/fleet/instance/bot-browser/bot-chromium'
 import type { ChromiumProcess } from '../../src/main/fleet/instance/bot-browser/chromium-supervisor'
@@ -252,6 +255,100 @@ describe('BotChromium', () => {
     expect((await chromium.state('conv-a')).activeId).toBe(third)
     await chromium.closeTab('conv-a', third)
     expect((await chromium.state('conv-a')).activeId).toBe(first)
+  })
+
+  it('keeps a conversation to its limit of tabs, closing the least recently used but never the active one', async () => {
+    const { chromium, browser, advance } = setup()
+    const first = (await chromium.page('conv-a')).targetId
+    const ids = [first]
+    for (let i = 2; i <= MAX_TABS_PER_OWNER; i++) {
+      advance(1_000)
+      ids.push(await chromium.createTab('conv-a', `https://tab${i}.test/`))
+    }
+    advance(1_000)
+    // The oldest tab was used since: the second oldest goes instead.
+    await chromium.page('conv-a', first)
+    advance(1_000)
+    const extra = await chromium.createTab('conv-a', 'https://extra.test/')
+    let tabs = (await chromium.state('conv-a')).tabs.map((tab) => tab.id)
+    expect(tabs).toHaveLength(MAX_TABS_PER_OWNER)
+    expect(tabs).not.toContain(ids[1])
+    expect(tabs).toEqual(expect.arrayContaining([first, extra]))
+    expect(browser().targets.has(ids[1])).toBe(false)
+
+    // The active tab stays even when it is the least recently used.
+    await chromium.switchTab('conv-a', ids[2])
+    advance(1_000)
+    for (const id of tabs.filter((id) => id !== ids[2])) await chromium.page('conv-a', id)
+    advance(1_000)
+    await chromium.createTab('conv-a', 'https://more.test/', { activate: false })
+    tabs = (await chromium.state('conv-a')).tabs.map((tab) => tab.id)
+    expect(tabs).toContain(ids[2])
+    expect(tabs).toHaveLength(MAX_TABS_PER_OWNER)
+
+    // Each conversation and worker has a limit of its own.
+    for (let i = 0; i < MAX_TABS_PER_OWNER; i++)
+      await chromium.createTab('conv-a', `https://w${i}.test/`, { ownerScopeId: 'w1', activate: false })
+    await chromium.createTab('conv-b', 'https://b.test/')
+    expect((await chromium.state('conv-a')).tabs).toHaveLength(MAX_TABS_PER_OWNER)
+    expect((await chromium.state('conv-a', 'w1')).tabs).toHaveLength(MAX_TABS_PER_OWNER)
+    expect((await chromium.state('conv-b')).tabs).toHaveLength(1)
+  })
+
+  it('counts popups against their opener’s limit', async () => {
+    const { chromium, browser } = setup()
+    const opener = (await chromium.page('conv-a')).targetId
+    for (let i = 2; i <= MAX_TABS_PER_OWNER; i++) await chromium.createTab('conv-a', `https://tab${i}.test/`)
+    await chromium.switchTab('conv-a', opener)
+    const popup = browser().open('https://popup.test/', opener)
+    await vi.waitFor(() => expect(browser().targets.size).toBe(MAX_TABS_PER_OWNER))
+    const tabs = (await chromium.state('conv-a')).tabs.map((tab) => tab.id)
+    expect(tabs).toEqual(expect.arrayContaining([opener, popup]))
+  })
+
+  it('closes the conversations’ tabs left unused, keeping each one’s active tab and the workers’', async () => {
+    vi.useFakeTimers()
+    const { chromium, browser, advance, log } = setup()
+    const first = (await chromium.page('conv-a')).targetId
+    const stale = await chromium.createTab('conv-a', 'https://stale.test/')
+    const navigated = await chromium.createTab('conv-a', 'https://navigated.test/')
+    const active = await chromium.createTab('conv-a', 'https://active.test/')
+    const worker = await chromium.createTab('conv-a', 'https://w.test/', { ownerScopeId: 'w1', activate: false })
+    const lone = await chromium.createTab('conv-b', 'https://lone.test/')
+
+    advance(IDLE_TAB_MS - IDLE_SWEEP_MS)
+    await chromium.page('conv-a', first)
+    browser().navigate(navigated, 'https://navigated.test/next')
+    await vi.waitFor(async () =>
+      expect((await chromium.state('conv-a')).tabs.find((tab) => tab.id === navigated)?.url).toContain('/next')
+    )
+    advance(IDLE_SWEEP_MS + 1)
+    await vi.advanceTimersByTimeAsync(IDLE_SWEEP_MS)
+
+    expect(browser().targets.has(stale)).toBe(false)
+    for (const id of [first, navigated, active, worker, lone]) expect(browser().targets.has(id)).toBe(true)
+    expect((await chromium.state('conv-a')).activeId).toBe(active)
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('closed a tab unused for 30 minutes: https://stale.test/'))
+  })
+
+  it('reopens at most the limit of a conversation’s saved tabs, the newest and its active one', async () => {
+    const tabs = Array.from({ length: MAX_TABS_PER_OWNER + 4 }, (_, i) => ({
+      url: `https://t${i}.test/`,
+      conversationId: 'conv-a',
+      ...(i === 0 ? { active: true } : {}),
+    }))
+    const { chromium } = setup({
+      files: {
+        [SAVED]: JSON.stringify({
+          version: 1,
+          tabs: [...tabs, { url: 'https://b.test/', conversationId: 'conv-b' }],
+        }),
+      },
+    })
+    const state = await chromium.state('conv-a')
+    expect(state.tabs.map((tab) => tab.url)).toEqual(['https://t0.test/', ...tabs.slice(5).map((tab) => tab.url)])
+    expect(state.tabs.find((tab) => tab.id === state.activeId)?.url).toBe('https://t0.test/')
+    expect((await chromium.state('conv-b')).tabs).toHaveLength(1)
   })
 
   it('removes Chromium’s own record of its tabs before each start, once a browser left behind is stopped', async () => {

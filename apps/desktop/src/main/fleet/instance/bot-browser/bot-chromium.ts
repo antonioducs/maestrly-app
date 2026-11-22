@@ -14,6 +14,14 @@ export const CHROMIUM_SESSIONS_FOLDER = path.join('Default', 'Sessions')
 /** Where newer Chromium builds keep that record, encrypted, beside or instead of the plain one. */
 export const CHROMIUM_ENCRYPTED_SESSIONS_FOLDER = path.join('Default', 'Sessions_Encrypted')
 const DEFAULT_TAB_URL = 'https://www.google.com'
+/**
+ * How many tabs a conversation (or a delegated worker) keeps: opening one more closes its least recently used. Agents
+ * rarely close tabs, and heavy pages left open hold hundreds of megabytes each in the bot's container.
+ */
+export const MAX_TABS_PER_OWNER = 8
+/** A conversation's tab unused this long closes, unless it is the conversation's active one. */
+export const IDLE_TAB_MS = 30 * 60_000
+export const IDLE_SWEEP_MS = 5 * 60_000
 
 export interface BotChromiumTab {
   id: string
@@ -35,6 +43,8 @@ interface TabOwner {
 interface TabRecord {
   info: ChromiumTargetInfo
   owner?: TabOwner
+  /** When a tool, a switch or a navigation last used it: the least recently used tabs close first. */
+  lastUsedAt: number
   page?: ChromiumPage
   attaching?: Promise<ChromiumPage>
 }
@@ -101,6 +111,9 @@ const nodeFs: BotChromiumFs = {
  * Every tab belongs to a conversation of the bot: the one whose tool or link opened it, the opener's for a popup, and
  * the conversation the desktop shows for a tab a person opened. A delegated worker's tabs are its own too. A
  * conversation's tools only see its own tabs.
+ *
+ * A conversation keeps at most `MAX_TABS_PER_OWNER` tabs, and those left unused for `IDLE_TAB_MS` close, its active tab
+ * excepted: agents rarely close the tabs they open.
  */
 export class BotChromium {
   private readonly supervisor: ChromiumSupervisor
@@ -115,6 +128,7 @@ export class BotChromium {
   /** While it restores tabs or shuts down, closing tabs are not what the person or the bot closed. */
   private quiet = false
   private saveTimer: ReturnType<typeof setTimeout> | null = null
+  private sweepTimer: ReturnType<typeof setTimeout> | null = null
   private saving: Promise<void> = Promise.resolve()
   private disposed = false
 
@@ -152,6 +166,7 @@ export class BotChromium {
     const record = id ? this.records.get(id) : undefined
     if (!id || !record || record.owner?.conversationId !== conversationId)
       throw new Error('This tab of the bot’s Chromium is no longer open.')
+    this.touch(record)
     return this.attach(id, record)
   }
 
@@ -171,8 +186,10 @@ export class BotChromium {
       }
       const record = this.records.get(targetId) ?? this.add({ targetId, url: target, title: '' })
       record.owner = { conversationId, ...(options.ownerScopeId ? { scopeId: options.ownerScopeId } : {}) }
+      this.touch(record)
       if (activate && !options.ownerScopeId) this.active.set(conversationId, targetId)
       this.scheduleSave()
+      await this.trim(record.owner, targetId)
       return targetId
     } finally {
       this.creating--
@@ -182,7 +199,9 @@ export class BotChromium {
   /** Makes a tab the conversation's active one and brings it forward in its window. */
   async switchTab(conversationId: string, tabId: string): Promise<void> {
     const pipe = await this.ready()
-    if (this.records.get(tabId)?.owner?.conversationId !== conversationId) return
+    const record = this.records.get(tabId)
+    if (record?.owner?.conversationId !== conversationId) return
+    this.touch(record)
     this.active.set(conversationId, tabId)
     this.scheduleSave()
     await pipe.send('Target.activateTarget', { targetId: tabId }).catch(() => {
@@ -304,9 +323,12 @@ export class BotChromium {
       .catch((error: unknown) => this.log(`downloads keep Chromium's default folder: ${(error as Error).message}`))
     await this.importCookiesOnce(pipe)
     await this.restoreTabs(pipe)
+    this.scheduleSweep()
   }
 
   private exited(): void {
+    if (this.sweepTimer) this.options.deps.clearTimeout(this.sweepTimer)
+    this.sweepTimer = null
     this.flushSave()
     this.stopEvents?.()
     this.stopEvents = null
@@ -344,12 +366,15 @@ export class BotChromium {
         const opener = info.openerId ? this.records.get(info.openerId)?.owner : undefined
         if (opener) record.owner = { ...opener }
         this.scheduleSave()
+        if (record.owner) void this.trim(record.owner, info.targetId)
         return
       }
       case 'Target.targetInfoChanged': {
         const info = pageInfo(params.targetInfo)
         const record = info ? this.records.get(info.targetId) : undefined
         if (!info || !record) return
+        // A navigation, the person's or a page's own, is a use; a title that changes (a counter, a clock) is not.
+        if (info.url !== record.info.url) this.touch(record)
         record.info = { ...record.info, url: info.url, title: info.title }
         record.page?.updateInfo(info)
         this.scheduleSave()
@@ -378,9 +403,62 @@ export class BotChromium {
   }
 
   private add(info: ChromiumTargetInfo): TabRecord {
-    const record: TabRecord = { info }
+    const record: TabRecord = { info, lastUsedAt: this.options.deps.now() }
     this.records.set(info.targetId, record)
     return record
+  }
+
+  private touch(record: TabRecord): void {
+    record.lastUsedAt = this.options.deps.now()
+  }
+
+  /** Closes an owner's least recently used tabs beyond the limit, never its active tab nor the one it just opened. */
+  private async trim(owner: TabOwner, keep: string): Promise<void> {
+    const ids = this.owned(owner.conversationId, owner.scopeId)
+    if (ids.length <= MAX_TABS_PER_OWNER) return
+    const active = owner.scopeId ? null : this.active.get(owner.conversationId)
+    const evictable = ids
+      .filter((id) => id !== keep && id !== active)
+      .sort((a, b) => this.records.get(a)!.lastUsedAt - this.records.get(b)!.lastUsedAt)
+    for (const id of evictable.slice(0, ids.length - MAX_TABS_PER_OWNER)) {
+      this.log(`closed a tab beyond the ${MAX_TABS_PER_OWNER} a conversation keeps: ${this.records.get(id)!.info.url}`)
+      await this.closeTab(owner.conversationId, id).catch(() => {})
+    }
+  }
+
+  private scheduleSweep(): void {
+    if (this.sweepTimer || this.disposed) return
+    this.sweepTimer = this.options.deps.setTimeout(() => {
+      this.sweepTimer = null
+      void this.sweepIdle().finally(() => {
+        if (this.isRunning) this.scheduleSweep()
+      })
+    }, IDLE_SWEEP_MS)
+  }
+
+  /**
+   * Closes the conversations' tabs left unused for `IDLE_TAB_MS`, keeping each conversation's active tab. A page's work
+   * that runs on its site's servers (a generation in Google Flow, for one) goes on without it. Workers' tabs end with
+   * their task.
+   */
+  private async sweepIdle(): Promise<void> {
+    if (!this.isRunning) return
+    this.adoptLooseTabs()
+    const cutoff = this.options.deps.now() - IDLE_TAB_MS
+    const idle: Array<[string, TabOwner]> = []
+    for (const [id, record] of this.records) {
+      const owner = record.owner
+      if (!owner || owner.scopeId || record.lastUsedAt > cutoff) continue
+      if (this.activeOf(owner.conversationId) === id) continue
+      idle.push([id, owner])
+    }
+    for (const [id, owner] of idle) {
+      // Closing is awaited one tab at a time: a tool may use one of the others meanwhile.
+      const record = this.records.get(id)
+      if (!record || record.lastUsedAt > cutoff) continue
+      this.log(`closed a tab unused for ${IDLE_TAB_MS / 60_000} minutes: ${record.info.url}`)
+      await this.closeTab(owner.conversationId, id).catch(() => {})
+    }
   }
 
   private remove(id: string, reason = 'target closed'): void {
@@ -479,7 +557,7 @@ export class BotChromium {
   }
 
   private async restoreTabs(pipe: CdpPipe): Promise<void> {
-    const saved = await this.readSaved()
+    const saved = withinLimit(await this.readSaved())
     if (saved.length === 0) return
     const blank = [...this.records.entries()].filter(([, record]) => !record.owner && record.info.url === 'about:blank')
     this.quiet = true
@@ -573,6 +651,19 @@ export class BotChromium {
   private log(message: string): void {
     this.options.deps.log(`The Chromium of bot ${this.options.botId} ${message}`)
   }
+}
+
+/** Each conversation's newest saved tabs within the limit, its active one always among them; saved order kept. */
+function withinLimit(saved: SavedTab[]): SavedTab[] {
+  const dropped = new Set<SavedTab>()
+  const byConversation = new Map<string, SavedTab[]>()
+  for (const tab of saved)
+    byConversation.set(tab.conversationId, [...(byConversation.get(tab.conversationId) ?? []), tab])
+  for (const tabs of byConversation.values()) {
+    const excess = tabs.length - MAX_TABS_PER_OWNER
+    if (excess > 0) for (const tab of tabs.filter((tab) => !tab.active).slice(0, excess)) dropped.add(tab)
+  }
+  return saved.filter((tab) => !dropped.has(tab))
 }
 
 function pageInfo(value: Record<string, unknown> | undefined): ChromiumTargetInfo | null {

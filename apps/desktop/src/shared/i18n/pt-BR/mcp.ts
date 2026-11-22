@@ -311,7 +311,8 @@ export default {
     },
     browser_new_tab: {
       title: 'Nova aba',
-      description: 'Abre uma aba nova (opcionalmente já navegando para uma URL ou termo de busca) e a torna ativa.',
+      description:
+        'Abre uma aba nova (opcionalmente já navegando para uma URL ou termo de busca) e a torna ativa. Prefira browser_navigate na aba atual e feche as abas de que não precisa mais. O navegador de um bot mantém no máximo 8 abas por conversa: abrir mais fecha as usadas há mais tempo, e abas sem uso por 30 minutos fecham (a ativa fica).',
       params: { url: 'URL ou termo de busca para abrir (default: página inicial)' },
     },
     browser_close_tab: {
