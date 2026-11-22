@@ -170,7 +170,7 @@ describe('Claude subscription manager', () => {
       },
       accountEpoch: 1,
       cliVersion: '2.1.263',
-      sdkVersion: '0.3.285',
+      sdkVersion: '0.3.330',
     })
     expect(status.accountFingerprint).toMatch(/^sha256:[a-f0-9]{64}$/)
     expect(JSON.stringify(status)).not.toContain('keychain-selector-only')

@@ -190,7 +190,7 @@ const codexTargets = targetRecord(codex, ([id, , , digest]) =>
  * Claude Code the installed Agent SDK bundles (its package.json `claudeCodeVersion`): the version a bot image ships,
  * and the minimum a bot's managed installation may run. Managed only on the Linux targets bots run on.
  */
-export const CLAUDE_CODE_PINNED_VERSION = '2.1.285'
+export const CLAUDE_CODE_PINNED_VERSION = '2.1.330'
 export type ClaudeCodeTargetId = 'linux-arm64' | 'linux-x64'
 export const CLAUDE_CODE_TARGET_LAYOUT: Readonly<Record<ClaudeCodeTargetId, { readonly suffix: string }>> =
   Object.freeze({
@@ -232,16 +232,16 @@ export function createClaudeCodeTarget(
 /** npm metadata of the pinned `@anthropic-ai/claude-code-<platform>` packages; archive sizes measured. */
 const claudeCodePins: Readonly<Record<ClaudeCodeTargetId, RuntimeArtifactMetadata>> = {
   'linux-arm64': {
-    sha512Base64: 'vAvIr+MVnm5IrSq8KoJrZkoG3BFpLvVEqfrx15w7hWW+gcSYHPvN33lfkzXvs5L8MYXxNW0Ae86MLiCH+x4ldQ==',
-    downloadBytes: 107_804_240,
-    maxDownloadBytes: downloadCap(107_804_240),
-    unpackedBytes: 239_723_082,
+    sha512Base64: 'V4yanAY5EA5UpwwRPtjSfqDbNqAlUJeVn3NYZw2AgmRHjdpSsLtHAzbxRXfkAnbjwTXzE0uedjQxUY02ARPcsA==',
+    downloadBytes: 176_189_557,
+    maxDownloadBytes: downloadCap(176_189_557),
+    unpackedBytes: 379_971_594,
   },
   'linux-x64': {
-    sha512Base64: '6qNST8qKemr+rD9zvUEwEq0UtWt0E5Js8bkbjh13/LM62FiGWcN6IqiJPxybJ2FNd+I3liXq6JYNv/vrGnmAow==',
-    downloadBytes: 107_536_804,
-    maxDownloadBytes: downloadCap(107_536_804),
-    unpackedBytes: 240_328_450,
+    sha512Base64: '9Gn+V7DtJ8M1nztP9CeDVl9g3RtrepI7rOFTyPRRnZe8D6zebIHKmC7OvBauucuAP0X0k85SDN/LPVZyjsGezQ==',
+    downloadBytes: 175_385_311,
+    maxDownloadBytes: downloadCap(175_385_311),
+    unpackedBytes: 381_121_626,
   },
 }
 const claudeCodeTargets = Object.freeze(

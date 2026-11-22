@@ -173,8 +173,8 @@ describe('runtime asset registry', () => {
         executablePath: 'claude',
       })
     }
-    expect(definition.targets['linux-arm64']?.maxDownloadBytes).toBeGreaterThanOrEqual(107_804_240)
-    expect(definition.targets['linux-x64']?.maxDownloadBytes).toBeGreaterThanOrEqual(107_536_804)
+    expect(definition.targets['linux-arm64']?.maxDownloadBytes).toBeGreaterThanOrEqual(176_189_557)
+    expect(definition.targets['linux-x64']?.maxDownloadBytes).toBeGreaterThanOrEqual(175_385_311)
   })
 
   it('pins the Antigravity ACP server for every desktop target', () => {
