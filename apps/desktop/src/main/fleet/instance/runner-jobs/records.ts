@@ -34,8 +34,10 @@ export type RunnerJobRecord = {
   job: FleetRunnerJob | null
   /** Once the runner's outputs are committed. */
   outputs: { files: Array<{ path: string; size: number }>; bytes: number; sha256: string } | null
-  /** The conversation was told of the final state. */
+  /** The conversation was told of the final state, or saw it itself through the runner tools. */
   continued: boolean
+  /** The conversation that submitted the job cancelled it: a job that then ends as cancelled tells it nothing. */
+  selfCancelled?: boolean
 }
 
 const recordSchema = z.object({
@@ -58,6 +60,7 @@ const recordSchema = z.object({
     })
     .nullable(),
   continued: z.boolean(),
+  selfCancelled: z.boolean().optional(),
 })
 
 const isFinal = (job: FleetRunnerJob | null): boolean => !!job && FLEET_RUNNER_JOB_FINAL_STATES.includes(job.state)

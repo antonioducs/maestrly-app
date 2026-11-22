@@ -145,7 +145,7 @@ import { InstanceTranscriptExtras, fleetQuestions, toolTarget, permissionTool } 
 import { LiveTranscript } from './live-transcript'
 import { InstanceHelpStore } from './help'
 import { BotRunConversations, isRunId, type RunLane, type ThreadRecord } from './routine-runs'
-import { runnerContinuationText, runnerLogTail } from './runner-jobs/completion'
+import { RUNNER_RESULTS_PER_MESSAGE_MAX, runnerContinuationsText, runnerLogTail } from './runner-jobs/completion'
 import { RunnerJobFiles } from './runner-jobs/files'
 import { RunnerJobRecords, type RunnerJobRecord } from './runner-jobs/records'
 import { ThreadReports } from './thread-reports'
@@ -195,6 +195,9 @@ import { BotSkillStore } from './bot-skills/store'
 import { BotSkillOwnerApi } from './bot-skills/owner'
 import { listConversationSkills } from '../../chat/skill-state'
 import { setConversationSkillProvider } from '../../chat/conversation-skill-provider'
+
+/** How long held runner job results wait after they could not be told before they are tried again. */
+const RUNNER_JOBS_RETRY_MS = 30_000
 
 /** Whether the bot may start turns at all; each conversation then starts its own while it runs none. */
 export function canDispatch(
@@ -464,6 +467,18 @@ export class BotRuntime {
   private readonly jobRecords: RunnerJobRecords
   /** The files of the jobs this bot sent to runners; the conversation side attaches through `setOnState`. */
   private readonly jobFiles: RunnerJobFiles
+  /**
+   * Jobs that ended while the conversation their result goes to was busy, by that conversation's turn key: told
+   * together once it is free, unless it saw them end meanwhile. Their records stay not `continued`, so a restart tells
+   * them (`reconcileRunnerJobs`).
+   */
+  private readonly heldRunnerJobs = new Map<string | null, Set<string>>()
+  /** While reconciling, ended jobs are held and then told together. */
+  private reconcilingRunnerJobs = false
+  /** After held jobs could not be told, when to try again. */
+  private runnerJobsRetryAt = 0
+  /** The conversations being told of jobs now: a job that ends meanwhile waits to be told with what follows. */
+  private readonly tellingRunnerJobs = new Set<string | null>()
   /** Names of the peers this bot listed, for the replies of its peer tools. */
   readonly peerNames = new Map<string, string>()
   private stored: StoredProfile | null
@@ -2125,6 +2140,7 @@ export class BotRuntime {
    * conversation never waits for another. Resolves once the turns it started have ended.
    */
   private async tick(): Promise<void> {
+    void this.releaseRunnerJobs()
     if (this.disposed || !this.primaryConversationId || Date.now() < this.quotaRetryAt) return
     await this.refreshAccounts()
     if (
@@ -2352,6 +2368,8 @@ export class BotRuntime {
       if (this.turns.get(runId) === turn) this.turns.delete(runId)
       turn.settle()
       this.changed()
+      // The jobs that ended while it ran, unless it saw them end, or another input of it waits to start.
+      if (this.heldRunnerJobs.has(runId)) void this.releaseRunnerJobs()
       // A run that ended gives back what it opened: its browser, terminals and the programs they run.
       if (lane && !this.queue.list().some((candidate) => inputRunId(candidate) === lane!.runId))
         void this.host.closeConversation?.(lane.conversationId).catch(() => undefined)
@@ -2464,80 +2482,187 @@ export class BotRuntime {
   }
   /**
    * Tells the conversation that submitted a runner job that it ended: the hook of the job files, run for every state
-   * the gateway reports. A job that has not ended, or whose conversation was told, does nothing. The conversation is
-   * continued as a release continues it (a run or a thread as such), under a key made from the job and its state, so a
-   * state sent again never tells it twice. When that run or thread is gone the bot's own conversation hears of it
-   * instead. A failure throws, so the gateway sends the state again.
+   * the gateway reports. A job that has not ended, whose conversation was told or saw it end through the runner tools,
+   * or that this conversation cancelled itself and ended cancelled, does nothing. While that conversation is busy (a
+   * turn runs there, or an input waits to start) the job is held, and told with the others that ended meanwhile once
+   * it is free (`releaseRunnerJobs`). A failure throws, so the gateway sends the state again.
    */
   async continueRunnerJob(stored: RunnerJobRecord): Promise<void> {
     const record = (await this.jobRecords.get(stored.jobId)) ?? stored
-    const job = record.job
-    if (!job || !FLEET_RUNNER_JOB_FINAL_STATES.includes(job.state) || record.continued) return
+    if (!(await this.untoldRunnerJob(record))) return
     if (this.disposed) throw new InstanceHttpError(404, 'NOT_FOUND', 'Bot does not exist.')
-    const log = await runnerLogTail(this.jobRecords, record)
-    const idempotencyKey = uuidFromSeed(`${record.jobId}:${job.state}`)
+    const { key } = this.runnerJobTarget(record)
+    if (this.reconcilingRunnerJobs || this.conversationBusy(key)) this.holdRunnerJob(key, record.jobId)
+    else await this.tellRunnerJobs([record])
+  }
+  /** Whether a job ended and its conversation has yet to hear of it; a job it cancelled itself is marked told. */
+  private async untoldRunnerJob(record: RunnerJobRecord): Promise<boolean> {
+    const job = record.job
+    if (!job || !FLEET_RUNNER_JOB_FINAL_STATES.includes(job.state) || record.continued) return false
+    if (job.state !== 'cancelled' || !record.selfCancelled) return true
+    await this.markRunnerJobTold(record.jobId)
+    return false
+  }
+  private async markRunnerJobTold(jobId: string): Promise<void> {
+    await this.jobRecords.update(jobId, (current) => (current.continued ? current : { ...current, continued: true }))
+  }
+  /**
+   * Where a job's result goes: the run or thread that submitted it, continued as such (a thread as a thread: as a run,
+   * its conversation would be refused), or the bot's own conversation. `where` is null when that run or thread is gone,
+   * and the bot's own conversation hears of it instead, as `name`.
+   */
+  private runnerJobTarget(record: RunnerJobRecord): {
+    where: Pick<FleetInstanceInput, 'run' | 'thread'> | null
+    key: string | null
+    name: string
+  } {
     const target = record.conversation
-    const lane =
-      target.kind === 'run'
-        ? this.runs.get(target.runId)
-        : target.kind === 'thread'
-          ? this.runs.get(target.threadId)
-          : undefined
-    const send = (where: Pick<FleetInstanceInput, 'run' | 'thread'>, from?: string) =>
-      this.input({
-        source: 'continuation',
-        text: runnerContinuationText({ record, job, log, ...(from ? { from } : {}) }),
-        attachments: [],
-        idempotencyKey,
-        ...where,
-      })
-    // A thread continues as a thread: as a run, its conversation would be refused.
-    const here =
-      target.kind === 'run' && lane?.kind === 'routine'
-        ? { run: { id: target.runId } }
-        : target.kind === 'thread' && lane?.kind === 'thread'
-          ? { thread: { id: target.threadId, title: target.title } }
-          : null
-    const gone =
-      target.kind === 'run'
-        ? `the routine run ${target.runId}`
-        : target.kind === 'thread'
-          ? `the conversation "${target.title}"`
-          : ''
-    try {
-      if (target.kind !== 'primary' && !here) await send({}, gone)
-      else await send(here ?? {})
-    } catch (error) {
-      // The conversation went away since the check: the bot's own hears of it.
-      if (!(here && error instanceof InstanceHttpError && error.code === 'NOT_FOUND')) throw error
-      await send({}, gone)
-    }
-    await this.jobRecords.update(record.jobId, (current) =>
-      current.continued ? current : { ...current, continued: true }
+    if (target.kind === 'primary') return { where: {}, key: null, name: '' }
+    if (target.kind === 'run')
+      return this.runs.get(target.runId)?.kind === 'routine'
+        ? { where: { run: { id: target.runId } }, key: target.runId, name: `the routine run ${target.runId}` }
+        : { where: null, key: null, name: `the routine run ${target.runId}` }
+    const name = `the conversation "${target.title}"`
+    return this.runs.get(target.threadId)?.kind === 'thread'
+      ? { where: { thread: { id: target.threadId, title: target.title } }, key: target.threadId, name }
+      : { where: null, key: null, name }
+  }
+  /** Whether a conversation answers now, or has an input waiting to start: a job's result then waits for it. */
+  private conversationBusy(key: string | null): boolean {
+    return (
+      this.turns.has(key) ||
+      this.tellingRunnerJobs.has(key) ||
+      this.queue
+        .list()
+        .some(
+          (candidate) =>
+            !candidate.started && !candidate.stopped && !candidate.attachmentError && inputRunId(candidate) === key
+        )
     )
+  }
+  private holdRunnerJob(key: string | null, jobId: string): void {
+    const held = this.heldRunnerJobs.get(key) ?? new Set<string>()
+    held.add(jobId)
+    this.heldRunnerJobs.set(key, held)
+  }
+  /**
+   * Tells each conversation that is free the jobs held for it, in as few messages as fit; one still busy keeps them.
+   * Runs on every tick and when a turn ends. What could not be told is held again and tried after a while.
+   */
+  private releaseRunnerJobs(): Promise<void> {
+    if (this.disposed || this.reconcilingRunnerJobs || Date.now() < this.runnerJobsRetryAt) return Promise.resolve()
+    const telling: Promise<void>[] = []
+    for (const [key, ids] of this.heldRunnerJobs) {
+      if (this.conversationBusy(key)) continue
+      this.heldRunnerJobs.delete(key)
+      telling.push(
+        this.tellHeldRunnerJobs([...ids]).catch((error: unknown) => {
+          console.warn('[fleet] could not tell the results of runner jobs', error)
+          this.runnerJobsRetryAt = Date.now() + RUNNER_JOBS_RETRY_MS
+          for (const id of ids) this.holdRunnerJob(key, id)
+        })
+      )
+    }
+    return Promise.all(telling).then(() => undefined)
+  }
+  private async tellHeldRunnerJobs(ids: string[]): Promise<void> {
+    // A run or thread that went away meanwhile sends its jobs to the bot's own conversation, which may be busy.
+    const byKey = new Map<string | null, RunnerJobRecord[]>()
+    for (const id of ids) {
+      const record = await this.jobRecords.get(id)
+      if (!record || !(await this.untoldRunnerJob(record))) continue
+      const { key } = this.runnerJobTarget(record)
+      byKey.set(key, [...(byKey.get(key) ?? []), record])
+    }
+    for (const [key, records] of byKey) {
+      if (this.conversationBusy(key)) for (const record of records) this.holdRunnerJob(key, record.jobId)
+      else await this.tellRunnerJobs(records)
+    }
+  }
+  /**
+   * Continues the one conversation these jobs' results go to, `RUNNER_RESULTS_PER_MESSAGE_MAX` results per message,
+   * in the order the jobs ended, then marks them told. Each message has a key made from its jobs and their states, so
+   * the same results sent again never tell it twice.
+   */
+  private async tellRunnerJobs(records: RunnerJobRecord[]): Promise<void> {
+    // Claimed before the first await, right after the caller found the conversation free.
+    const key = this.runnerJobTarget(records[0]).key
+    this.tellingRunnerJobs.add(key)
+    try {
+      await this.tellRunnerJobsNow(records)
+    } finally {
+      this.tellingRunnerJobs.delete(key)
+    }
+  }
+  private async tellRunnerJobsNow(records: RunnerJobRecord[]): Promise<void> {
+    const ended = (record: RunnerJobRecord) => record.job?.endedAt ?? record.createdAt
+    const ordered = [...records].sort((a, b) => ended(a).localeCompare(ended(b)) || a.jobId.localeCompare(b.jobId))
+    for (let start = 0; start < ordered.length; start += RUNNER_RESULTS_PER_MESSAGE_MAX) {
+      const batch = ordered.slice(start, start + RUNNER_RESULTS_PER_MESSAGE_MAX)
+      const items = await Promise.all(
+        batch.map(async (record) => ({
+          record,
+          job: record.job!,
+          log: await runnerLogTail(this.jobRecords, record),
+          target: this.runnerJobTarget(record),
+        }))
+      )
+      const idempotencyKey = uuidFromSeed(batch.map((record) => `${record.jobId}:${record.job!.state}`).join('\n'))
+      const send = (where: Pick<FleetInstanceInput, 'run' | 'thread'>, gone: boolean) =>
+        this.input({
+          source: 'continuation',
+          text: runnerContinuationsText(
+            items.map(({ record, job, log, target }) => ({
+              record,
+              job,
+              log,
+              ...(gone || !target.where ? { from: target.name } : {}),
+            }))
+          ),
+          attachments: [],
+          idempotencyKey,
+          ...where,
+        })
+      const where = items[0].target.where
+      try {
+        await send(where ?? {}, false)
+      } catch (error) {
+        // The conversation went away since the check: the bot's own hears of it.
+        if (!(where?.run || where?.thread) || !(error instanceof InstanceHttpError && error.code === 'NOT_FOUND'))
+          throw error
+        await send({}, true)
+      }
+      for (const record of batch) await this.markRunnerJobTold(record.jobId)
+    }
   }
   /**
    * Asks the gateway where the jobs stand that this environment has not heard end, such as after it was stopped while
-   * they ran, and stores what it answers as the gateway would have sent it. Best effort: the gateway sends states
-   * itself, and a job it cannot answer for stays as it is.
+   * they ran, and stores what it answers as the gateway would have sent it; then tells each conversation the jobs that
+   * ended for it, together. Best effort: the gateway sends states itself, and a job it cannot answer for stays as it is.
    */
   async reconcileRunnerJobs(): Promise<void> {
     const config = this.gatewayConfig
     if (!config || !this.runnersEnabled) return
-    for (const record of await this.jobRecords.list()) {
-      if (this.disposed || record.continued) continue
-      try {
-        if (record.job && FLEET_RUNNER_JOB_FINAL_STATES.includes(record.job.state)) {
-          await this.continueRunnerJob(record)
-          continue
+    this.reconcilingRunnerJobs = true
+    try {
+      for (const record of await this.jobRecords.list()) {
+        if (this.disposed || record.continued) continue
+        try {
+          if (record.job && FLEET_RUNNER_JOB_FINAL_STATES.includes(record.job.state)) {
+            this.holdRunnerJob(this.runnerJobTarget(record).key, record.jobId)
+            continue
+          }
+          const job = await gatewayRequest(config, 'runnerJobGet', undefined, { jobId: record.jobId })
+          await this.jobFiles.state(record.jobId, job)
+        } catch (error) {
+          // A record the gateway never heard of is a submit that did not get through: nothing to reconcile.
+          if (record.job) console.warn(`[fleet] could not reconcile runner job ${record.jobId}`, error)
         }
-        const job = await gatewayRequest(config, 'runnerJobGet', undefined, { jobId: record.jobId })
-        await this.jobFiles.state(record.jobId, job)
-      } catch (error) {
-        // A record the gateway never heard of is a submit that did not get through: nothing to reconcile.
-        if (record.job) console.warn(`[fleet] could not reconcile runner job ${record.jobId}`, error)
       }
+    } finally {
+      this.reconcilingRunnerJobs = false
     }
+    await this.releaseRunnerJobs()
   }
   async resolve(id: string, value: FleetInteractionResolution): Promise<void> {
     const pending = this.pending().find((entry) => entry.id === id)

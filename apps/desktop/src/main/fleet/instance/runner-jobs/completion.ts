@@ -76,12 +76,12 @@ function took(job: FleetRunnerJob): string | null {
 }
 
 /** The output files of a record, as many as fit, then how many were left out. */
-function filesSection(files: Array<{ path: string; size: number }>): string {
+function filesSection(files: Array<{ path: string; size: number }>, maxChars: number): string {
   const lines: string[] = []
   let chars = 0
   for (const file of files.slice(0, FILES_LISTED_MAX)) {
     const line = `- ${file.path} (${size(file.size)})`
-    if (chars + line.length + 1 > FILES_CHARS_MAX) break
+    if (chars + line.length + 1 > maxChars) break
     lines.push(line)
     chars += line.length + 1
   }
@@ -109,20 +109,36 @@ function fenceFor(log: string): string {
   return '`'.repeat(Math.max(3, longest + 1))
 }
 
-/**
- * What the conversation that submitted a job reads once the job ended: its state, error, exit code, duration, runner,
- * folder, the output files that came back and the end of its log. It never exceeds `FLEET_MESSAGE_TEXT_MAX`: the
- * header and the list of files are bounded first, and the log tail takes what is left, cut from its start.
- *
- * `from` names the conversation that submitted the job when the result goes to another one because that one is gone.
- */
-export function runnerContinuationText(input: {
+/** The most results one message carries; more jobs are told in several messages. */
+export const RUNNER_RESULTS_PER_MESSAGE_MAX = 4
+
+/** What one job's result is told from. */
+export type RunnerContinuation = {
   record: Pick<RunnerJobRecord, 'folder' | 'outputs'>
   job: FleetRunnerJob
   log: string
   from?: string
-}): string {
+}
+
+/** `text` cut to `max` characters, never splitting a surrogate pair. */
+function bounded(text: string, max: number): string {
+  if (text.length <= max) return text
+  let end = Math.max(0, max - 1)
+  const code = text.charCodeAt(end - 1)
+  if (code >= 0xd800 && code <= 0xdbff) end -= 1
+  return `${text.slice(0, end)}…`
+}
+
+/**
+ * What the conversation that submitted a job reads once the job ended: its state, error, exit code, duration, runner,
+ * folder, the output files that came back and the end of its log. It never exceeds `max` (`FLEET_MESSAGE_TEXT_MAX`):
+ * the header and the list of files are bounded first, and the log tail takes what is left, cut from its start.
+ *
+ * `from` names the conversation that submitted the job when the result goes to another one because that one is gone.
+ */
+export function runnerContinuationText(input: RunnerContinuation & { max?: number }): string {
   const { record, job } = input
+  const max = input.max ?? FLEET_MESSAGE_TEXT_MAX
   const head = [
     headline(job),
     ...(input.from ? [`It was submitted from ${input.from}, which no longer exists, so the result comes here.`] : []),
@@ -134,18 +150,37 @@ export function runnerContinuationText(input: {
   ]
   const files = record.outputs?.files ?? []
   const sections = [head.join('\n')]
-  if (files.length) sections.push(`Output files that came back into the folder:\n${filesSection(files)}`)
+  if (files.length)
+    sections.push(
+      `Output files that came back into the folder:\n${filesSection(files, Math.min(FILES_CHARS_MAX, Math.floor(max / 4)))}`
+    )
   else if (job.state === 'succeeded' || job.state === 'failed')
     sections.push('No output files came back into the folder.')
-  const before = sections.join('\n\n')
+  const before = bounded(sections.join('\n\n'), max)
   const log = input.log.replace(/\s+$/, '')
   if (!log) return before
   // Room for the text before it, the log's own heading, and a fence on each side, with a margin for the fence's length.
   const fence = fenceFor(log)
   const frame = `\n\nEnd of the log (the last lines the job wrote):\n${fence}\n\n${fence}`.length + LOG_CUT.length + 1
-  const room = FLEET_MESSAGE_TEXT_MAX - before.length - frame
+  const room = max - before.length - frame
   if (room < 200) return before
   const { text, cut } = lastChars(log, Math.min(room, FLEET_RUNNER_TRANSFER_LIMITS.logTailBytes))
   const tail = `${cut ? `${LOG_CUT}\n` : ''}${text}`
   return `${before}\n\nEnd of the log (the last lines the job wrote):\n${fence}\n${tail}\n${fence}`
+}
+
+const RESULTS_SEPARATOR = '\n\n---\n\n'
+
+/**
+ * One message for the results of several jobs that ended for the same conversation (at most
+ * `RUNNER_RESULTS_PER_MESSAGE_MAX`), so it answers them in one turn. Each result gets an equal share of
+ * `FLEET_MESSAGE_TEXT_MAX`; a single result is told as `runnerContinuationText` tells it.
+ */
+export function runnerContinuationsText(items: RunnerContinuation[]): string {
+  if (items.length === 1) return runnerContinuationText(items[0])
+  const intro = `${items.length} runner jobs ended.`
+  const share = Math.floor(
+    (FLEET_MESSAGE_TEXT_MAX - intro.length - RESULTS_SEPARATOR.length * items.length) / items.length
+  )
+  return [intro, ...items.map((item) => runnerContinuationText({ ...item, max: share }))].join(RESULTS_SEPARATOR)
 }
