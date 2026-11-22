@@ -29,7 +29,7 @@ type Entry = { item: MobileChatItem; row: TranscriptRow | null; part: 'step' | '
  * its newest text) folds into one activity row, as on the desktop: what opened the turn, the cards it passed (plans,
  * pages, files, requests) and its newest text stay outside in the order they came, then the activity, always last
  * so its live line sits under everything the turn shows. A turn's plan shows once, with its latest list, where it
- * first appeared.
+ * first appeared. A continuation still opens a turn but shows no row.
  *
  * A host marks every part of a message that streams as streaming; only the conversation's last item really is.
  */
@@ -47,7 +47,8 @@ export function transcriptRows(items: MobileChatItem[]): TranscriptRow[] {
       flushTurn(turn, rows)
       turn = []
       plan = null
-      rows.push({ kind: 'item', item })
+      // What the host fed the bot on its own (such as a runner job's result) is not shown, as on the desktop.
+      if (item.source !== 'continuation') rows.push({ kind: 'item', item })
       return
     }
     if (isPlan(item)) {
