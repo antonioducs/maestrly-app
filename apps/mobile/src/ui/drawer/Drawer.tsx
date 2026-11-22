@@ -3,8 +3,8 @@ import { Animated, Easing, Keyboard, PanResponder, Pressable, useWindowDimension
 import { useI18n } from '../../i18n'
 import { useTheme } from '../../theme/ThemeProvider'
 import { useReducedMotion } from '../useReducedMotion'
+import { shouldDragDrawer } from './drawer-gesture'
 
-const EDGE = 24
 const EASE = Easing.bezier(0.2, 0.7, 0.2, 1)
 
 /**
@@ -53,11 +53,7 @@ export function Drawer({
   const responder = useMemo(
     () =>
       PanResponder.create({
-        onMoveShouldSetPanResponder: (_event, gesture) => {
-          const horizontal = Math.abs(gesture.dx) > 8 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.5
-          if (!horizontal) return false
-          return state.current.open ? gesture.dx < 0 : gesture.x0 <= EDGE && gesture.dx > 0
-        },
+        onMoveShouldSetPanResponder: (_event, gesture) => shouldDragDrawer(state.current.open, gesture),
         onPanResponderMove: (_event, gesture) => {
           const base = state.current.open ? 1 : 0
           progress.setValue(Math.max(0, Math.min(1, base + gesture.dx / state.current.panelWidth)))
