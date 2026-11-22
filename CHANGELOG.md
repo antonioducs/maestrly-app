@@ -5,6 +5,42 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.42.0] - 2026-11-22
+
+### Added
+
+- **Dispatched conversation folders in sidebar**: conversations started from
+  another conversation via `start_conversations` or a plan handoff are now
+  grouped with their root origin conversation in a single-level collapsible
+  folder in the desktop sidebar, marked with a dispatch badge and an **Open
+  origin** menu action.
+
+### Changed
+
+- **Antigravity history retention on provider switch**: when moving a long
+  conversation to an Antigravity model exceeds its 192 KB prompt limit,
+  Maestrly now shrinks older tool outputs to one-line stubs first (keeping full
+  outputs stored for other models) and, if needed, asks the previous provider's
+  model to summarize earlier turns while telling Antigravity the full history
+  remains accessible via `history_search` and `history_read`. See
+  [Antigravity](docs/antigravity.md).
+
+### Fixed
+
+- **Claude Agent SDK `0.3.330` and OAuth sign-in URL parsing**: updated the
+  bundled Claude Agent SDK so `claude-haiku-5-5` is recognized natively with
+  effort levels (`low` through `max`), and updated interactive `claude auth
+  login --claudeai` URL detection for multi-line output in desktop and bot
+  sign-ins.
+- **Bot Files drawer clipping**: allowed bot conversations to shrink alongside
+  the **Files** drawer so wide conversation content no longer pushes the
+  drawer past the right edge.
+- **Mobile runner job results**: hid internal continuation messages for runner
+  job completions from mobile bot conversation transcripts, matching desktop.
+- **Mobile side menu swipe gesture**: restricted opening the drawer to drags
+  starting from the left edge so scrolling tables, code blocks, or interface
+  cards horizontally no longer opens the side menu.
+
 ## [0.41.1] - 2026-11-22
 
 ### Fixed
