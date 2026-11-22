@@ -309,7 +309,8 @@ export default {
     },
     browser_new_tab: {
       title: 'New tab',
-      description: 'Opens a new tab (optionally already navigating to a URL or search term) and makes it active.',
+      description:
+        "Opens a new tab (optionally already navigating to a URL or search term) and makes it active. Prefer browser_navigate in the current tab, and close tabs you no longer need. A bot's browser keeps at most 8 tabs per conversation: opening more closes the least recently used, and tabs unused for 30 minutes close (the active one stays).",
       params: { url: 'URL or search term to open (default: home page)' },
     },
     browser_close_tab: {
