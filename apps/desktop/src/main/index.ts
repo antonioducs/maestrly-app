@@ -195,6 +195,7 @@ import {
   updateConversationStatus,
   markConversationAttention,
   getConversation,
+  withDispatchOrigin,
   getWorkspace,
   getSoundSettings,
   getShortcutOpenMode,
@@ -1116,7 +1117,10 @@ function registerIpc(): void {
         const conversation = getConversation(conversationId)
         if (!conversation) return
         revealMain()
-        safeWindowSend(mainWindow, 'conversation:open', { conversation, focus: true })
+        safeWindowSend(mainWindow, 'conversation:open', {
+          conversation: withDispatchOrigin(conversation),
+          focus: true,
+        })
       },
       openSettingsInApp: (section) => {
         revealMain()
@@ -1196,7 +1200,10 @@ function registerIpc(): void {
       const conversation = getConversation(convId)
       if (!conversation) return
       focusMainWindow()
-      safeWindowSend(mainWindow, 'conversation:open', { conversation, focus: true })
+      safeWindowSend(mainWindow, 'conversation:open', {
+        conversation: withDispatchOrigin(conversation),
+        focus: true,
+      })
     },
     restartRemoteVSCode: (convId) =>
       remoteEditors ? restartRemoteVSCode(convId, remoteVSCodeDeps()) : Promise.resolve(),

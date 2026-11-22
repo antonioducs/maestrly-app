@@ -109,6 +109,13 @@ export interface ConvUiPrefs {
   }
 }
 
+export interface ConversationDispatchOrigin {
+  sourceConversationId: string
+  sourceName: string
+  rootConversationId: string
+  rootName: string
+}
+
 interface ConversationBase {
   id: string
   name: string
@@ -134,6 +141,8 @@ interface ConversationBase {
    * conversation away from the bot. Independent of management state, which stays the bot's ownership.
    */
   botManualChatEnabled?: boolean
+  /** Immediate source and chain root when this conversation was created by another conversation. */
+  dispatchOrigin?: ConversationDispatchOrigin
 }
 
 export interface ProjectConversation extends ConversationBase {

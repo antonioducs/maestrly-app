@@ -41,9 +41,25 @@ describe('shell keys', () => {
   it('carries a remote host in every id of its conversations, and takes it out again', () => {
     const conv = project('c1', 'w1', {
       repos: [{ workspaceId: 'w2', repoTop: '/r', branch: 'b', base: 'main', worktreePath: '/t', linkName: 'r' }],
+      dispatchOrigin: {
+        sourceConversationId: 'parent-1',
+        sourceName: 'Parent',
+        rootConversationId: 'root-1',
+        rootName: 'Root',
+      },
     } as Partial<Conversation>)
     const shell = shellConversation(HOST, conv)
-    expect(shell).toMatchObject({ id: `${HOST}#c1`, workspaceId: `${HOST}#w1`, name: 'c1' })
+    expect(shell).toMatchObject({
+      id: `${HOST}#c1`,
+      workspaceId: `${HOST}#w1`,
+      name: 'c1',
+      dispatchOrigin: {
+        sourceConversationId: `${HOST}#parent-1`,
+        sourceName: 'Parent',
+        rootConversationId: `${HOST}#root-1`,
+        rootName: 'Root',
+      },
+    })
     expect(shell.repos?.[0].workspaceId).toBe(`${HOST}#w2`)
     expect(isRemoteKey(shell.id)).toBe(true)
     expect(hostOfKey(shell.id)).toBe(HOST)

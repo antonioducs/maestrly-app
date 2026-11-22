@@ -1,7 +1,7 @@
 import type { HTMLAttributes, ReactNode } from 'react'
 import type { Conversation } from '../../../preload'
 import { useReorder } from '@/lib/use-reorder'
-import type { ConvTopNode, SharedConversationGroupInfo } from './conv-top-nodes'
+import type { ConvTopNode, DispatchConversationGroupInfo, SharedConversationGroupInfo } from './conv-top-nodes'
 
 export type DragHandle = HTMLAttributes<HTMLElement> & { draggable?: boolean }
 
@@ -12,6 +12,7 @@ export function WorkspaceConvList({
   onReorder,
   renderConv,
   renderGroup,
+  renderDispatch,
 }: {
   workspaceId: string
   nodes: ConvTopNode[]
@@ -20,6 +21,12 @@ export function WorkspaceConvList({
   renderConv: (conv: Conversation, dnd: DragHandle | undefined, isOver: boolean) => ReactNode
   renderGroup: (
     info: SharedConversationGroupInfo,
+    members: Conversation[],
+    dnd: DragHandle | undefined,
+    isOver: boolean
+  ) => ReactNode
+  renderDispatch: (
+    info: DispatchConversationGroupInfo,
     members: Conversation[],
     dnd: DragHandle | undefined,
     isOver: boolean
@@ -41,7 +48,9 @@ export function WorkspaceConvList({
       {nodes.map((n, i) => {
         const dnd = dndEnabled ? reorder.props(i) : undefined
         const isOver = dndEnabled && reorder.overIndex === i
-        return n.kind === 'conv' ? renderConv(n.conv, dnd, isOver) : renderGroup(n.info, n.members, dnd, isOver)
+        if (n.kind === 'conv') return renderConv(n.conv, dnd, isOver)
+        if (n.kind === 'dispatch') return renderDispatch(n.info, n.members, dnd, isOver)
+        return renderGroup(n.info, n.members, dnd, isOver)
       })}
     </>
   )

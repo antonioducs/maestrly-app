@@ -606,12 +606,24 @@ export function Sidebar({
     }
     return counts
   }, [routines?.routines])
-  const { convItem, sharedFolder } = useConvRows({
+  const conversationsById = useMemo(() => {
+    const map = new Map<string, Conversation>()
+    for (const c of standaloneConversations) map.set(c.id, c)
+    for (const ws of workspaces) for (const c of ws.conversations) map.set(c.id, c)
+    for (const section of hostSections) {
+      if (!section.shell) continue
+      for (const c of section.shell.standaloneConversations) map.set(c.id, c)
+      for (const ws of section.shell.workspaces) for (const c of ws.conversations) map.set(c.id, c)
+    }
+    return map
+  }, [standaloneConversations, workspaces, hostSections])
+  const { convItem, sharedFolder, dispatchFolder } = useConvRows({
     statuses,
     attention,
     activeId,
     pendingPlanIds,
     onSelect,
+    findConversation: (id) => conversationsById.get(id),
     renaming,
     setRenaming,
     renameValue,
@@ -742,6 +754,7 @@ export function Sidebar({
                   convItem(conv, { pl: 'pl-6', dnd, isOver, instanceKey: `tree:${conv.id}` })
                 }
                 renderGroup={(info, members, dnd, isOver) => sharedFolder(info, members, { dnd, isOver })}
+                renderDispatch={(info, members, dnd, isOver) => dispatchFolder(info, members, { dnd, isOver })}
               />
             )}
             {ws.conversations.length === 0 && (

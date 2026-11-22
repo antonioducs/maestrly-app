@@ -23,11 +23,12 @@ function conversation(id: string, overrides: Partial<ProjectConversation> = {}):
 }
 
 function nodeIds(nodes: ReturnType<typeof buildConvTopNodes>) {
-  return nodes.map((node) =>
-    node.kind === 'conv'
-      ? `conv:${node.conv.id}`
-      : `group:${node.info.cwd}:${node.members.map((member) => member.id).join(',')}`
-  )
+  return nodes.map((node) => {
+    if (node.kind === 'conv') return `conv:${node.conv.id}`
+    if (node.kind === 'dispatch')
+      return `dispatch:${node.info.rootId}:${node.info.rootName}:${node.members.map((member) => member.id).join(',')}`
+    return `group:${node.info.cwd}:${node.members.map((member) => member.id).join(',')}`
+  })
 }
 
 describe('buildConvTopNodes', () => {
@@ -91,5 +92,104 @@ describe('buildConvTopNodes', () => {
     ])
 
     expect(nodeIds(nodes)).toEqual(['group:/repo/group:group-early,group-late', 'conv:loose'])
+  })
+
+  it('groups a root with its children and grandchildren into one dispatch folder ordered by createdAt', () => {
+    const nodes = buildConvTopNodes([
+      conversation('grandchild', {
+        name: 'Grandchild',
+        createdAt: 30,
+        dispatchOrigin: {
+          sourceConversationId: 'child-1',
+          sourceName: 'Child 1',
+          rootConversationId: 'root',
+          rootName: 'FixTest',
+        },
+      }),
+      conversation('loose', { createdAt: 5 }),
+      conversation('child-2', {
+        name: 'Child 2',
+        createdAt: 25,
+        dispatchOrigin: {
+          sourceConversationId: 'root',
+          sourceName: 'FixTest',
+          rootConversationId: 'root',
+          rootName: 'FixTest',
+        },
+      }),
+      conversation('root', { name: 'FixTest', createdAt: 100 }),
+      conversation('child-1', {
+        name: 'Child 1',
+        createdAt: 15,
+        dispatchOrigin: {
+          sourceConversationId: 'root',
+          sourceName: 'FixTest',
+          rootConversationId: 'root',
+          rootName: 'FixTest',
+        },
+      }),
+    ])
+
+    expect(nodes[0]).toMatchObject({
+      kind: 'dispatch',
+      info: { key: 'dispatch:root', rootId: 'root', rootName: 'FixTest' },
+    })
+    // Folder sits at the position of its first member (grandchild), root comes first inside, then derived by createdAt.
+    expect(nodeIds(nodes)).toEqual(['dispatch:root:FixTest:root,child-1,child-2,grandchild', 'conv:loose'])
+  })
+
+  it('creates a dispatch folder with only children when the root is external to the workspace', () => {
+    const nodes = buildConvTopNodes([
+      conversation('c2', {
+        createdAt: 20,
+        dispatchOrigin: {
+          sourceConversationId: 'standalone-root',
+          sourceName: 'Planning Chat',
+          rootConversationId: 'standalone-root',
+          rootName: 'Planning Chat',
+        },
+      }),
+      conversation('c1', {
+        createdAt: 10,
+        dispatchOrigin: {
+          sourceConversationId: 'standalone-root',
+          sourceName: 'Planning Chat',
+          rootConversationId: 'standalone-root',
+          rootName: 'Planning Chat',
+        },
+      }),
+    ])
+
+    expect(nodeIds(nodes)).toEqual(['dispatch:standalone-root:Planning Chat:c1,c2'])
+  })
+
+  it('does not wrap a root without derived conversations in a dispatch folder', () => {
+    const nodes = buildConvTopNodes([conversation('root', { name: 'FixTest', createdAt: 10 })])
+    expect(nodeIds(nodes)).toEqual(['conv:root'])
+  })
+
+  it('gives dispatch folders precedence over shared-worktree groups while keeping shared grouping for the rest', () => {
+    const nodes = buildConvTopNodes([
+      conversation('root', { name: 'FixTest', cwd: '/repo/shared', createdAt: 10 }),
+      conversation('child', {
+        cwd: '/repo/shared',
+        createdAt: 20,
+        dispatchOrigin: {
+          sourceConversationId: 'root',
+          sourceName: 'FixTest',
+          rootConversationId: 'root',
+          rootName: 'FixTest',
+        },
+      }),
+      conversation('bystander', { cwd: '/repo/shared', createdAt: 30 }),
+      conversation('other-1', { cwd: '/repo/other', createdAt: 40 }),
+      conversation('other-2', { cwd: '/repo/other', createdAt: 50 }),
+    ])
+
+    expect(nodeIds(nodes)).toEqual([
+      'dispatch:root:FixTest:root,child',
+      'conv:bystander',
+      'group:/repo/other:other-1,other-2',
+    ])
   })
 })

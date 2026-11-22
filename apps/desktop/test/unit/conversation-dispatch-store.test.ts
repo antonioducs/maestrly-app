@@ -1,7 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { closeDb, freshDb, restartDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
-import { deleteConversation, getDb } from '../../src/main/store'
+import {
+  deleteConversation,
+  dispatchOriginsFor,
+  getConversation,
+  getDb,
+  listAllConversations,
+  listConversations,
+  renameConversation,
+  withDispatchOrigin,
+} from '../../src/main/store'
 import {
   conversationHasMessages,
   findConversationDispatch,
@@ -140,5 +149,162 @@ describe('conversation dispatch journal', () => {
       )
       .run(destination.id)
     expect(conversationHasMessages(destination.id)).toBe(true)
+  })
+})
+
+describe('conversation dispatch origins', () => {
+  it('resolves immediate source and chain root on withDispatchOrigin, listConversations, and listAllConversations without loading on getConversation', () => {
+    renameConversation(sourceId, 'FixTest')
+    const child = makeConversation(workspaceId, { id: 'child-1', name: 'Child Task' })
+    const grandchild = makeConversation(workspaceId, { id: 'grandchild-1', name: 'Subtask' })
+
+    reserveConversationDispatch(
+      entry({
+        dispatchId: 'd-child',
+        sourceConversationId: sourceId,
+        requestKey: 'CHILD',
+        conversationId: child.id,
+        conversationName: 'Child Task',
+      })
+    )
+    reserveConversationDispatch(
+      entry({
+        dispatchId: 'd-grandchild',
+        sourceConversationId: child.id,
+        requestKey: 'GRANDCHILD',
+        conversationId: grandchild.id,
+        conversationName: 'Subtask',
+      })
+    )
+
+    // Plain getConversation stays a single-row lookup without querying conversation_dispatches.
+    expect(getConversation(child.id)?.dispatchOrigin).toBeUndefined()
+
+    expect(withDispatchOrigin(getConversation(sourceId)!).dispatchOrigin).toBeUndefined()
+    expect(withDispatchOrigin(getConversation(child.id)!).dispatchOrigin).toEqual({
+      sourceConversationId: sourceId,
+      sourceName: 'FixTest',
+      rootConversationId: sourceId,
+      rootName: 'FixTest',
+    })
+    // Asking only for the grandchild still walks up through the unrequested intermediate child to the root.
+    const grandchildOnly = dispatchOriginsFor([grandchild.id])
+    expect([...grandchildOnly.keys()]).toEqual([grandchild.id])
+    expect(grandchildOnly.get(grandchild.id)).toEqual({
+      sourceConversationId: child.id,
+      sourceName: 'Child Task',
+      rootConversationId: sourceId,
+      rootName: 'FixTest',
+    })
+    expect(withDispatchOrigin(getConversation(grandchild.id)!).dispatchOrigin).toEqual({
+      sourceConversationId: child.id,
+      sourceName: 'Child Task',
+      rootConversationId: sourceId,
+      rootName: 'FixTest',
+    })
+
+    // Renaming the root or intermediate conversation reflects on subsequent listings.
+    renameConversation(sourceId, 'FixTest v2')
+    renameConversation(child.id, 'Child Task v2')
+
+    const listed = listConversations(workspaceId)
+    expect(listed.find((c) => c.id === grandchild.id)?.dispatchOrigin).toEqual({
+      sourceConversationId: child.id,
+      sourceName: 'Child Task v2',
+      rootConversationId: sourceId,
+      rootName: 'FixTest v2',
+    })
+    const all = listAllConversations()
+    expect(all.find((c) => c.id === child.id)?.dispatchOrigin).toEqual({
+      sourceConversationId: sourceId,
+      sourceName: 'FixTest v2',
+      rootConversationId: sourceId,
+      rootName: 'FixTest v2',
+    })
+  })
+
+  it('ignores discarded and deleted dispatches', () => {
+    const discarded = makeConversation(workspaceId, { id: 'dest-discarded', name: 'Discarded' })
+    const deleted = makeConversation(workspaceId, { id: 'dest-deleted', name: 'Deleted' })
+
+    reserveConversationDispatch(
+      entry({
+        dispatchId: 'd-discarded',
+        requestKey: 'DISC',
+        conversationId: discarded.id,
+        conversationName: discarded.name,
+      })
+    )
+    transitionConversationDispatch('d-discarded', ['reserved'], 'discarded')
+
+    reserveConversationDispatch(
+      entry({
+        dispatchId: 'd-deleted',
+        requestKey: 'DEL',
+        conversationId: deleted.id,
+        conversationName: deleted.name,
+      })
+    )
+    getDb().prepare("UPDATE conversation_dispatches SET phase='deleted' WHERE dispatch_id='d-deleted'").run()
+
+    expect(withDispatchOrigin(getConversation(discarded.id)!).dispatchOrigin).toBeUndefined()
+    expect(withDispatchOrigin(getConversation(deleted.id)!).dispatchOrigin).toBeUndefined()
+    expect(dispatchOriginsFor([discarded.id, deleted.id]).size).toBe(0)
+  })
+
+  it('ignores cyclic dispatch chains without looping', () => {
+    const a = makeConversation(workspaceId, { id: 'cycle-a', name: 'A' })
+    const b = makeConversation(workspaceId, { id: 'cycle-b', name: 'B' })
+    const self = makeConversation(workspaceId, { id: 'cycle-self', name: 'Self' })
+
+    reserveConversationDispatch(
+      entry({
+        dispatchId: 'd-ab',
+        sourceConversationId: a.id,
+        requestKey: 'AB',
+        conversationId: b.id,
+        conversationName: 'B',
+      })
+    )
+    reserveConversationDispatch(
+      entry({
+        dispatchId: 'd-ba',
+        sourceConversationId: b.id,
+        requestKey: 'BA',
+        conversationId: a.id,
+        conversationName: 'A',
+      })
+    )
+    reserveConversationDispatch(
+      entry({
+        dispatchId: 'd-self',
+        sourceConversationId: self.id,
+        requestKey: 'SELF',
+        conversationId: self.id,
+        conversationName: 'Self',
+      })
+    )
+
+    expect(dispatchOriginsFor([a.id, b.id, self.id]).size).toBe(0)
+    expect(withDispatchOrigin(getConversation(a.id)!).dispatchOrigin).toBeUndefined()
+    expect(withDispatchOrigin(getConversation(b.id)!).dispatchOrigin).toBeUndefined()
+    expect(withDispatchOrigin(getConversation(self.id)!).dispatchOrigin).toBeUndefined()
+  })
+
+  it('turns the child back into a loose conversation when its origin is deleted via ON DELETE CASCADE', () => {
+    const child = makeConversation(workspaceId, { id: 'child-orphan', name: 'Child' })
+    reserveConversationDispatch(
+      entry({
+        dispatchId: 'd-orphan',
+        sourceConversationId: sourceId,
+        requestKey: 'ORPHAN',
+        conversationId: child.id,
+        conversationName: child.name,
+      })
+    )
+    expect(withDispatchOrigin(getConversation(child.id)!).dispatchOrigin?.sourceConversationId).toBe(sourceId)
+
+    deleteConversation(sourceId)
+    expect(withDispatchOrigin(getConversation(child.id)!).dispatchOrigin).toBeUndefined()
   })
 })
