@@ -63,6 +63,19 @@ describe('transcript rows', () => {
     ).toEqual(['tool:t1', 'reasoning:r1', 'tool:t2', 'narration:a1', 'reasoning:r2', 'tool:t3'])
   })
 
+  it('hides a continuation, such as a runner job’s result, while it still opens a turn', () => {
+    const continuation = { ...user('c1'), text: 'Runner job j1 succeeded.', source: 'continuation' as const }
+    const rows = transcriptRows([
+      user('u1'),
+      tool('t1', 'bash'),
+      said('a1'),
+      continuation,
+      tool('t2', 'read'),
+      said('a2'),
+    ])
+    expect(rows.map(label)).toEqual(['u1', 'a1', 'activity:t1', 'a2', 'activity:t2'])
+  })
+
   it('keeps what the agent said last in view while it still works', () => {
     const rows = transcriptRows([user('u1'), said('a1'), tool('t1', 'bash'), said('a2'), tool('t2', 'bash')])
     expect(rows.map(label)).toEqual(['u1', 'a2', 'activity:a1'])
