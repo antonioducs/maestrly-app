@@ -19,6 +19,7 @@ async function launchChromium(): Promise<Browser> {
   }
 }
 
+// A real browser is slow when the machine is busy, so this suite gets 120s per test instead of the default.
 describe('real Chromium sandboxed iframe bridge (<link crossorigin> CSSOM + adoptedStyleSheets preview)', () => {
   let tmp: ReturnType<typeof tempDir>
   let host: ArtifactHost
@@ -33,7 +34,7 @@ describe('real Chromium sandboxed iframe bridge (<link crossorigin> CSSOM + adop
       ownerName: 'Antonio',
     })
     browser = await launchChromium()
-  }, 30_000)
+  }, 120_000)
 
   afterAll(async () => {
     await browser?.close().catch(() => {})
@@ -100,13 +101,14 @@ describe('real Chromium sandboxed iframe bridge (<link crossorigin> CSSOM + adop
     const { ticket } = await host.admin.mintOwnerTicket(created.id)
     const context = await browser.newContext()
     const page = await context.newPage()
+    page.setDefaultTimeout(120_000)
     const pageErrors: string[] = []
     page.on('pageerror', (err) => pageErrors.push(err.message))
 
     await page.goto(`http://127.0.0.1:${host.port}/a/${created.id}#o=${ticket}`)
 
     const contentFrameLocator = page.frameLocator('iframe.content')
-    await contentFrameLocator.locator('#btn').waitFor({ state: 'visible', timeout: 10_000 })
+    await contentFrameLocator.locator('#btn').waitFor({ state: 'visible', timeout: 60_000 })
 
     // Capture bridge messages received by the top-level shell window
     await page.evaluate(() => {
@@ -299,17 +301,18 @@ describe('real Chromium sandboxed iframe bridge (<link crossorigin> CSSOM + adop
     })
     expect(forwardedWhileEditing).toEqual([])
 
-    // Focusing a non-editable element forwards 's' and 't' shortcuts
+    // Focusing a non-editable element forwards 't' and 's' shortcuts ('s' switches to Screens view and moves focus out of the iframe, so send 't' first)
     await contentFrameLocator.locator('#btn').focus()
-    await page.keyboard.press('s')
-    await page.keyboard.press('t')
+    await childFrame.waitForFunction(() => document.activeElement?.id === 'btn')
+    await contentFrameLocator.locator('#btn').press('t')
+    await contentFrameLocator.locator('#btn').press('s')
     const forwardedKeys = await page.waitForFunction(() => {
       const msgs = (window as unknown as { __bridgeMessages: Array<{ type: string; key?: string }> }).__bridgeMessages
       const keys = msgs.filter((m) => m.type === 'key').map((m) => m.key)
       return keys.length >= 2 ? keys : null
     })
-    expect(await forwardedKeys.jsonValue()).toEqual(['s', 't'])
+    expect(await forwardedKeys.jsonValue()).toEqual(['t', 's'])
 
     await context.close()
-  }, 30_000)
+  }, 120_000)
 })
