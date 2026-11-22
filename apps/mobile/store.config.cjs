@@ -51,7 +51,10 @@ const contact = {
   phone: env('MAESTRLY_APP_REVIEW_PHONE'),
 }
 
-/** Answers what App Review asks new developer accounts under Guideline 2.1, so later submissions keep the answers. */
+/**
+ * Answers what App Review asks new developer accounts under Guideline 2.1, and about the business model under 2.1(b),
+ * so later submissions keep the answers.
+ */
 const REVIEW_NOTES = `Maestrly is an open-source developer tool (MIT License, https://github.com/antonioducs/maestrly-app). People run AI coding and automation agents ("bots") on their own computer or server with the Maestrly desktop app and bot server. This iOS app is the phone client of that server.
 
 PURPOSE AND AUDIENCE
@@ -75,7 +78,10 @@ REGIONAL DIFFERENCES
 The app works the same in every region where it is offered, in English and Brazilian Portuguese. It is not offered in mainland China.
 
 REGULATED INDUSTRY OR THIRD-PARTY MATERIAL
-Not applicable: the app does not operate in a regulated industry and contains no protected third-party material.`
+Not applicable: the app does not operate in a regulated industry and contains no protected third-party material.
+
+BUSINESS MODEL
+The app, the Maestrly desktop app and the bot server are free and open source. Nothing can be bought, subscribed to or unlocked, in the app or outside it: there is no In-App Purchase, subscription, advertising, account, license key or link to buy anything. The bot server runs its AI agents with AI model accounts the person already has with third parties (an API key or an existing ChatGPT or Claude plan). The person signs in to them on the server, not in the app, and the app cannot buy, upgrade or manage them; Settings > "Subscriptions" only shows how much of those plans' limits the server has used. Sample chats on the demo server, such as "Pricing tiers for teams", are example content: the plans in them are not Maestrly plans and are not sold anywhere.`
 
 module.exports = {
   configVersion: 0,
@@ -113,6 +119,9 @@ module.exports = {
       ageRatingOverride: 'NONE',
       ageRatingOverrideV2: 'NONE',
       koreaAgeRatingOverride: 'NONE',
+      // App Store Connect also asks about social media (and turning it off under 13), shared location, and dating and
+      // relationships. The eas-cli schema rejects those fields, so they are answered "No" in App Store Connect;
+      // `metadata:push` sends only the fields above and leaves those answers as they are.
     },
     info: {
       'en-US': {

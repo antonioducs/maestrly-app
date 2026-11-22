@@ -426,8 +426,15 @@ For App Review and the stores:
   reviewers to **Explore a demo server** on the first screen. They also answer
   what App Review asks new developer accounts under Guideline 2.1: the app's
   purpose and audience, setup and access, external services, regional
-  differences and regulated material. Edit them in `store.config.cjs`, not in
-  App Store Connect, because each `submit` overwrites them.
+  differences and regulated material. A **Business model** section answers
+  App Review's questions under Guideline 2.1(b): nothing is sold, and the demo
+  server's sample chats, such as **Pricing tiers for teams**, are not Maestrly
+  plans. Edit the notes in `store.config.cjs`, not in App Store Connect,
+  because each `submit` overwrites them.
+- The age rating's newer questions (social media, shared location, and dating
+  and relationships) are answered **No** in App Store Connect, because the
+  eas-cli schema rejects them; `submit` leaves those answers as they are. A
+  new app can't go back to review while they are blank.
 - App Review can also ask for a screen recording on a physical device, from
   launch through the typical flow, including pairing and **Unpair**. Attach it
   to the reply in App Store Connect.

@@ -4,6 +4,7 @@ import path from 'node:path'
 import { compileFunction } from 'node:vm'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import appConfig from '../app.config'
+import { DEMO_CHATS } from '../src/demo/chat-fixtures'
 import { en } from '../src/i18n/catalogs'
 
 const require = createRequire(import.meta.url)
@@ -104,8 +105,18 @@ describe('the App Store listing', () => {
       'EXTERNAL SERVICES',
       'REGIONAL DIFFERENCES',
       'REGULATED INDUSTRY OR THIRD-PARTY MATERIAL',
+      'BUSINESS MODEL',
     ]) {
       expect(notes).toContain(section)
     }
+  })
+
+  it('explains the business model with the screens and demo chats it names', () => {
+    const notes: string = listing(CONTACT).review.notes
+    expect(notes).toContain(`Settings > "${en['settings.subscriptions']}"`)
+    // App Review asked about the business model after seeing this demo chat's pricing tiers.
+    const pricing = 'Pricing tiers for teams'
+    expect(notes).toContain(`"${pricing}"`)
+    expect(DEMO_CHATS.map((chat) => chat.name)).toContain(pricing)
   })
 })
