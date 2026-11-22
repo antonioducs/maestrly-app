@@ -5,6 +5,24 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.41.1] - 2026-11-22
+
+### Fixed
+
+- **Runner job results on busy bot conversations**: runner job completions
+  that finish while a bot conversation is active or has queued messages now wait
+  until the conversation is free and arrive grouped together (up to four jobs
+  per message); jobs already observed via `runner_status` or `runner_logs`, or
+  cancelled by the conversation, no longer send duplicate completion messages.
+  See [Bot fleet](docs/bot-fleet.md).
+- **Bot browser tab cap and idle cleanup**: a bot conversation's Chromium
+  browser now keeps at most 8 tabs (closing the least recently used when
+  opening another) and closes tabs left unused for 30 minutes while preserving
+  the active tab.
+- **Bot transcript sync on stream reconnect**: bot transcripts and routine run
+  views now refresh when the event stream reconnects and preserve live items
+  that arrive while a transcript page is loading.
+
 ## [0.41.0] - 2026-11-21
 
 ### Added
