@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import type { FleetBot, FleetHostInfo, FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { FleetBot, FleetHostInfo, FleetTranscriptItem, FleetTranscriptPage } from '@maestrly/bot-fleet-protocol'
 import {
   accountsExhaustedNotice,
   activityLabel,
@@ -7,11 +7,15 @@ import {
   memorySegments,
 } from '../../src/renderer/lib/fleet/format'
 import {
+  type FleetAction,
+  type FleetState,
   fleetReducer,
   fleetServersReducer,
   initialFleetState,
   mergeTranscriptItems,
+  runTranscriptKey,
 } from '../../src/renderer/lib/fleet/state'
+import { createFleetActions } from '../../src/renderer/lib/fleet/use-fleet'
 import type { FleetServerId } from '../../src/shared/fleet-servers'
 
 const user = (id: string, at: string, text = id): FleetTranscriptItem => ({
@@ -232,5 +236,133 @@ describe('fleet state of several servers', () => {
     const state = { [A]: initialFleetState, [B]: initialFleetState }
     expect(Object.keys(fleetServersReducer(state, { type: 'retain', ids: [B] }))).toEqual([B])
     expect(fleetServersReducer(state, { type: 'retain', ids: [A, B] })).toBe(state)
+  })
+})
+
+describe('a transcript and the events that reach it while it loads', () => {
+  const T0 = '2026-01-01T00:00:00Z'
+  const T1 = '2026-01-01T00:01:00Z'
+  const T2 = '2026-01-01T00:02:00Z'
+  const upsert = (item: FleetTranscriptItem): FleetAction => ({
+    type: 'event',
+    value: { type: 'transcript.upsert', botId: 'b', at: item.at, item },
+  })
+  const page = (items: FleetTranscriptItem[]): FleetAction => ({
+    type: 'transcript.page',
+    botId: 'b',
+    page: { items, before: null },
+    older: false,
+  })
+  const ids = (state: FleetState) => state.transcripts.b?.items.map((item) => item.id)
+
+  it('keeps an item sent while the first page was on its way, read before it', () => {
+    let state = fleetReducer(initialFleetState, { type: 'transcript.loading', botId: 'b' })
+    state = fleetReducer(state, upsert(user('answer', T1)))
+    state = fleetReducer(state, page([user('question', T0)]))
+    expect(ids(state)).toEqual(['question', 'answer'])
+    expect(state.transcripts.b.arrived).toBeUndefined()
+  })
+  it('keeps what arrived during a reload, newer than the page it read', () => {
+    let state = fleetReducer(initialFleetState, page([user('question', T0)]))
+    state = fleetReducer(state, { type: 'transcript.loading', botId: 'b' })
+    state = fleetReducer(state, upsert(user('answer', T1)))
+    expect(ids(state)).toEqual(['question', 'answer'])
+    state = fleetReducer(state, page([user('question', T0)]))
+    expect(ids(state)).toEqual(['question', 'answer'])
+  })
+  it('takes nothing for a transcript never opened, and forgets what arrived when its page fails', () => {
+    expect(fleetReducer(initialFleetState, upsert(user('answer', T1)))).toBe(initialFleetState)
+    let state = fleetReducer(initialFleetState, { type: 'transcript.loading', botId: 'b' })
+    state = fleetReducer(state, upsert(user('answer', T1)))
+    state = fleetReducer(state, { type: 'transcript.error', botId: 'b', error: 'offline' })
+    state = fleetReducer(state, { type: 'transcript.loading', botId: 'b' })
+    state = fleetReducer(state, page([user('question', T0)]))
+    expect(ids(state)).toEqual(['question'])
+  })
+  it("does the same for a run's transcript", () => {
+    const key = runTranscriptKey('b', 'r')
+    let state = fleetReducer(initialFleetState, { type: 'runTranscript.loading', botId: 'b', runId: 'r' })
+    state = fleetReducer(state, {
+      type: 'event',
+      value: { type: 'routine_run.transcript.upsert', botId: 'b', runId: 'r', at: T1, item: user('answer', T1) },
+    })
+    state = fleetReducer(state, {
+      type: 'runTranscript.page',
+      botId: 'b',
+      runId: 'r',
+      page: { items: [user('question', T0)], before: null },
+      older: false,
+    })
+    expect(state.runTranscripts[key].items.map((item) => item.id)).toEqual(['question', 'answer'])
+  })
+
+  describe('loading it', () => {
+    const SERVER = 'aaaaaaaa-0000-4000-8000-000000000001' as FleetServerId
+    afterEach(() => vi.unstubAllGlobals())
+    function setup(state: FleetState = initialFleetState) {
+      const answers: Array<(page: FleetTranscriptPage) => void> = []
+      const api = {
+        fleetGetTranscript: vi.fn(() => new Promise<FleetTranscriptPage>((resolve) => answers.push(resolve))),
+        fleetListRuns: vi.fn(async () => ({ runs: [], before: null })),
+        fleetListPeerThreads: vi.fn(async () => ({ threads: [] })),
+      }
+      vi.stubGlobal('window', { api })
+      const actions = createFleetActions(
+        SERVER,
+        (action) => {
+          state = fleetReducer(state, action)
+        },
+        () => state,
+        () => undefined
+      )
+      return { actions, api, answers, state: () => state }
+    }
+
+    it('drops the answer to a request a newer one overtook', async () => {
+      const s = setup()
+      const first = s.actions.loadTranscript('b')
+      const second = s.actions.loadTranscript('b')
+      s.answers[1]({ items: [user('question', T0), user('answer', T1)], before: null })
+      await second
+      s.answers[0]({ items: [user('question', T0)], before: null })
+      await first
+      expect(ids(s.state())).toEqual(['question', 'answer'])
+    })
+    it('reads a conversation shown before again each time it opens', async () => {
+      const s = setup(fleetReducer(initialFleetState, page([user('question', T0)])))
+      s.actions.ensureTranscript('b')
+      // Shown again while its answer is on its way, it is not asked twice.
+      s.actions.ensureTranscript('b')
+      expect(s.api.fleetGetTranscript).toHaveBeenCalledTimes(1)
+      expect(ids(s.state())).toEqual(['question'])
+      s.answers[0]({ items: [user('question', T0), user('answer', T2)], before: null })
+      await vi.waitFor(() => expect(ids(s.state())).toEqual(['question', 'answer']))
+    })
+    it('reads again what it holds once the stream reopens, and only then', () => {
+      let held = fleetReducer(initialFleetState, page([user('question', T0)]))
+      held = fleetReducer(held, { type: 'runs.page', botId: 'b', page: { runs: [], before: null }, older: false })
+      const s = setup(held)
+      s.actions.streamChanged('connected')
+      expect(s.api.fleetGetTranscript).not.toHaveBeenCalled()
+      // The connection telling something else while open reads nothing.
+      s.actions.streamChanged('connected')
+      expect(s.api.fleetGetTranscript).not.toHaveBeenCalled()
+      s.actions.streamChanged('reconnecting')
+      s.actions.streamChanged('connected')
+      expect(s.api.fleetGetTranscript.mock.calls).toEqual([[SERVER, 'b', undefined]])
+      expect(s.api.fleetListRuns.mock.calls).toEqual([[SERVER, 'b', null]])
+      expect(s.api.fleetListPeerThreads).not.toHaveBeenCalled()
+    })
+    it('reads again a transcript reset while its first page was on its way', async () => {
+      const s = setup()
+      const first = s.actions.loadTranscript('b')
+      const before = s.state()
+      s.actions.dispatch({ type: 'event', value: { type: 'transcript.reset', botId: 'b', at: T1 } })
+      s.actions.resyncBot('b', before)
+      s.answers[1]({ items: [user('after', T1)], before: null })
+      s.answers[0]({ items: [user('stale', T0)], before: null })
+      await first
+      await vi.waitFor(() => expect(ids(s.state())).toEqual(['after']))
+    })
   })
 })

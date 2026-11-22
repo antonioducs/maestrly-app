@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import type { FleetInteractionResolution } from '@maestrly/bot-fleet-protocol'
-import { type FleetServerId, type FleetServerView, NO_FLEET_SERVER } from '../../../shared/fleet-servers'
+import {
+  type FleetConnectionState,
+  type FleetConnectionView,
+  type FleetServerId,
+  type FleetServerView,
+  NO_FLEET_SERVER,
+} from '../../../shared/fleet-servers'
 import {
   emptyRuns,
   emptyThreads,
@@ -13,6 +19,9 @@ import {
 } from './state'
 import { fleetErrorMessage } from './errors'
 
+/** A list this window holds, or one on its way: its answer may be from before what changed. */
+const held = (entry?: { loaded: boolean; loading: boolean }) => !!entry && (entry.loaded || entry.loading)
+
 /** The bot or the environment whose lifecycle action failed. */
 type ActionError = { botId: string | null; environmentId: string | null; message: string }
 
@@ -23,55 +32,73 @@ export function createFleetActions(
   stateOf: () => FleetState,
   setActionError: (error: ActionError | null) => void
 ) {
+  // The newest request for each list. A reload (or a reset, which reloads) overtakes the requests before it: their
+  // answers, read earlier, would put back what it replaced. An older page belongs to the newest reload it followed.
+  const requests = new Map<string, number>()
+  const request = (key: string, newest: boolean) => {
+    const id = (requests.get(key) ?? 0) + (newest ? 1 : 0)
+    requests.set(key, id)
+    return () => requests.get(key) === id
+  }
   const loadTranscript = async (botId: string, before?: string | null) => {
+    const current = request(`transcript\u0000${botId}`, !before)
     dispatch({ type: 'transcript.loading', botId })
     try {
       const page = await window.api.fleetGetTranscript(serverId, botId, before)
-      dispatch({ type: 'transcript.page', botId, page, older: !!before })
+      if (current()) dispatch({ type: 'transcript.page', botId, page, older: !!before })
     } catch (error) {
+      if (!current()) return
       dispatch({ type: 'transcript.error', botId, error: fleetErrorMessage(error) })
       throw error
     }
   }
   /** A page of a bot's routine runs: the newest, or with `before` the ones before it. */
   const loadRuns = async (botId: string, before?: string | null) => {
+    const current = request(`runs\u0000${botId}`, !before)
     dispatch({ type: 'runs.loading', botId })
     try {
       const page = await window.api.fleetListRuns(serverId, botId, before ?? null)
-      dispatch({ type: 'runs.page', botId, page, older: !!before })
+      if (current()) dispatch({ type: 'runs.page', botId, page, older: !!before })
     } catch (error) {
+      if (!current()) return
       dispatch({ type: 'runs.error', botId, error: fleetErrorMessage(error) })
       throw error
     }
   }
   const loadRunTranscript = async (botId: string, runId: string, before?: string | null) => {
+    const current = request(`run\u0000${runTranscriptKey(botId, runId)}`, !before)
     dispatch({ type: 'runTranscript.loading', botId, runId })
     try {
       const page = await window.api.fleetGetRunTranscript(serverId, botId, runId, before)
-      dispatch({ type: 'runTranscript.page', botId, runId, page, older: !!before })
+      if (current()) dispatch({ type: 'runTranscript.page', botId, runId, page, older: !!before })
     } catch (error) {
+      if (!current()) return
       dispatch({ type: 'runTranscript.error', botId, runId, error: fleetErrorMessage(error) })
       throw error
     }
   }
   /** A bot's conversations with other bots (`peer-conversations`). */
   const loadThreads = async (botId: string) => {
+    const current = request(`threads\u0000${botId}`, true)
     dispatch({ type: 'threads.loading', botId })
     try {
       const { threads } = await window.api.fleetListPeerThreads(serverId, botId)
-      dispatch({ type: 'threads.list', botId, threads })
+      if (current()) dispatch({ type: 'threads.list', botId, threads })
     } catch (error) {
+      if (!current()) return
       dispatch({ type: 'threads.error', botId, error: fleetErrorMessage(error) })
       throw error
     }
   }
   /** A thread's transcript, kept beside the runs' by the thread's id. */
   const loadThreadTranscript = async (botId: string, threadId: string, before?: string | null) => {
+    const current = request(`run\u0000${runTranscriptKey(botId, threadId)}`, !before)
     dispatch({ type: 'runTranscript.loading', botId, runId: threadId })
     try {
       const page = await window.api.fleetGetPeerThreadTranscript(serverId, botId, threadId, before)
-      dispatch({ type: 'runTranscript.page', botId, runId: threadId, page, older: !!before })
+      if (current()) dispatch({ type: 'runTranscript.page', botId, runId: threadId, page, older: !!before })
     } catch (error) {
+      if (!current()) return
       dispatch({ type: 'runTranscript.error', botId, runId: threadId, error: fleetErrorMessage(error) })
       throw error
     }
@@ -96,9 +123,50 @@ export function createFleetActions(
     const entry = stateOf().runTranscripts[runTranscriptKey(botId, threadId)] ?? emptyTranscript
     if (!entry.loaded && !entry.loading) void loadThreadTranscript(botId, threadId).catch(() => {})
   }
+  /**
+   * A bot's conversation as it opens. One shown before is read again too, behind what it shows: its events are the
+   * only other way it learns what changed, and the ones sent while this computer could not hear them are lost.
+   */
   const ensureTranscript = (botId: string) => {
     const entry = stateOf().transcripts[botId] ?? emptyTranscript
-    if (!entry.loaded && !entry.loading) void loadTranscript(botId).catch(() => {})
+    if (!entry.loading) void loadTranscript(botId).catch(() => {})
+  }
+  /**
+   * Reads again what this window holds of a bot: its conversation, runs and threads, and the transcripts of those
+   * opened, as `state` says it holds them.
+   */
+  const resyncBot = (botId: string, state: FleetState = stateOf()) => {
+    if (held(state.transcripts[botId])) void loadTranscript(botId).catch(() => {})
+    if (held(state.runs[botId])) void loadRuns(botId).catch(() => {})
+    if (held(state.threads[botId])) void loadThreads(botId).catch(() => {})
+    const prefix = runTranscriptKey(botId, '')
+    const threadIds = new Set((state.threads[botId]?.threads ?? []).map((thread) => thread.id))
+    for (const [key, entry] of Object.entries(state.runTranscripts))
+      if (key.startsWith(prefix) && held(entry)) {
+        const id = key.slice(prefix.length)
+        void (threadIds.has(id) ? loadThreadTranscript(botId, id) : loadRunTranscript(botId, id)).catch(() => {})
+      }
+  }
+  /** Every bot whose conversation, runs or threads this window holds. */
+  const resyncAll = (state: FleetState = stateOf()) => {
+    const bots = new Set([
+      ...Object.keys(state.transcripts),
+      ...Object.keys(state.runs),
+      ...Object.keys(state.threads),
+      ...Object.keys(state.runTranscripts).map((key) => key.slice(0, key.indexOf('\u0000'))),
+    ])
+    for (const botId of bots) resyncBot(botId, state)
+  }
+  // The server's stream as last told, apart from the renders: several changes can arrive before one.
+  let stream: FleetConnectionState | null = null
+  /**
+   * The server's stream changed. It sends no events again once it reopens, so whatever changed while it was closed
+   * is read again; its connection telling something else (its features, its host's name) changes nothing.
+   */
+  const streamChanged = (state: FleetConnectionState) => {
+    const was = stream
+    stream = state
+    if (state === 'connected' && was !== null && was !== 'connected') resyncAll()
   }
   // What the owner saw, on its way to the gateway (`owner-seen`): each run, or thread activity, is told once at a time.
   const seeing = new Set<string>()
@@ -267,6 +335,9 @@ export function createFleetActions(
     ensureThreads,
     loadThreadTranscript,
     ensureThreadTranscript,
+    resyncBot,
+    resyncAll,
+    streamChanged,
     seeRun,
     seeThread,
     botAction,
@@ -314,6 +385,10 @@ export function useFleets() {
   useEffect(() => {
     let active = true
     const known = new Set<FleetServerId>()
+    const applyConnection = (serverId: FleetServerId, connection: FleetConnectionView) => {
+      dispatchAll({ serverId, action: { type: 'connection', value: connection } })
+      actionsFor(serverId).streamChanged(connection.state)
+    }
     const loadSnapshot = (serverId: FleetServerId) =>
       void window.api
         .fleetGetSnapshot(serverId)
@@ -325,7 +400,7 @@ export function useFleets() {
       setServers(list)
       dispatchAll({ type: 'retain', ids: list.map((server) => server.id) })
       for (const server of list) {
-        dispatchAll({ serverId: server.id, action: { type: 'connection', value: server.connection } })
+        applyConnection(server.id, server.connection)
         if (!known.has(server.id)) loadSnapshot(server.id)
       }
       known.clear()
@@ -339,35 +414,24 @@ export function useFleets() {
       .catch(() => {})
     const offServers = window.api.onFleetServers((list) => follow(list))
     const offConnection = window.api.onFleetConnection((serverId, connection) => {
-      dispatchAll({ serverId, action: { type: 'connection', value: connection } })
+      applyConnection(serverId, connection)
       if (connection.state === 'connected') loadSnapshot(serverId)
     })
     const offEvent = window.api.onFleetEvent((serverId, event) => {
       const before = statesRef.current[serverId] ?? initialFleetState
       const fleet = actionsFor(serverId)
       dispatchAll({ serverId, action: { type: 'event', value: event } })
-      if (event.type === 'transcript.reset' && before.transcripts[event.botId]?.loaded) {
-        void fleet.loadTranscript(event.botId).catch(() => {})
-        // The bot restarted or its stream broke: what its runs and threads did meanwhile is read again too.
-        if (before.runs[event.botId]?.loaded) void fleet.loadRuns(event.botId).catch(() => {})
-        if (before.threads[event.botId]?.loaded) void fleet.loadThreads(event.botId).catch(() => {})
-        const threadIds = new Set((before.threads[event.botId]?.threads ?? []).map((thread) => thread.id))
-        for (const key of Object.keys(before.runTranscripts))
-          if (key.startsWith(runTranscriptKey(event.botId, '')) && before.runTranscripts[key].loaded) {
-            const id = key.slice(runTranscriptKey(event.botId, '').length)
-            void (
-              threadIds.has(id) ? fleet.loadThreadTranscript(event.botId, id) : fleet.loadRunTranscript(event.botId, id)
-            ).catch(() => {})
-          }
-      }
+      // The bot restarted or its stream broke: what its runs and threads did meanwhile is read again too.
+      if (event.type === 'transcript.reset' && held(before.transcripts[event.botId]))
+        fleet.resyncBot(event.botId, before)
       if (
         event.type === 'routine_run.transcript.reset' &&
-        before.runTranscripts[runTranscriptKey(event.botId, event.runId)]?.loaded
+        held(before.runTranscripts[runTranscriptKey(event.botId, event.runId)])
       )
         void fleet.loadRunTranscript(event.botId, event.runId).catch(() => {})
       if (
         event.type === 'peer_thread.transcript.reset' &&
-        before.runTranscripts[runTranscriptKey(event.botId, event.threadId)]?.loaded
+        held(before.runTranscripts[runTranscriptKey(event.botId, event.threadId)])
       )
         void fleet.loadThreadTranscript(event.botId, event.threadId).catch(() => {})
     })
