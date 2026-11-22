@@ -18,6 +18,7 @@ import { startClaudeDesktopLogin } from '../../src/main/chat/claude-agent-sdk/de
 let root: string
 let manager: ClaudeSubscriptionManager
 let silent = false
+let legacyLogin = false
 let capture: string
 let loginEnvironment: Record<string, string> = {}
 const environment = vi.fn((): NodeJS.ProcessEnv => ({ PATH: process.env.PATH, HOME: root }))
@@ -29,6 +30,7 @@ beforeEach(async () => {
   await copyFile(path.resolve('test/fixtures/fake-claude-login.mjs'), executable)
   await chmod(executable, 0o755)
   silent = false
+  legacyLogin = false
   environment.mockImplementation(() => ({ PATH: process.env.PATH, HOME: root }))
   manager = new ClaudeSubscriptionManager({
     resolveExecutable: () => executable,
@@ -39,7 +41,11 @@ beforeEach(async () => {
       capture = path.dirname(options.env.MAESTRLY_LOGIN_URL_FILE)
       loginEnvironment = options.env
       const child = spawn(command, args, {
-        env: { ...options.env, FAKE_CLAUDE_SILENT: silent ? '1' : '0' },
+        env: {
+          ...options.env,
+          FAKE_CLAUDE_SILENT: silent ? '1' : '0',
+          FAKE_CLAUDE_LEGACY_LOGIN: legacyLogin ? '1' : '0',
+        },
         stdio: ['pipe', 'pipe', 'pipe'],
       })
       children.push(child)
@@ -79,9 +85,8 @@ loginIt('captures both URLs and accepts a relayed callback', async () => {
   const redirect = new URL(new URL(login.autoUrl).searchParams.get('redirect_uri')!)
   expect(redirect.hostname).toBe('localhost')
   expect(redirect.pathname).toBe('/callback')
-  expect(new URL(login.manualUrl).searchParams.get('redirect_uri')).toBe(
-    'https://platform.claude.com/oauth/code/callback'
-  )
+  // Claude Code 2.1.330 prints the paste-a-code page on the line after `visit:`.
+  expect(login.manualUrl).toBe('https://claude.ai/oauth/authorize?z-fake-challenge')
   redirect.hostname = '127.0.0.1'
   redirect.search = '?code=good&state=fake-state'
   expect((await fetch(redirect, { redirect: 'manual' })).status).toBe(302)
@@ -89,6 +94,15 @@ loginIt('captures both URLs and accepts a relayed callback', async () => {
   expect(result.ok).toBe(true)
   expect(result.status.authenticated).toBe(true)
   expect(result.status.account?.email).toBe('owner@example.com')
+})
+loginIt('still reads the manual URL printed on the visit line by older Claude Code', async () => {
+  legacyLogin = true
+  const login = await manager.startInteractiveLogin()
+  expect(new URL(login.manualUrl).searchParams.get('redirect_uri')).toBe(
+    'https://platform.claude.com/oauth/code/callback'
+  )
+  login.submitCode('good#fake-state')
+  expect((await login.done).ok).toBe(true)
 })
 loginIt('signs the desktop in through the captured pages, keeping the session but not the browser', async () => {
   environment.mockImplementation(() => ({
@@ -102,9 +116,7 @@ loginIt('signs the desktop in through the captured pages, keeping the session bu
   }))
   const login = await startClaudeDesktopLogin(manager, 'linux')
   expect(new URL(login.authUrl!).origin).toBe('https://claude.com')
-  expect(new URL(login.manualUrl!).searchParams.get('redirect_uri')).toBe(
-    'https://platform.claude.com/oauth/code/callback'
-  )
+  expect(new URL(login.manualUrl!).origin).toBe('https://claude.ai')
   expect(loginEnvironment).toMatchObject({
     DISPLAY: ':0',
     DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/1000/bus',

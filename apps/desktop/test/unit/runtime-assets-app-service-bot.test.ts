@@ -119,14 +119,14 @@ describe('runtime asset app service in a bot', () => {
     expect(await runtimeAssetInfo('claude-code-runtime')).toMatchObject({
       id: 'claude-code-runtime',
       status: { state: 'not-installed' },
-      provided: { version: '2.1.285', active: true },
+      provided: { version: '2.1.330', active: true },
       update: { automatic: true, restartRequired: false },
     })
     expect(await runtimeAssetInfo('codex-runtime')).toMatchObject({
       provided: { version: '0.155.1', active: true },
       update: { automatic: true },
     })
-    expect(await runtimeUpdates('claude-code-runtime').effectiveVersion()).toBe('2.1.285')
+    expect(await runtimeUpdates('claude-code-runtime').effectiveVersion()).toBe('2.1.330')
     expect(await imageRuntimeBaseline('antigravity-acp-runtime')).toBeNull()
     expect(await runtimeAssetInfo('antigravity-acp-runtime')).toMatchObject({
       status: { state: 'not-installed' },

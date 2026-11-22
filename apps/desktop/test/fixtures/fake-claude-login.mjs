@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Mimics the Claude Code login surface Maestrly relies on (2.1.263).
+// Mimics the Claude Code login surface Maestrly relies on (2.1.330; FAKE_CLAUDE_LEGACY_LOGIN=1 prints 2.1.285's).
 import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
@@ -55,7 +55,9 @@ if (args[0] === 'auth' && args[1] === 'login') {
         `https://claude.com/cai/oauth/authorize?code=true&redirect_uri=${encodeURIComponent(redirect)}&state=fake-state`
       console.log('Opening browser to sign in…')
       execFile(process.env.BROWSER, [url(`http://localhost:${port}/callback`)], () => {})
-      console.log(`If the browser didn't open, visit: ${url('https://platform.claude.com/oauth/code/callback')}`)
+      if (process.env.FAKE_CLAUDE_LEGACY_LOGIN === '1')
+        console.log(`If the browser didn't open, visit: ${url('https://platform.claude.com/oauth/code/callback')}`)
+      else console.log("If the browser didn't open, visit:\nhttps://claude.ai/oauth/authorize?z-fake-challenge")
       process.stdout.write('Paste code here if prompted > ')
       readline.createInterface({ input: process.stdin }).on('line', (line) => {
         if (line.trim() === 'good#fake-state') finish()

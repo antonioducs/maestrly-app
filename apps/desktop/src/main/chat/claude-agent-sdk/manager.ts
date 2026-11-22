@@ -43,7 +43,7 @@ import { withSubscriptionAccount } from '../../../shared/chat'
 import { CLAUDE_SUBSCRIPTION_PROVIDER_ID as CLAUDE_SUBSCRIPTION_BASE_PROVIDER_ID } from '../../../shared/subagent-profiles'
 import { getSubscriptionFailoverRouter } from '../subscription-failover/router'
 
-export const CLAUDE_AGENT_SDK_VERSION = '0.3.285'
+export const CLAUDE_AGENT_SDK_VERSION = '0.3.330'
 export { CLAUDE_CODE_COMPATIBLE_VERSION, isCompatibleClaudeCodeVersion }
 const CLAUDE_PROFILE_DIRECTORY = 'claude-agent-sdk'
 const CLAUDE_SIGNED_OUT_MARKER = '.maestrly-signed-out'
@@ -922,6 +922,7 @@ export class ClaudeSubscriptionManager {
       let startupError: Error | undefined
       let autoUrl = ''
       let manualUrl = ''
+      let manualUrlOnNextLine = false
       let output = ''
       let finished = false
       const kill = () => child?.kill()
@@ -946,8 +947,16 @@ export class ClaudeSubscriptionManager {
         const lines = output.split(/\r?\n/)
         output = lines.pop()!.slice(-16_384)
         for (const line of lines) {
-          const match = /visit:\s*(https:\/\/\S+)/.exec(line)
-          if (match) manualUrl = match[1]
+          // Claude Code 2.1.285 prints `visit: <url>`; 2.1.330 prints the URL alone on the next line.
+          const visit = /visit:\s*(https:\/\/\S+)?/.exec(line)
+          if (visit) {
+            if (visit[1]) manualUrl = visit[1]
+            manualUrlOnNextLine = !visit[1]
+          } else if (manualUrlOnNextLine && line.trim()) {
+            const next = /^\s*(https:\/\/\S+)\s*$/.exec(line)
+            if (next) manualUrl = next[1]
+            manualUrlOnNextLine = false
+          }
         }
         publish()
       }
