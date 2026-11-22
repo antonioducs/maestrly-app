@@ -957,7 +957,7 @@ export function BotConversation({
   const searchHighlight = searchOpen && appliedQuery && appliedQuery === searchQuery.trim() ? appliedQuery : undefined
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col">
+    <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
       {searchOpen && (
         <ChatSearchBar
           query={searchQuery}

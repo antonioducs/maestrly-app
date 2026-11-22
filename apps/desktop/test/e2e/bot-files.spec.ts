@@ -824,6 +824,21 @@ test('the Files drawer shows the space, deletes what the owner picks and marks i
     const drawer = page.getByRole('complementary', { name: 'Files', exact: true })
     const search = drawer.getByRole('searchbox', { name: 'Search files' })
     await expect(search).toBeFocused()
+    // The conversation beside it gives way, however wide what it holds: the drawer is never pushed past the edge of its
+    // region and cut off.
+    await expect
+      .poll(() =>
+        drawer.evaluate((node) => {
+          const wide = node.ownerDocument.createElement('div')
+          wide.style.cssText = 'width: 2000px; flex-shrink: 0'
+          node.parentElement!.firstElementChild!.append(wide)
+          const region = node.ownerDocument.getElementById('fleet-workspace-conversation')!
+          const overflow = node.getBoundingClientRect().right - region.getBoundingClientRect().right
+          wide.remove()
+          return overflow
+        })
+      )
+      .toBeLessThanOrEqual(0.5)
     // "Free space" lists this conversation's files, largest first.
     await expect(drawer.getByRole('button', { name: /^This conversation/ })).toHaveAttribute('aria-pressed', 'true')
     await expect(drawer.getByRole('listitem')).toHaveCount(2)
