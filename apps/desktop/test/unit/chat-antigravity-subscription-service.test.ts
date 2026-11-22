@@ -96,6 +96,27 @@ const h = vi.hoisted(() => {
     genericRun: vi.fn(),
     send: vi.fn(),
     summarize: vi.fn(async () => ({ text: 'Gemini summary' })),
+    generateText: vi.fn(),
+    resolveLanguageModel: vi.fn(async () => ({ modelId: 'synthetic-model' })),
+    byokProviderIds: new Set<string>(),
+  }
+})
+
+vi.mock('ai', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('ai')>()),
+  generateText: h.generateText,
+}))
+vi.mock('../../src/main/chat/provider', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/chat/provider')>()),
+  resolveLanguageModel: h.resolveLanguageModel,
+}))
+vi.mock('../../src/main/chat/credentials', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/chat/credentials')>()
+  return {
+    ...actual,
+    hasApiKey: (providerId: string) => h.byokProviderIds.has(providerId) || actual.hasApiKey(providerId),
+    getApiKey: (providerId: string) =>
+      h.byokProviderIds.has(providerId) ? 'synthetic-key' : actual.getApiKey(providerId),
   }
 })
 
@@ -129,9 +150,15 @@ import {
   ANTIGRAVITY_PROMPT_TEXT_MAX_BYTES,
   antigravityIsolatedPromptText,
 } from '../../src/main/chat/antigravity-subscription/prompt-limit'
-import { addSubscriptionAccount, subscriptionProviderIdFor } from '../../src/main/chat/catalog'
+import { addProvider, addSubscriptionAccount, subscriptionProviderIdFor } from '../../src/main/chat/catalog'
 import { type ChatIpcDeps, registerChatIpc } from '../../src/main/chat/service'
-import { listChatMessages, listConversationContextMessages, upsertChatMessage } from '../../src/main/chat/chat-store'
+import {
+  chatHistoryStats,
+  listChatMessages,
+  listConversationContextMessages,
+  upsertChatMessage,
+} from '../../src/main/chat/chat-store'
+import { clearCompactionSummarizer, setCompactionSummarizer } from '../../src/main/chat/compaction-summarizer'
 import { estimateNativeSeedContextTokens } from '../../src/main/chat/portable-context'
 import { patchConvUiPrefs } from '../../src/main/store'
 import { closeDb, freshDb } from '../helpers/db'
@@ -271,6 +298,112 @@ describe('Google AI subscription service', () => {
     await expect(
       handlers.get('chat:antigravity-subscription:logout')!({}, { accountId: account.id })
     ).resolves.toMatchObject({ ok: true })
+  })
+
+  describe('summary for a conversation that moves to Antigravity', () => {
+    const antigravity = { providerId: 'builtin_antigravity_subscription', modelId: 'gemini-3.1-pro' }
+    const summarySuccess = { text: 'Handoff summary', totalUsage: { inputTokens: 80, outputTokens: 16 } }
+
+    /** One earlier exchange answered by `answeredBy`, then a turn on Antigravity whose runner needs a summary. */
+    async function summarizeOnSend(
+      answeredBy: { providerId: string; modelId: string },
+      beforeSend: (conversationId: string) => void = () => {}
+    ) {
+      const conv = makeConversation(makeWorkspace().id)
+      beforeSend(conv.id)
+      patchConvUiPrefs(conv.id, { chat: { ...antigravity, reasoning: 'low' } })
+      upsertChatMessage({
+        id: 'earlier-user',
+        conversationId: conv.id,
+        role: 'user',
+        parts: [{ type: 'text', id: 'u', text: 'Keep the public API stable. '.repeat(400) }],
+        createdAt: 1,
+      })
+      upsertChatMessage({
+        id: 'earlier-answer',
+        conversationId: conv.id,
+        role: 'assistant',
+        parts: [{ type: 'text', id: 'a', text: 'Agreed; the API stays as it is.' }],
+        model: answeredBy,
+        createdAt: 2,
+      })
+      let summary: unknown
+      h.run.mockImplementationOnce(async (opts) => {
+        // The runner persists its own bubble before it asks for a summary.
+        upsertChatMessage({
+          id: 'live',
+          conversationId: conv.id,
+          role: 'assistant',
+          parts: [],
+          model: antigravity,
+          createdAt: Date.now(),
+        })
+        summary = await opts.compactHistory()
+        return { planSubmitted: false, sessionId: null }
+      })
+      const handlers = register()
+      const sender = { isDestroyed: () => false, send: h.send }
+      await expect(
+        handlers.get('chat:send')!({ sender }, { conversationId: conv.id, text: 'Continue.' })
+      ).resolves.toEqual({ ok: true })
+      await vi.waitFor(() => expect(summary).toBeDefined(), { timeout: 10_000 })
+      return { conversationId: conv.id, summary }
+    }
+
+    function byokModel(modelId = 'synthetic-model') {
+      const provider = addProvider({ name: 'Synthetic', baseURL: 'https://provider.invalid/v1', kind: 'openai' })
+      h.byokProviderIds.add(provider.id)
+      return { providerId: provider.id, modelId }
+    }
+
+    afterEach(() => h.byokProviderIds.clear())
+
+    it('is written by the model of the last answer when it came from another provider', async () => {
+      const previous = byokModel()
+      h.generateText.mockResolvedValue(summarySuccess)
+      const { conversationId, summary } = await summarizeOnSend(previous)
+      expect(summary).toMatchObject({ summary: expect.stringContaining('Handoff summary') })
+      expect(h.resolveLanguageModel).toHaveBeenCalledWith(previous.providerId, previous.modelId)
+      expect(h.summarize).not.toHaveBeenCalled()
+      expect(
+        chatHistoryStats(conversationId).perModel.find((item) => item.providerId === previous.providerId)?.input
+      ).toBeGreaterThan(0)
+    })
+
+    it('falls back to Antigravity when the previous model cannot summarize', async () => {
+      const previous = byokModel()
+      h.generateText.mockRejectedValue(new Error('Synthetic quota exhausted'))
+      const { summary } = await summarizeOnSend(previous)
+      expect(h.generateText).toHaveBeenCalled()
+      expect(h.summarize).toHaveBeenCalled()
+      expect(summary).toMatchObject({ summary: expect.stringContaining('Gemini summary') })
+    })
+
+    it('stays on Antigravity when the last answer was already its own', async () => {
+      const { summary } = await summarizeOnSend(antigravity)
+      expect(h.generateText).not.toHaveBeenCalled()
+      expect(h.summarize).toHaveBeenCalled()
+      expect(summary).toMatchObject({ summary: expect.stringContaining('Gemini summary') })
+    })
+
+    it("leaves the choice to a bot's compaction model", async () => {
+      const previous = byokModel()
+      const bot = { ...previous, modelId: 'synthetic-helper' }
+      h.generateText.mockResolvedValue(summarySuccess)
+      let conversationId = ''
+      try {
+        ;({ conversationId } = await summarizeOnSend(previous, (id) => {
+          conversationId = id
+          setCompactionSummarizer(id, () => ({ ...bot, effort: '', fastMode: false }))
+        }))
+      } finally {
+        clearCompactionSummarizer(conversationId)
+      }
+      expect(h.resolveLanguageModel).toHaveBeenCalledWith(bot.providerId, bot.modelId)
+      expect(h.resolveLanguageModel).not.toHaveBeenCalledWith(previous.providerId, previous.modelId)
+      for (const [options] of h.generateText.mock.calls)
+        expect((options as { system?: string }).system).not.toContain('handed to a different model')
+    })
   })
 
   it('refuses to send when the account is signed out', async () => {

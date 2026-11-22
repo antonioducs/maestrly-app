@@ -25,7 +25,10 @@ import {
   runAntigravitySubscriptionChat,
 } from '../../src/main/chat/antigravity-subscription/runner'
 import { ANTIGRAVITY_PROMPT_TEXT_MAX_BYTES } from '../../src/main/chat/antigravity-subscription/prompt-limit'
-import { ANTIGRAVITY_MESSAGE_ANCHOR } from '../../src/main/chat/antigravity-subscription/session'
+import {
+  ANTIGRAVITY_CONDENSED_SEED_NOTE,
+  ANTIGRAVITY_MESSAGE_ANCHOR,
+} from '../../src/main/chat/antigravity-subscription/session'
 import { getAntigravitySessionBinding } from '../../src/main/chat/antigravity-subscription/session-store'
 import { PRELOAD_APP_TOOLS_TIMEOUT_MS, preloadAppToolsRegistry } from '../helpers/app-tools'
 import { createFakeAntigravity, type FakeAntigravity } from '../helpers/antigravity-fake'
@@ -132,6 +135,47 @@ function seedOversizedHistory() {
     parts: [{ type: 'text', id: 'earlier-assistant-text', text: 'earlier tool output\n'.repeat(12_000) }],
     createdAt: createdAt + 1,
   } as never)
+}
+
+/**
+ * Earlier turns from another runtime whose seed exceeds the prompt limit through old tool outputs (stored outputs are
+ * capped, so it takes several), followed by the three protected turns; `recentText` makes those turns large too.
+ */
+function seedToolHeavyHistory(recentText = 'recent answer') {
+  const createdAt = Date.now() - 100
+  const message = (id: string, role: 'user' | 'assistant', parts: unknown[], offset: number) =>
+    upsertChatMessage({ id, conversationId, role, parts, createdAt: createdAt + offset } as never)
+  message('old-user', 'user', [{ type: 'text', id: 'old-user-text', text: 'read the build log' }], 0)
+  message(
+    'old-assistant',
+    'assistant',
+    [
+      { type: 'text', id: 'old-assistant-text', text: 'decided: keep the public API stable' },
+      ...Array.from({ length: 5 }, (_, index) => ({
+        type: 'tool',
+        id: `old-tool-${index}`,
+        toolCallId: `old-tool-${index}`,
+        toolName: 'bash',
+        input: { command: `cat build-${index}.log` },
+        state: { status: 'completed', output: `OLD_BUILD ${index} compiled module\n`.repeat(1_600) },
+      })),
+    ],
+    1
+  )
+  for (let index = 0; index < 3; index += 1) {
+    message(
+      `recent-user-${index}`,
+      'user',
+      [{ type: 'text', id: `ru-${index}`, text: `request ${index}` }],
+      2 + 2 * index
+    )
+    message(
+      `recent-assistant-${index}`,
+      'assistant',
+      [{ type: 'text', id: `ra-${index}`, text: recentText }],
+      3 + 2 * index
+    )
+  }
 }
 
 /** `count` MCP tools with ~2 KB of description and schema each, as a large media server publishes. */
@@ -340,6 +384,52 @@ describe('Antigravity chat runner', () => {
     expect(textOf(events)).toBe('hi')
     const assistant = listChatMessages(conversationId).at(-1)
     expect(assistant?.parts.some((part) => part.type === 'compaction')).toBe(true)
+  })
+
+  it('fits an oversized seed by stubbing older tool outputs, without summarizing or touching the stored history', async () => {
+    seedToolHeavyHistory()
+    const compactHistory = vi.fn(async () => ({ summary: 'unused' }))
+    const { events } = await turn('ECHO hi', { compactHistory })
+    expect(compactHistory).not.toHaveBeenCalled()
+    expect(kinds(events)).not.toContain('compaction')
+    const prompt = promptText(fake.requests('session/prompt').at(-1))
+    expect(Buffer.byteLength(prompt, 'utf8')).toBeLessThanOrEqual(ANTIGRAVITY_PROMPT_TEXT_MAX_BYTES)
+    expect(prompt).toContain('decided: keep the public API stable')
+    expect(prompt).toContain('output removed — rerun or use history_search/history_read')
+    expect(prompt).not.toContain('OLD_BUILD compiled module')
+    expect(prompt).toContain('request 2')
+    expect(prompt).toContain(ANTIGRAVITY_CONDENSED_SEED_NOTE)
+    expect(prompt.endsWith(`${ANTIGRAVITY_MESSAGE_ANCHOR}\n\nECHO hi`)).toBe(true)
+    expect(textOf(events)).toBe('hi')
+    const stored = listChatMessages(conversationId).find((message) => message.id === 'old-assistant')
+    const tools = stored?.parts.filter((part) => part.type === 'tool') ?? []
+    expect(tools).toHaveLength(5)
+    for (const part of tools) {
+      expect(part).toMatchObject({ state: { status: 'completed', output: expect.stringContaining('OLD_BUILD') } })
+      expect('contextStub' in part ? part.contextStub : undefined).toBeUndefined()
+    }
+  })
+
+  it('summarizes when stubbing older tool outputs is not enough, and notes the condensed seed', async () => {
+    seedToolHeavyHistory('recent answer text\n'.repeat(4_000))
+    const compactHistory = vi.fn(async () => ({ summary: 'Summary of the earlier work.' }))
+    const { events } = await turn('ECHO hi', { compactHistory })
+    expect(compactHistory).toHaveBeenCalledTimes(1)
+    const prompt = promptText(fake.requests('session/prompt').at(-1))
+    expect(prompt).toContain('Previous summary:\nSummary of the earlier work.')
+    expect(prompt).toContain(ANTIGRAVITY_CONDENSED_SEED_NOTE)
+    expect(Buffer.byteLength(prompt, 'utf8')).toBeLessThanOrEqual(ANTIGRAVITY_PROMPT_TEXT_MAX_BYTES)
+    expect(textOf(events)).toBe('hi')
+  })
+
+  it('sends a seed that fits without the condensed note', async () => {
+    await turn('ECHO first answer')
+    h.mcpTools = {
+      echo,
+      extra: tool({ description: 'Extra.', inputSchema: z.object({}), execute: async () => 'extra' }),
+    }
+    await turn('ECHO second')
+    expect(promptText(fake.requests('session/prompt').at(-1))).not.toContain(ANTIGRAVITY_CONDENSED_SEED_NOTE)
   })
 
   it('keeps the full seed when it fits', async () => {

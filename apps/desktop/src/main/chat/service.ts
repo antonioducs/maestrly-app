@@ -5356,7 +5356,8 @@ async function startSendAttempt(
     const compactActiveHistory = async (
       claudeTarget?: ClaudeRuntimeTarget,
       onProgress?: (progress: PortableSummaryProgress) => void,
-      liveSummary?: LiveSummarizer
+      liveSummary?: LiveSummarizer,
+      handoffSummarizer?: ChatModelRef
     ): Promise<{
       summary: string
       usage?: NormalizedAiUsage
@@ -5374,55 +5375,74 @@ async function startSendAttempt(
           // An unusable speculative candidate falls through to the existing required compactor.
         }
       }
-      return compact(conversationId, {
-        allowActive: true,
-        signal: controller.signal,
-        persist: false,
-        mode: turnBehavior,
-        // The runners reload a committed boundary like a prepared one, keeping recent steps verbatim.
-        positional: true,
-        // Ending the turn because the summarizer failed loses more than continuing on a mechanical digest.
-        fallback: true,
-        onProgress,
-        ...(liveSummary ? { liveSummary } : {}),
-        contextWindow: claudeTarget?.contextWindow
-          ? turnContextWindow
-            ? Math.min(turnContextWindow, claudeTarget.contextWindow)
-            : claudeTarget.contextWindow
-          : turnContextWindow,
-        ...(useClaudeSubscription ? { claudeFailoverChain, claudeExecutionAxes: initialClaudeAxes } : {}),
-        harness: admittedHarness,
-        ...(admittedBehaviorResolvedModelId ? { resolvedModelId: admittedBehaviorResolvedModelId } : {}),
-      }).then((result) => {
-        if (result.billedModel && (result.usage || result.runtimeEstimatedCostUsd != null)) {
-          recordChatUsageAttempt({
-            id: randomUUID(),
-            conversationId,
-            model: result.billedModel,
-            mode: turnBehavior,
-            usage: result.usage ?? { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 },
-            runtimeEstimatedCostUsd: result.runtimeEstimatedCostUsd,
+      const summarizeWith = (handoff?: ChatModelRef): Promise<CompactResult> =>
+        compact(conversationId, {
+          allowActive: true,
+          signal: controller.signal,
+          persist: false,
+          mode: turnBehavior,
+          // The runners reload a committed boundary like a prepared one, keeping recent steps verbatim.
+          positional: true,
+          // Ending the turn because the summarizer failed loses more than continuing on a mechanical digest.
+          fallback: true,
+          onProgress,
+          ...(liveSummary ? { liveSummary } : {}),
+          contextWindow: claudeTarget?.contextWindow
+            ? turnContextWindow
+              ? Math.min(turnContextWindow, claudeTarget.contextWindow)
+              : claudeTarget.contextWindow
+            : turnContextWindow,
+          ...(useClaudeSubscription ? { claudeFailoverChain, claudeExecutionAxes: initialClaudeAxes } : {}),
+          harness: admittedHarness,
+          ...(admittedBehaviorResolvedModelId ? { resolvedModelId: admittedBehaviorResolvedModelId } : {}),
+          ...(handoff ? { handoffSummarizer: handoff } : {}),
+        }).then((result) => {
+          if (result.billedModel && (result.usage || result.runtimeEstimatedCostUsd != null)) {
+            recordChatUsageAttempt({
+              id: randomUUID(),
+              conversationId,
+              model: result.billedModel,
+              mode: turnBehavior,
+              usage: result.usage ?? { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 },
+              runtimeEstimatedCostUsd: result.runtimeEstimatedCostUsd,
+            })
+          }
+          return result
+        })
+      let result: CompactResult | undefined
+      if (handoffSummarizer && !controller.signal.aborted) {
+        const attempt = await summarizeWith(handoffSummarizer)
+        if (attempt.ok || controller.signal.aborted) result = attempt
+        else {
+          // The previous model being unavailable must not end the turn: the destination summarizes as before.
+          chatDiag({
+            kind: 'antigravity-handoff-summary-failed',
+            conv: conversationId,
+            providerId: handoffSummarizer.providerId,
+            modelId: handoffSummarizer.modelId,
+            error: attempt.error,
           })
         }
-        if (!result.ok) {
-          throw Object.assign(new Error(result.error ?? 'Portable compaction failed.'), {
-            partialUsage: result.billedModel ? undefined : result.usage,
-            runtimeEstimatedCostUsd: result.billedModel ? undefined : result.runtimeEstimatedCostUsd,
-          })
-        }
-        if (result.ok && result.summary) backgroundCoordinator?.manualCompaction(conversationId)
-        return result.ok && result.summary
-          ? {
-              summary: result.summary,
-              usage: result.billedModel ? undefined : result.usage,
-              // Native helper-call cost estimate → runner adds it to turn cost.
-              ...(!result.billedModel && result.runtimeEstimatedCostUsd != null
-                ? { runtimeEstimatedCostUsd: result.runtimeEstimatedCostUsd }
-                : {}),
-              ...(result.marker ? { prepared: result.marker } : {}),
-            }
-          : null
-      })
+      }
+      result ??= await summarizeWith()
+      if (!result.ok) {
+        throw Object.assign(new Error(result.error ?? 'Portable compaction failed.'), {
+          partialUsage: result.billedModel ? undefined : result.usage,
+          runtimeEstimatedCostUsd: result.billedModel ? undefined : result.runtimeEstimatedCostUsd,
+        })
+      }
+      if (result.summary) backgroundCoordinator?.manualCompaction(conversationId)
+      return result.summary
+        ? {
+            summary: result.summary,
+            usage: result.billedModel ? undefined : result.usage,
+            // Native helper-call cost estimate → runner adds it to turn cost.
+            ...(!result.billedModel && result.runtimeEstimatedCostUsd != null
+              ? { runtimeEstimatedCostUsd: result.runtimeEstimatedCostUsd }
+              : {}),
+            ...(result.marker ? { prepared: result.marker } : {}),
+          }
+        : null
     }
 
     const backgroundPrefixHook = {
@@ -5848,6 +5868,8 @@ async function startSendAttempt(
     } else if (useAntigravitySubscription && antigravityIdentityAtAdmission) {
       const admittedIdentity = antigravityIdentityAtAdmission
       const selectedModelId = selection.modelId
+      // Read now: the runner persists this turn's own bubble before it may need a summary.
+      const handoffSummarizer = handoffSummarizerFor(conversationId, isAntigravitySubscriptionProvider)
       turnPromise = (async () => {
         const manager = getAntigravitySubscriptionManager(selectionAccountId)
         manager.assertAccountIdentity(admittedIdentity)
@@ -5886,7 +5908,7 @@ async function startSendAttempt(
           signal: controller.signal,
           responseStartedAt,
           contextWindow: turnContextWindow,
-          compactHistory: (onProgress) => compactActiveHistory(undefined, onProgress),
+          compactHistory: (onProgress) => compactActiveHistory(undefined, onProgress, undefined, handoffSummarizer),
           canPersistSession: () => {
             if (!run.allowAntigravityPersistence || antigravityAuth.busy(selectionAccountId)) return false
             try {
@@ -7244,6 +7266,13 @@ interface CompactOpts {
   selectionOverride?: FrozenChatSelection
   /** Frozen billing and summary model; the conversation selection still owns progress and native cleanup. */
   summarizerOverride?: FrozenChatSelection
+  /**
+   * The model of the conversation's last answer, from another provider, summarizes for the destination that cannot
+   * hold the history; it saw the conversation whole. A bot's compaction model still wins.
+   */
+  handoffSummarizer?: ChatModelRef
+  /** Added to the summary instructions after the conversation's own focus. */
+  summaryFocus?: string
   origin?: 'manual'
   /** Behavior and canonical identity already frozen by an active turn admission. */
   harness?: ResolvedHarness
@@ -7340,6 +7369,26 @@ async function retireNativeBindingAfterPortableCompaction(
   }
 }
 
+const HANDOFF_SUMMARY_FOCUS =
+  'This summary is handed to a different model that never saw the original conversation and will continue the work from it. List every decision, constraint and preference the user stated, quoting the user’s own words when they are short, and mark each one that was later revised or reversed together with its current form.'
+
+/**
+ * The model of the last answer when it belongs to another provider than the destination's: it summarizes for a
+ * destination that cannot hold the history. Read before the destination's turn persists its own bubble.
+ */
+export function handoffSummarizerFor(
+  conversationId: string,
+  isDestinationProvider: (providerId: string) => boolean
+): ChatModelRef | undefined {
+  if (getCompactionSummarizer(conversationId)) return undefined
+  const last = [...listConversationContextMessages(conversationId)]
+    .reverse()
+    .find((message) => message.role === 'assistant' && message.model?.providerId && message.model.modelId)
+  const model = last?.model
+  if (!model || isDestinationProvider(model.providerId)) return undefined
+  return { providerId: model.providerId, modelId: model.modelId }
+}
+
 async function compact(conversationId: string, opts: CompactOpts = {}): Promise<CompactResult> {
   if (opts.allowActive) return compactReserved(conversationId, opts)
   const providerId = selectionFor(conversationId)?.providerId ?? null
@@ -7403,6 +7452,35 @@ export async function compactReserved(conversationId: string, opts: CompactOpts 
         })
         if (!resolved.ok) return { ok: false, error: 'compaction-model-unavailable' }
         opts = { ...opts, summarizerOverride: resolved.selection, harness: undefined, resolvedModelId: undefined }
+      } catch {
+        return { ok: false, error: 'compaction-model-unavailable' }
+      }
+    } else if (opts.handoffSummarizer) {
+      const handoff = opts.handoffSummarizer
+      // The background profile's effort when it names the same model; otherwise the model's default.
+      const profile = effectiveBackgroundCompactionConfig(conversationId)?.selection
+      const effort =
+        profile && profile.providerId === handoff.providerId && profile.modelId === handoff.modelId
+          ? profile.effort
+          : ''
+      try {
+        const resolved = await resolveFrozenChatSelection(conversationId, {
+          providerId: handoff.providerId,
+          modelId: handoff.modelId,
+          effort,
+          fastMode: false,
+        })
+        if (!resolved.ok) return { ok: false, error: 'compaction-model-unavailable' }
+        opts = {
+          ...opts,
+          handoffSummarizer: undefined,
+          summarizerOverride: resolved.selection,
+          harness: undefined,
+          resolvedModelId: undefined,
+          // The caller retries with the destination's own summarizer, which keeps the mechanical fallback.
+          fallback: false,
+          summaryFocus: HANDOFF_SUMMARY_FOCUS,
+        }
       } catch {
         return { ok: false, error: 'compaction-model-unavailable' }
       }
@@ -7709,7 +7787,9 @@ async function compactReservedWork(conversationId: string, opts: CompactOpts): P
   const compactBaseSystem =
     (conv.scope === 'standalone'
       ? `${COMPACT_SYSTEM}\nThis is a standalone general conversation. Preserve its goals and facts without assuming a project or repository.`
-      : harnessCompactionSystem(COMPACT_SYSTEM, compactHarness)) + (compactFocus ? `\n\n${compactFocus}` : '')
+      : harnessCompactionSystem(COMPACT_SYSTEM, compactHarness)) +
+    (compactFocus ? `\n\n${compactFocus}` : '') +
+    (opts.summaryFocus ? `\n\n${opts.summaryFocus}` : '')
   const history = opts.historyOverride
     ? [...opts.historyOverride]
     : opts.executionId

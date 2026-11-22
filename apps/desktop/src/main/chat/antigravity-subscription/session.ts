@@ -16,7 +16,8 @@ import { generatedInterfacesEnabled } from '../generated-interfaces'
 import type { ResolvedHarness } from '../harness/types'
 import { maestroAgentsFromTurn, renderMaestroAgentCatalog } from '../maestro-delegation'
 import { MAESTRO_SYSTEM_SPEC, renderMaestroTurnPolicy } from '../maestro-prompt'
-import { droppedImageText, nativeSeedContextText, renderNativeSeedTranscript } from '../message'
+import { applyToolPruning, planToolPruning, protectedRecentMessageIds } from '../compaction/tool-pruning'
+import { activeChatContext, droppedImageText, nativeSeedContextText, renderNativeSeedTranscript } from '../message'
 import { pdfFallbackText } from '../pdf-attachments'
 import { estimatePortableContextTokens, estimateTextTokens } from '../portable-context'
 import { buildProjectContext } from '../project-context'
@@ -196,6 +197,24 @@ export function buildAntigravitySeedTranscript(history: readonly ChatMessage[], 
   return renderNativeSeedTranscript(liveAssistant ? [...prior, liveAssistant] : prior)
 }
 
+/**
+ * `history` (ending with the current user message) as the seed sees it once older tool outputs are one-line stubs,
+ * by the same rule as the pre-send pruning step. Only the seed changes: the stored history keeps every output, so
+ * another model still receives them, and a session recreated later applies the rule again.
+ */
+export function pruneAntigravitySeedHistory(history: readonly ChatMessage[]): {
+  history: ChatMessage[]
+  stubs: number
+} {
+  const active = activeChatContext(history.slice(0, -1)).messages
+  const targets = planToolPruning(active, { protectedIds: protectedRecentMessageIds(active), mode: 'stub' })
+  return { history: applyToolPruning(history, targets), stubs: targets.length }
+}
+
+/** Follows a seed that lost tool outputs or older turns, so the model looks up what it cannot see. */
+export const ANTIGRAVITY_CONDENSED_SEED_NOTE =
+  'Parts of this prior dialogue are condensed (tool outputs replaced by one-line stubs, older turns summarized). The complete history is still available: before relying on or contradicting an earlier decision that is not shown in full here, read it with history_search and history_read.'
+
 function dataUrlImage(data: string | undefined): { data: string; mimeType: string } | null {
   const match = /^data:([^;,]+);base64,([\s\S]+)$/i.exec(data ?? '')
   return match ? { mimeType: match[1], data: match[2] } : null
@@ -218,6 +237,8 @@ export function buildAntigravityPromptBlocks(args: {
   instructions: string
   toolCatalog: string
   seedTranscript: string
+  /** The seed lost tool outputs or older turns; adds the note pointing to the history tools. */
+  seedCondensed?: boolean
   dropImages: boolean
   environment?: string
   turnReminder?: string
@@ -228,7 +249,10 @@ export function buildAntigravityPromptBlocks(args: {
     textParts.push(`<maestrly_instructions>\n${args.instructions}\n</maestrly_instructions>`)
     if (args.toolCatalog) textParts.push(args.toolCatalog)
   }
-  if (args.seedTranscript) textParts.push(nativeSeedContextText(args.seedTranscript))
+  if (args.seedTranscript) {
+    textParts.push(nativeSeedContextText(args.seedTranscript))
+    if (args.seedCondensed) textParts.push(ANTIGRAVITY_CONDENSED_SEED_NOTE)
+  }
   const turnContext = [args.newSession ? '' : args.turnReminder, args.environment]
     .map((value) => value?.trim() ?? '')
     .filter(Boolean)
