@@ -17,6 +17,11 @@ export type TranscriptState = FleetTranscriptPage & {
   loaded: boolean
   loading: boolean
   error: string | null
+  /**
+   * Items that arrived as events while a page was on its way: the page may have been read before them, so they are
+   * applied over it rather than lost.
+   */
+  arrived?: FleetTranscriptItem[]
 }
 /** A bot's routine runs (`routine-conversations`), newest first, as far back as loaded. */
 export type RunsState = {
@@ -177,7 +182,26 @@ function transcriptWithPage(
   const previous = current ?? emptyTranscript
   const olderItems = page.items.length ? previous.items.filter((item) => item.at < page.items[0].at) : []
   const items = older ? mergeTranscriptItems(page.items, previous.items) : mergeTranscriptItems(olderItems, page.items)
-  return { items, before: page.before, loaded: true, loading: false, error: null }
+  return {
+    items: previous.arrived?.length ? mergeTranscriptItems(items, previous.arrived) : items,
+    before: page.before,
+    loaded: true,
+    loading: false,
+    error: null,
+  }
+}
+
+/**
+ * A transcript with an item its events sent: shown at once when it is loaded, and kept for the page on its way, if
+ * any. One never opened takes nothing: its first page has it.
+ */
+function transcriptWithItem(current: TranscriptState | undefined, item: FleetTranscriptItem): TranscriptState | null {
+  if (!current || (!current.loaded && !current.loading)) return null
+  return {
+    ...current,
+    items: current.loaded ? mergeTranscriptItems(current.items, [item]) : current.items,
+    arrived: current.loading ? [...(current.arrived ?? []).filter((kept) => kept.id !== item.id), item] : undefined,
+  }
 }
 
 export function fleetReducer(state: FleetState, action: FleetAction): FleetState {
@@ -207,6 +231,7 @@ export function fleetReducer(state: FleetState, action: FleetAction): FleetState
             ...(state.transcripts[action.botId] ?? emptyTranscript),
             loading: false,
             error: action.error,
+            arrived: undefined,
           },
         },
       }
@@ -291,6 +316,7 @@ export function fleetReducer(state: FleetState, action: FleetAction): FleetState
             ...(state.runTranscripts[key] ?? emptyTranscript),
             loading: action.type === 'runTranscript.loading',
             error: action.type === 'runTranscript.error' ? action.error : null,
+            ...(action.type === 'runTranscript.error' ? { arrived: undefined } : {}),
           },
         },
       }
@@ -357,18 +383,8 @@ export function fleetReducer(state: FleetState, action: FleetAction): FleetState
             },
           }
         case 'transcript.upsert': {
-          const previous = state.transcripts[event.botId]
-          if (!previous?.loaded) return state
-          return {
-            ...state,
-            transcripts: {
-              ...state.transcripts,
-              [event.botId]: {
-                ...previous,
-                items: mergeTranscriptItems(previous.items, [event.item]),
-              },
-            },
-          }
+          const next = transcriptWithItem(state.transcripts[event.botId], event.item)
+          return next ? { ...state, transcripts: { ...state.transcripts, [event.botId]: next } } : state
         }
         case 'transcript.reset':
           return {
@@ -419,15 +435,8 @@ export function fleetReducer(state: FleetState, action: FleetAction): FleetState
             event.botId,
             event.type === 'peer_thread.transcript.upsert' ? event.threadId : event.runId
           )
-          const previous = state.runTranscripts[key]
-          if (!previous?.loaded) return state
-          return {
-            ...state,
-            runTranscripts: {
-              ...state.runTranscripts,
-              [key]: { ...previous, items: mergeTranscriptItems(previous.items, [event.item]) },
-            },
-          }
+          const next = transcriptWithItem(state.runTranscripts[key], event.item)
+          return next ? { ...state, runTranscripts: { ...state.runTranscripts, [key]: next } } : state
         }
         case 'routine_run.transcript.reset':
         case 'peer_thread.transcript.reset': {
