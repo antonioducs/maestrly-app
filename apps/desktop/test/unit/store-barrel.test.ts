@@ -25,6 +25,7 @@ const STORE_VALUE_EXPORTS = [
   'deleteLocalMemorySpace',
   'deleteWorkspace',
   'deleteWorkspaceGroup',
+  'dispatchOriginsFor',
   'getAppFlag',
   'getAppSetting',
   'getClosePopupShortcut',
@@ -97,6 +98,7 @@ const STORE_VALUE_EXPORTS = [
   'transaction',
   'updateConversationExperience',
   'updateConversationStatus',
+  'withDispatchOrigin',
 ]
 
 describe('store barrel contract', () => {

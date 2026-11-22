@@ -13,6 +13,8 @@ import {
   MoreHorizontal,
   Sparkles,
   Clock,
+  CornerDownRight,
+  ArrowUpRight,
 } from 'lucide-react'
 import type { Conversation } from '../../../preload'
 import { isRemoteKey } from '@/lib/hosts/shell-keys'
@@ -26,7 +28,7 @@ import { StatusIcon, type AgentStatus } from '@/components/sidebar/StatusIcon'
 import type { DragHandle } from '@/components/sidebar/WorkspaceConvList'
 import { dropdownKit, contextKit } from '@/components/sidebar/menu-kit'
 import { activeSiblingSource, type useSidebarMenus } from '@/components/sidebar/use-sidebar-menus'
-import type { SharedConversationGroupInfo } from '@/components/sidebar/conv-top-nodes'
+import type { DispatchConversationGroupInfo, SharedConversationGroupInfo } from '@/components/sidebar/conv-top-nodes'
 import { compactAge } from '@/components/sidebar/relative-time'
 import type { MouseEvent } from 'react'
 
@@ -36,6 +38,7 @@ export function useConvRows({
   activeId,
   pendingPlanIds,
   onSelect,
+  findConversation,
   renaming,
   setRenaming,
   renameValue,
@@ -54,6 +57,7 @@ export function useConvRows({
   activeId: string | null
   pendingPlanIds: Set<string>
   onSelect: (conv: Conversation) => void
+  findConversation?: (id: string) => Conversation | undefined
   renaming: { convId: string; instanceKey: string } | null
   setRenaming: Dispatch<SetStateAction<{ convId: string; instanceKey: string } | null>>
   renameValue: string
@@ -70,7 +74,7 @@ export function useConvRows({
   const { t } = useTranslation('ui')
   const { t: tRoutines } = useTranslation('routines')
   const [locale] = useLocale()
-  const { convMenuItems, sharedFolderMenuItems } = menus
+  const { convMenuItems, sharedFolderMenuItems, dispatchFolderMenuItems } = menus
 
   const dateFormat = useMemo(
     () => new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }),
@@ -147,6 +151,25 @@ export function useConvRows({
           )}
         </span>
         {conv.botOrigin && <BotConversationBadge conversation={conv} compact />}
+        {!conv.botOrigin &&
+          conv.dispatchOrigin &&
+          (() => {
+            const sourceName =
+              findConversation?.(conv.dispatchOrigin.sourceConversationId)?.name ?? conv.dispatchOrigin.sourceName
+            return (
+              <span
+                data-testid="conversation-dispatch-badge"
+                aria-label={t('sidebar.createdByConversation', { name: sourceName })}
+                title={t('sidebar.createdByConversation', { name: sourceName })}
+                className={cn(
+                  'inline-flex shrink-0 items-center rounded border border-violet-400/25 bg-violet-400/[0.08] px-1 py-0.5 text-violet-300',
+                  contextLabel && 'mt-0.5'
+                )}
+              >
+                <CornerDownRight className="size-3.5" aria-hidden="true" />
+              </span>
+            )
+          })()}
         <div className="min-w-0 flex-1">
           {isRenaming ? (
             <input
@@ -348,5 +371,96 @@ export function useConvRows({
     )
   }
 
-  return { convItem, sharedFolder }
+  const dispatchFolder = (
+    info: DispatchConversationGroupInfo,
+    members: Conversation[],
+    opts: { dnd?: DragHandle; isOver?: boolean } = {}
+  ) => {
+    const collapseKey = `dispatch:${info.rootId}`
+    const open = !collapsedGroups[collapseKey]
+    const folderAttention = members.some((mm) => attention.has(mm.id))
+    const rootInFolder = members.some((mm) => mm.id === info.rootId)
+    const rootConv = findConversation?.(info.rootId)
+    const rootName = rootConv?.name ?? info.rootName
+    const originConv = rootInFolder ? undefined : rootConv
+    const originTarget = originConv ? { conv: originConv, onOpen: onSelect } : undefined
+    return (
+      <li key={collapseKey} data-testid="sidebar-dispatch-folder" data-dispatch-root={info.rootId} {...opts.dnd}>
+        <ContextMenu>
+          <ContextMenuTrigger asChild>
+            <div
+              onClick={() => setCollapsedGroups((groups) => ({ ...groups, [collapseKey]: !groups[collapseKey] }))}
+              className={cn(
+                'group/folder mx-1.5 flex cursor-pointer items-center gap-1.5 rounded-md py-1.5 pl-3 pr-1 text-[13px] text-sidebar-foreground hover:bg-white/[0.04]',
+                opts.isOver && 'ring-1 ring-inset ring-primary/60'
+              )}
+            >
+              {open ? (
+                <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
+              ) : (
+                <ChevronRight className="size-3 shrink-0 text-muted-foreground" />
+              )}
+              {open ? (
+                <FolderOpen className="size-3.5 shrink-0 text-violet-400/80" />
+              ) : (
+                <Folder className="size-3.5 shrink-0 text-violet-400/80" />
+              )}
+              <span
+                className="min-w-0 flex-1 truncate"
+                onMouseEnter={(e) => showQuickTooltip(e, t('sidebar.dispatchFolder', { name: rootName }))}
+                onMouseLeave={hideQuickTooltip}
+              >
+                {rootName}
+              </span>
+              {folderAttention && (
+                <span
+                  title={t('sidebar.attentionTitle')}
+                  className="size-2 shrink-0 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.9)]"
+                />
+              )}
+              {originConv && (
+                <button
+                  type="button"
+                  data-no-drag
+                  data-testid="dispatch-folder-open-origin"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onSelect(originConv)
+                  }}
+                  title={t('sidebar.openOrigin', { name: originConv.name })}
+                  aria-label={t('sidebar.openOrigin', { name: originConv.name })}
+                  className="shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover/folder:opacity-100 focus-visible:opacity-100"
+                >
+                  <ArrowUpRight className="size-3.5" aria-hidden="true" />
+                </button>
+              )}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    data-no-drag
+                    onClick={(e) => e.stopPropagation()}
+                    title={t('sidebar.siblingFolderActions')}
+                    className="shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover/folder:opacity-100 data-[state=open]:opacity-100"
+                  >
+                    <MoreHorizontal className="size-3.5" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                  {dispatchFolderMenuItems(members, dropdownKit, originTarget)}
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <span className="shrink-0 rounded bg-white/[0.05] px-1 text-[10px] text-muted-foreground">
+                {members.length}
+              </span>
+            </div>
+          </ContextMenuTrigger>
+          <ContextMenuContent>{dispatchFolderMenuItems(members, contextKit, originTarget)}</ContextMenuContent>
+        </ContextMenu>
+        {open && <ul>{members.map((c) => convItem(c, { pl: 'pl-9', instanceKey: `tree:${c.id}` }))}</ul>}
+      </li>
+    )
+  }
+
+  return { convItem, sharedFolder, dispatchFolder }
 }

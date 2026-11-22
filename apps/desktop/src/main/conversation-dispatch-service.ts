@@ -973,7 +973,8 @@ async function buildDefaultConversationDispatchService(): Promise<ConversationDi
     readSettings: chat.persistedConversationSettings,
     startTurn: chat.startConversationDispatchTurn,
     hasPersistedMessages: dispatchStore.conversationHasMessages,
-    openConversation: (conversation, focus) => windowIpc.broadcast('conversation:open', { conversation, focus }),
+    openConversation: (conversation, focus) =>
+      windowIpc.broadcast('conversation:open', { conversation: store.withDispatchOrigin(conversation), focus }),
     notifyChanged: (conversationId) => windowIpc.broadcast('conversation-dispatch:changed', { conversationId }),
     reportStartFailure: chat.reportConversationDispatchStartFailure,
     isMigrating: (conversationId) => !!migration.incompleteMigrationForConversation(conversationId),

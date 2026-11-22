@@ -33,6 +33,15 @@ function mapConversation<T extends Conversation>(conversation: T, map: (id: stri
     ...(conversation.repos
       ? { repos: conversation.repos.map((repo) => ({ ...repo, workspaceId: map(repo.workspaceId) })) }
       : {}),
+    ...(conversation.dispatchOrigin
+      ? {
+          dispatchOrigin: {
+            ...conversation.dispatchOrigin,
+            sourceConversationId: map(conversation.dispatchOrigin.sourceConversationId),
+            rootConversationId: map(conversation.dispatchOrigin.rootConversationId),
+          },
+        }
+      : {}),
   }
 }
 

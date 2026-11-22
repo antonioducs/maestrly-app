@@ -1,6 +1,7 @@
 import { normalizeConversationExperience, type ConversationExperience } from '../../shared/conversation-experience'
 import type {
   Conversation,
+  ConversationDispatchOrigin,
   ProjectConversation,
   StandaloneConversation,
   ConversationMode,
@@ -10,6 +11,7 @@ import type {
 } from '../../shared/conversation'
 export type {
   Conversation,
+  ConversationDispatchOrigin,
   ProjectConversation,
   StandaloneConversation,
   ConversationMode,
@@ -160,6 +162,116 @@ export function setConversationLocation(
   if (Number(changed) !== 1) throw new Error('Conversation not found.')
 }
 
+const MAX_DISPATCH_DEPTH = 32
+const DISPATCH_ORIGIN_QUERY_CHUNK = 500
+
+interface DispatchEdgeRow {
+  destId: string
+  sourceId: string
+  destName: string
+  sourceName: string | null
+}
+
+/**
+ * Resolve immediate source and chain root for the requested conversations via an indexed
+ * recursive lookup starting from `ids`. Discarded/deleted dispatches and cyclic chains are ignored.
+ */
+export function dispatchOriginsFor(ids: readonly string[]): Map<string, ConversationDispatchOrigin> {
+  const origins = new Map<string, ConversationDispatchOrigin>()
+  const uniqueIds = [...new Set(ids)]
+  if (uniqueIds.length === 0) return origins
+
+  const db = getDb()
+  const edgeByDest = new Map<string, DispatchEdgeRow>()
+  const fallbackNames = new Map<string, string>()
+  const names = new Map<string, string>()
+
+  for (let offset = 0; offset < uniqueIds.length; offset += DISPATCH_ORIGIN_QUERY_CHUNK) {
+    const chunk = uniqueIds.slice(offset, offset + DISPATCH_ORIGIN_QUERY_CHUNK)
+    const values = chunk.map(() => '(?)').join(',')
+    const rows = db
+      .prepare(
+        `WITH RECURSIVE
+           seeds(id) AS (VALUES ${values}),
+           chain(dest_id, source_id, dest_name, depth) AS (
+             SELECT d.conversation_id, d.source_conversation_id, d.conversation_name, 0
+             FROM conversation_dispatches d
+             JOIN seeds ON seeds.id = d.conversation_id
+             WHERE d.phase NOT IN ('discarded', 'deleted')
+             UNION
+             SELECT d.conversation_id, d.source_conversation_id, d.conversation_name, chain.depth + 1
+             FROM conversation_dispatches d
+             JOIN chain ON d.conversation_id = chain.source_id
+             WHERE d.phase NOT IN ('discarded', 'deleted')
+               AND chain.depth < ?
+           )
+         SELECT DISTINCT
+           c.dest_id AS destId,
+           c.source_id AS sourceId,
+           c.dest_name AS destName,
+           s.name AS sourceName
+         FROM chain c
+         LEFT JOIN conversations s ON s.id = c.source_id`
+      )
+      .all(...chunk, MAX_DISPATCH_DEPTH) as unknown as DispatchEdgeRow[]
+
+    for (const row of rows) {
+      edgeByDest.set(row.destId, row)
+      if (row.destName) fallbackNames.set(row.destId, row.destName)
+      if (row.sourceName) names.set(row.sourceId, row.sourceName)
+    }
+  }
+  if (edgeByDest.size === 0) return origins
+
+  const nameOf = (id: string, fallback = ''): string => names.get(id) ?? fallbackNames.get(id) ?? fallback
+
+  for (const id of uniqueIds) {
+    const first = edgeByDest.get(id)
+    if (!first) continue
+    const visited = new Set<string>([id])
+    let currentId = first.sourceId
+    let cyclic = false
+    let depth = 0
+    while (true) {
+      if (visited.has(currentId)) {
+        cyclic = true
+        break
+      }
+      visited.add(currentId)
+      const parent = edgeByDest.get(currentId)
+      if (!parent) break
+      depth += 1
+      if (depth >= MAX_DISPATCH_DEPTH) break
+      currentId = parent.sourceId
+    }
+    if (cyclic) continue
+    origins.set(id, {
+      sourceConversationId: first.sourceId,
+      sourceName: nameOf(first.sourceId, first.destName),
+      rootConversationId: currentId,
+      rootName: nameOf(currentId, first.destName),
+    })
+  }
+  return origins
+}
+
+export function withDispatchOrigin<T extends Conversation>(conversation: T): T {
+  const origin = dispatchOriginsFor([conversation.id]).get(conversation.id)
+  if (origin) conversation.dispatchOrigin = origin
+  return conversation
+}
+
+function withDispatchOrigins<T extends Conversation>(conversations: T[]): T[] {
+  if (conversations.length === 0) return conversations
+  const origins = dispatchOriginsFor(conversations.map((conversation) => conversation.id))
+  if (origins.size === 0) return conversations
+  for (const conversation of conversations) {
+    const origin = origins.get(conversation.id)
+    if (origin) conversation.dispatchOrigin = origin
+  }
+  return conversations
+}
+
 export function getConversation(id: string): Conversation | undefined {
   return withRepos(rowToConversation(getDb().prepare('SELECT * FROM conversations WHERE id = ?').get(id)))
 }
@@ -175,10 +287,11 @@ export function listConversations(workspaceId: string, includeArchived = false):
   const sql = includeArchived
     ? "SELECT * FROM conversations WHERE scope = 'project' AND workspace_id = ? ORDER BY position ASC, created_at ASC"
     : "SELECT * FROM conversations WHERE scope = 'project' AND workspace_id = ? AND archived = 0 ORDER BY position ASC, created_at ASC"
-  return getDb()
+  const conversations = getDb()
     .prepare(sql)
     .all(workspaceId)
     .map((r) => withRepos(rowToConversation(r))!) as ProjectConversation[]
+  return withDispatchOrigins(conversations)
 }
 
 export function listStandaloneConversations(includeArchived = false): StandaloneConversation[] {
@@ -190,10 +303,11 @@ export function listStandaloneConversations(includeArchived = false): Standalone
 }
 
 export function listAllConversations(): Conversation[] {
-  return getDb()
+  const conversations = getDb()
     .prepare('SELECT * FROM conversations ORDER BY position ASC, created_at ASC')
     .all()
     .map((r) => withRepos(rowToConversation(r))!) as Conversation[]
+  return withDispatchOrigins(conversations)
 }
 
 /** Ids of every conversation of the profile, archived and standalone ones included. */

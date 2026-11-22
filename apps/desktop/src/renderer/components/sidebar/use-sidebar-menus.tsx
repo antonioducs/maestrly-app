@@ -20,6 +20,7 @@ import {
   Pin,
   PinOff,
   ArrowRightLeft,
+  ArrowUpRight,
 } from 'lucide-react'
 import type { Conversation, WorkspaceGroup, WorkspaceWithConversations } from '../../../preload'
 import type { MenuKit } from '@/components/sidebar/menu-kit'
@@ -286,6 +287,33 @@ export function useSidebarMenus({
     )
   }
 
+  const dispatchFolderMenuItems = (
+    members: Conversation[],
+    m: MenuKit,
+    origin?: { conv: Conversation; onOpen: (conv: Conversation) => void }
+  ) => (
+    <>
+      {origin && (
+        <>
+          <m.Item onClick={() => origin.onOpen(origin.conv)} className="gap-2 text-xs">
+            <ArrowUpRight className="size-3.5" /> {t('sidebar.openOrigin', { name: origin.conv.name })}
+          </m.Item>
+          <m.Separator />
+        </>
+      )}
+      <m.Item onClick={() => onArchiveSiblings(members, true)} className="gap-2 text-xs">
+        <Archive className="size-3.5" /> {t('sidebar.archiveAll', { count: members.length })}
+      </m.Item>
+      <m.Separator />
+      <m.Item
+        onClick={() => onDeleteSiblings(members)}
+        className="gap-2 text-xs text-destructive focus:text-destructive"
+      >
+        <Trash2 className="size-3.5" /> {t('sidebar.deleteAll', { count: members.length })}
+      </m.Item>
+    </>
+  )
+
   const workspaceMenuItems = (ws: WorkspaceWithConversations, m: MenuKit) => (
     <>
       <m.Item onClick={() => onNewConversation(ws.id)}>
@@ -346,6 +374,7 @@ export function useSidebarMenus({
     siblingCliMenuItems,
     convMenuItems,
     sharedFolderMenuItems,
+    dispatchFolderMenuItems,
     workspaceMenuItems,
     groupMenuItems,
   }
