@@ -195,8 +195,9 @@ function jobView(
 }
 
 const RESULT_NOTE =
-  'The result arrives in the conversation that submitted the job as a new message when it ends, whatever way it ends. ' +
-  'End your turn instead of waiting; runner_status and runner_logs show the job meanwhile.'
+  'The result arrives in the conversation that submitted the job as a new message when it ends, once that ' +
+  'conversation is free; it does not arrive if you saw the job end first with runner_status or runner_logs, or ' +
+  'cancelled it yourself. End your turn instead of waiting; runner_status and runner_logs show the job meanwhile.'
 
 /** Registers the runner tools of a bot conversation; `gateway` resolves the bot's own gateway access at each call. */
 export function registerBotRunnerTools(ctx: McpToolContext, gateway: Gateway, bot: () => BotRunnerHost | null): void {
@@ -245,6 +246,13 @@ export function registerBotRunnerTools(ctx: McpToolContext, gateway: Gateway, bo
   }
   const submittedFrom = (record: RunnerJobRecord) =>
     record.conversationId === ctx.convId ? 'this conversation' : 'another conversation of yours'
+  /** A job this conversation submitted and has now seen end is not announced to it again. */
+  const sawEnd = async (records: RunnerJobRecords, record: RunnerJobRecord | null, job: FleetRunnerJob | null) => {
+    if (!record || record.conversationId !== ctx.convId || record.continued || !isFinal(job)) return
+    await records
+      .update(record.jobId, (current) => (current.continued ? current : { ...current, continued: true }))
+      .catch(() => undefined)
+  }
 
   ctx.server.registerTool(
     'runner_list',
@@ -491,6 +499,7 @@ export function registerBotRunnerTools(ctx: McpToolContext, gateway: Gateway, bo
               }
             }
           }
+          await sawEnd(records, record, job)
           return ok(
             JSON.stringify({
               ...jobView(record, job, {
@@ -505,12 +514,15 @@ export function registerBotRunnerTools(ctx: McpToolContext, gateway: Gateway, bo
           .filter((record) => record.conversationId === ctx.convId)
           .slice(0, JOBS_LISTED_MAX)
         const refresh = mine.some((record) => !isFinal(record.job)) ? await gatewayJobs() : null
-        const jobs = mine.map((record) => {
-          const fresh = isFinal(record.job) ? null : (refresh?.get(record.jobId) ?? null)
-          const job = fresh ?? record.job
-          const state = job ? undefined : refresh ? 'not_submitted' : 'unknown'
-          return jobView(record, job, state ? { state } : {})
-        })
+        const jobs = await Promise.all(
+          mine.map(async (record) => {
+            const fresh = isFinal(record.job) ? null : (refresh?.get(record.jobId) ?? null)
+            const job = fresh ?? record.job
+            await sawEnd(records, record, job)
+            const state = job ? undefined : refresh ? 'not_submitted' : 'unknown'
+            return jobView(record, job, state ? { state } : {})
+          })
+        )
         return ok(
           JSON.stringify(
             jobs.length
@@ -558,6 +570,7 @@ export function registerBotRunnerTools(ctx: McpToolContext, gateway: Gateway, bo
           LOG_BYTES_MAX
         )
         const state = record.job?.state ?? 'not_submitted'
+        await sawEnd(records, record, record.job)
         return ok(
           log
             ? `Job ${record.jobId} (${state}), the end of its log:\n${log}`
@@ -574,13 +587,28 @@ export function registerBotRunnerTools(ctx: McpToolContext, gateway: Gateway, bo
     {
       description:
         'Stop a runner job. A queued job ends at once; one that runs is stopped by its runner, which takes a moment. ' +
-        'The conversation that submitted the job still receives a message when it ends, as for any other job.',
+        'Cancelled from the conversation that submitted it, the job sends no message there when it ends as cancelled; ' +
+        'if it ended some other way first, the result still arrives.',
       inputSchema: { jobId },
       annotations: { readOnlyHint: false },
     },
     async (input) => {
       try {
-        const job = await gatewayRequest(gateway(), 'runnerJobCancelOwn', undefined, { jobId: input.jobId })
+        const records = bot()?.runnerRecords() ?? null
+        const record = (await records?.get(input.jobId)) ?? null
+        const mine = !!records && record?.conversationId === ctx.convId
+        // Marked before the gateway hears of it, whose final state can come back before its answer.
+        const mark = (selfCancelled: boolean) =>
+          records!.update(input.jobId, (current) => ({ ...current, selfCancelled })).catch(() => undefined)
+        if (mine) await mark(true)
+        let job: FleetRunnerJob
+        try {
+          job = await gatewayRequest(gateway(), 'runnerJobCancelOwn', undefined, { jobId: input.jobId })
+        } catch (error) {
+          if (mine) await mark(false)
+          throw error
+        }
+        if (records) await sawEnd(records, record, job)
         return ok(
           JSON.stringify({
             jobId: job.jobId,
@@ -588,7 +616,9 @@ export function registerBotRunnerTools(ctx: McpToolContext, gateway: Gateway, bo
             cancelRequested: job.cancelRequested,
             note: isFinal(job)
               ? 'The job ended.'
-              : 'Cancellation requested: the runner stops the job, and a message tells this conversation when it ended.',
+              : mine
+                ? 'Cancellation requested: the runner stops the job. No message follows when it ends as cancelled.'
+                : 'Cancellation requested: the runner stops the job, and a message tells the conversation that submitted it when it ended.',
           })
         )
       } catch (error) {

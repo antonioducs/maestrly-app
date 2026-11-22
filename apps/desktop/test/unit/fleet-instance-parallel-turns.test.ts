@@ -135,6 +135,7 @@ async function bot() {
     editing: false,
     turns,
     retries: new Map(),
+    heldRunnerJobs: new Map(),
     quotaRetryAt: 0,
     reportedStartFailure: null,
     reportedStartFailures: new Map(),

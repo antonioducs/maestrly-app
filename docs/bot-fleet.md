@@ -1418,6 +1418,10 @@ sequenceDiagram
 - **The bot does not wait.** It ends its turn after sending the job; when the job ends, its conversation (the bot's
   conversation, a routine run, or a conversation with another bot) receives the state, exit code, duration, output
   files, and the end of the log, and continues.
+- **Results arrive once the conversation is free.** A job that ends while that conversation works, or has a message
+  waiting, is told when it is free, in one message with any other job that ended meanwhile (up to four per
+  message). A job whose end the bot already saw there with `runner_status` or `runner_logs`, or that it cancelled
+  there and ended cancelled, sends no message.
 - **Jobs wait for a computer.** A job waits until a linked computer that meets its requirements (GPU, how jobs run,
   operating system) has a free slot, for at most its queue timeout (60 minutes by default). A computer has 30 seconds
   to take a job it is offered. A computer that disconnects during a job has 10 minutes to come back before the job is
@@ -1439,7 +1443,7 @@ each in **Awaiting you**.
 | --- | --- |
 | The bot's **Settings → Runners**, on any of your computers | **Latest jobs**: state, runner, and when each was sent; for a running job, its CPU, memory now and at its peak, and processes. **Log** shows the job's output as it comes; **Cancel** stops a job that has not ended, wherever it runs. The list refreshes every 5 seconds while a job has not ended. |
 | **Settings → Runner**, on the computer that runs them | **Jobs on this computer**: bot, server, the first line of the command, what the job is doing, how long it has run, and what it uses, with **Log** and **Cancel**. **Recent jobs**: the last 20 jobs that ended there, with how each ended, its exit code or error, how long it took, its peak memory and CPU time, and its log. |
-| The bot's conversation | The command in the `runner_submit` step, and, when the job ends, a message with the result and the end of its log. |
+| The bot's conversation | The command in the `runner_submit` step, and, when the job ends, a message with the result and the end of its log, unless the bot already saw it end there. |
 
 CPU is counted in processors: 3.5 of 12 means three and a half of the computer's 12 processors are busy. The runner
 samples a native job's processes every second and a container's every 5 seconds, and tells the bot server at most

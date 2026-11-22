@@ -43,12 +43,21 @@ function fixture(options: { lanes?: Lane[]; input?: (value: FleetInstanceInput) 
     return { inputId: 'input', itemId: 'item', queued: true }
   })
   const lanes = options.lanes ?? []
+  // The conversations with a turn running, by turn key, and the inputs waiting in the queue.
+  const turns = new Map<string | null, unknown>()
+  const queued: Array<{ started: boolean; stopped?: boolean; input: Pick<FleetInstanceInput, 'run' | 'thread'> }> = []
   const runtime = Object.create(BotRuntime.prototype) as BotRuntime
   Object.assign(runtime, {
     disposed: false,
     jobRecords: records,
     runs: { get: (id: string) => lanes.find((lane) => lane.runId === id) },
     input,
+    turns,
+    queue: { list: () => queued },
+    heldRunnerJobs: new Map(),
+    tellingRunnerJobs: new Set(),
+    reconcilingRunnerJobs: false,
+    runnerJobsRetryAt: 0,
   })
   const files = new RunnerJobFiles({
     records,
@@ -56,7 +65,9 @@ function fixture(options: { lanes?: Lane[]; input?: (value: FleetInstanceInput) 
     onState: (record) => runtime.continueRunnerJob(record),
   })
   Object.assign(runtime, { jobFiles: files })
-  return { root, folder, records, files, runtime, sent, input }
+  /** What a turn that ends, or the next tick, does with the jobs held for a conversation that is now free. */
+  const release = () => (runtime as unknown as { releaseRunnerJobs(): Promise<void> }).releaseRunnerJobs()
+  return { root, folder, records, files, runtime, sent, input, turns, queued, release }
 }
 
 const seed = (records: RunnerJobRecords, folder: string, extra: Partial<RunnerJobRecord> = {}) =>
@@ -268,6 +279,202 @@ describe.skipIf(process.platform === 'win32')('runner job completion', () => {
     expect(sent[0].text).toContain('and the rest')
   })
 
+  it('holds the result while its conversation works, and tells it once the conversation is free', async () => {
+    const { folder, records, files, sent, turns, release } = fixture()
+    await seed(records, folder)
+    turns.set(null, {})
+    await files.state(JOB_ID, runnerJob(JOB_ID, 'succeeded', { exitCode: 0 }))
+    expect(sent).toEqual([])
+    // Not told yet, so a restart tells it.
+    expect((await records.get(JOB_ID))?.continued).toBe(false)
+    await release()
+    expect(sent).toEqual([])
+
+    turns.delete(null)
+    await release()
+    expect(sent).toHaveLength(1)
+    expect(sent[0].idempotencyKey).toBe(uuidFromSeed(`${JOB_ID}:succeeded`))
+    expect(sent[0].text.startsWith(`Runner job ${JOB_ID} succeeded.`)).toBe(true)
+    expect((await records.get(JOB_ID))?.continued).toBe(true)
+    await release()
+    expect(sent).toHaveLength(1)
+  })
+
+  it('holds the result while an input waits to start in its conversation, but not for a stopped one', async () => {
+    const { folder, records, files, sent, queued, release } = fixture()
+    await seed(records, folder)
+    queued.push({ started: false, input: {} })
+    await files.state(JOB_ID, runnerJob(JOB_ID, 'failed', { exitCode: 1 }))
+    expect(sent).toEqual([])
+    queued.splice(0)
+    await release()
+    expect(sent).toHaveLength(1)
+
+    const stopped = fixture()
+    await seed(stopped.records, stopped.folder)
+    stopped.queued.push({ started: false, stopped: true, input: {} })
+    await stopped.files.state(JOB_ID, runnerJob(JOB_ID, 'failed', { exitCode: 1 }))
+    expect(stopped.sent).toHaveLength(1)
+  })
+
+  it('holds a job that ends while its conversation is being told of another', async () => {
+    let open!: () => void
+    const gate = new Promise<void>((resolve) => {
+      open = resolve
+    })
+    const { folder, records, files, sent, input, release } = fixture({ input: () => gate })
+    const [first, second] = [1, 2].map((n) => `job_AAAAAAAAAAAAAAAA000${n}`)
+    await seed(records, folder, { jobId: first })
+    await seed(records, folder, { jobId: second })
+    const telling = files.state(first, runnerJob(first, 'succeeded', { exitCode: 0 }))
+    await vi.waitFor(() => expect(input).toHaveBeenCalledTimes(1))
+    await files.state(second, runnerJob(second, 'failed', { exitCode: 1 }))
+    expect(input).toHaveBeenCalledTimes(1)
+    open()
+    await telling
+    // In the bot, the first message then waits in the queue, and the second follows its turn.
+    await release()
+    expect(sent.map((item) => item.text.split('\n')[0])).toEqual([
+      `Runner job ${first} succeeded.`,
+      `Runner job ${second} failed.`,
+    ])
+  })
+
+  it('does not wait for another conversation of the bot', async () => {
+    const { folder, records, files, sent, turns } = fixture({ lanes: [{ kind: 'routine', runId: 'run-1' }] })
+    await seed(records, folder, { conversation: { kind: 'run', runId: 'run-1' } })
+    turns.set(null, {})
+    await files.state(JOB_ID, runnerJob(JOB_ID, 'succeeded', { exitCode: 0 }))
+    expect(sent).toHaveLength(1)
+    expect(sent[0].run).toEqual({ id: 'run-1' })
+  })
+
+  it('tells nothing of a job its conversation saw end while it worked', async () => {
+    const { folder, records, files, sent, turns, release } = fixture()
+    await seed(records, folder)
+    turns.set(null, {})
+    await files.state(JOB_ID, runnerJob(JOB_ID, 'succeeded', { exitCode: 0 }))
+    // runner_status, runner_logs or runner_cancel showed the conversation the job ended.
+    await records.update(JOB_ID, (record) => ({ ...record, continued: true }))
+    turns.delete(null)
+    await release()
+    expect(sent).toEqual([])
+  })
+
+  it('tells nothing of a job its conversation cancelled when it ends cancelled, and tells any other end', async () => {
+    const { folder, records, files, sent } = fixture()
+    await seed(records, folder, { selfCancelled: true })
+    await files.state(JOB_ID, runnerJob(JOB_ID, 'cancelled'))
+    expect(sent).toEqual([])
+    expect((await records.get(JOB_ID))?.continued).toBe(true)
+
+    // It ended before the cancellation reached its runner.
+    const raced = fixture()
+    await seed(raced.records, raced.folder, { selfCancelled: true })
+    await raced.files.state(JOB_ID, runnerJob(JOB_ID, 'succeeded', { exitCode: 0 }))
+    expect(raced.sent).toHaveLength(1)
+
+    // Cancelled by someone else, such as the owner.
+    const other = fixture()
+    await seed(other.records, other.folder)
+    await other.files.state(JOB_ID, runnerJob(JOB_ID, 'cancelled'))
+    expect(other.sent).toHaveLength(1)
+  })
+
+  it('tells the jobs that ended while the conversation worked in one message, in the order they ended', async () => {
+    const { folder, records, files, sent, turns, release } = fixture()
+    const ids = [1, 2, 3, 4, 5].map((n) => `job_AAAAAAAAAAAAAAAA000${n}`)
+    for (const id of ids) await seed(records, folder, { jobId: id })
+    turns.set(null, {})
+    // Ended in the order 3, 1, 2; 4 is a job the conversation cancelled itself.
+    const endedAt = (minute: number) => `2026-10-29T10:${String(minute).padStart(2, '0')}:00.000Z`
+    await files.state(ids[0], runnerJob(ids[0], 'succeeded', { exitCode: 0, endedAt: endedAt(20) }))
+    await files.state(ids[1], runnerJob(ids[1], 'failed', { exitCode: 1, endedAt: endedAt(30) }))
+    await files.state(ids[2], runnerJob(ids[2], 'expired', { endedAt: endedAt(10) }))
+    await records.update(ids[3], (record) => ({ ...record, selfCancelled: true }))
+    await files.state(ids[3], runnerJob(ids[3], 'cancelled', { endedAt: endedAt(15) }))
+    expect(sent).toEqual([])
+
+    turns.delete(null)
+    await release()
+    expect(sent).toHaveLength(1)
+    const { text } = sent[0]
+    expect(parsed(sent[0])).toBeTruthy()
+    expect(text.startsWith('3 runner jobs ended.')).toBe(true)
+    const order = [ids[2], ids[0], ids[1]].map((id) => text.indexOf(`Runner job ${id} `))
+    expect(order.every((at) => at > 0)).toBe(true)
+    expect([...order].sort((a, b) => a - b)).toEqual(order)
+    expect(text).not.toContain(ids[3])
+    expect(sent[0].idempotencyKey).toBe(
+      uuidFromSeed([`${ids[2]}:expired`, `${ids[0]}:succeeded`, `${ids[1]}:failed`].join('\n'))
+    )
+    for (const id of ids.slice(0, 4)) expect((await records.get(id))?.continued).toBe(true)
+    expect((await records.get(ids[4]))?.continued).toBe(false)
+  })
+
+  it('splits many results into messages of four, each within the input limit', async () => {
+    const { folder, records, files, sent, turns, release } = fixture()
+    const ids = Array.from({ length: 6 }, (_, n) => `job_AAAAAAAAAAAAAAAA00${String(n + 10)}`)
+    turns.set(null, {})
+    for (const [n, id] of ids.entries()) {
+      await seed(records, folder, {
+        jobId: id,
+        outputs: {
+          files: Array.from({ length: 300 }, (_, k) => ({ path: `out/${'d'.repeat(800)}/${k}.bin`, size: k })),
+          bytes: 1,
+          sha256: 'b'.repeat(64),
+        },
+      })
+      writeFileSync(path.join(records.dir(id), RUNNER_JOB_FILES.log), `${'x'.repeat(200)}\n`.repeat(500))
+      await files.state(
+        id,
+        runnerJob(id, 'failed', {
+          runnerName: 'R'.repeat(60),
+          exitCode: 137,
+          error: { code: 'timeout', message: 'm'.repeat(1_000) },
+          endedAt: `2026-10-29T10:${String(n + 10)}:00.000Z`,
+        })
+      )
+    }
+    turns.delete(null)
+    await release()
+    expect(sent.map((input) => input.text.split('\n')[0])).toEqual(['4 runner jobs ended.', '2 runner jobs ended.'])
+    expect(sent[1].text).toContain(`Runner job ${ids[4]} failed.`)
+    expect(sent[1].text).toContain(`Runner job ${ids[5]} failed.`)
+    for (const input of sent) {
+      expect(input.text.length).toBeLessThanOrEqual(FLEET_MESSAGE_TEXT_MAX)
+      expect(parsed(input)).toBeTruthy()
+    }
+    // Every result keeps the end of its log within its share.
+    expect(sent[0].text.match(/\(earlier lines omitted\)/g)).toHaveLength(4)
+  })
+
+  it('holds results it could not tell and tries again later', async () => {
+    let failing = true
+    const { folder, records, files, sent, turns, release, runtime } = fixture({
+      input: async () => {
+        if (failing) throw new Error('disk full')
+      },
+    })
+    await seed(records, folder)
+    turns.set(null, {})
+    await files.state(JOB_ID, runnerJob(JOB_ID, 'succeeded', { exitCode: 0 }))
+    turns.delete(null)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    await release()
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
+    expect((await records.get(JOB_ID))?.continued).toBe(false)
+    failing = false
+    // Not before the wait is over.
+    await release()
+    expect(sent).toEqual([])
+    Object.assign(runtime, { runnerJobsRetryAt: 0 })
+    await release()
+    expect(sent).toHaveLength(1)
+    expect((await records.get(JOB_ID))?.continued).toBe(true)
+  })
+
   it('gives a distinct key to each final state of a job', () => {
     expect(uuidFromSeed(`${JOB_ID}:failed`)).not.toBe(uuidFromSeed(`${JOB_ID}:succeeded`))
     expect(uuidFromSeed(`${JOB_ID}:failed`)).toBe(uuidFromSeed(`${JOB_ID}:failed`))
@@ -375,6 +582,35 @@ describe.skipIf(process.platform === 'win32')('runner job reconciliation', () =>
     expect(await records.get(B)).toMatchObject({ job: { state: 'running' }, continued: false })
     expect(await records.get(C)).toMatchObject({ job: null, continued: false })
     expect(api.asked.some((entry) => entry.endsWith(D))).toBe(false)
+  })
+
+  it('tells each conversation the jobs that ended while the bot was stopped in one message', async () => {
+    const { folder, records, runtime, sent } = fixture({ lanes: [{ kind: 'routine', runId: 'run-1' }] })
+    const api = await gateway([runnerJob(B, 'failed', { exitCode: 1 })])
+    Object.assign(runtime, {
+      stored: { profile: { gateway: { runnersEnabled: true } }, primaryConversationId: 'primary' },
+      gatewayToken: 't',
+      host: { gatewayUrl: api.url },
+    })
+    await seed(records, folder, { jobId: A, job: runnerJob(A, 'succeeded', { exitCode: 0 }) })
+    await seed(records, folder, { jobId: B, job: runnerJob(B, 'running') })
+    await seed(records, folder, {
+      jobId: C,
+      job: runnerJob(C, 'succeeded', { exitCode: 0 }),
+      conversation: { kind: 'run', runId: 'run-1' },
+    })
+
+    await runtime.reconcileRunnerJobs()
+
+    expect(sent).toHaveLength(2)
+    const primary = sent.find((input) => !input.run)!
+    expect(primary.text.startsWith('2 runner jobs ended.')).toBe(true)
+    expect(primary.text).toContain(`Runner job ${A} succeeded.`)
+    expect(primary.text).toContain(`Runner job ${B} failed.`)
+    const run = sent.find((input) => input.run)!
+    expect(run.run).toEqual({ id: 'run-1' })
+    expect(run.text.startsWith(`Runner job ${C} succeeded.`)).toBe(true)
+    for (const id of [A, B, C]) expect((await records.get(id))?.continued).toBe(true)
   })
 
   it('tells the conversation of a job that ended but was not told, and does nothing without runners', async () => {

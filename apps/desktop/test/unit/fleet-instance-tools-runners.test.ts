@@ -617,6 +617,34 @@ describe.skipIf(process.platform === 'win32')('runner tools of a fleet bot', () 
       ])
     })
 
+    it('marks the jobs this conversation sees end as told, so their results do not arrive again', async () => {
+      const [mine, listed, other, going] = [1, 2, 3, 4].map((n) => `job_AAAAAAAAAAAAAAAA000${n}`)
+      await seed(mine, 'primary', runnerJob(mine, 'running'))
+      await seed(listed, 'primary', runnerJob(listed, 'running'))
+      await seed(other, 'run-conversation', runnerJob(other, 'running'))
+      await seed(going, 'primary', runnerJob(going, 'running'))
+      const gateway = await fakeGateway(setup.records, {
+        // The gateway knew of the ends before it told the environment.
+        jobs: [
+          runnerJob(mine, 'succeeded', { exitCode: 0 }),
+          runnerJob(listed, 'failed', { exitCode: 1 }),
+          runnerJob(other, 'failed'),
+          runnerJob(going, 'running'),
+        ],
+      })
+      const mcp = await client(setup, gateway.url)
+      await mcp.callTool({ name: 'runner_status', arguments: { jobId: mine } })
+      // Another conversation's job is still news to the conversation that submitted it.
+      await mcp.callTool({ name: 'runner_status', arguments: { jobId: other } })
+      expect((await setup.records.get(mine))?.continued).toBe(true)
+      expect((await setup.records.get(listed))?.continued).toBe(false)
+      expect((await setup.records.get(other))?.continued).toBe(false)
+
+      await mcp.callTool({ name: 'runner_status', arguments: {} })
+      expect((await setup.records.get(listed))?.continued).toBe(true)
+      expect((await setup.records.get(going))?.continued).toBe(false)
+    })
+
     it('says so when this conversation submitted nothing, and when the gateway did not answer', async () => {
       const gateway = await fakeGateway(setup.records)
       const mcp = await client(setup, gateway.url)
@@ -654,7 +682,9 @@ describe.skipIf(process.platform === 'win32')('runner tools of a fleet bot', () 
     })
 
     it("prefers the runner's own copy once the job ended and it holds more", async () => {
-      await setup.records.create(runnerRecord(setup.project, { jobId: id, job: runnerJob(id, 'failed') }))
+      await setup.records.create(
+        runnerRecord(setup.project, { jobId: id, conversationId: 'primary', job: runnerJob(id, 'failed') })
+      )
       writeFileSync(path.join(setup.records.dir(id), RUNNER_JOB_FILES.log), lines(5, 'ours'))
       mkdirSync(path.join(setup.project, RUNNER_FOLDER_STATE), { recursive: true })
       writeFileSync(path.join(setup.project, RUNNER_FOLDER_STATE, `${id}.log`), lines(8, 'theirs'))
@@ -662,6 +692,24 @@ describe.skipIf(process.platform === 'win32')('runner tools of a fleet bot', () 
       const mcp = await client(setup, gateway.url)
       const log = text(await mcp.callTool({ name: 'runner_logs', arguments: { jobId: id, lines: 2 } }))
       expect(log.endsWith('theirs 7\ntheirs 8')).toBe(true)
+      // The conversation that submitted the job saw it ended: its result does not arrive again.
+      expect((await setup.records.get(id))?.continued).toBe(true)
+    })
+
+    it('leaves a job that has not ended, or that another conversation submitted, to be told', async () => {
+      const other = 'job_AAAAAAAAAAAAAAAA0002'
+      await setup.records.create(
+        runnerRecord(setup.project, { jobId: id, conversationId: 'primary', job: runnerJob(id, 'running') })
+      )
+      await setup.records.create(
+        runnerRecord(setup.project, { jobId: other, conversationId: 'elsewhere', job: runnerJob(other, 'failed') })
+      )
+      const gateway = await fakeGateway(setup.records)
+      const mcp = await client(setup, gateway.url)
+      await mcp.callTool({ name: 'runner_logs', arguments: { jobId: id } })
+      await mcp.callTool({ name: 'runner_logs', arguments: { jobId: other } })
+      expect((await setup.records.get(id))?.continued).toBe(false)
+      expect((await setup.records.get(other))?.continued).toBe(false)
     })
 
     it('says when there is no log yet, and refuses a job that is not in the records', async () => {
@@ -692,6 +740,47 @@ describe.skipIf(process.platform === 'win32')('runner tools of a fleet bot', () 
         await (await client(setup, queued.url)).callTool({ name: 'runner_cancel', arguments: { jobId: id } })
       )
       expect(ended).toMatchObject({ state: 'cancelled', note: 'The job ended.' })
+    })
+
+    it('keeps the conversation that cancelled its own job from hearing of it again', async () => {
+      await setup.records.create(
+        runnerRecord(setup.project, { jobId: id, conversationId: 'primary', job: runnerJob(id, 'running') })
+      )
+      const running = await fakeGateway(setup.records, {
+        cancel: (jobId) => runnerJob(jobId, 'running', { cancelRequested: true }),
+      })
+      const result = json(
+        await (await client(setup, running.url)).callTool({ name: 'runner_cancel', arguments: { jobId: id } })
+      )
+      expect(result.note).toContain('No message follows')
+      expect(await setup.records.get(id)).toMatchObject({ selfCancelled: true, continued: false })
+
+      // A queued job ends at once: the conversation sees it end.
+      const queued = await fakeGateway(setup.records)
+      await (await client(setup, queued.url)).callTool({ name: 'runner_cancel', arguments: { jobId: id } })
+      expect((await setup.records.get(id))?.continued).toBe(true)
+    })
+
+    it('does not mark a job it could not cancel, nor one another conversation submitted', async () => {
+      const other = 'job_AAAAAAAAAAAAAAAA0002'
+      await setup.records.create(
+        runnerRecord(setup.project, { jobId: id, conversationId: 'primary', job: runnerJob(id, 'running') })
+      )
+      await setup.records.create(
+        runnerRecord(setup.project, { jobId: other, conversationId: 'elsewhere', job: runnerJob(other, 'running') })
+      )
+      const down = await fakeGateway(setup.records, { cancel: () => 'missing' })
+      await (await client(setup, down.url)).callTool({ name: 'runner_cancel', arguments: { jobId: id } })
+      expect((await setup.records.get(id))?.selfCancelled).toBe(false)
+
+      const gateway = await fakeGateway(setup.records, {
+        cancel: (jobId) => runnerJob(jobId, 'running', { cancelRequested: true }),
+      })
+      const result = json(
+        await (await client(setup, gateway.url)).callTool({ name: 'runner_cancel', arguments: { jobId: other } })
+      )
+      expect(result.note).toContain('the conversation that submitted it')
+      expect((await setup.records.get(other))?.selfCancelled).toBeUndefined()
     })
 
     it('explains a job the gateway does not know', async () => {
