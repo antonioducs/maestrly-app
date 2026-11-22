@@ -119,12 +119,27 @@ first message of each Antigravity session carries the project's instructions
 (`AGENTS.md` or `CLAUDE.md`), the conversation's pinned memory, and the skill and
 subagent catalogs; the date and git branch come with every message.
 
-When a new session imports a long conversation, Maestrly summarizes the history
-before sending it if the prompt exceeds Antigravity's text limit. This can delay
-the first response after switching providers. Your current message is sent in
-full. If the prompt still cannot fit, Maestrly stops with an error before sending
-it; shorten the message or compact the conversation and retry. Summarization
-uses stages that fit the same limit.
+When a new session imports a long conversation and the prompt exceeds
+Antigravity's text limit, Maestrly reduces the imported history in steps when
+you send a message. Switching the model does nothing by itself.
+
+1. Older tool outputs become one-line stubs. The three most recent turns, plans,
+   to-do lists and questions keep their outputs, and no message text changes.
+   This applies only to the text sent to Antigravity: the conversation keeps
+   every output, so another model still receives them.
+2. If that is not enough, the history is summarized and recent messages follow
+   the summary verbatim. When the last answer came from another provider, that
+   model writes the summary, because it saw the whole conversation. It is asked
+   to keep every decision, constraint and preference you stated. Its usage is
+   billed to that model. If it cannot summarize (for example, no quota or a
+   signed-out account), Antigravity summarizes in stages that fit its limit. A
+   bot's compaction model, when set, is used instead of either.
+
+Once the history is reduced, the model is told that the full history is
+available through `history_search` and `history_read`. Summarizing can delay the
+first response after switching providers. Your current message is sent in full.
+If the prompt still cannot fit, Maestrly stops with an error before sending it;
+shorten the message or compact the conversation and retry.
 
 The server cannot close a session, so each one keeps a helper process
 (`localharness`, 40–100 MB) running until the server exits. Once a server has

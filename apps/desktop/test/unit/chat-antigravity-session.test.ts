@@ -10,10 +10,12 @@ import {
   assertAntigravityPromptFits,
 } from '../../src/main/chat/antigravity-subscription/prompt-limit'
 import {
+  ANTIGRAVITY_CONDENSED_SEED_NOTE,
   ANTIGRAVITY_MESSAGE_ANCHOR,
   buildAntigravityPromptBlocks,
   buildAntigravitySeedTranscript,
   hashAntigravityInstructions,
+  pruneAntigravitySeedHistory,
 } from '../../src/main/chat/antigravity-subscription/session'
 
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
@@ -187,6 +189,93 @@ describe('Antigravity prompt blocks', () => {
       createdAt: 3,
     } as unknown as ChatMessage
     expect(buildAntigravitySeedTranscript(history, live)).toBe('Previous summary:\nEarlier work summary.')
+  })
+
+  it('follows a condensed seed with the note on the history tools, and only then', () => {
+    const build = (seedTranscript: string, seedCondensed?: boolean) =>
+      (
+        buildAntigravityPromptBlocks({
+          conversationId: 'c1',
+          message: user([text('follow-up')]),
+          newSession: true,
+          instructions: 'i',
+          toolCatalog: '',
+          seedTranscript,
+          seedCondensed,
+          dropImages: false,
+        })[0] as { text: string }
+      ).text
+    const condensed = build('User: first question', true)
+    expect(condensed).toContain(`User: first question\n\n${ANTIGRAVITY_CONDENSED_SEED_NOTE}\n\n`)
+    expect(condensed.indexOf(ANTIGRAVITY_CONDENSED_SEED_NOTE)).toBeLessThan(
+      condensed.indexOf(ANTIGRAVITY_MESSAGE_ANCHOR)
+    )
+    expect(build('User: first question', false)).not.toContain(ANTIGRAVITY_CONDENSED_SEED_NOTE)
+    expect(build('', true)).not.toContain(ANTIGRAVITY_CONDENSED_SEED_NOTE)
+  })
+})
+
+describe('Antigravity seed pruning', () => {
+  const log = (title: string) =>
+    Array.from({ length: 200 }, (_, line) => `${title} line ${line}: compiled module`).join('\n')
+  const toolPart = (id: string, output: string) =>
+    ({
+      type: 'tool',
+      id,
+      toolCallId: id,
+      toolName: 'bash',
+      input: { command: `run ${id}` },
+      state: { status: 'completed', output },
+    }) as ChatMessage['parts'][number]
+  const assistant = (id: string, parts: ChatMessage['parts']) =>
+    ({ id, conversationId: 'c1', role: 'assistant', parts, createdAt: 2 }) as ChatMessage
+  const turns = (from: number, count: number) =>
+    Array.from({ length: count }, (_, offset) => from + offset).flatMap((index) => [
+      user([text(`request ${index}`)], `u${index}`),
+      assistant(`a${index}`, [text(`answer ${index}`), toolPart(`recent-${index}`, log(`RECENT_${index}`))]),
+    ])
+
+  it('stubs older tool outputs in the seed and leaves the stored messages and every text untouched', () => {
+    const history = [
+      user([text('start')], 'u0'),
+      assistant('a0', [text('decided: keep the API stable'), toolPart('old', log('OLD_BUILD'))]),
+      ...turns(1, 3),
+      user([text('current request')], 'current'),
+    ]
+    const pruned = pruneAntigravitySeedHistory(history)
+    expect(pruned.stubs).toBe(1)
+    const seed = buildAntigravitySeedTranscript(pruned.history)
+    expect(seed).toContain('decided: keep the API stable')
+    expect(seed).toContain('output removed — rerun or use history_search/history_read')
+    expect(seed).not.toContain('OLD_BUILD line 5:')
+    for (const index of [1, 2, 3]) expect(seed).toContain(`RECENT_${index} line 5:`)
+    expect(seed).not.toContain('current request')
+    expect(buildAntigravitySeedTranscript(history)).toContain('OLD_BUILD line 5:')
+    expect(history[1].parts.some((part) => part.type === 'tool' && part.contextStub)).toBe(false)
+  })
+
+  it('protects the three turns before the current message, which does not count as one of them', () => {
+    const history = [user([text('start')], 'u0'), ...turns(1, 3), user([text('current request')], 'current')]
+    expect(pruneAntigravitySeedHistory(history).stubs).toBe(0)
+  })
+
+  it('prunes the verbatim tail that follows a summary', () => {
+    const history = [
+      user([text('start')], 'u0'),
+      assistant('a0', [
+        toolPart('summarized', log('SUMMARIZED')),
+        { type: 'compaction', id: 'k1', text: 'Earlier work summary.', strategy: 'summary' } as never,
+      ]),
+      assistant('a-tail', [text('tail answer'), toolPart('tail', log('TAIL_BUILD'))]),
+      ...turns(1, 3),
+      user([text('current request')], 'current'),
+    ]
+    const pruned = pruneAntigravitySeedHistory(history)
+    expect(pruned.stubs).toBe(1)
+    const seed = buildAntigravitySeedTranscript(pruned.history)
+    expect(seed).toContain('Earlier work summary.')
+    expect(seed).toContain('tail answer')
+    expect(seed).not.toContain('TAIL_BUILD line 5:')
   })
 })
 

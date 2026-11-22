@@ -254,6 +254,51 @@ describe('service-owned compaction progress', () => {
     ).toBeGreaterThan(0)
   })
 
+  it('summarizes with the handoff model, bills it, and asks it to keep what the user decided', async () => {
+    const result = await compact({ handoffSummarizer: { ...model, modelId: 'background-helper' } })
+    expect(result.ok).toBe(true)
+    expect(result.billedModel).toEqual({ ...model, modelId: 'background-helper' })
+    expect(h.resolveLanguageModel).toHaveBeenCalledWith(model.providerId, 'background-helper')
+    expect(h.resolveLanguageModel).not.toHaveBeenCalledWith(model.providerId, model.modelId)
+    const systems = h.generateText.mock.calls.map(([options]) => (options as { system?: string }).system)
+    expect(systems.length).toBeGreaterThan(0)
+    for (const system of systems) expect(system).toMatch(/handed to a different model.*decision, constraint/s)
+    expect(progressEvents().at(-1)?.model).toEqual(model)
+    expect(
+      chatHistoryStats(conversationId).perModel.find((item) => item.modelId === 'background-helper')?.subInput
+    ).toBeGreaterThan(0)
+  })
+
+  it("keeps a bot's compaction model ahead of the handoff model", async () => {
+    setCompactionSummarizer(conversationId, () => ({
+      ...model,
+      modelId: 'small-model',
+      effort: 'off',
+      fastMode: false,
+    }))
+    expect((await compact({ handoffSummarizer: { ...model, modelId: 'background-helper' } })).ok).toBe(true)
+    expect(h.resolveLanguageModel).toHaveBeenCalledWith(model.providerId, 'small-model')
+    expect(h.resolveLanguageModel).not.toHaveBeenCalledWith(model.providerId, 'background-helper')
+    for (const [options] of h.generateText.mock.calls)
+      expect((options as { system?: string }).system).not.toContain('handed to a different model')
+  })
+
+  it('reports a failed handoff summary instead of committing a mechanical digest', async () => {
+    h.generateText.mockRejectedValue(new Error('Synthetic quota exhausted'))
+    const result = await compact({
+      handoffSummarizer: { ...model, modelId: 'background-helper' },
+      fallback: true,
+      summaryMaxRetries: 0,
+    })
+    expect(result.ok).toBe(false)
+    expect(result.degraded).toBeUndefined()
+    expect(
+      listChatMessages(conversationId)
+        .flatMap((message) => message.parts)
+        .some((part) => part.type === 'compaction')
+    ).toBe(false)
+  })
+
   it('marks a requested compaction as manual and reports completion after persistence', async () => {
     setCompactionSummarizer(conversationId, () => ({
       ...model,
@@ -907,7 +952,9 @@ describe('service-owned compaction progress', () => {
         .flatMap((message) => message.parts)
         .flatMap((part) => (part.type === 'compaction' ? [part.text] : []))
 
-    async function prepare(userText = 'EARLY_SOURCE_MARKER'): Promise<Map<string, Parameters<ChatIpcDeps['mhandle']>[1]>> {
+    async function prepare(
+      userText = 'EARLY_SOURCE_MARKER'
+    ): Promise<Map<string, Parameters<ChatIpcDeps['mhandle']>[1]>> {
       const handlers = new Map<string, Parameters<ChatIpcDeps['mhandle']>[1]>()
       registerChatIpc({
         mhandle: (channel, handler) => {

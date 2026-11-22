@@ -103,6 +103,7 @@ import {
   buildAntigravityPromptBlocks,
   buildAntigravitySeedTranscript,
   estimateAntigravityContextTokens,
+  pruneAntigravitySeedHistory,
 } from './session'
 import {
   getAntigravitySessionBinding,
@@ -678,10 +679,21 @@ export async function runAntigravitySubscriptionChat(
     }
 
     // The runtime keeps only the start of an oversized prompt, which would drop the request at its end. A seed that
-    // does not fit is replaced by a summary; whatever still does not fit fails here instead of being cut silently.
+    // does not fit first loses its older tool outputs, then is replaced by a summary; whatever still does not fit
+    // fails here instead of being cut silently.
     let compactedSeed = false
-    const buildPrompt = (withSeed = true) =>
-      buildAntigravityPromptBlocks({
+    let pruneSeed = false
+    let seedPruning: { source: ChatMessage[]; history: ChatMessage[]; stubs: number } | null = null
+    // Recomputed only when compaction replaces the history, so the verbatim tail after a summary is pruned too.
+    const prunedSeedHistory = () => {
+      if (seedPruning?.source !== history) seedPruning = { source: history, ...pruneAntigravitySeedHistory(history) }
+      return seedPruning
+    }
+    // The note names tools the model must actually have.
+    const historyToolsAvailable = 'history_search' in tools && 'history_read' in tools
+    const buildPrompt = (withSeed = true) => {
+      const pruned = pruneSeed ? prunedSeedHistory() : null
+      return buildAntigravityPromptBlocks({
         conversationId: args.conversationId,
         message: currentUser,
         newSession,
@@ -689,12 +701,14 @@ export async function runAntigravitySubscriptionChat(
         toolCatalog: activeToolset.catalog,
         seedTranscript:
           newSession && withSeed
-            ? buildAntigravitySeedTranscript(history, compactedSeed ? messages[0] : undefined)
+            ? buildAntigravitySeedTranscript(pruned?.history ?? history, compactedSeed ? messages[0] : undefined)
             : '',
+        seedCondensed: historyToolsAvailable && (compactedSeed || Boolean(pruned?.stubs)),
         dropImages,
         environment,
         turnReminder,
       })
+    }
     const compactSeed = async (compactHistory: NonNullable<RunAntigravitySubscriptionChatArgs['compactHistory']>) => {
       const compacted = await contextProgress.compact(
         async (onProgress) => {
@@ -761,6 +775,22 @@ export async function runAntigravitySubscriptionChat(
           cause,
         })
         throw new AntigravityPromptTooLargeError(promptBytes, cause)
+      }
+      if (newSession && history.length > 1) {
+        pruneSeed = true
+        prompt = buildPrompt()
+        const { stubs } = prunedSeedHistory()
+        if (stubs) {
+          const afterBytes = antigravityPromptTextBytes(prompt)
+          chatDiag({
+            kind: 'antigravity-seed-pruned',
+            conv: args.conversationId,
+            beforeBytes: promptBytes,
+            afterBytes,
+            stubs,
+            fits: afterBytes <= ANTIGRAVITY_PROMPT_TEXT_MAX_BYTES,
+          })
+        }
       }
     }
     // A prepared background summary can leave a suffix that is still too large; the second pass summarizes it too.
