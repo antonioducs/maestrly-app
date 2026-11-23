@@ -11,6 +11,17 @@ const h = vi.hoisted(() => ({
   getWorkspaceCreationService: vi.fn(),
   findGithubRepositoriesForChat: vi.fn(),
   createdWorkspaceIdsForTurn: vi.fn((_source: string, _origin: string): string[] => []),
+  getConfirmConversationDispatch: vi.fn(() => true),
+  dispatchOriginsFor: vi.fn((_ids: readonly string[]) => new Map<string, unknown>()),
+}))
+
+vi.mock('../../src/main/store/settings', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/store/settings')>()),
+  getConfirmConversationDispatch: h.getConfirmConversationDispatch,
+}))
+vi.mock('../../src/main/store/conversations', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/store/conversations')>()),
+  dispatchOriginsFor: h.dispatchOriginsFor,
 }))
 
 vi.mock('../../src/main/conversation-dispatch-service', () => ({
@@ -48,6 +59,8 @@ import { parseWorkspaceCreationResult, sameGitRemote } from '../../src/shared/wo
 import type { ToolContext } from '../../src/main/chat/tools/util'
 import {
   clearHumanTurnOrigin,
+  isHostTurnAdmission,
+  recordHostTurnOrigin,
   recordHumanTurnOrigin,
   type HumanTurnOrigin,
 } from '../../src/main/chat/conversation-dispatch-authorization'
@@ -64,6 +77,14 @@ const recorded: HumanTurnOrigin[] = []
 function humanTurn(text: string, conversationId = 'source'): HumanTurnOrigin {
   const origin = { token: {}, conversationId, messageId: 'msg-1', text, signal: new AbortController().signal }
   recordHumanTurnOrigin(origin)
+  recorded.push(origin)
+  return origin
+}
+
+/** A turn the app ran in the conversation: an approved plan, a continuation or a message from another one. */
+function hostTurn(conversationId = 'source'): HumanTurnOrigin {
+  const origin = { token: {}, conversationId, messageId: 'msg-host', text: '', signal: new AbortController().signal }
+  recordHostTurnOrigin(origin)
   recorded.push(origin)
   return origin
 }
@@ -90,6 +111,8 @@ afterEach(() => {
   for (const origin of recorded.splice(0)) clearHumanTurnOrigin(origin.conversationId, origin.token)
   vi.clearAllMocks()
   h.createdWorkspaceIdsForTurn.mockReturnValue([])
+  h.getConfirmConversationDispatch.mockReturnValue(true)
+  h.dispatchOriginsFor.mockReturnValue(new Map())
 })
 
 describe('conversation dispatch tool surface', () => {
@@ -191,6 +214,85 @@ describe('conversation dispatch tool surface', () => {
     expect(h.getConversationDispatchService).not.toHaveBeenCalled()
   })
 
+  describe('turns the app ran in the conversation (plan, continuation, peer message)', () => {
+    const ready = () => {
+      h.dispatchBatch.mockResolvedValue({ ok: true, items: [] })
+      h.getConversationDispatchService.mockResolvedValue({ dispatchBatch: h.dispatchBatch })
+    }
+
+    it('qualifies only admissions with the person behind them in this app', () => {
+      expect(isHostTurnAdmission(undefined)).toBe(false)
+      expect(isHostTurnAdmission({ internal: true })).toBe(true)
+      expect(isHostTurnAdmission({ peerMessage: {} })).toBe(true)
+      expect(isHostTurnAdmission({ dispatchSeed: {} })).toBe(true)
+      for (const opts of [
+        { internal: true, botAdmission: {} },
+        { internal: true, remoteAdmission: true },
+        { internal: true, runnerAdmission: {} },
+        { internal: true, runnerSignal: {} },
+        { internal: true, routineRun: {} },
+      ])
+        expect(isHostTurnAdmission(opts)).toBe(false)
+    })
+
+    it('refuses while the owner keeps the confirmation on', async () => {
+      ready()
+      hostTurn()
+      const runtime = conversationDispatchRuntimeFor('source', 'agent')!
+      expect(runtime).toBeDefined()
+      const confirm = vi.fn(async (_questions: unknown) => [['Start']])
+      const result = await startConversationsTool.execute(BATCH, context({ conversationDispatch: runtime, askQuestion: confirm }))
+      expect(result).toMatchObject({ ok: false, items: [] })
+      expect(result.error).toMatch(/not started by a message the person typed/)
+      expect(confirm).not.toHaveBeenCalled()
+      expect(h.dispatchBatch).not.toHaveBeenCalled()
+      const listed = await listConversationWorkspacesTool.execute({}, context({ conversationDispatch: runtime }))
+      expect(listed).toMatchObject({ error: expect.stringMatching(/not started by a message/) })
+    })
+
+    it('starts conversations without asking when the owner turned the confirmation off', async () => {
+      ready()
+      h.getConfirmConversationDispatch.mockReturnValue(false)
+      hostTurn()
+      const runtime = conversationDispatchRuntimeFor('source', 'agent')!
+      const confirm = vi.fn(async (_questions: unknown) => [["Don't start"]])
+      await startConversationsTool.execute(BATCH, context({ conversationDispatch: runtime, askQuestion: confirm }))
+      expect(confirm).not.toHaveBeenCalled()
+      expect(h.dispatchBatch.mock.calls[0][0].grant).toMatchObject({
+        maxConversations: null,
+        originKey: 'message:msg-host',
+      })
+    })
+
+    it('never lets a conversation an agent created start others on its own', async () => {
+      ready()
+      h.getConfirmConversationDispatch.mockReturnValue(false)
+      h.dispatchOriginsFor.mockReturnValue(new Map([['source', { sourceConversationId: 'parent' }]]))
+      hostTurn()
+      const runtime = conversationDispatchRuntimeFor('source', 'agent')!
+      const result = await startConversationsTool.execute(BATCH, context({ conversationDispatch: runtime }))
+      expect(result.error).toMatch(/agent created this conversation/)
+      expect(h.dispatchBatch).not.toHaveBeenCalled()
+      const created = await createWorkspaceTool.execute(
+        { requestKey: 'x', source: { kind: 'new', name: 'x' } } as never,
+        context({ conversationDispatch: runtime })
+      )
+      expect(created).toMatchObject({ ok: false, code: 'unavailable' })
+    })
+
+    it('expires with the turn', async () => {
+      ready()
+      h.getConfirmConversationDispatch.mockReturnValue(false)
+      const origin = hostTurn()
+      const runtime = conversationDispatchRuntimeFor('source', 'agent')!
+      clearHumanTurnOrigin('source', origin.token)
+      expect(conversationDispatchRuntimeFor('source', 'agent')).toBeUndefined()
+      const result = await startConversationsTool.execute(BATCH, context({ conversationDispatch: runtime }))
+      expect(result).toMatchObject({ ok: false, items: [] })
+      expect(h.dispatchBatch).not.toHaveBeenCalled()
+    })
+  })
+
   it('asks the person before a request that is not explicit and starts nothing without an answer', async () => {
     humanTurn('Analise esses cards do Jira e me diga o que falta.')
     const runtime = conversationDispatchRuntimeFor('source', 'agent')!
@@ -256,6 +358,27 @@ describe('conversation dispatch tool surface', () => {
       expect(result).toMatchObject({ ok: false, items: [] })
       expect(result.error).toMatch(/declined/)
       expect(h.dispatchBatch).not.toHaveBeenCalled()
+    })
+
+    it('starts without asking when the owner turned the confirmation off', async () => {
+      ready()
+      h.getConfirmConversationDispatch.mockReturnValue(false)
+      humanTurn(LOOSE)
+      const runtime = conversationDispatchRuntimeFor('source', 'agent')!
+      const confirm = ask([["Don't start"]])
+      await startConversationsTool.execute(BATCH, context({ conversationDispatch: runtime, askQuestion: confirm }))
+      expect(confirm).not.toHaveBeenCalled()
+      expect(h.dispatchBatch).toHaveBeenCalledTimes(1)
+      expect(h.dispatchBatch.mock.calls[0][0].grant).toMatchObject({ maxConversations: null, originKey: 'message:msg-1' })
+    })
+
+    it('still respects an explicit negation with the confirmation off', async () => {
+      h.getConfirmConversationDispatch.mockReturnValue(false)
+      humanTurn('Não abra conversas novas, só analise.')
+      const runtime = conversationDispatchRuntimeFor('source', 'agent')!
+      const result = await startConversationsTool.execute(BATCH, context({ conversationDispatch: runtime }))
+      expect(result.error).toMatch(/asked NOT/)
+      expect(h.getConversationDispatchService).not.toHaveBeenCalled()
     })
 
     it('respects an explicit negation without asking', async () => {

@@ -1408,6 +1408,11 @@ export default {
       auto: 'Automatic',
       full: 'Full access',
     },
+    confirmConversations: {
+      heading: 'Require your approval to start new conversations',
+      desc: 'Agents start conversations only when a message of yours asks for them; when the request is not explicit, they ask you in the chat first.',
+      warning: 'YOLO mode: the agent starts conversations whenever it judges it should, without asking, including while implementing an approved plan or receiving a result from another conversation. Content it reads (cards, files, web pages) could lead it to start conversations you did not want. Conversations created by agents still need a message from you to create others.',
+    },
     projectsDirectory: {
       heading: 'Projects folder',
       desc: 'Where chats create and clone projects you ask for. Also the default parent folder when you add a project.',

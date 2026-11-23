@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils'
 import { useHostApi } from '@/lib/hosts/host-context'
 import { useHostInfo } from '@/lib/hosts/use-hosts'
 import { HostFolderDialog } from '@/components/HostFolderDialog'
+import { SettingsSwitch } from '@/components/fleet/SettingsSwitch'
 import type { TFn } from './shared'
 
 export function DefaultPermissionSection({
@@ -42,6 +43,57 @@ export function DefaultPermissionSection({
           </button>
         ))}
       </div>
+    </section>
+  )
+}
+
+/** Whether start_conversations asks the person before a request their message did not state explicitly. */
+export function ConfirmConversationsSection({ t }: { t: TFn }) {
+  const api = useHostApi()
+  const [enabled, setEnabled] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    let alive = true
+    void api
+      .getConfirmConversationDispatch()
+      .then((value) => {
+        if (alive) setEnabled(value)
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [api])
+
+  const toggle = () => {
+    if (enabled === null) return
+    setEnabled(!enabled)
+    api.setConfirmConversationDispatch(!enabled)
+  }
+
+  return (
+    <section className="flex flex-col gap-3 border-t border-border pt-6" data-testid="confirm-conversations">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-sm font-semibold text-foreground">{t('settings.confirmConversations.heading')}</h2>
+          <p className="mt-0.5 text-[12px] text-muted-foreground">{t('settings.confirmConversations.desc')}</p>
+        </div>
+        <SettingsSwitch
+          checked={enabled ?? true}
+          disabled={enabled === null}
+          label={t('settings.confirmConversations.heading')}
+          onChange={toggle}
+        />
+      </div>
+      {enabled === false && (
+        <p
+          role="note"
+          className="flex items-start gap-2 rounded-md border border-amber-300/35 bg-amber-300/10 px-3 py-2 text-[12px]"
+        >
+          <ShieldAlert className="mt-0.5 size-4 shrink-0 text-amber-300" aria-hidden="true" />
+          <span>{t('settings.confirmConversations.warning')}</span>
+        </p>
+      )}
     </section>
   )
 }

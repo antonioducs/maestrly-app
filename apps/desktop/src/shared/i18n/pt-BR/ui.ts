@@ -1414,6 +1414,11 @@ export default {
       auto: 'Automático',
       full: 'Acesso total',
     },
+    confirmConversations: {
+      heading: 'Pedir sua autorização para iniciar novas conversas',
+      desc: 'Agentes só iniciam conversas quando uma mensagem sua pede; se o pedido não for explícito, perguntam no chat antes.',
+      warning: 'Modo YOLO: o agente inicia conversas quando achar que deve, sem perguntar, inclusive ao executar um plano aprovado ou ao receber o resultado de outra conversa. Conteúdo que ele lê (cards, arquivos, páginas) pode levá-lo a iniciar conversas que você não queria. Conversas criadas por agentes continuam precisando de uma mensagem sua para criar outras.',
+    },
     projectsDirectory: {
       heading: 'Pasta de projetos',
       desc: 'Onde os chats criam e clonam os projetos que você pedir. Também é a pasta padrão ao adicionar um projeto.',

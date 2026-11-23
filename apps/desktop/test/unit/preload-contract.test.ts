@@ -476,7 +476,7 @@ describe('preload API — exposure', () => {
 
   it('preserves the public preload API inventory', () => {
     const keys = Object.keys(api)
-    expect(keys).toHaveLength(735)
+    expect(keys).toHaveLength(737)
     expect(keys.sort()).toMatchSnapshot()
   })
 
@@ -1342,6 +1342,15 @@ describe('preload API — Chat settings wrappers', () => {
   it('setDefaultPermissionMode -> chat:default-permission-mode-set (send)', () => {
     api.setDefaultPermissionMode('ask')
     expect(sendSpy).toHaveBeenCalledWith('chat:default-permission-mode-set', 'ask')
+    expect(invokeSpy).not.toHaveBeenCalled()
+  })
+  it('getConfirmConversationDispatch -> chat:confirm-conversation-dispatch-get (invoke)', () => {
+    api.getConfirmConversationDispatch()
+    expect(invokeSpy).toHaveBeenCalledWith('chat:confirm-conversation-dispatch-get')
+  })
+  it('setConfirmConversationDispatch -> chat:confirm-conversation-dispatch-set (send)', () => {
+    api.setConfirmConversationDispatch(false)
+    expect(sendSpy).toHaveBeenCalledWith('chat:confirm-conversation-dispatch-set', false)
     expect(invokeSpy).not.toHaveBeenCalled()
   })
 

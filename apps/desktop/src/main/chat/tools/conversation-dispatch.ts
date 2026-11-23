@@ -27,6 +27,7 @@ import type { ChatQuestion } from '../../../shared/chat'
 import {
   assertConversationDispatchGrantCurrent,
   conversationDispatchDenialMessage,
+  currentHostTurnOrigin,
   currentHumanTurnOrigin,
   evaluateConversationDispatchGrant,
   evaluateHumanTurnGrant,
@@ -131,23 +132,42 @@ async function confirmConversationBatch(askQuestion: AskQuestion, batch: Convers
 }
 
 /**
+ * Why a turn the app ran on its own may not use these tools now, or null when it may: only while the owner keeps the
+ * confirmation off, and never in a conversation an agent created. Read on every call, so the setting applies at once.
+ */
+async function hostTurnRefusal(conversationId: string): Promise<string | null> {
+  const store = await import('../../store')
+  if (store.getConfirmConversationDispatch()) return conversationDispatchDenialMessage('host-turn')
+  if (store.dispatchOriginsFor([conversationId]).has(conversationId))
+    return conversationDispatchDenialMessage('agent-created')
+  return null
+}
+
+/**
  * Runtime for the turn currently admitted in `conversationId`, or undefined when the tools must not be offered:
- * Plan/Maestro modes and turns the person did not start. Ask receives it too: creating a project is judged by the
- * agent from the conversation, and starting conversations is still checked against the message when it runs.
+ * Plan/Maestro modes and turns run for nobody in this app. Ask receives it too: creating a project is judged by the
+ * agent from the conversation, and starting conversations is still checked against the message when it runs. A turn
+ * the app ran on its own in the person's conversation gets a runtime that refuses unless the owner turned the
+ * confirmation off (see hostTurnRefusal).
  */
 export function conversationDispatchRuntimeFor(
   conversationId: string,
   mode: ChatBehavior
 ): ConversationDispatchToolRuntime | undefined {
   if (!conversationDispatchToolsAllowed(mode)) return undefined
-  const origin = currentHumanTurnOrigin(conversationId)
+  const origin = currentHumanTurnOrigin(conversationId) ?? currentHostTurnOrigin(conversationId)
   if (!origin) return undefined
+  const refusal = () => (origin.host ? hostTurnRefusal(conversationId) : Promise.resolve(null))
   return {
     async listWorkspaces() {
+      const refused = await refusal()
+      if (refused) throw new Error(refused)
       const { listConversationDispatchWorkspaces } = await import('../../conversation-dispatch-service')
       return listConversationDispatchWorkspaces()
     },
     async listModels() {
+      const refused = await refusal()
+      if (refused) throw new Error(refused)
       const [service, chat] = await Promise.all([
         import('../../conversation-dispatch-service'),
         import('../service'),
@@ -158,6 +178,8 @@ export function conversationDispatchRuntimeFor(
       }
     },
     async startConversations(batch, signal, askQuestion) {
+      const refused = await refusal()
+      if (refused) return { ok: false, error: refused, items: [] }
       const evaluated = evaluateConversationDispatchGrant(origin)
       let grant: ConversationDispatchGrant
       if (evaluated.ok) grant = evaluated.grant
@@ -178,8 +200,10 @@ export function conversationDispatchRuntimeFor(
         } else {
           // The agent judged that the person wants these conversations, but the message does not say so in a way the
           // host can verify: the person confirms in the chat. Content the agent read can never answer for them.
+          // The owner may turn this question off in Settings and trust the agent's judgment instead.
+          const { getConfirmConversationDispatch } = await import('../../store')
           const confirmed = confirmedKeys.get(origin.token) ?? new Set<string>()
-          if (!batch.tasks.every((task) => confirmed.has(task.requestKey))) {
+          if (getConfirmConversationDispatch() && !batch.tasks.every((task) => confirmed.has(task.requestKey))) {
             if (!(await confirmConversationBatch(askQuestion, batch)))
               return { ok: false, error: conversationDispatchDenialMessage('declined'), items: [] }
             for (const task of batch.tasks) confirmed.add(task.requestKey)
@@ -198,10 +222,14 @@ export function conversationDispatchRuntimeFor(
       })
     },
     async findGithubRepositories(input, signal) {
+      const refused = await refusal()
+      if (refused) return { error: refused }
       const { findGithubRepositoriesForChat } = await import('../../workspace-creation-service')
       return findGithubRepositoriesForChat(input, signal)
     },
     async createWorkspace(input, signal, askQuestion) {
+      const refused = await refusal()
+      if (refused) return { ok: false, code: 'unavailable', error: refused, requestKey: input.requestKey }
       const evaluated = evaluateHumanTurnGrant(origin)
       if (!evaluated.ok) return { ok: false, code: 'unavailable', error: evaluated.message, requestKey: input.requestKey }
       const grant = evaluated.grant
@@ -224,8 +252,9 @@ export function conversationDispatchRuntimeFor(
  *
  * The names do not depend on who started the turn. A native session is resumed only while its tool set holds, so
  * hiding the tools from host-started turns discarded the session on every switch between typed and host turns. Such
- * a turn gets the same names without a runtime, and every tool refuses without it. Unattended executor and remote
- * turns never have a typed origin and stay without the names.
+ * a turn gets the same names, with a runtime that refuses while the owner keeps the confirmation on (or none at all
+ * for a turn run for nobody here), and every tool refuses without it. Unattended executor and remote turns never have
+ * a typed origin and stay without the names.
  */
 export function enableConversationDispatchTools(
   enabled: Set<string>,

@@ -21,9 +21,11 @@ export interface HumanTurnOrigin {
   conversationId: string
   /** Persisted id of the human message that started the turn. */
   messageId: string
-  /** Exactly what the person typed (attachments and hidden mention content excluded). */
+  /** Exactly what the person typed (attachments and hidden mention content excluded); empty for a host turn. */
   text: string
   signal: AbortSignal
+  /** Run by the app without text the person typed (see recordHostTurnOrigin). */
+  host?: true
 }
 
 const origins = new Map<string, HumanTurnOrigin>()
@@ -64,13 +66,48 @@ export function recordHumanTurnOrigin(origin: HumanTurnOrigin): void {
   origins.set(origin.conversationId, origin)
 }
 
+/** Clears the turn's origin, human or host-run (see recordHostTurnOrigin). */
 export function clearHumanTurnOrigin(conversationId: string, token: object): void {
   if (origins.get(conversationId)?.token === token) origins.delete(conversationId)
+  if (hostTurns.get(conversationId)?.token === token) hostTurns.delete(conversationId)
 }
 
 export function currentHumanTurnOrigin(conversationId: string): HumanTurnOrigin | null {
   const origin = origins.get(conversationId)
   return origin && !origin.signal.aborted ? origin : null
+}
+
+/**
+ * Turns the app runs in the person's conversation without text they typed: an approved plan's implementation, host
+ * continuations, and messages or results from other conversations. They may start conversations only when the
+ * owner turned the confirmation off in Settings, and never in a conversation an agent created (checked by the tool).
+ * Kept apart from human origins: a human origin resets the agent-to-agent hop count.
+ */
+const hostTurns = new Map<string, HumanTurnOrigin>()
+
+/** Admissions with nobody behind them in this app (bots, remote/web, runner jobs, routines) never qualify. */
+export function isHostTurnAdmission(opts: TurnAdmissionShape | undefined): boolean {
+  return (
+    !isHumanTurnAdmission(opts) &&
+    !opts?.botAdmission &&
+    !opts?.remoteAdmission &&
+    !opts?.runnerAdmission &&
+    !opts?.runnerSignal &&
+    !opts?.routineRun
+  )
+}
+
+export function recordHostTurnOrigin(origin: Omit<HumanTurnOrigin, 'text' | 'host'>): void {
+  hostTurns.set(origin.conversationId, { ...origin, text: '', host: true })
+}
+
+export function currentHostTurnOrigin(conversationId: string): HumanTurnOrigin | null {
+  const origin = hostTurns.get(conversationId)
+  return origin && !origin.signal.aborted ? origin : null
+}
+
+function isLiveTurn(conversationId: string, token: object): boolean {
+  return origins.get(conversationId)?.token === token || hostTurns.get(conversationId)?.token === token
 }
 
 export type ConversationDispatchDenial =
@@ -82,12 +119,17 @@ export type ConversationDispatchDenial =
   | 'hypothetical'
   | 'count-exceeded'
   | 'declined'
+  | 'host-turn'
+  | 'agent-created'
 
 export interface ConversationDispatchIntent {
   explicit: boolean
   /** Upper bound stated by the person ("open 3 conversations"); null when scoped per item or unbounded. */
   maxConversations: number | null
-  reason?: Exclude<ConversationDispatchDenial, 'no-human-turn' | 'turn-ended' | 'count-exceeded' | 'declined'>
+  reason?: Exclude<
+    ConversationDispatchDenial,
+    'no-human-turn' | 'turn-ended' | 'count-exceeded' | 'declined' | 'host-turn' | 'agent-created'
+  >
 }
 
 /** A live turn started by text the person typed. Enough to create or clone a project they asked for. */
@@ -140,6 +182,17 @@ export function conversationDispatchDenialMessage(code: ConversationDispatchDeni
       return `The person asked for at most ${limit ?? 0} conversation(s) in this turn; this request would exceed it.`
     case 'declined':
       return 'The person declined starting these conversations. Do not start them or retry; continue without them.'
+    case 'host-turn':
+      return (
+        'This turn was not started by a message the person typed (for example a plan being implemented or a result ' +
+        'from another conversation), so it cannot start conversations or create projects. Tell the person what you ' +
+        'would start and let them ask in a message.'
+      )
+    case 'agent-created':
+      return (
+        'An agent created this conversation, so it cannot start conversations or create projects on its own. Tell ' +
+        'the person what you would start and let them ask in a message here.'
+      )
     case 'not-requested':
       return (
         'The latest message does not explicitly ask to open/create/start other conversations or send work for development in a workspace. Do not start any. If it ' +
@@ -411,7 +464,7 @@ export function evaluateHumanTurnGrant(
   origin: HumanTurnOrigin | null
 ): { ok: true; grant: HumanTurnGrant } | { ok: false; code: 'no-human-turn' | 'turn-ended'; message: string } {
   if (!origin) return { ok: false, code: 'no-human-turn', message: conversationDispatchDenialMessage('no-human-turn') }
-  if (origin.signal.aborted || origins.get(origin.conversationId)?.token !== origin.token)
+  if (origin.signal.aborted || !isLiveTurn(origin.conversationId, origin.token))
     return { ok: false, code: 'turn-ended', message: conversationDispatchDenialMessage('turn-ended') }
   return {
     ok: true,
@@ -427,7 +480,7 @@ export function evaluateHumanTurnGrant(
 
 /** Recheck immediately before a mutation: the admitted turn must still be the conversation's live turn. */
 export function assertConversationDispatchGrantCurrent(grant: HumanTurnGrant): void {
-  if (grant.signal.aborted || origins.get(grant.conversationId)?.token !== grant.token) {
+  if (grant.signal.aborted || !isLiveTurn(grant.conversationId, grant.token)) {
     throw new ConversationDispatchDeniedError('turn-ended', conversationDispatchDenialMessage('turn-ended'))
   }
 }

@@ -11,7 +11,7 @@ import {
   type ShortcutOs,
 } from '../../shared/shortcuts'
 import { getDb } from './db'
-import { setAppFlag, getAppSetting, setAppSetting } from './app-settings'
+import { getAppFlag, setAppFlag, getAppSetting, setAppSetting } from './app-settings'
 
 // Preferred cross-platform drawer shell terminal (#167).
 
@@ -239,4 +239,17 @@ export function getDefaultMainTabOrder(): string[] | null {
 /** Upsert global default drawer-tab order JSON. */
 export function setDefaultMainTabOrder(order: string[]): void {
   setAppSetting(DEFAULT_MAIN_TAB_ORDER_KEY, JSON.stringify(order))
+}
+
+// ---- confirmation before an agent starts conversations ----
+
+/** Whether start_conversations asks the person before a request their message did not state explicitly. */
+export const CONFIRM_CONVERSATION_DISPATCH_KEY = 'chat.confirmConversationDispatch'
+
+export function getConfirmConversationDispatch(): boolean {
+  return getAppFlag(CONFIRM_CONVERSATION_DISPATCH_KEY, true)
+}
+
+export function setConfirmConversationDispatch(enabled: boolean): void {
+  setAppFlag(CONFIRM_CONVERSATION_DISPATCH_KEY, enabled)
 }
