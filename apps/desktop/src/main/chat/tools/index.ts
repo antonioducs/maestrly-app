@@ -94,7 +94,7 @@ const PLAN_TOOL_NAME = 'review_plan'
  * (generate_image requires imagegen toggle + connected ChatGPT subscription — see chat/image-gen.ts). */
 const OPT_IN_TOOL_NAMES = new Set<string>([
   'generate_image',
-  // Only for a main turn admitted from text the person typed; runners add them via conversationDispatchRuntimeFor.
+  // Only for a main turn of the person's conversation; runners add them via conversationDispatchRuntimeFor.
   ...CONVERSATION_DISPATCH_TOOL_NAMES,
   // Only for a main turn typed by the person or started by another conversation (conversationLinkRuntimeFor).
   ...CONVERSATION_LINK_TOOL_NAMES,

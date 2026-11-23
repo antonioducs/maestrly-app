@@ -70,6 +70,10 @@ export function makeSettingsHostApi(ipcRenderer: IpcTransport) {
     getDefaultPermissionMode: (): Promise<ChatPermMode> => ipcRenderer.invoke('chat:default-permission-mode-get'),
     setDefaultPermissionMode: (mode: ChatPermMode): void => ipcRenderer.send('chat:default-permission-mode-set', mode),
 
+    getConfirmConversationDispatch: (): Promise<boolean> => ipcRenderer.invoke('chat:confirm-conversation-dispatch-get'),
+    setConfirmConversationDispatch: (enabled: boolean): void =>
+      ipcRenderer.send('chat:confirm-conversation-dispatch-set', enabled),
+
     getFreeTerminalShell: (): Promise<string> => ipcRenderer.invoke('settings:free-terminal-shell-get'),
 
     setFreeTerminalShell: (value: string): void => ipcRenderer.send('settings:free-terminal-shell-set', value),

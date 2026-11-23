@@ -20,7 +20,9 @@ export { subscribeChatStream, unsubscribeChatStream } from './stream-subscribers
 import { remoteChatPolicy } from './remote-policy'
 import {
   clearHumanTurnOrigin,
+  isHostTurnAdmission,
   isHumanTurnAdmission,
+  recordHostTurnOrigin,
   recordHumanTurnOrigin,
 } from './conversation-dispatch-authorization'
 import { clearLinkedTurnOrigin, recordLinkedTurnOrigin } from './conversation-link-authorization'
@@ -5187,6 +5189,11 @@ async function startSendAttempt(
         reportBack: opts.peerMessage?.reportBack ?? opts.dispatchSeed?.reportBack ?? false,
         signal: controller.signal,
       })
+    }
+    // Run by the app in the person's conversation (plan implementation, continuations, messages from other
+    // conversations): may start conversations only if the owner turned the confirmation off.
+    if (isHostTurnAdmission(opts)) {
+      recordHostTurnOrigin({ token: run, conversationId, messageId: userMessageId, signal: controller.signal })
     }
     if (
       conv.scope === 'standalone' &&

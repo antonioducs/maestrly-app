@@ -21,6 +21,8 @@ import {
   setDefaultMainTabOrder,
   getLocale,
   setLocaleSetting,
+  getConfirmConversationDispatch,
+  setConfirmConversationDispatch,
 } from './store'
 import { setActiveShortcuts, setActiveCloseShortcut, setActiveDrawerShortcut } from './hotkeys'
 import { probeFreeTerminalShell, playSound } from './platform'
@@ -75,6 +77,11 @@ export function registerSettingsIpc(reg: IpcRegistrar, deps: SettingsIpcDeps): v
   reg.handle('chat:default-permission-mode-get', getDefaultPermissionMode)
   reg.on('chat:default-permission-mode-set', (_e, mode: ChatPermMode) => {
     if (mode === 'ask' || mode === 'auto' || mode === 'full') setAppSetting(permissionKey, mode)
+  })
+
+  reg.handle('chat:confirm-conversation-dispatch-get', () => getConfirmConversationDispatch())
+  reg.on('chat:confirm-conversation-dispatch-set', (_e, enabled: boolean) => {
+    if (typeof enabled === 'boolean') setConfirmConversationDispatch(enabled)
   })
 
   reg.handle('power:prevent-sleep-get', () => deps.isPreventSleepEnabled())

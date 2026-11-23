@@ -256,7 +256,7 @@ test('starts persistent conversations on explicit or confirmed requests and hand
     expect(seeds.length).toBeGreaterThanOrEqual(2)
     for (const seed of seeds) {
       expect(JSON.parse(seed.toolResults['seed-rogue'])).toMatchObject({ ok: false, items: [] })
-      expect(seed.toolResults['seed-rogue']).toContain('only works in the main agent turn')
+      expect(seed.toolResults['seed-rogue']).toContain('not started by a message the person typed')
     }
 
     // The result card links to the new conversation, which shows its origin.
