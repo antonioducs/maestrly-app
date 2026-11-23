@@ -45,7 +45,7 @@ const tables = (db: DatabaseSync) =>
 describe('backup records', () => {
   it('creates the backup tables on schema 24', () => {
     const store = open()
-    expect(version(store.db)).toBe('25')
+    expect(version(store.db)).toBe('26')
     expect(tables(store.db)).toEqual(['backup_environments', 'backup_runs', 'backup_settings'])
     expect(store.backupSettings()).toBeNull()
   })
@@ -58,7 +58,7 @@ describe('backup records', () => {
     raw.prepare("UPDATE meta SET value='23' WHERE key='schema_version'").run()
     raw.close()
     const store = open(dir)
-    expect(version(store.db)).toBe('25')
+    expect(version(store.db)).toBe('26')
     expect(tables(store.db)).toEqual(['backup_environments', 'backup_runs', 'backup_settings'])
   })
 
@@ -140,7 +140,7 @@ describe('backup records', () => {
     const dir = temp()
     open(dir).close()
     const raw = new DatabaseSync(path.join(dir, 'gateway.sqlite'))
-    raw.prepare("UPDATE meta SET value='26' WHERE key='schema_version'").run()
+    raw.prepare("UPDATE meta SET value='27' WHERE key='schema_version'").run()
     raw.close()
     expect(() => new Store(dir)).toThrow('Gateway database schema is newer than this binary')
   })

@@ -43,6 +43,8 @@ import {
   type FleetConversationCallRequest,
   type FleetUiOpenRequest,
   type FleetAccountImportRequest,
+  type FleetChatAttentionClearRequest,
+  type FleetChatAttentionClearResponse,
   type FleetImportResults,
   type FleetLoginStartRequest,
   type FleetLoginCallbackRequest,
@@ -947,15 +949,20 @@ export class InstanceClient {
   uiOpen(body: FleetUiOpenRequest) {
     return this.call('uiOpen', {}, undefined, body)
   }
-  async *events(since = 0, signal?: AbortSignal) {
+  /** Capability `chat-attention-sync`: clears attention marks for chats the owner saw on a phone. */
+  chatAttentionClear(body: FleetChatAttentionClearRequest): Promise<FleetChatAttentionClearResponse> {
+    return this.call('chatAttentionClear', {}, undefined, body)
+  }
+  async *events(since = 0, signal?: AbortSignal, options: { chatAttention?: 1 | 2 } = {}) {
     let response: Response
     try {
       // The gateway reads `reasoning` items and passes them on only to devices that ask for them.
       // And the routine runs' own conversations, which it passes on as runs to devices that ask for them.
+      // `chatAttention=2` is sent only to instances advertising `chat-attention-sync`; older hosts compare `=== '1'`.
       const query = {
         since,
         [FLEET_REASONING_QUERY]: 1,
-        [FLEET_CHAT_ATTENTION_QUERY]: 1,
+        [FLEET_CHAT_ATTENTION_QUERY]: options.chatAttention ?? 1,
         [FLEET_ROUTINE_RUNS_QUERY]: 1,
       }
       response = await fetch(this.origin + buildPath(FLEET_INSTANCE_ROUTES.events.path, {}, query), {

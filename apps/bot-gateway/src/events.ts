@@ -5,6 +5,7 @@ import {
   isFleetPeerThreadEvent,
   isFleetRoutineRunEvent,
   isFleetRunnerEvent,
+  type FleetAttentionUpdatedEvent,
   type FleetGatewayEvent,
 } from '@maestrly/bot-fleet-protocol'
 
@@ -19,6 +20,12 @@ export class EventHub {
   private readonly peerThreadReaders = new WeakSet<ServerResponse>()
   /** Subscribers that asked for backups (`backups=1`); an older app would fail on their events. */
   private readonly backupReaders = new WeakSet<ServerResponse>()
+  /**
+   * Subscribers that opted into `attention.updated` deltas (`attention=1`). `attention.updated` is intentionally NOT
+   * part of the closed `fleetGatewayEventSchema` union parsed by older clients and is NOT in activity seq replay:
+   * phones refetch `GET /v1/attention` after each (re)connect.
+   */
+  private readonly attentionReaders = new WeakSet<ServerResponse>()
   /**
    * Streams that asked for desktop calls, by device, newest last: a Mac is online for its bots while one is open, and
    * a call goes to its newest stream only.
@@ -48,12 +55,14 @@ export class EventHub {
       peerThreads?: boolean
       runners?: boolean
       backups?: boolean
+      attention?: boolean
     } = {}
   ) {
     if (options.reasoning) this.reasoningReaders.add(response)
     if (options.routineRuns) this.routineRunReaders.add(response)
     if (options.peerThreads) this.peerThreadReaders.add(response)
     if (options.backups) this.backupReaders.add(response)
+    if (options.attention) this.attentionReaders.add(response)
     response.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
       'Cache-Control': 'no-cache',
@@ -184,6 +193,21 @@ export class EventHub {
     }
     for (const response of this.subscribers) this.send(response, event)
   }
+  /**
+   * Sends an `attention.updated` delta to subscribers that opted in with `?attention=1`.
+   *
+   * Intentionally separate from `emit(FleetGatewayEvent)`: `attention.updated` is NOT part of `fleetGatewayEventSchema`
+   * (closed union parsed by older clients) and is NOT in activity seq replay — phones refetch `GET /v1/attention`
+   * after each (re)connect. Uses the exact same SSE framing (`event: fleet`, `data: <json>`).
+   */
+  emitAttention(event: FleetAttentionUpdatedEvent) {
+    if (!event.upsert.length && !event.remove.length) return
+    if (!this.subscribers.size) return
+    for (const response of this.subscribers) {
+      if (!this.attentionReaders.has(response)) continue
+      this.writeFrame(response, event)
+    }
+  }
   private send(response: ServerResponse, event: FleetGatewayEvent) {
     if (
       (event.type === 'transcript.upsert' ||
@@ -196,6 +220,9 @@ export class EventHub {
     if (isFleetPeerThreadEvent(event) && !this.peerThreadReaders.has(response)) return
     if (isFleetRunnerEvent(event) && !this.runnerReaders.has(response)) return
     if (isFleetBackupEvent(event) && !this.backupReaders.has(response)) return
+    this.writeFrame(response, event)
+  }
+  private writeFrame(response: ServerResponse, event: FleetGatewayEvent | FleetAttentionUpdatedEvent) {
     if (response.destroyed || this.behind(response)) {
       response.destroy()
       this.subscribers.delete(response)
