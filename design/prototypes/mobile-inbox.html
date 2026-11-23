@@ -307,7 +307,7 @@ const COPY = {
     'inbox.lane.main': 'Conversation', 'inbox.lane.routine': 'Routine', 'inbox.lane.thread': 'Between bots',
     'inbox.unread': 'Unread', 'inbox.offline': 'Offline', 'inbox.leavesIn': 'Leaves in {time}',
     'age.now': 'now', 'age.m': '{n}m', 'age.h': '{n}h', 'age.d': '{n}d',
-    'inbox.deny': 'Deny', 'inbox.allowOnce': 'Allow once', 'inbox.dismiss': 'Dismiss', 'inbox.dismissItem': 'Dismiss {title}',
+    'stub.deny': 'Deny', 'stub.allowOnce': 'Allow once', 'inbox.dismiss': 'Dismiss', 'inbox.dismissItem': 'Dismiss {title}',
     'inbox.dismissed': '“{title}” dismissed', 'inbox.undo': 'Undo', 'inbox.markRead': 'Mark as read', 'inbox.markAllRead': 'Mark all as read',
     'inbox.emptyTitle': 'You’re all caught up',
     'inbox.emptyBody': 'What needs you, and what ended in your chats, workspaces and bots, shows up here. Read items stay for 24 hours.',
@@ -315,7 +315,7 @@ const COPY = {
     'inbox.showAll': 'Show all servers', 'inbox.settings': 'Notification settings',
     'conn.offline': 'Can’t reach {server}', 'inbox.staleSince': 'Showing what it sent {time} ago.', 'conn.retryNow': 'Retry now',
     'conn.reconnecting': 'Reconnecting to {server}…',
-    'cue.eyebrow': 'Waiting on you', 'inbox.openedFrom': 'Opened from Notifications', 'inbox.answer': 'Answer', 'inbox.reviewPlan': 'Review plan', 'inbox.help': 'Help',
+    'cue.eyebrow': 'Waiting on you', 'stub.openedFrom': 'Opened from Notifications', 'stub.answer': 'Answer', 'stub.reviewPlan': 'Review plan', 'stub.help': 'Help',
     'status.ready': 'Ready', 'composer.placeholder': 'Message {name}',
   },
   pt: {
@@ -330,7 +330,7 @@ const COPY = {
     'inbox.lane.main': 'Conversa', 'inbox.lane.routine': 'Rotina', 'inbox.lane.thread': 'Entre bots',
     'inbox.unread': 'Não lida', 'inbox.offline': 'Sem conexão', 'inbox.leavesIn': 'Sai em {time}',
     'age.now': 'agora', 'age.m': '{n}min', 'age.h': '{n}h', 'age.d': '{n}d',
-    'inbox.deny': 'Negar', 'inbox.allowOnce': 'Permitir uma vez', 'inbox.dismiss': 'Dispensar', 'inbox.dismissItem': 'Dispensar {title}',
+    'stub.deny': 'Negar', 'stub.allowOnce': 'Permitir uma vez', 'inbox.dismiss': 'Dispensar', 'inbox.dismissItem': 'Dispensar {title}',
     'inbox.dismissed': '“{title}” dispensada', 'inbox.undo': 'Desfazer', 'inbox.markRead': 'Marcar como lida', 'inbox.markAllRead': 'Marcar tudo como lido',
     'inbox.emptyTitle': 'Tudo em dia',
     'inbox.emptyBody': 'O que precisa de você, e o que terminou nos seus chats, workspaces e bots, aparece aqui. Itens lidos ficam por 24 horas.',
@@ -338,7 +338,7 @@ const COPY = {
     'inbox.showAll': 'Mostrar todos os servidores', 'inbox.settings': 'Ajustes de notificações',
     'conn.offline': 'Sem acesso a {server}', 'inbox.staleSince': 'Mostrando o que ele enviou há {time}.', 'conn.retryNow': 'Tentar agora',
     'conn.reconnecting': 'Reconectando a {server}…',
-    'cue.eyebrow': 'Esperando por você', 'inbox.openedFrom': 'Aberto pelas Notificações', 'inbox.answer': 'Responder', 'inbox.reviewPlan': 'Revisar plano', 'inbox.help': 'Ajudar',
+    'cue.eyebrow': 'Esperando por você', 'stub.openedFrom': 'Aberto pelas Notificações', 'stub.answer': 'Responder', 'stub.reviewPlan': 'Revisar plano', 'stub.help': 'Ajudar',
     'status.ready': 'Pronto', 'composer.placeholder': 'Mensagem para {name}',
   },
 }
@@ -347,18 +347,19 @@ const t = (key, vars = {}) => (COPY[state.lang][key] ?? key).replace(/\{(\w+)\}/
 const age = (min) => min < 1 ? t('age.now') : min < 60 ? t('age.m', { n: min }) : min < 1440 ? t('age.h', { n: Math.floor(min / 60) }) : t('age.d', { n: Math.floor(min / 1440) })
 
 const SERVERS = { home: 'Home server', work: 'Work server' }
+const ENVS = { home: ['Default'], work: ['Production', 'Staging'] }
 const BOTS = { Scout: '#4f7fd9', Ledger: '#c2672e' }
 const ITEMS = [
   { key: 'a1', source: 'workspace', title: 'Add the inbox badge', project: 'maestrly-app', branch: 'feat/inbox-badge', kind: 'approval', group: 'waiting', unread: true, summary: 'Run npm publish --tag next in packages/protocol', server: 'home', ago: 2 },
-  { key: 'q1', source: 'bot', title: 'Scout', lane: 'main', kind: 'question', group: 'waiting', unread: true, summary: 'Which branch should the release notes compare against, main or release/1.8?', server: 'work', ago: 14 },
-  { key: 'p1', source: 'workspace', title: 'Move sessions to SQLite', project: 'api-gateway', branch: 'chore/sqlite-sessions', kind: 'plan', group: 'waiting', unread: false, summary: '7 steps, touches 12 files in src/session', server: 'work', ago: 41 },
+  { key: 'q1', source: 'bot', title: 'Scout', lane: 'main', kind: 'question', group: 'waiting', unread: true, summary: 'Which branch should the release notes compare against, main or release/1.8?', server: 'work', env: 'Production', ago: 14 },
+  { key: 'p1', source: 'workspace', title: 'Move sessions to SQLite', project: 'api-gateway', branch: 'chore/sqlite-sessions', kind: 'plan', group: 'waiting', unread: false, summary: '7 steps, touches 12 files in src/session', server: 'work', env: 'Staging', ago: 41 },
   { key: 'h1', source: 'bot', title: 'Ledger', lane: 'routine', kind: 'help', group: 'waiting', unread: true, summary: 'The bank export asks for a one-time code sent to your phone.', server: 'home', ago: 62 },
   { key: 'n1', source: 'chat', title: 'Explain push delivery on a locked phone', kind: 'finished', group: 'new', unread: true, summary: 'APNs holds the alert until the phone wakes; the badge number comes from the payload.', server: 'home', ago: 5 },
   { key: 'n2', source: 'routine', title: 'Nightly backup check', kind: 'error', group: 'new', unread: true, summary: 'rsync exited with code 23: some files were not transferred.', server: 'home', ago: 184 },
-  { key: 'n3', source: 'bot', title: 'Scout', lane: 'thread', kind: 'activity', group: 'new', unread: true, summary: null, server: 'work', ago: 371 },
+  { key: 'n3', source: 'bot', title: 'Scout', lane: 'thread', kind: 'activity', group: 'new', unread: true, summary: null, server: 'work', env: 'Production', ago: 371 },
   { key: 'r1', source: 'workspace', title: 'Fix the flaky Windows e2e', project: 'maestrly-app', branch: 'fix/e2e-windows', kind: 'finished', group: 'read', unread: false, summary: null, server: 'home', ago: 492, leaves: 960 },
   { key: 'r2', source: 'bot', title: 'Ledger', lane: 'main', kind: 'finished', group: 'read', unread: false, summary: null, server: 'home', ago: 1330, leaves: 110 },
-  { key: 'r3', source: 'chat', title: 'Summarize the CI failures', kind: 'error', group: 'read', unread: false, summary: null, server: 'work', ago: 1200, leaves: 240 },
+  { key: 'r3', source: 'chat', title: 'Summarize the CI failures', kind: 'error', group: 'read', unread: false, summary: null, server: 'work', env: 'Staging', ago: 1200, leaves: 240 },
 ]
 const pick = (...keys) => ITEMS.filter((i) => keys.includes(i.key))
 const PRESETS = [
@@ -423,15 +424,23 @@ function origin(i) {
     const li = i.lane === 'routine' ? 'repeat' : i.lane === 'thread' ? 'swap' : 'bot'
     segs.push(`<span class="seg keep">${ic(li, 12, 'muted')}<span class="t-small muted">${t('inbox.lane.' + i.lane)}</span></span>`)
   }
-  if (multiServer() && !state.filter) {
+  const place = placeText(i)
+  if (place) {
     const off = state.offline === i.server
-    segs.push(`<span class="seg keep" data-anat="7">${off ? ic('wifi-off', 12, 'brick') : ''}<span class="t-small muted">${esc(SERVERS[i.server])}</span></span>`)
+    segs.push(`<span class="seg keep" data-anat="6">${off ? ic('wifi-off', 12, 'brick') : ''}<span class="t-small muted">${esc(place)}</span></span>`)
   }
   return segs.join('<span class="sep t-small" aria-hidden="true">·</span>')
 }
+/* environment · server; the environment only when its server has several, the server only without a server filter. */
+function placeText(i) {
+  const env = ENVS[i.server].length > 1 && i.env ? i.env : null
+  const server = multiServer() && !state.filter ? SERVERS[i.server] : null
+  return [env, server].filter(Boolean).join(' · ')
+}
 function originText(i) {
   const parts = i.source === 'workspace' ? [i.project, i.branch] : i.source === 'chat' ? [t('inbox.source.chat')] : i.source === 'routine' ? [t('inbox.source.routine')] : [t('inbox.lane.' + i.lane)]
-  if (multiServer() && !state.filter) parts.push(SERVERS[i.server] + (state.offline === i.server ? ', ' + t('inbox.offline') : ''))
+  const place = placeText(i)
+  if (place) parts.push(place + (state.offline === i.server ? ', ' + t('inbox.offline') : ''))
   return parts
 }
 function timeOf(i) {
@@ -446,8 +455,6 @@ function row(i, { anat = false } = {}) {
   const time = timeOf(i)
   const lines = i.group === 'waiting' ? 2 : 1
   const a11y = [i.title, t('inbox.kind.' + i.kind), read ? null : i.summary, ...originText(i), time.text, i.unread ? t('inbox.unread') : null].filter(Boolean).join(', ')
-  const actions = i.kind === 'approval' && i.group === 'waiting' && !state.edit
-    ? `<div class="actions"><button class="btn secondary" data-act="deny" data-key="${i.key}" ${stale ? 'disabled' : ''}>${t('inbox.deny')}</button><button class="btn primary" data-act="allow" data-key="${i.key}" ${stale ? 'disabled' : ''}>${t('inbox.allowOnce')}</button></div>` : ''
   const trailing = state.edit && !anat
     ? `<button class="rowdismiss" data-act="dismiss" data-key="${i.key}" aria-label="${esc(t('inbox.dismissItem', { title: i.title }))}"><span>${ic('x', 16)}</span></button>` : ''
   const m = (n) => (anat ? ` data-anat="${n}"` : '')
@@ -456,11 +463,10 @@ function row(i, { anat = false } = {}) {
     <div class="row${i.unread ? ' unread' : ''}${stale ? ' stale' : ''}${state.edit && !anat ? ' editing' : ''}" role="button" tabindex="0" data-act="open" data-key="${i.key}" aria-label="${esc(a11y)}">
       <span class="lead"${m(1)}>${lead(i)}</span>
       <span class="content">
-        <span class="l1"><span class="title trunc"${m(2)}>${esc(i.title)}</span>${i.unread ? `<span class="dot"${m(8)} aria-hidden="true"></span>` : ''}${state.edit && !anat ? '' : `<span class="time t-small num ${time.cls}"${m(9)}>${time.text}</span>`}</span>
+        <span class="l1"><span class="title trunc"${m(2)}>${esc(i.title)}</span>${i.unread ? `<span class="dot"${m(7)} aria-hidden="true"></span>` : ''}${state.edit && !anat ? '' : `<span class="time t-small num ${time.cls}"${m(8)}>${time.text}</span>`}</span>
         <span class="kind"${m(3)}><span class="${tone}">${ic(kIcon, 14, '', 2)}</span><span class="t-label ${read ? 'muted' : kTone === 'cue' || kTone === 'brick' ? kTone : ''}">${t('inbox.kind.' + i.kind)}</span></span>
         ${!read && i.summary ? `<span class="summary t-sub muted" style="-webkit-line-clamp:${lines}"${m(4)}>${esc(i.summary)}</span>` : ''}
         <span class="meta"${m(5)}>${origin(i)}</span>
-        ${actions ? (anat ? actions.replace('class="actions"', 'class="actions" data-anat="6"') : actions) : ''}
       </span>
       ${trailing}
     </div></div>`
@@ -482,12 +488,12 @@ function homeScreen() {
     titleLead = cur.source === 'bot' ? avatar(cur.title, 26) : ''
     titleLine = `<span class="t-small muted trunc">${esc(cur.source === 'workspace' ? cur.project : SERVERS[cur.server])}</span>`
     const waiting = cur.group === 'waiting'
-    const act = { approval: t('inbox.allowOnce'), question: t('inbox.answer'), plan: t('inbox.reviewPlan'), help: t('inbox.help') }[cur.kind]
-    body = `<span class="t-small faint opened-note">${t('inbox.openedFrom')}</span>
+    const act = { approval: t('stub.allowOnce'), question: t('stub.answer'), plan: t('stub.reviewPlan'), help: t('stub.help') }[cur.kind]
+    body = `<span class="t-small faint opened-note">${t('stub.openedFrom')}</span>
       ${cur.summary && !waiting ? `<div class="t-body">${esc(cur.summary)}</div>` : ''}
       ${waiting ? `<div class="cuecard"><span class="t-label cue">${t('cue.eyebrow')}</span><span class="t-bodyMedium">${t('inbox.kind.' + cur.kind)}</span>
         <span class="t-sub muted">${esc(cur.summary ?? '')}</span>
-        <div class="actions" style="margin-top:6px">${cur.kind === 'approval' ? `<button class="btn secondary" data-act="resolve" data-key="${cur.key}">${t('inbox.deny')}</button>` : ''}<button class="btn primary" data-act="resolve" data-key="${cur.key}">${act}</button></div></div>` : ''}`
+        <div class="actions" style="margin-top:6px">${cur.kind === 'approval' ? `<button class="btn secondary" data-act="resolve" data-key="${cur.key}">${t('stub.deny')}</button>` : ''}<button class="btn primary" data-act="resolve" data-key="${cur.key}">${act}</button></div></div>` : ''}`
   } else {
     body = `<div class="bubble t-body">Can you check the release branch before Friday?</div>
       <div class="t-body">Sure. I’ll compare <span class="t-mono">release/1.8</span> with <span class="t-mono">main</span> and list what changed, then draft the notes for you to review.</div>`
@@ -642,7 +648,6 @@ phone.addEventListener('click', (e) => {
   if (act === 'bell') { state.screen = 'center'; state.open = null; render('enter') }
   else if (act === 'back') { state.screen = 'home'; state.edit = false; state.open = null; render('leave') }
   else if (act === 'open') { if (!state.edit) openItem(key) }
-  else if (act === 'allow' || act === 'deny') { e.stopPropagation(); resolve(key); render() }
   else if (act === 'resolve') { resolve(key); render() }
   else if (act === 'dismiss') { e.stopPropagation(); const wrap = el.closest('.swipe'); wrap ? collapseThenDismiss(wrap, key) : dismiss(key) }
   else if (act === 'filter') { state.filter = id || null; state.open = null; render() }
@@ -661,7 +666,7 @@ document.getElementById('toast-undo').addEventListener('click', undo)
 let drag = null
 phone.addEventListener('pointerdown', (e) => {
   const wrap = e.target.closest('.swipe')
-  if (!wrap || state.edit || e.target.closest('.swipe-action, .btn') || !wrap.closest('#list')) return
+  if (!wrap || state.edit || e.target.closest('.swipe-action') || !wrap.closest('#list')) return
   drag = { wrap, row: wrap.querySelector('.row'), key: wrap.dataset.key, x0: e.clientX, y0: e.clientY, base: wrap.classList.contains('open') ? -88 : 0, x: 0, active: false, lastX: e.clientX, lastT: performance.now(), v: 0 }
 })
 window.addEventListener('pointermove', (e) => {
@@ -711,8 +716,7 @@ const LEGEND = [
   ['Kind', '14 pt glyph + label; amber while it waits on you, brick when failed'],
   ['Summary', 'what it asks or said; 2 lines when waiting, 1 when new, hidden once read'],
   ['Origin', 'project + branch, Chat, Routine, or the bot’s lane'],
-  ['Inline actions', 'approvals only: Deny and Allow once'],
-  ['Place', 'server (and environment), only with more than one server'],
+  ['Place', 'environment · server (environment only when that server has several); server hidden under a server filter'],
   ['Unread dot', '8 pt, badge red'],
   ['Relative time', 'now, 3m, 2h, 1d; amber while waiting; “Leaves in 2h” near expiry'],
 ]
@@ -737,8 +741,8 @@ function renderAnatomy() {
       const m = document.createElement('span')
       m.className = 'marker'
       m.textContent = n
-      if (n >= 2 && n <= 6) { m.style.left = '11px'; m.style.top = box.t + box.h / 2 - 9 + 'px' }
-      else if (n === 7) { m.style.left = box.l + box.w + 4 + 'px'; m.style.top = box.t + box.h / 2 - 9 + 'px' }
+      if (n >= 2 && n <= 5) { m.style.left = '11px'; m.style.top = box.t + box.h / 2 - 9 + 'px' }
+      else if (n === 6) { m.style.left = box.l + box.w + 4 + 'px'; m.style.top = box.t + box.h / 2 - 9 + 'px' }
       else { m.style.left = box.l + box.w / 2 - 9 + 'px'; m.style.top = box.t - 22 + 'px' }
       card.appendChild(m)
     })

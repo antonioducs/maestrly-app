@@ -51,10 +51,15 @@ No other new tokens. Every tint below is `mix()` from `tokens.ts`.
 
 ### App-icon badge
 
-- `Notifications.setBadgeCountAsync(count)` with the same count as the bell, whenever the count changes and when the
-  app goes to the background. Use 0 to clear it.
-- While the app is closed, the OS shows the `badge` field of each push. The server must send the same count
-  (see open question 1). On Android the launcher decides between a dot and a number.
+The app-icon badge uses the same count rule as the bell, totalled across all paired servers.
+
+- **While the app runs:** call `Notifications.setBadgeCountAsync(total)` whenever the total changes. Use 0 to clear
+  it.
+- **While the app is closed:** the OS shows the `badge` field of each push, and each server only knows its own
+  items. So the phone reports to each server a `badgeOthers` value: the total of the **other** servers. It sends it
+  whenever that value changes and when the app goes to the background. Each server's gateway then sends
+  `badge = <its own pending count> + badgeOthers`.
+- On Android the launcher decides between a dot and a number.
 
 ## 3. Center screen
 
@@ -126,24 +131,22 @@ row: flexDirection row · alignItems flex-start · gap 12 · paddingVertical 10 
 ├─ (1) lead 40 × 40
 └─ content: flex 1 · minWidth 0
    ├─ line 1: flexDirection row · alignItems center · gap 6 · height 21
-   │   (2) title · (8) unread dot · (9) time
+   │   (2) title · (7) unread dot · (8) time
    ├─ (3) kind line          marginTop 1
    ├─ (4) summary            marginTop 2
-   ├─ (5) origin · (7) place marginTop 3
-   └─ (6) approval actions   marginTop 10
+   └─ (5) origin · (6) place marginTop 3
 ```
 
 | # | Part | Spec |
 | --- | --- | --- |
 | 1 | Lead | **Bot:** `Avatar` size 40 with the bot's tint and `status="idle"` (static ring at tint `52` alpha). Never animate it here: a list of breathing rings is noise. **Workspace chat:** a 40 × 40 tile, `borderRadius: 12`, `backgroundColor: surface`, `Icon folder` 19 in `ink`. **Chat:** the same tile with `message`. **Routine:** the same tile with `clock`. Decorative (`aria-hidden`). |
 | 2 | Title | `fonts.bodyMedium` 15.5/21 (`variant="bodyMedium"`), `ink`, `numberOfLines={1}`, `flex: 1`. Unread: `fonts.bodySemi`. The title is the conversation's or chat's name, the bot's name, or the routine's name. |
-| 8 | Unread dot | `width: 8`, `height: 8`, `borderRadius: 4`, `palette.badge`, `aria-hidden`. Only when `unread`. |
-| 9 | Time | `variant="small"` (12.5/17), tabular, `muted`. Waiting group: `cueInk` and `fonts.bodySemi`. Read items with less than 3 h left show `inbox.leavesIn` in `faint` instead of the age. Compact age: under 1 min `age.now`; under 60 min `age.m`; under 24 h `age.h` (floor); otherwise `age.d`. It re-renders each minute (`useNow`). |
+| 7 | Unread dot | `width: 8`, `height: 8`, `borderRadius: 4`, `palette.badge`, `aria-hidden`. Only when `unread`. |
+| 8 | Time | `variant="small"` (12.5/17), tabular, `muted`. Waiting group: `cueInk` and `fonts.bodySemi`. Read items with less than 3 h left show `inbox.leavesIn` in `faint` instead of the age. Compact age: under 1 min `age.now`; under 60 min `age.m`; under 24 h `age.h` (floor); otherwise `age.d`. It re-renders each minute (`useNow`). |
 | 3 | Kind line | `flexDirection: 'row'`, `alignItems: 'center'`, `gap: 5`. A 14 pt glyph (`strokeWidth={2}`) and a `variant="label"` (13/17 semibold) label `inbox.kind.<kind>`, 1 line. Colors are in the table below. |
 | 4 | Summary | What waits or what was said (`item.summary`, or the pending question or approval title the desktop reads from the host). `variant="sub"` (13/18), `muted`. `numberOfLines`: 2 in Waiting, 1 in New. Not drawn in Read, or when null. |
 | 5 | Origin | `flexDirection: 'row'`, `alignItems: 'center'`, `gap: 4`, single line, `overflow: 'hidden'`. Segments are separated by a `·` in `small`/`faint`. **Workspace:** project (`small`/`muted`, `flexShrink: 1`, `maxWidth: '50%'`), then `Icon branch` 12 `muted` and the branch in `variant="mono"` (12/17, `muted`, `flexShrink: 4`); both ellipsize at the tail, the branch first. No folder glyph: the lead already shows it. **Chat:** `Icon message` 12 + `inbox.source.chat`. **Routine:** `Icon clock` 12 + `inbox.source.routine`. **Bot:** lane glyph 12 (`bot` main, `repeat` routine, `swap` thread) + `inbox.lane.<lane>`. These segments do not shrink. |
-| 7 | Place | Last segment of the origin line, `flexShrink: 0`, `small`/`muted`: the server name, followed by ` · <environment>` when that server has more than one environment. Drawn only when the owner has more than one paired server **and** no server filter is selected. While the server is unreachable, an `Icon wifi-off` 12 in `brick` leads it. |
-| 6 | Approval actions | Only for `kind === 'approval'` in Waiting, when the request id is known (as on desktop). `flexDirection: 'row'`, `gap: 8`. `Button size="sm" variant="secondary"` with `inbox.deny`, then `Button size="sm" variant="primary"` with `inbox.allowOnce` (34 pt plus `hitSlop` 6, so 46 pt targets). Busy: `busy` on the pressed one, and both disabled. Disabled while the server is unreachable. On success the item resolves (§5). |
+| 6 | Place | Last segment of the origin line, `flexShrink: 0`, `small`/`muted`. Chips stay per server; this segment says where the item ran. **Environment:** shown only when that server has more than one environment. **Server:** shown only when the owner has more than one paired server **and** no server filter is selected. Both together read `<environment> · <server>`, for example `Production · Work server`. Under a server filter only the environment remains (`Production`). With one environment and a filter, the segment is not drawn. While the server is unreachable, an `Icon wifi-off` 12 in `brick` leads it. |
 
 Kind colors and glyphs:
 
@@ -176,7 +179,7 @@ the last snapshot.
   - Role: `accessibilityRole="alert"`, `accessibilityLiveRegion="polite"`. With several servers unreachable, one
     banner per server, in the Servers order.
 - Rows of that server: their lead and content are drawn at `opacity: 0.55`. Dim the children, not the row, or the
-  swipe action shows through. Approval actions are disabled, and the place gets the `wifi-off` glyph. Rows can
+  swipe action shows through. The place gets the `wifi-off` glyph. Rows can
   still be opened and dismissed.
 - Its chip gets the `wifi-off` glyph. Its items still count in the badge.
 
@@ -218,7 +221,7 @@ spring, with a different action and a full-swipe commit.
 
 Edit in the header turns the list into editing:
 
-- Each row drops its time and approval actions and gains a trailing 44 × 44 button: a 28 pt circle in `surface` with
+- Each row drops its time and gains a trailing 44 × 44 button: a 28 pt circle in `surface` with
   `Icon x` 16 in `muted`, centered vertically. Its label is `inbox.dismissItem`. In edit mode the row's
   `paddingRight` is 0.
 - Tapping the row body does nothing in Edit.
@@ -257,14 +260,19 @@ Every row exposes `accessibilityActions`: `[{ name: 'dismiss', label: inbox.dism
 | Action | Result |
 | --- | --- |
 | Tap a New or Read row | Opens its target (conversation, bot lane or routine run) as the home screen's current conversation, and pops the center. The item is read: a New item moves to Read, so the badge drops by one. |
-| Tap a Waiting row | Opens it the same way. The dot clears, but it **stays in Waiting and stays counted** until the owner answers. Then it becomes Read, as `finished` (or `error`, by the conversation's status, as `resolvedKind` does). |
-| Deny or Allow once on a row | Answers in place. The item resolves to Read and the count drops. The center stays open. |
+| Tap a Waiting row (approval, question, plan, help) | Opens it the same way, and the owner answers there, as the phone already does. The center has no inline approve or deny in v1. The dot clears, but the item **stays in Waiting and stays counted** until it is answered, as on desktop. Then it becomes Read, as `finished` (or `error`, by the conversation's status, as `resolvedKind` does). |
 | Back, or the edge swipe | Returns to the conversation. The filter and Edit reset. |
 | A new event on a dismissed item | It comes back, unread (desktop parity). |
 | Read items | Stay 24 h after being read, then drop out (`INBOX_READ_TTL_MS`). |
 
-The ledger, sources and reconciliation are the implementer's (task scope). The UI only needs the desktop's
-`InboxItem` shape, plus the server and environment of each place.
+### Read state is synced
+
+- Opening an item marks it **seen on its server**. For bots and their requests the gateway records it. For chats
+  and workspace chats the gateway forwards it to the desktop host, which clears the host's attention mark everywhere.
+  So reading on the phone clears the desktop, and the other way round.
+- The phone keeps only two things locally: the list of items read in the last 24 h (for the Read group) and the
+  dismissed items (dismissal is per device, as on desktop).
+- The UI needs the desktop's `InboxItem` shape, plus the server and environment of each place.
 
 ## 6. Motion summary
 
@@ -325,8 +333,6 @@ The mobile catalog uses `{name}` placeholders.
 | `age.m` | {n}m | {n}min |
 | `age.h` | {n}h | {n}h |
 | `age.d` | {n}d | {n}d |
-| `inbox.deny` | Deny | Negar |
-| `inbox.allowOnce` | Allow once | Permitir uma vez |
 | `inbox.dismiss` | Dismiss | Dispensar |
 | `inbox.dismissItem` | Dismiss {title} | Dispensar {title} |
 | `inbox.dismissed` | “{title}” dismissed | “{title}” dispensada |
@@ -361,9 +367,9 @@ Copy decisions:
 | `bell0` | Header, bell without a badge |
 | `bell3` | Header, badge 3 |
 | `bell99` | Header, badge 99+ (128 pending; the app icon shows 128) |
-| `center` | All three groups, two servers, approval actions |
-| `filtered` | Work server selected: the place is hidden on rows, and the header counts stay global |
-| `offline` | Work server unreachable: banner, dimmed rows, disabled actions, chip glyph |
+| `center` | All three groups, two servers; Work server has two environments |
+| `filtered` | Work server selected: rows drop the server but keep the environment, and the header counts stay global |
+| `offline` | Work server unreachable: banner, dimmed rows, chip glyph |
 | `swipe` | A row swiped open to its Dismiss action |
 | `toast` | After a dismissal: the toast with Undo |
 | `edit` | Edit mode with per-row dismiss and Mark all as read |
@@ -372,17 +378,15 @@ Copy decisions:
 
 Each state can be shown with `theme=light|dark` and `lang=en|pt`.
 
-## 10. Open questions for the implementer
+## 10. Decisions from review
 
-1. **Push badge while the app is closed.** The OS badge only matches the bell if each push carries the server's
-   pending count. With several paired servers, each server only knows its own items. Choose between a per-server
-   count (simple, undercounts), the phone resetting the badge on every foreground (the prototype's assumption), or
-   the server tracking it.
-2. **Should Waiting items count once seen?** This spec keeps every Waiting item counted until answered (desktop
-   parity). Use unread-only if the badge should mean "new to me".
-3. **Where read state lives.** The desktop ledger is per computer. Should the phone keep its own ledger (in `prefs`)
-   or sync read and dismiss state with the server, so reading on the desktop clears the phone?
-4. **Approve from the row for bots.** The desktop answers bot requests from the row with `resolveBotRequest`. Confirm
-   the phone's fleet controller exposes the same call; if not, approval rows open the conversation.
-5. **Environment in the place.** The prototype shows only the server. Confirm that `server · environment` is wanted
-   when a server has several environments, or whether the environment belongs in the chips.
+1. **App-icon badge while the app is closed:** each gateway sends `badge = <its pending> + badgeOthers`, and the
+   phone reports `badgeOthers` (§2).
+2. **Waiting items keep counting until answered,** read or not (desktop parity).
+3. **Read state is synced** through the server. Only the read-in-the-last-24h list and dismissals stay on the phone
+   (§5).
+4. **No inline approve or deny in v1.** Approval rows open the conversation, like the other waiting rows.
+5. **Environments:** chips stay per server, and rows show `environment · server` only when that server has more
+   than one environment (§3, place).
+
+No open questions remain for this design.
