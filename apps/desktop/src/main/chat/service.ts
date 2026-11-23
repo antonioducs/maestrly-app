@@ -2770,6 +2770,11 @@ function behaviorFor(conversationId: string): ChatBehavior {
   return resolveChatBehavior(getConversation(conversationId)?.experience, modeFor(conversationId))
 }
 
+/** Persisted working mode of a conversation (default agent). */
+export function conversationChatMode(conversationId: string): ChatMode {
+  return modeFor(conversationId)
+}
+
 /** Sets conversation behavior mode (used by index when approving a plan → return to agent). */
 export function setChatMode(conversationId: string, mode: ChatMode): void {
   if (getConversation(conversationId)?.experience === 'maestro') return

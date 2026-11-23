@@ -968,9 +968,12 @@ async function buildDefaultConversationDispatchService(): Promise<ConversationDi
     },
     applySettings: (conversationId, selected) => {
       chat.primeChatTurnSelection(conversationId, selected)
-      chat.setChatMode(conversationId, 'agent')
+      chat.setChatMode(conversationId, selected.mode ?? 'agent')
     },
-    readSettings: chat.persistedConversationSettings,
+    readSettings: (conversationId) => {
+      const persisted = chat.persistedConversationSettings(conversationId)
+      return persisted && { ...persisted, mode: chat.conversationChatMode(conversationId) }
+    },
     startTurn: chat.startConversationDispatchTurn,
     hasPersistedMessages: dispatchStore.conversationHasMessages,
     openConversation: (conversation, focus) =>
