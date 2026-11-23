@@ -10,6 +10,7 @@ import { InstrumentSans_500Medium } from '@expo-google-fonts/instrument-sans/500
 import { InstrumentSans_600SemiBold } from '@expo-google-fonts/instrument-sans/600SemiBold'
 import { JetBrainsMono_400Regular } from '@expo-google-fonts/jetbrains-mono/400Regular'
 import { I18nProvider, useI18n } from '../i18n'
+import { InboxProvider } from '../inbox/react'
 import { NotificationsProvider } from '../notifications/NotificationsProvider'
 import { ServersProvider, useServers } from '../servers/ServersProvider'
 import { ThemeProvider, useTheme } from '../theme/ThemeProvider'
@@ -46,24 +47,26 @@ function Root() {
       <StatusBar style={intro || theme.scheme === 'dark' ? 'light' : 'dark'} />
       {ready ? (
         <NotificationsProvider>
-          <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: theme.palette.canvas } }}>
-            <Stack.Screen name="settings" options={sheet} />
-            <Stack.Screen name="servers" options={sheet} />
-            <Stack.Screen name="devices" options={sheet} />
-            <Stack.Screen name="bot-details/[id]" options={sheet} />
-            <Stack.Screen name="bot-files/[id]" options={{ ...sheet, sheetAllowedDetents: [1] }} />
-            <Stack.Screen name="bot-setup/[id]" options={{ ...sheet, sheetAllowedDetents: [1] }} />
-            <Stack.Screen name="new-bot" options={{ ...sheet, sheetAllowedDetents: [1] }} />
-            <Stack.Screen name="new-chat" options={sheet} />
-            <Stack.Screen name="chat-setup/[id]" options={{ ...sheet, sheetAllowedDetents: [1] }} />
-            <Stack.Screen name="chat-defaults" options={{ ...sheet, sheetAllowedDetents: [1] }} />
-            <Stack.Screen name="usage" options={sheet} />
-            {/* The screen's own gestures pan and zoom it: no swipe closes it. */}
-            <Stack.Screen
-              name="bot-screen/[id]"
-              options={{ presentation: 'fullScreenModal', gestureEnabled: false, animation: 'slide_from_bottom' }}
-            />
-          </Stack>
+          <InboxProvider>
+            <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: theme.palette.canvas } }}>
+              <Stack.Screen name="settings" options={sheet} />
+              <Stack.Screen name="servers" options={sheet} />
+              <Stack.Screen name="devices" options={sheet} />
+              <Stack.Screen name="bot-details/[id]" options={sheet} />
+              <Stack.Screen name="bot-files/[id]" options={{ ...sheet, sheetAllowedDetents: [1] }} />
+              <Stack.Screen name="bot-setup/[id]" options={{ ...sheet, sheetAllowedDetents: [1] }} />
+              <Stack.Screen name="new-bot" options={{ ...sheet, sheetAllowedDetents: [1] }} />
+              <Stack.Screen name="new-chat" options={sheet} />
+              <Stack.Screen name="chat-setup/[id]" options={{ ...sheet, sheetAllowedDetents: [1] }} />
+              <Stack.Screen name="chat-defaults" options={{ ...sheet, sheetAllowedDetents: [1] }} />
+              <Stack.Screen name="usage" options={sheet} />
+              {/* The screen's own gestures pan and zoom it: no swipe closes it. */}
+              <Stack.Screen
+                name="bot-screen/[id]"
+                options={{ presentation: 'fullScreenModal', gestureEnabled: false, animation: 'slide_from_bottom' }}
+              />
+            </Stack>
+          </InboxProvider>
         </NotificationsProvider>
       ) : null}
       {intro ? <Intro ready={ready} onDone={closeIntro} /> : null}

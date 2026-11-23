@@ -1,7 +1,9 @@
 import {
+  FLEET_ATTENTION_QUERY,
   FLEET_PEER_THREADS_QUERY,
   FLEET_REASONING_QUERY,
   FLEET_ROUTINE_RUNS_QUERY,
+  type FleetAttentionUpdatedEvent,
   type FleetGatewayEvent,
 } from '@maestrly/bot-fleet-protocol'
 import type { GatewayClient } from '../gateway/client'
@@ -10,16 +12,18 @@ import type { OpenScreen } from '../screen/link'
 
 export type EventHandlers = {
   onEvent(event: FleetGatewayEvent): void
+  onAttention?(event: FleetAttentionUpdatedEvent): void
   onState(state: StreamState, detail?: { retryInMs: number }): void
 }
 
 /**
- * What the phone reads on the event stream: `reasoning` items when the server sends them, and the records and
- * transcripts of routine runs and threads between bots, which live in conversations of their own. A gateway that
- * predates them ignores the parameters and sends none.
+ * What the phone reads on the event stream: `reasoning` items when the server sends them, `attention` deltas when
+ * requested, and the records and transcripts of routine runs and threads between bots, which live in conversations of
+ * their own. A gateway that predates them ignores the parameters and sends none.
  */
-export const eventsQuery = (reasoning: boolean): Record<string, number> => ({
+export const eventsQuery = (reasoning: boolean, attention = false): Record<string, number> => ({
   ...(reasoning ? { [FLEET_REASONING_QUERY]: 1 } : {}),
+  ...(attention ? { [FLEET_ATTENTION_QUERY]: 1 } : {}),
   [FLEET_ROUTINE_RUNS_QUERY]: 1,
   [FLEET_PEER_THREADS_QUERY]: 1,
 })

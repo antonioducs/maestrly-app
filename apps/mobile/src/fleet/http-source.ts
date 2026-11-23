@@ -9,6 +9,7 @@ import { eventsQuery, type FleetSource } from './source'
 
 /** Expo's fetch streams response bodies (the event stream needs it) and, being native, sends no Origin header. */
 export const nativeFetch = expoFetch as unknown as FetchLike
+export const nativeStreamingFetch = expoFetch as unknown as StreamingFetch
 
 /** A client for one paired server, such as for unpairing a server that is not the active one. */
 export const gatewayClientFor = (server: PairedServer, token: string) =>
@@ -29,9 +30,9 @@ export function createHttpSource(server: PairedServer, token: string): FleetSour
     call: client.call,
     openEvents: (handlers) =>
       openEventStream({
-        url: server.origin + buildPath(FLEET_GATEWAY_ROUTES.events.path, {}, eventsQuery(reasoning)),
+        url: server.origin + buildPath(FLEET_GATEWAY_ROUTES.events.path, {}, eventsQuery(reasoning, true)),
         headers: client.headers(),
-        fetch: expoFetch as unknown as StreamingFetch,
+        fetch: nativeStreamingFetch,
         createDecoder: () => new TextDecoder(),
         ...handlers,
       }),
