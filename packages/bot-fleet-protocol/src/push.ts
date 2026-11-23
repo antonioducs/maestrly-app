@@ -4,6 +4,9 @@ import { z } from 'zod'
  * Push notifications to phones. A phone registers its push token with each server it paired; the gateway sends a
  * notification when something waits on the owner, a turn finishes or a bot fails, as the phone's preferences allow.
  * A notification carries only the bot's or chat's name, a fixed phrase and the ids to open: never message content.
+ *
+ * When the gateway advertises `FLEET_ATTENTION_FEATURE` (`attention` in `moreFeatures` of `/v1/meta`), it also sets
+ * the Expo push message's `badge` field to `thisServerPendingCount + (registration.badgeOthers ?? 0)`.
  */
 export const fleetPushCategorySchema = z.enum(['waiting', 'replies', 'routines', 'errors'])
 export type FleetPushCategory = z.infer<typeof fleetPushCategorySchema>
@@ -25,6 +28,13 @@ export const fleetPushRegistrationRequestSchema = z
     /** The language notifications are written in; English for anything the gateway does not know. */
     locale: z.string().min(2).max(16),
     preferences: fleetPushPreferencesSchema,
+    /**
+     * Pending attention count across all OTHER paired servers, reported by the phone so this gateway can compute the
+     * Expo push `badge` (`thisServerPending + badgeOthers`). Because this schema is `.strict()`, older gateways reject
+     * unknown keys: phones MUST send `badgeOthers` only to gateways advertising `FLEET_ATTENTION_FEATURE` (`attention`)
+     * in `moreFeatures` of `/v1/meta`.
+     */
+    badgeOthers: z.number().int().min(0).max(99_999).optional(),
   })
   .strict()
 export type FleetPushRegistrationRequest = z.infer<typeof fleetPushRegistrationRequestSchema>

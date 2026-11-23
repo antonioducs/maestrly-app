@@ -534,8 +534,29 @@ export const FLEET_ACTIVE_PAIRINGS_MAX = 5
 /** Workspaces host capability: it speaks the mobile API (`mobile:v1:*` channels) to phones over the bridge. */
 export const FLEET_MOBILE_HOST_FEATURE = 'mobile-api'
 
-/** A gateway reading an environment's events with this query set to 1 also gets `chat.attention` events. */
+/**
+ * A gateway reading a workspaces environment's events with this query receives chat attention events:
+ * - `1`: `chat.attention` only
+ * - `2`: `chat.attention`, `chat.attention.cleared`, and `chat.attention.snapshot` (on connect)
+ */
 export const FLEET_CHAT_ATTENTION_QUERY = 'chatAttention'
+
+/**
+ * Gateway feature (`moreFeatures` of `/v1/meta` only — never in legacy `features`, which is capped at
+ * `FLEET_META_FEATURES_LEGACY_MAX` for desktops up to 0.18): the server serves its attention center
+ * (`GET /v1/attention`, `POST /v1/attention/seen`), emits `attention.updated` on `GET /v1/events?attention=1`, and
+ * accepts `badgeOthers` on `PUT /v1/devices/self/push` to compute the Expo push `badge` count.
+ */
+export const FLEET_ATTENTION_FEATURE = 'attention'
+/** The query parameter a reader of `GET /v1/events` sets to `1` to receive `attention.updated` SSE events. */
+export const FLEET_ATTENTION_QUERY = 'attention'
+/** Bounds of server attention entries, snapshots, and seen requests. */
+export const FLEET_ATTENTION_LIMITS = {
+  keyMax: 400,
+  titleMax: 400,
+  entriesMax: 2_000,
+  seenKeysMax: 200,
+} as const
 
 /**
  * Gateway feature (`moreFeatures` of `/v1/meta`) and instance capability: a bot moves to another bots environment of

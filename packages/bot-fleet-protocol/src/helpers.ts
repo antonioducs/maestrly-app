@@ -1,5 +1,6 @@
 import type { FleetInstanceStatus, FleetInstanceTurn, FleetLoginKind } from './api.js'
 import {
+  FLEET_ATTENTION_QUERY,
   FLEET_CHAT_ATTENTION_QUERY,
   FLEET_ENVIRONMENT_DISPLAY,
   FLEET_REASONING_QUERY,
@@ -201,9 +202,29 @@ export function fleetReaderWantsReasoning(search: URLSearchParams): boolean {
   return search.get(FLEET_REASONING_QUERY) === '1'
 }
 
-/** Whether a reader of an environment's events asked for `chat.attention` events; an older gateway would fail on them. */
+export type FleetChatAttentionVersion = 0 | 1 | 2
+
+/**
+ * Which version of workspaces-host chat attention events an instance-stream reader asked for (`chatAttention`):
+ * - `0`: none (older gateways that reject unknown instance events)
+ * - `1`: `chat.attention` only
+ * - `2`: `chat.attention`, `chat.attention.cleared`, and `chat.attention.snapshot`
+ */
+export function fleetReaderChatAttentionVersion(search: URLSearchParams): FleetChatAttentionVersion {
+  const value = search.get(FLEET_CHAT_ATTENTION_QUERY)
+  if (value === '2') return 2
+  if (value === '1') return 1
+  return 0
+}
+
+/** Whether a reader of an environment's events asked for `chat.attention` events (`chatAttention=1` or `2`). */
 export function fleetReaderWantsChatAttention(search: URLSearchParams): boolean {
-  return search.get(FLEET_CHAT_ATTENTION_QUERY) === '1'
+  return fleetReaderChatAttentionVersion(search) > 0
+}
+
+/** Whether a reader of gateway events asked for `attention.updated` events (`attention=1`). */
+export function fleetReaderWantsAttention(search: URLSearchParams): boolean {
+  return search.get(FLEET_ATTENTION_QUERY) === '1'
 }
 
 /**
