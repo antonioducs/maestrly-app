@@ -38,8 +38,9 @@ Design mode, end with the turn that started them, and are not conversations the 
 
 `start_conversations` must accept a conversation mode per task so a `design` resource opens in Design mode. This is
 being added in a separate branch (`feat/select-operation-model`). This work merges `main` after it lands and resolves
-resource `mode` through that field. Until then a `design` resource cannot be dispatched, and the host refuses it with a
-clear error. It never silently falls back to Agent mode.
+resource `mode` through that field. Until then only `agent` resources can be dispatched (dispatch forces Agent mode
+today). The host refuses `design` and `ask` resources with `mode-unavailable`. It never silently falls back to Agent
+mode.
 
 ## Architecture
 
@@ -73,7 +74,8 @@ flowchart LR
 
 For a task with `agent: id`:
 
-1. Find the enabled resource `id` in the turn's frozen pool, or refuse with `unknown-agent`.
+1. Find the enabled resource `id` in the conversation's pool as read at dispatch time (so pool edits apply to the next
+   dispatch), or refuse with `unknown-agent`.
 2. Take the first candidate that `resolveConversationDispatchSettings` accepts (provider configured, model present,
    effort and Fast valid). With no candidates, use the orchestrator profile. With none valid, refuse with
    `agent-unavailable` and list why each candidate failed.
@@ -156,8 +158,9 @@ It replaces `MAESTRO_SYSTEM_SPEC`. It is shared by every runner and only wrapped
   swarm.
 - **Removed.** `OrchestrationRun` and the Maestro live banner.
 - **Settings.** The pool editor replaces the capability selector with a mode selector. Imported physical agents
-  (`agentName`) no longer exist: migration copies the imported agent's prompt into `instructions` when it is empty, and
-  drops the binding.
+  (`agentName`) no longer exist: migration drops the binding and keeps the resource's own `instructions`. Config
+  validation lives in `shared/` and cannot read physical agent files, and a worker conversation already gets the full
+  conversation system prompt.
 
 ### Removal
 
@@ -172,8 +175,7 @@ open. Old messages with `delegate` parts render through the generic tool renderi
 
 ## Error handling
 
-- Resolution failures (`unknown-agent`, `agent-unavailable`, `design-mode-unavailable`) fail only that task of the
-  batch, as other dispatch failures do. The orchestrator sees the reason in the tool result.
+- Resolution failures (`unknown-agent`, `agent-unavailable`, `mode-unavailable`) fail only that task of the batch, as other dispatch failures do. The orchestrator sees the reason in the tool result.
 - A worker whose turn errors becomes `failed`. The orchestrator decides whether to resend or mark it `blocked`.
 - A failed merge-detection check (git error) leaves the phase unchanged and logs it. It never marks a task merged.
 - "Stop swarm" when nothing is running changes nothing and is idempotent.
@@ -182,8 +184,8 @@ open. Old messages with `delegate` parts render through the generic tool renderi
 
 ## Testing
 
-- Unit: config v1 → v2 migration (capability → mode, `agentName` → instructions); pool resolution (first valid
-  candidate, fallback, orchestrator default, `unknown-agent`, `agent-unavailable`, design refused before the
+- Unit: config v1 → v2 migration (capability → mode, `agentName` dropped); pool resolution (first valid candidate,
+  fallback, orchestrator default, `unknown-agent`, `agent-unavailable`, non-agent modes refused before the
   prerequisite); `start_conversations` in Maestro refuses `settings` and `shared` and forces `reportBack`; swarm
   transitions (host-owned phases refused from the tool, dispatch/result/error/merge events); merge detection with a
   temporary git repo; no confirmation for Maestro dispatches in human and linked turns; hop enforcement removed
