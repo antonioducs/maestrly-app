@@ -7,6 +7,7 @@ import {
   FLEET_CHAT_ATTENTION_QUERY,
   FLEET_CHAT_ATTENTION_SYNC_CAPABILITY,
   FLEET_GATEWAY_ROUTES,
+  FLEET_INSTANCE_ROUTES,
   FLEET_META_FEATURES_LEGACY_MAX,
   fleetAttentionEntrySchema,
   fleetAttentionKey,
@@ -360,5 +361,19 @@ describe('attention protocol', () => {
     const legacyRegistrationSchema = fleetPushRegistrationRequestSchema.omit({ badgeOthers: true }).strict()
     expect(legacyRegistrationSchema.safeParse(basePushRegistration).success).toBe(true)
     expect(legacyRegistrationSchema.safeParse({ ...basePushRegistration, badgeOthers: 1 }).success).toBe(false)
+  })
+
+  it('lets the gateway clear chat attention marks on a host that syncs them', () => {
+    const route = FLEET_INSTANCE_ROUTES.chatAttentionClear
+    expect(route).toMatchObject({ method: 'POST', path: '/v1/chat-attention/clear' })
+    expect(route.body.parse({ conversationIds: ['conv-1', 'conv-2'] })).toEqual({
+      conversationIds: ['conv-1', 'conv-2'],
+    })
+    expect(() => route.body.parse({ conversationIds: [] })).toThrow()
+    expect(() => route.body.parse({ conversationIds: [''] })).toThrow()
+    expect(() => route.body.parse({ conversationIds: Array.from({ length: 201 }, (_, i) => `c${i}`) })).toThrow()
+    expect(() => route.body.parse({ conversationIds: ['conv-1'], extra: true })).toThrow()
+    expect(route.response.parse({ cleared: [] })).toEqual({ cleared: [] })
+    expect(route.response.parse({ cleared: ['conv-1'] })).toEqual({ cleared: ['conv-1'] })
   })
 })

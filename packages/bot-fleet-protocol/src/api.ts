@@ -1330,6 +1330,19 @@ export const fleetChatAttentionSnapshotItemSchema = z.object({
 })
 export type FleetChatAttentionSnapshotItem = z.infer<typeof fleetChatAttentionSnapshotItemSchema>
 
+/**
+ * The owner saw these chats on a phone (`POST /v1/attention/seen` on the gateway): the workspaces host clears their
+ * attention marks as if seen on a computer, and tells readers with `chatAttention=2` through `chat.attention.cleared`.
+ * Only for instances advertising `FLEET_CHAT_ATTENTION_SYNC_CAPABILITY`.
+ */
+export const fleetChatAttentionClearRequestSchema = z
+  .object({ conversationIds: z.array(z.string().min(1).max(200)).min(1).max(FLEET_ATTENTION_LIMITS.seenKeysMax) })
+  .strict()
+export type FleetChatAttentionClearRequest = z.infer<typeof fleetChatAttentionClearRequestSchema>
+/** The chats whose mark was cleared; a chat that had none, or that the host does not know, is left out. */
+export const fleetChatAttentionClearResponseSchema = z.object({ cleared: z.array(z.string().min(1).max(200)) })
+export type FleetChatAttentionClearResponse = z.infer<typeof fleetChatAttentionClearResponseSchema>
+
 /** Every event names its bot; null from an instance that predates environments (it hosts a single bot). */
 const instanceEventBase = {
   seq: fleetNonNegativeIntSchema,
@@ -3079,6 +3092,13 @@ export const FLEET_INSTANCE_ROUTES = {
     response: fleetInstanceHoldSchema,
   },
   uiOpen: { method: 'POST', path: '/v1/ui/open', body: fleetUiOpenRequestSchema, response: null },
+  /** Capability `chat-attention-sync`: clears the attention marks of chats the owner saw on a phone. */
+  chatAttentionClear: {
+    method: 'POST',
+    path: '/v1/chat-attention/clear',
+    body: fleetChatAttentionClearRequestSchema,
+    response: fleetChatAttentionClearResponseSchema,
+  },
   conversationCall: {
     method: 'POST',
     path: '/v1/conversation/call',
