@@ -1,5 +1,10 @@
 import { FLEET_SETTINGS_OPERATIONS } from './environment-settings.js'
 import {
+  fleetAttentionSeenRequestSchema,
+  fleetAttentionSeenResponseSchema,
+  fleetAttentionSnapshotSchema,
+} from './attention.js'
+import {
   fleetBotOwnSkillActionResultSchema,
   fleetBotOwnSkillActionSchema,
   fleetBotOwnSkillDetailSchema,
@@ -50,6 +55,7 @@ import {
 } from './host-files.js'
 import { z } from 'zod'
 import {
+  FLEET_ATTENTION_LIMITS,
   FLEET_BOT_SIDE_TURNS_MAX,
   FLEET_PEER_THREAD_LIMITS,
   FLEET_ENVIRONMENT_LIMITS,
@@ -1315,6 +1321,15 @@ export const fleetInstanceInputSchema = z
     'a run starts with its own routine input'
   )
 export type FleetInstanceInput = z.infer<typeof fleetInstanceInputSchema>
+/** One marked chat inside a workspaces host's `chat.attention.snapshot` instance event (`chatAttention=2` only). */
+export const fleetChatAttentionSnapshotItemSchema = z.object({
+  conversationId: z.string().min(1).max(200),
+  name: z.string().max(200),
+  kind: fleetChatAttentionKindSchema,
+  at: fleetTimestampSchema,
+})
+export type FleetChatAttentionSnapshotItem = z.infer<typeof fleetChatAttentionSnapshotItemSchema>
+
 /** Every event names its bot; null from an instance that predates environments (it hosts a single bot). */
 const instanceEventBase = {
   seq: fleetNonNegativeIntSchema,
@@ -1346,13 +1361,36 @@ export const fleetInstanceEventSchema = z.discriminatedUnion('type', [
   }),
   /** With `runId`, only that run's transcript changed (sent only to readers that ask for runs). */
   z.object({ ...instanceEventBase, type: z.literal('reset'), runId: fleetIdSchema.nullable().default(null) }),
-  /** A workspaces host's chat needs the owner (`chatAttention` readers only); the gateway turns it into a push. */
+  /** A workspaces host's chat needs the owner (`chatAttention=1` or `2` readers only); the gateway turns it into a push. */
   z.object({
     ...instanceEventBase,
     type: z.literal('chat.attention'),
     conversationId: z.string().min(1).max(200),
     name: z.string().max(200),
     kind: fleetChatAttentionKindSchema,
+  }),
+  /**
+   * A workspaces host's chat no longer needs the owner (`chatAttention=2` readers only; older gateways reject unknown
+   * instance event types). Gateways send `chatAttention=2` only to hosts advertising
+   * `FLEET_CHAT_ATTENTION_SYNC_CAPABILITY` (otherwise `1`), and do not keep chat entries in their attention store for
+   * environments without the capability (they could never be cleared; the phone falls back to the active server's
+   * bridge statuses).
+   */
+  z.object({
+    ...instanceEventBase,
+    type: z.literal('chat.attention.cleared'),
+    conversationId: z.string().min(1).max(200),
+  }),
+  /**
+   * Snapshot of currently marked chats on a workspaces host, sent on connect to replace the gateway's chat attention
+   * state for that environment (`chatAttention=2` readers only; older gateways reject unknown instance event types).
+   * Gateways send `chatAttention=2` only to hosts advertising `FLEET_CHAT_ATTENTION_SYNC_CAPABILITY` (otherwise `1`),
+   * and do not keep chat entries in their attention store for environments without the capability.
+   */
+  z.object({
+    ...instanceEventBase,
+    type: z.literal('chat.attention.snapshot'),
+    conversations: z.array(fleetChatAttentionSnapshotItemSchema).max(FLEET_ATTENTION_LIMITS.entriesMax),
   }),
 ])
 export type FleetInstanceEvent = z.infer<typeof fleetInstanceEventSchema>
@@ -2494,6 +2532,14 @@ export const FLEET_GATEWAY_ROUTES = {
     response: null,
   },
   inbox: { method: 'GET', path: '/v1/inbox', body: null, response: fleetInboxResponseSchema },
+  // Gateways with `attention` (`moreFeatures`): server-wide attention snapshot and seen-state sync.
+  attention: { method: 'GET', path: '/v1/attention', body: null, response: fleetAttentionSnapshotSchema },
+  attentionSeen: {
+    method: 'POST',
+    path: '/v1/attention/seen',
+    body: fleetAttentionSeenRequestSchema,
+    response: fleetAttentionSeenResponseSchema,
+  },
   peerMessages: { method: 'GET', path: '/v1/peer-messages', body: null, response: fleetPeerMessagesResponseSchema },
   activity: { method: 'GET', path: '/v1/activity', body: null, response: fleetActivityResponseSchema },
   events: { method: 'GET', path: '/v1/events', body: null, response: null },
