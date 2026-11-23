@@ -1,6 +1,10 @@
 import { EventEmitter } from 'node:events'
 import { describe, expect, it } from 'vitest'
-import { watchChatAttention } from '../../src/main/remote-host/server/chat-attention'
+import {
+  buildChatAttentionSnapshot,
+  watchChatAttention,
+  type ChatAttentionState,
+} from '../../src/main/remote-host/server/chat-attention'
 
 function setup() {
   const permissions = new EventEmitter()
@@ -139,6 +143,159 @@ describe('chat attention on a workspaces host', () => {
       statuses.emit('status', 'run', 'working')
       statuses.emit('status', 'run', 'ready')
       expect(published).toEqual([{ conversationId: 'run', kind: 'finished' }])
+    } finally {
+      stop()
+    }
+  })
+
+  it('builds snapshots with mapped attention kinds, sliced names, and non-null filter', () => {
+    const longName = 'x'.repeat(250)
+    const pendingPlans = new Set(['c-plan'])
+    const snapshot = buildChatAttentionSnapshot(
+      [
+        { id: 'c-plan', name: longName, status: 'ready', marked: false, at: 1_700_000_000_000 },
+        { id: 'c-question', name: 'Question', status: 'asking', marked: false, at: 1_700_000_001_000 },
+        { id: 'c-waiting', name: 'Approval', status: 'waiting', marked: true, at: 1_700_000_002_000 },
+        { id: 'c-failed', name: 'Error', status: 'error', marked: true, at: 1_700_000_003_000 },
+        { id: 'c-finished', name: 'Done', status: 'ready', marked: true, at: 1_700_000_004_000 },
+        { id: 'c-none', name: 'Quiet', status: 'ready', marked: false, at: 1_700_000_005_000 },
+        { id: 'c-working', name: 'Busy', status: 'working', marked: false, at: 1_700_000_006_000 },
+        { id: 'c-unmarked-error', name: 'Old error', status: 'error', marked: false, at: 1_700_000_007_000 },
+      ],
+      (id) => pendingPlans.has(id)
+    )
+    expect(snapshot).toEqual([
+      {
+        conversationId: 'c-plan',
+        name: 'x'.repeat(200),
+        kind: 'plan',
+        at: new Date(1_700_000_000_000).toISOString(),
+      },
+      {
+        conversationId: 'c-question',
+        name: 'Question',
+        kind: 'question',
+        at: new Date(1_700_000_001_000).toISOString(),
+      },
+      {
+        conversationId: 'c-waiting',
+        name: 'Approval',
+        kind: 'waiting',
+        at: new Date(1_700_000_002_000).toISOString(),
+      },
+      {
+        conversationId: 'c-failed',
+        name: 'Error',
+        kind: 'failed',
+        at: new Date(1_700_000_003_000).toISOString(),
+      },
+      {
+        conversationId: 'c-finished',
+        name: 'Done',
+        kind: 'finished',
+        at: new Date(1_700_000_004_000).toISOString(),
+      },
+    ])
+  })
+
+  it('emits cleared on each non-null to null transition without duplicates', () => {
+    const permissions = new EventEmitter()
+    const questions = new EventEmitter()
+    const statuses = new EventEmitter()
+    const changes = new EventEmitter()
+    const stateMap = new Map<string, ChatAttentionState>([
+      ['boot-marked', { status: 'ready', marked: true, hasPendingPlan: false, eligible: true }],
+      ['c-mark', { status: 'ready', marked: false, hasPendingPlan: false, eligible: true }],
+      ['c-wait', { status: 'ready', marked: false, hasPendingPlan: false, eligible: true }],
+      ['c-ask', { status: 'ready', marked: false, hasPendingPlan: false, eligible: true }],
+      ['c-plan', { status: 'ready', marked: false, hasPendingPlan: false, eligible: true }],
+      ['c-plan-marked', { status: 'ready', marked: true, hasPendingPlan: true, eligible: true }],
+      ['c-arch', { status: 'ready', marked: true, hasPendingPlan: false, eligible: true }],
+    ])
+    const published: Array<{ conversationId: string; kind: string }> = []
+    const cleared: string[] = []
+    const stop = watchChatAttention({
+      permissions,
+      questions,
+      watchStatuses: (listener) => {
+        const onStatus = (id: string, status: string) => listener(id, status)
+        statuses.on('status', onStatus)
+        return () => statuses.off('status', onStatus)
+      },
+      conversation: (id) => ({ name: `Chat ${id}` }),
+      hasPendingPlan: (id) => stateMap.get(id)?.hasPendingPlan ?? false,
+      initialAttention: () => [
+        { conversationId: 'boot-marked', kind: 'finished' },
+        { conversationId: 'c-plan-marked', kind: 'plan' },
+        { conversationId: 'c-arch', kind: 'finished' },
+      ],
+      conversationState: (id) => stateMap.get(id) ?? null,
+      watchChanges: (listener) => {
+        const onChange = (id: string) => listener(id)
+        changes.on('change', onChange)
+        return () => changes.off('change', onChange)
+      },
+      publish: ({ conversationId, kind }) => published.push({ conversationId, kind }),
+      publishCleared: (conversationId) => cleared.push(conversationId),
+    })
+
+    try {
+      // 1. Pre-existing marked conversation gets its mark cleared.
+      stateMap.set('boot-marked', { status: 'ready', marked: false, hasPendingPlan: false, eligible: true })
+      changes.emit('change', 'boot-marked')
+      // Repeated change must not emit a duplicate cleared.
+      changes.emit('change', 'boot-marked')
+
+      // 2. Live mark cleared while not waiting/asking/planned (finished -> null).
+      stateMap.set('c-mark', { status: 'ready', marked: true, hasPendingPlan: false, eligible: true })
+      statuses.emit('status', 'c-mark', 'working')
+      statuses.emit('status', 'c-mark', 'ready')
+      stateMap.set('c-mark', { status: 'ready', marked: false, hasPendingPlan: false, eligible: true })
+      changes.emit('change', 'c-mark')
+
+      // 3. Waiting conversation whose mark is cleared while still waiting does NOT emit cleared;
+      //    only when approval is answered and status leaves waiting does it emit cleared.
+      stateMap.set('c-wait', { status: 'waiting', marked: true, hasPendingPlan: false, eligible: true })
+      permissions.emit('asked', { conversationId: 'c-wait' })
+      stateMap.set('c-wait', { status: 'waiting', marked: false, hasPendingPlan: false, eligible: true })
+      changes.emit('change', 'c-wait')
+      expect(cleared).toEqual(['boot-marked', 'c-mark'])
+      stateMap.set('c-wait', { status: 'working', marked: false, hasPendingPlan: false, eligible: true })
+      statuses.emit('status', 'c-wait', 'working')
+
+      // 4. Question answered without mark.
+      stateMap.set('c-ask', { status: 'asking', marked: false, hasPendingPlan: false, eligible: true })
+      questions.emit('asked', { conversationId: 'c-ask' })
+      stateMap.set('c-ask', { status: 'working', marked: false, hasPendingPlan: false, eligible: true })
+      statuses.emit('status', 'c-ask', 'working')
+
+      // 5. Plan cleared without mark -> emits cleared.
+      stateMap.set('c-plan', { status: 'ready', marked: false, hasPendingPlan: true, eligible: true })
+      statuses.emit('status', 'c-plan', 'working')
+      statuses.emit('status', 'c-plan', 'ready')
+      stateMap.set('c-plan', { status: 'ready', marked: false, hasPendingPlan: false, eligible: true })
+      changes.emit('change', 'c-plan')
+
+      // 6. Plan cleared while still marked -> stays non-null ('finished'), then mark cleared -> emits cleared.
+      stateMap.set('c-plan-marked', { status: 'ready', marked: true, hasPendingPlan: false, eligible: true })
+      changes.emit('change', 'c-plan-marked')
+      expect(cleared).not.toContain('c-plan-marked')
+      stateMap.set('c-plan-marked', { status: 'ready', marked: false, hasPendingPlan: false, eligible: true })
+      changes.emit('change', 'c-plan-marked')
+
+      // 7. Archived / deleted (eligible = false) -> emits cleared once even if called twice.
+      stateMap.set('c-arch', { status: 'waiting', marked: true, hasPendingPlan: false, eligible: false })
+      changes.emit('change', 'c-arch')
+      stateMap.delete('c-arch')
+      changes.emit('change', 'c-arch')
+
+      expect(cleared).toEqual(['boot-marked', 'c-mark', 'c-wait', 'c-ask', 'c-plan', 'c-plan-marked', 'c-arch'])
+      expect(published).toEqual([
+        { conversationId: 'c-mark', kind: 'finished' },
+        { conversationId: 'c-wait', kind: 'waiting' },
+        { conversationId: 'c-ask', kind: 'question' },
+        { conversationId: 'c-plan', kind: 'plan' },
+      ])
     } finally {
       stop()
     }

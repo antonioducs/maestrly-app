@@ -37,6 +37,8 @@ export interface WorkspaceIpcDeps {
   stopChat: (conversationId: string) => void | Promise<void>
   /** Tells this computer's window and the computers connected to it to list the workspaces again. */
   notifyWorkspacesChanged: () => void
+  /** Notifies host listeners when a conversation is deleted during workspace removal. */
+  onConversationChanged?: (conversationId: string) => void
 }
 
 export function registerWorkspaceIpc(reg: IpcRegistrar, deps: WorkspaceIpcDeps): void {
@@ -72,6 +74,7 @@ export function registerWorkspaceIpc(reg: IpcRegistrar, deps: WorkspaceIpcDeps):
       disposeConversation(c.id)
       void unwatchNotes(c.id) // before deleting the row needed to resolve notes cwd
       await deleteConversation(c.id)
+      deps.onConversationChanged?.(c.id)
     }
     void unwatchProject(id) // stop project-note watching while its workspace row still exists
     unwatchMemory(id) // release project-memory watching
