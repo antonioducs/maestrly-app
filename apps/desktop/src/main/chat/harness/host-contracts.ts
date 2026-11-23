@@ -57,6 +57,9 @@ export const HOST_CONVERSATION_DISPATCH_GUIDANCE =
   'model/effort/Fast only as the person stated them (map names with list_conversation_models; providerId is required ' +
   'when a model is offered by several providers — ask the person which one). Omitted settings inherit this ' +
   "conversation's settings when compatible. Fast is a separate on/off setting, never a synonym for low effort. " +
+  'Settings.mode is never inherited (default "agent"): use "design" when the task is a visual or interactive ' +
+  'prototype, or when the person asks for Design mode; "plan" or "ask" only when the person wants a plan to review ' +
+  'or a read-only answer. ' +
   'For a workspace target, first call list_conversation_workspaces and use its canonical workspaceId, never an ' +
   'inferred ID or path. Ask the person to clarify ambiguous project names. When the person wants to work on a ' +
   'project that is not registered (it only exists on GitHub, or does not exist yet), use this order: ' +

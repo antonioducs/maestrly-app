@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import type { ChatMode } from './chat'
 
 /**
  * Conversation dispatch: persistent Standard conversations started from another conversation, either by
@@ -24,7 +25,11 @@ export interface ConversationDispatchSettings {
   /** 'off' means provider default; any other value must be supported by the model. */
   reasoning: string
   fastMode: boolean
+  /** Working mode of the destination; absent means Agent. Never inherited from the source. */
+  mode?: ChatMode
 }
+
+export const CONVERSATION_DISPATCH_MODES = ['agent', 'design', 'plan', 'ask'] as const satisfies readonly ChatMode[]
 
 const identifier = z.string().trim().min(1).max(300)
 const effort = z.string().trim().min(1).max(40)
@@ -49,6 +54,13 @@ export const conversationDispatchSettingsRequestSchema = z
       .optional()
       .describe('Effort exactly as stated by the person ("off" = provider default). Must be supported by the model.'),
     fastMode: z.boolean().optional().describe('Fast/priority mode on or off. Only when the person asked for it.'),
+    mode: z
+      .enum(CONVERSATION_DISPATCH_MODES)
+      .optional()
+      .describe(
+        'Working mode of the new conversation (default "agent", never inherited): "design" for visual/interactive ' +
+          'prototypes, "plan" to propose a plan for the person to review first, "ask" for read-only questions.'
+      ),
   })
   .strict()
 
@@ -267,6 +279,7 @@ export function conversationDispatchFingerprintInput(input: {
       : []),
     // Only when set, so fingerprints recorded before the option existed stay valid.
     ...(input.reportBack ? [{ reportBack: true }] : []),
+    ...(settings.mode && settings.mode !== 'agent' ? [{ mode: settings.mode }] : []),
   ])
 }
 
