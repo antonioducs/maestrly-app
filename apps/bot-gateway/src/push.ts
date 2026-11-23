@@ -8,7 +8,7 @@ import type {
 import { GatewayError } from './errors.js'
 
 /** One notification for one phone. */
-export type PushMessage = { to: string; title: string; body: string; data: FleetPushData }
+export type PushMessage = { to: string; title: string; body: string; data: FleetPushData; badge?: number }
 /** What became of a message: a token the push service no longer knows is dropped. */
 export type PushOutcome = { ok: true } | { ok: false; unregistered: boolean }
 
@@ -52,6 +52,7 @@ export class ExpoPushSender implements PushSender {
             title: message.title,
             body: message.body,
             data: message.data,
+            ...(message.badge === undefined ? {} : { badge: message.badge }),
             sound: 'default',
             priority: 'high',
             channelId: 'default',
@@ -155,6 +156,8 @@ export class PushNotifier {
       log?: (message: string) => void
       /** How long the same notification is not sent again. */
       windowMs?: number
+      /** Current pending attention count on this server, added to each registration's `badgeOthers`. */
+      attentionCount?: () => number
     }
   ) {
     this.now = deps.now ?? Date.now
@@ -200,17 +203,24 @@ export class PushNotifier {
   async test(deviceId: string): Promise<void> {
     const registration = this.deps.store.pushRegistration(deviceId)
     if (!registration) throw new GatewayError('NOT_FOUND', 'This phone has not registered for notifications')
+    const badge = this.badgeFor(registration)
     const [outcome] = await this.deps.sender.send([
       {
         to: registration.token,
         title: 'Maestrly',
         body: phrase(registration.locale, 'test', this.deps.serverName()),
         data: { v: 1, device: deviceId, kind: 'test', id: null, category: null },
+        ...(badge === undefined ? {} : { badge }),
       },
     ])
     if (outcome?.ok) return
     if (!outcome || outcome.unregistered) this.deps.store.deletePushRegistration(deviceId)
     throw new GatewayError('INSTANCE_UNAVAILABLE', 'The push service did not take the notification')
+  }
+
+  private badgeFor(registration: FleetPushRegistration): number | undefined {
+    if (!this.deps.attentionCount && registration.badgeOthers === undefined) return undefined
+    return (this.deps.attentionCount?.() ?? 0) + (registration.badgeOthers ?? 0)
   }
 
   private bot(botId: string, category: FleetPushCategory, key: Phrase, event: string): Promise<void> {
@@ -237,19 +247,23 @@ export class PushNotifier {
       return true
     })
     if (!recipients.length) return
-    const messages = recipients.map(({ deviceId, registration }) => ({
-      to: registration.token,
-      title: target.name.slice(0, 100) || 'Maestrly',
-      body: phrase(registration.locale, key, this.deps.serverName()),
-      data: {
-        v: 1 as const,
-        device: deviceId,
-        kind: target.kind,
-        id: target.id,
-        category,
-        ...(target.environmentId ? { env: target.environmentId } : {}),
-      },
-    }))
+    const messages = recipients.map(({ deviceId, registration }) => {
+      const badge = this.badgeFor(registration)
+      return {
+        to: registration.token,
+        title: target.name.slice(0, 100) || 'Maestrly',
+        body: phrase(registration.locale, key, this.deps.serverName()),
+        data: {
+          v: 1 as const,
+          device: deviceId,
+          kind: target.kind,
+          id: target.id,
+          category,
+          ...(target.environmentId ? { env: target.environmentId } : {}),
+        },
+        ...(badge === undefined ? {} : { badge }),
+      }
+    })
     let outcomes: PushOutcome[]
     try {
       outcomes = await this.deps.sender.send(messages)

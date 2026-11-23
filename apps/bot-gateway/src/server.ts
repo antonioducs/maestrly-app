@@ -6,6 +6,7 @@ import os from 'node:os'
 import { FleetNetwork } from './network.js'
 import {
   type FleetGatewayEvent,
+  FLEET_CHAT_ATTENTION_SYNC_CAPABILITY,
   FLEET_GATEWAY_ROUTES,
   FLEET_INTERNAL_ROUTES,
   FLEET_PROTOCOL_HEADER,
@@ -38,6 +39,7 @@ import { Backups } from './backups/service.js'
 import { ScreenProxy } from './screen.js'
 import { BridgeProxy, lifecycleBridgeDeps } from './bridge.js'
 import { HostFilesProxy, isHostFileRoute, lifecycleHostFilesDeps } from './host-files.js'
+import { AttentionStore } from './attention.js'
 import { disabledPushSender, ExpoPushSender, PushNotifier } from './push.js'
 import { DictationService } from './dictation.js'
 import { HostEditorProxy, lifecycleHostEditorDeps } from './host-editor.js'
@@ -129,11 +131,26 @@ export function createGatewayServers(ctx: GatewayContext) {
       ...lifecycleRunnerTargets(ctx.lifecycle),
       authorize: (jobId, deviceId, key) => runners.authorizeTransfer(jobId, deviceId, key),
     })
+  const attention =
+    ctx.attention ??
+    new AttentionStore({
+      store: ctx.store,
+      environmentHasChatSync: (environmentId) =>
+        ctx.lifecycle.environmentCapabilities(environmentId).includes(FLEET_CHAT_ATTENTION_SYNC_CAPABILITY),
+      clearChatAttention: (environmentId, conversationIds) =>
+        ctx.lifecycle.clearChatAttention(environmentId, conversationIds),
+      onUpdate: (event) => ctx.events.emitAttention(event),
+      initialInbox: ctx.lifecycle.inbox(),
+    })
   ctx.lifecycle.onBotPurged = (id) => {
     desktops.botPurged(id)
     runners.botPurged(id)
+    attention.removeBot(id)
   }
   ctx.lifecycle.onEnvironmentChanged = (id, formerlyLinked) => desktops.environmentChanged(id, formerlyLinked)
+  ctx.lifecycle.onEnvironmentCapabilitiesChanged = (environmentId, capabilities) => {
+    if (!capabilities.includes(FLEET_CHAT_ATTENTION_SYNC_CAPABILITY)) attention.removeEnvironment(environmentId)
+  }
   const bridge = ctx.bridge ?? new BridgeProxy(lifecycleBridgeDeps(ctx.lifecycle))
   const hostFiles = ctx.hostFiles ?? new HostFilesProxy(lifecycleHostFilesDeps(ctx.lifecycle))
   const hostEditor = ctx.hostEditor ?? new HostEditorProxy(lifecycleHostEditorDeps(ctx.lifecycle))
@@ -155,13 +172,23 @@ export function createGatewayServers(ctx: GatewayContext) {
           ? disabledPushSender
           : new ExpoPushSender({ accessToken: ctx.config.expoAccessToken }),
       serverName: () => ctx.config.displayName ?? ctx.config.publicHost,
+      attentionCount: () => attention.size,
       log: (message) => console.error(JSON.stringify({ component: 'push', level: 'warn', message })),
     })
   const dictation = ctx.dictation ?? new DictationService(ctx.store)
+  // AttentionStore MUST observe events before PushNotifier so push badges include the triggering event.
+  const observeAttention = (event: FleetGatewayEvent) => attention.observe(event)
   const observePush = (event: FleetGatewayEvent) => push.observe(event)
+  ctx.events.observers.add(observeAttention)
   ctx.events.observers.add(observePush)
-  ctx.lifecycle.onChatAttention = (environmentId, conversationId, name, kind) =>
+  ctx.lifecycle.onChatAttention = (environmentId, conversationId, name, kind, at) => {
+    attention.chatAttention(environmentId, conversationId, name, kind, at)
     void push.chat(environmentId, conversationId, name, kind)
+  }
+  ctx.lifecycle.onChatAttentionCleared = (environmentId, conversationId) =>
+    attention.chatAttentionCleared(environmentId, conversationId)
+  ctx.lifecycle.onChatAttentionSnapshot = (environmentId, conversations) =>
+    attention.chatAttentionSnapshot(environmentId, conversations)
   let refreshTimer: NodeJS.Timeout | null = null
   let revokeTimer: NodeJS.Timeout | null = null
   const revoking = new Set<string>()
@@ -196,6 +223,7 @@ export function createGatewayServers(ctx: GatewayContext) {
   }
   const activeCtx: GatewayContext = {
     ...ctx,
+    attention,
     push,
     dictation,
     backups,
@@ -472,6 +500,7 @@ export function createGatewayServers(ctx: GatewayContext) {
   return {
     publicServer,
     internalServer,
+    attention,
     routines,
     backups,
     peers,
@@ -514,6 +543,7 @@ export function createGatewayServers(ctx: GatewayContext) {
       hostFiles.close()
       runnerTransfers.close()
       hostEditor.close()
+      ctx.events.observers.delete(observeAttention)
       ctx.events.observers.delete(observePush)
       ctx.lifecycle.close()
       ctx.events.close()

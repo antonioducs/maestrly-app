@@ -210,6 +210,30 @@ describe('transcript reasoning', () => {
     // An item of the bot's own conversation names no routine run.
     expect(received).toEqual([{ ...event, runId: null }])
   })
+
+  it('sends chatAttention=2 only when asked and posts chatAttentionClear to the host', async () => {
+    const snapshot = {
+      seq: 0,
+      at,
+      botId: null,
+      type: 'chat.attention.snapshot',
+      conversations: [{ conversationId: 'c1', name: 'Deploy check', kind: 'plan', at }],
+    }
+    const cleared = { seq: 1, at, botId: null, type: 'chat.attention.cleared', conversationId: 'c1' }
+    const origin = await instance({
+      'GET /v1/events?since=0&reasoning=1&chatAttention=2&routineRuns=1': (res) => {
+        res.writeHead(200, { 'content-type': 'text/event-stream' })
+        res.write('event: fleet\ndata: ' + JSON.stringify(snapshot) + '\n\n')
+        res.end('event: fleet\ndata: ' + JSON.stringify(cleared) + '\n\n')
+      },
+      'POST /v1/chat-attention/clear': json(200, { cleared: ['c1'] }),
+    })
+    const client = new InstanceClient('work', 'control', origin)
+    const received = []
+    for await (const value of client.events(0, undefined, { chatAttention: 2 })) received.push(value)
+    expect(received).toEqual([snapshot, cleared])
+    expect(await client.chatAttentionClear({ conversationIds: ['c1', 'c2'] })).toEqual({ cleared: ['c1'] })
+  })
 })
 
 describe('bot profile sent to its environment', () => {

@@ -1,6 +1,7 @@
 import { environmentSettingsRoute } from './environment-settings.js'
 import {
   FLEET_ACCOUNT_POOLS_FEATURE,
+  FLEET_ATTENTION_FEATURE,
   FLEET_BOT_MOVE_FEATURE,
   FLEET_BOT_RESTART_FEATURE,
   FLEET_ENVIRONMENT_PLUGINS_FEATURE,
@@ -43,6 +44,8 @@ import {
   FLEET_BOT_AVATARS_FEATURE,
   FLEET_BOT_AVATAR_LIMITS,
   FLEET_ORDER_FEATURE,
+  fleetReaderWantsAttention,
+  type FleetAttentionSeenRequest,
   type FleetBotAvatarRequest,
   type FleetBotsReorderRequest,
   type FleetEnvironmentsReorderRequest,
@@ -568,6 +571,7 @@ export async function publicRoute(
             FLEET_BOT_AVATARS_FEATURE,
             FLEET_ORDER_FEATURE,
             FLEET_ARTIFACTS_DESIGN_FEATURE,
+            FLEET_ATTENTION_FEATURE,
           ],
           botImage: ctx.config.botImage,
           botImageVersion: await ctx.host.botImageVersion(),
@@ -1180,6 +1184,10 @@ export async function publicRoute(
           items: ctx.lifecycle.inbox(),
         },
       }
+    case 'attention':
+      return { body: ctx.attention!.snapshot() }
+    case 'attentionSeen':
+      return { body: await ctx.attention!.seen(body as FleetAttentionSeenRequest) }
     case 'peerMessages':
       return { body: { messages: ctx.store.peerMessages(number(url.searchParams.get('limit'), 200, 200)) } }
     case 'activity':
@@ -1254,6 +1262,7 @@ export async function publicRoute(
         peerThreads: fleetReaderWantsPeerThreads(url.searchParams),
         runners: fleetReaderWantsRunners(url.searchParams),
         backups: fleetReaderWantsBackups(url.searchParams),
+        attention: fleetReaderWantsAttention(url.searchParams),
       })
       return { stream: true }
     default:
