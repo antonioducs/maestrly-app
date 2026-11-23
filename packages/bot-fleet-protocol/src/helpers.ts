@@ -2,6 +2,7 @@ import type { FleetInstanceStatus, FleetInstanceTurn, FleetLoginKind } from './a
 import {
   FLEET_ATTENTION_QUERY,
   FLEET_CHAT_ATTENTION_QUERY,
+  FLEET_CHAT_ATTENTION_SYNC_CAPABILITY,
   FLEET_ENVIRONMENT_DISPLAY,
   FLEET_REASONING_QUERY,
   FLEET_ROUTINE_RUNS_QUERY,
@@ -220,6 +221,15 @@ export function fleetReaderChatAttentionVersion(search: URLSearchParams): FleetC
 /** Whether a reader of an environment's events asked for `chat.attention` events (`chatAttention=1` or `2`). */
 export function fleetReaderWantsChatAttention(search: URLSearchParams): boolean {
   return fleetReaderChatAttentionVersion(search) > 0
+}
+
+/**
+ * The `chatAttention` query value a gateway sends when subscribing to a workspaces host's instance event stream:
+ * `2` only when the instance advertises `FLEET_CHAT_ATTENTION_SYNC_CAPABILITY` in its health `capabilities`,
+ * otherwise `1` (already-released hosts check `=== '1'` and would stop emitting all `chat.attention` events for `2`).
+ */
+export function fleetChatAttentionQueryValue(capabilities: readonly string[]): 1 | 2 {
+  return capabilities.includes(FLEET_CHAT_ATTENTION_SYNC_CAPABILITY) ? 2 : 1
 }
 
 /** Whether a reader of gateway events asked for `attention.updated` events (`attention=1`). */

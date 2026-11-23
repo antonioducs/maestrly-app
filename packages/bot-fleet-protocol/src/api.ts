@@ -1321,7 +1321,6 @@ export const fleetInstanceInputSchema = z
     'a run starts with its own routine input'
   )
 export type FleetInstanceInput = z.infer<typeof fleetInstanceInputSchema>
-/** Every event names its bot; null from an instance that predates environments (it hosts a single bot). */
 /** One marked chat inside a workspaces host's `chat.attention.snapshot` instance event (`chatAttention=2` only). */
 export const fleetChatAttentionSnapshotItemSchema = z.object({
   conversationId: z.string().min(1).max(200),
@@ -1331,6 +1330,7 @@ export const fleetChatAttentionSnapshotItemSchema = z.object({
 })
 export type FleetChatAttentionSnapshotItem = z.infer<typeof fleetChatAttentionSnapshotItemSchema>
 
+/** Every event names its bot; null from an instance that predates environments (it hosts a single bot). */
 const instanceEventBase = {
   seq: fleetNonNegativeIntSchema,
   at: fleetTimestampSchema,
@@ -1371,7 +1371,10 @@ export const fleetInstanceEventSchema = z.discriminatedUnion('type', [
   }),
   /**
    * A workspaces host's chat no longer needs the owner (`chatAttention=2` readers only; older gateways reject unknown
-   * instance event types).
+   * instance event types). Gateways send `chatAttention=2` only to hosts advertising
+   * `FLEET_CHAT_ATTENTION_SYNC_CAPABILITY` (otherwise `1`), and do not keep chat entries in their attention store for
+   * environments without the capability (they could never be cleared; the phone falls back to the active server's
+   * bridge statuses).
    */
   z.object({
     ...instanceEventBase,
@@ -1381,6 +1384,8 @@ export const fleetInstanceEventSchema = z.discriminatedUnion('type', [
   /**
    * Snapshot of currently marked chats on a workspaces host, sent on connect to replace the gateway's chat attention
    * state for that environment (`chatAttention=2` readers only; older gateways reject unknown instance event types).
+   * Gateways send `chatAttention=2` only to hosts advertising `FLEET_CHAT_ATTENTION_SYNC_CAPABILITY` (otherwise `1`),
+   * and do not keep chat entries in their attention store for environments without the capability.
    */
   z.object({
     ...instanceEventBase,

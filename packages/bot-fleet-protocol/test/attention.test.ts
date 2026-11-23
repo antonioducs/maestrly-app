@@ -5,6 +5,7 @@ import {
   FLEET_ATTENTION_LIMITS,
   FLEET_ATTENTION_QUERY,
   FLEET_CHAT_ATTENTION_QUERY,
+  FLEET_CHAT_ATTENTION_SYNC_CAPABILITY,
   FLEET_GATEWAY_ROUTES,
   FLEET_META_FEATURES_LEGACY_MAX,
   fleetAttentionEntrySchema,
@@ -16,6 +17,7 @@ import {
   fleetAttentionSourceSchema,
   fleetAttentionUpdatedEventSchema,
   fleetChatAttentionKindSchema,
+  fleetChatAttentionQueryValue,
   fleetChatAttentionSnapshotItemSchema,
   fleetGatewayEventSchema,
   fleetInstanceEventSchema,
@@ -75,6 +77,8 @@ describe('attention protocol', () => {
     expect(FLEET_ATTENTION_FEATURE.length).toBeLessThanOrEqual(40)
     expect(FLEET_ATTENTION_QUERY).toBe('attention')
     expect(FLEET_CHAT_ATTENTION_QUERY).toBe('chatAttention')
+    expect(FLEET_CHAT_ATTENTION_SYNC_CAPABILITY).toBe('chat-attention-sync')
+    expect(FLEET_CHAT_ATTENTION_SYNC_CAPABILITY.length).toBeLessThanOrEqual(40)
     expect(FLEET_ATTENTION_LIMITS).toEqual({ keyMax: 400, titleMax: 400, entriesMax: 2000, seenKeysMax: 200 })
 
     expect(FLEET_GATEWAY_ROUTES.attention).toMatchObject({ method: 'GET', path: '/v1/attention', body: null })
@@ -242,6 +246,31 @@ describe('attention protocol', () => {
       expect(fleetReaderChatAttentionVersion(params)).toBe(version)
       expect(fleetReaderWantsChatAttention(params)).toBe(wants)
     }
+  })
+
+  it('gates chatAttention=2 on chat-attention-sync so older hosts keep emitting chat.attention', () => {
+    expect(fleetChatAttentionQueryValue([])).toBe(1)
+    expect(fleetChatAttentionQueryValue(['workspaces-host', 'mobile-api', 'host-routines'])).toBe(1)
+    expect(fleetChatAttentionQueryValue([FLEET_CHAT_ATTENTION_SYNC_CAPABILITY])).toBe(2)
+    expect(fleetChatAttentionQueryValue(['workspaces-host', FLEET_CHAT_ATTENTION_SYNC_CAPABILITY, 'mobile-api'])).toBe(
+      2
+    )
+
+    // Already-released hosts check `search.get('chatAttention') === '1'`, so sending `2` unconditionally would cause
+    // them to stop emitting all `chat.attention` events and silently break chat pushes.
+    const legacyHostWantsChatAttention = (search: URLSearchParams) => search.get(FLEET_CHAT_ATTENTION_QUERY) === '1'
+    expect(
+      legacyHostWantsChatAttention(
+        new URLSearchParams({ [FLEET_CHAT_ATTENTION_QUERY]: String(fleetChatAttentionQueryValue([])) })
+      )
+    ).toBe(true)
+    expect(
+      legacyHostWantsChatAttention(
+        new URLSearchParams({
+          [FLEET_CHAT_ATTENTION_QUERY]: String(fleetChatAttentionQueryValue([FLEET_CHAT_ATTENTION_SYNC_CAPABILITY])),
+        })
+      )
+    ).toBe(false)
   })
 
   it('parses chatAttention=2 instance events (cleared and snapshot)', () => {

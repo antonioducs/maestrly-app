@@ -535,9 +535,24 @@ export const FLEET_ACTIVE_PAIRINGS_MAX = 5
 export const FLEET_MOBILE_HOST_FEATURE = 'mobile-api'
 
 /**
+ * Instance capability (`capabilities` of instance health, `fleetInstanceHealthSchema`, read by the gateway via
+ * `lifecycle.environmentCapabilities` just like `FLEET_RUNNER_JOBS_CAPABILITY` / `FLEET_ROUTINE_CONVERSATIONS_FEATURE`):
+ * the workspaces host supports `chatAttention=2` on its instance event stream — emitting `chat.attention.cleared` and
+ * `chat.attention.snapshot` (on connect) alongside `chat.attention`. Gateways MUST send `chatAttention=2` only to
+ * instances advertising this capability (see `fleetChatAttentionQueryValue`); older hosts check `=== '1'` and would
+ * stop emitting all `chat.attention` events if sent `2`.
+ */
+export const FLEET_CHAT_ATTENTION_SYNC_CAPABILITY = 'chat-attention-sync'
+
+/**
  * A gateway reading a workspaces environment's events with this query receives chat attention events:
- * - `1`: `chat.attention` only
+ * - `1`: `chat.attention` only (for hosts without `FLEET_CHAT_ATTENTION_SYNC_CAPABILITY`)
  * - `2`: `chat.attention`, `chat.attention.cleared`, and `chat.attention.snapshot` (on connect)
+ *
+ * The gateway sends `2` ONLY to instances advertising `FLEET_CHAT_ATTENTION_SYNC_CAPABILITY`, otherwise `1` (already-
+ * released hosts compare `=== '1'` and would silently drop all chat pushes if sent `2`). For environments without
+ * `FLEET_CHAT_ATTENTION_SYNC_CAPABILITY`, the gateway does NOT keep chat entries in its attention store (they could
+ * never be cleared; the phone falls back to the bridge statuses of the active server).
  */
 export const FLEET_CHAT_ATTENTION_QUERY = 'chatAttention'
 
