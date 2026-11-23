@@ -22,6 +22,7 @@ import {
   chatSetupSummary,
   chatStatusLine,
   dayGroup,
+  dispatchChatLabel,
   groupByDay,
   waitingChats,
   workspaceGroups,
@@ -197,6 +198,15 @@ describe('chat lists', () => {
 })
 
 describe('workspace chats', () => {
+  const shape = (nodes: ReturnType<typeof workspaceNodes>) =>
+    nodes.map((node) =>
+      node.kind === 'chat'
+        ? node.chat.id
+        : node.kind === 'branch'
+          ? [node.branch, node.chats.map((c) => c.id)]
+          : [`from:${node.rootId}`, node.rootName, node.chats.map((c) => c.id)]
+    )
+
   it('puts chats that share a branch in a folder where its latest chat is, as the desktop does', () => {
     const nodes = workspaceNodes([
       chat('a', { branch: 'feat/x' }),
@@ -205,9 +215,52 @@ describe('workspace chats', () => {
       chat('d', { branch: null }),
       chat('e', { branch: 'feat/x' }),
     ])
+    expect(shape(nodes)).toEqual([['feat/x', ['a', 'c', 'e']], 'b', 'd'])
+  })
+
+  const from = (sourceId: string, rootId = sourceId) => ({
+    dispatchOrigin: {
+      sourceConversationId: sourceId,
+      sourceName: `${sourceId} then`,
+      rootConversationId: rootId,
+      rootName: `${rootId} then`,
+    },
+  })
+
+  it('puts the chats agents started in a folder of the first chat of their chain, before sharing a branch', () => {
+    const nodes = workspaceNodes([
+      chat('b', { branch: 'feat/x', ...from('a') }),
+      chat('c', { branch: 'main' }),
+      chat('a', { branch: 'feat/x' }),
+      chat('d', { branch: 'feat/x', ...from('b', 'a') }),
+      chat('e', { branch: 'feat/x' }),
+    ])
+    // The root leads its folder, and the folder takes the place of its latest chat; e is alone on feat/x now.
+    expect(shape(nodes)).toEqual([['from:a', 'A', ['a', 'b', 'd']], 'c', 'e'])
+  })
+
+  it('names a folder after its origin when that chat is elsewhere', () => {
+    const nodes = workspaceNodes([chat('b', from('x')), chat('c'), chat('d', from('x'))])
+    expect(shape(nodes)).toEqual([['from:x', 'x then', ['b', 'd']], 'c'])
+  })
+
+  it('marks a chat an agent started with the chat it came from, and a bot chat with its bot only', () => {
+    expect(dispatchChatLabel(chat('b', from('a')), text.t)).toBe('Created by a then')
     expect(
-      nodes.map((node) => (node.kind === 'chat' ? node.chat.id : [node.branch, node.chats.map((c) => c.id)]))
-    ).toEqual([['feat/x', ['a', 'c', 'e']], 'b', 'd'])
+      dispatchChatLabel(chat('b', { ...from('a'), bot: { name: 'Scout', state: 'active', shared: false } }), text.t)
+    ).toBeNull()
+    expect(dispatchChatLabel(chat('c'), text.t)).toBeNull()
+  })
+
+  it('shows in the demo the chats an agent started from another', async () => {
+    const source = createDemoChatsSource({ stepMs: 1 })
+    let ready = false
+    const connection = source.connect({ onEvent: () => {}, onState: () => {}, onReady: () => (ready = true) })
+    await vi.waitFor(() => expect(ready).toBe(true))
+    const lists = await connection.invoke('lists', {})
+    const dispatched = lists.workspaces.flatMap((workspace) => workspace.conversations).filter((c) => c.dispatchOrigin)
+    expect(dispatched.length).toBeGreaterThan(0)
+    expect(dispatched[0].dispatchOrigin?.rootConversationId).toBe('c-mvp')
   })
 })
 

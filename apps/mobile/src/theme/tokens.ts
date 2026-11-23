@@ -13,6 +13,9 @@ export type Palette = {
   lineStrong: string
   brass: string
   brassSoft: string
+  /** Chats an agent started from another chat, violet as the desktop sidebar marks them. */
+  plum: string
+  plumSoft: string
   cue: string
   cueInk: string
   cueSoft: string
@@ -38,6 +41,8 @@ export const palettes: { light: Palette; dark: Palette } = {
     lineStrong: '#c9c8be',
     brass: '#7d6229',
     brassSoft: '#f0e7d2',
+    plum: '#6b55a3',
+    plumSoft: '#ebe6f5',
     cue: '#e0a83a',
     cueInk: '#8a5b06',
     cueSoft: '#fcf3e0',
@@ -61,6 +66,8 @@ export const palettes: { light: Palette; dark: Palette } = {
     lineStrong: '#474c48',
     brass: '#d4b273',
     brassSoft: '#33301f',
+    plum: '#b7a3e8',
+    plumSoft: '#2a2537',
     cue: '#f2bd52',
     cueInk: '#f2bd52',
     cueSoft: '#2b2416',

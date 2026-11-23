@@ -1222,6 +1222,24 @@ describe('mobile API of a workspaces host', () => {
     h.api.dispose()
   })
 
+  it('lists where an agent started each conversation from, as the sidebar groups them', async () => {
+    const h = setup()
+    const dispatchOrigin = {
+      sourceConversationId: 'c2',
+      sourceName: 'Plan the release',
+      rootConversationId: 'c1',
+      rootName: 'x'.repeat(500),
+    }
+    h.state.workspaceChats = [
+      conversation('d1', { scope: 'project', workspaceId: 'w1', branch: 'task/d1', mode: 'worktree', dispatchOrigin }),
+    ]
+    const lists = (await h.invoke('mobile:v1:lists')) as MobileLists
+    const byId = Object.fromEntries(lists.workspaces[0].conversations.map((item) => [item.id, item]))
+    expect(byId.d1.dispatchOrigin).toEqual({ ...dispatchOrigin, rootName: 'x'.repeat(400) })
+    expect(byId.c2).not.toHaveProperty('dispatchOrigin')
+    h.api.dispose()
+  })
+
   it('names the bot on the messages it sent', async () => {
     const h = setup()
     h.state.messages = [{ ...user('m1', 'Fix the login test'), botName: 'Juno' }, answer('m2', 'Fixed.')]

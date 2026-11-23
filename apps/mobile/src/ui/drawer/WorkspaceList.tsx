@@ -61,60 +61,89 @@ function WorkspaceHeader({
   )
 }
 
-/** Chats that share a branch, in a folder named after it that opens and closes. */
-function BranchFolder({
-  branch,
+/**
+ * Chats in a folder that opens and closes: those that share a branch, named after it, or those agents started from
+ * one chat, named after it, with a way to that chat when it is not in the folder.
+ */
+function ChatFolder({
+  kind,
+  label,
   chats,
   open,
   currentId,
+  origin,
   onToggle,
   onOpen,
 }: {
-  branch: string
+  kind: 'branch' | 'dispatch'
+  label: string
   chats: MobileConversation[]
   open: boolean
   currentId: string | null
+  /** The chat the folder's chats came from, when it is listed elsewhere. */
+  origin?: { id: string; name: string }
   onToggle: () => void
   onOpen: (id: string) => void
 }) {
   const { palette } = useTheme()
-  const { plural } = useI18n()
+  const { t, plural } = useI18n()
   const working = chats.some((chat) => chat.status === 'working')
   const waiting = chats.some(isWaitingChat)
+  const title = kind === 'dispatch' ? t('drawer.dispatchFolder', { name: label }) : label
   return (
     <View>
-      <Pressable
-        accessibilityRole="button"
-        aria-expanded={open}
-        accessibilityLabel={`${branch}, ${plural('drawer.chatsCount', chats.length)}`}
-        onPress={onToggle}
-        style={({ pressed }) => ({
-          minHeight: 40,
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 7,
-          paddingHorizontal: 10,
-          borderRadius: 12,
-          backgroundColor: pressed ? palette.surface : 'transparent',
-        })}
-      >
-        <View style={{ transform: [{ rotate: open ? '0deg' : '-90deg' }] }}>
-          <Icon name="chev-down" size={13} color={palette.muted} />
-        </View>
-        <Icon name="branch" size={15} color={palette.brass} />
-        <AppText numberOfLines={1} variant="mono" style={{ flex: 1, minWidth: 0, fontSize: 13.5 }}>
-          {branch}
-        </AppText>
-        {!open && waiting ? (
-          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: palette.cue }} />
+      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+        <Pressable
+          accessibilityRole="button"
+          aria-expanded={open}
+          accessibilityLabel={`${title}, ${plural('drawer.chatsCount', chats.length)}`}
+          onPress={onToggle}
+          style={({ pressed }) => ({
+            flex: 1,
+            minHeight: 40,
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 7,
+            paddingHorizontal: 10,
+            borderRadius: 12,
+            backgroundColor: pressed ? palette.surface : 'transparent',
+          })}
+        >
+          <View style={{ transform: [{ rotate: open ? '0deg' : '-90deg' }] }}>
+            <Icon name="chev-down" size={13} color={palette.muted} />
+          </View>
+          {kind === 'dispatch' ? (
+            <Icon name="folder" size={15} color={palette.plum} />
+          ) : (
+            <Icon name="branch" size={15} color={palette.brass} />
+          )}
+          <AppText
+            numberOfLines={1}
+            variant={kind === 'branch' ? 'mono' : undefined}
+            style={{ flex: 1, minWidth: 0, fontSize: kind === 'branch' ? 13.5 : 14.5 }}
+          >
+            {label}
+          </AppText>
+          {!open && waiting ? (
+            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: palette.cue }} />
+          ) : null}
+          {!open && working && !waiting ? (
+            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: palette.muted }} />
+          ) : null}
+          <AppText variant="small" tone="faint">
+            {chats.length}
+          </AppText>
+        </Pressable>
+        {origin ? (
+          <IconButton
+            icon="arrow-up-right"
+            size={16}
+            color={palette.muted}
+            label={t('drawer.openOrigin', { name: origin.name })}
+            onPress={() => onOpen(origin.id)}
+          />
         ) : null}
-        {!open && working && !waiting ? (
-          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: palette.muted }} />
-        ) : null}
-        <AppText variant="small" tone="faint">
-          {chats.length}
-        </AppText>
-      </Pressable>
+      </View>
       {open ? (
         <View style={{ marginLeft: 16, paddingLeft: 6, borderLeftWidth: 1, borderLeftColor: palette.line }}>
           {chats.map((chat) => (
@@ -127,19 +156,22 @@ function BranchFolder({
 }
 
 /**
- * Every workspace with all of its chats, as the desktop sidebar shows them: chats that share a branch sit in a folder
- * named after the branch.
+ * Every workspace with all of its chats, as the desktop sidebar shows them: chats agents started sit in a folder named
+ * after the chat they came from, and other chats that share a branch in a folder named after the branch.
  */
 export function WorkspaceList({
   groups,
   searching,
   currentId,
+  isListed,
   onOpen,
   onNew,
 }: {
   groups: WorkspaceGroup[]
   searching: boolean
   currentId: string | null
+  /** Whether a chat can be opened from the lists, for the way to a folder's origin elsewhere. */
+  isListed?: (id: string) => boolean
   onOpen: (id: string) => void
   onNew: (workspaceId: string) => void
 }) {
@@ -192,15 +224,24 @@ export function WorkspaceList({
                         onPress={() => onOpen(node.chat.id)}
                       />
                     )
-                  const key = `${workspace.id}:branch:${node.branch}`
+                  const key =
+                    node.kind === 'branch'
+                      ? `${workspace.id}:branch:${node.branch}`
+                      : `${workspace.id}:dispatch:${node.rootId}`
                   const folderOpen = searching || !collapsed[key]
+                  const rootOutside =
+                    node.kind === 'dispatch' &&
+                    !node.chats.some((item) => item.id === node.rootId) &&
+                    (isListed?.(node.rootId) ?? false)
                   return (
-                    <BranchFolder
+                    <ChatFolder
                       key={key}
-                      branch={node.branch}
+                      kind={node.kind}
+                      label={node.kind === 'branch' ? node.branch : node.rootName}
                       chats={node.chats}
                       open={folderOpen}
                       currentId={currentId}
+                      origin={rootOutside ? { id: node.rootId, name: node.rootName } : undefined}
                       onToggle={() => toggle(key, folderOpen)}
                       onOpen={onOpen}
                     />

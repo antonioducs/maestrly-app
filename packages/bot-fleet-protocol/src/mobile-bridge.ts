@@ -50,6 +50,15 @@ export const mobileConversationBotSchema = z.object({
 })
 export type MobileConversationBot = z.infer<typeof mobileConversationBotSchema>
 
+/** The conversation an agent started this one from (`start_conversations`), and the first of that chain. */
+export const mobileConversationDispatchOriginSchema = z.object({
+  sourceConversationId: id,
+  sourceName: name,
+  rootConversationId: id,
+  rootName: name,
+})
+export type MobileConversationDispatchOrigin = z.infer<typeof mobileConversationDispatchOriginSchema>
+
 /** A chat of the host: standalone (no workspace) or in one of its workspaces, on its own branch. */
 export const mobileConversationSchema = z.object({
   id,
@@ -63,6 +72,8 @@ export const mobileConversationSchema = z.object({
   experience: mobileExperienceSchema,
   /** The bot that started the conversation; absent for any other, and from hosts that list no bot conversations. */
   bot: mobileConversationBotSchema.nullable().optional(),
+  /** Where an agent started the conversation from; absent for any other, and from hosts that predate it. */
+  dispatchOrigin: mobileConversationDispatchOriginSchema.nullable().optional(),
 })
 export type MobileConversation = z.infer<typeof mobileConversationSchema>
 
