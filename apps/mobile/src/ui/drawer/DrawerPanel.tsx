@@ -5,7 +5,7 @@ import { Pressable, ScrollView, type ScrollViewInstance, TextInput, View } from 
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useChats, useChatsController } from '../../chats/react'
 import { isWaitingChat, searchChats, waitingChats, workspaceGroups, workspaceResultCount } from '../../chats/selectors'
-import type { ChatsState } from '../../chats/state'
+import { allConversations, type ChatsState } from '../../chats/state'
 import { environmentChoices } from '../../fleet/create-bot'
 import { useFleet } from '../../fleet/react'
 import { botsByEnvironment, waitingItems } from '../../fleet/selectors'
@@ -120,6 +120,10 @@ export function DrawerPanel({
   const groups = botsByEnvironment(fleet, q, t('drawer.bots'))
   const chatResults = useMemo(() => searchChats(chatState.lists, q), [chatState.lists, q])
   const workspaceResults = useMemo(() => workspaceGroups(chatState.lists, q), [chatState.lists, q])
+  const isListed = useMemo(() => {
+    const ids = new Set(allConversations(chatState.lists).map((item) => item.id))
+    return (id: string) => ids.has(id)
+  }, [chatState.lists])
   const counts: Record<TabId, number> = {
     chats: chatResults.length,
     workspaces: workspaceResultCount(workspaceResults),
@@ -269,6 +273,7 @@ export function DrawerPanel({
         groups={workspaceResults}
         searching={q !== ''}
         currentId={currentChatId}
+        isListed={isListed}
         onOpen={openChat}
         onNew={(id) => newChat(id)}
       />

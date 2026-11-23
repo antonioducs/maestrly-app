@@ -77,6 +77,9 @@ export const ICON_PATHS = {
   moon: '<path d="M19.5 14.5A8 8 0 1 1 9.5 4.5a6.5 6.5 0 0 0 10 10Z"/>',
   pin: '<path d="M9 3.5h6M10 3.5v6l-3 4h10l-3-4v-6M12 13.5v7"/>',
   cite: '<path d="M5 4.5v6a4 4 0 0 0 4 4h10"/><path d="m15 10.5 4 4-4 4"/>',
+  // A chat an agent started from another one, and the way back to where it started.
+  dispatch: '<path d="M5 4.5v6a4 4 0 0 0 4 4h10"/><path d="m15 10.5 4 4-4 4"/>',
+  'arrow-up-right': '<path d="M7 17 17 7M8.5 7H17v8.5"/>',
   'bring-back': '<path d="M19 4.5v6a4 4 0 0 1-4 4H5"/><path d="m9 10.5-4 4 4 4"/>',
   more: '<circle cx="5.5" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="18.5" cy="12" r="1.4" fill="currentColor" stroke="none"/>',
   // A bot's screen on the phone: where the bot stopped, the whole screen, its keys and gestures.

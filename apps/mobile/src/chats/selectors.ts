@@ -76,22 +76,59 @@ export function workspaceGroups(lists: MobileLists | null, query: string): Works
 export type WorkspaceNode =
   | { kind: 'chat'; chat: MobileConversation }
   | { kind: 'branch'; branch: string; chats: MobileConversation[] }
+  | { kind: 'dispatch'; rootId: string; rootName: string; chats: MobileConversation[] }
 
 /**
- * A workspace's chats as the desktop sidebar shows them: chats that share a branch go in a folder named after it, in
- * the place of its latest chat; a chat alone on its branch stays a row. Order is kept within folders too.
+ * A workspace's chats as the desktop sidebar shows them: chats agents started go in a folder named after the first
+ * chat of their chain, with that chat first when it is in the workspace; other chats that share a branch go in a
+ * folder named after it. Each folder takes the place of its latest chat, a chat alone on its branch stays a row, and
+ * order is kept within folders too.
  */
 export function workspaceNodes(chats: MobileConversation[]): WorkspaceNode[] {
+  const listed = new Map(chats.map((chat) => [chat.id, chat]))
+  const derivedByRoot = new Map<string, { rootName: string; chats: MobileConversation[] }>()
+  for (const chat of chats) {
+    const origin = chat.dispatchOrigin
+    if (!origin || origin.rootConversationId === chat.id) continue
+    const group = derivedByRoot.get(origin.rootConversationId)
+    if (group) group.chats.push(chat)
+    else
+      derivedByRoot.set(origin.rootConversationId, {
+        rootName: listed.get(origin.rootConversationId)?.name ?? origin.rootName,
+        chats: [chat],
+      })
+  }
+  const dispatchOf = new Map<string, Extract<WorkspaceNode, { kind: 'dispatch' }>>()
+  for (const [rootId, group] of derivedByRoot) {
+    const root = listed.get(rootId)
+    const node = {
+      kind: 'dispatch' as const,
+      rootId,
+      rootName: group.rootName,
+      chats: root ? [root, ...group.chats] : group.chats,
+    }
+    for (const chat of node.chats) dispatchOf.set(chat.id, node)
+  }
+
   const byBranch = new Map<string, MobileConversation[]>()
   for (const chat of chats) {
-    if (!chat.branch) continue
+    if (!chat.branch || dispatchOf.has(chat.id)) continue
     const list = byBranch.get(chat.branch)
     if (list) list.push(chat)
     else byBranch.set(chat.branch, [chat])
   }
   const nodes: WorkspaceNode[] = []
   const placed = new Set<string>()
+  const placedDispatch = new Set<string>()
   for (const chat of chats) {
+    const dispatch = dispatchOf.get(chat.id)
+    if (dispatch) {
+      if (!placedDispatch.has(dispatch.rootId)) {
+        placedDispatch.add(dispatch.rootId)
+        nodes.push(dispatch)
+      }
+      continue
+    }
     const shared = chat.branch ? byBranch.get(chat.branch) : undefined
     if (!chat.branch || !shared || shared.length < 2) nodes.push({ kind: 'chat', chat })
     else if (!placed.has(chat.branch)) {
@@ -200,6 +237,12 @@ export function botChatState(chat: MobileConversation | null): BotChatState | nu
   if (!bot) return null
   if (bot.state === 'active') return bot.shared ? 'shared' : 'held'
   return bot.state
+}
+
+/** Which chat an agent started this one from, for its mark; a bot's chat names its bot instead. */
+export function dispatchChatLabel(chat: MobileConversation, t: Translate): string | null {
+  if (chat.bot || !chat.dispatchOrigin) return null
+  return t('drawer.createdByChat', { name: chat.dispatchOrigin.sourceName })
 }
 
 /** Whose a bot's chat is, for its indicators: "Managed by X", or "Created by X · Paused". */

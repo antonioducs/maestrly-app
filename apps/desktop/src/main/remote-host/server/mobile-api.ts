@@ -18,6 +18,7 @@ import {
   type MobileChatSetup,
   type MobileConversation,
   type MobileConversationBot,
+  type MobileConversationDispatchOrigin,
   type MobileDispatchItem,
   type MobileEventKey,
   type MobileEventPayload,
@@ -148,8 +149,21 @@ function mobileBot(conversation: Conversation): MobileConversationBot | null {
   }
 }
 
+/** The conversation an agent started this one from, and the first of that chain, as the sidebar groups them. */
+function mobileDispatchOrigin(conversation: Conversation): MobileConversationDispatchOrigin | null {
+  const origin = conversation.dispatchOrigin
+  if (!origin) return null
+  return {
+    sourceConversationId: origin.sourceConversationId,
+    sourceName: origin.sourceName.slice(0, 400),
+    rootConversationId: origin.rootConversationId,
+    rootName: origin.rootName.slice(0, 400),
+  }
+}
+
 function mobileConversation(conversation: Conversation, workspaceName: string | null): MobileConversation {
   const bot = mobileBot(conversation)
+  const dispatchOrigin = mobileDispatchOrigin(conversation)
   return {
     id: conversation.id,
     name: conversation.name,
@@ -161,6 +175,7 @@ function mobileConversation(conversation: Conversation, workspaceName: string | 
     pinned: conversation.pinnedAt !== null && conversation.pinnedAt !== undefined,
     experience: conversation.scope === 'project' && conversation.experience === 'maestro' ? 'maestro' : 'standard',
     ...(bot ? { bot } : {}),
+    ...(dispatchOrigin ? { dispatchOrigin } : {}),
   }
 }
 

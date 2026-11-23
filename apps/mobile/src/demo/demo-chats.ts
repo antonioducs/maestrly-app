@@ -461,8 +461,32 @@ export function createDemoChatsSource(
   }
   const limits = new Map<string, number | null>()
 
+  // As a host does: the chat an agent started this one from, and the first of that chain.
+  const withOrigin = (chat: Chat): MobileConversation => {
+    if (!chat.sourceConversationId) return chat.conversation
+    const source = chats.get(chat.sourceConversationId)
+    if (!source) return chat.conversation
+    let root = source
+    const seen = new Set([chat.conversation.id, source.conversation.id])
+    while (root.sourceConversationId && !seen.has(root.sourceConversationId)) {
+      const parent = chats.get(root.sourceConversationId)
+      if (!parent) break
+      seen.add(parent.conversation.id)
+      root = parent
+    }
+    return {
+      ...chat.conversation,
+      dispatchOrigin: {
+        sourceConversationId: source.conversation.id,
+        sourceName: source.conversation.name,
+        rootConversationId: root.conversation.id,
+        rootName: root.conversation.name,
+      },
+    }
+  }
+
   const lists = (): MobileResult<'lists'> => {
-    const visible = [...chats.values()].map((chat) => chat.conversation)
+    const visible = [...chats.values()].map(withOrigin)
     return {
       workspaces: workspaces.map((workspace) => ({
         id: workspace.id,
@@ -622,7 +646,7 @@ export function createDemoChatsSource(
       case 'open': {
         const current = chat()
         return {
-          conversation: current.conversation,
+          conversation: withOrigin(current),
           sourceConversationId: current.sourceConversationId,
           page: page(current, null),
           runtime: runtimeOf(current),

@@ -1,10 +1,11 @@
 import type { MobileConversation } from '@maestrly/bot-fleet-protocol'
 import { memo } from 'react'
 import { ActivityIndicator, Pressable, View } from 'react-native'
-import { botChatLabel, groupByDay, isWaitingChat } from '../../chats/selectors'
+import { botChatLabel, dispatchChatLabel, groupByDay, isWaitingChat } from '../../chats/selectors'
 import { useI18n } from '../../i18n'
 import { useTheme } from '../../theme/ThemeProvider'
 import { BotMark } from '../chat/BotMark'
+import { DispatchMark } from '../chat/DispatchMark'
 import { Icon } from '../icons'
 import { AppText } from '../primitives/Text'
 
@@ -22,11 +23,12 @@ export const ChatRow = memo(function ChatRow({
   const { t } = useI18n()
   const waiting = isWaitingChat(chat)
   const bot = botChatLabel(chat, t)
+  const dispatched = dispatchChatLabel(chat, t)
   const state = chat.status === 'working' ? t('drawer.working') : waiting ? t('cue.eyebrow') : null
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={[chat.name, bot, state].filter(Boolean).join(', ')}
+      accessibilityLabel={[chat.name, bot, dispatched, state].filter(Boolean).join(', ')}
       aria-selected={current}
       onPress={onPress}
       style={({ pressed }) => ({
@@ -41,6 +43,7 @@ export const ChatRow = memo(function ChatRow({
       })}
     >
       {chat.bot ? <BotMark size={20} /> : null}
+      {dispatched ? <DispatchMark size={20} /> : null}
       {chat.experience === 'maestro' ? <Icon name="sparkles" size={15} color={palette.muted} /> : null}
       <AppText numberOfLines={1} style={{ flex: 1, minWidth: 0, fontSize: 15.5 }}>
         {chat.name}
