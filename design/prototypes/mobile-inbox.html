@@ -1,0 +1,755 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Maestrly mobile · Notifications center prototype</title>
+<!-- Motion and shadow tokens come from the design system; colors are the phone app's palette
+     (apps/mobile/src/theme/tokens.ts), which the desktop tokens do not cover. -->
+<link rel="stylesheet" href="../tokens.css" crossorigin>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400&display=swap">
+<style>
+  /* apps/mobile/src/theme/tokens.ts, one variable per Palette key. --badge and --badge-ink are the proposed new tokens. */
+  [data-theme="light"] {
+    --canvas: #f6f5f1; --surface: #eeede8; --raised: #ffffff; --drawer: #efeee9; --sheet: #f3f2ee; --group: #ffffff;
+    --ink: #1f201e; --muted: #656760; --faint: #8d8f87; --line: #e3e2da; --lineStrong: #c9c8be;
+    --brass: #7d6229; --brassSoft: #f0e7d2; --cue: #e0a83a; --cueInk: #8a5b06; --cueSoft: #fcf3e0;
+    --moss: #2b7a58; --brick: #b34a4d; --scrim: rgba(20,22,21,0.34);
+    --badge: #d93a3f; --badge-ink: #ffffff;
+    --page: #e4e3dc; --page-ink: #1f201e; --page-muted: #656760; --page-card: #f6f5f1; --page-line: #d3d2c9;
+  }
+  [data-theme="dark"] {
+    --canvas: #141615; --surface: #222524; --raised: #1d201e; --drawer: #0f1110; --sheet: #1a1d1b; --group: #242826;
+    --ink: #ece9e1; --muted: #9ea298; --faint: #73776f; --line: #2f3330; --lineStrong: #474c48;
+    --brass: #d4b273; --brassSoft: #33301f; --cue: #f2bd52; --cueInk: #f2bd52; --cueSoft: #2b2416;
+    --moss: #63d19c; --brick: #ff8288; --scrim: rgba(0,0,0,0.52);
+    --badge: #d93a3f; --badge-ink: #ffffff;
+    --page: #090a09; --page-ink: #ece9e1; --page-muted: #9ea298; --page-card: #151716; --page-line: #2a2e2b;
+  }
+  :root { --f-display: 'Bricolage Grotesque', ui-sans-serif, system-ui, sans-serif;
+    --f-body: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif; --f-mono: 'JetBrains Mono', ui-monospace, monospace;
+    --swipe: 88px; --dur: var(--duration-overlay, 200ms); --ease: var(--ease-standard, cubic-bezier(0.4,0,0.2,1)); }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--page); color: var(--page-ink); font-family: var(--f-body); -webkit-font-smoothing: antialiased; }
+  button { font: inherit; color: inherit; background: none; border: 0; padding: 0; margin: 0; cursor: pointer; }
+  button:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--brass); outline-offset: -2px; }
+  .reduced *, .reduced *::before, .reduced *::after { transition: none !important; animation: none !important; }
+
+  /* ---------- page ---------- */
+  .page { display: flex; flex-wrap: wrap; gap: 32px; align-items: flex-start; padding: 28px; }
+  .panel { width: 280px; display: flex; flex-direction: column; gap: 18px; }
+  .panel h1 { font: 600 20px/26px var(--f-display); margin: 0; }
+  .panel p { margin: 0; font-size: 13px; line-height: 18px; color: var(--page-muted); }
+  .ctl { display: flex; flex-direction: column; gap: 6px; }
+  .ctl-label { font: 600 12px/16px var(--f-body); color: var(--page-muted); text-transform: uppercase; letter-spacing: .05em; }
+  .ctl-row { display: flex; flex-wrap: wrap; gap: 4px; }
+  .ctl button { min-height: 30px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--page-line); background: var(--page-card);
+    font-size: 13px; text-align: left; }
+  .ctl button[aria-pressed="true"] { background: var(--page-ink); color: var(--page); border-color: var(--page-ink); }
+  .states button { width: 100%; }
+  .appicon { display: flex; align-items: center; gap: 14px; }
+  .appicon-tile { position: relative; width: 60px; height: 60px; border-radius: 14px; background: #141615; display: grid; place-items: center; }
+  .appicon-tile svg { width: 34px; height: 34px; }
+  .appicon-badge { position: absolute; top: -7px; right: -9px; min-width: 24px; height: 24px; padding: 0 7px; border-radius: 12px;
+    background: #ff3b30; color: #fff; font: 600 14px/24px -apple-system, system-ui, sans-serif; text-align: center; }
+
+  /* ---------- phone ---------- */
+  .device { width: 406px; padding: 8px; border-radius: 62px; background: #0b0b0b; box-shadow: 0 30px 80px rgba(0,0,0,.28), inset 0 0 0 2px #2b2b2b; flex: none; }
+  .phone { position: relative; width: 390px; height: 844px; border-radius: 54px; overflow: hidden; background: var(--canvas); color: var(--ink);
+    display: flex; flex-direction: column; isolation: isolate; }
+  .statusbar { height: 47px; flex: none; display: flex; align-items: flex-end; justify-content: space-between; padding: 0 30px 7px 44px;
+    font: 600 16px/20px -apple-system, system-ui, sans-serif; color: var(--ink); }
+  .statusbar .glyphs { display: flex; gap: 6px; align-items: center; }
+  .statusbar .bars { width: 17px; height: 11px; background: linear-gradient(90deg, currentColor 0 3px, transparent 3px 4.6px, currentColor 4.6px 7.6px, transparent 7.6px 9.2px, currentColor 9.2px 12.2px, transparent 12.2px 13.8px, currentColor 13.8px);
+    clip-path: polygon(0 100%, 100% 0, 100% 100%); }
+  .statusbar .batt { width: 25px; height: 12px; border: 1.5px solid currentColor; border-radius: 4px; position: relative; opacity: .9; }
+  .statusbar .batt::after { content: ''; position: absolute; inset: 1.5px 6px 1.5px 1.5px; background: currentColor; border-radius: 1.5px; }
+  .island { position: absolute; top: 11px; left: 50%; translate: -50% 0; width: 122px; height: 35px; border-radius: 20px; background: #000; z-index: 50; }
+  .homebar { position: absolute; bottom: 8px; left: 50%; translate: -50% 0; width: 134px; height: 5px; border-radius: 3px; background: var(--ink); opacity: .9; z-index: 50; pointer-events: none; }
+  .screen { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }
+  .screen.enter { animation: push 300ms var(--ease-emphasized, cubic-bezier(0.32,0.72,0,1)); }
+  .screen.leave { animation: pop 260ms var(--ease-emphasized, cubic-bezier(0.32,0.72,0,1)); }
+  @keyframes push { from { transform: translateX(40%); opacity: .4; } to { transform: none; opacity: 1; } }
+  @keyframes pop { from { transform: translateX(-24%); opacity: .6; } to { transform: none; opacity: 1; } }
+
+  .ic { display: block; flex: none; }
+  .t-display { font: 600 17px/22px var(--f-display); }
+  .t-heading { font: 600 17px/22px var(--f-body); }
+  .t-body { font: 400 16px/23px var(--f-body); }
+  .t-bodyMedium { font: 500 15.5px/21px var(--f-body); }
+  .t-label { font: 600 13px/17px var(--f-body); }
+  .t-sub { font: 400 13px/18px var(--f-body); }
+  .t-small { font: 400 12.5px/17px var(--f-body); }
+  .t-mono { font: 400 12px/17px var(--f-mono); }
+  .muted { color: var(--muted); } .faint { color: var(--faint); } .cue { color: var(--cueInk); } .brick { color: var(--brick); } .moss { color: var(--moss); }
+  .num { font-variant-numeric: tabular-nums; }
+  .trunc { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+
+  /* IconButton: 44 x 44, radius 12, pressed = surface */
+  .iconbtn { position: relative; width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; flex: none; color: var(--ink); }
+  .iconbtn:active { background: var(--surface); }
+  .header { height: 52px; flex: none; display: flex; align-items: center; padding: 0 4px; }
+  .title-btn { display: flex; flex-direction: column; align-items: center; max-width: 100%; padding: 3px 10px; border-radius: 12px; }
+  .title-line { display: flex; align-items: center; gap: 7px; max-width: 100%; }
+
+  /* Bell badge (new). Outer 22 high incl. the 2 pt canvas ring; grows rightward from x = 22. */
+  .badge { position: absolute; top: 4px; left: 22px; height: 22px; min-width: 22px; padding: 0 5px; border-radius: 11px;
+    border: 2px solid var(--canvas); background: var(--badge); color: var(--badge-ink);
+    font: 600 11.5px/18px var(--f-body); font-variant-numeric: tabular-nums; text-align: center; white-space: nowrap; pointer-events: none; }
+  .badge.pop { animation: badgepop 160ms var(--ease); }
+  @keyframes badgepop { from { transform: scale(.6); } to { transform: none; } }
+
+  /* conversation mock */
+  .convo { flex: 1; min-height: 0; overflow: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 14px; }
+  .bubble { align-self: flex-end; max-width: 82%; background: var(--surface); border-radius: 18px; padding: 9px 14px; }
+  .composer { margin: 6px 12px 42px; min-height: 50px; border-radius: 25px; background: var(--raised); border: 1px solid var(--line);
+    display: flex; align-items: center; padding: 0 6px 0 18px; gap: 8px; }
+  .send { width: 36px; height: 36px; border-radius: 18px; background: var(--ink); color: var(--canvas); display: grid; place-items: center; margin-left: auto; }
+  .cuecard { border-radius: 16px; border: 1px solid var(--cue); background: var(--cueSoft); padding: 14px; display: flex; flex-direction: column; gap: 6px; }
+  .opened-note { align-self: center; }
+
+  /* Button primitive (sm): 34 high, radius 9, 12 side padding, 13.5 semibold */
+  .btn { min-height: 34px; padding: 0 12px; border-radius: 9px; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    font: 600 13.5px/20px var(--f-body); }
+  .btn.primary { background: var(--ink); color: var(--canvas); }
+  .btn.secondary { background: var(--surface); color: var(--ink); border: 1px solid var(--line); }
+  .btn:active { transform: scale(.98); }
+  .btn[disabled] { opacity: .4; cursor: default; }
+  .textbtn { min-height: 44px; padding: 0 10px; display: inline-flex; align-items: center; color: var(--brass); font: 600 16px/23px var(--f-body); }
+  .textbtn[disabled] { opacity: .35; cursor: default; }
+
+  /* center header */
+  .chead { height: 52px; flex: none; display: flex; align-items: center; padding: 0 4px; }
+  .chead .side { width: 64px; flex: none; display: flex; }
+  .chead .side.r { justify-content: flex-end; }
+  .chead .mid { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; }
+
+  /* filter chips (Pills metrics) */
+  .chips { flex: none; display: flex; gap: 6px; padding: 2px 16px 8px; overflow-x: auto; scrollbar-width: none; }
+  .chips::-webkit-scrollbar { display: none; }
+  .chip { flex: none; min-height: 36px; padding: 0 14px; border-radius: 18px; background: var(--surface); color: var(--ink);
+    display: inline-flex; align-items: center; gap: 6px; font: 500 14.5px/20px var(--f-body); }
+  .chip .count { font: 400 12.5px/17px var(--f-body); color: var(--muted); font-variant-numeric: tabular-nums; }
+  .chip[aria-checked="true"] { background: var(--ink); color: var(--canvas); }
+  .chip[aria-checked="true"] .count { color: var(--canvas); opacity: .7; }
+  .chip .ic.off { color: var(--brick); }
+  .chip[aria-checked="true"] .ic.off { color: var(--canvas); }
+
+  .list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 46px; scrollbar-width: none; overscroll-behavior: contain; }
+  .list::-webkit-scrollbar { display: none; }
+  .section-h { display: flex; align-items: center; gap: 8px; padding: 14px 10px 4px; }
+  .section-h.first { padding-top: 6px; }
+  .count-pill { min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; display: inline-grid; place-items: center;
+    font: 600 11.5px/14px var(--f-body); font-variant-numeric: tabular-nums; background: var(--surface); color: var(--muted); }
+  .count-pill.cue { background: var(--cue); color: #1f201e; }
+  .section-h .caption { margin-left: auto; }
+
+  /* row + swipe */
+  .swipe { position: relative; overflow: hidden; border-radius: 12px; margin-bottom: 2px; transition: height var(--dur) var(--ease), opacity var(--dur) var(--ease), margin var(--dur) var(--ease); }
+  .swipe-action { position: absolute; top: 0; right: 0; bottom: 0; width: var(--swipe); background: var(--brass); color: var(--canvas);
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font: 600 13.5px/18px var(--f-body); opacity: 0; }
+  .swipe.open .swipe-action, .swipe.dragging .swipe-action { opacity: 1; }
+  .row { position: relative; display: flex; align-items: flex-start; gap: 12px; padding: 10px 12px 10px 10px; min-height: 60px; border-radius: 12px;
+    background: var(--canvas); touch-action: pan-y; user-select: none; cursor: pointer; transition: transform 260ms var(--ease-emphasized, cubic-bezier(0.32,0.72,0,1)), background-color 150ms var(--ease); }
+  .row:active { background: var(--surface); }
+  .swipe.open .row { transform: translateX(calc(-1 * var(--swipe))); }
+  .swipe.dragging .row { transition: none; }
+  .row.stale > * { opacity: .55; }
+  .row.editing { padding-right: 0; cursor: default; }
+  .row.editing:active { background: var(--canvas); }
+  .lead { width: 40px; height: 40px; flex: none; }
+  .tile { width: 40px; height: 40px; border-radius: 12px; background: var(--surface); color: var(--ink); display: grid; place-items: center; }
+  .content { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .l1 { display: flex; align-items: center; gap: 6px; height: 21px; }
+  .l1 .title { flex: 1; font: 500 15.5px/21px var(--f-body); }
+  .row.unread .l1 .title { font-weight: 600; }
+  .dot { width: 8px; height: 8px; border-radius: 4px; background: var(--badge); flex: none; }
+  .time { flex: none; }
+  .time.waiting { color: var(--cueInk); font-weight: 600; }
+  .kind { display: flex; align-items: center; gap: 5px; margin-top: 1px; }
+  .summary { margin-top: 2px; display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; }
+  .meta { display: flex; align-items: center; gap: 4px; margin-top: 3px; white-space: nowrap; overflow: hidden; }
+  .meta .sep { color: var(--faint); flex: none; }
+  .meta .seg { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
+  .meta .seg.keep { flex: none; }
+  .meta .seg.project { flex-shrink: 1; max-width: 50%; }
+  .meta .seg.branch { flex-shrink: 4; }
+  .meta .seg span { overflow: hidden; text-overflow: ellipsis; }
+  .actions { display: flex; gap: 8px; margin-top: 10px; }
+  .rowdismiss { width: 44px; height: 44px; flex: none; display: grid; place-items: center; align-self: center; }
+  .rowdismiss span { width: 28px; height: 28px; border-radius: 14px; background: var(--surface); color: var(--muted); display: grid; place-items: center; }
+
+  .banner { display: flex; align-items: center; gap: 10px; margin: 0 4px 6px; padding: 8px 8px 8px 12px; border-radius: 12px;
+    background: color-mix(in srgb, var(--brick) 12%, var(--raised)); }
+  .banner .ic { color: var(--brick); }
+
+  .empty { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 96px 32px 0; }
+  .empty-tile { width: 52px; height: 52px; border-radius: 16px; display: grid; place-items: center;
+    background: color-mix(in srgb, var(--moss) 14%, var(--canvas)); color: var(--moss); }
+  .empty-tile.plain { background: var(--surface); color: var(--muted); }
+  .empty h2 { margin: 14px 0 0; }
+  .empty p { margin: 6px 0 0; max-width: 300px; font-size: 13.5px; line-height: 19px; }
+  .empty .btn { margin-top: 16px; }
+
+  .footbar { flex: none; border-top: 1px solid var(--line); padding: 4px 8px 38px; display: flex; justify-content: space-between; background: var(--canvas); }
+
+  .toast { position: absolute; left: 12px; right: 12px; bottom: 46px; z-index: 40; min-height: 48px; border-radius: 14px; background: var(--ink); color: var(--canvas);
+    display: flex; align-items: center; padding: 0 4px 0 16px; gap: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.18);
+    opacity: 0; transform: translateY(8px); pointer-events: none; transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease); }
+  .toast.in { opacity: 1; transform: none; pointer-events: auto; }
+  .toast .msg { flex: 1; min-width: 0; font: 400 14.5px/20px var(--f-body); color: color-mix(in srgb, var(--canvas) 82%, var(--ink)); }
+  .toast .msg { display: flex; white-space: pre; overflow: hidden; }
+  .toast .msg .fix { flex: none; }
+  .toast .undo { min-height: 44px; padding: 0 14px; font: 600 15px/20px var(--f-body); color: var(--canvas); }
+  .reduced .toast { transform: none; }
+
+  /* anatomy board */
+  .anat { width: 440px; display: flex; flex-direction: column; gap: 12px; }
+  .anat-card { position: relative; background: var(--canvas); color: var(--ink); border-radius: 20px; padding: 30px 30px 18px 40px; border: 1px solid var(--page-line); }
+  .anat-card .swipe { margin: 0; }
+  .marker { position: absolute; width: 18px; height: 18px; border-radius: 9px; background: #3b6fe0; color: #fff; font: 600 10.5px/18px var(--f-body);
+    text-align: center; z-index: 3; box-shadow: 0 0 0 2px var(--canvas); pointer-events: none; }
+  .legend { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; font-size: 13px; line-height: 18px; color: var(--page-ink); }
+  .legend b { display: inline-block; width: 18px; height: 18px; border-radius: 9px; background: #3b6fe0; color: #fff; font: 600 10.5px/18px var(--f-body);
+    text-align: center; margin-right: 8px; }
+  .legend span { color: var(--page-muted); }
+  .sources { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; background: var(--canvas); color: var(--ink); border-radius: 20px; padding: 16px; border: 1px solid var(--page-line); }
+  .sources div { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="page">
+  <aside class="panel" aria-label="Prototype controls">
+    <div>
+      <h1>Notifications center</h1>
+      <p>Phone app (apps/mobile). Reference for the React Native implementation; the spec is mobile-inbox.md next to this file.</p>
+    </div>
+    <div class="ctl states">
+      <span class="ctl-label">State</span>
+      <div class="ctl-row" id="states"></div>
+    </div>
+    <div class="ctl"><span class="ctl-label">Theme</span><div class="ctl-row" id="themes"></div></div>
+    <div class="ctl"><span class="ctl-label">Language</span><div class="ctl-row" id="langs"></div></div>
+    <div class="ctl"><span class="ctl-label">Motion</span><div class="ctl-row" id="motions"></div></div>
+    <div class="ctl">
+      <span class="ctl-label">App icon badge</span>
+      <div class="appicon">
+        <div class="appicon-tile" aria-hidden="true">
+          <svg viewBox="0 0 40 40" fill="none" stroke="#d4b273" stroke-width="3" stroke-linecap="round"><path d="M5.26 9.67A18 18 0 0 1 34.74 9.67"/><path d="M34.74 30.33A18 18 0 0 1 5.26 30.33"/></svg>
+          <span class="appicon-badge" id="appbadge" hidden></span>
+        </div>
+        <p id="appbadge-note">Drawn by the OS from the same count as the bell.</p>
+      </div>
+    </div>
+    <p>Try it: tap the bell; tap a row (it opens and leaves the count); drag a row left, or use Edit, to dismiss and Undo; filter by server; Back.</p>
+  </aside>
+
+  <div class="device"><div class="phone" id="phone">
+    <div class="island" aria-hidden="true"></div>
+    <div class="statusbar" aria-hidden="true"><span>9:41</span><span class="glyphs"><span class="bars"></span><span class="batt"></span></span></div>
+    <div class="screen" id="screen"></div>
+    <div class="toast" id="toast" role="status" aria-live="polite"><span class="msg" id="toast-msg"></span><button class="undo" id="toast-undo" type="button"></button></div>
+    <div class="homebar" aria-hidden="true"></div>
+  </div></div>
+
+  <section class="anat" aria-label="Row anatomy">
+    <div class="ctl-label">Row anatomy</div>
+    <div class="anat-card" id="anat"></div>
+    <ol class="legend" id="legend"></ol>
+    <div class="ctl-label">Lead by source</div>
+    <div class="sources" id="sources"></div>
+  </section>
+</div>
+
+<script>
+const ICONS = {
+  menu: '<path d="M4 8h16M4 16h11"/>',
+  compose: '<path d="M12 3.5H6a2.5 2.5 0 0 0-2.5 2.5v12A2.5 2.5 0 0 0 6 20.5h12a2.5 2.5 0 0 0 2.5-2.5v-6"/><path d="M18.4 2.8a2 2 0 0 1 2.8 2.8L12.5 14.3l-3.8 1 1-3.8Z"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6"/>',
+  'chev-left': '<path d="m15 6-6 6 6 6"/>',
+  'arrow-up': '<path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
+  x: '<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>',
+  'wifi-off': '<path d="m3 3 18 18"/><path d="M8.5 16.4a5 5 0 0 1 7 0M5 12.9a10 10 0 0 1 5-2.7M19 12.9a10 10 0 0 0-2.4-1.7M2 8.8a15 15 0 0 1 4.3-2.7M22 8.8A15 15 0 0 0 11 5"/><path d="M12 20h.01"/>',
+  clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+  alert: '<circle cx="12" cy="12" r="8.5"/><path d="M12 8v4.5M12 16h.01"/>',
+  bot: '<rect x="4.5" y="8" width="15" height="11.5" rx="3"/><path d="M12 4.5V8M9 13h.01M15 13h.01M2.5 13v2M21.5 13v2"/>',
+  hand: '<path d="M8 12.5V6a1.5 1.5 0 0 1 3 0v5.5M11 11V4.5a1.5 1.5 0 0 1 3 0V11M14 11V6a1.5 1.5 0 0 1 3 0v7a7 7 0 0 1-7 7h-.5a6 6 0 0 1-4.6-2.2L3.6 15a1.5 1.5 0 0 1 2.3-1.9L8 15.5"/>',
+  shield: '<path d="M12 3.5 5 6v5.5c0 4.3 2.9 7.6 7 9 4.1-1.4 7-4.7 7-9V6Z"/><path d="M12 9v3.5M12 15.5h.01"/>',
+  message: '<path d="M20.5 12a8.5 8.5 0 0 1-12.4 7.6L3.5 20.5l1-4.4A8.5 8.5 0 1 1 20.5 12Z"/>',
+  sparkles: '<path d="M11 3.5 12.7 8.3 17.5 10 12.7 11.7 11 16.5 9.3 11.7 4.5 10 9.3 8.3Z"/><path d="M18 14.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8Z"/>',
+  folder: '<path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Z"/>',
+  bell: '<path d="M6 8.5a6 6 0 0 1 12 0c0 6.5 2.5 8.5 2.5 8.5h-17S6 15 6 8.5"/><path d="M10.3 20.5a1.9 1.9 0 0 0 3.4 0"/>',
+  clipboard: '<rect x="5" y="4.5" width="14" height="16" rx="2.5"/><path d="M9 4.5V3.5h6v1M9 10.5h6M9 14.5h4"/>',
+  branch: '<circle cx="7" cy="5.5" r="2"/><circle cx="7" cy="18.5" r="2"/><circle cx="17" cy="8" r="2"/><path d="M7 7.5v9M17 10c0 4-10 2.5-10 6.5"/>',
+  swap: '<path d="m16 3.5 4 4-4 4"/><path d="M20 7.5H4"/><path d="m8 20.5-4-4 4-4"/><path d="M4 16.5h16"/>',
+  repeat: '<path d="m17 2.5 3.5 3.5-3.5 3.5"/><path d="M3.5 11.5v-1a4 4 0 0 1 4-4h13"/><path d="m7 21.5-3.5-3.5 3.5-3.5"/><path d="M20.5 12.5v1a4 4 0 0 1-4 4h-13"/>',
+  server: '<rect x="3.5" y="4" width="17" height="7" rx="2"/><rect x="3.5" y="13" width="17" height="7" rx="2"/><path d="M7.5 7.5h.01M7.5 16.5h.01"/>',
+  /* proposed new icon */
+  'help-circle': '<circle cx="12" cy="12" r="8.5"/><path d="M9.6 9.6a2.5 2.5 0 0 1 4.8.9c0 1.7-2.4 2.1-2.4 3.6M12 16.6h.01"/>',
+}
+const ic = (name, size = 20, cls = '', sw = 1.8) =>
+  `<svg class="ic ${cls}" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`
+
+const COPY = {
+  en: {
+    'inbox.open': 'Notifications', 'inbox.openCount': 'Notifications, {count} pending', 'home.openMenu': 'Open menu',
+    'inbox.title': 'Notifications', 'inbox.counts': '{waiting} waiting on you · {new} new', 'inbox.countsNone': 'Nothing pending',
+    'common.back': 'Back', 'inbox.edit': 'Edit', 'common.done': 'Done',
+    'inbox.filter': 'Filter by server', 'inbox.all': 'All',
+    'inbox.group.waiting': 'Waiting on you', 'inbox.caption.waiting': 'until you act', 'inbox.group.new': 'New', 'inbox.group.read': 'Read · last 24h',
+    'inbox.kind.approval': 'Needs your approval', 'inbox.kind.question': 'Has a question', 'inbox.kind.plan': 'Plan to review',
+    'inbox.kind.help': 'Asks for help', 'inbox.kind.error': 'Failed', 'inbox.kind.finished': 'Finished', 'inbox.kind.activity': 'Something new',
+    'inbox.source.chat': 'Chat', 'inbox.source.routine': 'Routine',
+    'inbox.lane.main': 'Conversation', 'inbox.lane.routine': 'Routine', 'inbox.lane.thread': 'Between bots',
+    'inbox.unread': 'Unread', 'inbox.offline': 'Offline', 'inbox.leavesIn': 'Leaves in {time}',
+    'age.now': 'now', 'age.m': '{n}m', 'age.h': '{n}h', 'age.d': '{n}d',
+    'inbox.deny': 'Deny', 'inbox.allowOnce': 'Allow once', 'inbox.dismiss': 'Dismiss', 'inbox.dismissItem': 'Dismiss {title}',
+    'inbox.dismissed': '“{title}” dismissed', 'inbox.undo': 'Undo', 'inbox.markRead': 'Mark as read', 'inbox.markAllRead': 'Mark all as read',
+    'inbox.emptyTitle': 'You’re all caught up',
+    'inbox.emptyBody': 'What needs you, and what ended in your chats, workspaces and bots, shows up here. Read items stay for 24 hours.',
+    'inbox.emptyFilteredTitle': 'Nothing on {server}', 'inbox.emptyFilteredBody': '{count} notifications are on your other servers.',
+    'inbox.showAll': 'Show all servers', 'inbox.settings': 'Notification settings',
+    'conn.offline': 'Can’t reach {server}', 'inbox.staleSince': 'Showing what it sent {time} ago.', 'conn.retryNow': 'Retry now',
+    'conn.reconnecting': 'Reconnecting to {server}…',
+    'cue.eyebrow': 'Waiting on you', 'inbox.openedFrom': 'Opened from Notifications', 'inbox.answer': 'Answer', 'inbox.reviewPlan': 'Review plan', 'inbox.help': 'Help',
+    'status.ready': 'Ready', 'composer.placeholder': 'Message {name}',
+  },
+  pt: {
+    'inbox.open': 'Notificações', 'inbox.openCount': 'Notificações, {count} pendentes', 'home.openMenu': 'Abrir menu',
+    'inbox.title': 'Notificações', 'inbox.counts': '{waiting} esperando por você · {new} novas', 'inbox.countsNone': 'Nada pendente',
+    'common.back': 'Voltar', 'inbox.edit': 'Editar', 'common.done': 'OK',
+    'inbox.filter': 'Filtrar por servidor', 'inbox.all': 'Tudo',
+    'inbox.group.waiting': 'Esperando por você', 'inbox.caption.waiting': 'até você agir', 'inbox.group.new': 'Novas', 'inbox.group.read': 'Lidas · últimas 24h',
+    'inbox.kind.approval': 'Precisa da sua aprovação', 'inbox.kind.question': 'Tem uma pergunta', 'inbox.kind.plan': 'Plano para revisar',
+    'inbox.kind.help': 'Pede ajuda', 'inbox.kind.error': 'Falhou', 'inbox.kind.finished': 'Terminou', 'inbox.kind.activity': 'Tem novidades',
+    'inbox.source.chat': 'Chat', 'inbox.source.routine': 'Rotina',
+    'inbox.lane.main': 'Conversa', 'inbox.lane.routine': 'Rotina', 'inbox.lane.thread': 'Entre bots',
+    'inbox.unread': 'Não lida', 'inbox.offline': 'Sem conexão', 'inbox.leavesIn': 'Sai em {time}',
+    'age.now': 'agora', 'age.m': '{n}min', 'age.h': '{n}h', 'age.d': '{n}d',
+    'inbox.deny': 'Negar', 'inbox.allowOnce': 'Permitir uma vez', 'inbox.dismiss': 'Dispensar', 'inbox.dismissItem': 'Dispensar {title}',
+    'inbox.dismissed': '“{title}” dispensada', 'inbox.undo': 'Desfazer', 'inbox.markRead': 'Marcar como lida', 'inbox.markAllRead': 'Marcar tudo como lido',
+    'inbox.emptyTitle': 'Tudo em dia',
+    'inbox.emptyBody': 'O que precisa de você, e o que terminou nos seus chats, workspaces e bots, aparece aqui. Itens lidos ficam por 24 horas.',
+    'inbox.emptyFilteredTitle': 'Nada em {server}', 'inbox.emptyFilteredBody': '{count} notificações estão nos seus outros servidores.',
+    'inbox.showAll': 'Mostrar todos os servidores', 'inbox.settings': 'Ajustes de notificações',
+    'conn.offline': 'Sem acesso a {server}', 'inbox.staleSince': 'Mostrando o que ele enviou há {time}.', 'conn.retryNow': 'Tentar agora',
+    'conn.reconnecting': 'Reconectando a {server}…',
+    'cue.eyebrow': 'Esperando por você', 'inbox.openedFrom': 'Aberto pelas Notificações', 'inbox.answer': 'Responder', 'inbox.reviewPlan': 'Revisar plano', 'inbox.help': 'Ajudar',
+    'status.ready': 'Pronto', 'composer.placeholder': 'Mensagem para {name}',
+  },
+}
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])
+const t = (key, vars = {}) => (COPY[state.lang][key] ?? key).replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? '')
+const age = (min) => min < 1 ? t('age.now') : min < 60 ? t('age.m', { n: min }) : min < 1440 ? t('age.h', { n: Math.floor(min / 60) }) : t('age.d', { n: Math.floor(min / 1440) })
+
+const SERVERS = { home: 'Home server', work: 'Work server' }
+const BOTS = { Scout: '#4f7fd9', Ledger: '#c2672e' }
+const ITEMS = [
+  { key: 'a1', source: 'workspace', title: 'Add the inbox badge', project: 'maestrly-app', branch: 'feat/inbox-badge', kind: 'approval', group: 'waiting', unread: true, summary: 'Run npm publish --tag next in packages/protocol', server: 'home', ago: 2 },
+  { key: 'q1', source: 'bot', title: 'Scout', lane: 'main', kind: 'question', group: 'waiting', unread: true, summary: 'Which branch should the release notes compare against, main or release/1.8?', server: 'work', ago: 14 },
+  { key: 'p1', source: 'workspace', title: 'Move sessions to SQLite', project: 'api-gateway', branch: 'chore/sqlite-sessions', kind: 'plan', group: 'waiting', unread: false, summary: '7 steps, touches 12 files in src/session', server: 'work', ago: 41 },
+  { key: 'h1', source: 'bot', title: 'Ledger', lane: 'routine', kind: 'help', group: 'waiting', unread: true, summary: 'The bank export asks for a one-time code sent to your phone.', server: 'home', ago: 62 },
+  { key: 'n1', source: 'chat', title: 'Explain push delivery on a locked phone', kind: 'finished', group: 'new', unread: true, summary: 'APNs holds the alert until the phone wakes; the badge number comes from the payload.', server: 'home', ago: 5 },
+  { key: 'n2', source: 'routine', title: 'Nightly backup check', kind: 'error', group: 'new', unread: true, summary: 'rsync exited with code 23: some files were not transferred.', server: 'home', ago: 184 },
+  { key: 'n3', source: 'bot', title: 'Scout', lane: 'thread', kind: 'activity', group: 'new', unread: true, summary: null, server: 'work', ago: 371 },
+  { key: 'r1', source: 'workspace', title: 'Fix the flaky Windows e2e', project: 'maestrly-app', branch: 'fix/e2e-windows', kind: 'finished', group: 'read', unread: false, summary: null, server: 'home', ago: 492, leaves: 960 },
+  { key: 'r2', source: 'bot', title: 'Ledger', lane: 'main', kind: 'finished', group: 'read', unread: false, summary: null, server: 'home', ago: 1330, leaves: 110 },
+  { key: 'r3', source: 'chat', title: 'Summarize the CI failures', kind: 'error', group: 'read', unread: false, summary: null, server: 'work', ago: 1200, leaves: 240 },
+]
+const pick = (...keys) => ITEMS.filter((i) => keys.includes(i.key))
+const PRESETS = [
+  { id: 'bell0', label: 'Header · bell without badge', screen: 'home', items: () => pick('r1', 'r2') },
+  { id: 'bell3', label: 'Header · badge 3', screen: 'home', items: () => pick('a1', 'q1', 'n1', 'r1', 'r2') },
+  { id: 'bell99', label: 'Header · badge 99+', screen: 'home', items: () => ITEMS, extra: 121 },
+  { id: 'center', label: 'Center · all sections', screen: 'center', items: () => ITEMS },
+  { id: 'filtered', label: 'Center · filtered by Work server', screen: 'center', items: () => ITEMS, filter: 'work' },
+  { id: 'offline', label: 'Center · Work server offline', screen: 'center', items: () => ITEMS, offline: 'work' },
+  { id: 'swipe', label: 'Center · row swiped open', screen: 'center', items: () => ITEMS, open: 'n2' },
+  { id: 'toast', label: 'Center · dismissed, Undo toast', screen: 'center', items: () => ITEMS, dismiss: 'n1' },
+  { id: 'edit', label: 'Center · Edit mode', screen: 'center', items: () => ITEMS, edit: true },
+  { id: 'emptyf', label: 'Center · filter with nothing', screen: 'center', items: () => pick('a1', 'n1', 'n2', 'r1'), filter: 'work', keepChips: true },
+  { id: 'empty', label: 'Center · empty', screen: 'center', items: () => [] },
+]
+
+const state = { theme: 'light', lang: 'en', reduced: false, screen: 'home', items: [], extra: 0, filter: null, offline: null, reconnecting: false,
+  edit: false, open: null, current: null, toast: null, preset: 'bell3', keepChips: false }
+let toastTimer = null
+let lastBadge = null
+
+function applyPreset(id) {
+  const p = PRESETS.find((x) => x.id === id)
+  Object.assign(state, { preset: id, screen: p.screen, items: p.items().map((i) => ({ ...i })), extra: p.extra ?? 0, filter: p.filter ?? null,
+    offline: p.offline ?? null, edit: !!p.edit, open: p.open ?? null, current: null, reconnecting: false, keepChips: !!p.keepChips })
+  hideToast(true)
+  render('none')
+  if (p.dismiss) dismiss(p.dismiss)
+}
+
+const listed = () => state.items.filter((i) => !i.dismissed)
+const isPending = (i) => i.group === 'waiting' || (i.group === 'new' && i.unread)
+const pendingCount = () => listed().filter(isPending).length + state.extra
+const badgeText = (n) => (n > 99 ? '99+' : String(n))
+const servers = () => [...new Set(listed().map((i) => i.server))]
+const multiServer = () => state.keepChips || servers().length > 1
+
+/* ---------- pieces ---------- */
+function avatar(name, size = 40) {
+  const tint = BOTS[name]
+  return `<span aria-hidden="true" style="position:relative;display:grid;place-items:center;width:${size}px;height:${size}px;flex:none">
+    <span style="width:${size * 0.74}px;height:${size * 0.74}px;border-radius:50%;display:grid;place-items:center;background:color-mix(in srgb, ${tint} 20%, var(--raised));color:color-mix(in srgb, ${tint} 78%, var(--ink));font:600 ${size * 0.34}px/${size * 0.4}px var(--f-display)">${name[0]}</span>
+    <svg width="${size}" height="${size}" viewBox="0 0 40 40" style="position:absolute;inset:0" fill="none" stroke="${tint}52" stroke-width="2.4" stroke-linecap="round"><path d="M5.26 9.67A18 18 0 0 1 34.74 9.67"/><path d="M34.74 30.33A18 18 0 0 1 5.26 30.33"/></svg></span>`
+}
+function lead(i) {
+  if (i.source === 'bot') return avatar(i.title)
+  const icon = i.source === 'workspace' ? 'folder' : i.source === 'chat' ? 'message' : 'clock'
+  return `<span class="tile" aria-hidden="true">${ic(icon, 19)}</span>`
+}
+const KIND = {
+  approval: ['shield', 'cue'], question: ['help-circle', 'cue'], plan: ['clipboard', 'cue'], help: ['hand', 'cue'],
+  error: ['alert', 'brick'], finished: ['check', 'moss'], activity: ['sparkles', 'muted'],
+}
+function origin(i) {
+  const segs = []
+  if (i.source === 'workspace') {
+    segs.push(`<span class="seg project"><span class="t-small muted">${esc(i.project)}</span></span>`)
+    segs.push(`<span class="seg branch">${ic('branch', 12, 'muted')}<span class="t-mono muted">${esc(i.branch)}</span></span>`)
+  } else if (i.source === 'chat') segs.push(`<span class="seg keep">${ic('message', 12, 'muted')}<span class="t-small muted">${t('inbox.source.chat')}</span></span>`)
+  else if (i.source === 'routine') segs.push(`<span class="seg keep">${ic('clock', 12, 'muted')}<span class="t-small muted">${t('inbox.source.routine')}</span></span>`)
+  else {
+    const li = i.lane === 'routine' ? 'repeat' : i.lane === 'thread' ? 'swap' : 'bot'
+    segs.push(`<span class="seg keep">${ic(li, 12, 'muted')}<span class="t-small muted">${t('inbox.lane.' + i.lane)}</span></span>`)
+  }
+  if (multiServer() && !state.filter) {
+    const off = state.offline === i.server
+    segs.push(`<span class="seg keep" data-anat="7">${off ? ic('wifi-off', 12, 'brick') : ''}<span class="t-small muted">${esc(SERVERS[i.server])}</span></span>`)
+  }
+  return segs.join('<span class="sep t-small" aria-hidden="true">·</span>')
+}
+function originText(i) {
+  const parts = i.source === 'workspace' ? [i.project, i.branch] : i.source === 'chat' ? [t('inbox.source.chat')] : i.source === 'routine' ? [t('inbox.source.routine')] : [t('inbox.lane.' + i.lane)]
+  if (multiServer() && !state.filter) parts.push(SERVERS[i.server] + (state.offline === i.server ? ', ' + t('inbox.offline') : ''))
+  return parts
+}
+function timeOf(i) {
+  if (i.group === 'read' && i.leaves !== undefined && i.leaves < 180) return { text: t('inbox.leavesIn', { time: age(Math.max(60, Math.ceil(i.leaves / 60) * 60)) }), cls: 'faint' }
+  return { text: age(i.ago), cls: i.group === 'waiting' ? 'waiting' : 'muted' }
+}
+function row(i, { anat = false } = {}) {
+  const [kIcon, kTone] = KIND[i.kind]
+  const read = i.group === 'read'
+  const tone = read ? 'muted' : kTone
+  const stale = state.offline === i.server
+  const time = timeOf(i)
+  const lines = i.group === 'waiting' ? 2 : 1
+  const a11y = [i.title, t('inbox.kind.' + i.kind), read ? null : i.summary, ...originText(i), time.text, i.unread ? t('inbox.unread') : null].filter(Boolean).join(', ')
+  const actions = i.kind === 'approval' && i.group === 'waiting' && !state.edit
+    ? `<div class="actions"><button class="btn secondary" data-act="deny" data-key="${i.key}" ${stale ? 'disabled' : ''}>${t('inbox.deny')}</button><button class="btn primary" data-act="allow" data-key="${i.key}" ${stale ? 'disabled' : ''}>${t('inbox.allowOnce')}</button></div>` : ''
+  const trailing = state.edit && !anat
+    ? `<button class="rowdismiss" data-act="dismiss" data-key="${i.key}" aria-label="${esc(t('inbox.dismissItem', { title: i.title }))}"><span>${ic('x', 16)}</span></button>` : ''
+  const m = (n) => (anat ? ` data-anat="${n}"` : '')
+  return `<div class="swipe${state.open === i.key && !anat ? ' open' : ''}" data-key="${i.key}">
+    <button class="swipe-action" data-act="dismiss" data-key="${i.key}" aria-label="${esc(t('inbox.dismissItem', { title: i.title }))}" tabindex="${state.open === i.key ? 0 : -1}">${ic('x', 20)}<span>${t('inbox.dismiss')}</span></button>
+    <div class="row${i.unread ? ' unread' : ''}${stale ? ' stale' : ''}${state.edit && !anat ? ' editing' : ''}" role="button" tabindex="0" data-act="open" data-key="${i.key}" aria-label="${esc(a11y)}">
+      <span class="lead"${m(1)}>${lead(i)}</span>
+      <span class="content">
+        <span class="l1"><span class="title trunc"${m(2)}>${esc(i.title)}</span>${i.unread ? `<span class="dot"${m(8)} aria-hidden="true"></span>` : ''}${state.edit && !anat ? '' : `<span class="time t-small num ${time.cls}"${m(9)}>${time.text}</span>`}</span>
+        <span class="kind"${m(3)}><span class="${tone}">${ic(kIcon, 14, '', 2)}</span><span class="t-label ${read ? 'muted' : kTone === 'cue' || kTone === 'brick' ? kTone : ''}">${t('inbox.kind.' + i.kind)}</span></span>
+        ${!read && i.summary ? `<span class="summary t-sub muted" style="-webkit-line-clamp:${lines}"${m(4)}>${esc(i.summary)}</span>` : ''}
+        <span class="meta"${m(5)}>${origin(i)}</span>
+        ${actions ? (anat ? actions.replace('class="actions"', 'class="actions" data-anat="6"') : actions) : ''}
+      </span>
+      ${trailing}
+    </div></div>`
+}
+function bellButton() {
+  const n = pendingCount()
+  const label = n ? t('inbox.openCount', { count: n }) : t('inbox.open')
+  const pop = lastBadge !== null && lastBadge === 0 && n > 0 ? ' pop' : ''
+  lastBadge = n
+  return `<button class="iconbtn" data-act="bell" aria-label="${esc(label)}">${ic('bell', 22)}${n ? `<span class="badge${pop}" aria-hidden="true">${badgeText(n)}</span>` : ''}</button>`
+}
+
+/* ---------- screens ---------- */
+function homeScreen() {
+  const cur = state.current
+  let titleLead = avatar('Scout', 26), titleName = 'Scout', titleLine = `<span class="t-small muted">${t('status.ready')}</span>`, body
+  if (cur) {
+    titleName = cur.title
+    titleLead = cur.source === 'bot' ? avatar(cur.title, 26) : ''
+    titleLine = `<span class="t-small muted trunc">${esc(cur.source === 'workspace' ? cur.project : SERVERS[cur.server])}</span>`
+    const waiting = cur.group === 'waiting'
+    const act = { approval: t('inbox.allowOnce'), question: t('inbox.answer'), plan: t('inbox.reviewPlan'), help: t('inbox.help') }[cur.kind]
+    body = `<span class="t-small faint opened-note">${t('inbox.openedFrom')}</span>
+      ${cur.summary && !waiting ? `<div class="t-body">${esc(cur.summary)}</div>` : ''}
+      ${waiting ? `<div class="cuecard"><span class="t-label cue">${t('cue.eyebrow')}</span><span class="t-bodyMedium">${t('inbox.kind.' + cur.kind)}</span>
+        <span class="t-sub muted">${esc(cur.summary ?? '')}</span>
+        <div class="actions" style="margin-top:6px">${cur.kind === 'approval' ? `<button class="btn secondary" data-act="resolve" data-key="${cur.key}">${t('inbox.deny')}</button>` : ''}<button class="btn primary" data-act="resolve" data-key="${cur.key}">${act}</button></div></div>` : ''}`
+  } else {
+    body = `<div class="bubble t-body">Can you check the release branch before Friday?</div>
+      <div class="t-body">Sure. I’ll compare <span class="t-mono">release/1.8</span> with <span class="t-mono">main</span> and list what changed, then draft the notes for you to review.</div>`
+  }
+  return `<div class="header">
+      <button class="iconbtn" aria-label="${t('home.openMenu')}">${ic('menu', 22)}</button>
+      ${bellButton()}
+      <div style="flex:1;min-width:0;display:flex;justify-content:center">
+        <button class="title-btn"><span class="title-line">${titleLead}<span class="t-display trunc">${esc(titleName)}</span></span>${titleLine}</button>
+      </div>
+      <button class="iconbtn" aria-label="Search">${ic('search', 22)}</button>
+      <button class="iconbtn" aria-label="New chat">${ic('compose', 22)}</button>
+    </div>
+    <div class="convo">${body}</div>
+    <div class="composer"><span class="t-body faint trunc">${t('composer.placeholder', { name: cur ? cur.title : 'Scout' })}</span><span class="send" aria-hidden="true">${ic('arrow-up', 18, '', 2.2)}</span></div>`
+}
+function centerScreen() {
+  const all = listed()
+  const vis = all.filter((i) => !state.filter || i.server === state.filter)
+  const waiting = all.filter((i) => i.group === 'waiting').length
+  const fresh = all.filter((i) => i.group === 'new' && i.unread).length + state.extra
+  const counts = waiting + fresh ? t('inbox.counts', { waiting, new: fresh }) : t('inbox.countsNone')
+  const anyUnread = all.some((i) => i.unread)
+  let chips = ''
+  if (multiServer() && all.length) {
+    const opts = [{ id: null, label: t('inbox.all'), n: all.length }, ...Object.keys(SERVERS).map((s) => ({ id: s, label: SERVERS[s], n: all.filter((i) => i.server === s).length }))]
+    chips = `<div class="chips" role="radiogroup" aria-label="${t('inbox.filter')}">${opts.map((o) => `<button class="chip" role="radio" aria-checked="${state.filter === o.id}" data-act="filter" data-id="${o.id ?? ''}" aria-label="${esc(o.label)}, ${o.n}${o.id && state.offline === o.id ? ', ' + t('inbox.offline') : ''}">${o.id && state.offline === o.id ? ic('wifi-off', 14, 'off') : ''}<span>${esc(o.label)}</span><span class="count">${o.n}</span></button>`).join('')}</div>`
+  }
+  let list = ''
+  if (state.offline && (!state.filter || state.filter === state.offline) && all.some((i) => i.server === state.offline)) {
+    list += state.reconnecting
+      ? `<div class="banner" role="alert">${ic('wifi-off', 18)}<div style="flex:1"><div style="font-size:13.5px;line-height:18px">${t('conn.reconnecting', { server: SERVERS[state.offline] })}</div></div></div>`
+      : `<div class="banner" role="alert">${ic('wifi-off', 18)}<div style="flex:1;min-width:0"><div style="font-size:13.5px;line-height:18px">${t('conn.offline', { server: SERVERS[state.offline] })}</div><div class="t-small muted">${t('inbox.staleSince', { time: age(12) })}</div></div><button class="btn secondary" data-act="retry">${t('conn.retryNow')}</button></div>`
+  }
+  if (!all.length) {
+    list += `<div class="empty"><span class="empty-tile">${ic('check', 24, '', 2)}</span><h2 class="t-heading">${t('inbox.emptyTitle')}</h2><p class="muted">${t('inbox.emptyBody')}</p>
+      <button class="btn secondary">${ic('bell', 16)}${t('inbox.settings')}</button></div>`
+  } else if (!vis.length) {
+    list += `<div class="empty"><span class="empty-tile plain">${ic('server', 24)}</span><h2 class="t-heading">${t('inbox.emptyFilteredTitle', { server: SERVERS[state.filter] })}</h2><p class="muted">${t('inbox.emptyFilteredBody', { count: all.length })}</p>
+      <button class="btn secondary" data-act="filter" data-id="">${t('inbox.showAll')}</button></div>`
+  } else {
+    let first = true
+    for (const g of ['waiting', 'new', 'read']) {
+      const items = vis.filter((i) => i.group === g).sort((a, b) => a.ago - b.ago || a.key.localeCompare(b.key))
+      if (!items.length) continue
+      list += `<section aria-label="${t('inbox.group.' + g)}"><div class="section-h${first ? ' first' : ''}" role="heading" aria-level="2">
+        <span class="t-label ${g === 'waiting' ? 'cue' : 'muted'}">${t('inbox.group.' + g)}</span><span class="count-pill${g === 'waiting' ? ' cue' : ''}">${items.length}</span>
+        ${g === 'waiting' ? `<span class="caption t-small faint">${t('inbox.caption.waiting')}</span>` : ''}</div>${items.map((i) => row(i)).join('')}</section>`
+      first = false
+    }
+  }
+  return `<div class="chead">
+      <div class="side"><button class="iconbtn" data-act="back" aria-label="${t('common.back')}">${ic('chev-left', 24)}</button></div>
+      <div class="mid" role="heading" aria-level="1"><span class="t-display trunc">${t('inbox.title')}</span><span class="t-small muted trunc">${counts}</span></div>
+      <div class="side r">${all.length ? `<button class="textbtn" data-act="edit">${state.edit ? t('common.done') : t('inbox.edit')}</button>` : ''}</div>
+    </div>
+    ${chips}
+    <div class="list" id="list">${list}</div>
+    ${state.edit ? `<div class="footbar"><button class="textbtn" data-act="readall" ${anyUnread ? '' : 'disabled'}>${t('inbox.markAllRead')}</button></div>` : ''}`
+}
+
+function render(motion = 'none') {
+  document.documentElement.dataset.theme = state.theme
+  document.documentElement.lang = state.lang === 'pt' ? 'pt-BR' : 'en'
+  document.body.classList.toggle('reduced', state.reduced)
+  const screen = document.getElementById('screen')
+  const prev = document.getElementById('list')?.scrollTop ?? 0
+  screen.innerHTML = state.screen === 'home' ? homeScreen() : centerScreen()
+  screen.classList.remove('enter', 'leave')
+  if (motion !== 'none' && !state.reduced) { void screen.offsetWidth; screen.classList.add(motion) }
+  const list = document.getElementById('list')
+  if (list && motion === 'none') list.scrollTop = prev
+  const n = pendingCount()
+  const b = document.getElementById('appbadge')
+  b.hidden = !n
+  b.textContent = n > 9999 ? '9999+' : n
+  document.getElementById('toast-undo').textContent = t('inbox.undo')
+  if (state.toast) toastText()
+  renderPanel()
+  renderAnatomy()
+}
+
+/* ---------- actions ---------- */
+const find = (key) => state.items.find((i) => i.key === key)
+function openItem(key) {
+  const i = find(key)
+  if (!i) return
+  if (i.group === 'new') { i.group = 'read'; i.leaves = 1440 }
+  i.unread = false
+  state.current = { ...i }
+  state.screen = 'home'; state.edit = false; state.open = null
+  render('leave')
+}
+function resolve(key) {
+  const i = find(key)
+  if (!i) return
+  i.group = 'read'; i.kind = 'finished'; i.unread = false; i.leaves = 1440; i.ago = 0
+  if (state.current?.key === key) state.current = { ...i }
+}
+function dismiss(key) {
+  const i = find(key)
+  if (!i) return
+  if (state.toast && state.toast.key !== key) clearTimeout(toastTimer)
+  const before = { ...i }
+  i.dismissed = true; i.unread = false
+  state.open = null
+  state.toast = { key, title: i.title, before }
+  render()
+  showToast()
+}
+function showToast() {
+  const el = document.getElementById('toast')
+  toastText()
+  el.classList.add('in')
+  clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => hideToast(), 6000)
+}
+/* Only the title truncates: the words around {title} stay whole in either language. */
+function toastText() {
+  const [before, after] = COPY[state.lang]['inbox.dismissed'].split('{title}')
+  document.getElementById('toast-msg').innerHTML = `<span class="fix">${esc(before)}</span><span class="trunc">${esc(state.toast.title)}</span><span class="fix">${esc(after)}</span>`
+}
+function hideToast(now) {
+  clearTimeout(toastTimer)
+  state.toast = null
+  document.getElementById('toast').classList.remove('in')
+}
+function undo() {
+  if (!state.toast) return
+  const i = find(state.toast.key)
+  Object.assign(i, state.toast.before)
+  delete i.dismissed
+  hideToast()
+  render()
+}
+function collapseThenDismiss(wrap, key) {
+  if (state.reduced) return dismiss(key)
+  wrap.style.height = wrap.offsetHeight + 'px'
+  void wrap.offsetHeight
+  wrap.style.height = '0px'; wrap.style.opacity = '0'; wrap.style.marginBottom = '0px'
+  setTimeout(() => dismiss(key), 200)
+}
+
+const phone = document.getElementById('phone')
+let suppressClick = false
+phone.addEventListener('click', (e) => {
+  if (suppressClick) { suppressClick = false; e.stopPropagation(); return }
+  const el = e.target.closest('[data-act]')
+  if (state.open && !e.target.closest('.swipe.open')) { state.open = null; render(); if (!el || el.dataset.act === 'open') return }
+  if (!el) return
+  const { act, key, id } = el.dataset
+  if (act === 'bell') { state.screen = 'center'; state.open = null; render('enter') }
+  else if (act === 'back') { state.screen = 'home'; state.edit = false; state.open = null; render('leave') }
+  else if (act === 'open') { if (!state.edit) openItem(key) }
+  else if (act === 'allow' || act === 'deny') { e.stopPropagation(); resolve(key); render() }
+  else if (act === 'resolve') { resolve(key); render() }
+  else if (act === 'dismiss') { e.stopPropagation(); const wrap = el.closest('.swipe'); wrap ? collapseThenDismiss(wrap, key) : dismiss(key) }
+  else if (act === 'filter') { state.filter = id || null; state.open = null; render() }
+  else if (act === 'edit') { state.edit = !state.edit; state.open = null; render() }
+  else if (act === 'readall') { listed().forEach((i) => { if (i.group === 'new' && i.unread) { i.group = 'read'; i.leaves = 1440 } i.unread = false }); state.extra = 0; render() }
+  else if (act === 'retry') { state.reconnecting = true; render(); setTimeout(() => { state.reconnecting = false; state.offline = null; render() }, 1200) }
+})
+phone.addEventListener('keydown', (e) => {
+  const row = e.target.closest?.('.row')
+  if (row && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); row.click() }
+  if (row && (e.key === 'Delete' || e.key === 'Backspace')) { e.preventDefault(); dismiss(row.dataset.key) }
+})
+document.getElementById('toast-undo').addEventListener('click', undo)
+
+/* Swipe: same thresholds as SwipeToDelete, plus a full swipe that commits. */
+let drag = null
+phone.addEventListener('pointerdown', (e) => {
+  const wrap = e.target.closest('.swipe')
+  if (!wrap || state.edit || e.target.closest('.swipe-action, .btn') || !wrap.closest('#list')) return
+  drag = { wrap, row: wrap.querySelector('.row'), key: wrap.dataset.key, x0: e.clientX, y0: e.clientY, base: wrap.classList.contains('open') ? -88 : 0, x: 0, active: false, lastX: e.clientX, lastT: performance.now(), v: 0 }
+})
+window.addEventListener('pointermove', (e) => {
+  if (!drag) return
+  const dx = e.clientX - drag.x0, dy = e.clientY - drag.y0
+  if (!drag.active) {
+    if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * 1.5) { drag.active = true; drag.wrap.classList.add('dragging') }
+    else if (Math.abs(dy) > 10) { drag = null; return } else return
+  }
+  const now = performance.now()
+  drag.v = (e.clientX - drag.lastX) / Math.max(1, now - drag.lastT)
+  drag.lastX = e.clientX; drag.lastT = now
+  drag.x = Math.min(0, drag.base + dx)
+  drag.row.style.transform = `translateX(${drag.x}px)`
+})
+window.addEventListener('pointerup', () => {
+  if (!drag) return
+  const d = drag; drag = null
+  if (!d.active) return
+  suppressClick = true
+  setTimeout(() => (suppressClick = false), 0)
+  d.wrap.classList.remove('dragging')
+  d.row.style.transform = ''
+  const w = d.wrap.offsetWidth
+  if (d.x < -w * 0.6) { d.row.style.transform = `translateX(${-w}px)`; return collapseThenDismiss(d.wrap, d.key) }
+  const open = d.v < -0.4 || (d.v <= 0.4 && d.x < -44)
+  state.open = open ? d.key : null
+  d.wrap.classList.toggle('open', open)
+  document.querySelectorAll('#list .swipe.open').forEach((s) => { if (s !== d.wrap) s.classList.remove('open') })
+})
+
+/* ---------- side panels ---------- */
+function seg(containerId, options, value, onPick) {
+  const c = document.getElementById(containerId)
+  c.innerHTML = options.map(([v, label]) => `<button type="button" aria-pressed="${v === value}" data-v="${v}">${label}</button>`).join('')
+  c.onclick = (e) => { const b = e.target.closest('button'); if (b) onPick(b.dataset.v) }
+}
+function renderPanel() {
+  seg('states', PRESETS.map((p) => [p.id, p.label]), state.preset, applyPreset)
+  seg('themes', [['light', 'Light'], ['dark', 'Dark']], state.theme, (v) => { state.theme = v; render() })
+  seg('langs', [['en', 'English'], ['pt', 'Português (BR)']], state.lang, (v) => { state.lang = v; render() })
+  seg('motions', [['full', 'Full'], ['reduced', 'Reduced']], state.reduced ? 'reduced' : 'full', (v) => { state.reduced = v === 'reduced'; render() })
+}
+const LEGEND = [
+  ['Lead, 40 × 40', 'bot avatar with its tint, or a tile: folder (workspace chat), message (chat), clock (routine)'],
+  ['Title', 'conversation, chat or bot name; semibold while unread'],
+  ['Kind', '14 pt glyph + label; amber while it waits on you, brick when failed'],
+  ['Summary', 'what it asks or said; 2 lines when waiting, 1 when new, hidden once read'],
+  ['Origin', 'project + branch, Chat, Routine, or the bot’s lane'],
+  ['Inline actions', 'approvals only: Deny and Allow once'],
+  ['Place', 'server (and environment), only with more than one server'],
+  ['Unread dot', '8 pt, badge red'],
+  ['Relative time', 'now, 3m, 2h, 1d; amber while waiting; “Leaves in 2h” near expiry'],
+]
+function renderAnatomy() {
+  const card = document.getElementById('anat')
+  const save = { edit: state.edit, open: state.open, offline: state.offline, keepChips: state.keepChips, filter: state.filter }
+  Object.assign(state, { edit: false, open: null, offline: null, keepChips: true, filter: null })
+  card.innerHTML = row(ITEMS[0], { anat: true })
+  document.getElementById('sources').innerHTML = [
+    [avatar('Ledger'), 'Bot'], [`<span class="tile">${ic('folder', 19)}</span>`, 'Workspace chat'], [`<span class="tile">${ic('message', 19)}</span>`, 'Chat'], [`<span class="tile">${ic('clock', 19)}</span>`, 'Routine'],
+  ].map(([l, n]) => `<div>${l}<span class="t-small muted">${n}</span></div>`).join('')
+  Object.assign(state, save)
+  document.getElementById('legend').innerHTML = LEGEND.map(([a, b], n) => `<li><b>${n + 1}</b>${a} <span>— ${b}</span></li>`).join('')
+  requestAnimationFrame(() => {
+    card.querySelectorAll('.marker').forEach((old) => old.remove())
+    const z = parseFloat(document.body.style.zoom || 1)
+    const base = card.getBoundingClientRect()
+    card.querySelectorAll('[data-anat]').forEach((el) => {
+      const r = el.getBoundingClientRect()
+      const box = { l: (r.left - base.left) / z, t: (r.top - base.top) / z, w: r.width / z, h: r.height / z }
+      const n = Number(el.dataset.anat)
+      const m = document.createElement('span')
+      m.className = 'marker'
+      m.textContent = n
+      if (n >= 2 && n <= 6) { m.style.left = '11px'; m.style.top = box.t + box.h / 2 - 9 + 'px' }
+      else if (n === 7) { m.style.left = box.l + box.w + 4 + 'px'; m.style.top = box.t + box.h / 2 - 9 + 'px' }
+      else { m.style.left = box.l + box.w / 2 - 9 + 'px'; m.style.top = box.t - 22 + 'px' }
+      card.appendChild(m)
+    })
+  })
+}
+
+const params = new URLSearchParams(location.search)
+if (params.get('theme')) state.theme = params.get('theme')
+if (params.get('lang')) state.lang = params.get('lang')
+if (params.get('fit')) document.body.style.zoom = Math.min(1, innerHeight / 916).toFixed(3)
+applyPreset(params.get('state') || 'bell3')
+</script>
+</body>
+</html>
