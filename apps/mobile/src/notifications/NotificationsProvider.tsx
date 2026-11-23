@@ -1,4 +1,9 @@
-import { FLEET_PUSH_DEFAULTS, type FleetPushCategory, type FleetPushPreferences } from '@maestrly/bot-fleet-protocol'
+import {
+  FLEET_ATTENTION_FEATURE,
+  FLEET_PUSH_DEFAULTS,
+  type FleetPushCategory,
+  type FleetPushPreferences,
+} from '@maestrly/bot-fleet-protocol'
 import Constants from 'expo-constants'
 import * as Device from 'expo-device'
 import * as Notifications from 'expo-notifications'
@@ -37,6 +42,8 @@ type NotificationsValue = {
   /** Whether the phone already offered notifications after pairing. */
   offered: boolean
   markOffered(): void
+  /** Re-sends push registrations with updated `badgeOthers` for servers advertising `attention`. */
+  syncBadgeOthers(badgeOthersByServer: Readonly<Record<string, number>>): Promise<void>
 }
 
 const NotificationsContext = createContext<NotificationsValue | null>(null)
@@ -77,6 +84,11 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
   }
   const serversRef = useRef(servers)
   serversRef.current = servers
+  const badgeOthersRef = useRef<Readonly<Record<string, number>>>({})
+  const localeRef = useRef(locale)
+  localeRef.current = locale
+  const preferencesRef = useRef(preferences)
+  preferencesRef.current = preferences
 
   useEffect(() => {
     if (!native || !kv) return
@@ -90,7 +102,7 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
           target.kind === shown.kind &&
           target.id === shown.id &&
           (!target.environmentId || target.environmentId === shown.environmentId)
-        return { shouldShowBanner: !visible, shouldShowList: true, shouldPlaySound: !visible, shouldSetBadge: false }
+        return { shouldShowBanner: !visible, shouldShowList: true, shouldPlaySound: !visible, shouldSetBadge: true }
       },
     })
     if (Platform.OS === 'android')
@@ -164,6 +176,7 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       platform: Platform.OS === 'android' ? 'android' : 'ios',
       locale,
       preferences,
+      badgeOthersByServer: badgeOthersRef.current,
       clientFor,
       skip: (server) => server.id === DEMO_SERVER.id,
     }).then((value) => alive && setResults(value))
@@ -190,7 +203,9 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       await Linking.openSettings().catch(() => {})
       return 'denied'
     }
-    const asked = await Notifications.requestPermissionsAsync()
+    const asked = await Notifications.requestPermissionsAsync({
+      ios: { allowAlert: true, allowBadge: true, allowSound: true },
+    })
     const next = toPermission(asked)
     setPermission(next)
     return next
@@ -221,6 +236,31 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     if (kv) void kv.set(OFFERED_KEY, '1').catch(() => {})
   }, [kv])
 
+  const syncBadgeOthers = useCallback(
+    async (badgeOthersByServer: Readonly<Record<string, number>>) => {
+      badgeOthersRef.current = { ...badgeOthersRef.current, ...badgeOthersByServer }
+      if (!native || !token || permission !== 'granted') return
+      const targets = serversRef.current.filter(
+        (server) =>
+          server.id !== DEMO_SERVER.id &&
+          server.features.includes(FLEET_ATTENTION_FEATURE) &&
+          server.id in badgeOthersByServer
+      )
+      if (!targets.length) return
+      const updated = await registerWithServers({
+        servers: targets,
+        token,
+        platform: Platform.OS === 'android' ? 'android' : 'ios',
+        locale: localeRef.current,
+        preferences: preferencesRef.current,
+        badgeOthersByServer,
+        clientFor,
+      })
+      setResults((previous) => ({ ...previous, ...updated }))
+    },
+    [token, permission, clientFor]
+  )
+
   const value = useMemo<NotificationsValue>(
     () => ({
       available: native,
@@ -233,8 +273,9 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       sendTest,
       offered,
       markOffered,
+      syncBadgeOthers,
     }),
-    [permission, problem, preferences, setPreference, enable, results, sendTest, offered, markOffered]
+    [permission, problem, preferences, setPreference, enable, results, sendTest, offered, markOffered, syncBadgeOthers]
   )
   return <NotificationsContext.Provider value={value}>{children}</NotificationsContext.Provider>
 }

@@ -1,4 +1,9 @@
-import { fleetGatewayEventSchema, type FleetGatewayEvent } from '@maestrly/bot-fleet-protocol'
+import {
+  fleetAttentionUpdatedEventSchema,
+  fleetGatewayEventSchema,
+  type FleetAttentionUpdatedEvent,
+  type FleetGatewayEvent,
+} from '@maestrly/bot-fleet-protocol'
 import { SseParser } from './sse'
 
 export type StreamState = 'connecting' | 'open' | 'retrying' | 'unauthorized' | 'incompatible' | 'closed'
@@ -14,6 +19,7 @@ export type EventStreamOptions = {
   fetch: StreamingFetch
   createDecoder: () => TextDecoderLike
   onEvent: (event: FleetGatewayEvent) => void
+  onAttention?: (event: FleetAttentionUpdatedEvent) => void
   onState: (state: StreamState, detail?: { retryInMs: number }) => void
   random?: () => number
   watchdogMs?: number
@@ -81,8 +87,16 @@ export function openEventStream(o: EventStreamOptions): { close(): void; reconne
         for (const frame of parser.push(decoder.decode(value, { stream: true }))) {
           if (!current()) break
           if (frame.event !== 'fleet') continue
+          const payload = json(frame.data)
+          if (o.onAttention) {
+            const attention = fleetAttentionUpdatedEventSchema.safeParse(payload)
+            if (attention.success) {
+              o.onAttention(attention.data)
+              continue
+            }
+          }
           // Newer gateways may send event types this app does not know yet.
-          const parsed = fleetGatewayEventSchema.safeParse(json(frame.data))
+          const parsed = fleetGatewayEventSchema.safeParse(payload)
           if (!parsed.success) continue
           if (parsed.data.type === 'hello') {
             attempt = 0

@@ -58,6 +58,8 @@ type Servers = {
   setCurrent(current: Current | null): void
   /** A gateway client for a paired server, such as to register for notifications; null for the demo server. */
   clientFor(server: PairedServer): Promise<GatewayClient | null>
+  /** Non-secret key-value storage (AsyncStorage on native, in-memory on web). */
+  kv: KeyValueStore
   /**
    * The active server's dictation: the engine this phone chose for it (null until chosen), and the server's key as
    * it last said (null when it cannot transcribe or has not answered yet).
@@ -361,6 +363,7 @@ export function ServersProvider({ children }: { children: ReactNode }) {
       current,
       setCurrent,
       clientFor,
+      kv,
       dictation,
       setDictationChoice,
       refreshDictation,
@@ -380,6 +383,7 @@ export function ServersProvider({ children }: { children: ReactNode }) {
       forget,
       current,
       clientFor,
+      kv,
       dictation,
       setDictationChoice,
       refreshDictation,
