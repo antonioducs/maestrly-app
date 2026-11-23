@@ -276,7 +276,7 @@ test('lets conversations message each other, bring results back and stop at the 
     }
     const result = (id: string) => requests.find((request) => id in request.toolResults)!.toolResults[id]
     expect(JSON.parse(result('seed-rogue'))).toMatchObject({ ok: false, items: [] })
-    expect(result('seed-rogue')).toContain('only works in the main agent turn')
+    expect(result('seed-rogue')).toContain('not started by a message the person typed')
     expect(JSON.parse(result('peer-rogue'))).toMatchObject({ ok: false, code: 'unavailable' })
     expect((await conversations(workspace.id)).map((item) => item.name).sort()).toEqual([
       'Other',

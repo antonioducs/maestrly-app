@@ -196,7 +196,7 @@ test('hands a standalone Ask plan to a named workspace branch without changing t
     const refused = requests.find((request) => request.lastUser.includes(PLAN) && request.results['rogue-inventory'])!
     expect(JSON.parse(refused.results.rogue)).toMatchObject({ ok: false, items: [] })
     expect(JSON.parse(refused.results['rogue-inventory'])).toEqual({
-      error: expect.stringContaining('only works in the main agent turn'),
+      error: expect.stringContaining('not started by a message the person typed'),
     })
     expect(await api('listConversations', workspaceId)).toHaveLength(1)
     expect(await api('chatGetMode', source.id)).toBe('ask')
