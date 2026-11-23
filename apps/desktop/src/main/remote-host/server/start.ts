@@ -27,7 +27,7 @@ import { HostEditor } from './host-editor'
 import { HostEnvironment } from './host-environment'
 import { HostFiles } from './host-files'
 import { setHostModelOptions } from './mobile-api'
-import { buildChatAttentionSnapshot, watchChatAttention } from './chat-attention'
+import { buildChatAttentionSnapshot, createChatAttentionSync } from './chat-attention'
 import type { HostBotAccess } from './bot-access'
 import { getChatPermissionBroker, getChatQuestionBroker } from '../../chat/service'
 import { getPending as getPendingPlan, observePlanEvents } from '../../plan-broker'
@@ -49,6 +49,8 @@ export interface ServerHostDeps {
   emitAttention(conversationId: string, attention: boolean): void
   /** Follows attention mark clears, archives, and deletions; returns how to stop. */
   watchConversationChanges(listener: (conversationId: string) => void): () => void
+  /** Follows seen acknowledgements even without a DB attention mark; returns how to stop. */
+  watchAttentionSeen?(listener: (conversationId: string) => void): () => void
   /** Moves a conversation's browser window where its computer or its Browser tab's video needs it. */
   placeBrowser(conversationId: string, placement: BrowserPlacement): void
   /** What the host gives the bots of its server; it takes their calls only when it can link itself to them. */
@@ -148,10 +150,10 @@ export async function startServerHostMode(window: BrowserWindow, deps: ServerHos
     await runtime.start()
     // Phones choose a chat's model from what the host's accounts offer, listed as for bots.
     setHostModelOptions(async () => (await runtime.selections()).options)
-    const snapshot = () =>
+    const baseSnapshot = () =>
       buildChatAttentionSnapshot(listConversationsForAttention(), (id) => getPendingPlan(id) !== null)
     // What the chats need from the owner goes to the gateway, which notifies the owner's phones.
-    const stopAttention = watchChatAttention({
+    const attention = createChatAttentionSync({
       permissions: getChatPermissionBroker(),
       questions: getChatQuestionBroker(),
       watchStatuses: deps.watchStatuses,
@@ -171,7 +173,7 @@ export async function startServerHostMode(window: BrowserWindow, deps: ServerHos
       publish: (event) => runtime.events.publish({ type: 'chat.attention', botId: null, ...event }),
       publishCleared: (conversationId) =>
         runtime.events.publish({ type: 'chat.attention.cleared', botId: null, conversationId }),
-      initialAttention: () => snapshot().map(({ conversationId, kind }) => ({ conversationId, kind })),
+      initialAttention: () => baseSnapshot().map(({ conversationId, kind }) => ({ conversationId, kind })),
       conversationState: (id) => {
         const state = getConversationAttentionState(id)
         if (!state) return null
@@ -180,6 +182,7 @@ export async function startServerHostMode(window: BrowserWindow, deps: ServerHos
           marked: state.marked,
           hasPendingPlan: getPendingPlan(id) !== null,
           eligible: !state.archived && !state.routine,
+          routine: !state.archived && state.routine,
         }
       },
       watchChanges: (listener) => {
@@ -190,7 +193,14 @@ export async function startServerHostMode(window: BrowserWindow, deps: ServerHos
           stopConversations()
         }
       },
+      watchSeen: deps.watchAttentionSeen,
     })
+    const snapshot = () =>
+      buildChatAttentionSnapshot(
+        listConversationsForAttention(),
+        (id) => getPendingPlan(id) !== null,
+        attention.routineSnapshot()
+      )
     // Computers move files of the host's folders, and read the copies it makes of PDF attachments for them.
     const hostFiles = new HostFiles({
       roots: () => hostFsRoots().map((root) => root.path),
@@ -227,10 +237,10 @@ export async function startServerHostMode(window: BrowserWindow, deps: ServerHos
         clear: (conversationIds) => {
           const cleared: string[] = []
           for (const id of conversationIds) {
-            if (clearConversationAttention(id)) {
-              deps.emitAttention(id, false)
-              cleared.push(id)
-            }
+            const clearedMark = clearConversationAttention(id)
+            if (clearedMark) deps.emitAttention(id, false)
+            const clearedRoutine = attention.clearSeen(id)
+            if (clearedMark || clearedRoutine) cleared.push(id)
           }
           return { cleared }
         },
@@ -252,7 +262,7 @@ export async function startServerHostMode(window: BrowserWindow, deps: ServerHos
     // The access this host gave bots is checked against the server once: it may have changed while the host was down.
     void deps.bots.start().catch(() => undefined)
     window.on('closed', async () => {
-      stopAttention()
+      attention.stop()
       deps.hub.closeAll()
       editor.closeAll()
       server.close()

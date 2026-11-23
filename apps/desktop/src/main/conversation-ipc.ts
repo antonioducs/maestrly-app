@@ -41,6 +41,8 @@ export interface ConversationIpcDeps {
   emitAttention?: (conversationId: string, attention: boolean) => void
   /** Notifies host listeners when a conversation is archived or deleted so attention sync updates. */
   onConversationChanged?: (conversationId: string) => void
+  /** Notifies host attention sync when a conversation is seen, even without a DB attention mark. */
+  onAttentionSeen?: (conversationId: string) => void
 }
 
 /** Archive or restore a conversation, as the conversation list does. */
@@ -132,6 +134,7 @@ export function registerConversationIpc(reg: IpcRegistrar, deps: ConversationIpc
   reg.mhandle('conversation:attention-clear', (_e, id: unknown) => {
     const conversationId = z.string().min(1).parse(id)
     if (clearConversationAttention(conversationId)) deps.emitAttention?.(conversationId, false)
+    deps.onAttentionSeen?.(conversationId)
   })
   reg.mhandle('conversation:archive', (_e, id: string, archived: boolean) => archiveConversation(deps, id, archived))
   reg.mhandle('conversation:delete', async (_e, id: string) => {

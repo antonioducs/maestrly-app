@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import { describe, expect, it } from 'vitest'
 import {
   buildChatAttentionSnapshot,
+  createChatAttentionSync,
   watchChatAttention,
   type ChatAttentionState,
 } from '../../src/main/remote-host/server/chat-attention'
@@ -298,6 +299,126 @@ describe('chat attention on a workspaces host', () => {
       ])
     } finally {
       stop()
+    }
+  })
+
+  it('tracks alerting routine-run notices in memory, includes them in snapshots, and clears them via clearSeen, watchSeen, new turn, or archive', () => {
+    const permissions = new EventEmitter()
+    const questions = new EventEmitter()
+    const statuses = new EventEmitter()
+    const changes = new EventEmitter()
+    const seen = new EventEmitter()
+    const stateMap = new Map<string, ChatAttentionState>([
+      ['r-alert', { status: 'ready', marked: false, hasPendingPlan: false, eligible: false, routine: true }],
+      ['r-fail', { status: 'ready', marked: false, hasPendingPlan: false, eligible: false, routine: true }],
+      ['r-quiet', { status: 'ready', marked: false, hasPendingPlan: false, eligible: false, routine: true }],
+      ['r-seen', { status: 'ready', marked: false, hasPendingPlan: false, eligible: false, routine: true }],
+      ['r-turn', { status: 'ready', marked: false, hasPendingPlan: false, eligible: false, routine: true }],
+      ['r-arch', { status: 'ready', marked: false, hasPendingPlan: false, eligible: false, routine: true }],
+      ['r-idle', { status: 'ready', marked: false, hasPendingPlan: false, eligible: false, routine: true }],
+    ])
+    const runs = new Map<
+      string,
+      { notify: 'notable' | 'all' | 'none'; outcome: 'notable' | 'nothing_new' | 'done'; active: boolean }
+    >([
+      ['r-alert', { notify: 'notable', outcome: 'notable', active: true }],
+      ['r-fail', { notify: 'none', outcome: 'done', active: true }],
+      ['r-quiet', { notify: 'notable', outcome: 'nothing_new', active: true }],
+      ['r-seen', { notify: 'all', outcome: 'done', active: true }],
+      ['r-turn', { notify: 'notable', outcome: 'notable', active: true }],
+      ['r-arch', { notify: 'notable', outcome: 'notable', active: true }],
+    ])
+    const published: Array<{ conversationId: string; kind: string }> = []
+    const cleared: string[] = []
+    const sync = createChatAttentionSync({
+      permissions,
+      questions,
+      watchStatuses: (listener) => {
+        const onStatus = (id: string, status: string) => listener(id, status)
+        statuses.on('status', onStatus)
+        return () => statuses.off('status', onStatus)
+      },
+      conversation: (id) => (stateMap.has(id) ? { name: `Routine ${id}` } : undefined),
+      hasPendingPlan: () => false,
+      routineRun: (id) => runs.get(id) ?? null,
+      conversationState: (id) => stateMap.get(id) ?? null,
+      watchChanges: (listener) => {
+        const onChange = (id: string) => listener(id)
+        changes.on('change', onChange)
+        return () => changes.off('change', onChange)
+      },
+      watchSeen: (listener) => {
+        const onSeen = (id: string) => listener(id)
+        seen.on('seen', onSeen)
+        return () => seen.off('seen', onSeen)
+      },
+      publish: ({ conversationId, kind }) => published.push({ conversationId, kind }),
+      publishCleared: (conversationId) => cleared.push(conversationId),
+    })
+
+    try {
+      // Alerting routine runs are published and tracked; non-alerting runs are neither published nor tracked.
+      for (const id of ['r-alert', 'r-quiet', 'r-seen', 'r-turn', 'r-arch']) {
+        statuses.emit('status', id, 'working')
+        statuses.emit('status', id, 'ready')
+      }
+      statuses.emit('status', 'r-fail', 'working')
+      stateMap.set('r-fail', { status: 'error', marked: false, hasPendingPlan: false, eligible: false, routine: true })
+      statuses.emit('status', 'r-fail', 'error')
+
+      expect(published).toEqual([
+        { conversationId: 'r-alert', kind: 'finished' },
+        { conversationId: 'r-seen', kind: 'finished' },
+        { conversationId: 'r-turn', kind: 'finished' },
+        { conversationId: 'r-arch', kind: 'finished' },
+        { conversationId: 'r-fail', kind: 'failed' },
+      ])
+      expect(cleared).toEqual([])
+
+      // Snapshot includes tracked routine notices alongside normal rows and excludes routine chats without a notice.
+      const snapshot = buildChatAttentionSnapshot(
+        [{ id: 'c-normal', name: 'Normal chat', status: 'ready', marked: true, at: 1_700_000_000_000 }],
+        () => false,
+        sync.routineSnapshot()
+      )
+      expect(snapshot.map(({ conversationId, name, kind }) => ({ conversationId, name, kind }))).toEqual([
+        { conversationId: 'c-normal', name: 'Normal chat', kind: 'finished' },
+        { conversationId: 'r-alert', name: 'Routine r-alert', kind: 'finished' },
+        { conversationId: 'r-seen', name: 'Routine r-seen', kind: 'finished' },
+        { conversationId: 'r-turn', name: 'Routine r-turn', kind: 'finished' },
+        { conversationId: 'r-arch', name: 'Routine r-arch', kind: 'finished' },
+        { conversationId: 'r-fail', name: 'Routine r-fail', kind: 'failed' },
+      ])
+
+      // 1. Clear route (clearSeen) clears tracked notices and reports true only when one existed.
+      expect(sync.clearSeen('r-alert')).toBe(true)
+      expect(sync.clearSeen('r-alert')).toBe(false)
+      expect(sync.clearSeen('r-quiet')).toBe(false)
+      expect(sync.clearSeen('r-idle')).toBe(false)
+
+      // 2. Desktop / mobile seen path (watchSeen) clears even without a DB mark.
+      seen.emit('seen', 'r-seen')
+      seen.emit('seen', 'r-quiet')
+
+      // 3. New turn (status 'working') clears the notice.
+      stateMap.set('r-turn', {
+        status: 'working',
+        marked: false,
+        hasPendingPlan: false,
+        eligible: false,
+        routine: true,
+      })
+      statuses.emit('status', 'r-turn', 'working')
+
+      // 4. Archiving clears the notice and drops it from snapshots; clearSeen then reports false.
+      stateMap.set('r-arch', { status: 'ready', marked: false, hasPendingPlan: false, eligible: false, routine: false })
+      changes.emit('change', 'r-arch')
+      expect(sync.clearSeen('r-arch')).toBe(false)
+
+      expect(cleared).toEqual(['r-alert', 'r-seen', 'r-turn', 'r-arch'])
+      expect(sync.routineSnapshot().map((item) => item.conversationId)).toEqual(['r-fail'])
+    } finally {
+      sync.stop()
     }
   })
 })

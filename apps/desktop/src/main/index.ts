@@ -462,6 +462,10 @@ const attentionChangeListeners = new Set<(conversationId: string) => void>()
 const notifyAttentionChange = (conversationId: string): void => {
   for (const listener of [...attentionChangeListeners]) listener(conversationId)
 }
+const attentionSeenListeners = new Set<(conversationId: string) => void>()
+const notifyAttentionSeen = (conversationId: string): void => {
+  for (const listener of [...attentionSeenListeners]) listener(conversationId)
+}
 const emitConversationAttention = (conversationId: string, attention: boolean): void => {
   sendToWindow('conversation:attention', { conversationId, attention })
   if (!attention) {
@@ -1106,6 +1110,7 @@ function registerIpc(): void {
     resumeBackgroundCompaction,
     emitAttention: emitConversationAttention,
     onConversationChanged: notifyAttentionChange,
+    onAttentionSeen: notifyAttentionSeen,
   }
   registerConversationIpc(reg, conversationIpcDeps)
   setAssistantConversationArchiver((id) => archiveConversation(conversationIpcDeps, id, true))
@@ -1662,6 +1667,10 @@ app.whenReady().then(async () => {
         watchConversationChanges: (listener) => {
           attentionChangeListeners.add(listener)
           return () => attentionChangeListeners.delete(listener)
+        },
+        watchAttentionSeen: (listener) => {
+          attentionSeenListeners.add(listener)
+          return () => attentionSeenListeners.delete(listener)
         },
         placeBrowser: (id, placement) =>
           placeConversationBrowser(id, placement, {
