@@ -5,6 +5,7 @@ import {
   declareSwarmTasks,
   ensureSwarmTasks,
   listSwarm,
+  maestroSwarmStatePart,
   onSwarmDispatchStarted,
   onSwarmWorkerResult,
   onSwarmWorkerTurnStarted,
@@ -393,5 +394,34 @@ describe('maestro swarm state transitions', () => {
         'Host-owned phases: implementing, delivered, merged, failed. Update the others with swarm_update.'
       )
     ).toBe(true)
+  })
+
+  it('builds a hidden markdown MessagePart only for Maestro conversations with swarm tasks', () => {
+    const standardConv = makeConversation(workspaceId, { name: 'Standard', experience: 'standard' }).id
+    const maestroConv = makeConversation(workspaceId, { name: 'Maestro', experience: 'maestro' }).id
+
+    // Empty swarm on Maestro returns null.
+    expect(maestroSwarmStatePart(maestroConv)).toBeNull()
+
+    // Non-Maestro conversation returns null even if swarm rows exist.
+    declareSwarmTasks(standardConv, [{ key: 'api', title: 'API' }])
+    expect(maestroSwarmStatePart(standardConv)).toBeNull()
+
+    // Maestro conversation with tasks returns hidden file part with rendered table.
+    declareSwarmTasks(maestroConv, [{ key: 'api', title: 'API pedidos', agent: 'neon' }])
+    const part = maestroSwarmStatePart(maestroConv)
+    expect(part).not.toBeNull()
+    expect(part).toMatchObject({
+      type: 'file',
+      name: 'maestro-swarm.md',
+      mediaType: 'text/markdown',
+      kind: 'text',
+      hidden: true,
+      data: renderMaestroSwarmState(listSwarm(maestroConv)),
+    })
+    if (part && part.type === 'file') {
+      expect(typeof part.id).toBe('string')
+      expect(part.id.length).toBeGreaterThan(0)
+    }
   })
 })

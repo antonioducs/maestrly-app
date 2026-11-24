@@ -86,6 +86,8 @@ export interface ConversationLinkServiceDeps {
   now(): number
   /** `prompts` catalog in the app locale. */
   text(key: string, params?: Record<string, string>): string
+  onPeerTurnStarted?(input: { fromConversationId: string; toConversationId: string }): void
+  onResult?(input: { orchestratorId: string; workerConversationId: string; status: string }): void
 }
 
 const PAGE = 100
@@ -371,7 +373,17 @@ export function createConversationLinkService(deps: ConversationLinkServiceDeps)
       result = { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
     if (result.ok) {
-      transitionPeerMessage(record.messageId, ['queued'], 'delivered')
+      const transitioned = transitionPeerMessage(record.messageId, ['queued'], 'delivered')
+      if (transitioned && record.kind === 'message') {
+        try {
+          deps.onPeerTurnStarted?.({
+            fromConversationId: record.fromConversationId,
+            toConversationId: record.toConversationId,
+          })
+        } catch {
+          // Hook failures must never break delivery.
+        }
+      }
       return 'delivered'
     }
     // A review holds the target until it is handed off; waitForSlot waits for that too.
@@ -562,6 +574,15 @@ export function createConversationLinkService(deps: ConversationLinkServiceDeps)
     })
     if (!created) return
     transitionPeerMessage(original.messageId, ['queued', 'delivered'], 'reported')
+    try {
+      deps.onResult?.({
+        orchestratorId: original.fromConversationId,
+        workerConversationId: original.toConversationId,
+        status,
+      })
+    } catch {
+      // Hook failures must never break result delivery.
+    }
     await deliver(result)
   }
 
@@ -587,7 +608,18 @@ export function createConversationLinkService(deps: ConversationLinkServiceDeps)
       reportBack: false,
       resultStatus: status,
     })
-    if (created) await deliver(result)
+    if (created) {
+      try {
+        deps.onResult?.({
+          orchestratorId: input.sourceConversationId,
+          workerConversationId: input.conversationId,
+          status,
+        })
+      } catch {
+        // Hook failures must never break result delivery.
+      }
+      await deliver(result)
+    }
   }
 
   /** After a restart: drain queued messages; a result whose turn died with the app is never delivered. */
@@ -622,11 +654,12 @@ function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
 }
 
 async function buildDefaultConversationLinkService(): Promise<ConversationLinkService> {
-  const [store, chat, chatStore, i18n] = await Promise.all([
+  const [store, chat, chatStore, i18n, maestroSwarm] = await Promise.all([
     import('./store'),
     import('./chat/service'),
     import('./chat/chat-store'),
     import('./i18n'),
+    import('./chat/maestro-swarm'),
   ])
   return createConversationLinkService({
     getConversation: store.getConversation,
@@ -640,6 +673,8 @@ async function buildDefaultConversationLinkService(): Promise<ConversationLinkSe
     sleep: abortableSleep,
     now: Date.now,
     text: (key, params) => i18n.tFor(store.getLocale(), 'prompts')(key, params),
+    onPeerTurnStarted: maestroSwarm.onSwarmWorkerTurnStarted,
+    onResult: maestroSwarm.onSwarmWorkerResult,
   })
 }
 

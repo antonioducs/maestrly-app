@@ -1,15 +1,20 @@
+import { randomUUID } from 'node:crypto'
+import type { MessagePart } from '../../shared/chat'
+import type { ChatBehavior } from '../../shared/conversation-experience'
 import { transaction } from '../store/db'
+import { getConversation } from '../store/conversations'
 import {
   findMaestroSwarmTaskByConversation,
   getMaestroSwarmTask,
   listMaestroSwarmTasks,
   upsertMaestroSwarmTask,
 } from '../store/maestro-swarm'
-import type {
-  MaestroSwarmChangesReason,
-  MaestroSwarmPhase,
-  MaestroSwarmTask,
-  MaestroSwarmTaskUpdate,
+import {
+  renderMaestroSwarmState,
+  type MaestroSwarmChangesReason,
+  type MaestroSwarmPhase,
+  type MaestroSwarmTask,
+  type MaestroSwarmTaskUpdate,
 } from '../../shared/maestro-swarm'
 
 const AGENT_OWNED_PHASES = new Set<string>(['queued', 'reviewing', 'changes', 'blocked'])
@@ -367,4 +372,22 @@ export function stopSwarm(orchestratorId: string): { workerConversationIds: stri
 
   if (changed) notify(orchestratorId)
   return { workerConversationIds }
+}
+
+/** Hidden per-turn swarm state table for Maestro orchestrator conversations; null for non-Maestro or empty swarms. */
+export function maestroSwarmStatePart(conversationId: string, behavior?: ChatBehavior): MessagePart | null {
+  const isMaestro =
+    behavior !== undefined ? behavior === 'maestro' : getConversation(conversationId)?.experience === 'maestro'
+  if (!isMaestro) return null
+  const data = renderMaestroSwarmState(listSwarm(conversationId))
+  if (!data) return null
+  return {
+    type: 'file',
+    id: randomUUID(),
+    name: 'maestro-swarm.md',
+    mediaType: 'text/markdown',
+    kind: 'text',
+    data,
+    hidden: true,
+  }
 }

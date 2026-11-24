@@ -220,6 +220,8 @@ import {
   stopChat,
 } from './chat/service'
 import { setConversationMaestroConfig } from './chat/maestro-config'
+import { setMaestroSwarmListener } from './chat/maestro-swarm'
+import { registerMaestroSwarmIpc } from './chat/maestro-swarm-ipc'
 import { resolveMaestroStrategyProfile, setLastUsedMaestroStrategyProfile } from './chat/maestro-strategy-profiles'
 import { registerUsageIpc } from './usage/usage-service'
 import type { IpcRegistrar } from './ipc-registrar'
@@ -1155,6 +1157,8 @@ function registerIpc(): void {
       else broadcastStatus({ agentId: conversationId, status })
     },
   })
+  registerMaestroSwarmIpc(reg, { stopChat })
+  setMaestroSwarmListener((conversationId) => broadcast('maestro:swarm-changed', { conversationId }))
   registerPluginIpc(reg)
   registerMcpOAuthIpc(reg, {
     // Sign-in for a remote host's server: this computer runs the browser part and the host keeps the result.

@@ -633,3 +633,99 @@ describe('restart', () => {
     expect(deps.startPeerTurn).not.toHaveBeenCalled()
   })
 })
+
+describe('swarm lifecycle hooks', () => {
+  it('calls onPeerTurnStarted when delivering a message, and ignores throwing hooks', async () => {
+    dispatch(source, child)
+    const onPeerTurnStarted = vi.fn()
+    const { deps, service } = harness({ onPeerTurnStarted })
+
+    const sent = await service.send(human(), { conversationId: child, message: 'Apply fixes.' }, async () => true)
+    expect(sent).toMatchObject({ ok: true, status: 'delivered' })
+    expect(onPeerTurnStarted).toHaveBeenCalledTimes(1)
+    expect(onPeerTurnStarted).toHaveBeenCalledWith({ fromConversationId: source, toConversationId: child })
+
+    // Report delivery does not invoke onPeerTurnStarted.
+    const reportRes = await service.report(linked(child, source, 1), { message: 'Update.' })
+    expect(reportRes).toMatchObject({ ok: true, status: 'delivered' })
+    expect(onPeerTurnStarted).toHaveBeenCalledTimes(1)
+    expect(deps.startPeerTurn).toHaveBeenCalledTimes(2)
+
+    // Throwing hook must never break delivery.
+    const throwing = vi.fn(() => {
+      throw new Error('hook boom')
+    })
+    const second = harness({ onPeerTurnStarted: throwing })
+    const sent2 = await second.service.send(
+      human(source, { originKey: 'message:typed-2' }),
+      { conversationId: child, message: 'Another fix.' },
+      async () => true
+    )
+    expect(sent2).toMatchObject({ ok: true, status: 'delivered' })
+    expect(throwing).toHaveBeenCalledTimes(1)
+    expect(getPeerMessage(sent2.ok ? sent2.messageId! : '')?.phase).toBe('delivered')
+  })
+
+  it('calls onResult for dispatch results and peer results, and ignores throwing hooks', async () => {
+    dispatch(source, child)
+    const onResult = vi.fn()
+    const { deps, service } = harness({ onResult })
+
+    await service.relayDispatchResult({
+      dispatchId: `dispatch-${child}`,
+      sourceConversationId: source,
+      conversationId: child,
+      outcome: { status: 'success', assistantMessageId: 'a', summaryText: 'Done.' },
+    })
+    // Replaying the same dispatch result does not invoke onResult a second time.
+    await service.relayDispatchResult({
+      dispatchId: `dispatch-${child}`,
+      sourceConversationId: source,
+      conversationId: child,
+      outcome: { status: 'success', assistantMessageId: 'a', summaryText: 'Done.' },
+    })
+    expect(onResult).toHaveBeenCalledTimes(1)
+    expect(onResult).toHaveBeenCalledWith({
+      orchestratorId: source,
+      workerConversationId: child,
+      status: 'success',
+    })
+    expect(deps.startPeerTurn).toHaveBeenCalledTimes(1)
+
+    // Peer result with error status invokes onResult with 'error'.
+    await service.send(
+      human(source, { originKey: 'message:typed-err' }),
+      { conversationId: child, message: 'Retry it.', reportBack: true },
+      async () => true
+    )
+    peerCalls(deps)[1].onOutcome!({ status: 'error', error: 'crash', assistantMessageId: null })
+    await vi.waitFor(() => expect(deps.startPeerTurn).toHaveBeenCalledTimes(3))
+    expect(onResult).toHaveBeenCalledTimes(2)
+    expect(onResult).toHaveBeenLastCalledWith({
+      orchestratorId: source,
+      workerConversationId: child,
+      status: 'error',
+    })
+
+    // Throwing onResult must never break result delivery.
+    const throwingOnResult = vi.fn(() => {
+      throw new Error('result hook boom')
+    })
+    const second = harness({ onResult: throwingOnResult })
+    await second.service.relayDispatchResult({
+      dispatchId: `dispatch-${child}-2`,
+      sourceConversationId: source,
+      conversationId: child,
+      outcome: { status: 'success', assistantMessageId: 'b', summaryText: 'Delivered anyway.' },
+    })
+    expect(throwingOnResult).toHaveBeenCalledTimes(1)
+    expect(second.deps.startPeerTurn).toHaveBeenCalledTimes(1)
+    expect(peerCalls(second.deps)[0]).toMatchObject({
+      conversationId: source,
+      fromConversationId: child,
+      kind: 'result',
+      body: 'Delivered anyway.',
+      resultStatus: 'success',
+    })
+  })
+})

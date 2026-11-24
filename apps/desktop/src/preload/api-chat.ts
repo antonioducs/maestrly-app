@@ -75,6 +75,7 @@ import type {
 import type { SubagentProfileModelMetaResult } from '../shared/subagent-profile-effort'
 import type { StructuredAgentMentionDraft } from '../shared/chat-agent-mentions'
 import type { MaestroLiveEvent, MaestroLivePostResult, MaestroLiveState } from '../shared/maestro-live'
+import type { MaestroSwarmTask } from '../shared/maestro-swarm'
 import type { UnifiedUsageStats } from '../shared/usage'
 import type {
   MaestroConfigPayload,
@@ -397,6 +398,17 @@ export function makeChatApi(ipcRenderer: IpcTransport) {
       const listener = (_event: unknown, payload: MaestroConfiguratorEvent) => callback(payload)
       ipcRenderer.on(MAESTRO_CONFIGURATOR_EVENT_CHANNEL, listener)
       return () => ipcRenderer.removeListener(MAESTRO_CONFIGURATOR_EVENT_CHANNEL, listener)
+    },
+    chatMaestroSwarmGet: (conversationId: string): Promise<MaestroSwarmTask[]> =>
+      ipcRenderer.invoke('chat:maestro:swarm:get', conversationId),
+    chatMaestroSwarmStop: (
+      conversationId: string
+    ): Promise<{ ok: true; stopped: number } | { ok: false; stopped: 0; error: 'invalid-conversation' }> =>
+      ipcRenderer.invoke('chat:maestro:swarm:stop', conversationId),
+    onMaestroSwarmChanged: (callback: (payload: { conversationId: string }) => void): (() => void) => {
+      const listener = (_event: unknown, payload: { conversationId: string }) => callback(payload)
+      ipcRenderer.on('maestro:swarm-changed', listener)
+      return () => ipcRenderer.removeListener('maestro:swarm-changed', listener)
     },
 
     chatExecutionProviders: (): Promise<Array<{ id: string; name: string; models: string[] }>> =>

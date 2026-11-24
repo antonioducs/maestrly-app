@@ -516,6 +516,8 @@ import { getMainWebContents, sendToConversation } from '../window-ipc'
 import { sendToRemoteMains } from '../remote-ui-targets'
 import { registerSubagentProfileIpc } from './subagent-profile-ipc'
 import { registerMaestroIpc } from './maestro-ipc'
+import { maestroSwarmStatePart, reconcileSwarmMerges } from './maestro-swarm'
+import { createMaestroSwarmGit } from './maestro-swarm-git'
 import { registerMaestroConfiguratorIpc } from './maestro-configurator-ipc'
 import { maestroConfiguratorService } from './maestro-configurator'
 import { freezeMaestroTurn } from './maestro-config'
@@ -4701,6 +4703,8 @@ async function startSendAttempt(
             signal: operation.controller.signal,
           })
     if (turnMemory) for (const p of turnMemory.hiddenParts) parts.push(p)
+    const swarmPart = maestroSwarmStatePart(conversationId, turnBehavior)
+    if (swarmPart) parts.push(swarmPart)
 
     // Plugin hooks on the session's start and on each prompt, run by Maestrly for every model before the prompt is
     // stored: their context reaches the model as hidden parts of this message (never the cached project context).
@@ -6171,6 +6175,11 @@ async function startSendAttempt(
         // cleanup tombstones for the sweeper.
         if (turnBehavior === 'maestro' && run.messageId) {
           void releaseTurnDelegationRuntimes(conversationId, run.messageId).catch(() => undefined)
+        }
+        if (turnBehavior === 'maestro' && conv.cwd) {
+          void reconcileSwarmMerges(conversationId, createMaestroSwarmGit(conv.cwd)).catch((error) => {
+            console.warn('[maestro-swarm] merge reconciliation failed:', error)
+          })
         }
         if (active.get(conversationId) === run) active.delete(conversationId)
         clearHumanTurnOrigin(conversationId, run)
