@@ -889,8 +889,33 @@ export async function listConversationDispatchWorkspaces(): Promise<Conversation
   )
 }
 
+export async function resolveConversationDispatchSettingsFor(
+  sourceConversationId: string,
+  requested: ConversationDispatchSettingsRequest
+): Promise<ResolvedConversationDispatchSettings> {
+  const [chat, settings] = await Promise.all([import('./chat/service'), import('./conversation-dispatch-settings')])
+  return settings.resolveConversationDispatchSettings(sourceConversationId, requested, {
+    sourceSettings: chat.conversationExecutionSettings,
+    listModels: listConversationDispatchModels,
+    describeModel: chat.describeChatModelForDispatch,
+    validateSelection: async (conversationId, selected) => {
+      try {
+        const result = await chat.resolveFrozenChatSelection(conversationId, {
+          providerId: selected.providerId,
+          modelId: selected.modelId,
+          effort: selected.reasoning,
+          fastMode: selected.fastMode,
+        })
+        return result.ok ? { ok: true } : { ok: false, error: result.error }
+      } catch (error) {
+        return { ok: false, error: errorText(error) }
+      }
+    },
+  })
+}
+
 async function buildDefaultConversationDispatchService(): Promise<ConversationDispatchService> {
-  const [store, chat, workspace, git, windowIpc, i18n, migration, settings, dispatchStore] = await Promise.all([
+  const [store, chat, workspace, git, windowIpc, i18n, migration, dispatchStore] = await Promise.all([
     import('./store'),
     import('./chat/service'),
     import('./workspace-service'),
@@ -898,30 +923,11 @@ async function buildDefaultConversationDispatchService(): Promise<ConversationDi
     import('./window-ipc'),
     import('./i18n'),
     import('./conversation-migration/store'),
-    import('./conversation-dispatch-settings'),
     import('./conversation-dispatch-store'),
   ])
   return createConversationDispatchService({
     getConversation: (id) => store.getConversation(id),
-    resolveSettings: (sourceConversationId, requested) =>
-      settings.resolveConversationDispatchSettings(sourceConversationId, requested, {
-        sourceSettings: chat.conversationExecutionSettings,
-        listModels: listConversationDispatchModels,
-        describeModel: chat.describeChatModelForDispatch,
-        validateSelection: async (conversationId, selected) => {
-          try {
-            const result = await chat.resolveFrozenChatSelection(conversationId, {
-              providerId: selected.providerId,
-              modelId: selected.modelId,
-              effort: selected.reasoning,
-              fastMode: selected.fastMode,
-            })
-            return result.ok ? { ok: true } : { ok: false, error: result.error }
-          } catch (error) {
-            return { ok: false, error: errorText(error) }
-          }
-        },
-      }),
+    resolveSettings: resolveConversationDispatchSettingsFor,
     resolveHead: (cwd) => git.resolveCommit(cwd),
     getWorkspace: store.getWorkspace,
     resolveBranch: git.resolveDispatchBranch,
