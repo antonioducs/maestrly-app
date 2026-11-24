@@ -179,7 +179,13 @@ export async function resolveConversationDispatchSettings(
     inherited.push(source?.fastMode === true && !capability.fastMode ? 'fastMode (off: unsupported by this model)' : 'fastMode')
   }
 
-  const settings: ConversationDispatchSettings = { providerId: providerId!, modelId: modelId!, reasoning, fastMode }
+  const settings: ConversationDispatchSettings = {
+    providerId: providerId!,
+    modelId: modelId!,
+    reasoning,
+    fastMode,
+    ...(requested.mode && requested.mode !== 'agent' ? { mode: requested.mode } : {}),
+  }
   const validated = await deps.validateSelection(sourceConversationId, settings)
   if (!validated.ok) {
     return validated.error === 'no-key' || validated.error === 'no-provider'
@@ -210,6 +216,7 @@ export function sameDispatchSettings(
     left.providerId === right.providerId &&
     left.modelId === right.modelId &&
     (left.reasoning || 'off') === (right.reasoning || 'off') &&
-    left.fastMode === right.fastMode
+    left.fastMode === right.fastMode &&
+    (left.mode ?? 'agent') === (right.mode ?? 'agent')
   )
 }

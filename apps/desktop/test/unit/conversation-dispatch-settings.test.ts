@@ -174,6 +174,26 @@ describe('resolveConversationDispatchSettings', () => {
       resolveConversationDispatchSettings('source', { providerId: 'claude', modelId: 'opus', reasoning: 'Default' }, deps())
     ).resolves.toMatchObject({ ok: true, settings: { reasoning: 'off' } })
   })
+
+  it('keeps a requested working mode and never inherits it from the source', async () => {
+    await expect(resolveConversationDispatchSettings('source', { mode: 'design' }, deps())).resolves.toEqual({
+      ok: true,
+      settings: { ...SOURCE, mode: 'design' },
+      inherited: ['model', 'reasoning', 'fastMode'],
+    })
+    const omitted = await resolveConversationDispatchSettings(
+      'source',
+      {},
+      deps({ sourceSettings: vi.fn(() => ({ ...SOURCE, mode: 'plan' as const })) })
+    )
+    expect(omitted).toMatchObject({ ok: true })
+    if (omitted.ok) expect(omitted.settings.mode).toBeUndefined()
+    await expect(resolveConversationDispatchSettings('source', { mode: 'agent' }, deps())).resolves.toEqual({
+      ok: true,
+      settings: SOURCE,
+      inherited: ['model', 'reasoning', 'fastMode'],
+    })
+  })
 })
 
 describe('sameDispatchSettings', () => {
@@ -181,5 +201,11 @@ describe('sameDispatchSettings', () => {
     expect(sameDispatchSettings(SOURCE, { ...SOURCE })).toBe(true)
     expect(sameDispatchSettings({ ...SOURCE, fastMode: false }, SOURCE)).toBe(false)
     expect(sameDispatchSettings(null, SOURCE)).toBe(false)
+  })
+
+  it('treats an absent mode as Agent and compares the working mode', () => {
+    expect(sameDispatchSettings({ ...SOURCE, mode: 'agent' }, SOURCE)).toBe(true)
+    expect(sameDispatchSettings({ ...SOURCE, mode: 'agent' }, { ...SOURCE, mode: 'design' })).toBe(false)
+    expect(sameDispatchSettings({ ...SOURCE, mode: 'design' }, { ...SOURCE, mode: 'design' })).toBe(true)
   })
 })

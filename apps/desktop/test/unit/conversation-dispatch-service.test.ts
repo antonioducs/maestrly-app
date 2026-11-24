@@ -163,6 +163,27 @@ describe('conversation dispatch service', () => {
     )
   })
 
+  it('applies the requested working mode before the first turn and fingerprints it', async () => {
+    const { deps, service } = harness()
+    const result = await service.dispatchBatch({
+      grant: grant(),
+      batch: { defaults: { mode: 'design' }, tasks: [task('UI-1'), task('API-1', { settings: { mode: 'agent' } })] },
+      assertCurrent: () => undefined,
+    })
+    expect(result.items.map((item) => item.status)).toEqual(['started', 'started'])
+    const applied = vi.mocked(deps.applySettings).mock.calls.map(([, settings]) => settings.mode)
+    expect(applied).toEqual(['design', 'agent'])
+    expect(findConversationDispatch(source.id, 'message:msg-1', 'UI-1')?.settings.mode).toBe('design')
+
+    const changed = await service.dispatchBatch({
+      grant: grant(),
+      batch: { defaults: { mode: 'plan' }, tasks: [task('UI-1')] },
+      assertCurrent: () => undefined,
+    })
+    expect(changed.ok).toBe(false)
+    expect(changed.items[0].error).toMatch(/already used for different content/)
+  })
+
   it('lists registered unavailable repositories without substituting another checkout', async () => {
     const other = makeWorkspace({ name: 'Unavailable repository', path: '/missing/dispatch-test-repository' })
     const options = await listConversationDispatchWorkspaces()
