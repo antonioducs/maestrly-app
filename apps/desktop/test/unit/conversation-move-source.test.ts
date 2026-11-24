@@ -25,6 +25,7 @@ import {
 } from '../../src/main/cwd-activity-coordinator'
 import { createWorktree } from '../../src/main/git-service'
 import { getConversation, getDb } from '../../src/main/store'
+import { observeConversationChanges } from '../../src/main/workspace-service'
 import { closeDb, freshDb, restartDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
 import { dirty, git, type MoveRepo, makeRemoteRepo } from '../helpers/move-repo'
@@ -153,18 +154,25 @@ describe('conversation move source', () => {
   })
 
   it('releases: deletes the conversation and worktree, keeps the branch, backup ref and package', async () => {
-    await freeze()
-    const pkg = await exportSource({ operationId: OP, selectedIgnoredPaths: [], confirmedSensitivePaths: [] }, deps)
-    await releaseSource({ operationId: OP })
-    expect(getConversation(conv.id)).toBeUndefined()
-    await expect(access(conv.cwd)).rejects.toThrow()
-    expect(git(repo.work, 'branch', '--list', 'feat')).toContain('feat')
-    expect(git(repo.work, 'rev-parse', `refs/maestrly/moved/${OP}`)).toMatch(/^[0-9a-f]{40}$/)
-    expect(git(repo.work, 'for-each-ref', `refs/maestrly/move/${OP}`)).toBe('')
-    await expect(access(pkg.path)).resolves.toBeUndefined()
-    expect(getMoveEndpoint(OP, 'source')?.state).toBe('released')
-    expect(cwdLeaseOwner(conv.cwd)).toBeNull()
-    await releaseSource({ operationId: OP })
+    const changed: string[] = []
+    const stop = observeConversationChanges((id) => changed.push(id))
+    try {
+      await freeze()
+      const pkg = await exportSource({ operationId: OP, selectedIgnoredPaths: [], confirmedSensitivePaths: [] }, deps)
+      await releaseSource({ operationId: OP })
+      expect(getConversation(conv.id)).toBeUndefined()
+      expect(changed).toContain(conv.id)
+      await expect(access(conv.cwd)).rejects.toThrow()
+      expect(git(repo.work, 'branch', '--list', 'feat')).toContain('feat')
+      expect(git(repo.work, 'rev-parse', `refs/maestrly/moved/${OP}`)).toMatch(/^[0-9a-f]{40}$/)
+      expect(git(repo.work, 'for-each-ref', `refs/maestrly/move/${OP}`)).toBe('')
+      await expect(access(pkg.path)).resolves.toBeUndefined()
+      expect(getMoveEndpoint(OP, 'source')?.state).toBe('released')
+      expect(cwdLeaseOwner(conv.cwd)).toBeNull()
+      await releaseSource({ operationId: OP })
+    } finally {
+      stop()
+    }
   })
 
   it('thaws an exported source and refuses to thaw a released one', async () => {

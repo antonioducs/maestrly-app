@@ -25,7 +25,8 @@ export function useOpenLink(
       if (target.kind === 'chat' && environmentId) setEnvironment(environmentId)
       setCurrent(target)
     }
-    router.replace('/home')
+    if (router.canDismiss()) router.dismissTo('/home')
+    else router.replace('/home')
   }, [
     known,
     serverId,

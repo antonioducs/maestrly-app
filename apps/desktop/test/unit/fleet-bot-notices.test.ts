@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  FLEET_ATTENTION_FEATURE,
   fleetPeerThreadSchema,
   fleetRoutineRunSchema,
   type FleetActivityEntry,
@@ -7,7 +8,7 @@ import {
   type FleetRoutineRun,
 } from '@maestrly/bot-fleet-protocol'
 import { FleetBotAttention } from '../../src/main/notifications/bot-attention'
-import { FleetBotNotices } from '../../src/main/notifications/bot-notices'
+import { FleetBotNotices, notifyBotSeenOnGateway } from '../../src/main/notifications/bot-notices'
 import type { SystemNotice } from '../../src/main/notifications/system-notices'
 import type { FleetServerId } from '../../src/shared/fleet-servers'
 
@@ -224,5 +225,78 @@ describe('FleetBotNotices of runs and threads seen on another device', () => {
     s.notices.live(S1, entry('turn_completed', { source: 'routine', runId: 'run-1', alert: true }))
     expect(s.marks()).toEqual([])
     expect(s.shown.map(({ key }) => key)).toEqual([`bot:${S1}/alex:run:run-1`])
+  })
+
+  it('notifies the gateway when a bot is seen only when the server supports the attention feature', async () => {
+    const onSeen = vi.fn()
+    let stored: string | null = null
+    const attention = new FleetBotAttention({
+      load: () => stored,
+      save: (value) => {
+        stored = value
+      },
+      emit: () => undefined,
+    })
+    const notices = new FleetBotNotices({
+      notices: { show: vi.fn(), dismiss: vi.fn(), dismissPrefix: vi.fn() },
+      attention,
+      sees: () => false,
+      botName: () => 'Alex',
+      serverName: () => null,
+      open: vi.fn(),
+      onSeen,
+    })
+    notices.seen(S1, 'alex')
+    expect(onSeen).toHaveBeenCalledWith(S1, 'alex')
+
+    const callWithoutFeature = vi.fn(async () => ({ ok: true }))
+    notifyBotSeenOnGateway({ hasFeature: () => false, call: callWithoutFeature }, 'alex')
+    expect(callWithoutFeature).not.toHaveBeenCalled()
+
+    const callWithFeature = vi.fn(async () => ({ ok: true }))
+    notifyBotSeenOnGateway({ hasFeature: (f) => f === FLEET_ATTENTION_FEATURE, call: callWithFeature }, 'alex')
+    expect(callWithFeature).toHaveBeenCalledWith('attentionSeen', { body: { keys: ['bot:alex'] } })
+
+    const logError = vi.fn()
+    const failingCall = vi.fn(async () => {
+      throw new Error('offline')
+    })
+    notifyBotSeenOnGateway({ hasFeature: (f) => f === FLEET_ATTENTION_FEATURE, call: failingCall }, 'alex', logError)
+    await vi.waitFor(() => expect(logError).toHaveBeenCalledOnce())
+
+    notifyBotSeenOnGateway(null, 'alex')
+  })
+
+  it('calls onSeen when live activity would mark a bot the owner is currently viewing (B3)', () => {
+    const onSeen = vi.fn()
+    let stored: string | null = null
+    const attention = new FleetBotAttention({
+      load: () => stored,
+      save: (value) => {
+        stored = value
+      },
+      emit: () => undefined,
+    })
+    const show = vi.fn()
+    const notices = new FleetBotNotices({
+      notices: { show, dismiss: vi.fn(), dismissPrefix: vi.fn() },
+      attention,
+      sees: (_serverId, botId) => botId === 'alex',
+      botName: () => 'Alex',
+      serverName: () => null,
+      open: vi.fn(),
+      onSeen,
+    })
+
+    // Non-marking live event while viewing does not call onSeen.
+    notices.live(S1, entry('needs_you'))
+    expect(onSeen).not.toHaveBeenCalled()
+    expect(show).not.toHaveBeenCalled()
+
+    // Marking reply arriving while viewing calls onSeen without marking locally or showing a toast.
+    notices.live(S1, entry('turn_completed', { source: 'owner' }))
+    expect(onSeen).toHaveBeenCalledExactlyOnceWith(S1, 'alex')
+    expect(attention.list()).toEqual([])
+    expect(show).not.toHaveBeenCalled()
   })
 })

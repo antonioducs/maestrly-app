@@ -9,6 +9,10 @@ import {
   insertConversation,
 } from '../../src/main/store'
 import {
+  deleteConversation as deleteWorkspaceConversation,
+  observeConversationChanges,
+} from '../../src/main/workspace-service'
+import {
   createConversationDispatchService,
   listConversationDispatchWorkspaces,
   type ConversationDispatchServiceDeps,
@@ -739,5 +743,32 @@ describe('conversation dispatch service', () => {
     })
     expect(third.ok).toBe(true)
     expect(third.items[0].status).toBe('started')
+  })
+
+  it('fires central conversation change notifications when rollback deletes a prepared conversation (S6)', async () => {
+    const changed: string[] = []
+    const stop = observeConversationChanges((id) => changed.push(id))
+    const { service } = harness({
+      deleteConversation: (id, options) => deleteWorkspaceConversation(id, options),
+    })
+
+    try {
+      const prepared = await service.prepare({
+        sourceConversationId: source.id,
+        originKey: 'plan:rollback:test',
+        requestKey: 'plan',
+        kind: 'plan',
+        title: 'Rollback test',
+        prompt: '## Plan',
+        placement: 'shared',
+        settings: SETTINGS,
+      })
+
+      await service.discard(prepared.record.dispatchId)
+      expect(getConversation(prepared.conversation.id)).toBeUndefined()
+      expect(changed).toEqual([prepared.conversation.id])
+    } finally {
+      stop()
+    }
   })
 })

@@ -26,6 +26,7 @@ import {
 import { useFleet, useFleetController } from '../../fleet/react'
 import type { FleetState } from '../../fleet/state'
 import { useI18n } from '../../i18n'
+import { useBotAttentionSeen } from '../../inbox'
 import { useServers } from '../../servers/ServersProvider'
 import { useTheme } from '../../theme/ThemeProvider'
 import { fonts, mix } from '../../theme/tokens'
@@ -448,6 +449,7 @@ export function LaneView({ botId, lane }: { botId: string; lane: LaneRef }) {
   const { t } = useI18n()
   const insets = useSafeAreaInsets()
   const controller = useFleetController()
+  useBotAttentionSeen(controller.source.serverId, botId)
   const kind = lane.kind
   const laneId = lane.id
   const bot = useFleet(

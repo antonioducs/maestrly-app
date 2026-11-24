@@ -347,6 +347,74 @@ export function listConversationAttention(): string[] {
   ).map((row) => row.id)
 }
 
+export interface ConversationAttentionRow {
+  id: string
+  name: string
+  status: ConversationStatus
+  marked: boolean
+  at: number
+  routine?: boolean
+}
+
+/** Unarchived conversations with fields needed to compute attention state and snapshots. */
+export function listConversationsForAttention(): ConversationAttentionRow[] {
+  return (
+    getDb()
+      .prepare(
+        `SELECT id, name, status, attention_at, last_activity_at, created_at, routine_id
+         FROM conversations
+         WHERE archived = 0
+         ORDER BY COALESCE(
+           CASE WHEN attention_at IS NOT NULL THEN MAX(attention_at, COALESCE(last_activity_at, 0)) END,
+           NULLIF(last_activity_at, 0),
+           created_at
+         ) DESC`
+      )
+      .all() as Array<{
+      id: string
+      name: string
+      status: ConversationStatus
+      attention_at: number | null
+      last_activity_at: number
+      created_at: number
+      routine_id: string | null
+    }>
+  ).map((row) => ({
+    id: row.id,
+    name: row.name,
+    status: row.status,
+    marked: row.routine_id === null && row.attention_at !== null,
+    at:
+      row.attention_at !== null
+        ? Math.max(row.attention_at, row.last_activity_at)
+        : row.last_activity_at > 0
+          ? row.last_activity_at
+          : row.created_at,
+    routine: row.routine_id !== null,
+  }))
+}
+
+/** Single-conversation state for evaluating attention transitions; null when deleted. */
+export function getConversationAttentionState(id: string): {
+  status: ConversationStatus
+  marked: boolean
+  archived: boolean
+  routine: boolean
+} | null {
+  const row = getDb()
+    .prepare('SELECT status, attention_at, archived, routine_id FROM conversations WHERE id = ?')
+    .get(id) as
+    | { status: ConversationStatus; attention_at: number | null; archived: number; routine_id: string | null }
+    | undefined
+  if (!row) return null
+  return {
+    status: row.status,
+    marked: row.attention_at !== null,
+    archived: row.archived !== 0,
+    routine: row.routine_id !== null,
+  }
+}
+
 /** Compare-and-set keeps explicit experience transitions from overwriting a concurrent or stale state. */
 export function updateConversationExperience(
   id: string,

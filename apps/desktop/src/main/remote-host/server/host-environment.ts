@@ -1,12 +1,15 @@
 import {
   type FleetAccountImportRequest,
   type FleetAddApiKeyAccountRequest,
+  type FleetChatAttentionClearResponse,
+  type FleetChatAttentionSnapshotItem,
   type FleetInstanceHealthRoutines,
   type FleetLoginCallbackRequest,
   type FleetLoginStartRequest,
   type FleetMcpImportRequest,
   type FleetSkillInstallRequest,
   type FleetSubscriptionKind,
+  FLEET_CHAT_ATTENTION_SYNC_CAPABILITY,
   FLEET_CONVERSATION_COMPUTERS_FEATURE,
   FLEET_HOST_EDITOR_FEATURE,
   FLEET_HOST_FILES_FEATURE,
@@ -25,6 +28,11 @@ import { ComputerUnavailableError, type ConversationComputers } from './computer
 export interface HostComputers {
   computers: Pick<ConversationComputers, 'acquireScreen'>
   conversationExists(conversationId: string): boolean
+}
+
+export interface HostChatAttention {
+  snapshot(): FleetChatAttentionSnapshotItem[]
+  clear(conversationIds: string[]): FleetChatAttentionClearResponse
 }
 
 const notBots = (): InstanceHttpError =>
@@ -51,7 +59,9 @@ export class HostEnvironment implements InstanceEnvironment {
     /** The workspaces folder it mounts (`MAESTRLY_WORKSPACES_ROOT`): its own, or the server's shared one. */
     private readonly folder: string | null = null,
     /** Enabled local routines summary reported on `/v1/health` so the gateway keeps the environment running. */
-    private readonly routines: (() => FleetInstanceHealthRoutines) | null = null
+    private readonly routines: (() => FleetInstanceHealthRoutines) | null = null,
+    /** Chat attention snapshot and clear route handlers (`chat-attention-sync`). */
+    private readonly chatAttention: HostChatAttention | null = null
   ) {
     this.events = runtime.events
     this.settings = runtime.settings
@@ -88,10 +98,17 @@ export class HostEnvironment implements InstanceEnvironment {
       FLEET_HOST_FILES_FOLDERS_FEATURE,
       FLEET_HOST_EDITOR_FEATURE,
       FLEET_MOBILE_HOST_FEATURE,
+      FLEET_CHAT_ATTENTION_SYNC_CAPABILITY,
       FLEET_HOST_ROUTINES_FEATURE,
       ...(this.computers ? [FLEET_CONVERSATION_COMPUTERS_FEATURE] : []),
       ...(this.desktopCalls ? [FLEET_HOST_DESKTOP_CALLS_FEATURE] : []),
     ]
+  }
+  chatAttentionSnapshot() {
+    return this.chatAttention?.snapshot() ?? []
+  }
+  clearChatAttention(conversationIds: string[]) {
+    return this.chatAttention?.clear(conversationIds) ?? { cleared: [] }
   }
   selections() {
     return this.runtime.selections()

@@ -1,4 +1,5 @@
 import type { ArtifactHosting } from './artifact-hosting.js'
+import type { AttentionStore } from './attention.js'
 import type { DesktopBridge } from './desktop-bridge.js'
 import type { Runners } from './runners.js'
 import type { RunnerTransfers } from './runner-transfers.js'
@@ -40,6 +41,7 @@ export type GatewayContext = {
   desktops?: DesktopBridge
   runners?: Runners
   runnerTransfers?: RunnerTransfers
+  attention?: AttentionStore
   push?: PushNotifier
   dictation?: DictationService
   backups?: Backups

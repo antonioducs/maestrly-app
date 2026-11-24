@@ -1,4 +1,5 @@
 import {
+  FLEET_ATTENTION_FEATURE,
   FLEET_PUSH_DEFAULTS,
   FLEET_PHONES_FEATURE,
   fleetPushDataSchema,
@@ -26,9 +27,17 @@ export const savePushPreferences = (kv: KeyValueStore, preferences: FleetPushPre
 
 /**
  * What a tapped notification opens: a bot or a chat of a paired server, or nothing it can open. A chat names the
- * workspaces environment it runs on, unless its server predates several of them.
+ * workspaces environment it runs on, unless its server predates several of them; a bot may name a routine run or peer
+ * thread lane.
  */
-export type PushTarget = { serverId: string; kind: 'bot' | 'chat'; id: string; environmentId?: string }
+export type PushTarget = {
+  serverId: string
+  kind: 'bot' | 'chat'
+  id: string
+  environmentId?: string
+  runId?: string
+  threadId?: string
+}
 export function pushTarget(data: unknown, servers: PairedServer[]): PushTarget | null {
   const parsed = fleetPushDataSchema.safeParse(data)
   if (!parsed.success || parsed.data.kind === 'test' || !parsed.data.id) return null
@@ -41,16 +50,23 @@ export function pushTarget(data: unknown, servers: PairedServer[]): PushTarget |
 }
 
 /** A link that opens what a notification is about, on its server. */
-export const pushLink = (target: PushTarget) =>
-  `/${target.kind}/${encodeURIComponent(target.id)}?server=${encodeURIComponent(target.serverId)}${
+export const pushLink = (target: PushTarget) => {
+  if (target.kind === 'bot' && (target.runId || target.threadId)) {
+    const kind = target.runId ? 'run' : 'thread'
+    const lane = target.runId ?? target.threadId ?? ''
+    return `/lane/${encodeURIComponent(target.id)}?kind=${kind}&lane=${encodeURIComponent(lane)}&server=${encodeURIComponent(target.serverId)}`
+  }
+  return `/${target.kind}/${encodeURIComponent(target.id)}?server=${encodeURIComponent(target.serverId)}${
     target.environmentId ? `&env=${encodeURIComponent(target.environmentId)}` : ''
   }`
+}
 
 export type PushRegistrationResult = 'registered' | 'unsupported' | 'off' | 'failed'
 
 /**
  * Tells each paired server where to send this phone's notifications, and what about. A server that predates push,
- * or sends none, is left out; the demo server is not a real server.
+ * or sends none, is left out; the demo server is not a real server. `badgeOthers` is sent strictly to servers
+ * advertising `FLEET_ATTENTION_FEATURE` because older gateways reject unknown fields on the strict request schema.
  */
 export async function registerWithServers(input: {
   servers: PairedServer[]
@@ -58,6 +74,7 @@ export async function registerWithServers(input: {
   platform: 'ios' | 'android'
   locale: string
   preferences: FleetPushPreferences
+  badgeOthersByServer?: Readonly<Record<string, number>>
   clientFor: (server: PairedServer) => Promise<Pick<GatewayClient, 'call'> | null>
   skip?: (server: PairedServer) => boolean
 }): Promise<Record<string, PushRegistrationResult>> {
@@ -74,6 +91,14 @@ export async function registerWithServers(input: {
         results[server.id] = 'failed'
         return
       }
+      const rawBadgeOthers =
+        server.features.includes(FLEET_ATTENTION_FEATURE) && input.badgeOthersByServer
+          ? input.badgeOthersByServer[server.id]
+          : undefined
+      const badgeOthers =
+        typeof rawBadgeOthers === 'number' && Number.isFinite(rawBadgeOthers)
+          ? Math.max(0, Math.min(99_999, Math.floor(rawBadgeOthers)))
+          : undefined
       try {
         await client.call('devicePushSet', {
           body: {
@@ -82,6 +107,7 @@ export async function registerWithServers(input: {
             platform: input.platform,
             locale: input.locale,
             preferences: input.preferences,
+            ...(badgeOthers !== undefined ? { badgeOthers } : {}),
           },
         })
         results[server.id] = 'registered'

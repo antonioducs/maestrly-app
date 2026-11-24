@@ -226,8 +226,9 @@ describe('registerConversationIpc', () => {
   it('lists the host attention marks and tells every window only when a clear changed one', async () => {
     const { reg, handles, mhandles } = createTestRegistrar()
     const emitAttention = vi.fn()
+    const onAttentionSeen = vi.fn()
     vi.mocked(listConversationAttention).mockReturnValueOnce(['conv-1'])
-    registerConversationIpc(reg, { stopChat: h.stopChat, emitAttention })
+    registerConversationIpc(reg, { stopChat: h.stopChat, emitAttention, onAttentionSeen })
 
     expect(handles.get('conversation:attention-list')!({} as never)).toEqual(['conv-1'])
 
@@ -235,11 +236,14 @@ describe('registerConversationIpc', () => {
     await mhandles.get('conversation:attention-clear')!({} as never, 'conv-1')
     expect(clearConversationAttention).toHaveBeenCalledWith('conv-1')
     expect(emitAttention).toHaveBeenCalledWith('conv-1', false)
+    expect(onAttentionSeen).toHaveBeenCalledWith('conv-1')
 
     emitAttention.mockClear()
+    onAttentionSeen.mockClear()
     vi.mocked(clearConversationAttention).mockReturnValueOnce(false)
     await mhandles.get('conversation:attention-clear')!({} as never, 'conv-1')
     expect(emitAttention).not.toHaveBeenCalled()
+    expect(onAttentionSeen).toHaveBeenCalledWith('conv-1')
 
     expect(() => mhandles.get('conversation:attention-clear')!({} as never, 42)).toThrow()
   })

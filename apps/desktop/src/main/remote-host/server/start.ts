@@ -10,7 +10,12 @@ import { type BridgeUpgrade, createInstanceControlServer } from '../../fleet/ins
 import { tMain } from '../../i18n'
 import { canUseComputer } from '../../mcp/tools/computer'
 import { setProjectsDirectoryFallback } from '../../projects-directory'
-import { getConversation } from '../../store'
+import {
+  clearConversationAttention,
+  getConversation,
+  getConversationAttentionState,
+  listConversationsForAttention,
+} from '../../store'
 import { hostFsRoots } from '../host-fs'
 import { noteRemoteEditorActivity } from '../../drawer/vscode'
 import { startVSCodeServer, vscodeServerEndpoint } from '../../vscode/vscode-server'
@@ -22,11 +27,12 @@ import { HostEditor } from './host-editor'
 import { HostEnvironment } from './host-environment'
 import { HostFiles } from './host-files'
 import { setHostModelOptions } from './mobile-api'
-import { watchChatAttention } from './chat-attention'
+import { buildChatAttentionSnapshot, clearChatAttentionIds, createChatAttentionSync } from './chat-attention'
 import type { HostBotAccess } from './bot-access'
 import { getChatPermissionBroker, getChatQuestionBroker } from '../../chat/service'
-import { getPending as getPendingPlan } from '../../plan-broker'
+import { getPending as getPendingPlan, observePlanEvents } from '../../plan-broker'
 import { getRoutine, getRoutineHealthSummary, getRun } from '../../routines/store'
+import { observeConversationChanges } from '../../workspace-service'
 
 /** What server mode needs from the main process. */
 export interface ServerHostDeps {
@@ -40,6 +46,12 @@ export interface ServerHostDeps {
   purgeConversation(conversationId: string): Promise<void>
   /** Follows the status of the host's conversations; returns how to stop. */
   watchStatuses(listener: (conversationId: string, status: string) => void): () => void
+  /** Notifies connected desktops when an attention mark is cleared. */
+  emitAttention(conversationId: string, attention: boolean): void
+  /** Follows attention mark clears, archives, and deletions; returns how to stop. */
+  watchConversationChanges(listener: (conversationId: string) => void): () => void
+  /** Follows seen acknowledgements even without a DB attention mark; returns how to stop. */
+  watchAttentionSeen?(listener: (conversationId: string) => void): () => void
   /** Moves a conversation's browser window where its computer or its Browser tab's video needs it. */
   placeBrowser(conversationId: string, placement: BrowserPlacement): void
   /** What the host gives the bots of its server; it takes their calls only when it can link itself to them. */
@@ -139,8 +151,10 @@ export async function startServerHostMode(window: BrowserWindow, deps: ServerHos
     await runtime.start()
     // Phones choose a chat's model from what the host's accounts offer, listed as for bots.
     setHostModelOptions(async () => (await runtime.selections()).options)
+    const baseSnapshot = () =>
+      buildChatAttentionSnapshot(listConversationsForAttention(), (id) => getPendingPlan(id) !== null)
     // What the chats need from the owner goes to the gateway, which notifies the owner's phones.
-    const stopAttention = watchChatAttention({
+    const attention = createChatAttentionSync({
       permissions: getChatPermissionBroker(),
       questions: getChatQuestionBroker(),
       watchStatuses: deps.watchStatuses,
@@ -158,7 +172,38 @@ export async function startServerHostMode(window: BrowserWindow, deps: ServerHos
         return { notify: routine.notify, outcome, active: run.status === 'running' || run.status === 'waiting' }
       },
       publish: (event) => runtime.events.publish({ type: 'chat.attention', botId: null, ...event }),
+      publishCleared: (conversationId) =>
+        runtime.events.publish({ type: 'chat.attention.cleared', botId: null, conversationId }),
+      initialAttention: () => baseSnapshot().map(({ conversationId, kind }) => ({ conversationId, kind })),
+      conversationState: (id) => {
+        const state = getConversationAttentionState(id)
+        if (!state) return null
+        return {
+          status: state.status,
+          marked: state.marked,
+          hasPendingPlan: getPendingPlan(id) !== null,
+          eligible: !state.archived && !state.routine,
+          routine: !state.archived && state.routine,
+        }
+      },
+      watchChanges: (listener) => {
+        const stopPlans = observePlanEvents((conversationId) => listener(conversationId))
+        const stopWorkspace = observeConversationChanges(listener)
+        const stopConversations = deps.watchConversationChanges(listener)
+        return () => {
+          stopPlans()
+          stopWorkspace()
+          stopConversations()
+        }
+      },
+      watchSeen: deps.watchAttentionSeen,
     })
+    const snapshot = () =>
+      buildChatAttentionSnapshot(
+        listConversationsForAttention(),
+        (id) => getPendingPlan(id) !== null,
+        attention.routineSnapshot()
+      )
     // Computers move files of the host's folders, and read the copies it makes of PDF attachments for them.
     const hostFiles = new HostFiles({
       roots: () => hostFsRoots().map((root) => root.path),
@@ -189,7 +234,16 @@ export async function startServerHostMode(window: BrowserWindow, deps: ServerHos
       },
       deps.bots.available,
       config.workspacesRoot,
-      () => getRoutineHealthSummary()
+      () => getRoutineHealthSummary(),
+      {
+        snapshot,
+        clear: (conversationIds) =>
+          clearChatAttentionIds(conversationIds, {
+            clearMark: clearConversationAttention,
+            emitAttention: deps.emitAttention,
+            attention,
+          }),
+      }
     )
     const server = createInstanceControlServer(config, host, {
       bridge: deps.hub,
@@ -207,7 +261,7 @@ export async function startServerHostMode(window: BrowserWindow, deps: ServerHos
     // The access this host gave bots is checked against the server once: it may have changed while the host was down.
     void deps.bots.start().catch(() => undefined)
     window.on('closed', async () => {
-      stopAttention()
+      attention.stop()
       deps.hub.closeAll()
       editor.closeAll()
       server.close()

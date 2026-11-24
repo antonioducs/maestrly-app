@@ -2,23 +2,22 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { closeDb, freshDb } from '../helpers/db'
-import {
-  conversationPermissionScope,
-  permissionScopeKey,
-} from '../../src/shared/conversation-scope'
+import { conversationPermissionScope, permissionScopeKey } from '../../src/shared/conversation-scope'
 import { ROUTINE_LIMITS, type LocalRoutine, type RoutineDraft } from '../../src/shared/routines'
 import type { InternalTurnHandle, InternalTurnOutcome } from '../../src/shared/chat'
 import type { StandaloneConversation } from '../../src/shared/conversation'
 import { getDb, getConversation, insertConversation } from '../../src/main/store'
-import {
-  deleteAllSavedPermissions,
-  deleteSavedPermission,
-  listSavedPermissions,
-} from '../../src/main/chat/permission'
+import { deleteAllSavedPermissions, deleteSavedPermission, listSavedPermissions } from '../../src/main/chat/permission'
 import { upsertChatMessage } from '../../src/main/chat/chat-store'
 import { createRoutine, getRun, insertRun, updateRun } from '../../src/main/routines/store'
 import { buildRoutinePrompt } from '../../src/main/routines/prompt'
-import { createRoutineRunner, type RoutineRunnerDeps } from '../../src/main/routines/runner'
+import {
+  createRoutineRunner,
+  deleteRoutineRunConversation,
+  deleteRoutineWithData,
+  type RoutineRunnerDeps,
+} from '../../src/main/routines/runner'
+import { observeConversationChanges } from '../../src/main/workspace-service'
 import { recoverInterruptedRoutineRuns } from '../../src/main/routines/scheduler'
 import { keepRoutineRunFiles } from '../../src/main/routines/run-files'
 
@@ -202,7 +201,11 @@ describe('routine prompt builder', () => {
       scheduledAt: Date.UTC(2026, 10, 18, 9, 0),
       previousReports: [
         {
-          run: { startedAt: Date.UTC(2026, 10, 17, 9, 0), scheduledAt: Date.UTC(2026, 10, 17, 9, 0), status: 'notable' },
+          run: {
+            startedAt: Date.UTC(2026, 10, 17, 9, 0),
+            scheduledAt: Date.UTC(2026, 10, 17, 9, 0),
+            status: 'notable',
+          },
           report: { outcome: 'notable', summary: '2 PRs waiting', pending: 'Review #4', notes: 'Watch #5' },
         },
       ],
@@ -399,7 +402,9 @@ describe('routine runner', () => {
       id: 'msg-1',
       conversationId: convId,
       role: 'user',
-      parts: [{ id: 'p1', type: 'file', kind: 'text', name: 'notes.txt', mediaType: 'text/plain', data: 'hello world' }],
+      parts: [
+        { id: 'p1', type: 'file', kind: 'text', name: 'notes.txt', mediaType: 'text/plain', data: 'hello world' },
+      ],
       createdAt: 1000,
     })
 
@@ -476,7 +481,13 @@ describe('routine runner', () => {
     const env = makeDeps({
       pendingInteractions: () => ({
         permissions: [],
-        questions: [{ messageId: 'm-1', toolCallId: 'tc-1', questions: [{ header: 'Alvo', question: 'Which environment?', options: [] }] }],
+        questions: [
+          {
+            messageId: 'm-1',
+            toolCallId: 'tc-1',
+            questions: [{ header: 'Alvo', question: 'Which environment?', options: [] }],
+          },
+        ],
       }),
     })
     const runner = createRoutineRunner(env.deps)
@@ -563,5 +574,33 @@ describe('routine runner', () => {
     env.startedTurns[0].done.resolve({ status: 'cancelled', assistantMessageId: null })
     await runner.waitForRun(run.id)
     expect(releaseNoop).toHaveBeenCalled()
+  })
+
+  it('notifies conversation change observers when deleting a run conversation or routine data (S6)', async () => {
+    const routine = createRoutine(sampleDraft(), null, 1000)
+    const env = makeDeps()
+    const runner = createRoutineRunner(env.deps)
+    const changed: string[] = []
+    const stop = observeConversationChanges((id) => changed.push(id))
+
+    try {
+      const r1 = await runner.start(routine.id, 'schedule', env.now())
+      env.startedTurns[0].done.resolve({ status: 'success', assistantMessageId: null })
+      await runner.waitForRun(r1.id)
+
+      const r2 = await runner.start(routine.id, 'schedule', env.now() + 1000)
+      env.startedTurns[1].done.resolve({ status: 'success', assistantMessageId: null })
+      await runner.waitForRun(r2.id)
+
+      await expect(deleteRoutineRunConversation(r1.id)).resolves.toBe(true)
+      expect(getConversation(r1.conversationId!)).toBeUndefined()
+      expect(changed).toEqual([r1.conversationId!])
+
+      await expect(deleteRoutineWithData(routine.id, runner)).resolves.toBe(true)
+      expect(getConversation(r2.conversationId!)).toBeUndefined()
+      expect(changed).toEqual([r1.conversationId!, r2.conversationId!])
+    } finally {
+      stop()
+    }
   })
 })

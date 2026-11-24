@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import {
+  FLEET_CHAT_ATTENTION_SYNC_CAPABILITY,
+  fleetChatAttentionQueryValue,
   type FleetChatAttentionKind,
+  type FleetChatAttentionSnapshotItem,
   deriveBotId,
   fleetBotBlocksUpdate,
   FLEET_BOT_ENV,
@@ -190,6 +193,8 @@ export class Lifecycle {
   private readonly hostHasRoutines = new Map<string, boolean>()
   /** One event stream per environment, fanned out to its bots. */
   private readonly links = new Map<string, AbortController>()
+  /** The `chatAttention` query version each open environment stream was opened with. */
+  private readonly linkChatAttention = new Map<string, 1 | 2>()
   private readonly pendingSeen = new Map<string, Set<string>>()
   private readonly reconcileTimers = new Map<string, NodeJS.Timeout>()
   private readonly controllerTimers = new Map<string, NodeJS.Timeout>()
@@ -253,7 +258,19 @@ export class Lifecycle {
   /** An archived environment is about to be deleted for good: what reads its files (a backup) lets them go first. */
   beforeEnvironmentPurge: (environmentId: string) => Promise<void> = async () => {}
   /** A chat of the workspaces host needs the owner (`chat.attention`). */
-  onChatAttention?: (environmentId: string, conversationId: string, name: string, kind: FleetChatAttentionKind) => void
+  onChatAttention?: (
+    environmentId: string,
+    conversationId: string,
+    name: string,
+    kind: FleetChatAttentionKind,
+    at: string
+  ) => void
+  /** A workspaces host cleared a chat's attention mark (`chat.attention.cleared`, `chatAttention=2`). */
+  onChatAttentionCleared?: (environmentId: string, conversationId: string) => void
+  /** A workspaces host sent its current marked chats on connect (`chat.attention.snapshot`, `chatAttention=2`). */
+  onChatAttentionSnapshot?: (environmentId: string, conversations: readonly FleetChatAttentionSnapshotItem[]) => void
+  /** An environment's reported capabilities were loaded or changed. */
+  onEnvironmentCapabilitiesChanged?: (environmentId: string, capabilities: readonly string[]) => void
   constructor(
     readonly store: Store,
     readonly docker: DockerDriver,
@@ -354,6 +371,7 @@ export class Lifecycle {
     if (JSON.stringify(this.inbox()) !== before) this.onEvent({ type: 'inbox.updated', at: now(), items: this.inbox() })
     if (status.ready && this.get(id)?.lifecycle === 'running') this.onReady(id)
     const environmentId = this.store.getBot(id)?.environmentId
+    if (environmentId) this.syncLinkChatAttention(environmentId)
     if (environmentId && this.store.getEnvironment(environmentId)?.updateRequestedAt)
       void this.maybeUpdate(environmentId)
   }
@@ -377,6 +395,62 @@ export class Lifecycle {
   private stopLink(environmentId: string) {
     this.links.get(environmentId)?.abort()
     this.links.delete(environmentId)
+    this.linkChatAttention.delete(environmentId)
+  }
+  /** Reconnects an active environment event stream when its `chatAttention` query version changes. */
+  private syncLinkChatAttention(environmentId: string) {
+    if (!this.links.has(environmentId)) return
+    const desired = fleetChatAttentionQueryValue(this.environmentCapabilities(environmentId))
+    if (this.linkChatAttention.get(environmentId) !== desired) this.startLink(environmentId)
+  }
+  /**
+   * Updates cached instance health metadata when capabilities or appVersion change, notifying listeners and
+   * reconnecting the event stream if the `chatAttention` query version changed.
+   */
+  private applyInstanceCapabilities(
+    environmentId: string,
+    appVersion: string,
+    capabilities: string[],
+    reconnect = true
+  ) {
+    const previous = this.instances.get(environmentId)
+    const changed =
+      !previous ||
+      previous.appVersion !== appVersion ||
+      previous.capabilities.length !== capabilities.length ||
+      previous.capabilities.some((cap, index) => cap !== capabilities[index])
+    this.instances.set(environmentId, {
+      appVersion,
+      capabilities,
+      runtimes: previous?.runtimes ?? null,
+      additionalRuntimes: previous?.additionalRuntimes,
+    })
+    if (!changed) return
+    this.onEnvironmentCapabilitiesChanged?.(environmentId, this.environmentCapabilities(environmentId))
+    this.emitEnvironment(environmentId, false)
+    if (reconnect) this.syncLinkChatAttention(environmentId)
+  }
+  /**
+   * Asks a running workspaces host advertising `chat-attention-sync` to clear attention marks for chats seen on a
+   * phone. Returns the conversation ids the host cleared, or `[]` when unsupported, stopped, or unreachable.
+   */
+  async clearChatAttention(environmentId: string, conversationIds: string[]): Promise<string[]> {
+    if (!conversationIds.length) return []
+    const environment = this.store.getEnvironment(environmentId)
+    if (
+      !environment ||
+      environment.archivedAt ||
+      environment.kind !== 'workspaces' ||
+      environment.lifecycle !== 'running'
+    )
+      return []
+    if (!this.environmentCapabilities(environmentId).includes(FLEET_CHAT_ATTENTION_SYNC_CAPABILITY)) return []
+    try {
+      const response = await this.client(environmentId).chatAttentionClear({ conversationIds })
+      return response.cleared
+    } catch {
+      return []
+    }
   }
   private removeStatus(id: string) {
     const before = JSON.stringify(this.inbox())
@@ -412,12 +486,52 @@ export class Lifecycle {
       while (!controller.signal.aborted) {
         try {
           const client = this.client(environmentId)
-          if (broken && this.capable(environmentId))
-            await client.environmentStatus().then(
-              (aggregate) => this.recoverMembers(environmentId, aggregate, controller.signal),
+          if (broken) {
+            await client.health().then(
+              (health) => {
+                if (controller.signal.aborted || !health.ready) return
+                this.applyInstanceCapabilities(environmentId, health.appVersion, health.capabilities, false)
+              },
               () => {}
             )
-          for await (const event of client.events(since, controller.signal)) {
+            if (this.capable(environmentId))
+              await client.environmentStatus().then(
+                (aggregate) => this.recoverMembers(environmentId, aggregate, controller.signal),
+                () => {}
+              )
+          }
+          const chatAttention = fleetChatAttentionQueryValue(this.environmentCapabilities(environmentId))
+          this.linkChatAttention.set(environmentId, chatAttention)
+          // On a `chatAttention=2` workspaces link the connect snapshot is authoritative; ignore replayed
+          // `chat.attention`/`chat.attention.cleared` events arriving before it so a restart does not re-push or
+          // mutate attention state with stale replay entries. `chatAttention=1` links stay unchanged.
+          let awaitingChatSnapshot =
+            chatAttention === 2 && this.store.getEnvironment(environmentId)?.kind === 'workspaces'
+          for await (const event of client.events(since, controller.signal, { chatAttention })) {
+            // Connect snapshots may carry seq 0 or <= since and always replace chat attention state.
+            if (event.type === 'chat.attention.snapshot') {
+              awaitingChatSnapshot = false
+              if (event.seq > since) since = event.seq
+              delay = 1000
+              this.dispatch(environmentId, event)
+              continue
+            }
+            if (awaitingChatSnapshot && (event.type === 'chat.attention' || event.type === 'chat.attention.cleared')) {
+              if (event.seq > since) since = event.seq
+              delay = 1000
+              continue
+            }
+            // A workspaces host has no bots to refresh on a sequence reset; dispatch chat events directly.
+            if (
+              (event.type === 'chat.attention' || event.type === 'chat.attention.cleared') &&
+              event.seq <= since &&
+              this.store.getEnvironment(environmentId)?.kind === 'workspaces'
+            ) {
+              since = event.seq
+              delay = 1000
+              this.dispatch(environmentId, event)
+              continue
+            }
             // A run's own reset says only that run's transcript changed.
             if ((event.type === 'reset' && !event.runId) || event.seq <= since) {
               since = await this.refreshStatuses(environmentId, client, event.seq, controller.signal)
@@ -440,7 +554,17 @@ export class Lifecycle {
     // A workspaces host's chats are not bots: what they need goes to the owner's phones.
     if (event.type === 'chat.attention') {
       if (this.store.getEnvironment(environmentId)?.kind === 'workspaces')
-        this.onChatAttention?.(environmentId, event.conversationId, event.name, event.kind)
+        this.onChatAttention?.(environmentId, event.conversationId, event.name, event.kind, event.at)
+      return
+    }
+    if (event.type === 'chat.attention.cleared') {
+      if (this.store.getEnvironment(environmentId)?.kind === 'workspaces')
+        this.onChatAttentionCleared?.(environmentId, event.conversationId)
+      return
+    }
+    if (event.type === 'chat.attention.snapshot') {
+      if (this.store.getEnvironment(environmentId)?.kind === 'workspaces')
+        this.onChatAttentionSnapshot?.(environmentId, event.conversations)
       return
     }
     const id = this.eventBot(environmentId, event.botId)
@@ -1346,6 +1470,7 @@ export class Lifecycle {
     )
       throw new GatewayError('INSTANCE_UNAVAILABLE', WORKSPACES_UNSUPPORTED)
     this.instances.set(environmentId, health)
+    this.onEnvironmentCapabilitiesChanged?.(environmentId, this.environmentCapabilities(environmentId))
     // The desktop answers: bots still to be installed move on to their profile step.
     for (const bot of this.store.botsOfEnvironment(environmentId))
       if (bot.lifecycle !== 'running' && bot.setup.step !== 'profile')
@@ -1746,6 +1871,7 @@ export class Lifecycle {
       const health = await this.client(id).health()
       this.hostBusy.set(id, health.busy === true)
       this.hostHasRoutines.set(id, (health.routines?.enabled ?? 0) > 0)
+      if (health.ready) this.applyInstanceCapabilities(id, health.appVersion, health.capabilities)
     } catch {
       this.hostBusy.set(id, true)
       this.hostHasRoutines.set(id, true)
@@ -3077,6 +3203,7 @@ export class Lifecycle {
       runtimes: this.instances.get(id)?.runtimes ?? null,
       additionalRuntimes: this.instances.get(id)?.additionalRuntimes,
     })
+    this.onEnvironmentCapabilitiesChanged?.(id, this.environmentCapabilities(id))
     const lingering = await this.installMembers(id, client, null, true)
     this.updateEnvironment(id, { lifecycle: 'running', setup: environmentSetup('ready') })
     for (const bot of this.store.botsOfEnvironment(id))

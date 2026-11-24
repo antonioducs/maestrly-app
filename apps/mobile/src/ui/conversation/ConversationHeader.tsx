@@ -1,10 +1,11 @@
 import type { FleetBot, MobileConversation, MobileRuntime } from '@maestrly/bot-fleet-protocol'
 import { router } from 'expo-router'
-import type { ReactNode } from 'react'
-import { Pressable, View } from 'react-native'
+import { type ReactNode, useEffect, useRef } from 'react'
+import { Animated, Easing, Platform, Pressable, View } from 'react-native'
 import { botChatLabel, chatStatusLine } from '../../chats/selectors'
 import { botStatusLine, statusLineText, type StatusLine } from '../../fleet/selectors'
 import { useI18n } from '../../i18n'
+import { useInbox } from '../../inbox'
 import { useTheme } from '../../theme/ThemeProvider'
 import { fonts } from '../../theme/tokens'
 import { BotAvatar } from '../Avatar'
@@ -12,6 +13,7 @@ import { BotMark } from '../chat/BotMark'
 import { Icon } from '../icons'
 import { IconButton } from '../primitives/IconButton'
 import { AppText } from '../primitives/Text'
+import { useReducedMotion } from '../useReducedMotion'
 
 function TitleButton({
   label,
@@ -116,54 +118,106 @@ export function NewChatTitle({ where }: { where: string }) {
   )
 }
 
-/** The top bar: the menu (with a dot when something waits on you), what is open, and a new chat. */
+const BADGE_EASE = Easing.bezier(0.4, 0, 0.2, 1)
+
+function BellButton() {
+  const { palette } = useTheme()
+  const { t } = useI18n()
+  const { counts } = useInbox()
+  const reduced = useReducedMotion()
+  const count = counts.total
+  const previousCount = useRef(count)
+  const scale = useRef(new Animated.Value(1)).current
+
+  useEffect(() => {
+    const appeared = previousCount.current === 0 && count > 0
+    previousCount.current = count
+    if (!appeared || reduced) {
+      scale.setValue(1)
+      return
+    }
+    scale.setValue(0.6)
+    Animated.timing(scale, {
+      toValue: 1,
+      duration: 160,
+      easing: BADGE_EASE,
+      useNativeDriver: Platform.OS !== 'web',
+    }).start()
+  }, [count, reduced, scale])
+
+  const label = count > 0 ? t('inbox.openCount', { count }) : t('inbox.open')
+  const badgeText = count > 99 ? '99+' : String(count)
+
+  return (
+    <IconButton
+      icon="bell"
+      label={label}
+      onPress={() => router.push('/inbox')}
+      style={{ overflow: 'visible', zIndex: 1 }}
+    >
+      {count > 0 ? (
+        <Animated.View
+          aria-hidden
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            top: 4,
+            left: 22,
+            height: 22,
+            minWidth: 22,
+            borderRadius: 11,
+            paddingHorizontal: 5,
+            borderWidth: 2,
+            borderColor: palette.canvas,
+            backgroundColor: palette.badge,
+            alignItems: 'center',
+            justifyContent: 'center',
+            transform: [{ scale }],
+          }}
+        >
+          <AppText
+            numberOfLines={1}
+            style={{
+              fontFamily: fonts.bodySemi,
+              fontSize: 11.5,
+              lineHeight: 14,
+              color: palette.badgeInk,
+              fontVariant: ['tabular-nums'],
+            }}
+          >
+            {badgeText}
+          </AppText>
+        </Animated.View>
+      ) : null}
+    </IconButton>
+  )
+}
+
+/** The top bar: menu, notifications bell, what is open, search and a new chat. */
 export function ConversationHeader({
   title,
-  waiting,
   onOpenMenu,
   onNewChat,
   onSearch = null,
 }: {
   title: ReactNode
-  waiting: number
   onOpenMenu: () => void
   /** Null when the server has no chats. */
   onNewChat: (() => void) | null
   /** Opens or closes the search of the conversation shown; null when none is. */
   onSearch?: (() => void) | null
 }) {
-  const { palette } = useTheme()
   const { t } = useI18n()
+  const rightCount = (onSearch ? 1 : 0) + (onNewChat ? 1 : 0)
   return (
     <View style={{ height: 52, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4 }}>
-      <IconButton
-        icon="menu"
-        label={waiting ? t('home.openMenuWaiting', { count: waiting }) : t('home.openMenu')}
-        onPress={onOpenMenu}
-        badge={
-          waiting ? (
-            <View
-              style={{
-                width: 9,
-                height: 9,
-                borderRadius: 5,
-                backgroundColor: palette.cue,
-                borderWidth: 2,
-                borderColor: palette.canvas,
-              }}
-            />
-          ) : null
-        }
-      />
-      {/* Keeps the title centered when the right side holds two buttons. */}
-      {onSearch && onNewChat ? <View style={{ width: 44 }} /> : null}
+      <IconButton icon="menu" label={t('home.openMenu')} onPress={onOpenMenu} />
+      <BellButton />
       <View style={{ flex: 1, alignItems: 'center', minWidth: 0 }}>{title}</View>
+      {/* Keeps the title centered against the 88 pt left side while anchoring single actions to the right edge. */}
+      {rightCount === 0 ? <View style={{ width: 88 }} /> : rightCount === 1 ? <View style={{ width: 44 }} /> : null}
       {onSearch ? <IconButton icon="search" label={t('search.open')} onPress={onSearch} /> : null}
-      {onNewChat ? (
-        <IconButton icon="compose" label={t('chat.newChat')} onPress={onNewChat} />
-      ) : onSearch ? null : (
-        <View style={{ width: 44 }} />
-      )}
+      {onNewChat ? <IconButton icon="compose" label={t('chat.newChat')} onPress={onNewChat} /> : null}
     </View>
   )
 }

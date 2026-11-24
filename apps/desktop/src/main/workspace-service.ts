@@ -107,8 +107,21 @@ export function renameConversation(id: string, name: string): void {
   }
 }
 
+const conversationChangeListeners = new Set<(conversationId: string) => void>()
+
+/** Notifies host listeners when a conversation is archived, unarchived, or deleted. */
+export function observeConversationChanges(listener: (conversationId: string) => void): () => void {
+  conversationChangeListeners.add(listener)
+  return () => conversationChangeListeners.delete(listener)
+}
+
+function notifyConversationChanged(conversationId: string): void {
+  for (const listener of [...conversationChangeListeners]) listener(conversationId)
+}
+
 export function setConversationArchived(id: string, archived: boolean): void {
   store.setConversationArchived(id, archived)
+  notifyConversationChanged(id)
 }
 
 export function removeWorkspace(id: string): void {
@@ -138,6 +151,7 @@ export async function deleteConversation(
   const deleteRowAndArtifacts = async (): Promise<void> => {
     const toolImageRefs = collectChatToolImageRefs(id)
     store.deleteConversation(id)
+    notifyConversationChanged(id)
     releaseUnreferencedChatToolImages(toolImageRefs)
 
     deleteConversationToolImageMetadata(id)
