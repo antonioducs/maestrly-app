@@ -30,6 +30,7 @@ export interface AppNotificationsDeps {
   hostLabel?: (hostId: HostId) => string | null
   botAttention: Omit<FleetBotAttentionDeps, 'max'>
   badge: Omit<AppBadgeDeps, 'mainWindow'>
+  onBotSeen?: (serverId: FleetServerId, botId: string) => void
 }
 
 /** This computer's system notifications: of its conversations, of remote hosts' conversations, and of bots. */
@@ -77,6 +78,7 @@ export class AppNotifications {
       botName: deps.botName,
       serverName: deps.serverName,
       open: (target) => this.open(target),
+      onSeen: deps.onBotSeen,
     })
     this.backups = new FleetBackupNotices({
       notices: this.notices,

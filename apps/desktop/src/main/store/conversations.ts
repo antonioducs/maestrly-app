@@ -347,6 +347,62 @@ export function listConversationAttention(): string[] {
   ).map((row) => row.id)
 }
 
+export interface ConversationAttentionRow {
+  id: string
+  name: string
+  status: ConversationStatus
+  marked: boolean
+  at: number
+}
+
+/** Unarchived, non-routine conversations with fields needed to compute attention state and snapshots. */
+export function listConversationsForAttention(): ConversationAttentionRow[] {
+  return (
+    getDb()
+      .prepare(
+        `SELECT id, name, status, attention_at, last_activity_at, created_at
+         FROM conversations
+         WHERE archived = 0 AND routine_id IS NULL
+         ORDER BY COALESCE(attention_at, NULLIF(last_activity_at, 0), created_at) DESC`
+      )
+      .all() as Array<{
+      id: string
+      name: string
+      status: ConversationStatus
+      attention_at: number | null
+      last_activity_at: number
+      created_at: number
+    }>
+  ).map((row) => ({
+    id: row.id,
+    name: row.name,
+    status: row.status,
+    marked: row.attention_at !== null,
+    at: row.attention_at ?? (row.last_activity_at > 0 ? row.last_activity_at : row.created_at),
+  }))
+}
+
+/** Single-conversation state for evaluating attention transitions; null when deleted. */
+export function getConversationAttentionState(id: string): {
+  status: ConversationStatus
+  marked: boolean
+  archived: boolean
+  routine: boolean
+} | null {
+  const row = getDb()
+    .prepare('SELECT status, attention_at, archived, routine_id FROM conversations WHERE id = ?')
+    .get(id) as
+    | { status: ConversationStatus; attention_at: number | null; archived: number; routine_id: string | null }
+    | undefined
+  if (!row) return null
+  return {
+    status: row.status,
+    marked: row.attention_at !== null,
+    archived: row.archived !== 0,
+    routine: row.routine_id !== null,
+  }
+}
+
 /** Compare-and-set keeps explicit experience transitions from overwriting a concurrent or stale state. */
 export function updateConversationExperience(
   id: string,

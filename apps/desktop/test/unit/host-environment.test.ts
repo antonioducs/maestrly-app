@@ -107,6 +107,7 @@ describe('workspaces host environment', () => {
         'host-files-folders',
         'host-editor',
         'mobile-api',
+        'chat-attention-sync',
         'host-routines',
       ],
       busy: false,
@@ -151,6 +152,7 @@ describe('workspaces host environment', () => {
         'host-files-folders',
         'host-editor',
         'mobile-api',
+        'chat-attention-sync',
         'host-routines',
       ],
       bots: [],
@@ -230,5 +232,33 @@ describe('workspaces host environment', () => {
     expect(environment.settings).toBe(runtime.settings)
     environment.checkRuntimes()
     expect(runtime.checkRuntimes).toHaveBeenCalledOnce()
+  })
+
+  it('delegates chat attention snapshot and clear when configured, and defaults to empty', () => {
+    const plain = setup().environment
+    expect(plain.chatAttentionSnapshot?.()).toEqual([])
+    expect(plain.clearChatAttention?.(['c1'])).toEqual({ cleared: [] })
+
+    const { runtime } = setup()
+    const snapshot = [
+      { conversationId: 'c1', name: 'Chat 1', kind: 'waiting' as const, at: '2026-11-23T00:00:00.000Z' },
+    ]
+    const chatAttention = {
+      snapshot: vi.fn(() => snapshot),
+      clear: vi.fn((ids: string[]) => ({ cleared: ids })),
+    }
+    const environment = new HostEnvironment(
+      runtime as unknown as EnvironmentRuntime,
+      () => false,
+      null,
+      false,
+      null,
+      null,
+      chatAttention
+    )
+    expect(environment.chatAttentionSnapshot()).toEqual(snapshot)
+    expect(environment.clearChatAttention(['c1', 'c2'])).toEqual({ cleared: ['c1', 'c2'] })
+    expect(chatAttention.snapshot).toHaveBeenCalledOnce()
+    expect(chatAttention.clear).toHaveBeenCalledWith(['c1', 'c2'])
   })
 })

@@ -39,6 +39,10 @@ export interface ConversationIpcDeps {
   resumeBackgroundCompaction?: (id: string) => void
   /** Tells every window, on this computer and connected ones, that the conversation's attention mark changed. */
   emitAttention?: (conversationId: string, attention: boolean) => void
+  /** Notifies host listeners when a conversation is archived or deleted so attention sync updates. */
+  onConversationChanged?: (conversationId: string) => void
+  /** Notifies host attention sync when a conversation is seen, even without a DB attention mark. */
+  onAttentionSeen?: (conversationId: string) => void
 }
 
 /** Archive or restore a conversation, as the conversation list does. */
@@ -59,7 +63,10 @@ export async function archiveConversation(deps: ConversationIpcDeps, id: string,
     cleanupSharedWatchers(id) // #322: release shared watchers only when no active sibling needs them
   }
   setConversationArchived(id, archived)
-  if (archived && clearConversationAttention(id)) deps.emitAttention?.(id, false)
+  if (archived) {
+    if (clearConversationAttention(id)) deps.emitAttention?.(id, false)
+    deps.onConversationChanged?.(id)
+  }
   if (!archived) deps.resumeBackgroundCompaction?.(id)
 }
 
@@ -127,6 +134,7 @@ export function registerConversationIpc(reg: IpcRegistrar, deps: ConversationIpc
   reg.mhandle('conversation:attention-clear', (_e, id: unknown) => {
     const conversationId = z.string().min(1).parse(id)
     if (clearConversationAttention(conversationId)) deps.emitAttention?.(conversationId, false)
+    deps.onAttentionSeen?.(conversationId)
   })
   reg.mhandle('conversation:archive', (_e, id: string, archived: boolean) => archiveConversation(deps, id, archived))
   reg.mhandle('conversation:delete', async (_e, id: string) => {
@@ -144,6 +152,7 @@ export function registerConversationIpc(reg: IpcRegistrar, deps: ConversationIpc
     cleanupSharedWatchers(id) // before deleting the row needed to resolve notes paths and cwd
     // Persistent cleanup lives in the service and also covers workspace removal.
     await deleteConversation(id)
+    deps.onConversationChanged?.(id)
   })
 }
 

@@ -303,6 +303,7 @@ import { handleGenUiWidgetProtocol } from './genui-widget-scheme'
 import { registerPrivilegedSchemes } from './privileged-schemes'
 import { noticeFleetDownload } from './fleet/client/download-notices'
 import { AppNotifications } from './notifications/app-notifications'
+import { notifyBotSeenOnGateway } from './notifications/bot-notices'
 import { registerNotificationsIpc } from './notifications/ipc'
 import { remoteConversationLabel } from './remote-conversation-labels'
 import type { SoundSettings } from '../shared/sound'
@@ -455,6 +456,22 @@ function keepsRunningInBackground(): boolean {
 const sendToWindow = (channel: string, payload?: unknown): void => {
   safeWindowSend(mainWindow, channel, payload)
   sendToRemoteMains(channel, payload)
+}
+
+const attentionChangeListeners = new Set<(conversationId: string) => void>()
+const notifyAttentionChange = (conversationId: string): void => {
+  for (const listener of [...attentionChangeListeners]) listener(conversationId)
+}
+const attentionSeenListeners = new Set<(conversationId: string) => void>()
+const notifyAttentionSeen = (conversationId: string): void => {
+  for (const listener of [...attentionSeenListeners]) listener(conversationId)
+}
+const emitConversationAttention = (conversationId: string, attention: boolean): void => {
+  sendToWindow('conversation:attention', { conversationId, attention })
+  if (!attention) {
+    appNotifications?.conversations.seen(conversationId)
+    notifyAttentionChange(conversationId)
+  }
 }
 
 /** Stop live resources before a local reset without deleting repositories or conversation data. */
@@ -1085,15 +1102,15 @@ function registerIpc(): void {
     getMainWindow: () => mainWindow,
     stopChat,
     notifyWorkspacesChanged: () => sendToMainTargets('workspace:changed'),
+    onConversationChanged: notifyAttentionChange,
   })
   cancelProjectSetupsAndWait = registerProjectSetupIpc(reg).cancelAndWait
   const conversationIpcDeps: ConversationIpcDeps = {
     stopChat,
     resumeBackgroundCompaction,
-    emitAttention: (conversationId, attention) => {
-      sendToWindow('conversation:attention', { conversationId, attention })
-      if (!attention) appNotifications?.conversations.seen(conversationId)
-    },
+    emitAttention: emitConversationAttention,
+    onConversationChanged: notifyAttentionChange,
+    onAttentionSeen: notifyAttentionSeen,
   }
   registerConversationIpc(reg, conversationIpcDeps)
   setAssistantConversationArchiver((id) => archiveConversation(conversationIpcDeps, id, true))
@@ -1474,7 +1491,9 @@ app.whenReady().then(async () => {
       serverName: (serverId) =>
         fleetServers.list().length > 1 ? (fleetServers.get(serverId)?.getConnection().hostname ?? null) : null,
       hostLabel: (hostId) => {
-        const host = hostRegistry()?.list().find((item) => item.id === hostId)
+        const host = hostRegistry()
+          ?.list()
+          .find((item) => item.id === hostId)
         if (!host?.remote) return null
         return host.server ? `${host.label} · ${host.server}` : host.label || null
       },
@@ -1488,6 +1507,7 @@ app.whenReady().then(async () => {
         setBadgeCount: (count) => void app.setBadgeCount(count),
         description: (count) => tMain('main')('notices.badge', { count }),
       },
+      onBotSeen: (serverId, botId) => notifyBotSeenOnGateway(fleetServers.get(serverId), botId),
     })
   registry.on('status', broadcastStatus)
   registry.on('status', ({ agentId, status, alert }) => {
@@ -1642,6 +1662,15 @@ app.whenReady().then(async () => {
           const onStatus = ({ agentId, status }: { agentId: string; status: string }) => listener(agentId, status)
           registry.on('status', onStatus)
           return () => registry.off('status', onStatus)
+        },
+        emitAttention: emitConversationAttention,
+        watchConversationChanges: (listener) => {
+          attentionChangeListeners.add(listener)
+          return () => attentionChangeListeners.delete(listener)
+        },
+        watchAttentionSeen: (listener) => {
+          attentionSeenListeners.add(listener)
+          return () => attentionSeenListeners.delete(listener)
         },
         placeBrowser: (id, placement) =>
           placeConversationBrowser(id, placement, {

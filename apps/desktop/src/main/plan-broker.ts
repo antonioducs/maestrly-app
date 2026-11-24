@@ -1,4 +1,4 @@
-import { autonomousPolicy,AutonomousInteractionError } from './chat/autonomous'
+import { autonomousPolicy, AutonomousInteractionError } from './chat/autonomous'
 import { emitChatHost } from './chat/host-events'
 import * as windowIpc from './window-ipc'
 import { getLocale } from './store'
@@ -106,9 +106,17 @@ const pending = new Map<string, Pending>() // agentId to plan awaiting a decisio
 const lastPlan = new Map<string, { plan: string; version: number }>() // p/ versionar (diff)
 /** Reserve the source between revise and the next version, independently of visible pending plans. */
 const revisionReservations = new Map<string, RevisionReservation>()
+const planObservers = new Set<(conversationId: string, event: 'received' | 'cleared') => void>()
+
+export function observePlanEvents(
+  listener: (conversationId: string, event: 'received' | 'cleared') => void
+): () => void {
+  planObservers.add(listener)
+  return () => planObservers.delete(listener)
+}
 
 function emitPlanEvent(agentId: string, channel: string, payload: unknown): void {
-  emitChatHost(agentId,channel,payload)
+  emitChatHost(agentId, channel, payload)
   // The main renderer still needs the event to focus the conversation; the plan panel receives the
   // same event directly so an unrelated conversation does not wake every panel renderer.
   if (typeof windowIpc.sendToConversation === 'function') {
@@ -116,6 +124,10 @@ function emitPlanEvent(agentId: string, channel: string, payload: unknown): void
   } else {
     // Legacy/unit harnesses only expose broadcast.
     windowIpc.broadcast(channel, payload)
+  }
+  if (channel === 'plan:received' || channel === 'plan:cleared') {
+    const kind = channel === 'plan:received' ? 'received' : 'cleared'
+    for (const observer of [...planObservers]) observer(agentId, kind)
   }
 }
 
@@ -125,7 +137,7 @@ export function initPlanBroker(onReceived?: (agentId: string) => void): void {
 
 /** Stage a plan, replacing a still-pending earlier version. */
 function registerPlan(input: PlanSubmitInput): void {
-  if(autonomousPolicy(input.agentId))throw new AutonomousInteractionError()
+  if (autonomousPolicy(input.agentId)) throw new AutonomousInteractionError()
   const old = pending.get(input.agentId)
   const prev = lastPlan.get(input.agentId)
   const version = (prev?.version ?? 0) + 1
