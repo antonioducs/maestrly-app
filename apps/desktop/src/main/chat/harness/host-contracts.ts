@@ -102,8 +102,8 @@ export const HOST_SEND_TO_CONVERSATION_GUIDANCE =
   'receiving agent works under its own mode and permissions, so this is available in Ask mode too; this ' +
   'conversation keeps its own restrictions. The first message to a conversation that is not linked to this one ' +
   "needs the person's confirmation in the chat. Turns not started by the person (messages and results from other " +
-  'conversations) can only message linked conversations, and at most 3 agent-to-agent turns follow each message ' +
-  'the person typed. A busy target receives the message when its current turn ends. Set reportBack only when the ' +
+  'conversations) can only message linked conversations. A busy target receives the message when its current turn ' +
+  'ends. Set reportBack only when the ' +
   "person wants the result brought back: the target's final answer to this message is then delivered here, " +
   'starting a new turn in this conversation. Use wait_conversation instead when the person wants the result in ' +
   'this same turn; do not combine both for one message. Sending the same message again in this turn reports the ' +

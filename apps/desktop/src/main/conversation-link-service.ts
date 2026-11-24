@@ -4,8 +4,8 @@
  *
  * Authorization is decided by the caller's turn provenance (see chat/conversation-link-authorization): a turn the
  * person typed may read any conversation and message any of them (the first message to one not linked to it needs
- * the person's confirmation); a turn started by another conversation only reaches linked conversations, within the
- * hop limit. Every message is journaled first, so a repeated call replays it, a busy target receives it when its
+ * the person's confirmation); a turn started by another conversation only reaches linked conversations. Every
+ * message is journaled first, so a repeated call replays it, a busy target receives it when its
  * turn ends, and queued messages survive a restart. A target never runs two turns at once: one drain per target.
  */
 import { createHash, randomUUID } from 'node:crypto'
@@ -34,7 +34,6 @@ import {
 } from '../shared/conversation-link'
 import type { SequencedChatMessage, StoredChatMessage } from './chat/chat-store'
 import { isConversationContextMessage } from './chat/chat-store'
-import { hopAllowed } from './chat/conversation-link-authorization'
 import type { ConversationPeerTurnInput } from './chat/service'
 import { getConversationDispatchByDestination } from './conversation-dispatch-store'
 import {
@@ -455,26 +454,12 @@ export function createConversationLinkService(deps: ConversationLinkServiceDeps)
       return fail('archived', `"${conversation.name}" is archived; ask the person to restore it first.`)
     const relation = relationBetween(caller.conversationId, conversation.id)
     const reportBack = input.reportBack === true
-    if (caller.kind === 'linked') {
-      if (!relation)
-        return fail(
-          'not-linked',
-          'Turns not started by the person can only message linked conversations (the one that started this ' +
-            'conversation, conversations started from it, or ones that exchanged messages with it). Tell the person instead.'
-        )
-      if (!hopAllowed(caller.hop, 1))
-        return fail(
-          'hop-limit',
-          'Agent-to-agent hop limit reached: conversations cannot keep messaging each other without the person. ' +
-            'Finish this turn and let the person continue.'
-        )
-      if (reportBack && !hopAllowed(caller.hop, 2))
-        return fail(
-          'hop-limit',
-          'Agent-to-agent hop limit reached for bringing a result back: send without reportBack or let the person ' +
-            'continue.'
-        )
-    }
+    if (caller.kind === 'linked' && !relation)
+      return fail(
+        'not-linked',
+        'Turns not started by the person can only message linked conversations (the one that started this ' +
+          'conversation, conversations started from it, or ones that exchanged messages with it). Tell the person instead.'
+      )
     const gate = caller.kind !== 'human' ? null : caller.isAssistant && admit ? admit : relation ? null : confirm
     if (gate) {
       const confirmed = await gate(summarize(conversation, null), input.message.slice(0, 400)).catch(() => false)
@@ -521,11 +506,6 @@ export function createConversationLinkService(deps: ConversationLinkServiceDeps)
         conversationName: target.name,
         note: `Your final answer in this turn is delivered to "${target.name}" automatically; put the report there.`,
       }
-    if (caller.kind === 'linked' && !hopAllowed(caller.hop, 1))
-      return fail(
-        'hop-limit',
-        'Agent-to-agent hop limit reached: finish this turn with your answer; the person can pass it on.'
-      )
     if (target.archived) return fail('archived', `"${target.name}" is archived; ask the person to restore it first.`)
     const ended = guarded(caller)
     if (ended) return ended

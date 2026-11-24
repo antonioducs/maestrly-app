@@ -180,7 +180,7 @@ describe('sending messages', () => {
     expect(confirm).not.toHaveBeenCalled()
   })
 
-  it('lets turns started by another conversation reach only linked conversations, within the hop limit', async () => {
+  it('lets turns started by another conversation reach only linked conversations', async () => {
     dispatch(source, child)
     const { deps, service } = harness()
     const confirm = vi.fn(async () => true)
@@ -193,15 +193,23 @@ describe('sending messages', () => {
       status: 'delivered',
     })
     expect(peerCalls(deps).at(-1)).toMatchObject({ conversationId: source, hop: 3 })
-    expect(await service.send(linked(child, source, 3), { conversationId: source, message: 'Again.' }, confirm)).toMatchObject({
-      code: 'hop-limit',
-    })
-    expect(
-      await service.send(linked(child, source, 2), { conversationId: source, message: 'Tell me.', reportBack: true }, confirm)
-    ).toMatchObject({ code: 'hop-limit', error: expect.stringMatching(/without reportBack/) })
     expect(
       await service.send(linked(child, source, 1), { conversationId: source, message: 'Tell me.', reportBack: true }, confirm)
     ).toMatchObject({ status: 'delivered' })
+  })
+
+  it('delivers a linked send with reportBack at hop 5', async () => {
+    dispatch(source, child)
+    const { deps, service } = harness()
+    const confirm = vi.fn(async () => true)
+    const sent = await service.send(
+      linked(child, source, 5),
+      { conversationId: source, message: 'Tell me.', reportBack: true },
+      confirm
+    )
+    expect(sent).toMatchObject({ ok: true, status: 'delivered' })
+    expect(sent.ok && sent.messageId ? getPeerMessage(sent.messageId)?.hop : null).toBe(6)
+    expect(peerCalls(deps).at(-1)).toMatchObject({ conversationId: source, hop: 6, reportBack: true })
   })
 
   it('records nothing when the turn that asked has ended', async () => {
@@ -381,7 +389,10 @@ describe('reporting to the source', () => {
     })
     expect(deferred).toMatchObject({ ok: true, status: 'deferred', conversationId: source })
     expect(deps.startPeerTurn).toHaveBeenCalledTimes(1)
-    expect(await service.report(linked(child, source, 3), { message: 'Late.' })).toMatchObject({ code: 'hop-limit' })
+    const deep = await service.report(linked(child, source, 5), { message: 'Still reporting.' })
+    expect(deep).toMatchObject({ ok: true, status: 'delivered', conversationId: source })
+    expect(deep.ok && deep.messageId ? getPeerMessage(deep.messageId)?.hop : null).toBe(6)
+    expect(peerCalls(deps).at(-1)).toMatchObject({ conversationId: source, kind: 'report', hop: 6, reportBack: false })
   })
 
   it('reports from a typed turn to the conversation that started this one or last sent work', async () => {

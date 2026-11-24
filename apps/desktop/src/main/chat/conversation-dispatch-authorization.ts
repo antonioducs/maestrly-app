@@ -81,7 +81,7 @@ export function currentHumanTurnOrigin(conversationId: string): HumanTurnOrigin 
  * Turns the app runs in the person's conversation without text they typed: an approved plan's implementation, host
  * continuations, and messages or results from other conversations. They may start conversations only when the
  * owner turned the confirmation off in Settings, and never in a conversation an agent created (checked by the tool).
- * Kept apart from human origins: a human origin resets the agent-to-agent hop count.
+ * Kept apart from human origins: a human origin starts at hop 0 (recorded for diagnostics).
  */
 const hostTurns = new Map<string, HumanTurnOrigin>()
 

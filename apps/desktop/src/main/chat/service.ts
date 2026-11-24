@@ -5184,7 +5184,7 @@ async function startSendAttempt(
         signal: controller.signal,
       })
     } else if (opts?.peerMessage || opts?.dispatchSeed) {
-      // Started by another conversation: it may answer and follow up with linked conversations, within the hop limit.
+      // Started by another conversation: it may answer and follow up with linked conversations.
       recordLinkedTurnOrigin({
         token: run,
         conversationId,
