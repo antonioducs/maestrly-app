@@ -9,6 +9,9 @@ export const SESSION_COOKIE = 'maestrly_artifact_session'
 /** A random secret that ties an access request, and access-code attempts, to one browser. */
 export const VISITOR_COOKIE = 'maestrly_artifact_visitor'
 export const MAX_BRIDGE_MESSAGE_CHARS = 300
+/** A screen's picture for the Screens canvas, as a data URL: a few hundred KB at most at the sizes the shell asks. */
+export const MAX_THUMBNAIL_CHARS = 2_000_000
+const THUMBNAIL_URL = /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/
 /** Never includes `allow-same-origin` or `allow-top-navigation`: content keeps an opaque origin. */
 export const CONTENT_SANDBOX = 'allow-scripts allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox'
 
@@ -458,6 +461,8 @@ export type BridgeMessage =
   | { type: 'board-load'; requestId: string }
   /** A whiteboard's canvas sends what the person changed; the host validates every element. */
   | { type: 'board-push'; requestId: string; elements: unknown[] }
+  /** The picture of the page the shell asked for, as a raster data URL; null when the page could not be drawn. */
+  | { type: 'capture'; requestId: string; image: string | null }
 
 /** An anchor as the page receives it: the page's own text or a place in it, never names or comment text. */
 export type ShellAnchor = { id: string } & Pick<CommentAnchor, 'quote' | 'point'>
@@ -475,6 +480,8 @@ export type ShellMessage =
   | { type: 'highlight-component'; component: string | null }
   | { type: 'reveal-component'; component: string }
   | { type: 'inventory-request'; requestId: string }
+  /** Asks for a picture of the page as it looks now, scaled to fit the given size. */
+  | { type: 'capture-request'; requestId: string; maxWidth: number; maxHeight: number }
   | { type: 'token-preview'; tokens: TokenChange[] }
   | { type: 'token-preview-clear' }
   | { type: 'reveal'; id: string }
@@ -871,6 +878,14 @@ export function parseBridgeMessage(value: unknown): BridgeMessage | null {
       return { type: 'response-submit', requestId: v.requestId, data: isResponseData(v.data) ? v.data : null }
     case 'board-load':
       return isRequestId(v.requestId) ? { type: 'board-load', requestId: v.requestId } : null
+    case 'capture': {
+      if (!isRequestId(v.requestId)) return null
+      if (v.image === null) return { type: 'capture', requestId: v.requestId, image: null }
+      const image = v.image
+      return typeof image === 'string' && image.length <= MAX_THUMBNAIL_CHARS && THUMBNAIL_URL.test(image)
+        ? { type: 'capture', requestId: v.requestId, image }
+        : null
+    }
     case 'board-push':
       return isRequestId(v.requestId) && isBoardBatch(v.elements)
         ? { type: 'board-push', requestId: v.requestId, elements: v.elements }

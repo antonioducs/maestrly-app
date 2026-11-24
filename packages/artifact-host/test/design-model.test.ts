@@ -21,10 +21,38 @@ import {
   resolveScreenViewport,
   screenFrameUrl,
   selectLiveScreens,
+  thumbnailSize,
   tokenDraftKey,
 } from '../src/shell/design-model.js'
 
 describe('parseBridgeMessage design protocol validation', () => {
+  it('accepts a screen picture only as a bounded raster data URL', () => {
+    const image = 'data:image/jpeg;base64,/9j/4AAQSkZJRg=='
+    expect(parseBridgeMessage({ source: 'maestrly-bridge', type: 'capture', requestId: 'cap1', image })).toEqual({
+      type: 'capture',
+      requestId: 'cap1',
+      image,
+    })
+    expect(parseBridgeMessage({ source: 'maestrly-bridge', type: 'capture', requestId: 'cap1', image: null })).toEqual({
+      type: 'capture',
+      requestId: 'cap1',
+      image: null,
+    })
+    for (const bad of [
+      'data:image/svg+xml;base64,PHN2Zz4=',
+      'data:text/html;base64,PGI+',
+      'https://evil.test/a.png',
+      'data:image/png;base64,abc"onload=x',
+      `data:image/png;base64,${'A'.repeat(2_000_000)}`,
+      42,
+    ]) {
+      expect(
+        parseBridgeMessage({ source: 'maestrly-bridge', type: 'capture', requestId: 'cap1', image: bad })
+      ).toBeNull()
+    }
+    expect(parseBridgeMessage({ source: 'maestrly-bridge', type: 'capture', requestId: 'bad id', image })).toBeNull()
+  })
+
   const validStyles = {
     fontFamily: 'Inter, sans-serif',
     fontSize: '14px',
@@ -623,6 +651,32 @@ describe('pure design-model helpers', () => {
       limit: 5,
     })
     expect(live).toEqual(['s8', 's2', 's3', 's5', 's1'])
+
+    // With pictures: drawn screens stay live only when focused or shown large; the rest of the pool draws the others,
+    // the visible ones first, then screens that could not be drawn, then the ones off screen.
+    const pictures = new Map<string, string | null>([
+      ['s0', 'data:'],
+      ['s1', 'data:'],
+      ['s2', 'data:'],
+      ['s3', null],
+      ['s5', 'data:'],
+      ['s8', 'data:'],
+    ])
+    expect(
+      selectLiveScreens({
+        screens,
+        focusedId: 's8',
+        visibleIds: ['s1', 's2', 's3', 's4'],
+        detailIds: ['s2'],
+        lruIds: ['s5', 's3'],
+        thumbnails: pictures,
+        limit: 6,
+      })
+    ).toEqual(['s8', 's2', 's4', 's3', 's6', 's7'])
+
+    expect(thumbnailSize(1440, 900)).toEqual({ width: 720, height: 450 })
+    expect(thumbnailSize(390, 844)).toEqual({ width: 390, height: 844 })
+    expect(thumbnailSize(400, 2560)).toEqual({ width: 200, height: 1280 })
   })
 
   it('merges inspected tokens with manifest componentTokens and active theme/drafts', () => {
@@ -696,12 +750,23 @@ describe('createDesignController progressive inventory, pool, preview, save, sug
       this.ownerDocument = doc
     }
     setAttribute() {}
+    get firstChild(): FakeIframe | FakeElement | null {
+      return this.children[0] ?? null
+    }
     appendChild<T extends FakeIframe | FakeElement>(child: T): T {
       if (child instanceof FakeIframe) {
         child.parentElement = this
         child.isConnected = true
       }
       this.children.push(child)
+      return child
+    }
+    insertBefore(child: FakeIframe, before: FakeIframe | FakeElement | null): FakeIframe {
+      child.remove()
+      const at = before ? this.children.indexOf(before) : -1
+      this.children.splice(at < 0 ? this.children.length : at, 0, child)
+      child.parentElement = this
+      child.isConnected = true
       return child
     }
     remove() {
@@ -859,6 +924,150 @@ describe('createDesignController progressive inventory, pool, preview, save, sug
 
     ctrl.destroy()
     expect(liveConnected()).toHaveLength(0)
+  })
+
+  async function screensController() {
+    const doc = new FakeDoc()
+    const stage = doc.createElement('iframe') as FakeIframe
+    doc.body.appendChild(stage)
+    const state: ViewerState = {
+      artifact: {
+        id: 'A'.repeat(22),
+        kind: 'page',
+        title: 'App',
+        currentVersion: 1,
+        versions: [{ number: 1, createdAt: 100, summary: 'Init' }],
+      },
+      identity: { kind: 'owner' },
+      ownerName: 'Antonio',
+      can: { comment: true, resolve: true, respond: true, edit: false, history: true },
+    }
+    const api: ArtifactApi = {
+      state: async () => state,
+      read: async () => jsonRes(200, { design: sampleDesign }),
+      write: async (action) =>
+        action === 'frame'
+          ? jsonRes(200, { url: '/c/cap.sig/index.html', expiresAt: Date.now() + 600_000 })
+          : jsonRes(404, {}),
+    }
+    const ctrl = createDesignController({
+      api,
+      state,
+      stageFrame: stage as unknown as HTMLIFrameElement,
+      version: 1,
+      preview: false,
+      onChange: () => {},
+      onDisableCommenting: () => {},
+      onVersionCreated: () => {},
+      onReplaced: () => {},
+      onIdentityChanged: () => {},
+    })
+    await ctrl.setVersion(1, '/c/cap.sig/index.html', Date.now() + 600_000)
+    const moved: string[] = []
+    const cards = new Map(
+      eightScreens.map((screen) => {
+        const card = Object.assign(new FakeElement(doc), {
+          isConnected: true,
+          moveBefore(child: FakeIframe, before: FakeIframe | FakeElement | null) {
+            moved.push(screen.id)
+            card.insertBefore(child, before)
+          },
+        })
+        return [screen.id, card] as const
+      })
+    )
+    const frameOf = (id: string) => ctrl.screenFrame(id) as unknown as FakeIframe | null
+    const settle = () => new Promise((r) => setTimeout(r, 0))
+    const ready = async (id: string) => {
+      ctrl.routeMessage(frameOf(id)!.contentWindow as unknown as MessageEventSource, { type: 'ready' })
+      await settle()
+    }
+    return { doc, ctrl, cards, moved, frameOf, settle, ready }
+  }
+
+  it('creates screen frames in their card and moves them with moveBefore, without new loads', async () => {
+    const { doc, ctrl, cards, moved, frameOf, settle, ready } = await screensController()
+
+    ctrl.setView('screens')
+    ctrl.setVisibleScreens(['scr-1'], null)
+    await settle()
+    // Two loads at a time: the visible screen and the first screen still without a picture, both parked.
+    const parked = frameOf('scr-1')
+    expect(parked?.parentElement).not.toBe(cards.get('scr-1'))
+    expect(frameOf('scr-2')).not.toBeNull()
+
+    ctrl.setScreenHost((id) => cards.get(id) as unknown as HTMLElement)
+    expect(frameOf('scr-1')).toBe(parked)
+    expect(parked?.parentElement).toBe(cards.get('scr-1'))
+    expect(moved.sort()).toEqual(['scr-1', 'scr-2'])
+
+    // The next load starts in its card: it is never moved.
+    await ready('scr-1')
+    expect(frameOf('scr-3')?.parentElement).toBe(cards.get('scr-3'))
+    expect(moved).toHaveLength(2)
+    expect(doc.createdIframes).toHaveLength(4)
+
+    ctrl.setScreenHost(null)
+    expect(frameOf('scr-1')?.parentElement).not.toBe(cards.get('scr-1'))
+    expect(frameOf('scr-1')?.isConnected).toBe(true)
+    ctrl.destroy()
+  })
+
+  it('draws every screen into a picture once, keeping live only the screens shown larger than it', async () => {
+    const { ctrl, cards, frameOf, settle, ready } = await screensController()
+    const ids = eightScreens.map((screen) => screen.id)
+    ctrl.setScreenHost((id) => cards.get(id) as unknown as HTMLElement)
+    ctrl.setView('screens')
+    ctrl.setVisibleScreens(ids, null, [])
+    await settle()
+
+    await ready('scr-1')
+    const request = frameOf('scr-1')!.posted.find((m) => m.type === 'capture-request') as
+      | { type: 'capture-request'; requestId: string; maxWidth: number; maxHeight: number }
+      | undefined
+    expect(request).toMatchObject({ maxWidth: 720, maxHeight: 1280 })
+    const scr1 = frameOf('scr-1')!
+    const image = 'data:image/jpeg;base64,AAAA'
+    // A picture from another screen's frame, or for a request it did not get, is ignored.
+    ctrl.routeMessage(frameOf('scr-2')!.contentWindow as unknown as MessageEventSource, {
+      type: 'capture',
+      requestId: request!.requestId,
+      image: 'data:image/jpeg;base64,BBBB',
+    })
+    expect(ctrl.snapshot().screenThumbnails.has('scr-1')).toBe(false)
+    ctrl.routeMessage(scr1.contentWindow as unknown as MessageEventSource, {
+      type: 'capture',
+      requestId: request!.requestId,
+      image,
+    })
+    await settle()
+    expect(ctrl.snapshot().screenThumbnails.get('scr-1')).toBe(image)
+    expect(ctrl.snapshot().screenThumbnails.has('scr-2')).toBe(false)
+    // Drawn and shown small: its frame goes back to the pool for the screens still without a picture.
+    expect(frameOf('scr-1')).toBeNull()
+    expect(scr1.isConnected).toBe(false)
+
+    // A screen that cannot be drawn is remembered, so it is not loaded again in the background.
+    await ready('scr-2')
+    const failed = frameOf('scr-2')!.posted.find((m) => m.type === 'capture-request') as { requestId: string }
+    ctrl.routeMessage(frameOf('scr-2')!.contentWindow as unknown as MessageEventSource, {
+      type: 'capture',
+      requestId: failed.requestId,
+      image: null,
+    })
+    expect(ctrl.snapshot().screenThumbnails.get('scr-2')).toBeNull()
+
+    // Zoomed in on it, the drawn screen gets its live frame back without being drawn again.
+    ctrl.setVisibleScreens(['scr-1'], null, ['scr-1'])
+    await settle()
+    expect(frameOf('scr-1')).not.toBeNull()
+    await ready('scr-1')
+    expect(frameOf('scr-1')!.posted.some((m) => m.type === 'capture-request')).toBe(false)
+
+    // Retrying a screen that could not be drawn tries to draw it again.
+    ctrl.retryScreen('scr-2')
+    expect(ctrl.snapshot().screenThumbnails.has('scr-2')).toBe(false)
+    ctrl.destroy()
   })
 
   it('handles guest naming + auto-summary on suggestTokens, and owner saveTokens / applySuggestion', async () => {

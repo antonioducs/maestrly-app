@@ -18,6 +18,15 @@ import {
 
 export const MAX_LIVE_SCREEN_FRAMES = 6
 export const MAX_CONCURRENT_FRAME_LOADS = 2
+/** The largest picture of a screen the canvas keeps; screens shown larger than it stay live. */
+export const THUMBNAIL_MAX_WIDTH = 720
+export const THUMBNAIL_MAX_HEIGHT = 1280
+
+/** The pixel size of a screen's picture: the screen scaled down to fit the thumbnail bounds, never up. */
+export function thumbnailSize(width: number, height: number): { width: number; height: number } {
+  const scale = Math.min(1, THUMBNAIL_MAX_WIDTH / Math.max(1, width), THUMBNAIL_MAX_HEIGHT / Math.max(1, height))
+  return { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) }
+}
 
 export const VIEWPORT_PRESETS: Readonly<Record<ScreenViewportPreset, { width: number; height: number }>> = {
   desktop: { width: 1440, height: 900 },
@@ -397,12 +406,21 @@ export function diffTokens(
   return diffs.map(({ name, from, to, theme }) => ({ name, from, to, theme }))
 }
 
+/**
+ * The screens that get a live frame, in priority order. Without `thumbnails`: the focused screen, the visible ones,
+ * then the recently used ones. With them, a screen that has a picture stays live only when it is focused or shown
+ * larger than its picture (`detailIds`), and the frames left over draw the screens that have no picture yet, the
+ * visible ones first, so the pool works through every screen while the canvas is zoomed out.
+ * `thumbnails` maps a screen to its picture, or to null when it could not be drawn.
+ */
 export function selectLiveScreens(options: {
   screens: readonly DesignScreen[]
   visibleIds: readonly string[]
   focusedId: string | null
   lruIds: readonly string[]
   limit?: number
+  thumbnails?: ReadonlyMap<string, string | null>
+  detailIds?: readonly string[]
 }): string[] {
   const max = Math.max(0, Math.min(options.limit ?? MAX_LIVE_SCREEN_FRAMES, MAX_LIVE_SCREEN_FRAMES))
   if (max === 0 || options.screens.length === 0) return []
@@ -415,8 +433,18 @@ export function selectLiveScreens(options: {
     chosen.push(id)
   }
   add(options.focusedId)
-  for (const id of options.visibleIds) add(id)
-  for (const id of options.lruIds) add(id)
+  const { thumbnails } = options
+  if (!thumbnails) {
+    for (const id of options.visibleIds) add(id)
+    for (const id of options.lruIds) add(id)
+    return chosen
+  }
+  const detail = new Set(options.detailIds ?? [])
+  for (const id of options.visibleIds) if (detail.has(id)) add(id)
+  for (const id of options.visibleIds) if (!thumbnails.has(id)) add(id)
+  for (const id of options.visibleIds) if (thumbnails.get(id) === null) add(id)
+  for (const screen of options.screens) if (!thumbnails.has(screen.id)) add(screen.id)
+  for (const id of options.lruIds) if (!thumbnails.get(id)) add(id)
   return chosen
 }
 

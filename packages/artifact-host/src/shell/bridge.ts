@@ -944,6 +944,234 @@
   })
   if (!('maestrly' in window)) Object.defineProperty(window, 'maestrly', { value: api, configurable: true })
 
+  // --- A picture of the page for the Screens canvas. It is drawn from a detached copy of the DOM rendered as an SVG
+  // image, so the page itself is never touched. Only the artifact's own files can be fetched (connect-src), so they
+  // are embedded as data URLs; fonts and images from elsewhere are left out of the picture.
+
+  const CAPTURE_SETTLE_MS = 350
+  const MAX_CAPTURE_RESOURCE_BYTES = 3 * 1024 * 1024
+  const MAX_CAPTURE_TOTAL_BYTES = 12 * 1024 * 1024
+  const MAX_CAPTURE_RESOURCES = 200
+  const MAX_IMPORT_DEPTH = 4
+  const CSS_URL_RE = /url\(\s*(['"]?)([^'")]*)\1\s*\)/g
+  const XML_NAME_RE = /^[A-Za-z_][A-Za-z0-9_.-]*$/
+  const SKIPPED_TAGS = new Set(['SCRIPT', 'NOSCRIPT', 'LINK', 'STYLE', 'SOURCE', 'TEMPLATE'])
+  /** The capability directory: `/c/<capability>/`. */
+  const ownPrefix = `${location.origin}${location.pathname.split('/').slice(0, 3).join('/')}/`
+
+  interface CaptureBudget {
+    bytes: number
+    cache: Map<string, Promise<string | null>>
+  }
+
+  const nextFrame = () =>
+    new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, FRAME_FALLBACK_MS)
+      requestAnimationFrame(() => {
+        clearTimeout(timer)
+        resolve()
+      })
+    })
+
+  async function settle(): Promise<void> {
+    if (document.readyState !== 'complete')
+      await new Promise<void>((resolve) => window.addEventListener('load', () => resolve(), { once: true }))
+    await document.fonts?.ready.catch(() => {})
+    await new Promise((resolve) => setTimeout(resolve, CAPTURE_SETTLE_MS))
+    await nextFrame()
+    await nextFrame()
+  }
+
+  function readDataUrl(blob: Blob): Promise<string | null> {
+    return new Promise((resolve) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null)
+      reader.onerror = () => resolve(null)
+      reader.readAsDataURL(blob)
+    })
+  }
+
+  function embed(raw: string, base: string, budget: CaptureBudget): Promise<string | null> {
+    if (raw.startsWith('data:')) return Promise.resolve(raw)
+    let url: URL
+    try {
+      url = new URL(raw, base)
+    } catch {
+      return Promise.resolve(null)
+    }
+    if (!url.href.startsWith(ownPrefix)) return Promise.resolve(null)
+    const hash = url.hash
+    url.hash = ''
+    const cached = budget.cache.get(url.href)
+    if (cached) return cached.then((value) => (value ? value + hash : null))
+    if (budget.cache.size >= MAX_CAPTURE_RESOURCES) return Promise.resolve(null)
+    const load = (async () => {
+      const response = await fetch(url.href)
+      if (!response.ok) return null
+      const blob = await response.blob()
+      if (blob.size > MAX_CAPTURE_RESOURCE_BYTES || budget.bytes + blob.size > MAX_CAPTURE_TOTAL_BYTES) return null
+      budget.bytes += blob.size
+      return readDataUrl(blob)
+    })().catch(() => null)
+    budget.cache.set(url.href, load)
+    return load.then((value) => (value ? value + hash : null))
+  }
+
+  async function embedCssUrls(css: string, base: string, budget: CaptureBudget): Promise<string> {
+    const found = new Map<string, Promise<string | null>>()
+    for (const match of css.matchAll(CSS_URL_RE)) {
+      const raw = match[2]!.trim()
+      if (raw && !raw.startsWith('#') && !found.has(raw)) found.set(raw, embed(raw, base, budget))
+    }
+    const resolved = new Map<string, string | null>()
+    for (const [raw, value] of found) resolved.set(raw, await value)
+    return css.replace(CSS_URL_RE, (whole, _quote, raw: string) => {
+      const value = resolved.get(raw.trim())
+      return value ? `url("${value}")` : whole
+    })
+  }
+
+  async function sheetCss(target: CSSStyleSheet, depth: number, budget: CaptureBudget): Promise<string> {
+    // The bridge's own sheets (cursors, highlights, token previews) stay out: the picture is the published design.
+    if (target === sheet || target === previewSheet || target.disabled) return ''
+    const parts: string[] = []
+    try {
+      for (const rule of Array.from(target.cssRules)) {
+        if (rule instanceof CSSImportRule) {
+          if (rule.styleSheet && depth < MAX_IMPORT_DEPTH)
+            parts.push(await sheetCss(rule.styleSheet, depth + 1, budget))
+        } else parts.push(rule.cssText)
+      }
+    } catch {
+      // Linked without `crossorigin`, its rules cannot be read: the artifact's own file is fetched instead, while a
+      // style sheet from elsewhere is left out of the picture.
+      if (!target.href?.startsWith(ownPrefix)) return ''
+      try {
+        const response = await fetch(target.href)
+        if (!response.ok) return ''
+        parts.push(await response.text())
+      } catch {
+        return ''
+      }
+    }
+    const media = target.media?.mediaText
+    const css = await embedCssUrls(parts.join('\n'), target.href ?? document.baseURI, budget)
+    return media && media !== 'all' ? `@media ${media}{${css}}` : css
+  }
+
+  async function documentCss(budget: CaptureBudget): Promise<string> {
+    const parts: string[] = []
+    for (const sheet of Array.from(document.styleSheets)) parts.push(await sheetCss(sheet, 0, budget))
+    for (const sheet of document.adoptedStyleSheets) parts.push(await sheetCss(sheet, 0, budget))
+    // In the picture the root is the SVG: `:root` rules go to the copied `<html>`, with the same specificity.
+    return parts.join('\n').replace(/:root\b/g, ':is(html,[data-maestrly-root])')
+  }
+
+  /** A copy of the page with its live state written down (form values, canvases, current images), ready for XML. */
+  async function documentCopy(budget: CaptureBudget): Promise<HTMLElement> {
+    const root = document.documentElement
+    const copy = root.cloneNode(true) as HTMLElement
+    const originals = root.querySelectorAll('*')
+    const copies = copy.querySelectorAll('*')
+    const pending: Promise<unknown>[] = []
+    for (let i = 0; i < copies.length; i++) {
+      const from = originals[i]!
+      const to = copies[i]!
+      if (SKIPPED_TAGS.has(from.tagName)) {
+        to.remove()
+        continue
+      }
+      for (const attribute of Array.from(to.attributes)) {
+        // Framework attributes such as `:class` or `@click` are not XML names and would break the picture.
+        if (attribute.namespaceURI === null && !XML_NAME_RE.test(attribute.name)) to.removeAttribute(attribute.name)
+      }
+      const inline = to.getAttribute('style')
+      if (inline?.includes('url(')) {
+        pending.push(embedCssUrls(inline, document.baseURI, budget).then((value) => to.setAttribute('style', value)))
+      }
+      if (from instanceof HTMLInputElement) {
+        if (from.type === 'checkbox' || from.type === 'radio') to.toggleAttribute('checked', from.checked)
+        else if (from.type !== 'file') to.setAttribute('value', from.value)
+      } else if (from instanceof HTMLTextAreaElement) {
+        to.textContent = from.value
+      } else if (from instanceof HTMLSelectElement) {
+        const options = (to as HTMLSelectElement).options
+        for (let j = 0; j < from.options.length; j++) options[j]?.toggleAttribute('selected', from.options[j]!.selected)
+      } else if (from instanceof HTMLImageElement) {
+        to.removeAttribute('srcset')
+        to.removeAttribute('loading')
+        const src = from.currentSrc || from.src
+        pending.push(
+          (src ? embed(src, document.baseURI, budget) : Promise.resolve(null)).then((value) => {
+            if (value) to.setAttribute('src', value)
+            else to.removeAttribute('src')
+          })
+        )
+      } else if (from instanceof HTMLVideoElement) {
+        to.removeAttribute('src')
+        if (from.poster)
+          pending.push(
+            embed(from.poster, document.baseURI, budget).then((value) =>
+              value ? to.setAttribute('poster', value) : to.removeAttribute('poster')
+            )
+          )
+      } else if (from instanceof HTMLCanvasElement) {
+        try {
+          const image = document.createElement('img')
+          for (const attribute of Array.from(to.attributes)) image.setAttribute(attribute.name, attribute.value)
+          image.setAttribute('src', from.toDataURL())
+          image.style.width = `${from.clientWidth}px`
+          image.style.height = `${from.clientHeight}px`
+          to.replaceWith(image)
+        } catch {
+          // A canvas that drew something from elsewhere cannot be read: it stays blank in the picture.
+        }
+      } else if (from instanceof HTMLIFrameElement) {
+        to.removeAttribute('src')
+        to.removeAttribute('srcdoc')
+      }
+    }
+    await Promise.all(pending)
+    copy.setAttribute('data-maestrly-root', '')
+    return copy
+  }
+
+  async function capture(maxWidth: number, maxHeight: number): Promise<string | null> {
+    const width = Math.max(1, document.documentElement.clientWidth || window.innerWidth)
+    const height = Math.max(1, window.innerHeight)
+    const budget: CaptureBudget = { bytes: 0, cache: new Map() }
+    const [css, copy] = await Promise.all([documentCss(budget), documentCopy(budget)])
+    const styleElement = document.createElement('style')
+    styleElement.textContent = css
+    ;(copy.querySelector('head') ?? copy).append(styleElement)
+    // The page is drawn as it is scrolled.
+    if (window.scrollX || window.scrollY) {
+      const body = copy.querySelector('body')
+      body?.style.setProperty('translate', `${-window.scrollX}px ${-window.scrollY}px`)
+    }
+    const markup = new XMLSerializer().serializeToString(copy)
+    const svg =
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">` +
+      `<foreignObject x="0" y="0" width="100%" height="100%">${markup}</foreignObject></svg>`
+    const image = new Image()
+    image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
+    await image.decode()
+    const scale = Math.min(1, maxWidth / width, maxHeight / height)
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.max(1, Math.round(width * scale))
+    canvas.height = Math.max(1, Math.round(height * scale))
+    const context = canvas.getContext('2d')
+    if (!context) return null
+    context.fillStyle = '#ffffff'
+    context.fillRect(0, 0, canvas.width, canvas.height)
+    context.imageSmoothingQuality = 'high'
+    context.drawImage(image, 0, 0, canvas.width, canvas.height)
+    return canvas.toDataURL('image/jpeg', 0.85)
+  }
+
+  const captureSize = (value: unknown, fallback: number): number =>
+    typeof value === 'number' && Number.isFinite(value) ? Math.min(2048, Math.max(32, Math.round(value))) : fallback
+
   // --- What the shell asks. Only the viewer that frames this page may ask.
 
   const text = (value: unknown, max: number): string => (typeof value === 'string' ? value.slice(0, max) : '')
@@ -1066,6 +1294,14 @@
         inspectedElement = null
         post({ type: 'inspect-pick', target: null })
       }
+    } else if (data.type === 'capture-request' && typeof data.requestId === 'string') {
+      const requestId = data.requestId.slice(0, 32)
+      const maxWidth = captureSize(data.maxWidth, 720)
+      const maxHeight = captureSize(data.maxHeight, 1280)
+      settle()
+        .then(() => capture(maxWidth, maxHeight))
+        .catch(() => null)
+        .then((image) => post({ type: 'capture', requestId, image }))
     } else if (data.type === 'inventory-request' && typeof data.requestId === 'string') {
       const { instances, mains, variants } = collectInventory()
       post({ type: 'inventory', requestId: data.requestId.slice(0, 32), instances, mains, variants })
