@@ -87,27 +87,8 @@ import {
 import { SubagentCoordinator, type SubagentLease } from '../subagent-coordinator'
 import { acquireSubagentSlot, SUBAGENT_SLOT_WAIT_LINE } from '../subagent-concurrency'
 import { createSubagentSessionRecorder } from '../subagent-session'
-import {
-  MAESTRO_DELEGATE_TOOL_DESCRIPTION,
-  MAESTRO_DELEGATE_TOOL_SCHEMA,
-  maestroAgentsFromTurn,
-  prepareMaestroDelegation,
-  renderMaestroAgentCatalog,
-} from '../maestro-delegation'
-import { MAESTRO_SYSTEM_SPEC, renderMaestroTurnPolicy } from '../maestro-prompt'
-import type { MaestroLiveRunPort } from '../maestro-live'
+import { renderMaestroSwarmSection } from '../maestro-prompt'
 import { buildSubagentSupervisionTools } from '../maestro-supervision-tools'
-import {
-  markDelegationObserved,
-  startMaestroDelegation,
-  unobservedTurnDelegations,
-  waitForTurnDelegationsTerminal,
-} from '../maestro-delegation-registry'
-import {
-  buildMaestroWorkerTools,
-  isMaestroWorkerOperationalToolName,
-  type MaestroWorkerToolRuntime,
-} from '../maestro-worker-tools'
 import { recordModelCallUsage } from '../usage-diagnostics'
 import { renderDesignModePrompt, renderDesignUltraGuidance } from '../design-mode-prompt'
 import {
@@ -125,7 +106,6 @@ import {
   claudeSubagentRuntimeSignature,
   planSubagentResume,
   recreatedTask,
-  resolveSubagentResume,
   settledSubagentResume,
   subagentToolSignature,
   type SubagentReplayMessage,
@@ -337,7 +317,6 @@ export interface RunCodexSubscriptionChatArgs {
   logicalSelection?: ChatModelRef
   mode: ChatBehavior
   maestro?: MaestroTurnSnapshotV1
-  maestroLive?: MaestroLiveRunPort
   permMode: ChatPermMode
   reasoningEffort?: string
   /** Effective Fast Mode of this parent turn, resolved by the service before entering the runner. */
@@ -749,10 +728,8 @@ export function maestrlyDeveloperInstructions(
     'request_user_input interaction when a decision from the user is genuinely required.' +
     hostGenUiSection(options.generatedInterfaces) +
     maestrlySkillCatalog(skills) +
-    (mode === 'maestro' && options.maestro
-      ? `\n\n${renderMaestroAgentCatalog(options.maestro)}`
-      : subagentCatalog(agents, conversationId, mode === 'plan' || mode === 'ask')) +
-    (mode === 'maestro' && options.maestro ? `\n\n${renderMaestroTurnPolicy(options.maestro)}` : '') +
+    subagentCatalog(agents, conversationId, mode === 'plan' || mode === 'ask') +
+    (mode === 'maestro' && options.maestro ? `\n\n${renderMaestroSwarmSection(options.maestro)}` : '') +
     `\n\n${MEMORY_TOOL_GUIDANCE}` +
     (designPrompt ? `\n\n${designPrompt}` : '')
   if (mode === 'plan') {
@@ -770,9 +747,6 @@ export function maestrlyDeveloperInstructions(
       'request_user_input only when the answer truly requires a decision from the user. ' +
       HOST_ASK_DISPATCH_GUIDANCE
     )
-  }
-  if (mode === 'maestro') {
-    return common + `\n\n${MAESTRO_SYSTEM_SPEC}`
   }
   if (mode === 'design') {
     return common + ' This turn is Design mode with Agent-equivalent capabilities under the selected permissions.'
@@ -795,16 +769,13 @@ export function maestrlyAstraHostInstructions(
         ? 'Ask mode is read-only unless the user explicitly changes the task.'
         : mode === 'design'
           ? `Design mode has Agent-equivalent capabilities under the selected permissions.\n\n${renderDesignModePrompt(mode)}`
-          : mode === 'maestro'
-            ? MAESTRO_SYSTEM_SPEC
-            : 'Agent mode: carry authorized work through a verified result within the selected permissions.'
+          : 'Agent mode: carry authorized work through a verified result within the selected permissions.'
   return (
     modeBoundary +
     hostGenUiSection(options.generatedInterfaces) +
     maestrlySkillCatalog(skills) +
-    (mode === 'maestro' && options.maestro
-      ? `\n\n${renderMaestroAgentCatalog(options.maestro)}\n\n${renderMaestroTurnPolicy(options.maestro)}`
-      : subagentCatalog(agents, options.conversationId, mode === 'plan' || mode === 'ask')) +
+    subagentCatalog(agents, options.conversationId, mode === 'plan' || mode === 'ask') +
+    (mode === 'maestro' && options.maestro ? `\n\n${renderMaestroSwarmSection(options.maestro)}` : '') +
     `\n\n${MEMORY_TOOL_GUIDANCE}`
   )
 }
@@ -818,30 +789,26 @@ function collaborationModeFor(
   reasoningEffort: string | undefined = args.reasoningEffort
 ): CodexCollaborationMode {
   const ultraInstructions = args.maestrlyUltra
-    ? args.mode === 'maestro'
-      ? 'Maestrly Ultra applies only to the orchestrator reasoning profile. Keep all worker selection governed by the frozen Strategy and Agent Pool.'
-      : args.mode === 'design'
-        ? renderDesignUltraGuidance(args.mode)
-        : args.mode === 'agent'
-          ? 'Maestrly Ultra mode is active for this turn. Use maximum rigor. For every non-trivial task, actively ' +
-            'look for independent slices before starting. When useful independent slices exist, DELEGATE them through ' +
-            'the Maestrly `task` tool and emit multiple independent `task` calls in the same response so they run in ' +
-            'parallel. Use `explore` for broad investigation and worker agents for self-contained implementation ' +
-            'slices. Keep yourself as the orchestrator: integrate the results, verify the implementation, and ' +
-            'critically review the outcome before finishing. Delegation is encouraged, not mandatory when there is no ' +
-            'meaningful independent slice.'
-          : args.mode === 'plan'
-            ? 'Maestrly Ultra mode is active for this Plan turn. Stay read-only, investigate deeply, and actively look ' +
-              'for independent research lines. When useful, delegate them through the Maestrly `task` tool and emit ' +
-              'multiple independent `task` calls in the same response so they run in parallel. Synthesize and ' +
-              'cross-check the results into a concrete plan, submit it through review_plan, and stop.'
-            : 'Maestrly Ultra mode is active for this Ask turn. Stay read-only, investigate deeply, and actively look ' +
-              'for broad or independent investigation lines. When useful, delegate them through the Maestrly `task` ' +
-              'tool and emit multiple independent `task` calls in the same response so they run in parallel. ' +
-              'Cross-check the findings, verify assumptions, and answer with maximum rigor.'
-    : args.mode === 'maestro'
-      ? MAESTRO_SYSTEM_SPEC
-      : null
+    ? args.mode === 'design'
+      ? renderDesignUltraGuidance(args.mode)
+      : capabilityBehaviorFor(args.mode) === 'agent'
+        ? 'Maestrly Ultra mode is active for this turn. Use maximum rigor. For every non-trivial task, actively ' +
+          'look for independent slices before starting. When useful independent slices exist, DELEGATE them through ' +
+          'the Maestrly `task` tool and emit multiple independent `task` calls in the same response so they run in ' +
+          'parallel. Use `explore` for broad investigation and worker agents for self-contained implementation ' +
+          'slices. Keep yourself as the orchestrator: integrate the results, verify the implementation, and ' +
+          'critically review the outcome before finishing. Delegation is encouraged, not mandatory when there is no ' +
+          'meaningful independent slice.'
+        : args.mode === 'plan'
+          ? 'Maestrly Ultra mode is active for this Plan turn. Stay read-only, investigate deeply, and actively look ' +
+            'for independent research lines. When useful, delegate them through the Maestrly `task` tool and emit ' +
+            'multiple independent `task` calls in the same response so they run in parallel. Synthesize and ' +
+            'cross-check the results into a concrete plan, submit it through review_plan, and stop.'
+          : 'Maestrly Ultra mode is active for this Ask turn. Stay read-only, investigate deeply, and actively look ' +
+            'for broad or independent investigation lines. When useful, delegate them through the Maestrly `task` ' +
+            'tool and emit multiple independent `task` calls in the same response so they run in parallel. ' +
+            'Cross-check the findings, verify assumptions, and answer with maximum rigor.'
+    : null
   return {
     mode: args.mode === 'plan' ? 'plan' : 'default',
     settings: {
@@ -1793,7 +1760,6 @@ function codexNativeWebSearchEnabled(
     getWebSearchProvider() !== 'off' &&
     !remoteChatPolicy(args.conversationId) &&
     args.mode !== 'ask' &&
-    args.mode !== 'maestro' &&
     args.permMode !== 'ask' &&
     // Plugin tool hooks must see every search: the host web_search runs through them instead.
     !hasToolHooks(args.conversationId, args.mode)
@@ -1818,16 +1784,14 @@ async function buildDynamicTools(
   const physicalAgents = await listEffectiveAgents({
     cwd: args.cwd,
     conversationId: args.conversationId,
-    mode: capabilityMode === 'agent' || args.mode === 'maestro' ? 'agent' : 'plan',
+    mode: capabilityMode === 'agent' ? 'agent' : 'plan',
   })
   const agents =
-    args.mode === 'maestro' && args.maestro
-      ? maestroAgentsFromTurn(args.maestro, physicalAgents)
-      : capabilityMode === 'agent'
-        ? physicalAgents
-        : args.maestrlyUltra
-          ? physicalAgents.filter((agent) => agent.name === 'explore')
-          : []
+    capabilityMode === 'agent'
+      ? physicalAgents
+      : args.maestrlyUltra
+        ? physicalAgents.filter((agent) => agent.name === 'explore')
+        : []
   const gate = (toolName: string, toolCallId: string, signal?: AbortSignal) => {
     return args.broker.assert({
       conversationId: args.conversationId,
@@ -1847,7 +1811,7 @@ async function buildDynamicTools(
   const appToolsEnabled = appAccess.enabled
   const disabledIds = new Set(prefs?.mcpDisabled ?? [])
   const mcp =
-    capabilityMode === 'agent' || args.mode === 'maestro'
+    capabilityMode === 'agent'
       ? await buildMcpTools({
           conversationId: args.conversationId,
           signal: args.signal,
@@ -1866,13 +1830,10 @@ async function buildDynamicTools(
         })
       : { tools: {}, close: async () => {} }
   const app =
-    ((capabilityMode === 'agent' || args.mode === 'maestro') && appToolsEnabled) ||
+    (capabilityMode === 'agent' && appToolsEnabled) ||
     hasPersonalMemoryTools(args.conversationId)
       ? await buildAppTools({
-          only:
-            appToolsEnabled && (capabilityMode === 'agent' || args.mode === 'maestro')
-              ? undefined
-              : PERSONAL_MEMORY_TOOLS,
+          only: appToolsEnabled && capabilityMode === 'agent' ? undefined : PERSONAL_MEMORY_TOOLS,
           disabledGroups: appAccess.disabledGroups,
           conversationId: args.conversationId,
           mode: args.mode,
@@ -1903,7 +1864,7 @@ async function buildDynamicTools(
     const bridgeNames =
       capabilityMode === 'agent' && args.permMode !== 'full'
         ? new Set(['bash'])
-        : args.mode === 'plan' || args.mode === 'ask' || args.mode === 'maestro'
+        : args.mode === 'plan' || args.mode === 'ask'
           ? new Set(['read', 'grep', 'glob', 'webfetch'])
           : new Set<string>()
     if (hasReadOnlySubagent) {
@@ -2009,37 +1970,33 @@ async function buildDynamicTools(
       const supervisionTools = buildSubagentSupervisionTools({
         conversationId: args.conversationId,
         parentMessageId: state.messageId,
-        maestro: args.mode === 'maestro',
+        maestro: false,
         signal: args.signal,
       })
       runtimes.push(...(await toolSetRuntimes(supervisionTools, new Set())))
     }
     if (agents.length) {
-      const delegationToolName = args.mode === 'maestro' ? 'delegate' : 'task'
       runtimes.push({
         spec: {
           type: 'function',
-          name: delegationToolName,
-          description: args.mode === 'maestro' ? MAESTRO_DELEGATE_TOOL_DESCRIPTION : TASK_TOOL_DESCRIPTION,
-          inputSchema:
-            args.mode === 'maestro'
-              ? MAESTRO_DELEGATE_TOOL_SCHEMA
-              : withTaskComplexity(
-                  {
-                    type: 'object',
-                    properties: {
-                      agent: {
-                        type: 'string',
-                        enum: agents.map((agent) => agent.name),
-                        description: 'Subagent name from the catalog.',
-                      },
-                      prompt: { type: 'string', description: 'Self-contained subtask and all required context.' },
-                    },
-                    required: ['agent', 'prompt'],
-                    additionalProperties: false,
-                  },
-                  args.conversationId
-                ),
+          name: 'task',
+          description: TASK_TOOL_DESCRIPTION,
+          inputSchema: withTaskComplexity(
+            {
+              type: 'object',
+              properties: {
+                agent: {
+                  type: 'string',
+                  enum: agents.map((agent) => agent.name),
+                  description: 'Subagent name from the catalog.',
+                },
+                prompt: { type: 'string', description: 'Self-contained subtask and all required context.' },
+              },
+              required: ['agent', 'prompt'],
+              additionalProperties: false,
+            },
+            args.conversationId
+          ),
         },
         execute: (input, toolCallId, signal, update) => {
           if (!state.runTask) throw new Error('The Maestrly subagent executor is not ready')
@@ -2049,7 +2006,7 @@ async function buildDynamicTools(
     }
     // ALL Maestrly skills (`.agents` + `.claude`) enter the same host-owned ToolSet above. Codex's
     // NATIVE catalog is disabled in all modes (`skills.include_instructions: false`).
-    if (!isBotMode() && args.mode !== 'ask' && args.mode !== 'maestro') {
+    if (!isBotMode() && args.mode !== 'ask') {
       const schema = asSchema(reviewPlanTool.parameters)
       runtimes.push({
         spec: {
@@ -3385,7 +3342,6 @@ export async function runCodexSubscriptionChat(
     const collabStartedAt = new Map<string, number>()
     const resolvedTaskProfiles = new Map<string, ReturnType<typeof resolveSubagentExecutionProfile>>()
     let activeManagedTasks = 0
-    let maestroGuardRequired = false
     const managedTaskWaiters = new Set<() => void>()
     const notifyManagedTasksSettled = (): void => {
       if (activeManagedTasks) return
@@ -3469,69 +3425,43 @@ export async function runCodexSubscriptionChat(
       selectableAgentNames
     )
     state.runTask = async (input, toolCallId, signal, update) => {
-      let agentName = isRecord(input) && typeof input.agent === 'string' ? input.agent.trim() : ''
-      let task = isRecord(input) && typeof input.prompt === 'string' ? input.prompt.trim() : ''
-      const maestroPrepared =
-        args.mode === 'maestro' && args.maestro
-          ? await prepareMaestroDelegation({
-              input,
-              turn: args.maestro,
-              parent: { ...args.selection, effort: currentReasoningEffort || 'off' },
-              parentFastMode: args.fastMode,
-              turnState: subagentTurnState,
-              delegationId: toolCallId,
-              owner: { conversationId: args.conversationId, parentMessageId: assistantId },
-            })
-          : undefined
-      if (maestroPrepared) {
-        agentName = maestroPrepared.agentName
-        task = maestroPrepared.task
-      }
+      const agentName = isRecord(input) && typeof input.agent === 'string' ? input.agent.trim() : ''
+      const task = isRecord(input) && typeof input.prompt === 'string' ? input.prompt.trim() : ''
       if (!agentName || !task) throw new Error('task requires non-empty agent and prompt fields')
       // Agent selection is semantic and happens before execution-profile resolution.
       // Execution routing is host-managed and keyed by the selected agent name.
       // A role mentioned inside task.prompt must never alter profile resolution.
-      if (!maestroPrepared) {
-        assertSubagentSelection({
-          state: subagentTurnState,
-          selectedAgent: agentName,
-          availableAgents: dynamic.agents.map((agent) => agent.name),
-          runtime: 'codex-subscription',
-          conversationId: args.conversationId,
-        })
-        recordSubagentDispatch(subagentTurnState, agentName)
-      }
+      assertSubagentSelection({
+        state: subagentTurnState,
+        selectedAgent: agentName,
+        availableAgents: dynamic.agents.map((agent) => agent.name),
+        runtime: 'codex-subscription',
+        conversationId: args.conversationId,
+      })
+      recordSubagentDispatch(subagentTurnState, agentName)
       const executeResolvedTask = async (
         signal: AbortSignal,
         externalRecorder?: import('../subagent-session').SubagentSessionRecorder,
         background = false
       ): Promise<DynamicToolExecutionResult> => {
         const updateState = background ? () => undefined : update
-        // Async Maestro delegations are owned by the delegation registry after `delegate` returns its handle.
-        // They must not block the current Codex RPC from settling: the host guard below waits for them and then
-        // opens a continuation turn. Foreground `task` calls remain part of the RPC teardown barrier.
         if (!background) activeManagedTasks += 1
         try {
           const startedAt = Date.now()
           const lines: string[] = []
           let resolved = resolvedTaskProfiles.get(toolCallId)
           if (!resolved) {
-            resolved = maestroPrepared
-              ? Promise.resolve({
-                  definition: dynamic.agents.find((agent) => agent.name === agentName) ?? null,
-                  profile: maestroPrepared.execution.profile,
-                })
-              : resolveSubagentExecutionProfile({
-                  agentName,
-                  agents: dynamic.agents,
-                  conversationId: args.conversationId,
-                  parentFastMode: args.fastMode,
-                  complexity: parseTaskComplexity(isRecord(input) ? input.complexity : null),
-                  parent: {
-                    ...args.selection,
-                    effort: currentReasoningEffort || 'off',
-                  },
-                })
+            resolved = resolveSubagentExecutionProfile({
+              agentName,
+              agents: dynamic.agents,
+              conversationId: args.conversationId,
+              parentFastMode: args.fastMode,
+              complexity: parseTaskComplexity(isRecord(input) ? input.complexity : null),
+              parent: {
+                ...args.selection,
+                effort: currentReasoningEffort || 'off',
+              },
+            })
             resolvedTaskProfiles.set(toolCallId, resolved)
           }
           const { definition, profile } = await resolved
@@ -3541,11 +3471,10 @@ export async function runCodexSubscriptionChat(
               conversationId: args.conversationId,
               parentMessageId: assistantId,
               toolCallId,
-              origin: args.mode === 'maestro' ? 'delegate' : 'task',
+              origin: 'task',
               agentName,
               task,
               profile,
-              maestro: maestroPrepared?.execution.snapshot,
               startedAt,
             })
           const meta = (
@@ -3554,7 +3483,6 @@ export async function runCodexSubscriptionChat(
             runtimeEstimatedCostUsd?: number
           ): SubagentRunMeta => ({
             profile,
-            ...(maestroPrepared ? { maestro: maestroPrepared.execution.snapshot } : {}),
             startedAt,
             sessionId: sessionRecorder.id,
             ...(sessionRecorder.summary()?.phase ? { phase: sessionRecorder.summary()!.phase } : {}),
@@ -3586,26 +3514,7 @@ export async function runCodexSubscriptionChat(
           }
           let lease: SubagentLease | null = null
           let releaseSlot: (() => void) | null = null
-          let maestroWorkerRuntime: MaestroWorkerToolRuntime | null = null
           try {
-            maestroWorkerRuntime =
-              args.mode === 'maestro'
-                ? await buildMaestroWorkerTools({
-                    conversationId: args.conversationId,
-                    projectId: args.projectId,
-                    permissionScope: args.permissionScope,
-                    cwd: args.cwd,
-                    parentMessageId: assistantId,
-                    delegationId: maestroPrepared?.execution.snapshot.delegationId ?? toolCallId,
-                    label: maestroPrepared?.execution.snapshot.resource.label ?? agentName,
-                    profile,
-                    broker: args.broker,
-                    signal,
-                    emitGeneratedImage: state.emitGeneratedImage,
-                    onGeneratedImageUsage: state.onGeneratedImageUsage,
-                    generateImage: state.generateImage,
-                  })
-                : null
             const effectiveProfile = profile.effective
             const childMeta = isClaudeSubscriptionProvider(profile.effective.providerId)
               ? { meta: { vision: true } }
@@ -3620,23 +3529,17 @@ export async function runCodexSubscriptionChat(
               imageInterpreterConfigured: hasConfiguredImageInterpreter(),
             })
             const inheritedChildTools = Object.fromEntries(
-              Object.entries(childToolSet(signal, supportsImages)).filter(
-                ([name]) => name !== 'executor_report' && (args.mode !== 'maestro' || name !== 'use_skill')
-              )
+              Object.entries(childToolSet(signal, supportsImages)).filter(([name]) => name !== 'executor_report')
             ) as ToolSet
             // A child's tool calls run the conversation's plugin hooks too.
             const childTools: ToolSet = wrapToolSetWithHooks(
               sessionRecorder.instrumentTools({
                 ...inheritedChildTools,
-                ...(maestroWorkerRuntime?.tools ?? {}),
               }),
               runnerHookContext(args)
             )
             const namespacedChildTools = namespaceSubagentToolSet(childTools, toolCallId)
-            const childDeferredToolNames = new Set([
-              ...dynamic.deferredToolNames,
-              ...(maestroWorkerRuntime?.deferredToolNames ?? []),
-            ])
+            const childDeferredToolNames = new Set([...dynamic.deferredToolNames])
             const allChildRuntimes = await toolSetRuntimes(namespacedChildTools, childDeferredToolNames)
             const childSpecs = allChildRuntimes.map((runtime) => runtime.spec)
             const claudeSubagentTools = asClaudeTools(allChildRuntimes, signal, supportsImages)
@@ -3648,24 +3551,13 @@ export async function runCodexSubscriptionChat(
             const onTextUpdate = (textUpdate: import('../subagent-text-stream').SubagentTextUpdate): void => {
               sessionRecorder.text(textUpdate)
             }
-            const codexReadOnly =
-              args.mode === 'maestro' ? false : isSubagentReadOnly(args.mode, definition.tools, childTools)
-            const childToolNames =
-              args.mode === 'maestro'
-                ? new Set(Object.keys(namespacedChildTools).filter(isMaestroWorkerOperationalToolName))
-                : selectSubagentToolNames({
-                    definition,
-                    readOnly: codexReadOnly,
-                    providedHostTools: namespacedChildTools,
-                  })
-            const effectiveDefinition: ChatAgent =
-              args.mode === 'maestro'
-                ? {
-                    ...definition,
-                    tools: [...childToolNames],
-                    prompt: [definition.prompt, maestroWorkerRuntime?.skillCatalog].filter(Boolean).join('\n\n'),
-                  }
-                : definition
+            const codexReadOnly = isSubagentReadOnly(args.mode, definition.tools, childTools)
+            const childToolNames = selectSubagentToolNames({
+              definition,
+              readOnly: codexReadOnly,
+              providedHostTools: namespacedChildTools,
+            })
+            const effectiveDefinition: ChatAgent = definition
             const nativeCodex = isCodexSubscriptionProvider(profile.effective.providerId)
             const nativeClaude = isClaudeSubscriptionProvider(profile.effective.providerId)
             const nativeCursor = isCursorSubscriptionProvider(profile.effective.providerId)
@@ -3677,19 +3569,8 @@ export async function runCodexSubscriptionChat(
             )
             lease = await state.subagentCoordinator.acquire({ agent: agentName, signal })
             const childApproval = approvalConfig(codexReadOnly ? 'plan' : 'agent', args.permMode)
-            // Maestro continuity (same semantics as subagent-executor): reopen this agent's previous native thread
-            // when provider/account/tools match; otherwise recreate it with the report injected.
-            const persistRuntime = args.mode === 'maestro'
-            const resumedFrom = maestroPrepared?.execution.snapshot.resumedFrom
-            const resumeSource: SubagentResumeSource | null = resumedFrom
-              ? (resolveSubagentResume(resumedFrom) ?? {
-                  sessionId: resumedFrom,
-                  agentName,
-                  handle: null,
-                  lastReport: '',
-                  replay: [],
-                })
-              : null
+            const persistRuntime = false
+            const resumeSource: SubagentResumeSource | null = null
             let resumeOutcomeRecorded = false
             const recordResume = (status: SubagentResumeStatus, reason?: string): void => {
               if (resumeOutcomeRecorded) return
@@ -4080,7 +3961,7 @@ export async function runCodexSubscriptionChat(
                       task,
                       readOnly: codexReadOnly,
                       tools: claudeSubagentTools,
-                      allowSkillLoader: args.mode === 'maestro',
+                      allowSkillLoader: false,
                       progress,
                       onTextUpdate,
                       persistRuntime,
@@ -4147,7 +4028,7 @@ export async function runCodexSubscriptionChat(
                           tools: Object.fromEntries(
                             Object.entries(namespacedChildTools).filter(([name]) => childToolNames.has(name))
                           ),
-                          allowSkillLoader: args.mode === 'maestro',
+                          allowSkillLoader: false,
                           progress,
                           onTextUpdate,
                         })
@@ -4184,7 +4065,7 @@ export async function runCodexSubscriptionChat(
                               Object.entries(namespacedChildTools).filter(([name]) => childToolNames.has(name))
                             ),
                             deferrableToolNames: childDeferredToolNames,
-                            allowSkillLoader: args.mode === 'maestro',
+                            allowSkillLoader: false,
                             progress,
                             onTextUpdate,
                           })
@@ -4223,7 +4104,7 @@ export async function runCodexSubscriptionChat(
                               signal,
                               childDeferredToolNames
                             ),
-                            allowSkillLoader: args.mode === 'maestro',
+                            allowSkillLoader: false,
                             progress,
                             onTextUpdate,
                           })
@@ -4249,7 +4130,7 @@ export async function runCodexSubscriptionChat(
                             onTextUpdate,
                             readOnly: codexReadOnly,
                             tools: childTools,
-                            allowSkillLoader: args.mode === 'maestro',
+                            allowSkillLoader: false,
                           })
                           if (resume.replay) settleResume({ resumed: true })
                           return outcome
@@ -4257,7 +4138,6 @@ export async function runCodexSubscriptionChat(
             const result =
               codexChildAccountsExhausted &&
               firstResult.error &&
-              args.mode !== 'maestro' &&
               !signal.aborted &&
               hasAdmissibleModelFallback(profile.effective, args.conversationId)
                 ? await (async () => {
@@ -4271,7 +4151,7 @@ export async function runCodexSubscriptionChat(
                       cwd: args.cwd,
                       parentMessageId: assistantId,
                       toolCallId,
-                      mode: args.mode,
+                      mode: args.mode === 'maestro' ? 'agent' : args.mode,
                       permMode: args.permMode,
                       profile,
                       definition,
@@ -4338,7 +4218,6 @@ export async function runCodexSubscriptionChat(
           } finally {
             lease?.release()
             releaseSlot?.()
-            await maestroWorkerRuntime?.close()
           }
         } finally {
           if (!background) {
@@ -4346,21 +4225,6 @@ export async function runCodexSubscriptionChat(
             notifyManagedTasksSettled()
           }
         }
-      }
-      if (maestroPrepared) {
-        maestroGuardRequired = true
-        return startMaestroDelegation({
-          conversationId: args.conversationId,
-          parentMessageId: assistantId,
-          toolCallId,
-          agentName,
-          task,
-          profile: maestroPrepared.execution.profile,
-          maestro: maestroPrepared.execution.snapshot,
-          parentSignal: signal,
-          maestroLive: args.maestroLive,
-          execute: (workSignal, sessionRecorder) => executeResolvedTask(workSignal, sessionRecorder, true),
-        })
       }
       return executeResolvedTask(signal)
     }
@@ -4696,14 +4560,7 @@ export async function runCodexSubscriptionChat(
         (classification?.kind === 'quota' || classification?.kind === 'suspect') &&
         !args.signal.aborted &&
         !planStopArmed
-      // A normal Codex task is synchronous from the provider's point of view, so root completion drains every
-      // child before settling. Maestro `delegate` is intentionally detached: draining here would either cancel
-      // useful work or wait 15 seconds and fail before the supervision continuation can run.
-      const preserveAsyncMaestroDelegations =
-        args.mode === 'maestro' && maestroGuardRequired && !args.signal.aborted && !planStopArmed
-      const cleanup = preserveAsyncMaestroDelegations
-        ? waitForGeneratedImages()
-        : stopUnfinishedChildren(preserveManagedTasks).then(() => waitForGeneratedImages())
+      const cleanup = stopUnfinishedChildren(preserveManagedTasks).then(() => waitForGeneratedImages())
       void cleanup
         .then(() => settle(params))
         .catch(async (error) => {
@@ -5625,43 +5482,6 @@ export async function runCodexSubscriptionChat(
         if (rootAbortTimer) {
           clearTimeout(rootAbortTimer)
           rootAbortTimer = undefined
-        }
-
-        if (
-          maestroGuardRequired &&
-          args.mode === 'maestro' &&
-          !args.signal.aborted &&
-          !state.planSubmitted &&
-          !planStopArmed
-        ) {
-          const unobserved = unobservedTurnDelegations(args.conversationId, assistantId)
-          if (unobserved.length > 0) {
-            const unobservedIds = new Set(unobserved.map((session) => session.id))
-            // The parent attempted to finish too early. Keep the same visible assistant turn alive, wait on the
-            // durable registry (abortable by Stop), then force one final model pass to reconcile the results.
-            const settled = await waitForTurnDelegationsTerminal(args.conversationId, assistantId, args.signal)
-            const delegations = settled.filter((session) => unobservedIds.has(session.id))
-            for (const session of delegations) markDelegationObserved(session.id)
-            carryCurrentAttemptUsage(latestUsage)
-            latestUsage = null
-            const summary = delegations.map((session) => ({
-              sessionId: session.id,
-              agent: session.agentName,
-              status: session.status,
-              phase: session.phase,
-              tools: session.toolNames,
-              files: session.files,
-              tests: session.tests,
-              error: session.error,
-            }))
-            const guardText =
-              'Host guard: delegated sessions have settled. Inspect any needed transcript, reconcile every result, ' +
-              `and only then produce the final answer. Sessions: ${JSON.stringify(summary)}`
-            input = [codexTextInput(guardText)]
-            clientUserMessageId = randomUUID()
-            maestroGuardRequired = false
-            continue
-          }
         }
 
         if (result.turn.status === 'failed' && !args.signal.aborted && !state.planSubmitted && !planStopArmed) {

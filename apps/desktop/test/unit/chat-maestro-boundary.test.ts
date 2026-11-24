@@ -3,12 +3,19 @@ import { describe, expect, it } from 'vitest'
 import { BUILTIN_AGENTS } from '../../src/main/chat/agents'
 import { approvalConfig } from '../../src/main/chat/codex-subscription/runner'
 import { builtinToolNamesForMode, isSubagentReadOnly } from '../../src/main/chat/tools'
-import { APP_TOOL_POLICY, appToolAllowed, externalMcpToolAllowed } from '../../src/main/chat/tool-policy'
-import { MAESTRO_DELEGATE_TOOL_SCHEMA, maestroAgentsFromTurn } from '../../src/main/chat/maestro-delegation'
+import {
+  APP_TOOL_POLICY,
+  CONVERSATION_DISPATCH_TOOL_NAMES,
+  CONVERSATION_LINK_TOOL_NAMES,
+  PARENT_ONLY_CONVERSATION_TOOL_NAMES,
+  appToolAllowed,
+  conversationDispatchToolsAllowed,
+  conversationLinkToolsAllowed,
+  externalMcpToolAllowed,
+} from '../../src/main/chat/tool-policy'
 import { resolveChatBehavior } from '../../src/shared/conversation-experience'
-import { createDefaultMaestroConfig } from '../../src/shared/maestro'
-
-import { buildMaestrlyBasePrompt } from '../../src/main/chat/harness/host-contracts'
+import { capabilityBehaviorFor } from '../../src/shared/chat-mode'
+import { buildMaestrlyBasePrompt, hostCapabilitySection } from '../../src/main/chat/harness/host-contracts'
 import { harnessFor } from '../../src/main/chat/harness/execution'
 import type { ChatBehavior } from '../../src/shared/conversation-experience'
 
@@ -28,194 +35,109 @@ const SYSTEM_PROMPT = (
     hasNotesTab,
   })
 
-
-describe('Maestro parent/worker capability boundary', () => {
-  it('gives the parent only read-only built-ins and no shell/write/edit/artifact tools', () => {
+describe('Maestro orchestrator capability boundary', () => {
+  it('gives the Maestro parent full Agent built-in capabilities while keeping behavior as maestro', () => {
     expect(resolveChatBehavior('standard', 'plan')).toBe('plan')
     expect(resolveChatBehavior('standard', 'design')).toBe('design')
     expect(resolveChatBehavior('maestro', 'agent')).toBe('maestro')
     expect(resolveChatBehavior('maestro', 'ask')).toBe('maestro')
-    const names = builtinToolNamesForMode('maestro')
-    expect([...names]).toEqual(expect.arrayContaining(['read', 'grep', 'glob']))
-    for (const forbidden of ['bash', 'write', 'edit', 'generate_image', 'review_plan', 'todo_write']) {
-      expect(names.has(forbidden)).toBe(false)
+    expect(capabilityBehaviorFor('maestro')).toBe('agent')
+
+    const maestroNames = builtinToolNamesForMode('maestro')
+    const agentNames = builtinToolNamesForMode('agent')
+    expect([...maestroNames].sort()).toEqual([...agentNames].sort())
+    for (const expected of ['read', 'grep', 'glob', 'edit', 'write', 'bash', 'todo_write']) {
+      expect(maestroNames.has(expected), expected).toBe(true)
     }
-    expect(approvalConfig('maestro', 'full')).toMatchObject({ sandbox: 'read-only' })
-    expect(SYSTEM_PROMPT('/repo', true, 'maestro', true)).toContain('parent is structurally read-only')
+    expect(approvalConfig('maestro', 'full')).toEqual(approvalConfig('agent', 'full'))
+    expect(approvalConfig('maestro', 'auto')).toEqual(approvalConfig('agent', 'auto'))
+    expect(hostCapabilitySection('maestro')).toBe(hostCapabilitySection('agent'))
   })
 
-  it('sends multi-file investigation to a pool exploration agent instead of the parent', () => {
-    const prompt = SYSTEM_PROMPT('/repo', true, 'maestro', true)
-    expect(prompt).toContain('not investigation')
-    expect(prompt).toContain('delegate kind=explore to the pool agent best suited for exploration')
-  })
-
-  it('addresses the parent as an orchestrator, not as an agent that edits and runs checks', () => {
+  it('gives the Maestro parent the same base prompt as Agent across profiles', () => {
     for (const modelId of ['generic-model', 'claude-opus-5', 'gemini-4-argon']) {
       const maestro = SYSTEM_PROMPT('/repo', true, 'maestro', true, modelId)
-      expect(maestro.split('# Maestro orchestration contract').length - 1, modelId).toBe(1)
-      expect(maestro, modelId).toContain('Workers change code and run checks')
-      expect(maestro, modelId).not.toContain('`edit`/`write` to change them')
-      expect(maestro, modelId).not.toContain('todo_write')
-      expect(maestro, modelId).not.toMatch(/browser_\*|browser (?:navigation|inspection)/)
       const agent = SYSTEM_PROMPT('/repo', true, 'agent', true, modelId)
-      expect(agent, modelId).toContain('`edit`/`write` to change them')
-      expect(agent, modelId).not.toContain('Workers change code and run checks')
+      expect(maestro, modelId).toBe(agent)
+      expect(maestro, modelId).toContain('`edit`/`write` to change them')
+      expect(maestro, modelId).not.toContain('parent is structurally read-only')
+      expect(maestro, modelId).not.toContain('Workers change code and run checks')
     }
   })
 
-  it('requires the parent to choose an agent while keeping execution details out of delegate input', () => {
-    const properties = Object.keys(MAESTRO_DELEGATE_TOOL_SCHEMA.properties)
-    expect(properties).toEqual(expect.arrayContaining(['agent', 'task', 'kind', 'domain', 'reviewOf', 'independent']))
-    expect(MAESTRO_DELEGATE_TOOL_SCHEMA.required).toContain('agent')
-    expect(properties).not.toEqual(
-      expect.arrayContaining(['provider', 'providerId', 'model', 'modelId', 'effort', 'fastMode'])
-    )
-  })
-
-  it('tells review resources that scoped browser and terminal validation are operationally available', () => {
-    const config = createDefaultMaestroConfig()
-    const agents = maestroAgentsFromTurn({
-      version: config.version,
-      strategy: config.strategy,
-      pool: config.pool,
-      source: 'safe-default',
-      diagnostics: [],
-      frozenAt: 1,
-    })
-    const reviewer = agents.find((agent) => agent.name === 'reviewer')!
-    expect(reviewer.prompt).toContain('full operational tool catalog')
-    expect(reviewer.prompt).toContain('isolated browser tabs and terminals')
-  })
-
-  it('allows only proven read-only MCP/app tools while Pool workers remain mutable', () => {
+  it('allows full MCP and app tools for Maestro like Agent', () => {
     expect(externalMcpToolAllowed('maestro', { readOnlyHint: true })).toBe(true)
-    expect(externalMcpToolAllowed('maestro', { readOnlyHint: false })).toBe(false)
-    expect(appToolAllowed('maestro', 'memory_search')).toBe(true)
-    expect(appToolAllowed('maestro', 'notes_read_page')).toBe(true)
-    for (const mutating of ['browser_navigate', 'notes_write_page', 'project_notes_append_page']) {
-      expect(appToolAllowed('maestro', mutating), mutating).toBe(false)
+    expect(externalMcpToolAllowed('maestro', { readOnlyHint: false })).toBe(true)
+    for (const name of Object.keys(APP_TOOL_POLICY)) {
+      expect(appToolAllowed('maestro', name), name).toBe(appToolAllowed('agent', name))
     }
-    // Inspecting pages and the screen is worker work; what people write stays readable by the parent.
-    for (const workerOnly of ['browser_snapshot', 'browser_read_text', 'computer_screenshot']) {
-      expect(appToolAllowed('maestro', workerOnly), workerOnly).toBe(false)
-      expect(appToolAllowed('agent', workerOnly), workerOnly).toBe(true)
-      expect(appToolAllowed('plan', workerOnly), workerOnly).toBe(true)
-    }
-    expect(appToolAllowed('maestro', 'terminal_read')).toBe(true)
-    expect(appToolAllowed('maestro', 'whiteboard_read')).toBe(true)
-    expect(appToolAllowed('maestro', 'artifact_comments')).toBe(true)
-    for (const [name, policy] of Object.entries(APP_TOOL_POLICY)) {
-      if (appToolAllowed('maestro', name)) expect(policy.readOnly, name).toBe(true)
-    }
-    const worker = BUILTIN_AGENTS.find((agent) => agent.name === 'general-purpose')!
-    expect(isSubagentReadOnly('maestro', worker.tools, new Set(worker.tools))).toBe(false)
+    expect(appToolAllowed('maestro', 'browser_navigate')).toBe(true)
+    expect(appToolAllowed('maestro', 'browser_snapshot')).toBe(true)
+    expect(appToolAllowed('maestro', 'computer_screenshot')).toBe(true)
+    expect(appToolAllowed('maestro', 'notes_write_page')).toBe(true)
+    expect(appToolAllowed('maestro', 'review_plan')).toBe(false)
+
+    const generalPurpose = BUILTIN_AGENTS.find((agent) => agent.name === 'general-purpose')!
+    expect(isSubagentReadOnly('maestro', generalPurpose.tools, new Set(generalPurpose.tools))).toBe(false)
     expect(isSubagentReadOnly('maestro', undefined, new Set(['read', 'grep']))).toBe(true)
   })
 
-  it('wires delegate and the frozen Maestro snapshot through every parent runtime', () => {
+  it('allows conversation dispatch and link tools for Maestro while keeping them out of workers and subagents', () => {
+    expect(conversationDispatchToolsAllowed('maestro')).toBe(true)
+    expect(conversationLinkToolsAllowed('maestro')).toBe(true)
+    for (const name of [...CONVERSATION_DISPATCH_TOOL_NAMES, ...CONVERSATION_LINK_TOOL_NAMES]) {
+      expect(PARENT_ONLY_CONVERSATION_TOOL_NAMES).toContain(name)
+    }
+    for (const file of [
+      'src/main/chat/tools/index.ts',
+      'src/main/chat/claude-agent-sdk/subagent-runner.ts',
+      'src/main/chat/claude-agent-sdk/task-runtime.ts',
+      'src/main/chat/github-copilot/subagent-runner.ts',
+      'src/main/chat/cursor-subscription/subagent-runner.ts',
+      'src/main/chat/antigravity-subscription/subagent-runner.ts',
+    ]) {
+      expect(readFileSync(file, 'utf8'), file).toContain('...PARENT_ONLY_CONVERSATION_TOOL_NAMES')
+    }
+  })
+
+  it('wires the swarm prompt through every runner and removes legacy delegate tool and live port usage', () => {
     for (const file of [
       'src/main/chat/runner.ts',
       'src/main/chat/claude-agent-sdk/runner.ts',
       'src/main/chat/codex-subscription/runner.ts',
       'src/main/chat/github-copilot/runner.ts',
+      'src/main/chat/cursor-subscription/session.ts',
+      'src/main/chat/antigravity-subscription/session.ts',
     ]) {
       const source = readFileSync(file, 'utf8')
-      expect(source, file).toContain("'delegate'")
-      expect(source, file).toContain('maestro')
-      expect(source, file).toContain('maestroLive')
+      expect(source, file).toContain('renderMaestroSwarmSection')
+      expect(source, file).not.toContain('renderMaestroAgentCatalog')
+      expect(source, file).not.toContain('renderMaestroTurnPolicy')
+      expect(source, file).not.toContain('MAESTRO_SYSTEM_SPEC')
+      expect(source, file).not.toContain('MAESTRO_DELEGATE_TOOL')
     }
-    const codex = readFileSync('src/main/chat/codex-subscription/runner.ts', 'utf8')
-    expect(codex).toContain("toolName === 'task' || toolName === 'delegate'")
+
     for (const file of [
       'src/main/chat/runner.ts',
       'src/main/chat/claude-agent-sdk/runner.ts',
+      'src/main/chat/claude-agent-sdk/task-runtime.ts',
       'src/main/chat/codex-subscription/runner.ts',
       'src/main/chat/github-copilot/runner.ts',
+      'src/main/chat/cursor-subscription/runner.ts',
+      'src/main/chat/cursor-subscription/task-runtime.ts',
+      'src/main/chat/antigravity-subscription/runner.ts',
+      'src/main/chat/antigravity-subscription/task-runtime.ts',
     ]) {
-      expect(readFileSync(file, 'utf8'), file).toContain('renderMaestroAgentCatalog')
+      const source = readFileSync(file, 'utf8')
+      expect(source, file).not.toContain('startMaestroDelegation')
+      expect(source, file).not.toContain('prepareMaestroDelegation')
+      expect(source, file).not.toContain('maestroLive')
     }
-  })
 
-  it('keeps the full worker catalog behind child execution in every runtime', () => {
-    const executor = readFileSync('src/main/chat/subagent-executor.ts', 'utf8')
-    const codex = readFileSync('src/main/chat/codex-subscription/runner.ts', 'utf8')
-    expect(executor).toContain('buildMaestroWorkerTools({')
-    expect(codex).toContain('buildMaestroWorkerTools({')
-    for (const file of [
-      'src/main/chat/runner.ts',
-      'src/main/chat/claude-agent-sdk/task-runtime.ts',
-      'src/main/chat/github-copilot/runner.ts',
-    ]) {
-      expect(readFileSync(file, 'utf8'), file).toContain('executeSubagent({')
-    }
-    for (const file of [
-      'src/main/chat/runner.ts',
-      'src/main/chat/claude-agent-sdk/task-runtime.ts',
-      'src/main/chat/github-copilot/runner.ts',
-      'src/main/chat/codex-subscription/runner.ts',
-    ]) {
-      expect(readFileSync(file, 'utf8'), file).toContain('maestroLive: args.maestroLive')
-    }
-    expect(readFileSync('src/main/chat/maestro-delegation-registry.ts', 'utf8')).toContain(
-      'embedPending(input.toolCallId'
-    )
-    expect(readFileSync('src/main/chat/maestro-worker-tools.ts', 'utf8')).toContain("mode: 'agent'")
-    expect(readFileSync('src/main/chat/tool-policy.ts', 'utf8')).toContain("mode !== 'maestro' || entry.readOnly")
-  })
-
-  it('keeps the worker skill catalog and loader under the same Maestro-owned boundary', () => {
-    const executor = readFileSync('src/main/chat/subagent-executor.ts', 'utf8')
-    const codex = readFileSync('src/main/chat/codex-subscription/runner.ts', 'utf8')
-    const workerTools = readFileSync('src/main/chat/maestro-worker-tools.ts', 'utf8')
-
-    expect(workerTools).toContain('buildModelSkillRuntime({')
-    expect(workerTools).toContain('skillCatalog: skillRuntime.catalog')
-    expect(executor).toContain("args.mode !== 'maestro' || name !== 'use_skill'")
-    expect(executor).toContain('maestroRuntime.skillCatalog')
-    expect(codex).toContain("args.mode !== 'maestro' || name !== 'use_skill'")
-    expect(codex).toContain('maestroWorkerRuntime?.skillCatalog')
-    expect(codex).toContain('isGitHubCopilotSubscriptionProvider(profile.effective.providerId)')
-    expect(codex).toContain('runGitHubCopilotSubagent({')
-  })
-  it('owns the live inbox in the admitted ActiveRun and settles it before renderer done', () => {
     const service = readFileSync('src/main/chat/service.ts', 'utf8')
-    expect(service).toContain('createMaestroLiveRunPort({')
-    expect(service).toContain("'chat:maestro-live:post'")
-    expect(service).toContain("'chat:maestro-live:snapshot'")
-    expect(service).toContain("'chat:maestro-live:cancel'")
-    const finish = service.indexOf('run.maestroLive?.finish(maestroTerminalStatus)')
-    const doneMarker = 'send(`chat:delta:' + '${' + "conversationId}`, { kind: 'done' })"
-    const done = service.indexOf(doneMarker, finish)
-    expect(finish).toBeGreaterThan(-1)
-    expect(done).toBeGreaterThan(finish)
-  })
-
-  it('starts Maestro delegates asynchronously and exposes wait/list/inspect/cancel to every parent runtime', () => {
-    for (const file of [
-      'src/main/chat/runner.ts',
-      'src/main/chat/claude-agent-sdk/task-runtime.ts',
-      'src/main/chat/codex-subscription/runner.ts',
-      'src/main/chat/github-copilot/runner.ts',
-    ]) {
-      expect(readFileSync(file, 'utf8'), file).toContain('startMaestroDelegation({')
-    }
-    for (const file of [
-      'src/main/chat/runner.ts',
-      'src/main/chat/claude-agent-sdk/runner.ts',
-      'src/main/chat/codex-subscription/runner.ts',
-      'src/main/chat/github-copilot/runner.ts',
-    ]) {
-      expect(readFileSync(file, 'utf8'), file).toContain('buildSubagentSupervisionTools({')
-    }
-    const supervision = readFileSync('src/main/chat/maestro-supervision-tools.ts', 'utf8')
-    for (const tool of ['wait_delegation', 'list_delegations', 'inspect_subagent', 'cancel_delegation']) {
-      expect(supervision).toContain(tool)
-    }
-    const prompt = readFileSync('src/main/chat/maestro-prompt.ts', 'utf8')
-    expect(prompt).toContain('Never finish while a delegation is preparing or running')
-    expect(readFileSync('src/main/chat/codex-subscription/runner.ts', 'utf8')).toContain('maestroGuardRequired')
-    expect(readFileSync('src/main/chat/claude-agent-sdk/runner.ts', 'utf8')).toContain('maestroGuarded')
-    expect(readFileSync('src/main/chat/service.ts', 'utf8')).toContain('maestroGuardContinuation')
+    expect(service).toContain('reconcileSwarmMerges')
+    expect(service).toContain('maestroSwarmStatePart')
+    expect(service).not.toContain('createMaestroLiveRunPort(')
+    expect(service).not.toContain('maestroGuardContinuation')
   })
 })

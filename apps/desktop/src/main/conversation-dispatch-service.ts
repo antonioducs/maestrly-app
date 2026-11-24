@@ -79,6 +79,7 @@ export interface ConversationDispatchServiceDeps {
   openConversation(conversation: Conversation, focus: boolean): void
   notifyChanged(conversationId: string): void
   reportStartFailure(conversationId: string, error: string): void
+  onStarted?(record: ConversationDispatchRecord): void
   isMigrating(conversationId: string): boolean
   text(key: string, params?: Record<string, string>): string
 }
@@ -531,21 +532,33 @@ export function createConversationDispatchService(deps: ConversationDispatchServ
     } catch (error) {
       result = { ok: false, error: errorText(error) }
     }
+    const notifyStarted = (started: ConversationDispatchRecord | null): void => {
+      if (!started || !deps.onStarted) return
+      try {
+        deps.onStarted(started)
+      } catch {
+        // Never break a started dispatch if a listener throws.
+      }
+    }
     if (result.ok) {
-      transitionConversationDispatch(dispatchId, ['starting'], 'started')
+      const transitioned = transitionConversationDispatch(dispatchId, ['starting'], 'started')
       deps.notifyChanged(conversation.id)
-      return { record: getConversationDispatch(dispatchId)!, status: 'started', replayed: false }
+      const latest = getConversationDispatch(dispatchId)!
+      if (transitioned) notifyStarted(latest)
+      return { record: latest, status: 'started', replayed: false }
     }
     // The seed never started: keep the destination and let the person retry the same conversation.
     const failure = result.error
+    let transitionedToStarted = false
     if (deps.hasPersistedMessages(conversation.id)) {
-      transitionConversationDispatch(dispatchId, ['starting'], 'started')
+      transitionedToStarted = transitionConversationDispatch(dispatchId, ['starting'], 'started')
     } else {
       transitionConversationDispatch(dispatchId, ['starting'], 'start-failed', failure)
       deps.reportStartFailure(conversation.id, failure)
     }
     deps.notifyChanged(conversation.id)
     const latest = getConversationDispatch(dispatchId)!
+    if (transitionedToStarted) notifyStarted(latest)
     return latest.phase === 'started'
       ? { record: latest, status: 'started', replayed: false }
       : { record: latest, status: 'start-failed', replayed: false, error: failure }
@@ -915,7 +928,7 @@ export async function resolveConversationDispatchSettingsFor(
 }
 
 async function buildDefaultConversationDispatchService(): Promise<ConversationDispatchService> {
-  const [store, chat, workspace, git, windowIpc, i18n, migration, dispatchStore] = await Promise.all([
+  const [store, chat, workspace, git, windowIpc, i18n, migration, dispatchStore, maestroSwarm] = await Promise.all([
     import('./store'),
     import('./chat/service'),
     import('./workspace-service'),
@@ -924,6 +937,7 @@ async function buildDefaultConversationDispatchService(): Promise<ConversationDi
     import('./i18n'),
     import('./conversation-migration/store'),
     import('./conversation-dispatch-store'),
+    import('./chat/maestro-swarm'),
   ])
   return createConversationDispatchService({
     getConversation: (id) => store.getConversation(id),
@@ -986,6 +1000,17 @@ async function buildDefaultConversationDispatchService(): Promise<ConversationDi
       windowIpc.broadcast('conversation:open', { conversation: store.withDispatchOrigin(conversation), focus }),
     notifyChanged: (conversationId) => windowIpc.broadcast('conversation-dispatch:changed', { conversationId }),
     reportStartFailure: chat.reportConversationDispatchStartFailure,
+    onStarted: (record) => {
+      if (store.getConversation(record.sourceConversationId)?.experience === 'maestro') {
+        maestroSwarm.onSwarmDispatchStarted({
+          orchestratorId: record.sourceConversationId,
+          requestKey: record.requestKey,
+          conversationId: record.conversationId,
+          branch: record.branch,
+          title: record.title,
+        })
+      }
+    },
     isMigrating: (conversationId) => !!migration.incompleteMigrationForConversation(conversationId),
     text: (key, params) => i18n.tFor(store.getLocale(), 'prompts')(key, params),
   })

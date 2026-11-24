@@ -12,7 +12,7 @@ export interface AppToolPromptGroups {
   listed: AppToolGroup[]
   /** Groups the prompt recommends over native tools, minus the ones turned off. */
   preferred: AppToolGroup[]
-  /** Restricted-mode (Plan/Ask/Maestro) catalog fragments of the groups still on. */
+  /** Restricted-mode (Plan/Ask) catalog fragments of the groups still on. */
   restricted: string[]
   /** Sentence naming the groups the user turned off, or '' when none is off. */
   disabledNote: string
@@ -24,23 +24,21 @@ export interface AppToolPromptGroups {
  */
 export function appToolPromptGroups(
   hasNotesTab: boolean,
-  mode: string,
+  _mode: string,
   disabledGroups: readonly AppToolGroup[] = []
 ): AppToolPromptGroups {
   const disabled = new Set(disabledGroups)
   const on = (group: AppToolGroup) => !disabled.has(group)
   const notes = hasNotesTab && on('notes')
-  const maestro = mode === 'maestro'
   const off = APP_TOOL_GROUPS.filter((group) => disabled.has(group))
-  // Maestro's orchestrator leaves the browser to its workers (see appToolAllowed).
-  const browser = on('browser') && !maestro
+  const browser = on('browser')
   return {
     listed: (
       ['terminal', 'browser', ...(hasNotesTab ? ['notes' as const] : []), 'memory', 'debug'] as AppToolGroup[]
-    ).filter((group) => on(group) && (group !== 'browser' || browser)),
+    ).filter(on),
     preferred: (['terminal', 'memory', ...(hasNotesTab ? ['notes' as const] : [])] as AppToolGroup[]).filter(on),
     restricted: [
-      notes ? (maestro ? 'notes list/read' : 'notes list/read/create/write/append') : '',
+      notes ? 'notes list/read/create/write/append' : '',
       on('memory') ? 'memory search/list/read' : '',
       browser ? 'browser navigation/read' : '',
       on('terminal') ? 'terminal read' : '',

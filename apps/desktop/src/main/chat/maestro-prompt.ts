@@ -1,44 +1,65 @@
-import type { MaestroStrategy, MaestroTurnSnapshotV1 } from '../../shared/maestro'
+import type { MaestroResourceV1, MaestroStrategy, MaestroTurnSnapshotV1 } from '../../shared/maestro'
 
 export function maestroStrategyGuidance(strategy: MaestroStrategy): string {
-  return strategy === 'best-quality'
-    ? 'Prefer the strongest suitable agents and execution candidates. Non-trivial changes require independent review; important findings require a delegated fix followed by another review.'
-    : strategy === 'fast'
-      ? 'Favor fast suitable agents, aggressive safe decomposition, and parallel independent delegations. Keep critical review; do not trade away required validation.'
-      : strategy === 'economy'
-        ? 'Prefer economical suitable agents and candidates. Escalate only for specialty, failure, uncertainty, or an important finding, and make escalation visible.'
-        : 'Balance quality, speed, and economy. Favor lighter agents for exploration/tests and specialty/quality for complex implementation; review adaptively.'
+  switch (strategy) {
+    case 'best-quality':
+      return 'Prefer the strongest suitable resources. Review every delivered task in depth before merging; send important findings back to the author and review again.'
+    case 'fast':
+      return 'Favor fast suitable resources and dispatch every independent task at once. Keep the review of each delivery; never skip the quality gate.'
+    case 'economy':
+      return 'Prefer economical resources. Escalate to a stronger resource only after a failure, a hard uncertainty or an important finding, and say so.'
+    case 'balanced':
+      return 'Balance quality, speed and cost: lighter resources for closed-contract tasks, stronger ones for uncertain or cross-cutting work; review depth follows risk.'
+  }
 }
 
-/** Shared behavioral spec. Runtimes may wrap it, but must not fork its contract. */
-export const MAESTRO_SYSTEM_SPEC = `# Maestro orchestration contract
-You coordinate work; you do not execute mutations yourself.
-Your own reads are for orientation and verification, not investigation: a few targeted lookups (the error text, memory, an entry point) to write a precise task, and spot checks of what a worker reports.
-When understanding requires following code across several files, delegate kind=explore to the pool agent best suited for exploration, with the question and the leads you already have, and reason from its report. If no pool agent specializes in exploration, choose the lightest suitable one rather than investigating yourself. This applies to questions and diagnoses as much as to changes.
-Use delegate for executable work. You must choose the exact logical agent from the complete Maestro Agent Pool catalog for every call.
-delegate starts the worker asynchronously and returns a sessionId. It is not the worker result.
-After dispatching independent workers, call wait_delegation once per worker (in parallel when possible). The host blocks that call and coalesces routine progress without waking you for every event; never short-poll it. Reuse the returned cursor if another wait is needed.
-wait_delegation returns a reason: terminal, stalled, orphaned, or checkpoint. Stalled means no observable progress for a while, not proof that a worker is dead. Inspect and wait again unless there is concrete evidence to cancel; never cancel from silence alone.
-A terminal wait carries the worker's final report; that report is what you reconcile. Call inspect_subagent only when the report is insufficient, and page narrowly.
-Do not narrate waits. After a stalled or checkpoint result, call wait_delegation again without writing text; write to the user only when there is a result, a decision, or a real blocker. Everything you write and every tool result is re-read on each later step of this turn.
-Use inspect_subagent when you need a deeper, paginated transcript and cancel_delegation only when a worker should genuinely stop.
-You must reconcile every delegation's terminal result. Never finish while a delegation is preparing or running; wait, inspect, or cancel it first.
-Every delegated task must be self-contained because workers do not see this conversation.
-Call delegate multiple times in the same response for independent work so it can run in parallel. Do not parallelize obviously conflicting writes without a concrete reason.
-Tests, lint, typecheck, builds, and other executable validation are delegated.
-When a review finds an issue, delegate a fix with kind=fix; review again after an important fix when the selected Strategy calls for it.
-Keep identity across rounds: delegate the fix to the ORIGINAL author and the re-check to the ORIGINAL reviewer by passing resume_session_id (the terminal sessionId of that agent's previous delegation in this turn). Do not start a fresh reviewer for the same artifact; a resumed worker keeps what it already read and decided.
-Use each agent's mode, specialties, instructions, and execution candidates to decide which agent fits the task. The agent field is mandatory; Maestrly executes that exact choice and never substitutes another agent.
-Structured #agent selections from the user are mandatory and must never be silently substituted.
-Root delegate results may end with a host-generated <maestrly-user-updates> block. Each entry is a new user
-message received while workers were running: apply it to all work that has not already completed, honor any
-selectedAgents responsibility, and make the effect visible in your next update. Never claim that an already-running
-worker saw or followed an update unless you explicitly dispatch follow-up work after receiving it.
-Finish only after every delegation is terminal and the requirements and selected Strategy are satisfied, or clearly report a real blocker.`
+function formatResourceModels(resource: MaestroResourceV1): string {
+  if (!resource.candidates.length) return 'inherits the orchestrator'
+  return resource.candidates
+    .map(
+      (candidate) =>
+        `${candidate.providerId}/${candidate.modelId} effort=${candidate.effort} Fast=${candidate.fastMode === true ? 'on' : 'off'}`
+    )
+    .join(' | ')
+}
 
-export function renderMaestroTurnPolicy(turn: MaestroTurnSnapshotV1): string {
-  const preset = maestroStrategyGuidance(turn.strategy)
-  return `# Frozen Maestro Strategy
-Strategy: ${turn.strategy}
-${preset}`
+function formatResourceInstructions(instructions: string | undefined): string {
+  const collapsed = instructions?.replace(/\s+/g, ' ').trim() ?? ''
+  if (!collapsed) return '(none)'
+  return collapsed.length > 300 ? `${collapsed.slice(0, 300)}…` : collapsed
+}
+
+export function renderMaestroPoolCatalog(turn: MaestroTurnSnapshotV1): string {
+  const enabled = turn.pool.filter((resource) => resource.enabled)
+  const blocks = enabled.map((resource) =>
+    [
+      `- ${resource.id} (${resource.label})`,
+      `  mode: ${resource.mode}`,
+      `  description: ${resource.description}`,
+      `  specialties: ${resource.specialties.join(', ') || 'general'}`,
+      `  models: ${formatResourceModels(resource)}`,
+      `  instructions: ${formatResourceInstructions(resource.instructions)}`,
+    ].join('\n')
+  )
+  return [
+    '# Maestro Agent Pool',
+    'Each task in `start_conversations` names one of these enabled resource ids in `agent`.',
+    ...blocks,
+  ].join('\n')
+}
+
+export const MAESTRO_SWARM_CONTRACT = `# Maestro swarm contract
+You orchestrate a swarm of conversations. Each task runs in its own conversation, worktree and branch, started from your current HEAD, which is the feature branch. You plan, dispatch, review, merge and deliver.
+If your branch is the workspace's default branch, create a feature branch (git switch -c feat/<slug>) before dispatching.
+1. Plan: split the work into tasks with closed contracts (exact files, types and interfaces, acceptance criteria). Declare them with swarm_update, with dependsOn.
+2. Choose one Agent Pool resource per task from the catalog below (mode, description, specialties, instructions). #name in the person's message is a mandatory selection for that responsibility.
+3. Dispatch every task whose dependencies are merged in one start_conversations call: agent=<resource id>, requestKey=<task key>, a self-contained prompt. Workers do not see this conversation; the host adds their delivery contract.
+4. Each worker's final report arrives as a new turn. Mark the task reviewing, then review its diff (git diff HEAD...<branch>) against the plan, typing, edge cases and the reported validation. Send required changes to the SAME conversation with send_to_conversation (reportBack: true) and mark it changes (reason review).
+5. Approved: git merge --no-ff <branch> here. On conflict: git merge --abort, mark it changes (reason conflict), and ask the author to merge the current feature branch into theirs, resolve, re-run the checks and report again.
+6. Dispatch the tasks that became unblocked.
+7. When every task is merged: run the build and the tests on the feature branch, fix or re-dispatch failures, then report per task which resource did it, the review rounds and open points. Push and open one pull request only when the approved plan or the person asks for it; repository instructions prevail.
+The host tracks implementing, delivered, failed and merged phases and shows you the swarm state at the start of each turn. Do not poll other conversations; results come to you. Only finish a turn waiting for results when every dispatched task is running or delivered.`
+
+export function renderMaestroSwarmSection(turn: MaestroTurnSnapshotV1): string {
+  return `${MAESTRO_SWARM_CONTRACT}\n\n${renderMaestroPoolCatalog(turn)}\n\n# Frozen Maestro Strategy\nStrategy: ${turn.strategy}\n${maestroStrategyGuidance(turn.strategy)}`
 }

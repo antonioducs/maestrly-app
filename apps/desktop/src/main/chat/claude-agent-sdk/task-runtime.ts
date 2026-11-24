@@ -8,7 +8,6 @@ import type {
   SubagentRunMeta,
 } from '../../../shared/chat'
 import type { ChatBehavior } from '../../../shared/conversation-experience'
-import type { MaestroTurnSnapshotV1 } from '../../../shared/maestro'
 import type { GeneratedImageEmission, GeneratedImageUsage } from '../tools/util'
 import type { ChatAgent } from '../agents'
 import { isClaudeSubscriptionProvider } from '../catalog'
@@ -29,9 +28,6 @@ import { describeEphemeralToolImage, hasConfiguredImageInterpreter } from '../im
 import { adaptToolSetForModel, supportsChatToolImages } from '../tool-capabilities'
 import { getSubagentProfileModelMeta } from '../subagent-profile-model-meta'
 import { executeSubagent } from '../subagent-executor'
-import { prepareMaestroDelegation } from '../maestro-delegation'
-import type { MaestroLiveRunPort } from '../maestro-live'
-import { startMaestroDelegation } from '../maestro-delegation-registry'
 import type { SubagentSessionRecorder } from '../subagent-session'
 import type { ClaudeSubscriptionAccountIdentity, ClaudeSubscriptionManager } from './manager'
 import type { NormalizedClaudeUsage } from './usage'
@@ -61,8 +57,6 @@ export interface CreateClaudeTaskRuntimeArgs {
   permissionScope?: PermissionScope
   cwd: string
   mode: ChatBehavior
-  maestro?: MaestroTurnSnapshotV1
-  maestroLive?: MaestroLiveRunPort
   permMode: ChatPermMode
   selection: ChatModelRef
   reasoningEffort?: string
@@ -118,59 +112,35 @@ export function selectedSubagentToolNames(
 export function createClaudeTaskRuntime(args: CreateClaudeTaskRuntimeArgs): ClaudeManagedTaskRunner {
   return async (input, toolCallId, signal, update) => {
     const parsed = isRecord(input) ? input : {}
-    let agentName = typeof parsed.agent === 'string' ? parsed.agent : ''
-    let task = typeof parsed.prompt === 'string' ? parsed.prompt : ''
-    const maestroPrepared =
-      args.mode === 'maestro' && args.maestro
-        ? await prepareMaestroDelegation({
-            input,
-            turn: args.maestro,
-            parent: { ...args.selection, effort: args.reasoningEffort || 'off' },
-            parentFastMode: args.fastMode,
-            turnState: args.turnState,
-            delegationId: toolCallId,
-            owner: { conversationId: args.conversationId, parentMessageId: args.assistantId },
-          })
-        : undefined
-    if (maestroPrepared) {
-      agentName = maestroPrepared.agentName
-      task = maestroPrepared.task
-    }
+    const agentName = typeof parsed.agent === 'string' ? parsed.agent : ''
+    const task = typeof parsed.prompt === 'string' ? parsed.prompt : ''
     if (!agentName || !task) throw new Error('task requires agent and prompt.')
     // Agent selection is semantic and happens before execution-profile resolution.
     // Execution routing is host-managed and keyed by the selected agent name.
     // A role mentioned inside task.prompt must never alter profile resolution.
-    if (!maestroPrepared) {
-      assertSubagentSelection({
-        state: args.turnState,
-        selectedAgent: agentName,
-        availableAgents: args.agents.map((agent) => agent.name),
-        runtime: 'claude-subscription',
-        conversationId: args.conversationId,
-      })
-      recordSubagentDispatch(args.turnState, agentName)
-    }
+    assertSubagentSelection({
+      state: args.turnState,
+      selectedAgent: agentName,
+      availableAgents: args.agents.map((agent) => agent.name),
+      runtime: 'claude-subscription',
+      conversationId: args.conversationId,
+    })
+    recordSubagentDispatch(args.turnState, agentName)
     const startedAt = Date.now()
     const lines: string[] = []
-    const resolved = maestroPrepared
-      ? {
-          definition: args.agents.find((agent) => agent.name === agentName) ?? null,
-          profile: maestroPrepared.execution.profile,
-        }
-      : await resolveSubagentExecutionProfile({
-          agentName,
-          agents: [...args.agents],
-          conversationId: args.conversationId,
-          parentFastMode: args.fastMode,
-          complexity: parseTaskComplexity(parsed.complexity),
-          parent: {
-            ...args.selection,
-            effort: args.reasoningEffort && args.reasoningEffort !== 'off' ? args.reasoningEffort : '',
-          },
-        })
+    const resolved = await resolveSubagentExecutionProfile({
+      agentName,
+      agents: [...args.agents],
+      conversationId: args.conversationId,
+      parentFastMode: args.fastMode,
+      complexity: parseTaskComplexity(parsed.complexity),
+      parent: {
+        ...args.selection,
+        effort: args.reasoningEffort && args.reasoningEffort !== 'off' ? args.reasoningEffort : '',
+      },
+    })
     const meta = (usage?: NormalizedClaudeUsage, final = false, runtimeEstimatedCostUsd?: number): SubagentRunMeta => ({
       profile: resolved.profile,
-      ...(maestroPrepared ? { maestro: maestroPrepared.execution.snapshot } : {}),
       startedAt,
       ...(usage
         ? {
@@ -281,10 +251,7 @@ export function createClaudeTaskRuntime(args: CreateClaudeTaskRuntimeArgs): Clau
           cwd: args.cwd,
           parentMessageId: args.assistantId,
           toolCallId,
-          delegationId: maestroPrepared?.execution.snapshot.delegationId,
-          delegationLabel: maestroPrepared?.execution.snapshot.resource.label,
-          maestroSnapshot: maestroPrepared?.execution.snapshot,
-          mode: args.mode,
+          mode: args.mode === 'maestro' ? 'agent' : args.mode,
           permMode: args.permMode,
           profile: resolved.profile,
           definition: resolved.definition!,
@@ -339,20 +306,6 @@ export function createClaudeTaskRuntime(args: CreateClaudeTaskRuntimeArgs): Clau
       }
     }
 
-    if (maestroPrepared) {
-      return startMaestroDelegation({
-        conversationId: args.conversationId,
-        parentMessageId: args.assistantId,
-        toolCallId,
-        agentName,
-        task,
-        profile: resolved.profile,
-        maestro: maestroPrepared.execution.snapshot,
-        parentSignal: signal,
-        maestroLive: args.maestroLive,
-        execute: (workSignal, sessionRecorder) => executeResolved(workSignal, sessionRecorder, true),
-      })
-    }
     return executeResolved(signal)
   }
 }

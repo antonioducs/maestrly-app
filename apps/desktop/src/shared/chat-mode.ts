@@ -1,7 +1,7 @@
 import type { ChatMode } from './chat'
 import type { ChatBehavior } from './conversation-experience'
 
-export type ChatCapabilityBehavior = Exclude<ChatBehavior, 'design'>
+export type ChatCapabilityBehavior = 'agent' | 'plan' | 'ask'
 
 export const CHAT_BEHAVIORS = ['agent', 'design', 'plan', 'ask', 'maestro'] as const
 
@@ -20,11 +20,11 @@ export function normalizeChatMode(value: unknown): ChatMode {
 export function capabilityBehaviorFor(mode: ChatBehavior): ChatCapabilityBehavior {
   switch (mode) {
     case 'design':
+    case 'maestro':
       return 'agent'
     case 'agent':
     case 'plan':
     case 'ask':
-    case 'maestro':
       return mode
   }
 }

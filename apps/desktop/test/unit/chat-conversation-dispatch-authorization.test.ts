@@ -3,11 +3,13 @@ import {
   assertConversationDispatchGrantCurrent,
   clearHumanTurnOrigin,
   conversationDispatchDenialMessage,
+  currentHostTurnOrigin,
   currentHumanTurnOrigin,
   detectConversationDispatchIntent,
   evaluateConversationDispatchGrant,
   evaluateHumanTurnGrant,
   isHumanTurnAdmission,
+  recordHostTurnOrigin,
   recordHumanTurnOrigin,
   type HumanTurnOrigin,
 } from '../../src/main/chat/conversation-dispatch-authorization'
@@ -217,6 +219,26 @@ describe('evaluateConversationDispatchGrant', () => {
     const analysis = origin('Leia o card PROJ-9 e resuma.')
     recordHumanTurnOrigin(analysis)
     expect(evaluateConversationDispatchGrant(analysis)).toMatchObject({ ok: false, code: 'not-requested' })
+  })
+
+  it('accepts a live host turn origin in evaluateHumanTurnGrant without reading text', () => {
+    const token = {}
+    const signal = new AbortController().signal
+    recordHostTurnOrigin({ token, conversationId: 'maestro-1', messageId: 'msg-host', signal })
+    const host = currentHostTurnOrigin('maestro-1')
+    expect(host).toMatchObject({ host: true, text: '' })
+    expect(evaluateHumanTurnGrant(host)).toEqual({
+      ok: true,
+      grant: {
+        conversationId: 'maestro-1',
+        messageId: 'msg-host',
+        originKey: 'message:msg-host',
+        token,
+        signal,
+      },
+    })
+    clearHumanTurnOrigin('maestro-1', token)
+    expect(evaluateHumanTurnGrant(host)).toMatchObject({ ok: false, code: 'turn-ended' })
   })
 
   it('clears only the matching turn token', () => {

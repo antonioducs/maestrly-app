@@ -128,9 +128,9 @@ function resolveUltra(
   if (!refs) return null
   const base = text(profile, fallback, refs.base)
   if (base == null) return null
-  const byMode = {} as Record<ChatBehavior, string>
-  for (const [mode, ref] of Object.entries(refs.byMode) as [ChatBehavior, string][]) {
-    byMode[mode] = text(profile, fallback, ref) ?? ''
+  const byMode = {} as Partial<Record<ChatBehavior, string>>
+  for (const [mode, ref] of Object.entries(refs.byMode) as [ChatBehavior, string | undefined][]) {
+    if (ref != null) byMode[mode] = text(profile, fallback, ref) ?? ''
   }
   return { base, byMode }
 }

@@ -36,7 +36,7 @@ export type HarnessTextRef = string
 
 export interface HarnessUltraRefs {
   base: HarnessTextRef
-  byMode: Readonly<Record<ChatBehavior, HarnessTextRef>>
+  byMode: Readonly<Partial<Record<ChatBehavior, HarnessTextRef>>>
 }
 
 export interface HarnessPromptOverrides {
@@ -177,7 +177,7 @@ export type HarnessResolutionReason =
 
 export interface ResolvedUltraGuidance {
   base: string
-  byMode: Readonly<Record<ChatBehavior, string>>
+  byMode: Readonly<Partial<Record<ChatBehavior, string>>>
 }
 
 export interface ResolvedHarnessPrompts {

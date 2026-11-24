@@ -7,11 +7,15 @@
  */
 import { z } from 'zod'
 import {
+  CONVERSATION_DISPATCH_MAX_PROMPT,
   conversationDispatchBatchSchema,
   type ConversationDispatchBatch,
   type ConversationDispatchBatchResult,
+  type ConversationDispatchItemResult,
   type ConversationDispatchModelOption,
   type ConversationDispatchSettings,
+  type ConversationDispatchSettingsRequest,
+  type ConversationDispatchTask,
   type ConversationDispatchWorkspaceOption,
 } from '../../../shared/conversation-dispatch'
 import type { ChatBehavior } from '../../../shared/conversation-experience'
@@ -36,8 +40,15 @@ import {
 import { autonomousPolicy } from '../autonomous'
 import { remoteChatPolicy } from '../remote-policy'
 import { HOST_CONVERSATION_DISPATCH_GUIDANCE, HOST_WORKSPACE_CREATION_GUIDANCE } from '../harness/host-contracts'
-import { CONVERSATION_DISPATCH_TOOL_NAMES, conversationDispatchToolsAllowed } from '../tool-policy'
+import {
+  CONVERSATION_DISPATCH_TOOL_NAMES,
+  conversationDispatchToolsAllowed,
+  MAESTRO_SWARM_TOOL_NAMES,
+} from '../tool-policy'
 import { defineTool } from './util'
+
+/** Worker modes that Maestro conversations can dispatch via Agent Pool resources. */
+export const MAESTRO_DISPATCH_MODES = ['agent', 'design', 'ask'] as const
 
 type GithubRepositoriesResult = { repositories: GithubRepositoryOption[] } | { error: string }
 type AskQuestion = (questions: ChatQuestion[]) => Promise<string[][]>
@@ -133,11 +144,12 @@ async function confirmConversationBatch(askQuestion: AskQuestion, batch: Convers
 
 /**
  * Why a turn the app ran on its own may not use these tools now, or null when it may: only while the owner keeps the
- * confirmation off, and never in a conversation an agent created. Read on every call, so the setting applies at once.
+ * confirmation off (except Maestro, where worker results wake host turns that must dispatch), and never in a
+ * conversation an agent created. Read on every call, so the setting applies at once.
  */
-async function hostTurnRefusal(conversationId: string): Promise<string | null> {
+async function hostTurnRefusal(conversationId: string, skipConfirmCheck = false): Promise<string | null> {
   const store = await import('../../store')
-  if (store.getConfirmConversationDispatch()) return conversationDispatchDenialMessage('host-turn')
+  if (!skipConfirmCheck && store.getConfirmConversationDispatch()) return conversationDispatchDenialMessage('host-turn')
   if (store.dispatchOriginsFor([conversationId]).has(conversationId))
     return conversationDispatchDenialMessage('agent-created')
   return null
@@ -145,10 +157,11 @@ async function hostTurnRefusal(conversationId: string): Promise<string | null> {
 
 /**
  * Runtime for the turn currently admitted in `conversationId`, or undefined when the tools must not be offered:
- * Plan/Maestro modes and turns run for nobody in this app. Ask receives it too: creating a project is judged by the
- * agent from the conversation, and starting conversations is still checked against the message when it runs. A turn
- * the app ran on its own in the person's conversation gets a runtime that refuses unless the owner turned the
- * confirmation off (see hostTurnRefusal).
+ * Plan mode and turns run for nobody in this app. Ask receives it too: creating a project is judged by the agent
+ * from the conversation, and starting conversations is still checked against the message when it runs. Maestro
+ * orchestrators dispatch Agent Pool workers in isolated worktrees with reportBack enabled, including on host turns
+ * woken by worker results. A turn the app ran on its own in another conversation gets a runtime that refuses unless
+ * the owner turned the confirmation off (see hostTurnRefusal).
  */
 export function conversationDispatchRuntimeFor(
   conversationId: string,
@@ -157,7 +170,12 @@ export function conversationDispatchRuntimeFor(
   if (!conversationDispatchToolsAllowed(mode)) return undefined
   const origin = currentHumanTurnOrigin(conversationId) ?? currentHostTurnOrigin(conversationId)
   if (!origin) return undefined
-  const refusal = () => (origin.host ? hostTurnRefusal(conversationId) : Promise.resolve(null))
+  const refusal = () =>
+    mode === 'maestro'
+      ? hostTurnRefusal(conversationId, true)
+      : origin.host
+        ? hostTurnRefusal(conversationId)
+        : Promise.resolve(null)
   return {
     async listWorkspaces() {
       const refused = await refusal()
@@ -180,6 +198,154 @@ export function conversationDispatchRuntimeFor(
     async startConversations(batch, signal, askQuestion) {
       const refused = await refusal()
       if (refused) return { ok: false, error: refused, items: [] }
+      if (mode === 'maestro') {
+        const turn = evaluateHumanTurnGrant(origin)
+        if (!turn.ok) return { ok: false, error: turn.message, items: [] }
+        const grant: ConversationDispatchGrant = { ...turn.grant, maxConversations: null }
+        const [maestroConfig, maestroSwarm, maestroDispatch, dispatchServiceModule] = await Promise.all([
+          import('../maestro-config'),
+          import('../maestro-swarm'),
+          import('../maestro-swarm-dispatch'),
+          import('../../conversation-dispatch-service'),
+        ])
+        const pool = maestroConfig.getConversationMaestroConfig(conversationId).config.pool
+        const failedByIndex = new Map<number, ConversationDispatchItemResult>()
+        const validEntries: { task: ConversationDispatchTask; resourceId: string }[] = []
+
+        for (let index = 0; index < batch.tasks.length; index++) {
+          const task = batch.tasks[index]
+          if (batch.defaults !== undefined || task.settings !== undefined) {
+            failedByIndex.set(index, {
+              requestKey: task.requestKey,
+              title: task.title,
+              status: 'failed',
+              error: 'settings are not accepted in Maestro; choose an Agent Pool resource with agent',
+            })
+            continue
+          }
+          if (task.placement === 'shared' || batch.placement === 'shared') {
+            failedByIndex.set(index, {
+              requestKey: task.requestKey,
+              title: task.title,
+              status: 'failed',
+              error: 'Maestro workers always run in their own worktree',
+            })
+            continue
+          }
+          // Workers branch from the orchestrator's HEAD (the feature branch) so their work merges back locally.
+          const target = { ...batch.target, ...task.target }
+          if (target.workspaceId !== undefined || target.baseBranch !== undefined) {
+            failedByIndex.set(index, {
+              requestKey: task.requestKey,
+              title: task.title,
+              status: 'failed',
+              error: "Maestro workers start from this conversation's HEAD; omit target.workspaceId and target.baseBranch",
+            })
+            continue
+          }
+          if (!task.agent) {
+            failedByIndex.set(index, {
+              requestKey: task.requestKey,
+              title: task.title,
+              status: 'failed',
+              error: 'agent is required in Maestro',
+            })
+            continue
+          }
+          const resolved = await maestroDispatch.resolveMaestroDispatchAgent({
+            pool,
+            agentId: task.agent,
+            supportedModes: MAESTRO_DISPATCH_MODES,
+            resolve: (requested) => dispatchServiceModule.resolveConversationDispatchSettingsFor(conversationId, requested),
+          })
+          if (!resolved.ok) {
+            failedByIndex.set(index, {
+              requestKey: task.requestKey,
+              title: task.title,
+              status: 'failed',
+              error: resolved.message,
+            })
+            continue
+          }
+          const prompt = maestroDispatch.composeMaestroWorkerPrompt({
+            instructions: resolved.resource.instructions,
+            task: task.prompt,
+          })
+          if (prompt.length > CONVERSATION_DISPATCH_MAX_PROMPT) {
+            failedByIndex.set(index, {
+              requestKey: task.requestKey,
+              title: task.title,
+              status: 'failed',
+              error: `Composed worker prompt exceeds the ${CONVERSATION_DISPATCH_MAX_PROMPT}-character limit (${prompt.length} characters).`,
+            })
+            continue
+          }
+          const settings: ConversationDispatchSettingsRequest = {
+            ...resolved.settings,
+            ...(resolved.mode !== 'agent' ? { mode: resolved.mode } : {}),
+          }
+          const { agent: _agent, settings: _settings, ...rest } = task
+          validEntries.push({
+            resourceId: resolved.resource.id,
+            task: {
+              ...rest,
+              settings,
+              placement: 'worktree',
+              reportBack: true,
+              prompt,
+            },
+          })
+        }
+
+        if (validEntries.length === 0) {
+          return {
+            ok: false,
+            error: 'No task could be dispatched',
+            items: batch.tasks.map((_, index) => failedByIndex.get(index)!),
+          }
+        }
+
+        maestroSwarm.ensureSwarmTasks(
+          conversationId,
+          validEntries.map((entry) => ({
+            key: entry.task.requestKey,
+            title: entry.task.title,
+            resourceId: entry.resourceId,
+          }))
+        )
+
+        const rewrittenBatch: ConversationDispatchBatch = {
+          ...(batch.target ? { target: batch.target } : {}),
+          placement: 'worktree',
+          reportBack: true,
+          tasks: validEntries.map((entry) => entry.task),
+        }
+        const service = await dispatchServiceModule.getConversationDispatchService()
+        const serviceResult = await service.dispatchBatch({
+          grant,
+          batch: rewrittenBatch,
+          signal: AbortSignal.any([signal, grant.signal]),
+          assertCurrent: () => assertConversationDispatchGrantCurrent(grant),
+        })
+
+        const serviceItemByKey = new Map(serviceResult.items.map((item) => [item.requestKey, item]))
+        const items: ConversationDispatchItemResult[] = []
+        for (let index = 0; index < batch.tasks.length; index++) {
+          const failed = failedByIndex.get(index)
+          if (failed) {
+            items.push(failed)
+          } else {
+            const item = serviceItemByKey.get(batch.tasks[index].requestKey)
+            if (item) items.push(item)
+          }
+        }
+        return { ...serviceResult, items }
+      }
+
+      if (batch.tasks.some((task) => task.agent !== undefined)) {
+        return { ok: false, error: 'agent is only accepted in Maestro conversations', items: [] }
+      }
+
       const evaluated = evaluateConversationDispatchGrant(origin)
       let grant: ConversationDispatchGrant
       if (evaluated.ok) grant = evaluated.grant
@@ -264,6 +430,9 @@ export function enableConversationDispatchTools(
   if (!conversationDispatchToolsAllowed(mode) || autonomousPolicy(conversationId) || remoteChatPolicy(conversationId))
     return undefined
   for (const name of CONVERSATION_DISPATCH_TOOL_NAMES) enabled.add(name)
+  if (mode === 'maestro') {
+    for (const name of MAESTRO_SWARM_TOOL_NAMES) enabled.add(name)
+  }
   return conversationDispatchRuntimeFor(conversationId, mode)
 }
 

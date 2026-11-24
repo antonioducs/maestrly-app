@@ -3295,26 +3295,24 @@ describe('Codex subscription runner', () => {
     expect(getCodexThreadBinding(conversation.id)).toBeNull()
   })
 
-  it('keeps an asynchronous Maestro delegate alive and forces the final overview in a continuation', async () => {
+  it('gives a Maestro parent the swarm contract and Agent tools without legacy delegate or host guard', async () => {
     const workspace = makeWorkspace()
     const conversation = makeConversation(workspace.id, { experience: 'maestro' })
-    persistUser(conversation.id, 'user_maestro_async_guard', 'Delegate and then provide an overview.', 1)
+    persistUser(conversation.id, 'user_maestro_swarm', 'Orchestrate the feature branch.', 1)
     const client = new FakeCodexClient()
-    client.queueTurn({ turnId: 'turn_maestro_parent', notifications: [] })
-    client.queueTurn({ turnId: 'turn_maestro_child', notifications: [] })
     client.queueTurn({
-      turnId: 'turn_maestro_overview',
+      turnId: 'turn_maestro_parent',
       notifications: [
         {
           method: 'item/agentMessage/delta',
           params: {
             threadId: 'thread_1',
-            turnId: 'turn_maestro_overview',
-            itemId: 'maestro_overview',
-            delta: 'Final overview after reconciling the agent.',
+            turnId: 'turn_maestro_parent',
+            itemId: 'maestro_parent_answer',
+            delta: 'Swarm plan ready.',
           },
         },
-        completedNotification('thread_1', 'turn_maestro_overview'),
+        completedNotification('thread_1', 'turn_maestro_parent'),
       ],
     })
     const config = createDefaultMaestroConfig()
@@ -3329,193 +3327,34 @@ describe('Codex subscription runner', () => {
       diagnostics: [],
       frozenAt: 1,
     }
-    let rootResolved = false
-    const running = runCodexSubscriptionChat(args).then((result) => {
-      rootResolved = true
-      return result
-    })
 
-    await vi.waitFor(() => expect(client.startTurnCalls).toHaveLength(1), { timeout: 10_000 })
-    await expect(
-      client.serverRequest({
-        id: 'delegate_maestro_async',
-        method: 'item/tool/call',
-        params: {
-          threadId: 'thread_1',
-          turnId: 'turn_maestro_parent',
-          itemId: 'delegate_maestro_async',
-          callId: 'delegate_maestro_async',
-          tool: 'delegate',
-          arguments: {
-            agent: 'generalist',
-            task: 'Do the delegated work.',
-            kind: 'implement',
-            domain: 'fullstack',
-            independent: true,
-          },
-        },
-      })
-    ).resolves.toMatchObject({ success: true })
-    await vi.waitFor(() => expect(client.startTurnCalls).toHaveLength(2), { timeout: 10_000 })
+    await expect(runCodexSubscriptionChat(args)).resolves.toEqual({ planSubmitted: false, threadId: 'thread_1' })
+    expect(client.startThreadCalls).toHaveLength(1)
+    expect(client.startTurnCalls).toHaveLength(1)
 
-    // The provider ends the parent round before the worker. This must trigger supervision, not teardown/timeout.
-    client.emit(completedNotification('thread_1', 'turn_maestro_parent'))
-    await waitImmediate()
-    expect(rootResolved).toBe(false)
-    expect(client.interruptTurnCalls).not.toContainEqual({
-      threadId: 'thread_2',
-      turnId: 'turn_maestro_child',
-    })
-
-    client.emit({
-      method: 'item/agentMessage/delta',
-      params: {
-        threadId: 'thread_2',
-        turnId: 'turn_maestro_child',
-        itemId: 'maestro_child_answer',
-        delta: 'Delegated work completed.',
-      },
-    })
-    client.emit(completedNotification('thread_2', 'turn_maestro_child'))
-
-    await expect(running).resolves.toEqual({ planSubmitted: false, threadId: 'thread_1' })
-    expect(client.startTurnCalls).toHaveLength(3)
-    expect(client.startTurnCalls[2]).toMatchObject({
-      threadId: 'thread_1',
-      input: [
-        expect.objectContaining({
-          type: 'text',
-          text: expect.stringContaining('Host guard: delegated sessions have settled.'),
-        }),
-      ],
-    })
-    const assistant = assistantMessages(conversation.id)[0]
-    expect(assistant.error).toBeUndefined()
-    expect(assistant.parts).toContainEqual(
-      expect.objectContaining({ type: 'text', text: 'Final overview after reconciling the agent.' })
-    )
-  })
-
-  it('tracks a native Cursor Maestro delegate through the final overview', async () => {
-    const delegation = await import('../../src/main/chat/maestro-delegation')
-    const originalPrepare = delegation.prepareMaestroDelegation
-    const prepare = vi.spyOn(delegation, 'prepareMaestroDelegation').mockImplementation(async (input) => {
-      const prepared = await originalPrepare(input)
-      prepared.execution.profile.effective = {
-        ...prepared.execution.profile.effective!,
-        providerId: 'builtin_cursor_subscription',
-        modelId: 'composer-2',
-      }
-      return prepared
-    })
-    let finishCursor!: (value: {
-      text: string
-      model: { providerId: string; modelId: string }
-      usage: { input: number; output: number; cacheRead: number; cacheCreate: number; totalInput: number }
-    }) => void
-    cursorH.run.mockReset().mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          finishCursor = resolve
-        })
-    )
-    const workspace = makeWorkspace()
-    const conversation = makeConversation(workspace.id, { experience: 'maestro' })
-    persistUser(conversation.id, 'user_maestro_async_guard', 'Delegate and then provide an overview.', 1)
-    const client = new FakeCodexClient()
-    client.queueTurn({ turnId: 'turn_maestro_parent', notifications: [] })
-    client.queueTurn({
-      turnId: 'turn_maestro_overview',
-      notifications: [
-        {
-          method: 'item/agentMessage/delta',
-          params: {
-            threadId: 'thread_1',
-            turnId: 'turn_maestro_overview',
-            itemId: 'maestro_overview',
-            delta: 'Final overview after reconciling the agent.',
-          },
-        },
-        completedNotification('thread_1', 'turn_maestro_overview'),
-      ],
-    })
-    const config = createDefaultMaestroConfig()
-    const args = runArgs(conversation.id, workspace.id, conversation.cwd, client)
-    args.mode = 'maestro'
-    args.permMode = 'full'
-    args.maestro = {
-      version: config.version,
-      strategy: config.strategy,
-      pool: config.pool,
-      source: 'safe-default',
-      diagnostics: [],
-      frozenAt: 1,
+    const started = client.startThreadCalls[0] as {
+      developerInstructions?: string
+      dynamicTools: Array<{ name: string; tools?: Array<{ name: string }> }>
+      config: Record<string, unknown>
     }
-    let rootResolved = false
-    const running = runCodexSubscriptionChat(args).then((result) => {
-      rootResolved = true
-      return result
-    })
+    expect(started.developerInstructions).toContain('# Maestro swarm contract')
+    expect(started.developerInstructions).toContain('# Maestro Agent Pool')
+    expect(started.developerInstructions).toContain('Strategy: balanced')
+    expect(started.developerInstructions).toContain('This turn is Agent mode:')
+    expect(started.developerInstructions).not.toContain('parent is structurally read-only')
+    expect(client.startTurnCalls[0]).toMatchObject({ sandboxPolicy: { type: 'dangerFullAccess' } })
+    expect(started.config['mcp_servers.maestrly']).toBeDefined()
 
-    await vi.waitFor(() => expect(client.startTurnCalls).toHaveLength(1), { timeout: 10_000 })
-    await expect(
-      client.serverRequest({
-        id: 'delegate_maestro_async',
-        method: 'item/tool/call',
-        params: {
-          threadId: 'thread_1',
-          turnId: 'turn_maestro_parent',
-          itemId: 'delegate_maestro_async',
-          callId: 'delegate_maestro_async',
-          tool: 'delegate',
-          arguments: {
-            agent: 'generalist',
-            task: 'Do the delegated work.',
-            kind: 'implement',
-            domain: 'fullstack',
-            independent: true,
-          },
-        },
-      })
-    ).resolves.toMatchObject({ success: true })
-    await vi.waitFor(() => expect(cursorH.run).toHaveBeenCalledTimes(1), { timeout: 10_000 })
-    expect(cursorH.run).toHaveBeenCalledWith(
-      expect.objectContaining({ allowSkillLoader: true, readOnly: false, agentName: 'generalist' })
-    )
+    const dynamicNames = started.dynamicTools.flatMap((spec) => spec.tools?.map((tool) => tool.name) ?? [spec.name])
+    expect(dynamicNames).toContain('inspect_subagent')
+    expect(dynamicNames).not.toContain('delegate')
+    expect(dynamicNames).not.toContain('list_delegations')
+    expect(dynamicNames).not.toContain('wait_delegation')
+    expect(dynamicNames).not.toContain('cancel_delegation')
 
-    // The provider ends the parent round before the worker. This must trigger supervision, not teardown/timeout.
-    client.emit(completedNotification('thread_1', 'turn_maestro_parent'))
-    await waitImmediate()
-    expect(rootResolved).toBe(false)
-    expect(client.interruptTurnCalls).not.toContainEqual({
-      threadId: 'thread_2',
-      turnId: 'turn_maestro_child',
-    })
-
-    finishCursor({
-      text: 'Delegated work completed.',
-      model: { providerId: 'builtin_cursor_subscription', modelId: 'composer-2' },
-      usage: { input: 7, output: 3, cacheRead: 0, cacheCreate: 0, totalInput: 7 },
-    })
-
-    await expect(running).resolves.toEqual({ planSubmitted: false, threadId: 'thread_1' })
-    expect(client.startTurnCalls).toHaveLength(2)
-    expect(client.startTurnCalls[1]).toMatchObject({
-      threadId: 'thread_1',
-      input: [
-        expect.objectContaining({
-          type: 'text',
-          text: expect.stringContaining('Host guard: delegated sessions have settled.'),
-        }),
-      ],
-    })
     const assistant = assistantMessages(conversation.id)[0]
     expect(assistant.error).toBeUndefined()
-    expect(assistant.usage).toMatchObject({ subInput: 7, subOutput: 3 })
-    prepare.mockRestore()
-    expect(assistant.parts).toContainEqual(
-      expect.objectContaining({ type: 'text', text: 'Final overview after reconciling the agent.' })
-    )
+    expect(assistant.parts).toContainEqual(expect.objectContaining({ type: 'text', text: 'Swarm plan ready.' }))
   })
 
   it('uses official Plan collaborationMode, streams plan deltas and accepts the final item without a delta', async () => {

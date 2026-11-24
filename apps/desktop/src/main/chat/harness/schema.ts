@@ -4,7 +4,6 @@ import {
   HARNESS_ENDPOINT_KINDS,
   HARNESS_ENVIRONMENT_PLACEMENTS,
   HARNESS_HOOK_STRATEGIES,
-  HARNESS_MODES,
   HARNESS_PROGRESS_MODES,
   HARNESS_PROMPT_LAYOUTS,
   HARNESS_SCHEMA_VERSION,
@@ -50,7 +49,15 @@ const capabilityClaims = z
 const ultraRefs = z
   .object({
     base: textRef,
-    byMode: z.object(Object.fromEntries(HARNESS_MODES.map((mode) => [mode, textRef]))).strict(),
+    byMode: z
+      .object({
+        agent: textRef,
+        ask: textRef,
+        plan: textRef,
+        design: textRef,
+        maestro: textRef.optional(),
+      })
+      .strict(),
   })
   .strict()
 

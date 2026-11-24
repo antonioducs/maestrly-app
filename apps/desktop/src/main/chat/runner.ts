@@ -97,7 +97,6 @@ import { parseTaskComplexity, withTaskComplexity } from './subagent-route'
 import { getSubagentProfileModelMeta } from './subagent-profile-model-meta'
 import { executeSubagent } from './subagent-executor'
 import type { SubagentSessionRecorder } from './subagent-session'
-import { startMaestroDelegation } from './maestro-delegation-registry'
 import { buildSubagentSupervisionTools } from './maestro-supervision-tools'
 import {
   assertSubagentSelection,
@@ -108,15 +107,7 @@ import { detectExplicitSubagentsForTurn } from './subagent-turn-request'
 import { isOpenAINativeCompactionPart, namespaceSubagentToolSet } from './subagent-runner'
 import { AI_SDK_MAX_RETRIES, classifyStreamRetry, shouldBlockHighUsageRetry } from './retry-policy'
 import { SubagentCoordinator, type SubagentLease } from './subagent-coordinator'
-import {
-  MAESTRO_DELEGATE_TOOL_DESCRIPTION,
-  MAESTRO_DELEGATE_TOOL_SCHEMA,
-  maestroAgentsFromTurn,
-  prepareMaestroDelegation,
-  renderMaestroAgentCatalog,
-} from './maestro-delegation'
-import { MAESTRO_SYSTEM_SPEC, renderMaestroTurnPolicy } from './maestro-prompt'
-import type { MaestroLiveRunPort } from './maestro-live'
+import { renderMaestroSwarmSection } from './maestro-prompt'
 import { recordModelCallUsage } from './usage-diagnostics'
 import { applyFastModeServiceTier } from './fast-mode'
 import {
@@ -420,10 +411,8 @@ export interface RunChatArgs {
   frozenReasoningEffort?: string
   modeOverride?: 'agent' | 'plan' | 'ask'
   behaviorOverride?: ChatBehavior
-  /** Frozen at turn admission; settings changes cannot reinterpret an in-flight delegate call. */
+  /** Frozen at turn admission; renders the Maestro swarm contract, pool catalog, and strategy. */
   maestro?: MaestroTurnSnapshotV1
-  /** Maestro run inbox delivered with the next root delegate result. */
-  maestroLive?: MaestroLiveRunPort
   /** Frozen Fast Mode (isolated execution); when defined, runner does NOT reread ui_prefs. */
   fastModeOverride?: boolean
   /** Isolated internal turn: transcript = execution; metadata centralized on bubble. */
@@ -869,13 +858,11 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   // these modes' read-only contract; runSubagent also clamps tools via readOnly). Model delegates
   // subtasks via `task` → ISOLATED sub-run (no nested `task` → no recursion). Catalog in prompt.
   const agents =
-    mode === 'maestro' && args.maestro
-      ? maestroAgentsFromTurn(args.maestro, await listEffectiveAgents({ cwd, conversationId, mode: 'agent' }))
-      : capabilityMode === 'agent'
-        ? await listEffectiveAgents({ cwd, conversationId, mode: 'agent' })
-        : ultra
-          ? (await listEffectiveAgents({ cwd, conversationId, mode: 'plan' })).filter((a) => a.name === 'explore')
-          : []
+    capabilityMode === 'agent'
+      ? await listEffectiveAgents({ cwd, conversationId, mode: 'agent' })
+      : ultra
+        ? (await listEffectiveAgents({ cwd, conversationId, mode: 'plan' })).filter((a) => a.name === 'explore')
+        : []
   // Explicit user-named agents for this turn — host guard blocks silent substitution.
   const selectableAgentNames = agents.map((agent) => agent.name)
   const subagentTurnState = createExplicitSubagentTurnState(
@@ -940,92 +927,64 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     subUsage.totalInput += usage.totalInput
     recordSubagentUsage({ providerId: imageUsage.providerId, modelId: imageUsage.modelId }, usage)
   }
-  const delegationToolName = mode === 'maestro' ? 'delegate' : 'task'
   const taskTools: ToolSet = agents.length
     ? {
-        [delegationToolName]: tool({
+        task: tool({
           description:
-            mode === 'maestro'
-              ? MAESTRO_DELEGATE_TOOL_DESCRIPTION
-              : 'Delegates a subtask to an isolated SUBAGENT (its own context/tools/prompt). Use it for focused ' +
-                "subtasks; the return value is the subagent's result as text. Pick an agent from the catalog in the system prompt.",
+            'Delegates a subtask to an isolated SUBAGENT (its own context/tools/prompt). Use it for focused ' +
+            "subtasks; the return value is the subagent's result as text. Pick an agent from the catalog in the system prompt.",
           // Independent subagents may run in parallel but remain mutators/idempotent in the ledger.
           metadata: { parallelSafe: true, readOnly: false },
           inputSchema: jsonSchema(
-            mode === 'maestro'
-              ? MAESTRO_DELEGATE_TOOL_SCHEMA
-              : withTaskComplexity(
-                  {
-                    type: 'object',
-                    properties: {
-                      agent: {
-                        type: 'string',
-                        enum: agents.map((item) => item.name),
-                        description: 'subagent name (from the catalog in the system prompt)',
-                      },
-                      prompt: {
-                        type: 'string',
-                        description:
-                          'the subtask, with ALL the context it needs (the subagent does NOT see this conversation)',
-                      },
-                    },
-                    required: ['agent', 'prompt'],
+            withTaskComplexity(
+              {
+                type: 'object',
+                properties: {
+                  agent: {
+                    type: 'string',
+                    enum: agents.map((item) => item.name),
+                    description: 'subagent name (from the catalog in the system prompt)',
                   },
-                  conversationId
-                )
+                  prompt: {
+                    type: 'string',
+                    description:
+                      'the subtask, with ALL the context it needs (the subagent does NOT see this conversation)',
+                  },
+                },
+                required: ['agent', 'prompt'],
+              },
+              conversationId
+            )
           ),
           execute: async (input: unknown, opts?: { toolCallId?: string }) => {
             const toolCallId = opts?.toolCallId
             const startedAt = Date.now()
             const lines: string[] = []
             const standard = input && typeof input === 'object' ? (input as { agent?: unknown; prompt?: unknown }) : {}
-            let agent = typeof standard.agent === 'string' ? standard.agent : ''
-            let prompt = typeof standard.prompt === 'string' ? standard.prompt : ''
-            const maestroPrepared =
-              mode === 'maestro' && args.maestro
-                ? await prepareMaestroDelegation({
-                    input,
-                    turn: args.maestro,
-                    parent: { ...selection, effort: reasoningEffort || 'off' },
-                    parentFastMode: fastMode,
-                    turnState: subagentTurnState,
-                    delegationId: toolCallId,
-                    owner: { conversationId, parentMessageId: assistantId },
-                  })
-                : undefined
-            if (maestroPrepared) {
-              agent = maestroPrepared.agentName
-              prompt = maestroPrepared.task
-            }
+            const agent = typeof standard.agent === 'string' ? standard.agent : ''
+            const prompt = typeof standard.prompt === 'string' ? standard.prompt : ''
             // Agent selection is semantic and happens before execution-profile resolution.
             // Execution routing is host-managed and keyed by the selected agent name.
             // A role mentioned inside task.prompt must never alter profile resolution.
-            if (!maestroPrepared) {
-              assertSubagentSelection({
-                state: subagentTurnState,
-                selectedAgent: agent,
-                availableAgents: agents.map((item) => item.name),
-                runtime: 'byok',
-                conversationId,
-              })
-              recordSubagentDispatch(subagentTurnState, agent)
-            }
-            const resolved = maestroPrepared
-              ? {
-                  definition: agents.find((item) => item.name === agent) ?? null,
-                  profile: maestroPrepared.execution.profile,
-                }
-              : await resolveSubagentExecutionProfile({
-                  agentName: agent,
-                  agents,
-                  conversationId,
-                  parentFastMode: fastMode,
-                  complexity: parseTaskComplexity((standard as { complexity?: unknown }).complexity),
-                  parent: {
-                    ...selection,
-                    effort: reasoningEffort || 'off',
-                  },
-                })
+            assertSubagentSelection({
+              state: subagentTurnState,
+              selectedAgent: agent,
+              availableAgents: agents.map((item) => item.name),
+              runtime: 'byok',
+              conversationId,
+            })
+            recordSubagentDispatch(subagentTurnState, agent)
+            const resolved = await resolveSubagentExecutionProfile({
+              agentName: agent,
+              agents,
+              conversationId,
+              parentFastMode: fastMode,
+              complexity: parseTaskComplexity((standard as { complexity?: unknown }).complexity),
+              parent: {
+                ...selection,
+                effort: reasoningEffort || 'off',
+              },
+            })
             const { definition, profile } = resolved
             // durationMs only in FINAL state: during running it would freeze the card.
             const finalMeta = (
@@ -1034,7 +993,6 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
               sessionRecorder?: SubagentSessionRecorder
             ): SubagentRunMeta => ({
               profile,
-              ...(maestroPrepared ? { maestro: maestroPrepared.execution.snapshot } : {}),
               startedAt,
               ...(sessionRecorder
                 ? {
@@ -1072,7 +1030,6 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
             }
             const initialMeta: SubagentRunMeta = {
               profile,
-              ...(maestroPrepared ? { maestro: maestroPrepared.execution.snapshot } : {}),
               startedAt,
             }
             if (toolCallId) {
@@ -1145,10 +1102,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
                     cwd,
                     parentMessageId: assistantId,
                     toolCallId,
-                    delegationId: maestroPrepared?.execution.snapshot.delegationId,
-                    delegationLabel: maestroPrepared?.execution.snapshot.resource.label,
-                    maestroSnapshot: maestroPrepared?.execution.snapshot,
-                    mode,
+                    mode: mode === 'maestro' ? 'agent' : mode,
                     permMode: getConvUiPrefs(conversationId).chat?.permMode ?? 'ask',
                     profile,
                     definition,
@@ -1183,23 +1137,6 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
               }
             }
 
-            if (maestroPrepared && toolCallId) {
-              const handle = startMaestroDelegation({
-                conversationId,
-                parentMessageId: assistantId,
-                toolCallId,
-                agentName: agent,
-                task: prompt,
-                profile,
-                maestro: maestroPrepared.execution.snapshot,
-                parentSignal: signal,
-                maestroLive: args.maestroLive,
-                execute: (workSignal, sessionRecorder) => executeResolved(workSignal, sessionRecorder, true),
-              })
-              if (handle.sub) subagentRunMeta.set(toolCallId, handle.sub)
-              return handle
-            }
-
             try {
               const result = await executeResolved(signal)
               if (result.error) throw new Error(result.error)
@@ -1209,9 +1146,6 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
                 subagentUsage?: NormalizedAiUsage
                 subagentModel?: ChatModelRef
                 subagentRuntimeEstimatedCostUsd?: number
-              }
-              if (args.maestroLive && toolCallId && withUsage instanceof Error) {
-                withUsage.message = args.maestroLive.embedPending(toolCallId, withUsage.message).output
               }
               account(withUsage.subagentUsage, withUsage.subagentModel, withUsage.subagentRuntimeEstimatedCostUsd)
               if (toolCallId && signal.aborted) {
@@ -1238,7 +1172,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     ? buildSubagentSupervisionTools({
         conversationId,
         parentMessageId: assistantId,
-        maestro: mode === 'maestro',
+        maestro: false,
         signal,
       })
     : {}
@@ -1300,24 +1234,22 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       renderSkillCatalogEntries(skills)
     : ''
   const agentsCatalog = agents.length
-    ? mode === 'maestro'
-      ? `\n\n${renderMaestroAgentCatalog(args.maestro!)}`
-      : '\n\n# Subagents\nDelegate work to an isolated subagent with the `task` tool ' +
-        '(agent="<name>", prompt="<the full task, with ALL context it needs — it does NOT see this conversation>"); ' +
-        'it runs in its OWN context and returns just its result. Two ways to use it: (1) offload broad searches or ' +
-        "deep investigation that would otherwise flood your context with file dumps you won't reuse; (2) for a LARGE " +
-        'task, DECOMPOSE it into self-contained slices and delegate each to a worker agent — the slices run isolated ' +
-        '(and independent ones can run in parallel: emit several `task` calls in one response). Keep the parent thread ' +
-        'as the orchestrator: split the work, delegate, then integrate and verify the results. Give each subagent a ' +
-        'precise, self-contained prompt (it sees nothing but what you pass). Skip delegation for trivial work you can ' +
-        'do in a step or two.\n' +
-        buildAndRenderSubagentDispatchCatalog({
-          agents,
-          conversationId,
-          forceReadOnly: subagentsReadOnly,
-        })
+    ? '\n\n# Subagents\nDelegate work to an isolated subagent with the `task` tool ' +
+      '(agent="<name>", prompt="<the full task, with ALL context it needs — it does NOT see this conversation>"); ' +
+      'it runs in its OWN context and returns just its result. Two ways to use it: (1) offload broad searches or ' +
+      "deep investigation that would otherwise flood your context with file dumps you won't reuse; (2) for a LARGE " +
+      'task, DECOMPOSE it into self-contained slices and delegate each to a worker agent — the slices run isolated ' +
+      '(and independent ones can run in parallel: emit several `task` calls in one response). Keep the parent thread ' +
+      'as the orchestrator: split the work, delegate, then integrate and verify the results. Give each subagent a ' +
+      'precise, self-contained prompt (it sees nothing but what you pass). Skip delegation for trivial work you can ' +
+      'do in a step or two.\n' +
+      buildAndRenderSubagentDispatchCatalog({
+        agents,
+        conversationId,
+        forceReadOnly: subagentsReadOnly,
+      })
     : ''
-  const maestroPolicyContext = mode === 'maestro' && args.maestro ? `\n\n${renderMaestroTurnPolicy(args.maestro)}` : ''
+  const maestroSwarmContext = mode === 'maestro' && args.maestro ? `\n\n${renderMaestroSwarmSection(args.maestro)}` : ''
 
   // Reasoning/thinking: send only levels in the MODEL LIST (models.dev) — changing models will not send
   // invalid inherited levels (e.g. xhigh on gemini), avoiding errors. 'off'/Default and nonreasoning models → none.
@@ -1433,25 +1365,23 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   // parallel → integrate → verify); plan/ask only parallel `explore` investigation (read-only).
   const ultraBlock = !ultra
     ? ''
-    : mode === 'maestro'
-      ? '\n\n# ULTRA ORCHESTRATOR\nUse maximum rigor while coordinating. Ultra applies only to the orchestrator profile; the frozen Strategy and Pool still govern every worker.'
-      : mode === 'design'
-        ? `\n\n# ULTRA MODE\n${renderDesignUltraGuidance(mode)}${profileUltra ? `\n\n${profileUltra}` : ''}`
-        : profileUltra
-          ? `\n\n# ULTRA MODE\n${profileUltra}`
-          : mode === 'agent'
-            ? '\n\n# ULTRA MODE\nThe user opted into maximum effort (and cost) for maximum quality on this conversation. ' +
-              'Work accordingly: plan before executing (todo_write) and investigate deeply before concluding. For any ' +
-              'non-trivial task, actively look for independent slices and DELEGATE them via the `task` tool — emit ' +
-              'multiple `task` calls in one response so they run in parallel — using `explore` subagents for broad ' +
-              'investigation and worker agents for self-contained implementation slices. Then integrate the results, ' +
-              'VERIFY the work (run tests/build when possible) and finish with a critical review of your own changes ' +
-              'looking for gaps or regressions. Delegation is encouraged, not mandatory: still do trivial work directly.'
-            : '\n\n# ULTRA MODE\nThe user opted into maximum effort (and cost) for maximum quality on this conversation. ' +
-              'Investigate deeply before answering: besides your read tools, you have the `task` tool with the read-only ' +
-              '`explore` subagent — delegate broad or independent investigation lines to it (emit multiple `task` calls ' +
-              'in one response so they run in parallel) and keep your own context for synthesis. Cross-check findings ' +
-              'and be critical of your first conclusion before finishing.'
+    : mode === 'design'
+      ? `\n\n# ULTRA MODE\n${renderDesignUltraGuidance(mode)}${profileUltra ? `\n\n${profileUltra}` : ''}`
+      : profileUltra
+        ? `\n\n# ULTRA MODE\n${profileUltra}`
+        : capabilityMode === 'agent'
+          ? '\n\n# ULTRA MODE\nThe user opted into maximum effort (and cost) for maximum quality on this conversation. ' +
+            'Work accordingly: plan before executing (todo_write) and investigate deeply before concluding. For any ' +
+            'non-trivial task, actively look for independent slices and DELEGATE them via the `task` tool — emit ' +
+            'multiple `task` calls in one response so they run in parallel — using `explore` subagents for broad ' +
+            'investigation and worker agents for self-contained implementation slices. Then integrate the results, ' +
+            'VERIFY the work (run tests/build when possible) and finish with a critical review of your own changes ' +
+            'looking for gaps or regressions. Delegation is encouraged, not mandatory: still do trivial work directly.'
+          : '\n\n# ULTRA MODE\nThe user opted into maximum effort (and cost) for maximum quality on this conversation. ' +
+            'Investigate deeply before answering: besides your read tools, you have the `task` tool with the read-only ' +
+            '`explore` subagent — delegate broad or independent investigation lines to it (emit multiple `task` calls ' +
+            'in one response so they run in parallel) and keep your own context for synthesis. Cross-check findings ' +
+            'and be critical of your first conclusion before finishing.'
   const basePrompt = buildMaestrlyBasePrompt({
     harness,
     scope: projectId === null ? 'standalone' : 'project',
@@ -1465,7 +1395,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   })
   const systemEnvContext = harness.prompts.environment.placement === 'system' ? envContext : ''
   let system =
-    basePrompt + systemEnvContext + projectContext + skillsCatalog + agentsCatalog + maestroPolicyContext + ultraBlock
+    basePrompt + systemEnvContext + projectContext + skillsCatalog + agentsCatalog + maestroSwarmContext + ultraBlock
   if (useOpenAIHarness) {
     // Responses protocol and textual prompt are separate axes. Pinned Codex has templates per
     // slug; only exact gpt-5.6-sol binding receives its port. Others retain the generic
@@ -1475,7 +1405,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         localShell: allTools[OPENAI_LOCAL_SHELL_TOOL_NAME] != null,
         applyPatch: allTools[OPENAI_APPLY_PATCH_TOOL_NAME] != null,
       },
-      mode === 'maestro' ? 'ask' : mode
+      mode === 'maestro' ? 'agent' : mode
     )
     let promptStablePrefix =
       basePrompt +
@@ -1483,7 +1413,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       projectContext +
       skillsCatalog +
       agentsCatalog +
-      maestroPolicyContext +
+      maestroSwarmContext +
       ultraBlock
     system = promptStablePrefix + envContext
     let sourceCommit: string | undefined
@@ -1500,9 +1430,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         generatedInterfaces: generatedInterfacesEnabled(),
         projectContext,
         skillsContext: skillsCatalog,
-        agentsContext: `${agentsCatalog.replace(/^\s*# Subagents\s*/i, '')}${
-          mode === 'maestro' ? `\n\n${MAESTRO_SYSTEM_SPEC}` : ''
-        }${maestroPolicyContext}`,
+        agentsContext: `${agentsCatalog.replace(/^\s*# Subagents\s*/i, '')}${maestroSwarmContext}`,
         envContext: envDetails,
         // A profile publishing a native maximum tier never receives the synthetic Maestrly overlay.
         ultraContext:

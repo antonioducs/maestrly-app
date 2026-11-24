@@ -10,7 +10,6 @@ import {
   prepareMaestroDelegation,
   renderMaestroAgentCatalog,
 } from '../../src/main/chat/maestro-delegation'
-import { MAESTRO_SYSTEM_SPEC } from '../../src/main/chat/maestro-prompt'
 import { BUILTIN_AGENTS } from '../../src/main/chat/agents'
 import { createExplicitSubagentTurnState } from '../../src/main/chat/subagent-selection-guard'
 
@@ -248,10 +247,9 @@ describe('Maestro parent-selected execution', () => {
     })
     const lookup = (value: SubagentSessionSummary | null) => () => value
 
-    it('is exposed in the delegate schema and the orchestration contract', () => {
+    it('is exposed in the delegate schema as an optional string', () => {
       expect(MAESTRO_DELEGATE_TOOL_SCHEMA.properties.resume_session_id.type).toBe('string')
       expect(MAESTRO_DELEGATE_TOOL_SCHEMA.required).not.toContain('resume_session_id')
-      expect(MAESTRO_SYSTEM_SPEC).toContain('resume_session_id')
     })
 
     it('rejects an unknown session', () => {

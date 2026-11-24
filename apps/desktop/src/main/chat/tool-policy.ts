@@ -224,21 +224,12 @@ export function isHostToolParallelSafe(name: string, metadata?: unknown): boolea
   return PARALLEL_SAFE_HOST_TOOL_NAMES.has(name)
 }
 
-/**
- * Read-only app tools Maestro's orchestrator still does not receive: inspecting a page or the screen is work for a
- * worker, which gets these tools with its own catalog. What people write — terminals, notes, whiteboards, artifact
- * comments and responses — stays readable here, since a worker's resources are scoped to its delegation.
- */
-const MAESTRO_WORKER_ONLY_TOOL_PREFIXES = ['browser_', 'computer_'] as const
-
 export function appToolAllowed(mode: ChatBehavior, name: string): boolean {
   if (name === 'review_plan') return false
   if (capabilityBehaviorFor(mode) === 'agent') return true
   const entry = APP_TOOL_POLICY[name as AppToolName]
-  // Plan/Ask retain their product allowlist, including safe recording/navigation side effects. Maestro is a
-  // stricter structural boundary: its parent receives only entries that are both allowlisted and proven read-only.
-  if (mode === 'maestro' && MAESTRO_WORKER_ONLY_TOOL_PREFIXES.some((prefix) => name.startsWith(prefix))) return false
-  return entry?.allowedInPlanAsk === true && (mode !== 'maestro' || entry.readOnly)
+  // Plan/Ask retain their product allowlist, including safe recording/navigation side effects.
+  return entry?.allowedInPlanAsk === true
 }
 
 export function appToolMetadata(name: string): Pick<AppToolPolicy, 'readOnly' | 'parallelSafe'> | undefined {
@@ -320,10 +311,11 @@ export function deferredLoadingToolNames(tools: Record<string, unknown>): Set<st
 
 /**
  * Built-in, parent-only tools that start persistent conversations, and create or clone the projects they work in.
- * They mutate (projects, worktrees, conversations, turns), so they never enter Plan, the structurally read-only
- * Maestro parent, subagents or Maestro workers.
- * Ask receives this narrow handoff capability only for an explicit human dispatch request.
- * Runners add them only for a turn admitted from text the person typed (see conversation-dispatch-authorization).
+ * They mutate (projects, worktrees, conversations, turns), so they never enter Plan, subagents or Maestro workers.
+ * Maestro parent receives them to dispatch worker conversations from its Agent Pool; Ask receives this narrow handoff
+ * capability only for an explicit human dispatch request.
+ * Runners add them only for a turn admitted from text the person typed or an eligible host turn (see
+ * conversation-dispatch-authorization).
  */
 export const CONVERSATION_DISPATCH_TOOL_NAMES = [
   'list_conversation_models',
@@ -334,13 +326,13 @@ export const CONVERSATION_DISPATCH_TOOL_NAMES = [
 ] as const
 
 export function conversationDispatchToolsAllowed(mode: ChatBehavior): boolean {
-  return mode === 'ask' || (mode !== 'maestro' && capabilityBehaviorFor(mode) === 'agent')
+  return mode === 'ask' || mode === 'maestro' || capabilityBehaviorFor(mode) === 'agent'
 }
 
 /**
  * Built-in, parent-only tools for reading and messaging other existing conversations. Sending starts turns elsewhere,
- * so like the dispatch tools they stay out of Plan, Maestro, subagents and workers. Runners add them for a turn the
- * person typed or one started by another conversation (see conversation-link-authorization).
+ * so like the dispatch tools they stay out of Plan, subagents and workers. Runners add them for a turn the person
+ * typed or one started by another conversation (see conversation-link-authorization).
  */
 export const CONVERSATION_LINK_TOOL_NAMES = [
   'list_conversations',
@@ -361,12 +353,16 @@ export const ROUTINE_PROPOSE_TOOL_NAME = 'routine_propose' as const
 export const ROUTINE_RUN_REPORT_TOOL_NAME = 'routine_run_report' as const
 export const ROUTINE_TOOL_NAMES = [ROUTINE_PROPOSE_TOOL_NAME, ROUTINE_RUN_REPORT_TOOL_NAME] as const
 
-/** Every tool that starts, reads or messages other conversations (or manages routines); children never receive them. */
+/** Built-in, parent-only tool for Maestro to track and update swarm task phases. */
+export const MAESTRO_SWARM_TOOL_NAMES = ['swarm_update'] as const
+
+/** Every tool that starts, reads or messages other conversations (or manages routines/swarms); children never receive them. */
 export const PARENT_ONLY_CONVERSATION_TOOL_NAMES = [
   ...CONVERSATION_DISPATCH_TOOL_NAMES,
   ...CONVERSATION_LINK_TOOL_NAMES,
   ...ASSISTANT_TOOL_NAMES,
   ...ROUTINE_TOOL_NAMES,
+  ...MAESTRO_SWARM_TOOL_NAMES,
 ] as const
 
 export const conversationLinkToolsAllowed = conversationDispatchToolsAllowed

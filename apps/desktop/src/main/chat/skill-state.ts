@@ -363,11 +363,11 @@ export function forgetSkillNames(names: readonly string[]): void {
 }
 
 /**
- * Model-invocable skills the MAIN agent of a turn receives (catalog + `use_skill`). Ask stays lean, and Maestro's
- * orchestrator delegates the work instead of doing it: its workers load skills themselves.
+ * Model-invocable skills the MAIN agent of a turn receives (catalog + `use_skill`). Ask stays lean; Agent, Plan,
+ * Design, and Maestro load enabled skills.
  */
 export async function mainAgentSkills(mode: ChatBehavior, cwd: string, conversationId?: string): Promise<ChatSkill[]> {
-  if (mode === 'ask' || mode === 'maestro') return []
+  if (mode === 'ask') return []
   return (await effectiveSkills(cwd, conversationId)).filter((skill) => skill.modelInvocable)
 }
 

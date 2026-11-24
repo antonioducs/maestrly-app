@@ -90,17 +90,8 @@ import { parseTaskComplexity, withTaskComplexity } from '../subagent-route'
 import { namespaceSubagentToolSet, type NormalizedAiUsage } from '../subagent-runner'
 import { SubagentCoordinator, type SubagentLease } from '../subagent-coordinator'
 import { recordModelCallUsage } from '../usage-diagnostics'
-import {
-  MAESTRO_DELEGATE_TOOL_DESCRIPTION,
-  MAESTRO_DELEGATE_TOOL_SCHEMA,
-  maestroAgentsFromTurn,
-  prepareMaestroDelegation,
-  renderMaestroAgentCatalog,
-} from '../maestro-delegation'
-import { MAESTRO_SYSTEM_SPEC, renderMaestroTurnPolicy } from '../maestro-prompt'
-import type { MaestroLiveRunPort } from '../maestro-live'
+import { renderMaestroSwarmSection } from '../maestro-prompt'
 import { buildSubagentSupervisionTools } from '../maestro-supervision-tools'
-import { startMaestroDelegation } from '../maestro-delegation-registry'
 import type { SubagentSessionRecorder } from '../subagent-session'
 import { isClaudeSubscriptionProvider } from '../catalog'
 import { githubCopilotErrorMessage } from './errors'
@@ -198,7 +189,6 @@ export interface RunGitHubCopilotChatArgs {
   harness?: ResolvedHarness
   mode: ChatBehavior
   maestro?: MaestroTurnSnapshotV1
-  maestroLive?: MaestroLiveRunPort
   permMode: ChatPermMode
   reasoningEffort?: string
   maestrlyUltra?: boolean
@@ -612,37 +602,31 @@ async function prepareRuntime(
     const allAgents = await listEffectiveAgents({
       cwd: args.cwd,
       conversationId: args.conversationId,
-      mode: capabilityMode === 'agent' || args.mode === 'maestro' ? 'agent' : 'plan',
+      mode: capabilityMode === 'agent' ? 'agent' : 'plan',
     })
     const agents =
-      args.mode === 'maestro' && args.maestro
-        ? maestroAgentsFromTurn(args.maestro, allAgents)
-        : capabilityMode === 'agent'
-          ? allAgents
-          : args.maestrlyUltra
-            ? allAgents.filter((agent) => agent.name === 'explore')
-            : []
-    const delegationToolName = args.mode === 'maestro' ? 'delegate' : 'task'
+      capabilityMode === 'agent'
+        ? allAgents
+        : args.maestrlyUltra
+          ? allAgents.filter((agent) => agent.name === 'explore')
+          : []
     const taskTools: ToolSet = agents.length
       ? {
-          [delegationToolName]: tool({
-            description:
-              args.mode === 'maestro' ? MAESTRO_DELEGATE_TOOL_DESCRIPTION : GITHUB_COPILOT_TASK_TOOL_DESCRIPTION,
+          task: tool({
+            description: GITHUB_COPILOT_TASK_TOOL_DESCRIPTION,
             inputSchema: jsonSchema(
-              args.mode === 'maestro'
-                ? MAESTRO_DELEGATE_TOOL_SCHEMA
-                : withTaskComplexity(
-                    {
-                      type: 'object',
-                      properties: {
-                        agent: { type: 'string', enum: agents.map((agent) => agent.name) },
-                        prompt: { type: 'string', description: 'Self-contained subtask and all required context.' },
-                      },
-                      required: ['agent', 'prompt'],
-                      additionalProperties: false,
-                    },
-                    args.conversationId
-                  )
+              withTaskComplexity(
+                {
+                  type: 'object',
+                  properties: {
+                    agent: { type: 'string', enum: agents.map((agent) => agent.name) },
+                    prompt: { type: 'string', description: 'Self-contained subtask and all required context.' },
+                  },
+                  required: ['agent', 'prompt'],
+                  additionalProperties: false,
+                },
+                args.conversationId
+              )
             ),
             execute: async (input, options) => {
               if (!state.runTask) throw new Error('The Maestrly subagent executor is not ready')
@@ -662,7 +646,7 @@ async function prepareRuntime(
       ? buildSubagentSupervisionTools({
           conversationId: args.conversationId,
           parentMessageId: assistantId,
-          maestro: args.mode === 'maestro',
+          maestro: false,
           signal: args.signal,
         })
       : {}
@@ -695,25 +679,22 @@ async function prepareRuntime(
     const profileUltra = harnessUltraGuidance(harness, args.mode)
     const projectContext = await buildProjectContext(args.projectId, args.cwd, args.conversationId)
     const skillContext = skillsCatalog(skills, args.projectId !== null)
-    const agentContext =
-      args.mode === 'maestro' && args.maestro
-        ? renderMaestroAgentCatalog(args.maestro)
-        : agentsCatalog(agents, args.conversationId, capabilityMode === 'plan' || capabilityMode === 'ask')
+    const agentContext = agentsCatalog(agents, args.conversationId, capabilityMode === 'plan' || capabilityMode === 'ask')
+    const maestroSwarmContext =
+      args.mode === 'maestro' && args.maestro ? renderMaestroSwarmSection(args.maestro) : ''
     const platform =
       process.platform === 'darwin' ? 'macOS' : process.platform === 'win32' ? 'Windows' : process.platform
     const git = args.projectId === null ? null : await gitEnvInfo(args.cwd).catch(() => null)
     const gitLine = git ? ` Git branch: ${git.branch} (${git.dirty ? 'uncommitted changes' : 'clean'}).` : ''
     const env = `OS: ${platform}. ${commandShellEnvironment()} Today's date: ${new Date().toISOString().slice(0, 10)}. ${args.projectId === null ? 'Private working directory' : 'Project directory'}: ${args.cwd}.${gitLine}`
     const ultra = args.maestrlyUltra
-      ? args.mode === 'maestro'
-        ? 'Maximum-rigor reasoning applies only to the orchestrator; choose agents deliberately from the frozen Strategy and Pool.'
-        : args.mode === 'design'
-          ? [renderDesignUltraGuidance(args.mode), profileUltra ?? ''].filter(Boolean).join('\n\n')
-          : profileUltra
-            ? profileUltra
-            : args.mode === 'agent'
-              ? 'Maximum-rigor Maestrly Ultra mode is active. Decompose non-trivial work, delegate independent slices through task when useful, integrate the results, verify the implementation, and critically review it before finishing.'
-              : 'Maximum-rigor Maestrly Ultra mode is active. Stay read-only, investigate deeply, delegate independent exploration when useful, and cross-check the conclusion.'
+      ? args.mode === 'design'
+        ? [renderDesignUltraGuidance(args.mode), profileUltra ?? ''].filter(Boolean).join('\n\n')
+        : profileUltra
+          ? profileUltra
+          : capabilityMode === 'agent'
+            ? 'Maximum-rigor Maestrly Ultra mode is active. Decompose non-trivial work, delegate independent slices through task when useful, integrate the results, verify the implementation, and critically review it before finishing.'
+            : 'Maximum-rigor Maestrly Ultra mode is active. Stay read-only, investigate deeply, delegate independent exploration when useful, and cross-check the conclusion.'
       : ''
     const notes = Boolean(getConversation(args.conversationId))
     const runtimeOverlay =
@@ -736,8 +717,8 @@ async function prepareRuntime(
       runtimeOverlay +
       projectContext +
       (skillContext ? `\n\n# ${args.projectId === null ? 'Available' : 'Project'} skills\n${skillContext}` : '') +
-      (agentContext ? `\n\n${args.mode === 'maestro' ? agentContext : `# Subagents\n${agentContext}`}` : '') +
-      (args.mode === 'maestro' && args.maestro ? `\n\n${renderMaestroTurnPolicy(args.maestro)}` : '') +
+      (agentContext ? `\n\n# Subagents\n${agentContext}` : '') +
+      (maestroSwarmContext ? `\n\n${maestroSwarmContext}` : '') +
       (ultra ? `\n\n# Ultra mode\n${ultra}` : '')
     let systemMessage = `${stableSystemMessage}\n\n# Environment\n${env}`
     // Copilot's legacy prompt key selects the textual axis only; it never enables advanced policies.
@@ -753,9 +734,7 @@ async function prepareRuntime(
         hasNotesTab: notes,
         projectContext,
         skillsContext: skillContext,
-        agentsContext: `${agentContext}${args.mode === 'maestro' ? `\n\n${MAESTRO_SYSTEM_SPEC}` : ''}${
-          args.mode === 'maestro' && args.maestro ? `\n\n${renderMaestroTurnPolicy(args.maestro)}` : ''
-        }`,
+        agentsContext: [agentContext, maestroSwarmContext].filter(Boolean).join('\n\n'),
         envContext: env,
         ultraContext: ultra,
         nativeTools: { localShell: false, applyPatch: false },
@@ -1162,66 +1141,39 @@ export async function runGitHubCopilotChat(args: RunGitHubCopilotChatArgs): Prom
       selectableAgentNames
     )
     state.runTask = async (input, toolCallId, signal) => {
-      let agentName =
+      const agentName =
         input && typeof input === 'object' && typeof (input as { agent?: unknown }).agent === 'string'
           ? (input as { agent: string }).agent.trim()
           : ''
-      let task =
+      const task =
         input && typeof input === 'object' && typeof (input as { prompt?: unknown }).prompt === 'string'
           ? (input as { prompt: string }).prompt.trim()
           : ''
-      const maestroPrepared =
-        args.mode === 'maestro' && args.maestro
-          ? await prepareMaestroDelegation({
-              input,
-              turn: args.maestro,
-              parent: { ...args.selection, effort: args.reasoningEffort || 'off' },
-              parentFastMode: false,
-              turnState: subagentTurnState,
-              delegationId: toolCallId,
-              owner: { conversationId: args.conversationId, parentMessageId: assistantId },
-            })
-          : undefined
-      if (maestroPrepared) {
-        agentName = maestroPrepared.agentName
-        task = maestroPrepared.task
-      }
       if (!agentName || !task) throw new Error('task requires non-empty agent and prompt fields')
       // Agent selection is semantic and happens before execution-profile resolution.
       // Execution routing is host-managed and keyed by the selected agent name.
       // A role mentioned inside task.prompt must never alter profile resolution.
-      if (!maestroPrepared) {
-        assertSubagentSelection({
-          state: subagentTurnState,
-          selectedAgent: agentName,
-          availableAgents: taskRuntime.agents.map((agent) => agent.name),
-          runtime: 'github-copilot',
-          conversationId: args.conversationId,
-        })
-        recordSubagentDispatch(subagentTurnState, agentName)
-      }
-      ensureTool(
-        toolCallId,
-        args.mode === 'maestro' ? 'delegate' : 'task',
-        args.mode === 'maestro' ? input : { agent: agentName, prompt: task }
-      )
+      assertSubagentSelection({
+        state: subagentTurnState,
+        selectedAgent: agentName,
+        availableAgents: taskRuntime.agents.map((agent) => agent.name),
+        runtime: 'github-copilot',
+        conversationId: args.conversationId,
+      })
+      recordSubagentDispatch(subagentTurnState, agentName)
+      ensureTool(toolCallId, 'task', { agent: agentName, prompt: task })
       const startedAt = Date.now()
       const lines: string[] = []
       let resolved = resolvedTaskProfiles.get(toolCallId)
       if (!resolved) {
-        resolved = maestroPrepared
-          ? Promise.resolve({
-              definition: taskRuntime.agents.find((agent) => agent.name === agentName) ?? null,
-              profile: maestroPrepared.execution.profile,
-            })
-          : resolveSubagentExecutionProfile({
-              agentName,
-              agents: taskRuntime.agents,
-              conversationId: args.conversationId,
-              parentFastMode: false,
-              complexity: parseTaskComplexity((input as { complexity?: unknown } | null)?.complexity),
-              parent: { ...args.selection, effort: args.reasoningEffort || 'off' },
-            })
+        resolved = resolveSubagentExecutionProfile({
+          agentName,
+          agents: taskRuntime.agents,
+          conversationId: args.conversationId,
+          parentFastMode: false,
+          complexity: parseTaskComplexity((input as { complexity?: unknown } | null)?.complexity),
+          parent: { ...args.selection, effort: args.reasoningEffort || 'off' },
+        })
         resolvedTaskProfiles.set(toolCallId, resolved)
       }
       const { definition, profile } = await resolved
@@ -1231,7 +1183,6 @@ export async function runGitHubCopilotChat(args: RunGitHubCopilotChatArgs): Prom
         runtimeEstimatedCostUsd?: number
       ): SubagentRunMeta => ({
         profile,
-        ...(maestroPrepared ? { maestro: maestroPrepared.execution.snapshot } : {}),
         startedAt,
         ...(measured
           ? {
@@ -1308,10 +1259,7 @@ export async function runGitHubCopilotChat(args: RunGitHubCopilotChatArgs): Prom
             cwd: args.cwd,
             parentMessageId: assistantId,
             toolCallId,
-            delegationId: maestroPrepared?.execution.snapshot.delegationId,
-            delegationLabel: maestroPrepared?.execution.snapshot.resource.label,
-            maestroSnapshot: maestroPrepared?.execution.snapshot,
-            mode: args.mode,
+            mode: args.mode === 'maestro' ? 'agent' : args.mode,
             permMode: args.permMode,
             profile,
             definition,
@@ -1377,22 +1325,6 @@ export async function runGitHubCopilotChat(args: RunGitHubCopilotChatArgs): Prom
         }
       }
 
-      if (maestroPrepared) {
-        const handle = startMaestroDelegation({
-          conversationId: args.conversationId,
-          parentMessageId: assistantId,
-          toolCallId,
-          agentName,
-          task,
-          profile,
-          maestro: maestroPrepared.execution.snapshot,
-          parentSignal: signal,
-          maestroLive: args.maestroLive,
-          execute: (workSignal, sessionRecorder) => executeResolved(workSignal, sessionRecorder, true),
-        })
-        if (handle.sub) subagentRuns.set(toolCallId, handle.sub)
-        return handle
-      }
       return executeResolved(signal)
     }
 

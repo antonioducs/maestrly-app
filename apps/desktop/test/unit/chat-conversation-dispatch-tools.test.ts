@@ -13,6 +13,9 @@ const h = vi.hoisted(() => ({
   createdWorkspaceIdsForTurn: vi.fn((_source: string, _origin: string): string[] => []),
   getConfirmConversationDispatch: vi.fn(() => true),
   dispatchOriginsFor: vi.fn((_ids: readonly string[]) => new Map<string, unknown>()),
+  resolveConversationDispatchSettingsFor: vi.fn(),
+  getConversationMaestroConfig: vi.fn(),
+  ensureSwarmTasks: vi.fn(),
 }))
 
 vi.mock('../../src/main/store/settings', async (importOriginal) => ({
@@ -28,6 +31,13 @@ vi.mock('../../src/main/conversation-dispatch-service', () => ({
   getConversationDispatchService: h.getConversationDispatchService,
   listConversationDispatchModels: h.listConversationDispatchModels,
   listConversationDispatchWorkspaces: h.listConversationDispatchWorkspaces,
+  resolveConversationDispatchSettingsFor: h.resolveConversationDispatchSettingsFor,
+}))
+vi.mock('../../src/main/chat/maestro-config', () => ({
+  getConversationMaestroConfig: h.getConversationMaestroConfig,
+}))
+vi.mock('../../src/main/chat/maestro-swarm', () => ({
+  ensureSwarmTasks: h.ensureSwarmTasks,
 }))
 vi.mock('../../src/main/workspace-creation-service', () => ({
   getWorkspaceCreationService: h.getWorkspaceCreationService,
@@ -64,10 +74,16 @@ import {
   recordHumanTurnOrigin,
   type HumanTurnOrigin,
 } from '../../src/main/chat/conversation-dispatch-authorization'
-import { APP_TOOL_POLICY, CONVERSATION_DISPATCH_TOOL_NAMES } from '../../src/main/chat/tool-policy'
+import {
+  APP_TOOL_POLICY,
+  CONVERSATION_DISPATCH_TOOL_NAMES,
+  conversationDispatchToolsAllowed,
+  PARENT_ONLY_CONVERSATION_TOOL_NAMES,
+} from '../../src/main/chat/tool-policy'
 import { interactiveTool, registerAutonomousConversation } from '../../src/main/chat/autonomous'
 import { isMaestroWorkerOperationalToolName } from '../../src/main/chat/maestro-worker-tools'
 import {
+  CONVERSATION_DISPATCH_MAX_PROMPT,
   conversationDispatchBranchSlug,
   parseConversationDispatchBatchResult,
 } from '../../src/shared/conversation-dispatch'
@@ -126,19 +142,25 @@ describe('conversation dispatch tool surface', () => {
     }
   })
 
-  it('is offered for human-started Agent, Design and Ask turns only', () => {
+  it('is offered for human-started Agent, Design, Ask and Maestro turns only', () => {
+    expect(conversationDispatchToolsAllowed('maestro')).toBe(true)
+    expect(PARENT_ONLY_CONVERSATION_TOOL_NAMES).toContain('swarm_update')
     expect(conversationDispatchRuntimeFor('source', 'agent')).toBeUndefined()
     expect(conversationDispatchRuntimeFor('source', 'ask')).toBeUndefined()
     humanTurn('Abra uma conversa para cada card.')
     expect(conversationDispatchRuntimeFor('source', 'agent')).toBeDefined()
     expect(conversationDispatchRuntimeFor('source', 'design')).toBeDefined()
     expect(conversationDispatchRuntimeFor('source', 'ask')).toBeDefined()
-    for (const mode of ['plan', 'maestro'] as const) {
-      expect(conversationDispatchRuntimeFor('source', mode)).toBeUndefined()
-    }
+    expect(conversationDispatchRuntimeFor('source', 'maestro')).toBeDefined()
+    expect(conversationDispatchRuntimeFor('source', 'plan')).toBeUndefined()
     const enabled = builtinToolNamesForMode('agent')
     expect(enableConversationDispatchTools(enabled, 'source', 'agent')).toBeDefined()
     expect([...CONVERSATION_DISPATCH_TOOL_NAMES].every((name) => enabled.has(name))).toBe(true)
+    expect(enabled.has('swarm_update')).toBe(false)
+    const maestroEnabled = builtinToolNamesForMode('maestro')
+    expect(enableConversationDispatchTools(maestroEnabled, 'source', 'maestro')).toBeDefined()
+    expect([...CONVERSATION_DISPATCH_TOOL_NAMES].every((name) => maestroEnabled.has(name))).toBe(true)
+    expect(maestroEnabled.has('swarm_update')).toBe(true)
     const restricted = builtinToolNamesForMode('plan')
     expect(enableConversationDispatchTools(restricted, 'source', 'plan')).toBeUndefined()
     expect(CONVERSATION_DISPATCH_TOOL_NAMES.some((name) => restricted.has(name))).toBe(false)
@@ -289,6 +311,326 @@ describe('conversation dispatch tool surface', () => {
       expect(conversationDispatchRuntimeFor('source', 'agent')).toBeUndefined()
       const result = await startConversationsTool.execute(BATCH, context({ conversationDispatch: runtime }))
       expect(result).toMatchObject({ ok: false, items: [] })
+      expect(h.dispatchBatch).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('Maestro swarm dispatch runtime', () => {
+    const POOL = [
+      {
+        id: 'builder',
+        label: 'Builder',
+        enabled: true,
+        description: 'Implements features',
+        mode: 'agent' as const,
+        specialties: ['code'],
+        candidates: [{ providerId: 'claude', modelId: 'sonnet', effort: 'high', fastMode: false }],
+        instructions: 'Write clean TypeScript and unit tests.',
+      },
+      {
+        id: 'designer',
+        label: 'Designer',
+        enabled: true,
+        description: 'Builds visual prototypes',
+        mode: 'design' as const,
+        specialties: ['ui'],
+        candidates: [{ providerId: 'claude', modelId: 'opus', effort: 'high', fastMode: false }],
+        instructions: 'Focus on visual polish.',
+      },
+    ]
+
+    const setupMaestro = () => {
+      h.getConversationMaestroConfig.mockReturnValue({
+        config: { version: 2, strategy: 'balanced', pool: POOL },
+        source: 'global',
+        diagnostics: [],
+        hasConversationOverride: false,
+      })
+      h.resolveConversationDispatchSettingsFor.mockImplementation(async (_convId, requested) => ({
+        ok: true as const,
+        settings: {
+          providerId: requested.providerId ?? 'claude',
+          modelId: requested.modelId ?? 'sonnet',
+          reasoning: requested.reasoning ?? 'high',
+          fastMode: requested.fastMode ?? false,
+          ...(requested.mode && requested.mode !== 'agent' ? { mode: requested.mode } : {}),
+        },
+        inherited: [],
+      }))
+      h.dispatchBatch.mockImplementation(async ({ batch }) => ({
+        ok: true,
+        items: batch.tasks.map((task: { requestKey: string; title: string }) => ({
+          requestKey: task.requestKey,
+          title: task.title,
+          status: 'started' as const,
+          conversationId: `conv-${task.requestKey}`,
+        })),
+      }))
+      h.getConversationDispatchService.mockResolvedValue({ dispatchBatch: h.dispatchBatch })
+    }
+
+    it('dispatches from a host origin even with confirmation ON, rewrites worktree/reportBack/prompt, and ensures swarm tasks', async () => {
+      setupMaestro()
+      h.getConfirmConversationDispatch.mockReturnValue(true)
+      hostTurn()
+      const runtime = conversationDispatchRuntimeFor('source', 'maestro')!
+      expect(runtime).toBeDefined()
+      const confirm = vi.fn(async () => [["Don't start"]])
+      const result = await startConversationsTool.execute(
+        {
+          tasks: [{ requestKey: 'T-1', title: 'Build API', prompt: 'Add /health endpoint.', agent: 'builder' }],
+        },
+        context({ conversationDispatch: runtime, askQuestion: confirm })
+      )
+      expect(confirm).not.toHaveBeenCalled()
+      expect(result.ok).toBe(true)
+      expect(h.ensureSwarmTasks).toHaveBeenCalledWith('source', [
+        { key: 'T-1', title: 'Build API', resourceId: 'builder' },
+      ])
+      expect(h.dispatchBatch).toHaveBeenCalledTimes(1)
+      const call = h.dispatchBatch.mock.calls[0][0]
+      expect(call.grant).toMatchObject({ maxConversations: null, originKey: 'message:msg-host' })
+      expect(call.batch.placement).toBe('worktree')
+      expect(call.batch.reportBack).toBe(true)
+      expect(call.batch.defaults).toBeUndefined()
+      expect(call.batch.tasks).toHaveLength(1)
+      expect(call.batch.tasks[0]).toMatchObject({
+        requestKey: 'T-1',
+        title: 'Build API',
+        placement: 'worktree',
+        reportBack: true,
+        settings: { providerId: 'claude', modelId: 'sonnet', reasoning: 'high', fastMode: false },
+      })
+      expect('agent' in call.batch.tasks[0]).toBe(false)
+      expect(call.batch.tasks[0].prompt).toContain('# Role\nWrite clean TypeScript and unit tests.')
+      expect(call.batch.tasks[0].prompt).toContain('# Task\nAdd /health endpoint.')
+      expect(call.batch.tasks[0].prompt).toContain('# Delivery contract')
+    })
+
+    it('dispatches a design resource with settings.mode "design"', async () => {
+      setupMaestro()
+      humanTurn('Design the dashboard')
+      const runtime = conversationDispatchRuntimeFor('source', 'maestro')!
+      const result = await startConversationsTool.execute(
+        {
+          tasks: [{ requestKey: 'UI-1', title: 'Dashboard UI', prompt: 'Create dashboard mockup.', agent: 'designer' }],
+        },
+        context({ conversationDispatch: runtime })
+      )
+      expect(result.ok).toBe(true)
+      expect(h.ensureSwarmTasks).toHaveBeenCalledWith('source', [
+        { key: 'UI-1', title: 'Dashboard UI', resourceId: 'designer' },
+      ])
+      const dispatchedTask = h.dispatchBatch.mock.calls[0][0].batch.tasks[0]
+      expect(dispatchedTask.settings).toMatchObject({
+        providerId: 'claude',
+        modelId: 'opus',
+        mode: 'design',
+      })
+    })
+
+    it('fails tasks with settings or batch defaults in Maestro', async () => {
+      setupMaestro()
+      humanTurn('Start work')
+      const runtime = conversationDispatchRuntimeFor('source', 'maestro')!
+      const withTaskSettings = await startConversationsTool.execute(
+        {
+          tasks: [
+            {
+              requestKey: 'T-1',
+              title: 'Task 1',
+              prompt: 'Do it',
+              agent: 'builder',
+              settings: { modelId: 'opus' },
+            },
+          ],
+        },
+        context({ conversationDispatch: runtime })
+      )
+      expect(withTaskSettings).toEqual({
+        ok: false,
+        error: 'No task could be dispatched',
+        items: [
+          {
+            requestKey: 'T-1',
+            title: 'Task 1',
+            status: 'failed',
+            error: 'settings are not accepted in Maestro; choose an Agent Pool resource with agent',
+          },
+        ],
+      })
+      expect(h.dispatchBatch).not.toHaveBeenCalled()
+      expect(h.ensureSwarmTasks).not.toHaveBeenCalled()
+
+      const withBatchDefaults = await startConversationsTool.execute(
+        {
+          defaults: { reasoning: 'high' },
+          tasks: [{ requestKey: 'T-2', title: 'Task 2', prompt: 'Do it', agent: 'builder' }],
+        },
+        context({ conversationDispatch: runtime })
+      )
+      expect(withBatchDefaults).toEqual({
+        ok: false,
+        error: 'No task could be dispatched',
+        items: [
+          {
+            requestKey: 'T-2',
+            title: 'Task 2',
+            status: 'failed',
+            error: 'settings are not accepted in Maestro; choose an Agent Pool resource with agent',
+          },
+        ],
+      })
+      expect(h.dispatchBatch).not.toHaveBeenCalled()
+    })
+
+    it('fails tasks with shared placement or missing agent in Maestro', async () => {
+      setupMaestro()
+      humanTurn('Start work')
+      const runtime = conversationDispatchRuntimeFor('source', 'maestro')!
+      const res = await startConversationsTool.execute(
+        {
+          tasks: [
+            { requestKey: 'S-1', title: 'Shared', prompt: 'Do it', agent: 'builder', placement: 'shared' },
+            { requestKey: 'M-1', title: 'No agent', prompt: 'Do it' },
+          ],
+        },
+        context({ conversationDispatch: runtime })
+      )
+      expect(res).toEqual({
+        ok: false,
+        error: 'No task could be dispatched',
+        items: [
+          {
+            requestKey: 'S-1',
+            title: 'Shared',
+            status: 'failed',
+            error: 'Maestro workers always run in their own worktree',
+          },
+          {
+            requestKey: 'M-1',
+            title: 'No agent',
+            status: 'failed',
+            error: 'agent is required in Maestro',
+          },
+        ],
+      })
+      expect(h.dispatchBatch).not.toHaveBeenCalled()
+    })
+
+    it('fails tasks that would not start from the orchestrator HEAD in Maestro', async () => {
+      setupMaestro()
+      humanTurn('Start work')
+      const runtime = conversationDispatchRuntimeFor('source', 'maestro')!
+      const error = "Maestro workers start from this conversation's HEAD; omit target.workspaceId and target.baseBranch"
+      const res = await startConversationsTool.execute(
+        {
+          tasks: [
+            { requestKey: 'W-1', title: 'Other workspace', prompt: 'Do it', agent: 'builder', target: { workspaceId: 'ws-2' } },
+            { requestKey: 'B-1', title: 'Other base', prompt: 'Do it', agent: 'builder', target: { baseBranch: 'main' } },
+          ],
+        },
+        context({ conversationDispatch: runtime })
+      )
+      expect(res).toEqual({
+        ok: false,
+        error: 'No task could be dispatched',
+        items: [
+          { requestKey: 'W-1', title: 'Other workspace', status: 'failed', error },
+          { requestKey: 'B-1', title: 'Other base', status: 'failed', error },
+        ],
+      })
+      expect(h.dispatchBatch).not.toHaveBeenCalled()
+    })
+
+    it('fails only an unknown agent task while dispatching the valid task and preserving original order', async () => {
+      setupMaestro()
+      humanTurn('Start work')
+      const runtime = conversationDispatchRuntimeFor('source', 'maestro')!
+      const res = await startConversationsTool.execute(
+        {
+          tasks: [
+            { requestKey: 'BAD-1', title: 'Unknown', prompt: 'Do A', agent: 'ghost' },
+            { requestKey: 'OK-1', title: 'Valid', prompt: 'Do B', agent: 'builder' },
+          ],
+        },
+        context({ conversationDispatch: runtime })
+      )
+      expect(res.ok).toBe(true)
+      expect(res.items).toHaveLength(2)
+      expect(res.items[0]).toMatchObject({
+        requestKey: 'BAD-1',
+        title: 'Unknown',
+        status: 'failed',
+        error: expect.stringMatching(/Unknown Agent Pool resource "ghost"/),
+      })
+      expect(res.items[1]).toMatchObject({
+        requestKey: 'OK-1',
+        title: 'Valid',
+        status: 'started',
+        conversationId: 'conv-OK-1',
+      })
+      expect(h.ensureSwarmTasks).toHaveBeenCalledWith('source', [
+        { key: 'OK-1', title: 'Valid', resourceId: 'builder' },
+      ])
+      expect(h.dispatchBatch).toHaveBeenCalledTimes(1)
+      expect(h.dispatchBatch.mock.calls[0][0].batch.tasks.map((t: { requestKey: string }) => t.requestKey)).toEqual([
+        'OK-1',
+      ])
+    })
+
+    it('fails a task when the composed Maestro worker prompt exceeds the max length', async () => {
+      setupMaestro()
+      humanTurn('Start work')
+      const runtime = conversationDispatchRuntimeFor('source', 'maestro')!
+      const huge = 'a'.repeat(CONVERSATION_DISPATCH_MAX_PROMPT - 10)
+      const res = await startConversationsTool.execute(
+        {
+          tasks: [{ requestKey: 'HUGE-1', title: 'Too big', prompt: huge, agent: 'builder' }],
+        },
+        context({ conversationDispatch: runtime })
+      )
+      expect(res.ok).toBe(false)
+      expect(res.error).toBe('No task could be dispatched')
+      expect(res.items[0]).toMatchObject({
+        requestKey: 'HUGE-1',
+        status: 'failed',
+        error: expect.stringMatching(/exceeds/i),
+      })
+      expect(h.dispatchBatch).not.toHaveBeenCalled()
+    })
+
+    it('refuses a Maestro conversation created by a dispatch (agent-created)', async () => {
+      setupMaestro()
+      h.dispatchOriginsFor.mockReturnValue(new Map([['source', { sourceConversationId: 'parent' }]]))
+      hostTurn()
+      const runtime = conversationDispatchRuntimeFor('source', 'maestro')!
+      const res = await startConversationsTool.execute(
+        { tasks: [{ requestKey: 'T-1', title: 'Build', prompt: 'Do it', agent: 'builder' }] },
+        context({ conversationDispatch: runtime })
+      )
+      expect(res.ok).toBe(false)
+      expect(res.error).toMatch(/agent created this conversation/)
+      expect(res.items).toEqual([])
+      expect(h.dispatchBatch).not.toHaveBeenCalled()
+      expect(h.ensureSwarmTasks).not.toHaveBeenCalled()
+    })
+
+    it('refuses the whole batch when agent is passed outside Maestro', async () => {
+      setupMaestro()
+      humanTurn('Abra uma conversa para esse card.')
+      const runtime = conversationDispatchRuntimeFor('source', 'agent')!
+      const confirm = vi.fn(async () => [['Start']])
+      const res = await startConversationsTool.execute(
+        { tasks: [{ requestKey: 'T-1', title: 'Task', prompt: 'Do it', agent: 'builder' }] },
+        context({ conversationDispatch: runtime, askQuestion: confirm })
+      )
+      expect(res).toEqual({
+        ok: false,
+        error: 'agent is only accepted in Maestro conversations',
+        items: [],
+      })
+      expect(confirm).not.toHaveBeenCalled()
       expect(h.dispatchBatch).not.toHaveBeenCalled()
     })
   })

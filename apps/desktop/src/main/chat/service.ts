@@ -344,13 +344,6 @@ import {
   listSubagentSessions,
   markInterruptedSubagentSessions,
 } from './subagent-session-store'
-import {
-  cancelTurnDelegations,
-  markDelegationObserved,
-  unobservedTurnDelegations,
-  waitForTurnDelegationsTerminal,
-} from './maestro-delegation-registry'
-import { releaseTurnDelegationRuntimes } from './subagent-resume'
 import { registerPerformanceCache } from '../performance/metrics'
 import { builtinToolNamesForMode } from './tools'
 import {
@@ -490,7 +483,6 @@ import type {
   InternalTurnOutcome,
   McpServerInfo,
   MessagePart,
-  SubagentSessionSummary,
   ChatSubscriptionFailoverEvent,
 } from '../../shared/chat'
 import type { ConversationStatus } from '../store'
@@ -521,7 +513,6 @@ import { createMaestroSwarmGit } from './maestro-swarm-git'
 import { registerMaestroConfiguratorIpc } from './maestro-configurator-ipc'
 import { maestroConfiguratorService } from './maestro-configurator'
 import { freezeMaestroTurn } from './maestro-config'
-import { createMaestroLiveRunPort, maestroLiveState, type MaestroLiveRunPort } from './maestro-live'
 import {
   clearMaestroLiveRunsForConversation,
   getActiveMaestroLiveRun,
@@ -670,72 +661,6 @@ const mergeIsolatedSummaryAttemptUsage = (
   }
 }
 
-/**
- * Fallback guards for transports that returned before async workers settled must attach their usage to the
- * original parent message exactly once. The caller invokes this only for previously-unobserved sessions and
- * marks them observed immediately afterwards, so retries cannot double-account.
- */
-function accountGuardedDelegationUsage(
-  conversationId: string,
-  parentMessageId: string,
-  sessions: readonly SubagentSessionSummary[]
-): void {
-  const measured = sessions.filter((session) => session.usage && session.profile?.effective)
-  if (!measured.length) return
-  const message = getChatMessage(conversationId, parentMessageId)
-  if (!message) return
-  const previous = message.usage
-  const perModel = new Map(
-    (previous?.subagentUsage ?? []).map((entry) => [`${entry.providerId}\0${entry.modelId}`, { ...entry }])
-  )
-  let subInput = previous?.subInput ?? 0
-  let subOutput = previous?.subOutput ?? 0
-  let subCachedInput = previous?.subCachedInput ?? 0
-  let subCacheCreate = previous?.subCacheCreate ?? 0
-  for (const session of measured) {
-    const usage = session.usage!
-    const effective = session.profile!.effective!
-    subInput += usage.input
-    subOutput += usage.output
-    subCachedInput += usage.cacheRead
-    subCacheCreate += usage.cacheCreate
-    const key = `${effective.providerId}\0${effective.modelId}`
-    const current = perModel.get(key) ?? {
-      providerId: effective.providerId,
-      modelId: effective.modelId,
-      input: 0,
-      output: 0,
-    }
-    current.input += usage.input
-    current.output += usage.output
-    current.cachedInput = (current.cachedInput ?? 0) + usage.cacheRead
-    current.cacheCreate = (current.cacheCreate ?? 0) + usage.cacheCreate
-    if (session.runtimeEstimatedCostUsd != null) {
-      current.runtimeEstimatedCostUsd = (current.runtimeEstimatedCostUsd ?? 0) + session.runtimeEstimatedCostUsd
-    } else {
-      current.catalogInput = (current.catalogInput ?? 0) + usage.input
-      current.catalogOutput = (current.catalogOutput ?? 0) + usage.output
-      current.catalogCacheRead = (current.catalogCacheRead ?? 0) + usage.cacheRead
-      current.catalogCacheCreate = (current.catalogCacheCreate ?? 0) + usage.cacheCreate
-    }
-    perModel.set(key, current)
-  }
-  upsertChatMessage({
-    ...message,
-    usage: {
-      ...(previous ?? {}),
-      usageVersion: 2,
-      input: previous?.input ?? 0,
-      output: previous?.output ?? 0,
-      subInput,
-      subOutput,
-      subCachedInput,
-      subCacheCreate,
-      subagentUsage: [...perModel.values()],
-    },
-  })
-}
-
 interface ActiveRun {
   controller: AbortController
   send: SafeSend
@@ -785,8 +710,6 @@ interface ActiveRun {
   /** Structured terminal outcome (internal automated turn API). Resolves ONCE. */
   outcome: Promise<InternalTurnOutcome>
   settleOutcome: (outcome: InternalTurnOutcome) => void
-  /** Host-owned inbox for the Maestro turn; absent in Standard and internal turns. */
-  maestroLive?: MaestroLiveRunPort
   activeHarnessProfile: import('../../shared/chat').ChatActiveHarnessProfile | null
   midTurnSteering: boolean
   liveReasoningUpdate: boolean
@@ -2677,7 +2600,7 @@ export function chatRuntimeState(conversationId: string): ChatRuntimeState {
       .pendingFor(conversationId)
       .map((request) => toRequestPayload(request).request),
     pendingQuestions: getQuestionBroker().pendingQuestionsFor(conversationId),
-    maestroLive: maestroLiveState(run?.maestroLive),
+    maestroLive: null,
     midTurnSteering: run?.midTurnSteering === true,
     liveReasoningUpdate: run?.liveReasoningUpdate === true,
     liveReasoningEfforts: run?.liveReasoningEfforts ?? [],
@@ -5050,13 +4973,6 @@ async function startSendAttempt(
     const controller = new AbortController()
     const assistantMessageId = useOfficialSubscription ? '' : randomUUID()
     const assistantCreatedAt = Date.now()
-    const maestroLive = maestroTurn
-      ? createMaestroLiveRunPort({
-          conversationId,
-          assistantMessageId: assistantMessageId || null,
-          emit: (event) => send(`chat:maestro-live:${conversationId}`, event),
-        })
-      : undefined
     let settleDone!: () => void
     const done = new Promise<void>((resolve) => {
       settleDone = resolve
@@ -5103,14 +5019,10 @@ async function startSendAttempt(
       liveReasoningEfforts: [],
       liveReasoningReset: false,
       acceptedSteeringMessageIds: new Set(),
-      ...(maestroLive ? { maestroLive } : {}),
     }
     if (admittedCodexTarget) acquireActiveProvider(run, admittedCodexTarget.providerId)
     admittedRun = run
     active.set(conversationId, run)
-    if (maestroLive) {
-      send(`chat:maestro-live:${conversationId}`, { kind: 'run-updated', run: maestroLive.state().run })
-    }
     if (opts?.botAdmission) {
       assertBotTurnAdmission(conversationId, opts.botAdmission)
       if (storedProviderId !== opts.botAdmission.providerId || selection.modelId !== opts.botAdmission.modelId)
@@ -5255,7 +5167,6 @@ async function startSendAttempt(
     // None indicates completion: work may be unfinished. Treat as 'error' rather than green/ready. The runner
     // only lets a cut finish reach here after exhausting transparent retries.
     let wasInterrupted = false
-    let maestroTerminalStatus: 'completed' | 'error' | 'aborted' | 'interrupted' = 'error'
     if (modelFallbackIsStrict(opts)) releaseStrictSelection = holdStrictModelSelection(conversationId)
     // Model fallback: the raw failure that ended this attempt, else the error the runner showed for it.
     const modelFallbackTurn = opts?.modelFallback
@@ -5275,7 +5186,6 @@ async function startSendAttempt(
     const emit = (ev: ChatStreamEvent) => {
       if (ev.kind === 'message-start') {
         run.messageId = ev.messageId
-        run.maestroLive?.bindAssistantMessage(ev.messageId)
       }
       if (ev.kind === 'error') {
         hadError = true
@@ -5289,15 +5199,9 @@ async function startSendAttempt(
       if (ev.kind === 'finish' && CUT_FINISH_REASONS.has(ev.finishReason)) wasInterrupted = true
       send(`chat:delta:${conversationId}`, ev)
     }
-    /**
-     * Where the same turn continues after it failed, or null. Decided once the turn settled, so a Maestro turn
-     * first lets its delegations finish: the continuation must see their results, not race them.
-     */
+    /** Where the same turn continues after it failed, or null. */
     const decideModelFallback = async (failure: unknown, planSubmitted: boolean) => {
       if (!modelFallbackTurn) return null
-      if (turnBehavior === 'maestro' && run.messageId && !controller.signal.aborted) {
-        await waitForTurnDelegationsTerminal(conversationId, run.messageId, controller.signal).catch(() => undefined)
-      }
       return continuationAfterFailure(
         modelFallbackTurn,
         failure,
@@ -5468,7 +5372,6 @@ async function startSendAttempt(
       },
     }
     let turnPromise: Promise<{ planSubmitted: boolean }>
-    let maestroGuardContinuation: { prompt: string } | null = null
     let stopHookContinuation: { prompt: string; count: number } | null = null
     let planGuardContinuation: { prompt: string } | null = null
     if (useCodexSubscription && admittedCodexTarget && codexFailoverChain) {
@@ -5503,7 +5406,6 @@ async function startSendAttempt(
           selection,
           mode: turnBehavior,
           maestro: maestroTurn,
-          maestroLive: run.maestroLive,
           permMode: permModeFor(conversationId),
           reasoningEffort,
           maestrlyUltra,
@@ -5651,7 +5553,6 @@ async function startSendAttempt(
           harness: admittedHarness,
           mode: turnBehavior,
           maestro: maestroTurn,
-          maestroLive: run.maestroLive,
           permMode: permModeFor(conversationId),
           reasoningEffort,
           maestrlyUltra,
@@ -5775,7 +5676,6 @@ async function startSendAttempt(
           harness: admittedHarness,
           mode: turnBehavior,
           maestro: maestroTurn,
-          maestroLive: run.maestroLive,
           permMode: permModeFor(conversationId),
           reasoningEffort,
           fastMode,
@@ -5852,7 +5752,6 @@ async function startSendAttempt(
           harness: admittedHarness,
           permMode: permModeFor(conversationId),
           maestro: maestroTurn,
-          maestroLive: run.maestroLive,
           fastMode,
           reasoningEffort: resolved.reasoningEffort,
           maestrlyUltra: resolved.maestrlyUltra,
@@ -5908,7 +5807,6 @@ async function startSendAttempt(
           harness: admittedHarness,
           permMode: permModeFor(conversationId),
           maestro: maestroTurn,
-          maestroLive: run.maestroLive,
           reasoningEffort: resolved.reasoningEffort,
           maestrlyUltra: resolved.maestrlyUltra,
           dropImages: !supportsChatToolImages({
@@ -5963,7 +5861,7 @@ async function startSendAttempt(
           ? { reasoningOverride: fallbackTurnAxes.reasoning ?? 'off', fastModeOverride: fallbackTurnAxes.fastMode }
           : {}),
         ...modelFallbackRunnerHooks,
-        ...(maestroTurn ? { maestro: maestroTurn, maestroLive: run.maestroLive } : {}),
+        ...(maestroTurn ? { maestro: maestroTurn } : {}),
       })
     }
 
@@ -5976,45 +5874,6 @@ async function startSendAttempt(
             planSubmitted
           )
           if (modelFallbackContinuation) return
-        }
-        // Codex/Claude reopen within their own native session. Other transports use this host-owned
-        // fallback: wait without a cap for workers and start a new internal reconciliation turn before
-        // releasing automation/status. A session is observed if the parent already consumed a terminal wait/inspect.
-        if (
-          turnBehavior === 'maestro' &&
-          run.messageId &&
-          !useCodexSubscription &&
-          !useClaudeSubscription &&
-          !controller.signal.aborted
-        ) {
-          const unobserved = unobservedTurnDelegations(conversationId, run.messageId)
-          if (unobserved.length > 0) {
-            const settled = await waitForTurnDelegationsTerminal(conversationId, run.messageId, controller.signal)
-            const pendingReconciliation = settled.filter((session) => unobserved.some((item) => item.id === session.id))
-            if (pendingReconciliation.length > 0) {
-              accountGuardedDelegationUsage(conversationId, run.messageId, pendingReconciliation)
-              for (const session of pendingReconciliation) markDelegationObserved(session.id)
-              maestroGuardContinuation = {
-                prompt:
-                  'Host guard: the previous Maestro response attempted to finish before reconciling every ' +
-                  'delegation. The sessions below are terminal. Use inspect_subagent with session_id whenever ' +
-                  'details are needed, reconcile every result and only then answer the user.\n\n' +
-                  JSON.stringify(
-                    pendingReconciliation.map((session) => ({
-                      sessionId: session.id,
-                      agent: session.agentName,
-                      status: session.status,
-                      phase: session.phase,
-                      tools: session.toolNames,
-                      files: session.files,
-                      tests: session.tests,
-                      error: session.error,
-                    }))
-                  ),
-              }
-              return
-            }
-          }
         }
         // Plan mode: a turn that ends well without `review_plan` leaves nothing to approve in the Plan tab. Ask
         // once, for the plan the model just wrote; the continuation never chains another guard.
@@ -6072,13 +5931,6 @@ async function startSendAttempt(
             ? ('error' as const)
             : ('success' as const)
         if (outcome === 'error') markAcceptedSteeringFailed()
-        maestroTerminalStatus = controller.signal.aborted
-          ? 'aborted'
-          : wasInterrupted
-            ? 'interrupted'
-            : hadError
-              ? 'error'
-              : 'completed'
         try {
           opts?.onComplete?.({ planSubmitted, outcome })
         } catch {
@@ -6114,9 +5966,7 @@ async function startSendAttempt(
         modelFallbackContinuation =
           modelFallbackTurn && !controller.signal.aborted ? await decideModelFallback(e, false) : null
         const continuing = modelFallbackContinuation != null
-        maestroTerminalStatus = controller.signal.aborted ? 'aborted' : 'error'
         if (!controller.signal.aborted && !continuing) markAcceptedSteeringFailed()
-        if (run.messageId && !continuing) cancelTurnDelegations(conversationId, run.messageId)
         if (!continuing) {
           try {
             opts?.onComplete?.({ planSubmitted: false, outcome: controller.signal.aborted ? 'cancelled' : 'error' })
@@ -6168,14 +6018,7 @@ async function startSendAttempt(
       .finally(async () => {
         // Release the slot BEFORE 'done' so the next queued turn does not get "busy"; 'done' is the ONLY
         // turn-end signal (the renderer advances the queue only here) — avoids double triggering (finish + done).
-        run.maestroLive?.finish(maestroTerminalStatus)
         applyCodexTurnControl(null)
-        // Native threads/sessions persisted by this turn's delegations have served their purpose (resume applies
-        // only within the turn). Release is best-effort and never blocks completion: failures remain in
-        // cleanup tombstones for the sweeper.
-        if (turnBehavior === 'maestro' && run.messageId) {
-          void releaseTurnDelegationRuntimes(conversationId, run.messageId).catch(() => undefined)
-        }
         if (turnBehavior === 'maestro' && conv.cwd) {
           void reconcileSwarmMerges(conversationId, createMaestroSwarmGit(conv.cwd)).catch((error) => {
             console.warn('[maestro-swarm] merge reconciliation failed:', error)
@@ -6192,9 +6035,9 @@ async function startSendAttempt(
           void maybeScheduleBackgroundCompaction(conversationId)
         }
         if (hookTurn) removeHookTranscript(conversationId)
-        // Host continuations (Maestro's reconciliation guard, the Plan guard, a Stop hook asking for more) run as an
-        // internal turn that settles this one when it ends; the latter two keep the authority this turn was admitted
-        // with and the Plan guard's "already continued" mark, so a user turn gets at most one Plan guard.
+        // Host continuations (the Plan guard, a Stop hook asking for more) run as an internal turn that settles this
+        // one when it ends; they keep the authority this turn was admitted with and the Plan guard's "already
+        // continued" mark, so a user turn gets at most one Plan guard.
         const keptAdmission = {
           ...(opts?.botAdmission ? { botAdmission: opts.botAdmission } : {}),
           ...(opts?.remoteAdmission ? { remoteAdmission: true } : {}),
@@ -6234,9 +6077,7 @@ async function startSendAttempt(
                 ...keptAdmission,
               },
             }
-          : maestroGuardContinuation
-            ? { prompt: maestroGuardContinuation.prompt, failure: 'maestro-guard', opts: {} }
-            : planGuardContinuation
+          : planGuardContinuation
               ? {
                   prompt: planGuardContinuation.prompt,
                   failure: 'plan-guard',
@@ -6310,7 +6151,6 @@ async function startSendAttempt(
     turnSnapshot?.end(admittedRun?.messageId || null)
     releaseCwdActivityOnce()
     if (admittedRun) {
-      admittedRun.maestroLive?.finish(admittedRun.controller.signal.aborted ? 'aborted' : 'error')
       // Failure before producing a message: the internal handle needs an outcome (never leave it pending).
       const message = error instanceof Error ? error.message : String(error)
       admittedRun.settleOutcome({ status: 'error', error: message, assistantMessageId: admittedRun.messageId || null })
@@ -6455,7 +6295,6 @@ function stop(conversationId: string): void {
   cancelBackgroundJob(conversationId, true)
   const run = active.get(conversationId)
   if (run) {
-    run.maestroLive?.cancelPending()
     run.controller.abort()
   }
   pendingConversationOperations.get(conversationId)?.controller.abort()
@@ -10779,24 +10618,13 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
       const runId = typeof payload?.runId === 'string' ? payload.runId : ''
       const text = typeof payload?.text === 'string' ? payload.text : ''
       if (!conversationId || !runId || !text.trim()) return { ok: false as const, error: 'invalid-input' as const }
-      const live = active.get(conversationId)?.maestroLive
-      if (!live || live.runId !== runId) return { ok: false as const, error: 'run-not-active' as const }
-      return live.post(text, Array.isArray(payload?.agentMentions) ? payload.agentMentions : undefined)
+      return { ok: false as const, error: 'run-not-active' as const }
     }
   )
-  deps.mhandle('chat:maestro-live:snapshot', (_event, conversationId: string) => {
-    if (typeof conversationId !== 'string' || !conversationId) return null
-    return active.get(conversationId)?.maestroLive?.state() ?? null
-  })
+  deps.mhandle('chat:maestro-live:snapshot', (_event, _conversationId: string) => null)
   deps.mhandle(
     'chat:maestro-live:cancel',
-    (_event, payload?: { conversationId?: string; runId?: string; messageId?: string }) => {
-      const conversationId = typeof payload?.conversationId === 'string' ? payload.conversationId : ''
-      const runId = typeof payload?.runId === 'string' ? payload.runId : ''
-      const messageId = typeof payload?.messageId === 'string' ? payload.messageId : ''
-      const live = active.get(conversationId)?.maestroLive
-      return !!live && live.runId === runId && !!messageId && live.cancelMessage(messageId)
-    }
+    (_event, _payload?: { conversationId?: string; runId?: string; messageId?: string }) => false
   )
   deps.mhandle(
     'chat:subagents:list',

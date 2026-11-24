@@ -28,10 +28,10 @@ const LEGACY_PROMPT_HASHES = {
   'plan:false:true': 'b7e3f7998285fe9280d09d7be4be7925157655bef569b45536a24cba0de0ecc9',
   'plan:true:false': '7d4f8733ccbe3a641f1ad330e394a1de98352ab5b50c9f9b1a3ceaf8ad372e31',
   'plan:true:true': '5da73f443eb07c75073fd5e18e7b1d4dab28c481f03490c2eb1b48f8877314b1',
-  'maestro:false:false': '613f6dff8237e7da2a200fdef3d00b98da95385c1757c4e36223676e522319c2',
-  'maestro:false:true': '22bb48116016283607740fd39d5e6d1d7a42bc2268c09e4129663c8781dabb33',
-  'maestro:true:false': '0128b2a9dd3db2c10089b0f339c8dc54a9489ec0689261da1029028c59764050',
-  'maestro:true:true': 'a271aeb8cc561eb0626700552853034dca6b797eeec82e6c21ef016a90f5110c',
+  'maestro:false:false': '73fa1b1f52bfa9b8caa12af779ac3032e90dd12bf1d56e33479902122a36fafe',
+  'maestro:false:true': '9f66656381a9e52696e0144dfa58f07591d12f2847b4c603a33a933d67f1093e',
+  'maestro:true:false': 'c8558c18207b403669feb1efa64edc917731bd61103a05a4900b30ec96208126',
+  'maestro:true:true': 'f16d71082f9a0f25c335c41147fc94400cdd977b70bfa8e65f4c00e6ca0eacaf',
 }
 
 describe('Fable 5.1 prompt fragments', () => {
@@ -66,7 +66,7 @@ describe('Fable 5.1 prompt fragments', () => {
     expect(prompt(true, 'ask', false, fable)).toContain('Do NOT edit project files or run commands')
     expect(prompt(true, 'ask', false, fable)).toContain('when start_conversations is exposed')
     expect(prompt(true, 'plan', false, fable)).toContain('Calling review_plan ENDS your turn')
-    expect(prompt(true, 'maestro', false, fable)).toContain('parent is structurally read-only')
+    expect(prompt(true, 'maestro', false, fable)).toBe(agent)
   })
 
   it('gives children role-appropriate instructions without user-facing progress', () => {

@@ -8,6 +8,7 @@ import type { ResolvedHarness } from '../harness/types'
 import { createHash } from 'node:crypto'
 import type { ChatMessage } from '../../../shared/chat'
 import type { ChatBehavior } from '../../../shared/conversation-experience'
+import { capabilityBehaviorFor } from '../../../shared/chat-mode'
 import type { MaestroTurnSnapshotV1 } from '../../../shared/maestro'
 import type { AppToolGroup } from '../../../shared/app-tool-groups'
 import { getConversation } from '../../store'
@@ -21,8 +22,7 @@ import { buildProjectContext } from '../project-context'
 import { commandShellEnvironment } from '../tools/command-shell'
 import { listEffectiveAgents } from '../virtual-subagents'
 import { MEMORY_TOOL_GUIDANCE, PERSONAL_MEMORY_TOOL_GUIDANCE } from '../memory-tool-guidance'
-import { maestroAgentsFromTurn, renderMaestroAgentCatalog } from '../maestro-delegation'
-import { MAESTRO_SYSTEM_SPEC, renderMaestroTurnPolicy } from '../maestro-prompt'
+import { renderMaestroSwarmSection } from '../maestro-prompt'
 import type { CursorAgentBinding } from './session-store'
 
 export interface CursorBindingCompatibilityInput {
@@ -106,21 +106,19 @@ export async function buildCursorHarnessContext(
 ): Promise<{ envelope: CursorHarnessEnvelope; skills: readonly ChatSkill[]; agents: readonly ChatAgent[] }> {
   const skills = await mainAgentSkills(args.mode, args.cwd, args.conversationId)
   const skillContext = skillsCatalog(skills, args.projectId !== null)
+  const capabilityMode = capabilityBehaviorFor(args.mode)
   const allAgents = await listEffectiveAgents({
     cwd: args.cwd,
     conversationId: args.conversationId,
-    mode: args.mode === 'agent' || args.mode === 'maestro' ? 'agent' : 'plan',
+    mode: capabilityMode === 'agent' ? 'agent' : 'plan',
   })
   const agents =
-    args.mode === 'maestro' && args.maestro
-      ? maestroAgentsFromTurn(args.maestro, allAgents)
-      : args.mode === 'agent'
-        ? allAgents
-        : args.maestrlyUltra
-          ? allAgents.filter((agent) => agent.name === 'explore')
-          : []
-  const agentContext =
-    args.mode === 'maestro' && args.maestro ? renderMaestroAgentCatalog(args.maestro) : agentsCatalog(agents)
+    capabilityMode === 'agent'
+      ? allAgents
+      : args.maestrlyUltra
+        ? allAgents.filter((agent) => agent.name === 'explore')
+        : []
+  const agentContext = agentsCatalog(agents)
   const projectContext = await buildProjectContext(args.projectId, args.cwd, args.conversationId)
   const platform = process.platform === 'darwin' ? 'macOS' : process.platform === 'win32' ? 'Windows' : process.platform
   const git = await gitEnvInfo(args.cwd).catch(() => null)
@@ -128,11 +126,9 @@ export async function buildCursorHarnessContext(
   const environment = `OS: ${platform}. ${commandShellEnvironment()} Today's date: ${new Date().toISOString().slice(0, 10)}. Project directory: ${args.cwd}.${gitLine}`
   const harness = args.harness ?? resolveCursorHarness(args.modelId)
   const ultra = args.maestrlyUltra
-    ? args.mode === 'maestro'
-      ? 'Maximum-rigor reasoning applies only to the orchestrator; choose agents deliberately from the frozen Strategy and Pool.'
-      : args.mode === 'agent'
-        ? 'Maximum-rigor Maestrly Ultra mode is active. Decompose non-trivial work, delegate independent slices through task when useful, integrate the results, verify the implementation, and critically review it before finishing.'
-        : 'Maximum-rigor Maestrly Ultra mode is active. Stay read-only, investigate deeply, and cross-check the conclusion.'
+    ? capabilityMode === 'agent'
+      ? 'Maximum-rigor Maestrly Ultra mode is active. Decompose non-trivial work, delegate independent slices through task when useful, integrate the results, verify the implementation, and critically review it before finishing.'
+      : 'Maximum-rigor Maestrly Ultra mode is active. Stay read-only, investigate deeply, and cross-check the conclusion.'
     : ''
   const conversation = getConversation(args.conversationId)
   const notes = !isBotMode() && Boolean(conversation)
@@ -164,8 +160,7 @@ export async function buildCursorHarnessContext(
       : []),
     'The `ask_question` tool asks the user a question and waits for the answer.',
     // The Maestrly base layout already carries the contract and the memory guidance.
-    ...(args.mode === 'maestro' && !basePrompt.includes(MAESTRO_SYSTEM_SPEC) ? [MAESTRO_SYSTEM_SPEC] : []),
-    ...(args.mode === 'maestro' && args.maestro ? [renderMaestroTurnPolicy(args.maestro)] : []),
+    ...(args.mode === 'maestro' && args.maestro ? [renderMaestroSwarmSection(args.maestro)] : []),
     ...(basePrompt.includes(memoryGuidance) ? [] : [memoryGuidance]),
     ...(ultra ? [harnessUltraGuidance(harness, args.mode) ?? ultra] : []),
     ...(notes ? ['The conversation has a Notes tab; use it when the user asks about notes.'] : []),

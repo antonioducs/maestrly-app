@@ -35,6 +35,7 @@ import {
 import { botReadTool, botSendTool, maestrlyOverviewTool, respondPendingTool } from './assistant'
 import { routineProposeTool } from './routine-propose'
 import { routineRunReportTool } from './routine-run-report'
+import { swarmUpdateTool } from './maestro-swarm'
 import { boundText, type ToolContext, type ToolDef } from './util'
 import { chatToolOutputToAiSdkOutput, modelOutputToChatToolOutput } from '../tool-output'
 import type { ChatBehavior } from '../../../shared/conversation-experience'
@@ -44,6 +45,7 @@ import {
   CONVERSATION_DISPATCH_TOOL_NAMES,
   CONVERSATION_LINK_TOOL_NAMES,
   isHostToolReadOnly,
+  MAESTRO_SWARM_TOOL_NAMES,
   PARENT_ONLY_CONVERSATION_TOOL_NAMES,
   ROUTINE_TOOL_NAMES,
 } from '../tool-policy'
@@ -80,6 +82,7 @@ export const ALL_TOOLS: ToolDef<any, any>[] = [
   respondPendingTool,
   routineProposeTool,
   routineRunReportTool,
+  swarmUpdateTool,
 ]
 export const ALL_TOOL_NAMES = ALL_TOOLS.map((t) => t.name)
 
@@ -102,6 +105,8 @@ const OPT_IN_TOOL_NAMES = new Set<string>([
   ...ASSISTANT_TOOL_NAMES,
   // Local routine proposals (local chats) and run reports (run conversations).
   ...ROUTINE_TOOL_NAMES,
+  // Maestro orchestrator swarm board updates; enabled via enableConversationDispatchTools in Maestro mode.
+  ...MAESTRO_SWARM_TOOL_NAMES,
 ])
 
 /** Capabilities that make an Agent subagent a worker instead of a read-only investigator. */

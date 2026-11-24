@@ -54,6 +54,7 @@ import {
   ASSISTANT_TOOL_NAMES,
   CONVERSATION_DISPATCH_TOOL_NAMES,
   CONVERSATION_LINK_TOOL_NAMES,
+  MAESTRO_SWARM_TOOL_NAMES,
   PARENT_ONLY_CONVERSATION_TOOL_NAMES,
   ROUTINE_TOOL_NAMES,
 } from '../../src/main/chat/tool-policy'
@@ -115,6 +116,7 @@ describe('conversation link tool surface', () => {
       ...CONVERSATION_LINK_TOOL_NAMES,
       ...ASSISTANT_TOOL_NAMES,
       ...ROUTINE_TOOL_NAMES,
+      ...MAESTRO_SWARM_TOOL_NAMES,
     ])
     for (const name of CONVERSATION_LINK_TOOL_NAMES) {
       expect(ALL_TOOL_NAMES).toContain(name)
@@ -149,11 +151,12 @@ describe('conversation link tool surface', () => {
     expect(interactiveTool('read')).toBe(false)
   })
 
-  it('is offered to turns the person typed and turns another conversation started, in Agent, Design and Ask', () => {
+  it('is offered to turns the person typed and turns another conversation started, in Agent, Design, Ask and Maestro', () => {
     expect(conversationLinkRuntimeFor('source', 'agent')).toBeUndefined()
     humanTurn()
-    for (const mode of ['agent', 'design', 'ask'] as const) expect(conversationLinkRuntimeFor('source', mode)).toBeDefined()
-    for (const mode of ['plan', 'maestro'] as const) expect(conversationLinkRuntimeFor('source', mode)).toBeUndefined()
+    for (const mode of ['agent', 'design', 'ask', 'maestro'] as const)
+      expect(conversationLinkRuntimeFor('source', mode)).toBeDefined()
+    expect(conversationLinkRuntimeFor('source', 'plan')).toBeUndefined()
 
     linkedTurn()
     const enabled = builtinToolNamesForMode('agent')

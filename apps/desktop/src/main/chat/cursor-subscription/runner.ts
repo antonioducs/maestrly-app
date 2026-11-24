@@ -15,7 +15,6 @@ import type {
 } from '../../../shared/chat'
 import type { ChatBehavior } from '../../../shared/conversation-experience'
 import type { MaestroTurnSnapshotV1 } from '../../../shared/maestro'
-import type { MaestroLiveRunPort } from '../maestro-live'
 import { applyChatEvent } from '../../../shared/chat'
 import { responseDurationMs } from '../../../shared/response-duration'
 import { getConvUiPrefs } from '../../store'
@@ -53,7 +52,6 @@ import { detectExplicitSubagentsForTurn } from '../subagent-turn-request'
 import { SubagentCoordinator } from '../subagent-coordinator'
 import type { ChatSubagentUsage } from '../../../shared/chat'
 import { createCursorTaskRuntime, type CursorManagedTaskRunner } from './task-runtime'
-import { MAESTRO_DELEGATE_TOOL_DESCRIPTION, MAESTRO_DELEGATE_TOOL_SCHEMA } from '../maestro-delegation'
 import { withTaskComplexity } from '../subagent-route'
 import { buildSubagentSupervisionTools } from '../maestro-supervision-tools'
 import {
@@ -108,7 +106,6 @@ export interface RunCursorSubscriptionChatArgs {
   permMode?: import('../../../shared/chat').ChatPermMode
   harness?: import('../harness/types').ResolvedHarness
   maestro?: MaestroTurnSnapshotV1
-  maestroLive?: MaestroLiveRunPort
 
   fastMode?: boolean
 
@@ -560,37 +557,32 @@ async function runCursorSubscriptionChatInScope(
           }
         : {}
 
-      const delegationToolName = args.mode === 'maestro' ? 'delegate' : 'task'
       const taskTools: ToolSet = agents.length
         ? {
-            [delegationToolName]: tool({
+            task: tool({
               description:
-                args.mode === 'maestro'
-                  ? MAESTRO_DELEGATE_TOOL_DESCRIPTION
-                  : 'Delegate a self-contained slice of work to an isolated Maestrly subagent. ' +
-                    'Give the full context; the subagent does not see this conversation.',
+                'Delegate a self-contained slice of work to an isolated Maestrly subagent. ' +
+                'Give the full context; the subagent does not see this conversation.',
               inputSchema: jsonSchema(
-                args.mode === 'maestro'
-                  ? MAESTRO_DELEGATE_TOOL_SCHEMA
-                  : withTaskComplexity(
-                      {
-                        type: 'object',
-                        properties: {
-                          agent: { type: 'string', enum: agents.map((agent) => agent.name) },
-                          prompt: { type: 'string', description: 'Self-contained subtask and all required context.' },
-                        },
-                        required: ['agent', 'prompt'],
-                        additionalProperties: false,
-                      },
-                      args.conversationId
-                    )
+                withTaskComplexity(
+                  {
+                    type: 'object',
+                    properties: {
+                      agent: { type: 'string', enum: agents.map((agent) => agent.name) },
+                      prompt: { type: 'string', description: 'Self-contained subtask and all required context.' },
+                    },
+                    required: ['agent', 'prompt'],
+                    additionalProperties: false,
+                  },
+                  args.conversationId
+                )
               ),
               execute: async (input, options) => {
                 if (!state.runTask) throw new Error('The Maestrly subagent executor is not ready')
                 const toolCallId = options.toolCallId
 
-                apply({ kind: 'tool-input-start', messageId: assistantId, toolCallId, toolName: delegationToolName })
-                apply({ kind: 'tool-call', messageId: assistantId, toolCallId, toolName: delegationToolName, input })
+                apply({ kind: 'tool-input-start', messageId: assistantId, toolCallId, toolName: 'task' })
+                apply({ kind: 'tool-call', messageId: assistantId, toolCallId, toolName: 'task', input })
                 let result: Awaited<ReturnType<CursorManagedTaskRunner>>
                 try {
                   result = await state.runTask(input, toolCallId, options.abortSignal ?? args.signal, (update) => {
@@ -627,7 +619,7 @@ async function runCursorSubscriptionChatInScope(
         ? buildSubagentSupervisionTools({
             conversationId: args.conversationId,
             parentMessageId: assistantId,
-            maestro: args.mode === 'maestro',
+            maestro: false,
             signal: args.signal,
           })
         : {}
@@ -663,8 +655,6 @@ async function runCursorSubscriptionChatInScope(
           permissionScope: args.permissionScope,
           cwd: args.cwd,
           mode: args.mode,
-          maestro: args.maestro,
-          maestroLive: args.maestroLive,
           turnState: explicitSubagentTurnState,
           permMode: args.permMode ?? 'ask',
           selection: args.selection,

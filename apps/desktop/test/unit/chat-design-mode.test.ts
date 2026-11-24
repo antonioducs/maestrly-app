@@ -15,12 +15,12 @@ describe('Design chat mode policy', () => {
       expect(normalizeChatMode(value)).toBe('agent')
   })
 
-  it('maps only Design to Agent capabilities and preserves every other behavior', () => {
+  it('maps Design and Maestro to Agent capabilities and preserves Plan and Ask', () => {
     expect(capabilityBehaviorFor('design')).toBe('agent')
     expect(capabilityBehaviorFor('agent')).toBe('agent')
+    expect(capabilityBehaviorFor('maestro')).toBe('agent')
     expect(capabilityBehaviorFor('plan')).toBe('plan')
     expect(capabilityBehaviorFor('ask')).toBe('ask')
-    expect(capabilityBehaviorFor('maestro')).toBe('maestro')
   })
 
   it('cycles through Design between Agent and Plan', () => {

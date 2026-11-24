@@ -4,7 +4,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { closeDb, freshDb } from '../helpers/db'
 import { buildAntigravityInstructions } from '../../src/main/chat/antigravity-subscription/session'
-import { MAESTRO_SYSTEM_SPEC } from '../../src/main/chat/maestro-prompt'
+import { MAESTRO_SWARM_CONTRACT } from '../../src/main/chat/maestro-prompt'
 import { createDefaultMaestroConfig, type MaestroTurnSnapshotV1 } from '../../src/shared/maestro'
 
 const h = vi.hoisted(() => ({ git: vi.fn() }))
@@ -99,17 +99,18 @@ describe('Antigravity instructions', () => {
     expect(instructions).toContain('Use only the tools listed in <maestrly_tools>')
   })
 
-  it('give the Maestro orchestrator its contract once and no skill catalog to load', async () => {
+  it('give the Maestro orchestrator the swarm contract once and keep its skill catalog', async () => {
     const skillDir = path.join(cwd, '.agents', 'skills', 'sentinel-skill')
     mkdirSync(skillDir, { recursive: true })
     writeFileSync(path.join(skillDir, 'SKILL.md'), '---\nname: sentinel-skill\ndescription: Sentinel skill.\n---\nBody')
     const agent = await build({ mode: 'agent' })
     expect(agent.skills.map((skill) => skill.name)).toContain('sentinel-skill')
     const maestro = await build({ mode: 'maestro', maestro: frozenMaestroTurn() })
-    expect(occurrences(maestro.instructions, MAESTRO_SYSTEM_SPEC)).toBe(1)
-    expect(maestro.skills).toEqual([])
-    expect(maestro.instructions).not.toContain('sentinel-skill')
+    expect(occurrences(maestro.instructions, MAESTRO_SWARM_CONTRACT)).toBe(1)
+    expect(maestro.skills.map((skill) => skill.name)).toContain('sentinel-skill')
+    expect(maestro.instructions).toContain('sentinel-skill')
     expect(maestro.instructions).toContain('# Maestro Agent Pool')
+    expect(maestro.instructions).toContain('Strategy: balanced')
   })
 
   it('compose a standalone chat as a general assistant with personal memory only', async () => {

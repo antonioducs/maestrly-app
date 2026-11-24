@@ -22,7 +22,6 @@ import type {
 import type { ChatBehavior } from '../../../shared/conversation-experience'
 import { capabilityBehaviorFor } from '../../../shared/chat-mode'
 import type { MaestroTurnSnapshotV1 } from '../../../shared/maestro'
-import type { MaestroLiveRunPort } from '../maestro-live'
 import { applyChatEvent, toolOutputText } from '../../../shared/chat'
 import { responseDurationMs } from '../../../shared/response-duration'
 import { getConversation, getConvUiPrefs } from '../../store'
@@ -117,20 +116,9 @@ import {
 } from './session-store'
 import { createClaudeStreamMapper } from './stream-map'
 import { createClaudeTaskRuntime, type ClaudeManagedTaskRunner } from './task-runtime'
-import {
-  MAESTRO_DELEGATE_TOOL_DESCRIPTION,
-  MAESTRO_DELEGATE_TOOL_SCHEMA,
-  maestroAgentsFromTurn,
-  renderMaestroAgentCatalog,
-} from '../maestro-delegation'
 import { withTaskComplexity } from '../subagent-route'
-import { renderMaestroTurnPolicy } from '../maestro-prompt'
+import { renderMaestroSwarmSection } from '../maestro-prompt'
 import { buildSubagentSupervisionTools } from '../maestro-supervision-tools'
-import {
-  markDelegationObserved,
-  unobservedTurnDelegations,
-  waitForTurnDelegationsTerminal,
-} from '../maestro-delegation-registry'
 import { buildClaudeToolBridge, CLAUDE_DISALLOWED_NATIVE_TOOLS, type ClaudeToolBridge } from './tools'
 import { conversationShellEnv } from '../conversation-env'
 import { normalizeClaudeUsage, type NormalizedClaudeUsage } from './usage'
@@ -173,7 +161,6 @@ export interface RunClaudeChatArgs {
   frozenResolvedModelId?: string
   mode: ChatBehavior
   maestro?: MaestroTurnSnapshotV1
-  maestroLive?: MaestroLiveRunPort
   permMode: ChatPermMode
   reasoningEffort?: string
   fastMode?: boolean
@@ -664,41 +651,34 @@ async function prepareRuntime(
     const allAgents = await listEffectiveAgents({
       cwd: args.cwd,
       conversationId: args.conversationId,
-      mode: capabilityMode === 'agent' || args.mode === 'maestro' ? 'agent' : 'plan',
+      mode: capabilityMode === 'agent' ? 'agent' : 'plan',
     })
     const agents =
-      args.mode === 'maestro' && args.maestro
-        ? maestroAgentsFromTurn(args.maestro, allAgents)
-        : capabilityMode === 'agent'
-          ? allAgents
-          : args.maestrlyUltra
-            ? allAgents.filter((agent) => agent.name === 'explore')
-            : []
-    const delegationToolName = args.mode === 'maestro' ? 'delegate' : 'task'
+      capabilityMode === 'agent'
+        ? allAgents
+        : args.maestrlyUltra
+          ? allAgents.filter((agent) => agent.name === 'explore')
+          : []
     const taskTools: ToolSet = agents.length
       ? {
-          [delegationToolName]: tool({
+          task: tool({
             description:
-              args.mode === 'maestro'
-                ? MAESTRO_DELEGATE_TOOL_DESCRIPTION
-                : 'Delegates one focused, self-contained task to an isolated Maestrly subagent. Include all required context.',
+              'Delegates one focused, self-contained task to an isolated Maestrly subagent. Include all required context.',
             // Independent subagents may run in parallel but remain mutators/idempotent in the ledger.
             metadata: { parallelSafe: true, readOnly: false },
             inputSchema: jsonSchema(
-              args.mode === 'maestro'
-                ? MAESTRO_DELEGATE_TOOL_SCHEMA
-                : withTaskComplexity(
-                    {
-                      type: 'object',
-                      properties: {
-                        agent: { type: 'string', enum: agents.map((agent) => agent.name) },
-                        prompt: { type: 'string' },
-                      },
-                      required: ['agent', 'prompt'],
-                      additionalProperties: false,
-                    },
-                    args.conversationId
-                  )
+              withTaskComplexity(
+                {
+                  type: 'object',
+                  properties: {
+                    agent: { type: 'string', enum: agents.map((agent) => agent.name) },
+                    prompt: { type: 'string' },
+                  },
+                  required: ['agent', 'prompt'],
+                  additionalProperties: false,
+                },
+                args.conversationId
+              )
             ),
             execute: async (input, options) => {
               if (!state.runTask) throw new Error('The Maestrly subagent executor is not ready.')
@@ -727,7 +707,7 @@ async function prepareRuntime(
       ? buildSubagentSupervisionTools({
           conversationId: args.conversationId,
           parentMessageId: assistantId,
-          maestro: args.mode === 'maestro',
+          maestro: false,
           signal: args.signal,
         })
       : {}
@@ -763,20 +743,13 @@ async function prepareRuntime(
       })
     const profileUltra = harnessUltraGuidance(harness, args.mode)
     const ultra = args.maestrlyUltra
-      ? args.mode === 'maestro'
-        ? [
-            'Maximum-rigor reasoning applies only to the orchestrator. Keep the frozen Strategy and choose agents deliberately from the Pool.',
-            profileUltra ?? '',
-          ]
-            .filter(Boolean)
-            .join('\n\n')
-        : args.mode === 'design'
-          ? [renderDesignUltraGuidance(args.mode), profileUltra ?? ''].filter(Boolean).join('\n\n')
-          : profileUltra
-            ? profileUltra
-            : args.mode === 'agent'
-              ? 'Maximum-rigor Maestrly Ultra mode is active. Decompose non-trivial work, delegate independent slices through task when useful, integrate results, verify, and review before finishing.'
-              : 'Maximum-rigor Maestrly Ultra mode is active. Stay read-only, investigate deeply, and cross-check the conclusion.'
+      ? args.mode === 'design'
+        ? [renderDesignUltraGuidance(args.mode), profileUltra ?? ''].filter(Boolean).join('\n\n')
+        : profileUltra
+          ? profileUltra
+          : capabilityMode === 'agent'
+            ? 'Maximum-rigor Maestrly Ultra mode is active. Decompose non-trivial work, delegate independent slices through task when useful, integrate results, verify, and review before finishing.'
+            : 'Maximum-rigor Maestrly Ultra mode is active. Stay read-only, investigate deeply, and cross-check the conclusion.'
       : ''
     const systemPrompt = [
       buildMaestrlyBasePrompt({
@@ -794,11 +767,9 @@ async function prepareRuntime(
       projectContext,
       skills.length ? `# ${args.projectId === null ? 'Available' : 'Project'} skills\n${skillsCatalog(skills)}` : '',
       agents.length
-        ? args.mode === 'maestro'
-          ? renderMaestroAgentCatalog(args.maestro!)
-          : `# Maestrly subagents\n${agentsCatalog(agents, args.conversationId, capabilityMode !== 'agent')}`
+        ? `# Maestrly subagents\n${agentsCatalog(agents, args.conversationId, capabilityMode !== 'agent')}`
         : '',
-      args.mode === 'maestro' && args.maestro ? renderMaestroTurnPolicy(args.maestro) : '',
+      args.mode === 'maestro' && args.maestro ? renderMaestroSwarmSection(args.maestro) : '',
       ultra ? `# Ultra mode\n${ultra}` : '',
       harness.prompts.environment.transient ? '' : `# Environment\n${env}`,
       autonomousPolicy(args.conversationId) ? AUTONOMOUS_INSTRUCTIONS : '',
@@ -1298,8 +1269,6 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
         permissionScope: args.permissionScope,
         cwd: args.cwd,
         mode: args.mode,
-        maestro: args.maestro,
-        maestroLive: args.maestroLive,
         permMode: args.permMode,
         selection: args.selection,
         reasoningEffort: args.reasoningEffort,
@@ -1393,7 +1362,6 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
       resumeSessionAt: resolution.resumeSessionAt,
       forkSession: resolution.forkSession,
     }
-    let maestroGuarded = false
     let rateLimitInfo: SDKRateLimitInfo | undefined
     let assistantFailure: unknown
     let failureCode: 'claude-accounts-exhausted' | undefined
@@ -1456,7 +1424,6 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
       state.toolJournal?.stopAccepting()
       // Provider completion does not own the lifetime of admitted host tasks.
       await state.toolJournal?.drain(args.signal)
-      if (args.mode === 'maestro') await waitForTurnDelegationsTerminal(args.conversationId, assistantId, args.signal)
       args.signal.throwIfAborted()
       persist()
       archiveAttempt()
@@ -1586,7 +1553,6 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
           transientContext: runtime!.transientContext,
         }
       )
-      maestroGuarded = false
       switchingAccount = false
       args.onFailoverTransition?.({
         scope: 'root',
@@ -1968,58 +1934,6 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
           continue
 
         if (!portableCompactionRequested || args.signal.aborted || state.planSubmitted) {
-          const pendingGuard =
-            args.mode === 'maestro' &&
-            !maestroGuarded &&
-            !args.signal.aborted &&
-            !state.planSubmitted &&
-            unobservedTurnDelegations(args.conversationId, assistantId).length > 0
-          if (pendingGuard) {
-            const attemptUsage = aggregateClaudeUsage(streamMapper.state().assistantUsageByMessageId.values())
-            if (attemptUsage) completedAttemptUsage.push(attemptUsage)
-            currentAttemptUsageArchived = true
-            const resumeSessionId = sessionId
-            const delegations = await waitForTurnDelegationsTerminal(args.conversationId, assistantId, args.signal)
-            for (const delegation of delegations) markDelegationObserved(delegation.id)
-            persist()
-            // A resumed session already holds the turn's images natively; only a fresh one needs them re-sent.
-            const continuationTranscript = renderClaudeSeed(liveHistory(), {
-              dropImages: args.dropImages,
-              ...(resumeSessionId ? { budget: { images: 0, bytes: 0 } } : {}),
-            })
-            const guardMessage: ChatMessage = {
-              id: randomUUID(),
-              conversationId: args.conversationId,
-              role: 'user',
-              internal: true,
-              parts: [
-                {
-                  type: 'text',
-                  id: randomUUID(),
-                  text:
-                    'Host guard: delegated sessions have settled. Inspect any needed transcript, reconcile every ' +
-                    `result, and only then produce the final answer. Sessions: ${JSON.stringify(
-                      delegations.map((entry) => ({
-                        sessionId: entry.id,
-                        agent: entry.agentName,
-                        status: entry.status,
-                        tools: entry.toolNames,
-                        files: entry.files,
-                        tests: entry.tests,
-                        error: entry.error,
-                      }))
-                    )}`,
-                },
-              ],
-              createdAt: Date.now(),
-            }
-            nextPrompt = buildClaudeSessionPrompt(guardMessage, continuationTranscript, {
-              dropImages: args.dropImages,
-            })
-            nextResume = resumeSessionId ? { resume: resumeSessionId } : {}
-            maestroGuarded = true
-            continue
-          }
           break
         }
         if (portableInterruptPromise) await settleWithin(portableInterruptPromise, 2_000, args.signal)
@@ -2027,7 +1941,6 @@ async function runClaudeChatTurn(args: RunClaudeChatArgs): Promise<RunClaudeChat
         // tool first, including results that never received a provider ACK.
         state.toolJournal?.stopAccepting()
         await state.toolJournal?.drain(args.signal)
-        if (args.mode === 'maestro') await waitForTurnDelegationsTerminal(args.conversationId, assistantId, args.signal)
         persist()
         let compactionContext = context as ClaudeContextSnapshot | null
 
