@@ -657,15 +657,17 @@ export function createInboxController(options: InboxControllerOptions): InboxCon
       dispatchSeen(keys)
     },
     markAllRead() {
-      const unreadKeys = state.items.filter((item) => item.unread && !isWaitingKind(item.kind)).map((item) => item.key)
-      if (unreadKeys.length === 0) return
+      const unread = state.items.filter((item) => item.unread)
+      if (unread.length === 0) return
+      const unreadKeys = unread.map((item) => item.key)
       for (const key of unreadKeys) restoredActive.delete(key)
       const currentNow = now()
       const { observations } = buildObservations()
       const reconciled = reconcileInbox(ledger, observations, currentNow)
       updateLedger(markInboxRead(reconciled, unreadKeys, currentNow))
       recompute()
-      dispatchSeen(unreadKeys)
+      // Waiting items lose their dot here but stay until answered: the server is told only about news.
+      dispatchSeen(unread.filter((item) => !isWaitingKind(item.kind)).map((item) => item.key))
     },
     dismiss(key) {
       restoredActive.delete(key)

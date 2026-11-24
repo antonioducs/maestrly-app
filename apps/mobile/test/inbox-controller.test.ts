@@ -233,8 +233,10 @@ describe('inbox controller', () => {
     controller.markAllRead()
     expect(controller.getState().counts).toEqual({ waiting: 1, unread: 0, total: 1 })
     expect(controller.getState().items.find((i) => i.key === 's1|request:atlas/req-1')?.group).toBe('waiting')
+    expect(controller.getState().items.find((i) => i.key === 's1|request:atlas/req-1')?.unread).toBe(false)
     expect(controller.getState().items.find((i) => i.key === 's1|bot:ledger')?.group).toBe('read')
     expect(sendSeen).toHaveBeenCalledTimes(1)
+    expect(sendSeen.mock.calls[0]?.[1]).not.toContain('request:atlas/req-1')
 
     // Dismiss hides an item; restore puts it back.
     const undo = controller.dismiss('s1|bot:ledger')
