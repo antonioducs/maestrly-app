@@ -14,7 +14,7 @@ Maestrly App is designed to protect:
 - conversations, prompts, generated assets, usage records, notes, memory, and
   project metadata;
 - repositories, worktrees, uncommitted changes, terminals, and command output;
-- Maestro plans, worker results, and permissions;
+- Maestro plans, swarm state, worker results, and permissions;
 - browser sessions, configured MCP transports, skills, and external tool results;
 - SQLite integrity and recoverable profile migrations; and
 - packaged application/runtime provenance and file boundaries.
@@ -1043,8 +1043,8 @@ line, scripts and executables, and every component with its support status.
   with the user's permissions, so they need an explicit approval of the exact
   list of hooks (event, matcher, command and timeout). Maestrly keeps a digest
   of that list and runs only hooks whose digest matches; an update that changes
-  them asks again. Hooks run only in Agent and Design conversations, never in
-  Ask, Plan or Maestro, nor for the reviewers of code and plan reviews, which
+  them asks again. Hooks run only in Agent, Design, and Maestro conversations,
+  never in Ask or Plan, nor for the reviewers of code and plan reviews, which
   run in Ask. Each runs with a time limit (60 seconds by default, at most 10
   minutes) and an output limit of 1 MiB, and its whole process group is ended
   on timeout or Stop. A hook can deny a tool call or block a prompt, from any
@@ -1174,6 +1174,19 @@ The host owns permission prompts, tool routing, and project context. Subagents
 inherit explicit execution profiles and cannot silently become a separate
 authority. Context budgeting and redaction reduce accidental disclosure but
 cannot determine whether user-authored prompt content is sensitive.
+
+A Maestro orchestrator starts worker conversations from enabled Agent Pool
+resources without asking for dispatch confirmation, including on host turns
+woken by worker results; the host forces isolated worktrees branched from the
+orchestrator's HEAD with `reportBack` enabled and refuses custom `settings`,
+shared placement, and `target.workspaceId`/`target.baseBranch`. Worker
+conversations — and any other conversation created by an agent — cannot start
+further conversations or create projects, and subagents never receive dispatch
+or conversation-link tools. The fixed three-hop limit on agent-to-agent turns
+between conversations has been removed (`hop` is still recorded for
+diagnostics); stopping a conversation — or using **Stop swarm** in a Maestro
+orchestrator, which cancels the orchestrator turn and every implementing worker
+turn — is the brake.
 
 The [Maestrly assistant](chat-context.md#maestrly-assistant) acts only through
 existing paths: it sends messages as the person, calls the bot actions the

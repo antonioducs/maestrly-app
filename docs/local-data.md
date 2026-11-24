@@ -49,6 +49,31 @@ Each entry records the effective chat `mode` frozen for that work (`agent`,
   as unknown in exports (`mode: null`) and grouped usage aggregation
   (`'unknown'`).
 
+## Maestro swarm state
+
+`maestro_swarm_tasks` in the app database (`maestrly-agents.db`) stores the task
+board of each Maestro orchestrator conversation, keyed by
+`(orchestrator_conversation_id, task_key)`. Each row records `title`,
+`resource_id`, `depends_on_json`, the worker's `conversation_id` and `branch`,
+`base_commit` (the commit the worker branch started from; a branch still at it
+is never marked merged), `phase` (`queued`, `implementing`, `delivered`, `reviewing`, `changes`,
+`merged`, `blocked`, or `failed`), `changes_reason` (`review` or `conflict`),
+`review_round`, `note`, `merged_commit`, and timestamps. The host injects this
+board into each orchestrator turn as a hidden `maestro-swarm.md` part so
+compaction and restarts preserve swarm state; rows are removed by foreign-key
+cascade when the orchestrator conversation is deleted or when local data is
+reset.
+
+Global Maestro Agent Pool and strategy configuration is stored under
+`chat.maestro.v1` in `app_settings` (schema version 2: each resource stores a
+conversation `mode` of `agent`, `design`, or `ask` instead of `capability`, and
+no longer binds an imported physical `agentName`; version 1 configurations
+migrate automatically on read).
+
+The legacy `chat_maestro_runs` and `chat_maestro_run_messages` tables remain in
+the database schema so older profiles still open cleanly, but are no longer read
+or written.
+
 ## Paired bot servers
 
 `fleet.servers` in `app_settings` lists the bot servers this computer is paired with, in pairing order: this

@@ -87,11 +87,17 @@ API-key, Codex, Claude, GitHub Copilot, Grok, Google Antigravity ACP, or
 compatible provider protocols. Provider failures are isolated from other local
 features.
 
-Maestro coordinates parent and subagent turns through explicit execution
-profiles. The host remains authoritative for agent selection, tool catalogs,
-permission prompts, project scope, lifecycle cleanup, and usage accounting.
-Provider-native tools are disabled or bridged through host-owned controls where
-the integration contract permits it.
+Maestro orchestrates a swarm of worker conversations from an orchestrator
+conversation with Agent capabilities, conversation dispatch/linking tools, and
+`swarm_update`. Each task starts a persistent worker conversation in its own
+worktree branched from the orchestrator's HEAD, with its model candidates, mode
+(`agent`, `design`, or `ask`), and instructions resolved from the Agent Pool;
+swarm state is persisted in SQLite (`maestro_swarm_tasks`) and injected into
+each orchestrator turn as a hidden `maestro-swarm.md` part. The host remains
+authoritative for resource resolution, tool catalogs, permission prompts,
+project scope, lifecycle, and usage accounting. Provider-native tools are
+disabled or bridged through host-owned controls where the integration contract
+permits it.
 
 Credentials managed by the app are read in the main process through Electron
 `safeStorage`. Subscription CLIs can use their own isolated homes or credential
@@ -119,7 +125,7 @@ a tool exists, then reads its schema when it needs it (`chat/mcp-discovery.ts`,
   Claude Code announces their names, and the model loads a schema when it needs
   one. Claude Code defers nothing while `ToolSearch` is off.
 - **Every other runtime** (Cursor, Google Antigravity, API keys without tool
-  search, Grok, subagents and Maestro workers on any of them). No wrapper is
+  search, Grok, and subagents on any of them). No wrapper is
   built. `mcp_search` carries an index of tool names within a fixed budget (a
   small server lists every tool, a large one lists what fits and counts the
   rest), ranks a keyword query, reads exact names or lists names a page at a
@@ -206,8 +212,7 @@ reviewers run as Ask subagents, so no hook runs for them. `startSend` runs
 message (outside the cached project context), records the session's
 compaction boundary in the conversation's preferences (`hookSession`, which a
 conversation move leaves behind), and turns a `Stop`
-hook's reason into an internal continuation turn, like the Maestro
-reconciliation guard. Hook notices are a stream event (`hook-notice`) that is
+hook's reason into an internal continuation turn, like the Plan guard. Hook notices are a stream event (`hook-notice`) that is
 never persisted. The mobile API of a host (`remote-host/server/mobile-api.ts`)
 lists plugin servers by the conversation's scope, offers each account of a
 server with several as an entry `<serverId>#<accountId>`, and reports a blocked

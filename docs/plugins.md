@@ -118,8 +118,8 @@ every model.
 
 - **Approval.** Hooks run only after you approve them, at install or later with the **Hooks** switch under
   **Installed**. An update that changes them asks again.
-- **Where.** Hooks run only in Agent and Design conversations, on the host that runs the conversation, in its folder.
-  They never run in Ask, Plan, or Maestro conversations, nor for the reviewers of a code or plan review, which run in
+- **Where.** Hooks run only in Agent, Design, and Maestro conversations, on the host that runs the conversation, in its
+  folder. They never run in Ask or Plan conversations, nor for the reviewers of a code or plan review, which run in
   Ask.
 - **Events.**
 

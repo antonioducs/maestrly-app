@@ -90,7 +90,7 @@ and `null` only disables a reference or option that accepts it. There is no `ext
 | `prompts.styleAndWork` | Style and work body of the Maestrly layout |
 | `prompts.behaviorHeader` | Emit the execution-scoped behavioral header |
 | `prompts.subagent`, `prompts.compaction` | Texts appended to subagent and compaction prompts |
-| `prompts.ultra` | `{ base, byMode: { agent, ask, plan, design, maestro } }` |
+| `prompts.ultra` | `{ base, byMode: { agent, ask, plan, design, maestro? } }` (`maestro` falls back to `agent`) |
 | `prompts.developerPrefix` | `{ base, asyncTools? }` for transports with separate developer instructions |
 | `prompts.environment` | `placement` (`system`, `last-user-message`) and `transient` |
 | `reasoning.manifestEfforts` | Efforts the profile allows; `null` keeps the runtime catalog authoritative |
@@ -112,8 +112,8 @@ example, BYOK Responses streams over HTTP/SSE, so steering and live reasoning st
 a profile claims.
 
 Host contracts are composed outside profile text and cannot be removed by configuration: mode
-restrictions (Ask, Plan, Design, Maestro), the actual toolset, permissions, memory and project
-guidance, Maestro policy and account identity.
+contracts and restrictions (Ask, Plan, Design, Maestro), the actual toolset, permissions, memory
+and project guidance, Maestro swarm contract and account identity.
 
 ## Flags
 
@@ -198,7 +198,7 @@ over. `apps/desktop/src/main/chat/tool-robustness/` handles them the same way fo
 
 | Layer | Applied in | Runtimes |
 |---|---|---|
-| Lenient input | `adaptToolSetForModel` | All: BYOK, subagents, Maestro workers, Claude, Codex, Copilot, Antigravity, Cursor |
+| Lenient input | `adaptToolSetForModel` | All: BYOK, subagents, Claude, Codex, Copilot, Antigravity, Cursor |
 | Loop guard | `adaptToolSetForModel`, as the outermost wrapper | All where Maestrly executes the tool |
 | JSON and name repair | `repairToolCall` of `streamText` | BYOK and its subagents |
 | History, call ids, schema dialects | model middleware in `provider.ts` | BYOK Anthropic and OpenAI-compatible |
