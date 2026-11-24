@@ -6,6 +6,8 @@ import {
   FLEET_ENVIRONMENT_LIMITS,
   dictationProviderSchema,
   type DictationProvider,
+  fleetAttentionEntrySchema,
+  type FleetAttentionEntry,
   fleetErrorCodeSchema,
   fleetPushRegistrationSchema,
   type FleetDeviceClient,
@@ -325,7 +327,28 @@ function pushRegistrationRow(row: Row): FleetPushRegistration {
     platform: row.platform,
     locale: row.locale,
     preferences: JSON.parse(String(row.preferences_json)),
+    ...(row.badge_others === null || row.badge_others === undefined ? {} : { badgeOthers: Number(row.badge_others) }),
     updatedAt: row.updated_at,
+  })
+}
+
+function attentionEntryRow(row: Row): FleetAttentionEntry {
+  return fleetAttentionEntrySchema.parse({
+    key: row.key,
+    source: row.source,
+    kind: row.kind,
+    at: row.at,
+    title: row.title,
+    ...(row.environment_id === null || row.environment_id === undefined
+      ? {}
+      : { environmentId: String(row.environment_id) }),
+    ...(row.bot_id === null || row.bot_id === undefined ? {} : { botId: String(row.bot_id) }),
+    ...(row.conversation_id === null || row.conversation_id === undefined
+      ? {}
+      : { conversationId: String(row.conversation_id) }),
+    ...(row.request_id === null || row.request_id === undefined ? {} : { requestId: String(row.request_id) }),
+    ...(row.run_id === null || row.run_id === undefined ? {} : { runId: String(row.run_id) }),
+    ...(row.thread_id === null || row.thread_id === undefined ? {} : { threadId: String(row.thread_id) }),
   })
 }
 
@@ -397,7 +420,7 @@ export class Store {
     const version = Number(
       (this.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get() as Row | undefined)?.value ?? 0
     )
-    if (version > 25) throw new Error('Gateway database schema is newer than this binary')
+    if (version > 26) throw new Error('Gateway database schema is newer than this binary')
     if (version === 0) {
       this.db.exec(`
         CREATE TABLE devices (id TEXT PRIMARY KEY, name TEXT NOT NULL, token_sha256 TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, last_seen_at TEXT, revoked_at TEXT);
@@ -608,6 +631,7 @@ export class Store {
       this.db.prepare("UPDATE meta SET value='24' WHERE key='schema_version'").run()
     }
     if (version <= 24) this.migrateFleetOrder()
+    if (version <= 25) this.migrateAttention()
 
     if (this.db.prepare('PRAGMA foreign_key_check').all().length)
       throw new Error('Gateway migration foreign key check failed')
@@ -754,6 +778,25 @@ export class Store {
       UPDATE environments SET position=(SELECT COUNT(*) FROM environments AS older WHERE older.created_at<environments.created_at OR (older.created_at=environments.created_at AND older.id<environments.id)) WHERE position IS NULL;
     `)
     this.db.prepare("UPDATE meta SET value='25' WHERE key='schema_version'").run()
+  }
+  /**
+   * Schema 26: server-wide attention center (`attention`) persisted across restarts, and optional `badge_others` on
+   * phone push registrations so each push carries an accurate app-icon badge across all paired servers.
+   */
+  private migrateAttention() {
+    const columns = new Set(
+      (this.db.prepare('PRAGMA table_info(push_registrations)').all() as Row[]).map((row) => String(row.name))
+    )
+    if (!columns.has('badge_others'))
+      this.db.exec(
+        "ALTER TABLE push_registrations ADD COLUMN badge_others INTEGER CHECK (badge_others IS NULL OR (typeof(badge_others) = 'integer' AND badge_others >= 0))"
+      )
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS attention_entries (key TEXT PRIMARY KEY, source TEXT NOT NULL CHECK (source IN ('chat','bot','request')), kind TEXT NOT NULL CHECK (kind IN ('question','approval','plan','help','error','finished','activity')), at TEXT NOT NULL, title TEXT NOT NULL, environment_id TEXT, bot_id TEXT, conversation_id TEXT, request_id TEXT, run_id TEXT, thread_id TEXT);
+      CREATE INDEX IF NOT EXISTS idx_attention_entries_source_env ON attention_entries(source, environment_id);
+      CREATE INDEX IF NOT EXISTS idx_attention_entries_bot ON attention_entries(bot_id);
+    `)
+    this.db.prepare("UPDATE meta SET value='26' WHERE key='schema_version'").run()
   }
   private routineRun(row: Row): StoredRoutineRun {
     const json = <T>(value: unknown): T | null => (value ? (JSON.parse(String(value)) as T) : null)
@@ -1078,7 +1121,7 @@ export class Store {
     const at = new Date().toISOString()
     this.db
       .prepare(
-        'INSERT INTO push_registrations(device_id,provider,token,platform,locale,preferences_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(device_id) DO UPDATE SET provider=excluded.provider, token=excluded.token, platform=excluded.platform, locale=excluded.locale, preferences_json=excluded.preferences_json, updated_at=excluded.updated_at'
+        'INSERT INTO push_registrations(device_id,provider,token,platform,locale,preferences_json,badge_others,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(device_id) DO UPDATE SET provider=excluded.provider, token=excluded.token, platform=excluded.platform, locale=excluded.locale, preferences_json=excluded.preferences_json, badge_others=excluded.badge_others, updated_at=excluded.updated_at'
       )
       .run(
         deviceId,
@@ -1087,6 +1130,7 @@ export class Store {
         request.platform,
         request.locale,
         JSON.stringify(request.preferences),
+        request.badgeOthers ?? null,
         at,
         at
       )
@@ -1094,6 +1138,44 @@ export class Store {
   }
   deletePushRegistration(deviceId: string): boolean {
     return this.db.prepare('DELETE FROM push_registrations WHERE device_id=?').run(deviceId).changes > 0
+  }
+  listAttentionEntries(): FleetAttentionEntry[] {
+    const rows = this.db.prepare('SELECT * FROM attention_entries ORDER BY at DESC, key ASC').all() as Row[]
+    return rows.flatMap((row) => {
+      try {
+        return [attentionEntryRow(row)]
+      } catch {
+        return []
+      }
+    })
+  }
+  applyAttentionDelta(upsert: readonly FleetAttentionEntry[], remove: readonly string[]): void {
+    if (!upsert.length && !remove.length) return
+    this.transaction(() => {
+      if (remove.length) {
+        const del = this.db.prepare('DELETE FROM attention_entries WHERE key=?')
+        for (const key of remove) del.run(key)
+      }
+      if (upsert.length) {
+        const put = this.db.prepare(
+          'INSERT INTO attention_entries(key,source,kind,at,title,environment_id,bot_id,conversation_id,request_id,run_id,thread_id) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET source=excluded.source, kind=excluded.kind, at=excluded.at, title=excluded.title, environment_id=excluded.environment_id, bot_id=excluded.bot_id, conversation_id=excluded.conversation_id, request_id=excluded.request_id, run_id=excluded.run_id, thread_id=excluded.thread_id'
+        )
+        for (const entry of upsert)
+          put.run(
+            entry.key,
+            entry.source,
+            entry.kind,
+            entry.at,
+            entry.title,
+            entry.environmentId ?? null,
+            entry.botId ?? null,
+            entry.conversationId ?? null,
+            entry.requestId ?? null,
+            entry.runId ?? null,
+            entry.threadId ?? null
+          )
+      }
+    })
   }
   /** The server's dictation key, in plaintext like the other secrets the gateway keeps. */
   dictationSettings(): StoredDictation | null {
@@ -1900,6 +1982,7 @@ export class Store {
       this.db.prepare('DELETE FROM host_secrets WHERE environment_id=?').run(id)
       this.db.prepare('DELETE FROM environment_desktop_links WHERE environment_id=?').run(id)
       this.db.prepare('DELETE FROM backup_environments WHERE environment_id=?').run(id)
+      this.db.prepare('DELETE FROM attention_entries WHERE environment_id=?').run(id)
       this.db.prepare('DELETE FROM environments WHERE id=?').run(id)
       return { botIds, ownerMemoriesDeleted }
     })
@@ -2374,6 +2457,7 @@ export class Store {
         )
       this.db.prepare('DELETE FROM bot_secrets WHERE bot_id=?').run(id)
       this.db.prepare('DELETE FROM bot_avatars WHERE bot_id=?').run(id)
+      this.db.prepare('DELETE FROM attention_entries WHERE bot_id=?').run(id)
       this.db.prepare('DELETE FROM bots WHERE id=?').run(id)
     })
   }

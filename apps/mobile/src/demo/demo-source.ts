@@ -1,6 +1,7 @@
 import {
   compareFleetTranscriptItems,
   deriveBotId,
+  FLEET_ATTENTION_FEATURE,
   FLEET_DEVICES_FEATURE,
   FLEET_PHONES_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
@@ -13,8 +14,12 @@ import {
   FLEET_PEER_CONVERSATIONS_FEATURE,
   FLEET_ROUTINE_CONVERSATIONS_FEATURE,
   FLEET_TRANSCRIPT_REASONING_FEATURE,
+  fleetAttentionKey,
   fleetFileQuotaBytes,
   summarizeText,
+  type FleetAttentionEntry,
+  type FleetAttentionSeenRequest,
+  type FleetAttentionUpdatedEvent,
   type FleetBot,
   type FleetCreateBotRequest,
   type FleetDevice,
@@ -31,6 +36,7 @@ import {
   type FleetTakeoverState,
   type FleetTranscriptItem,
 } from '@maestrly/bot-fleet-protocol'
+import { botRequestKind, isWaitingKind, type InboxLedger } from '@maestrly/bot-fleet-protocol/inbox'
 import { GatewayError, type CallOptions, type GatewayClient, type RouteKey } from '../gateway/client'
 import { joinAvailability } from '../fleet/create-bot'
 import { botRecord } from '../fleet/factories'
@@ -51,6 +57,7 @@ export const DEMO_FEATURES = [
   FLEET_PEER_CONVERSATIONS_FEATURE,
   FLEET_FILES_MANAGE_FEATURE,
   FLEET_PHONE_SCREENS_FEATURE,
+  FLEET_ATTENTION_FEATURE,
 ]
 
 /** The demo server as a paired server: it never leaves the phone. */
@@ -61,6 +68,27 @@ export const DEMO_SERVER: PairedServer = {
   deviceName: 'Phone',
   features: DEMO_FEATURES,
   pairedAt: '2026-10-12T12:00:00.000Z',
+}
+
+/** One already-read demo item seeded into a fresh ledger so the notifications center shows all three groups immediately. */
+export function demoInitialReadEntries(now: number): InboxLedger<string> {
+  const minute = 60_000
+  const key = `${DEMO_SERVER.id}|${fleetAttentionKey.chat('company', 'k-roles')}`
+  return {
+    [key]: {
+      kind: 'finished',
+      at: now - 35 * minute,
+      readAt: now - 25 * minute,
+      dismissedAt: null,
+      view: {
+        source: 'chat',
+        title: 'Read-only role for auditors',
+        summary: null,
+        place: { key: `${DEMO_SERVER.id}/company`, label: `${DEMO_SERVER.name} · Company` },
+        target: { kind: 'conversation', conversationId: 'k-roles' },
+      },
+    },
+  }
 }
 
 const PLACEHOLDER_IMAGE =
@@ -141,6 +169,47 @@ export function createDemoSource(options: { stepMs?: number; autoplay?: boolean 
   const emit = (event: FleetGatewayEvent) => {
     for (const listener of listeners) listener.onEvent(event)
   }
+  const emitAttention = (event: FleetAttentionUpdatedEvent) => {
+    for (const listener of listeners) listener.onAttention?.(event)
+  }
+  const attentionEntries = new Map<string, FleetAttentionEntry>()
+  const requestAttentionEntry = (item: FleetInboxItem): FleetAttentionEntry => {
+    const bot = bots.get(item.botId)
+    return {
+      key: fleetAttentionKey.request(item.botId, item.interaction.id),
+      source: 'request',
+      kind: botRequestKind(item),
+      at: item.interaction.at,
+      title: bot?.name ?? item.botId,
+      environmentId: bot?.environmentId ?? null,
+      botId: item.botId,
+      requestId: item.interaction.id,
+      ...(item.interaction.runId ? { runId: item.interaction.runId } : {}),
+    }
+  }
+  const syncRequestAttention = (items: FleetInboxItem[], broadcast: boolean) => {
+    const nextRequestKeys = new Set<string>()
+    const upsertEntries: FleetAttentionEntry[] = []
+    for (const item of items) {
+      const entry = requestAttentionEntry(item)
+      nextRequestKeys.add(entry.key)
+      const previous = attentionEntries.get(entry.key)
+      if (!previous || previous.at !== entry.at || previous.kind !== entry.kind) {
+        attentionEntries.set(entry.key, entry)
+        upsertEntries.push(entry)
+      }
+    }
+    const removedKeys: string[] = []
+    for (const [key, entry] of attentionEntries) {
+      if (entry.source === 'request' && !nextRequestKeys.has(key)) {
+        attentionEntries.delete(key)
+        removedKeys.push(key)
+      }
+    }
+    if (broadcast && (upsertEntries.length > 0 || removedKeys.length > 0)) {
+      emitAttention({ type: 'attention.updated', upsert: upsertEntries, remove: removedKeys })
+    }
+  }
   const requireBot = (id: string): FleetBot => {
     const bot = bots.get(id)
     if (!bot) throw new GatewayError('NOT_FOUND', 404, 'Bot not found')
@@ -166,6 +235,7 @@ export function createDemoSource(options: { stepMs?: number; autoplay?: boolean 
   const setInbox = (items: FleetInboxItem[]) => {
     inbox = items
     emit({ type: 'inbox.updated', at: stamp(), items })
+    syncRequestAttention(items, true)
   }
   // The files the bots shared: Pixel's fill its space, the others have none yet.
   const fileWorld = demoFilesWorld(Date.now())
@@ -235,6 +305,61 @@ export function createDemoSource(options: { stepMs?: number; autoplay?: boolean 
         interaction: { kind: 'question', id: item.toolCallId, at: item.at, questions: item.questions, itemId: item.id },
       })
     }
+  }
+
+  // Seed initial attention entries covering waiting (approval, question, plan) and unread news (finished, error)
+  // across all four demo environments (studio, research, personal, company).
+  syncRequestAttention(inbox, false)
+  const minutesAgo = (minutes: number) => new Date(clock - minutes * 60_000).toISOString()
+  for (const entry of [
+    {
+      key: fleetAttentionKey.chat('personal', 'c-push'),
+      source: 'chat',
+      kind: 'plan',
+      at: minutesAgo(6),
+      title: 'Expo push sender interface',
+      environmentId: 'personal',
+      conversationId: 'c-push',
+    },
+    {
+      key: fleetAttentionKey.bot('atlas'),
+      source: 'bot',
+      kind: 'finished',
+      at: minutesAgo(8),
+      title: 'Atlas',
+      environmentId: 'studio',
+      botId: 'atlas',
+      threadId: 'thread-pixel',
+    },
+    {
+      key: fleetAttentionKey.chat('company', 'k-invoices'),
+      source: 'chat',
+      kind: 'error',
+      at: minutesAgo(12),
+      title: 'Invoice export timeouts',
+      environmentId: 'company',
+      conversationId: 'k-invoices',
+    },
+    {
+      key: fleetAttentionKey.chat('personal', 'c-flaky'),
+      source: 'chat',
+      kind: 'finished',
+      at: minutesAgo(18),
+      title: 'Fix flaky gateway reconnect test',
+      environmentId: 'personal',
+      conversationId: 'c-flaky',
+    },
+    {
+      key: fleetAttentionKey.bot('ledger'),
+      source: 'bot',
+      kind: 'finished',
+      at: minutesAgo(30),
+      title: 'Ledger',
+      environmentId: 'research',
+      botId: 'ledger',
+    },
+  ] satisfies FleetAttentionEntry[]) {
+    attentionEntries.set(entry.key, entry)
   }
 
   const isRunning = (botId: string) => bots.get(botId)?.status === 'working'
@@ -617,7 +742,14 @@ export function createDemoSource(options: { stepMs?: number; autoplay?: boolean 
     if (lane !== undefined) return lane
     switch (key) {
       case 'meta':
-        return { protocol: 1, gatewayVersion: 'demo', botImage: 'demo', botImageVersion: null, features: DEMO_FEATURES }
+        return {
+          protocol: 1,
+          gatewayVersion: 'demo',
+          botImage: 'demo',
+          botImageVersion: null,
+          features: DEMO_FEATURES.filter((feature) => feature !== FLEET_ATTENTION_FEATURE),
+          moreFeatures: [FLEET_ATTENTION_FEATURE],
+        }
       case 'botsList':
         return { bots: order.map((botId) => bots.get(botId)).filter(Boolean) }
       case 'botGet':
@@ -628,6 +760,20 @@ export function createDemoSource(options: { stepMs?: number; autoplay?: boolean 
         return { environments: world.environments }
       case 'inbox':
         return { items: inbox }
+      case 'attention':
+        return { entries: [...attentionEntries.values()], at: stamp() }
+      case 'attentionSeen': {
+        const { keys } = body as FleetAttentionSeenRequest
+        const cleared: string[] = []
+        for (const entryKey of keys) {
+          const existing = attentionEntries.get(entryKey)
+          if (!existing || isWaitingKind(existing.kind)) continue
+          attentionEntries.delete(entryKey)
+          cleared.push(entryKey)
+        }
+        if (cleared.length > 0) emitAttention({ type: 'attention.updated', upsert: [], remove: cleared })
+        return { cleared }
+      }
       case 'botTranscript': {
         requireBot(id)
         const all = transcripts[id]

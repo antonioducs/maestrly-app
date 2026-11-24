@@ -1,4 +1,4 @@
-import type { FleetGatewayEvent } from '@maestrly/bot-fleet-protocol'
+import type { FleetAttentionUpdatedEvent, FleetGatewayEvent } from '@maestrly/bot-fleet-protocol'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { openEventStream, retryDelay, type StreamingFetch, type StreamState } from '../src/gateway/event-stream'
 
@@ -43,6 +43,7 @@ class Connection {
 function harness(statuses: number[] = []) {
   const connections: Connection[] = []
   const events: FleetGatewayEvent[] = []
+  const attention: FleetAttentionUpdatedEvent[] = []
   const states: Array<[StreamState, number | undefined]> = []
   const fetch = vi.fn<StreamingFetch>(async (_url, init) => {
     const status = statuses.shift() ?? 200
@@ -56,10 +57,11 @@ function harness(statuses: number[] = []) {
     fetch,
     createDecoder: () => new TextDecoder(),
     onEvent: (event) => events.push(event),
+    onAttention: (event) => attention.push(event),
     onState: (state, detail) => states.push([state, detail?.retryInMs]),
     random: () => 0.5,
   })
-  return { connections, events, states, fetch, stream }
+  return { connections, events, attention, states, fetch, stream }
 }
 
 const flush = () => vi.advanceTimersByTimeAsync(0)
@@ -205,5 +207,35 @@ describe('gateway event stream', () => {
     await flush()
     expect(events).toHaveLength(1)
     expect(cancel).toHaveBeenCalled()
+  })
+
+  it('routes attention.updated frames to onAttention without forwarding them to onEvent', async () => {
+    const h = harness()
+    await flush()
+    h.connections[0].push(hello)
+    h.connections[0].push(
+      frame({
+        type: 'attention.updated',
+        upsert: [
+          {
+            key: 'chat:studio/c1',
+            source: 'chat',
+            kind: 'finished',
+            at,
+            title: 'Build complete',
+            environmentId: 'studio',
+            conversationId: 'c1',
+          },
+        ],
+        remove: ['chat:studio/old'],
+      })
+    )
+    await flush()
+    expect(h.events).toHaveLength(1)
+    expect(h.events[0]?.type).toBe('hello')
+    expect(h.attention).toHaveLength(1)
+    expect(h.attention[0]?.upsert).toHaveLength(1)
+    expect(h.attention[0]?.remove).toEqual(['chat:studio/old'])
+    h.stream.close()
   })
 })

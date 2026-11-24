@@ -1,4 +1,9 @@
-import type { FleetActivityEntry, FleetGatewayEvent } from '@maestrly/bot-fleet-protocol'
+import {
+  FLEET_ATTENTION_FEATURE,
+  fleetAttentionKey,
+  type FleetActivityEntry,
+  type FleetGatewayEvent,
+} from '@maestrly/bot-fleet-protocol'
 import { type FleetServerId, fleetKey } from '../../shared/fleet-servers'
 import type { FleetBotAttentionKind, NotificationTarget } from '../../shared/notifications'
 import { type FleetBotNoticeKind, fleetBotEventFor } from '../fleet/client/alerts'
@@ -15,6 +20,23 @@ export interface FleetBotNoticesDeps {
   /** The server's name when the owner pairs several, to tell their bots apart; null otherwise. */
   serverName(serverId: FleetServerId): string | null
   open(target: NotificationTarget): void
+  /** Notifies the server's gateway when the owner sees a bot on this desktop. */
+  onSeen?(serverId: FleetServerId, botId: string): void
+}
+
+export function notifyBotSeenOnGateway(
+  client:
+    | {
+        hasFeature(feature: string): boolean
+        call(key: 'attentionSeen', options: { body: { keys: string[] } }): Promise<unknown>
+      }
+    | null
+    | undefined,
+  botId: string,
+  logError: (error: unknown) => void = (error) => console.warn('[notifications] attentionSeen failed:', error)
+): void {
+  if (!client?.hasFeature(FLEET_ATTENTION_FEATURE)) return
+  void client.call('attentionSeen', { body: { keys: [fleetAttentionKey.bot(botId)] } }).catch(logError)
 }
 
 /** A run or a thread as its server tells every device of the owner's, with what they have seen of it. */
@@ -52,9 +74,14 @@ export class FleetBotNotices {
 
   live(serverId: FleetServerId, entry: FleetActivityEntry): void {
     const event = fleetBotEventFor(entry)
-    if (!event || this.deps.sees(serverId, event.botId)) return
+    if (!event) return
     const { botId, runId, threadId, lane } = event
-    if (event.mark && !(lane && this.seenRuns.has(`${fleetKey(serverId, botId)}:${lane}`))) {
+    const wouldMark = event.mark && !(lane && this.seenRuns.has(`${fleetKey(serverId, botId)}:${lane}`))
+    if (this.deps.sees(serverId, botId)) {
+      if (wouldMark) this.deps.onSeen?.(serverId, botId)
+      return
+    }
+    if (wouldMark) {
       const at = Date.parse(entry.at)
       this.deps.attention.mark(serverId, botId, lane, {
         kind: attentionKind(event.notice),
@@ -133,5 +160,6 @@ export class FleetBotNotices {
   seen(serverId: FleetServerId, botId: string): void {
     this.deps.attention.clear(serverId, botId)
     this.deps.notices.dismissPrefix(noticePrefix(serverId, botId))
+    this.deps.onSeen?.(serverId, botId)
   }
 }

@@ -54,7 +54,7 @@ import {
   fleetFileIdSchema,
   fleetFileRefSchema,
   fleetInstanceEventSchema,
-  fleetReaderWantsChatAttention,
+  fleetReaderChatAttentionVersion,
   fleetReaderWantsReasoning,
   fleetReaderWantsRoutineRuns,
   fleetTranscriptItemReadable,
@@ -76,6 +76,9 @@ import {
   type FleetBotOwnSkillsSettings,
   type FleetBotOwnSkillVersionFiles,
   type FleetBotSkills,
+  type FleetChatAttentionClearRequest,
+  type FleetChatAttentionClearResponse,
+  type FleetChatAttentionSnapshotItem,
   type FleetConversationCallRequest,
   type FleetEditMessageRequest,
   type FleetFileRef,
@@ -283,6 +286,12 @@ export interface InstanceEnvironment {
   open(target: FleetUiOpenRequest['target']): Promise<void>
   /** Starts checks for Claude Code and Codex releases in the background; their results arrive in bot statuses. */
   checkRuntimes(): void
+  /** Current chat attention items on a workspaces host (`chat-attention-sync`), for `chatAttention=2` readers. */
+  chatAttentionSnapshot?(): FleetChatAttentionSnapshotItem[]
+  /** Clears attention marks on a workspaces host (`chat-attention-sync`). */
+  clearChatAttention?(
+    conversationIds: string[]
+  ): Promise<FleetChatAttentionClearResponse> | FleetChatAttentionClearResponse
 }
 
 // `botId` defaults to null when the event is parsed: events of the environment itself name no bot. Fields with
@@ -295,9 +304,15 @@ type EventPayload = {
 }[EventInput['type']]
 export class InstanceEvents {
   private seq = 0
+  private evictedSeq = 0
   private ring: FleetInstanceEvent[] = []
   private subscribers = new Set<(event: FleetInstanceEvent) => void>()
   get lastSeq(): number {
+    return this.seq
+  }
+  /** Allocates a sequence number for a connection-scoped event that is not stored in the replay ring. */
+  allocateSeq(): number {
+    this.seq += 1
     return this.seq
   }
   publish(event: EventPayload): FleetInstanceEvent {
@@ -306,13 +321,16 @@ export class InstanceEvents {
     const full = fleetInstanceEventSchema.parse({ ...payload, seq, at: new Date().toISOString() })
     this.seq = seq
     this.ring.push(full)
-    if (this.ring.length > 2_000) this.ring.shift()
+    if (this.ring.length > 2_000) {
+      const dropped = this.ring.shift()
+      if (dropped) this.evictedSeq = dropped.seq
+    }
     for (const send of this.subscribers) send(full)
     return full
   }
   replay(since: number): FleetInstanceEvent[] | null {
     if (since < 0 || !Number.isSafeInteger(since) || since > this.seq) return null
-    if (this.ring.length && since < this.ring[0].seq - 1) return null
+    if (since < this.evictedSeq) return null
     return this.ring.filter((event) => event.seq > since)
   }
   subscribe(send: (event: FleetInstanceEvent) => void): () => void {
@@ -425,25 +443,34 @@ function parseFlag(url: URL, name: 'purge' | 'replace' | 'folder'): boolean {
 function sseFrame(event: FleetInstanceEvent): string {
   return `id: ${event.seq}\nevent: fleet\ndata: ${JSON.stringify(event)}\n\n`
 }
-function streamEvents(request: IncomingMessage, response: ServerResponse, url: URL, events: InstanceEvents): void {
+function streamEvents(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL,
+  environment: InstanceEnvironment
+): void {
+  const { events } = environment
   const raw = url.searchParams.get('since') ?? '0'
   if (!/^\d+$/.test(raw)) throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Invalid event cursor.')
   const since = Number(raw)
   if (!Number.isSafeInteger(since)) throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Invalid event cursor.')
   // A gateway that does not read `reasoning` items never gets them: it would fail on the whole stream.
   const reasoning = fleetReaderWantsReasoning(url.searchParams)
-  // Nor `chat.attention` events, which only a gateway that asks for them knows.
-  const chatAttention = fleetReaderWantsChatAttention(url.searchParams)
+  // `chatAttention=1`: `chat.attention` only; `2`: also `chat.attention.cleared` and `chat.attention.snapshot`.
+  const chatAttentionVersion = fleetReaderChatAttentionVersion(url.searchParams)
   // Nor what happens in routine runs' own conversations: an older gateway would take it for the bot's conversation.
   const routineRuns = fleetReaderWantsRoutineRuns(url.searchParams)
   const readable = (event: FleetInstanceEvent) => {
     if ((event.type === 'transcript.upsert' || event.type === 'reset' || event.type === 'turn.finished') && event.runId)
       if (!routineRuns) return false
-    return event.type === 'transcript.upsert'
-      ? fleetTranscriptItemReadable(event.item, reasoning)
-      : event.type !== 'chat.attention' || chatAttention
+    if (event.type === 'transcript.upsert') return fleetTranscriptItemReadable(event.item, reasoning)
+    if (event.type === 'chat.attention') return chatAttentionVersion >= 1
+    if (event.type === 'chat.attention.cleared' || event.type === 'chat.attention.snapshot')
+      return chatAttentionVersion === 2
+    return true
   }
   const replay = events.replay(since)
+  const snapshot = chatAttentionVersion === 2 ? environment.chatAttentionSnapshot?.() : undefined
   response.writeHead(200, {
     'content-type': 'text/event-stream',
     'cache-control': 'no-cache',
@@ -454,6 +481,18 @@ function streamEvents(request: IncomingMessage, response: ServerResponse, url: U
       sseFrame({ seq: events.lastSeq, at: new Date().toISOString(), type: 'reset', botId: null, runId: null })
     )
   else for (const event of replay) if (readable(event)) response.write(sseFrame(event))
+  if (snapshot !== undefined) {
+    // Allocate a sequence strictly greater than both `since` and any reset/replayed event so the gateway accepts
+    // the snapshot without treating it as a reset, and without storing it in the shared replay ring.
+    const snapshotEvent = fleetInstanceEventSchema.parse({
+      seq: events.allocateSeq(),
+      at: new Date().toISOString(),
+      botId: null,
+      type: 'chat.attention.snapshot',
+      conversations: snapshot,
+    })
+    response.write(sseFrame(snapshotEvent))
+  }
   const unsubscribe = events.subscribe((event) => {
     if (readable(event)) response.write(sseFrame(event))
   })
@@ -725,6 +764,10 @@ export function createInstanceControlServer(
     apiKeyAccountAdd: ({ input }) => environment.addApiKeyAccount(input as FleetAddApiKeyAccountRequest),
     accountRemove: ({ params }) => environment.removeAccount(params.providerId),
     uiOpen: ({ input }) => environment.open((input as FleetUiOpenRequest).target),
+    chatAttentionClear: ({ input }) => {
+      if (!environment.clearChatAttention) throw new InstanceHttpError(404, 'NOT_FOUND', 'Route not found.')
+      return environment.clearChatAttention((input as FleetChatAttentionClearRequest).conversationIds)
+    },
 
     botInstall: async ({ params, input }) => {
       const value = input as FleetInstanceBotInstall
@@ -833,7 +876,7 @@ export function createInstanceControlServer(
       const match = routeFor(request.method ?? '', url.pathname)
       if (!match) throw new InstanceHttpError(404, 'NOT_FOUND', 'Route not found.')
       if (SCREEN_ROUTES.has(match.key)) throw new InstanceHttpError(400, 'INVALID_REQUEST', 'Screen upgrade required.')
-      if (match.key === 'events') return streamEvents(request, response, url, environment.events)
+      if (match.key === 'events') return streamEvents(request, response, url, environment)
       // An environment without host files refuses their routes before reading a body, as it does unknown routes; the
       // same for bots' calls on an environment that takes none.
       if (isHostFilesRoute(match.key))

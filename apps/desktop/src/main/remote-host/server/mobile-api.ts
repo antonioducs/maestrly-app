@@ -1157,8 +1157,13 @@ export class MobileApi {
     }
     if (channel === 'agent:status') {
       const value = payload as { agentId?: unknown; status?: unknown } | null
-      if (typeof value?.agentId === 'string' && STATUSES.has(value.status as ConversationStatus))
+      if (typeof value?.agentId === 'string' && STATUSES.has(value.status as ConversationStatus)) {
         this.emit('status', { conversationId: value.agentId, status: value.status as ConversationStatus })
+        // Routine runs do not emit `conversation:attention`, so if the phone already has the run open when its
+        // turn ends, still clear any in-memory routine notice on the host.
+        if ((value.status === 'ready' || value.status === 'error') && this.open.has(value.agentId))
+          this.clearAttention(value.agentId)
+      }
       return
     }
     if (

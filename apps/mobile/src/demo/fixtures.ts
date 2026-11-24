@@ -1,4 +1,5 @@
 import {
+  FLEET_CHAT_ATTENTION_SYNC_CAPABILITY,
   FLEET_ENVIRONMENTS_FEATURE,
   FLEET_UNIFIED_DESKTOP_FEATURE,
   FLEET_VIDEO_SCREENS_FEATURE,
@@ -119,14 +120,14 @@ export function demoWorld(now: number): DemoWorld {
       name: 'Personal',
       kind: 'workspaces',
       tint: '#4f7cac',
-      capabilities: ['mobile-api'],
+      capabilities: ['mobile-api', FLEET_CHAT_ATTENTION_SYNC_CAPABILITY],
     }),
     environmentRecord({
       id: 'company',
       name: 'Company',
       kind: 'workspaces',
       tint: '#c0663f',
-      capabilities: ['mobile-api'],
+      capabilities: ['mobile-api', FLEET_CHAT_ATTENTION_SYNC_CAPABILITY],
     }),
   ]
   const bots = [

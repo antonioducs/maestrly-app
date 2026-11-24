@@ -1,4 +1,9 @@
-import { FLEET_PUSH_DEFAULTS, type FleetPushCategory, type FleetPushPreferences } from '@maestrly/bot-fleet-protocol'
+import {
+  FLEET_ATTENTION_FEATURE,
+  FLEET_PUSH_DEFAULTS,
+  type FleetPushCategory,
+  type FleetPushPreferences,
+} from '@maestrly/bot-fleet-protocol'
 import Constants from 'expo-constants'
 import * as Device from 'expo-device'
 import * as Notifications from 'expo-notifications'
@@ -37,6 +42,10 @@ type NotificationsValue = {
   /** Whether the phone already offered notifications after pairing. */
   offered: boolean
   markOffered(): void
+  /** Re-sends push registrations with updated `badgeOthers` for servers advertising `attention`; returns per-server success. */
+  syncBadgeOthers(badgeOthersByServer: Readonly<Record<string, number>>): Promise<Record<string, boolean>>
+  /** Subscribes to foreground notifications received by the app so the icon badge can be re-applied from local truth. */
+  onNotificationReceived(listener: () => void): () => void
 }
 
 const NotificationsContext = createContext<NotificationsValue | null>(null)
@@ -77,6 +86,12 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
   }
   const serversRef = useRef(servers)
   serversRef.current = servers
+  const badgeOthersRef = useRef<Readonly<Record<string, number>>>({})
+  const receivedListenersRef = useRef(new Set<() => void>())
+  const localeRef = useRef(locale)
+  localeRef.current = locale
+  const preferencesRef = useRef(preferences)
+  preferencesRef.current = preferences
 
   useEffect(() => {
     if (!native || !kv) return
@@ -90,6 +105,7 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
           target.kind === shown.kind &&
           target.id === shown.id &&
           (!target.environmentId || target.environmentId === shown.environmentId)
+        // Keep `shouldSetBadge: false` so incoming foreground pushes never overwrite the local cross-server badge total.
         return { shouldShowBanner: !visible, shouldShowList: true, shouldPlaySound: !visible, shouldSetBadge: false }
       },
     })
@@ -111,10 +127,16 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     void Notifications.getLastNotificationResponseAsync().then((response) => {
       if (response) setOpened(response.notification.request.content.data)
     })
-    const subscription = Notifications.addNotificationResponseReceivedListener((response) =>
+    const receivedSubscription = Notifications.addNotificationReceivedListener(() => {
+      for (const listener of receivedListenersRef.current) listener()
+    })
+    const responseSubscription = Notifications.addNotificationResponseReceivedListener((response) =>
       setOpened(response.notification.request.content.data)
     )
-    return () => subscription.remove()
+    return () => {
+      receivedSubscription.remove()
+      responseSubscription.remove()
+    }
   }, [kv])
 
   // Opens what a tapped notification is about once the servers are known.
@@ -164,6 +186,7 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       platform: Platform.OS === 'android' ? 'android' : 'ios',
       locale,
       preferences,
+      badgeOthersByServer: badgeOthersRef.current,
       clientFor,
       skip: (server) => server.id === DEMO_SERVER.id,
     }).then((value) => alive && setResults(value))
@@ -190,7 +213,9 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       await Linking.openSettings().catch(() => {})
       return 'denied'
     }
-    const asked = await Notifications.requestPermissionsAsync()
+    const asked = await Notifications.requestPermissionsAsync({
+      ios: { allowAlert: true, allowBadge: true, allowSound: true },
+    })
     const next = toPermission(asked)
     setPermission(next)
     return next
@@ -221,6 +246,41 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     if (kv) void kv.set(OFFERED_KEY, '1').catch(() => {})
   }, [kv])
 
+  const syncBadgeOthers = useCallback(
+    async (badgeOthersByServer: Readonly<Record<string, number>>): Promise<Record<string, boolean>> => {
+      badgeOthersRef.current = { ...badgeOthersRef.current, ...badgeOthersByServer }
+      if (!native || !token || permission !== 'granted') return {}
+      const targets = serversRef.current.filter(
+        (server) =>
+          server.id !== DEMO_SERVER.id &&
+          server.features.includes(FLEET_ATTENTION_FEATURE) &&
+          server.id in badgeOthersByServer
+      )
+      if (!targets.length) return {}
+      const updated = await registerWithServers({
+        servers: targets,
+        token,
+        platform: Platform.OS === 'android' ? 'android' : 'ios',
+        locale: localeRef.current,
+        preferences: preferencesRef.current,
+        badgeOthersByServer,
+        clientFor,
+      })
+      setResults((previous) => ({ ...previous, ...updated }))
+      const outcome: Record<string, boolean> = {}
+      for (const [serverId, status] of Object.entries(updated)) outcome[serverId] = status === 'registered'
+      return outcome
+    },
+    [token, permission, clientFor]
+  )
+
+  const onNotificationReceived = useCallback((listener: () => void) => {
+    receivedListenersRef.current.add(listener)
+    return () => {
+      receivedListenersRef.current.delete(listener)
+    }
+  }, [])
+
   const value = useMemo<NotificationsValue>(
     () => ({
       available: native,
@@ -233,8 +293,22 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       sendTest,
       offered,
       markOffered,
+      syncBadgeOthers,
+      onNotificationReceived,
     }),
-    [permission, problem, preferences, setPreference, enable, results, sendTest, offered, markOffered]
+    [
+      permission,
+      problem,
+      preferences,
+      setPreference,
+      enable,
+      results,
+      sendTest,
+      offered,
+      markOffered,
+      syncBadgeOthers,
+      onNotificationReceived,
+    ]
   )
   return <NotificationsContext.Provider value={value}>{children}</NotificationsContext.Provider>
 }

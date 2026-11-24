@@ -330,6 +330,8 @@ function fakeEnvironment() {
       bytes: 10,
     })) as InstanceEnvironment['prepareBackup'],
     releaseBackup: vi.fn(async () => {}) as InstanceEnvironment['releaseBackup'],
+    chatAttentionSnapshot: undefined as InstanceEnvironment['chatAttentionSnapshot'],
+    clearChatAttention: undefined as InstanceEnvironment['clearChatAttention'],
   }
   const typed: InstanceEnvironment = environment
   const bot: InstanceBot = bots.get('alpha')!
@@ -828,13 +830,27 @@ describe('instance control HTTP', () => {
   })
 
   it('streams what a chat needs only to a gateway that asks for it', async () => {
-    const { base, events } = await setup()
+    const fake = fakeEnvironment()
+    fake.environment.chatAttentionSnapshot = vi.fn(() => [
+      {
+        conversationId: 'c-init',
+        name: 'Initial plan',
+        kind: 'plan' as const,
+        at: '2026-11-23T09:00:00.000Z',
+      },
+    ])
+    const { base, events } = await setup(fake)
     events.publish({
       type: 'chat.attention',
       botId: null,
       conversationId: 'c1',
       name: 'Fix the test',
       kind: 'question',
+    })
+    events.publish({
+      type: 'chat.attention.cleared',
+      botId: null,
+      conversationId: 'c1',
     })
     events.publish({ type: 'reset', botId: null })
     const open = async (query: string) => {
@@ -844,10 +860,109 @@ describe('instance control HTTP', () => {
     }
     const plain = await open('')
     expect((await plain.next(1)).map((event) => event.type)).toEqual(['reset'])
-    const asked = await open('&chatAttention=1')
-    expect((await asked.next(2)).map((event) => event.type)).toEqual(['chat.attention', 'reset'])
+    const v1 = await open('&chatAttention=1')
+    expect((await v1.next(2)).map((event) => event.type)).toEqual(['chat.attention', 'reset'])
+    const v2 = await open('&chatAttention=2')
+    const v2Initial = await v2.next(4)
+    expect(v2Initial.map((event) => [event.seq, event.type])).toEqual([
+      [1, 'chat.attention'],
+      [2, 'chat.attention.cleared'],
+      [3, 'reset'],
+      [4, 'chat.attention.snapshot'],
+    ])
+    expect(v2Initial[3]).toMatchObject({
+      type: 'chat.attention.snapshot',
+      conversations: [
+        {
+          conversationId: 'c-init',
+          name: 'Initial plan',
+          kind: 'plan',
+          at: '2026-11-23T09:00:00.000Z',
+        },
+      ],
+    })
+
+    // Live events and a second v2 reader confirm snapshot is connection-scoped and seq stays strictly monotonic.
+    events.publish({
+      type: 'chat.attention.cleared',
+      botId: null,
+      conversationId: 'c-init',
+    })
+    events.publish({
+      type: 'chat.attention',
+      botId: null,
+      conversationId: 'c2',
+      name: 'Needs approval',
+      kind: 'waiting',
+    })
+    expect((await v1.next(1)).map((event) => [event.seq, event.type])).toEqual([[6, 'chat.attention']])
+    expect((await v2.next(2)).map((event) => [event.seq, event.type])).toEqual([
+      [5, 'chat.attention.cleared'],
+      [6, 'chat.attention'],
+    ])
+
+    // Resuming from before the snapshot gap does not reset and does not replay the first connection's snapshot.
+    const resumeController = new AbortController()
+    const resumeStream = await fetch(base + '/v1/events?since=2&chatAttention=1', {
+      headers: headers(),
+      signal: resumeController.signal,
+    })
+    const resumed = eventReader(resumeStream)
+    expect((await resumed(2)).map((event) => [event.seq, event.type])).toEqual([
+      [3, 'reset'],
+      [6, 'chat.attention'],
+    ])
+    resumeController.abort()
+
+    // Stale `since > lastSeq` emits `reset` followed by a fresh snapshot with `seq > reset.seq`.
+    const staleController = new AbortController()
+    const staleStream = await fetch(base + '/v1/events?since=999&chatAttention=2', {
+      headers: headers(),
+      signal: staleController.signal,
+    })
+    const staleEvents = await eventReader(staleStream)(2)
+    expect(staleEvents.map((event) => [event.seq, event.type])).toEqual([
+      [6, 'reset'],
+      [7, 'chat.attention.snapshot'],
+    ])
+    staleController.abort()
     plain.controller.abort()
-    asked.controller.abort()
+    v1.controller.abort()
+    v2.controller.abort()
+  })
+
+  it('clears chat attention via POST /v1/chat-attention/clear and validates input', async () => {
+    const plain = await setup()
+    expect((await send(plain.base, 'POST', '/v1/chat-attention/clear', { conversationIds: ['c1'] })).status).toBe(404)
+
+    const fake = fakeEnvironment()
+    const clearChatAttention = vi.fn((ids: string[]) => ({ cleared: ids.filter((id) => id !== 'unknown') }))
+    fake.environment.clearChatAttention = clearChatAttention
+    const { base } = await setup(fake)
+
+    const denied = await fetch(base + '/v1/chat-attention/clear', {
+      method: 'POST',
+      headers: { [FLEET_PROTOCOL_HEADER]: '1', 'content-type': 'application/json' },
+      body: JSON.stringify({ conversationIds: ['c1'] }),
+    })
+    expect(denied.status).toBe(401)
+    expect((await send(base, 'POST', '/v1/chat-attention/clear', { conversationIds: [] })).status).toBe(400)
+    expect(
+      (await send(base, 'POST', '/v1/chat-attention/clear', { conversationIds: ['c1'], extra: true })).status
+    ).toBe(400)
+    expect(
+      (
+        await send(base, 'POST', '/v1/chat-attention/clear', {
+          conversationIds: Array.from({ length: 201 }, (_, index) => `c-${index}`),
+        })
+      ).status
+    ).toBe(400)
+    expect(clearChatAttention).not.toHaveBeenCalled()
+
+    const ok = await send(base, 'POST', '/v1/chat-attention/clear', { conversationIds: ['c1', 'unknown', 'c2'] })
+    expect(ok.status).toBe(200)
+    expect(await ok.json()).toEqual({ cleared: ['c1', 'c2'] })
+    expect(clearChatAttention).toHaveBeenCalledWith(['c1', 'unknown', 'c2'])
   })
 })
 

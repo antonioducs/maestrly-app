@@ -144,7 +144,9 @@ describe('push notifications', () => {
     // The same chat id on another workspaces host is another chat.
     await h.notifier.chat('zello', 'c1', 'Invoices', 'plan')
     expect(
-      h.sent.flat().map((message) => [message.title, message.body, message.data.kind, message.data.id, message.data.env])
+      h.sent
+        .flat()
+        .map((message) => [message.title, message.body, message.data.kind, message.data.id, message.data.env])
     ).toEqual([
       ['Fix the flaky test', 'Has a plan for you', 'chat', 'c1', 'workspaces'],
       ['Changelog', 'Finished its turn', 'chat', 'c2', 'workspaces'],
@@ -180,6 +182,50 @@ describe('push notifications', () => {
     await expect(failing.notifier.test('d1')).rejects.toMatchObject({ code: 'INSTANCE_UNAVAILABLE' })
     expect(failing.removed).toEqual(['d1'])
   })
+
+  it('sets badge = attentionCount + (badgeOthers ?? 0) on notifications and test pushes', async () => {
+    const sent: PushMessage[][] = []
+    let count = 2
+    const regs: Record<string, FleetPushRegistration> = {
+      withOthers: registration({ badgeOthers: 5, token: 'ExponentPushToken[cccccccccccccccccccccc]' }),
+      withoutOthers: registration({ token: 'ExponentPushToken[dddddddddddddddddddddd]' }),
+      zeroOthers: registration({ badgeOthers: 0, token: 'ExponentPushToken[eeeeeeeeeeeeeeeeeeeeee]' }),
+    }
+    const store: PushStore = {
+      activePushRegistrations: () =>
+        Object.entries(regs).map(([deviceId, value]) => ({ deviceId, registration: value })),
+      pushRegistration: (deviceId) => regs[deviceId] ?? null,
+      deletePushRegistration: () => false,
+      getBot: () => ({ name: 'Atlas' }),
+    }
+    const notifier = new PushNotifier({
+      store,
+      sender: {
+        send: async (messages) => {
+          sent.push(messages)
+          return messages.map(() => ({ ok: true }))
+        },
+      },
+      serverName: () => 'home-lab',
+      attentionCount: () => count,
+    })
+    notifier.observe(activity('atlas', 'turn_completed', { source: 'owner' }, 1))
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(sent[0].map((m) => [m.data.device, m.badge])).toEqual([
+      ['withOthers', 7],
+      ['withoutOthers', undefined],
+      ['zeroOthers', 2],
+    ])
+    expect(sent[0].find((m) => m.data.device === 'withoutOthers')).not.toHaveProperty('badge')
+    count = 0
+    await notifier.test('withOthers')
+    await notifier.test('withoutOthers')
+    await notifier.test('zeroOthers')
+    expect(sent[1][0].badge).toBe(5)
+    expect(sent[2][0].badge).toBeUndefined()
+    expect(sent[2][0]).not.toHaveProperty('badge')
+    expect(sent[3][0].badge).toBe(0)
+  })
 })
 
 describe('Expo push sender', () => {
@@ -188,7 +234,7 @@ describe('Expo push sender', () => {
     const fetch = vi.fn(async (_url: string, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as unknown[]
       bodies.push(body)
-      expect((init?.headers as Record<string, string>).authorization).toBe('Bearer expo-token')
+      expect(((init?.headers ?? {}) as Record<string, string>).authorization).toBe('Bearer expo-token')
       return new Response(
         JSON.stringify({
           data: body.map((_, index) =>
@@ -205,10 +251,18 @@ describe('Expo push sender', () => {
       title: 'Atlas',
       body: 'Needs your approval',
       data: { v: 1, device: 'd', kind: 'bot', id: 'atlas', category: 'waiting' },
+      ...(index === 0 ? { badge: 4 } : {}),
     })
     const outcomes = await sender.send(Array.from({ length: 150 }, (_, index) => message(index)))
     expect(bodies.map((body) => body.length)).toEqual([100, 50])
-    expect(bodies[0][0]).toMatchObject({ title: 'Atlas', sound: 'default', priority: 'high', channelId: 'default' })
+    expect(bodies[0][0]).toMatchObject({
+      title: 'Atlas',
+      badge: 4,
+      sound: 'default',
+      priority: 'high',
+      channelId: 'default',
+    })
+    expect(bodies[0][1]).not.toHaveProperty('badge')
     expect(outcomes[0]).toEqual({ ok: true })
     expect(outcomes[1]).toEqual({ ok: false, unregistered: true })
     expect(outcomes[101]).toEqual({ ok: false, unregistered: true })

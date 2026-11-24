@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { KeyboardAvoidingView, type TextInputInstance, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useChats } from '../chats/react'
-import { waitingChats } from '../chats/selectors'
 import { allConversations, type ChatsState } from '../chats/state'
 import { DEMO_SERVER } from '../demo/demo-source'
 import { lanesSupported, threadState, unseenRuns, unseenThreads } from '../fleet/lanes'
@@ -14,6 +13,7 @@ import { type FleetState, runsSeenSet, selectRunsSeen, selectThreadsSeen, thread
 import { editableItemId } from '../fleet/transcript-search'
 import { GatewayError } from '../gateway/client'
 import { useI18n } from '../i18n'
+import { useBotAttentionSeen } from '../inbox'
 import { useServers, type Current } from '../servers/ServersProvider'
 import { useTheme } from '../theme/ThemeProvider'
 import { ChatConversation } from '../ui/chat/ChatConversation'
@@ -178,6 +178,8 @@ function BotConversation({ bot }: { bot: FleetBot }) {
     [bot, online, focusComposer, inbox, controller, active?.id, edit, lanes]
   )
 
+  useBotAttentionSeen(controller.source.serverId, bot.id)
+
   useEffect(() => {
     void controller.openBot(bot.id)
     return () => controller.closeBot()
@@ -258,12 +260,6 @@ function HomeScreen() {
   // Each conversation opens without a search.
   useEffect(() => setSearching(false), [currentKey])
   const hosted = useChats(useCallback((state: ChatsState) => state.hosted, []))
-  const waitingBots = useFleet(
-    useCallback((state: FleetState) => new Set(state.inbox.map((item) => item.botId)).size, [])
-  )
-  const waitingChatCount = useChats(
-    useCallback((state: ChatsState) => (state.hosted ? waitingChats(state.lists).length : 0), [])
-  )
   const bot = useFleet(
     useCallback(
       (state: FleetState) =>
@@ -353,7 +349,6 @@ function HomeScreen() {
       >
         <ConversationHeader
           title={title}
-          waiting={waitingBots + waitingChatCount}
           onOpenMenu={() => setOpen(true)}
           onNewChat={newChat}
           onSearch={

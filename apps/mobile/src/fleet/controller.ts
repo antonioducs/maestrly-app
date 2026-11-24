@@ -5,6 +5,7 @@ import {
   FLEET_PARALLEL_TURNS_FEATURE,
   FLEET_TRANSCRIPT_REASONING_FEATURE,
   fleetMetaFeatures,
+  type FleetAttentionUpdatedEvent,
   type FleetBot,
   type FleetFileSettings,
   type FleetFilesDeleted,
@@ -96,6 +97,10 @@ export function createFleetController(
   const seenKey = lanesSeenKey(source.serverId)
   let state: FleetState = { ...initialFleetState, features: source.features }
   const listeners = new Set<() => void>()
+  const attentionSubscribers = new Set<{
+    onEvent(event: FleetAttentionUpdatedEvent): void
+    onHello(): void
+  }>()
   let stream: { close(): void; reconnectNow(): void } | null = null
   let openBotId: string | null = null
   // The run's or thread's conversation on screen, which reloads after a hello or a reset like the bot's own.
@@ -372,6 +377,9 @@ export function createFleetController(
     onState(next, detail) {
       dispatch({ type: 'connection', state: next, retryAt: detail ? now() + detail.retryInMs : null })
     },
+    onAttention(event) {
+      for (const subscriber of attentionSubscribers) subscriber.onEvent(event)
+    },
     onEvent(event) {
       for (const seen of watches) {
         if (event.type === 'bot.removed') seen.bots.add(event.botId)
@@ -390,6 +398,7 @@ export function createFleetController(
       if (event.type === 'hello') {
         hellos++
         void refresh()
+        for (const subscriber of attentionSubscribers) subscriber.onHello()
       }
       if (event.type === 'transcript.reset' && event.botId === openBotId) {
         void loadLatest(event.botId)
@@ -474,6 +483,13 @@ export function createFleetController(
 
   return {
     source,
+    /** Subscribes to attention frames and hello reconnects on this server's shared fleet stream. */
+    onAttentionStream(subscriber: { onEvent(event: FleetAttentionUpdatedEvent): void; onHello(): void }) {
+      attentionSubscribers.add(subscriber)
+      return () => {
+        attentionSubscribers.delete(subscriber)
+      }
+    },
     store: {
       getState: () => state,
       subscribe(listener: () => void) {
