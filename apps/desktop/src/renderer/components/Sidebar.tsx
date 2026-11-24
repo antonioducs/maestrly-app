@@ -4,6 +4,7 @@ import type { StandaloneConversation } from '../../shared/conversation'
 /** Local workspaces, virtual groups, and pinned conversations.
  * Apply drag sorting only to the complete list so filtered searches cannot corrupt persisted order. */
 import {
+  useCallback,
   useEffect,
   useMemo,
   useState,
@@ -617,13 +618,14 @@ export function Sidebar({
     }
     return map
   }, [standaloneConversations, workspaces, hostSections])
+  const findConversation = useCallback((id: string) => conversationsById.get(id), [conversationsById])
   const { convItem, sharedFolder, dispatchFolder } = useConvRows({
     statuses,
     attention,
     activeId,
     pendingPlanIds,
     onSelect,
-    findConversation: (id) => conversationsById.get(id),
+    findConversation,
     renaming,
     setRenaming,
     renameValue,
@@ -749,12 +751,15 @@ export function Sidebar({
                 workspaceId={ws.id}
                 nodes={buildConvTopNodes(ws.conversations)}
                 dndEnabled={renaming === null}
+                findConversation={findConversation}
                 onReorder={onReorderConversations}
                 renderConv={(conv, dnd, isOver) =>
                   convItem(conv, { pl: 'pl-6', dnd, isOver, instanceKey: `tree:${conv.id}` })
                 }
                 renderGroup={(info, members, dnd, isOver) => sharedFolder(info, members, { dnd, isOver })}
-                renderDispatch={(info, members, dnd, isOver) => dispatchFolder(info, members, { dnd, isOver })}
+                renderDispatch={(info, members, dnd, isOver, swarmTasks) =>
+                  dispatchFolder(info, members, { dnd, isOver, swarmTasks })
+                }
               />
             )}
             {ws.conversations.length === 0 && (

@@ -124,8 +124,7 @@ import { ConversationDispatchBanner } from './ConversationDispatchBanner'
 import { ReviewRoom } from './review/ReviewRoom'
 import type { ReviewReceiptActions } from './review/ReviewReceiptCard'
 import { MaestroControl } from './MaestroControl'
-import { MaestroActivityPill, type MaestroRun } from './MaestroActivityPill'
-import type { DelegatePart } from './OrchestrationRun'
+import { MaestroActivityPill } from './MaestroActivityPill'
 import { SubagentSessionPanel } from './SubagentSessionPanel'
 import { SubagentSessionContext, SubagentSessionsContext, type OpenSubagentSession } from './SubagentSessionContext'
 import { SubagentActivityPill } from './SubagentActivityPill'
@@ -614,16 +613,6 @@ export function ChatView({
     setHighlightMsgId(id)
     highlightTimerRef.current = setTimeout(() => setHighlightMsgId(null), 2500)
   }, [])
-
-  const jumpToMessage = useCallback(
-    (messageId: string) => {
-      const el = scrollRef.current?.querySelector<HTMLElement>(`[data-msg-id="${CSS.escape(messageId)}"]`)
-      if (!el) return
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      flashHighlight(messageId)
-    },
-    [flashHighlight]
-  )
 
   const goToHit = useCallback(
     async (hit: ChatSearchHit) => {
@@ -2113,17 +2102,6 @@ export function ChatView({
     !streaming &&
     messages.length >= 2
 
-  const maestroRuns = useMemo<MaestroRun[]>(() => {
-    const runs: MaestroRun[] = []
-    for (const message of messages) {
-      const parts = message.parts.filter(
-        (part): part is DelegatePart => part.type === 'tool' && part.toolName === 'delegate'
-      )
-      if (parts.length > 0) runs.push({ messageId: message.id, parts })
-    }
-    return runs
-  }, [messages])
-
   const reloadSubagentSessions = useCallback(async () => {
     const sessions = await api.chatSubagentSessions(conversationId, { limit: 200 })
     setSubagentSessions(sessions)
@@ -2327,13 +2305,7 @@ export function ChatView({
                 )}
 
                 {isMaestro ? (
-                  <MaestroActivityPill
-                    runs={maestroRuns}
-                    conversationId={conversationId}
-                    liveState={maestroLive}
-                    onOpenMention={openMention}
-                    onJumpToMessage={jumpToMessage}
-                  />
+                  <MaestroActivityPill conversationId={conversationId} subagentSessions={subagentSessions} />
                 ) : (
                   <SubagentActivityPill sessions={subagentSessions} />
                 )}

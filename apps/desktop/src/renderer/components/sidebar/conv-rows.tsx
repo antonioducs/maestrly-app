@@ -17,8 +17,10 @@ import {
   ArrowUpRight,
 } from 'lucide-react'
 import type { Conversation } from '../../../preload'
+import type { MaestroSwarmTask } from '../../../shared/maestro-swarm'
 import { isRemoteKey } from '@/lib/hosts/shell-keys'
 import { BotConversationBadge } from '../bot/BotConversationBadge'
+import { SwarmPhaseBadge } from '@/components/sidebar/SwarmPhaseBadge'
 import { cn } from '@/lib/utils'
 import { useLocale } from '@/lib/i18n'
 import { Button } from '@/components/ui/button'
@@ -109,6 +111,7 @@ export function useConvRows({
       instanceKey: string
       contextLabel?: string
       contextTooltip?: string
+      swarmTask?: MaestroSwarmTask
     }
   ) => {
     const status = statuses[conv.id] ?? conv.status
@@ -226,6 +229,7 @@ export function useConvRows({
             )}
             title={timeTitle(conv)}
           >
+            {opts.swarmTask && <SwarmPhaseBadge task={opts.swarmTask} />}
             {conv.experience === 'maestro' && (
               <span className="flex items-center text-amber-300/80" title={t('sidebar.maestroConversation')}>
                 <Sparkles className="size-3" />
@@ -374,13 +378,14 @@ export function useConvRows({
   const dispatchFolder = (
     info: DispatchConversationGroupInfo,
     members: Conversation[],
-    opts: { dnd?: DragHandle; isOver?: boolean } = {}
+    opts: { dnd?: DragHandle; isOver?: boolean; swarmTasks?: ReadonlyMap<string, MaestroSwarmTask> } = {}
   ) => {
     const collapseKey = `dispatch:${info.rootId}`
     const open = !collapsedGroups[collapseKey]
     const folderAttention = members.some((mm) => attention.has(mm.id))
     const rootInFolder = members.some((mm) => mm.id === info.rootId)
-    const rootConv = findConversation?.(info.rootId)
+    const rootConv = findConversation?.(info.rootId) ?? members.find((mm) => mm.id === info.rootId)
+    const isMaestroFolder = rootConv?.experience === 'maestro'
     const rootName = rootConv?.name ?? info.rootName
     const originConv = rootInFolder ? undefined : rootConv
     const originTarget = originConv ? { conv: originConv, onOpen: onSelect } : undefined
@@ -457,7 +462,14 @@ export function useConvRows({
           </ContextMenuTrigger>
           <ContextMenuContent>{dispatchFolderMenuItems(members, contextKit, originTarget)}</ContextMenuContent>
         </ContextMenu>
-        {open && <ul>{members.map((c) => convItem(c, { pl: 'pl-9', instanceKey: `tree:${c.id}` }))}</ul>}
+        {open && (
+          <ul>
+            {members.map((c) => {
+              const swarmTask = isMaestroFolder && c.id !== info.rootId ? opts.swarmTasks?.get(c.id) : undefined
+              return convItem(c, { pl: 'pl-9', instanceKey: `tree:${c.id}`, swarmTask })
+            })}
+          </ul>
+        )}
       </li>
     )
   }

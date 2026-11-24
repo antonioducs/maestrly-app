@@ -64,17 +64,27 @@ describe('Maestro renderer contract', () => {
     expect(preload).toContain('onChatMaestroLive')
   })
 
-  it('localizes the Maestro panel and the orchestration timeline instead of hardcoding copy', () => {
+  it('localizes the Maestro panel, activity pill and orchestration timeline instead of hardcoding copy', () => {
     for (const file of [
       'src/renderer/components/chat/MaestroControl.tsx',
+      'src/renderer/components/chat/MaestroActivityPill.tsx',
       'src/renderer/components/chat/OrchestrationRun.tsx',
     ]) {
       const source = readFileSync(file, 'utf8')
       expect(source, file).toContain("useTranslation('chat')")
-      for (const hardcoded of ['Agent Pool', 'Save global default', 'Orchestration Run', 'Execution candidates']) {
+      for (const hardcoded of [
+        'Agent Pool',
+        'Save global default',
+        'Orchestration Run',
+        'Execution candidates',
+        'Stop swarm',
+      ]) {
         expect(source.includes(hardcoded), `${file} still hardcodes "${hardcoded}"`).toBe(false)
       }
     }
+    const pill = readFileSync('src/renderer/components/chat/MaestroActivityPill.tsx', 'utf8')
+    expect(pill).toContain("t('maestro.swarm.title')")
+    expect(pill).toContain("t('maestro.swarm.stop')")
     const en = readFileSync('src/shared/i18n/en/chat.ts', 'utf8')
     const pt = readFileSync('src/shared/i18n/pt-BR/chat.ts', 'utf8')
     expect(en).toMatch(/(?:["']maestro["']|\bmaestro)\s*:\s*\{/)
