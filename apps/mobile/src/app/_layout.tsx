@@ -49,6 +49,7 @@ function Root() {
         <NotificationsProvider>
           <InboxProvider>
             <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: theme.palette.canvas } }}>
+              <Stack.Screen name="inbox" options={{ animation: 'slide_from_right' }} />
               <Stack.Screen name="settings" options={sheet} />
               <Stack.Screen name="servers" options={sheet} />
               <Stack.Screen name="devices" options={sheet} />

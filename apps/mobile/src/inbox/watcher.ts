@@ -27,6 +27,8 @@ export interface WatchedServerState {
   readonly reachable: boolean
   /** True once at least one snapshot fetch has succeeded. */
   readonly loaded: boolean
+  /** Epoch ms of the last successful snapshot or attention delta, or null before the first sync. */
+  readonly lastSyncedAt: number | null
 }
 
 export interface AttentionWatcher {
@@ -37,6 +39,8 @@ export interface AttentionWatcher {
   background(): void
   /** Resumes stream and refetches snapshot (AppState -> active). */
   foreground(): void
+  /** Resets backoff, refetches the snapshot, and reconnects the stream immediately when active. */
+  retryNow(): void
   /** Permanently stops watching (e.g. unpair or unmount). */
   stop(): void
 }
@@ -47,6 +51,7 @@ export interface SharedAttentionStream {
   getEnvironments(): ReadonlyArray<{ id: string; name: string }>
   subscribeStore(listener: () => void): () => void
   onAttentionStream(handlers: { onEvent(event: FleetAttentionUpdatedEvent): void; onHello(): void }): () => void
+  reconnectNow?(): void
 }
 
 export interface StandaloneAttentionTransport {
@@ -71,6 +76,7 @@ export interface AttentionWatcherOptions {
   call: Pick<GatewayClient, 'call'>['call']
   transport: StandaloneAttentionTransport | SharedAttentionTransport
   random?: () => number
+  now?: () => number
 }
 
 function applyDelta(
@@ -98,12 +104,14 @@ function isUnhealthyStreamState(state: StreamState): boolean {
  */
 export function createAttentionWatcher(options: AttentionWatcherOptions): AttentionWatcher {
   const random = options.random ?? Math.random
+  const now = options.now ?? Date.now
   const listeners = new Set<(state: WatchedServerState) => void>()
 
   let entries = new Map<string, FleetAttentionEntry>()
   let environments = new Map<string, string>()
   let reachable = true
   let loaded = false
+  let lastSyncedAt: number | null = null
   let started = false
   let stopped = false
   let paused = false
@@ -125,6 +133,7 @@ export function createAttentionWatcher(options: AttentionWatcherOptions): Attent
     environments,
     reachable,
     loaded,
+    lastSyncedAt,
   })
 
   let currentState = snapshotState()
@@ -158,6 +167,7 @@ export function createAttentionWatcher(options: AttentionWatcherOptions): Attent
 
   const handleAttentionDelta = (delta: FleetAttentionUpdatedEvent) => {
     if (stopped || paused) return
+    lastSyncedAt = now()
     if (inFlightGen !== null) {
       bufferedDeltas.push(delta)
       return
@@ -192,6 +202,7 @@ export function createAttentionWatcher(options: AttentionWatcherOptions): Attent
       if (envList) environments = new Map(envList.environments.map((env) => [env.id, env.name]))
       else syncSharedEnvironments()
       loaded = true
+      lastSyncedAt = now()
       fetchAttempt = 0
       reachable = !isUnhealthyStreamState(streamState)
       emit()
@@ -311,6 +322,19 @@ export function createAttentionWatcher(options: AttentionWatcherOptions): Attent
         streamState = options.transport.stream.getConnection()
         if (streamState === 'open') void fetchSnapshot()
       }
+    },
+    retryNow() {
+      if (stopped || paused || !started) return
+      fetchAttempt = 0
+      clearFetchRetry()
+      if (options.transport.mode === 'standalone') {
+        if (streamHandle) streamHandle.reconnectNow()
+        else openStandaloneStream()
+      } else {
+        options.transport.stream.reconnectNow?.()
+        streamState = options.transport.stream.getConnection()
+      }
+      void fetchSnapshot()
     },
     stop() {
       if (stopped) return

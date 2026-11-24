@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { KeyboardAvoidingView, type TextInputInstance, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useChats } from '../chats/react'
-import { waitingChats } from '../chats/selectors'
 import { allConversations, type ChatsState } from '../chats/state'
 import { DEMO_SERVER } from '../demo/demo-source'
 import { lanesSupported, threadState, unseenRuns, unseenThreads } from '../fleet/lanes'
@@ -258,12 +257,6 @@ function HomeScreen() {
   // Each conversation opens without a search.
   useEffect(() => setSearching(false), [currentKey])
   const hosted = useChats(useCallback((state: ChatsState) => state.hosted, []))
-  const waitingBots = useFleet(
-    useCallback((state: FleetState) => new Set(state.inbox.map((item) => item.botId)).size, [])
-  )
-  const waitingChatCount = useChats(
-    useCallback((state: ChatsState) => (state.hosted ? waitingChats(state.lists).length : 0), [])
-  )
   const bot = useFleet(
     useCallback(
       (state: FleetState) =>
@@ -353,7 +346,6 @@ function HomeScreen() {
       >
         <ConversationHeader
           title={title}
-          waiting={waitingBots + waitingChatCount}
           onOpenMenu={() => setOpen(true)}
           onNewChat={newChat}
           onSearch={

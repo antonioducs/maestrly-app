@@ -12,6 +12,7 @@ export function IconButton({
   size = 22,
   disabled,
   badge,
+  children,
   style,
 }: {
   icon: IconName
@@ -22,6 +23,7 @@ export function IconButton({
   disabled?: boolean
   /** A dot on the corner, such as the amber one when something waits on you. */
   badge?: ReactNode
+  children?: ReactNode
   style?: StyleProp<ViewStyle>
 }) {
   const { palette } = useTheme()
@@ -47,6 +49,7 @@ export function IconButton({
     >
       <Icon name={icon} size={size} color={color ?? palette.ink} />
       {badge ? <View style={{ position: 'absolute', top: 9, right: 8 }}>{badge}</View> : null}
+      {children}
     </Pressable>
   )
 }

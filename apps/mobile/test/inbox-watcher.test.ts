@@ -393,4 +393,168 @@ describe('inbox attention watcher', () => {
     watcher.stop()
     fleet.stop()
   })
+
+  it('tracks lastSyncedAt across snapshots, deltas, and failures', async () => {
+    let clock = Date.parse('2026-10-12T12:00:00.000Z')
+    let failSnapshot = false
+    const connections: FakeSseConnection[] = []
+    const fetchStream = vi.fn<StreamingFetch>(async (_url, init) => {
+      const connection = new FakeSseConnection(init.signal)
+      connections.push(connection)
+      return { status: 200, body: { getReader: () => connection.reader() } }
+    })
+    const watcher = createAttentionWatcher({
+      serverId: 's1',
+      features: [FLEET_ATTENTION_FEATURE],
+      call: (async () => {
+        if (failSnapshot) throw new GatewayError('NETWORK', 0, 'offline')
+        return { entries: [entry({ key: 'chat:personal/c1' })], at: AT }
+      }) as never,
+      transport: {
+        mode: 'standalone',
+        origin: 'https://s1.example.dev',
+        headers: () => ({ Authorization: 'Bearer tok' }),
+        fetchStream,
+      },
+      now: () => clock,
+      random: () => 0.5,
+    })
+
+    expect(watcher.getState().lastSyncedAt).toBeNull()
+    watcher.start()
+    await flush()
+    expect(watcher.getState().lastSyncedAt).toBeNull()
+
+    clock += 5_000
+    connections[0].push(helloFrame)
+    await flush()
+    const snapshotSyncedAt = clock
+    expect(watcher.getState().lastSyncedAt).toBe(snapshotSyncedAt)
+
+    clock += 12_000
+    connections[0].push(
+      frame({
+        type: 'attention.updated',
+        upsert: [entry({ key: 'chat:personal/c2', conversationId: 'c2' })],
+        remove: [],
+      })
+    )
+    await flush()
+    const deltaSyncedAt = clock
+    expect(watcher.getState().lastSyncedAt).toBe(deltaSyncedAt)
+
+    // Failing snapshot or stream drop preserves the last successful sync timestamp.
+    clock += 8_000
+    failSnapshot = true
+    connections[0].end()
+    await flush()
+    expect(watcher.getState().reachable).toBe(false)
+    expect(watcher.getState().lastSyncedAt).toBe(deltaSyncedAt)
+
+    watcher.stop()
+  })
+
+  it('retryNow resets backoff, refetches snapshot, reconnects stream, and no-ops when paused or stopped', async () => {
+    let attempts = 0
+    let shouldFail = true
+    const h = createStandaloneHarness({
+      random: () => 0.5,
+      attentionCall: async () => {
+        attempts++
+        if (shouldFail) throw new GatewayError('NETWORK', 0, 'offline')
+        return { entries: [entry({ key: 'chat:personal/c1' })], at: AT }
+      },
+    })
+
+    // No-op before start.
+    h.watcher.retryNow()
+    await flush()
+    expect(attempts).toBe(0)
+
+    h.watcher.start()
+    await flush()
+    h.connections[0].push(helloFrame)
+    await flush()
+    expect(attempts).toBe(1)
+
+    // Advance past first retry so fetchAttempt escalates to 2 (2000ms pending).
+    await vi.advanceTimersByTimeAsync(retryDelay(0, () => 0.5))
+    expect(attempts).toBe(2)
+
+    // Drop the SSE stream as well so stream reconnect backoff is pending.
+    h.connections[0].end()
+    await flush()
+    expect(h.connections).toHaveLength(1)
+
+    // retryNow reconnects the SSE stream immediately, resets fetchAttempt to 0, and refetches snapshot.
+    h.watcher.retryNow()
+    await flush()
+    expect(h.connections).toHaveLength(2)
+    expect(attempts).toBe(3)
+
+    // Since fetchAttempt was reset to 0, the next scheduled retry uses retryDelay(0, 0.5) = 1000ms, not 4000ms.
+    shouldFail = false
+    await vi.advanceTimersByTimeAsync(retryDelay(0, () => 0.5) - 1)
+    expect(attempts).toBe(3)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(attempts).toBe(4)
+
+    // No-op while paused in background.
+    h.watcher.background()
+    h.watcher.retryNow()
+    await flush()
+    expect(attempts).toBe(4)
+    expect(h.connections).toHaveLength(2)
+
+    // No-op after stop.
+    h.watcher.foreground()
+    await flush()
+    h.watcher.stop()
+    h.watcher.retryNow()
+    await flush()
+    expect(attempts).toBe(4)
+  })
+
+  it('retryNow calls shared stream reconnectNow and refetches snapshot in shared mode', async () => {
+    const reconnectNow = vi.fn()
+    const attentionFn = vi.fn(async () => ({ entries: [entry({ key: 'bot:ledger' })], at: AT }))
+    let connection: 'open' | 'retrying' = 'retrying'
+    const storeListeners = new Set<() => void>()
+    const watcher = createAttentionWatcher({
+      serverId: 'active-1',
+      features: [FLEET_ATTENTION_FEATURE],
+      call: (() => attentionFn()) as never,
+      transport: {
+        mode: 'shared',
+        stream: {
+          getConnection: () => connection,
+          getEnvironments: () => [],
+          subscribeStore: (listener) => {
+            storeListeners.add(listener)
+            return () => storeListeners.delete(listener)
+          },
+          onAttentionStream: () => () => {},
+          reconnectNow: () => {
+            reconnectNow()
+            connection = 'open'
+            for (const listener of storeListeners) listener()
+          },
+        },
+      },
+    })
+
+    watcher.start()
+    await flush()
+    expect(attentionFn).not.toHaveBeenCalled()
+    expect(watcher.getState().reachable).toBe(false)
+
+    watcher.retryNow()
+    await flush()
+    expect(reconnectNow).toHaveBeenCalledTimes(1)
+    expect(attentionFn).toHaveBeenCalledTimes(1)
+    expect(watcher.getState().reachable).toBe(true)
+    expect(watcher.getState().lastSyncedAt).not.toBeNull()
+
+    watcher.stop()
+  })
 })

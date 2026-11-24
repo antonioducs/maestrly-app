@@ -47,6 +47,8 @@ export interface InboxServerInput {
   supportsAttention: boolean
   reachable: boolean
   loaded: boolean
+  /** Epoch ms of the last successful sync (snapshot, delta, or fallback update), or null before the first one. */
+  lastSyncedAt?: number | null
   /** Active entries from `GET /v1/attention` + SSE deltas (when `supportsAttention` is true). */
   entries: ReadonlyMap<string, FleetAttentionEntry>
   /** Known environments for this server (`environmentId -> name`). */
@@ -263,6 +265,7 @@ export function createInboxController(options: InboxControllerOptions): InboxCon
   let serverInputs: readonly InboxServerInput[] = []
   let serversById = new Map<string, InboxServerInput>()
   const seededServers = new Set<string>()
+  const fallbackSyncByServer = new Map<string, { signature: string; reachable: boolean; at: number }>()
   const listeners = new Set<() => void>()
 
   let persistTimer: ReturnType<typeof setTimeout> | null = null
@@ -437,6 +440,12 @@ export function createInboxController(options: InboxControllerOptions): InboxCon
       reachable: server.reachable,
       supportsAttention: server.supportsAttention,
       environments: server.environments.size,
+      lastSyncedAt:
+        server.lastSyncedAt !== undefined
+          ? server.lastSyncedAt
+          : server.supportsAttention
+            ? null
+            : (fallbackSyncByServer.get(server.id)?.at ?? null),
     }))
     const badgeOthers = computeBadgeOthers(serverInputs, items)
 
@@ -481,6 +490,23 @@ export function createInboxController(options: InboxControllerOptions): InboxCon
     setServers(inputs) {
       serverInputs = inputs
       serversById = new Map(inputs.map((server) => [server.id, server]))
+      const currentNow = now()
+      for (const id of fallbackSyncByServer.keys()) {
+        const server = serversById.get(id)
+        if (!server || server.supportsAttention) fallbackSyncByServer.delete(id)
+      }
+      for (const server of inputs) {
+        if (server.supportsAttention || server.lastSyncedAt !== undefined) continue
+        const prev = fallbackSyncByServer.get(server.id)
+        if (server.loaded && server.reachable) {
+          const signature = JSON.stringify(server.fallback ?? null)
+          if (!prev?.reachable || prev.signature !== signature) {
+            fallbackSyncByServer.set(server.id, { signature, reachable: true, at: currentNow })
+          }
+        } else if (!server.reachable && prev?.reachable) {
+          fallbackSyncByServer.set(server.id, { ...prev, reachable: false })
+        }
+      }
       // Prune entries belonging to unpaired servers once the ledger has loaded.
       if (ledgerLoaded && inputs.length >= 0) {
         let next: Record<string, InboxEntry<string>> | null = null

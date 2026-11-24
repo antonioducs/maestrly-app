@@ -18,6 +18,8 @@ export type Palette = {
   cueSoft: string
   moss: string
   brick: string
+  badge: string
+  badgeInk: string
   codeBg: string
   codeInk: string
   scrim: string
@@ -43,6 +45,8 @@ export const palettes: { light: Palette; dark: Palette } = {
     cueSoft: '#fcf3e0',
     moss: '#2b7a58',
     brick: '#b34a4d',
+    badge: '#d93a3f',
+    badgeInk: '#ffffff',
     codeBg: '#1b1d1b',
     codeInk: '#e7e4dc',
     scrim: 'rgba(20,22,21,0.34)',
@@ -66,6 +70,8 @@ export const palettes: { light: Palette; dark: Palette } = {
     cueSoft: '#2b2416',
     moss: '#63d19c',
     brick: '#ff8288',
+    badge: '#d93a3f',
+    badgeInk: '#ffffff',
     codeBg: '#0c0d0c',
     codeInk: '#e7e4dc',
     scrim: 'rgba(0,0,0,0.52)',

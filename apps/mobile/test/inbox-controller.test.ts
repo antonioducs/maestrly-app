@@ -128,8 +128,8 @@ describe('inbox controller', () => {
 
     expect(counts).toEqual({ waiting: 1, unread: 2, total: 3 })
     expect(servers).toEqual([
-      { id: 'srv-a', name: 'Home', reachable: true, supportsAttention: true, environments: 2 },
-      { id: 'srv-b', name: 'Office', reachable: false, supportsAttention: true, environments: 1 },
+      { id: 'srv-a', name: 'Home', reachable: true, supportsAttention: true, environments: 2, lastSyncedAt: null },
+      { id: 'srv-b', name: 'Office', reachable: false, supportsAttention: true, environments: 1, lastSyncedAt: null },
     ])
     controller.stop()
   })
@@ -391,6 +391,113 @@ describe('inbox controller', () => {
     expect(sendSeen).not.toHaveBeenCalled()
     controller.stop()
   })
+
+  it('tracks lastSyncedAt for attention and fallback servers', async () => {
+    const { kv } = memoryStores()
+    let now = BASE_NOW
+    const controller = createInboxController({ kv, now: () => now, tickMs: 0 })
+    await controller.start()
+
+    controller.setServers([
+      serverInput({ id: 'srv-a', name: 'Attention', supportsAttention: true, loaded: false, lastSyncedAt: null }),
+      serverInput({ id: 'srv-f', name: 'Legacy', supportsAttention: false, loaded: false }),
+    ])
+    expect(controller.getState().servers.map((s) => ({ id: s.id, lastSyncedAt: s.lastSyncedAt }))).toEqual([
+      { id: 'srv-a', lastSyncedAt: null },
+      { id: 'srv-f', lastSyncedAt: null },
+    ])
+
+    // Initial load sets fallback lastSyncedAt and passes through attention lastSyncedAt.
+    now = BASE_NOW + 10_000
+    const fallbackObs = fallbackObservations({
+      serverId: 'srv-f',
+      serverName: 'Legacy',
+      bots: [botRecord({ id: 'atlas', name: 'Atlas' })],
+      environments: [],
+      inbox: [
+        {
+          botId: 'atlas',
+          interaction: {
+            kind: 'permission',
+            id: 'r1',
+            at: iso(0),
+            title: 'Deploy',
+            detail: null,
+            tool: null,
+            itemId: 'i1',
+          },
+        },
+      ],
+      environmentId: null,
+      chatLists: null,
+    })
+    controller.setServers([
+      serverInput({
+        id: 'srv-a',
+        name: 'Attention',
+        supportsAttention: true,
+        loaded: true,
+        lastSyncedAt: BASE_NOW + 5_000,
+      }),
+      serverInput({ id: 'srv-f', name: 'Legacy', supportsAttention: false, loaded: true, fallback: fallbackObs }),
+    ])
+    expect(controller.getState().servers.map((s) => ({ id: s.id, lastSyncedAt: s.lastSyncedAt }))).toEqual([
+      { id: 'srv-a', lastSyncedAt: BASE_NOW + 5_000 },
+      { id: 'srv-f', lastSyncedAt: BASE_NOW + 10_000 },
+    ])
+
+    // Unchanged fallback observations or going unreachable do not advance fallback lastSyncedAt.
+    now = BASE_NOW + 20_000
+    controller.setServers([
+      serverInput({
+        id: 'srv-a',
+        name: 'Attention',
+        supportsAttention: true,
+        reachable: false,
+        loaded: true,
+        lastSyncedAt: BASE_NOW + 5_000,
+      }),
+      serverInput({
+        id: 'srv-f',
+        name: 'Legacy',
+        supportsAttention: false,
+        reachable: false,
+        loaded: true,
+        fallback: fallbackObs,
+      }),
+    ])
+    expect(controller.getState().servers.map((s) => ({ id: s.id, lastSyncedAt: s.lastSyncedAt }))).toEqual([
+      { id: 'srv-a', lastSyncedAt: BASE_NOW + 5_000 },
+      { id: 'srv-f', lastSyncedAt: BASE_NOW + 10_000 },
+    ])
+
+    // Recovering reachability advances fallback lastSyncedAt.
+    now = BASE_NOW + 30_000
+    controller.setServers([
+      serverInput({
+        id: 'srv-a',
+        name: 'Attention',
+        supportsAttention: true,
+        reachable: true,
+        loaded: true,
+        lastSyncedAt: BASE_NOW + 30_000,
+      }),
+      serverInput({
+        id: 'srv-f',
+        name: 'Legacy',
+        supportsAttention: false,
+        reachable: true,
+        loaded: true,
+        fallback: fallbackObs,
+      }),
+    ])
+    expect(controller.getState().servers.map((s) => ({ id: s.id, lastSyncedAt: s.lastSyncedAt }))).toEqual([
+      { id: 'srv-a', lastSyncedAt: BASE_NOW + 30_000 },
+      { id: 'srv-f', lastSyncedAt: BASE_NOW + 30_000 },
+    ])
+
+    controller.stop()
+  })
 })
 
 describe('fallback observations', () => {
@@ -539,10 +646,7 @@ describe('demo server attention', () => {
     const groups = new Set(items.map((item) => item.group))
     expect(groups).toEqual(new Set(['waiting', 'new', 'read']))
     const waitingKinds = new Set(items.filter((i) => i.group === 'waiting').map((i) => i.kind))
-    expect(waitingKinds.has('approval')).toBe(true)
-    expect(waitingKinds.has('question')).toBe(true)
-    expect(waitingKinds.has('plan')).toBe(true)
-    expect(waitingKinds.has('help')).toBe(true)
+    expect(waitingKinds).toEqual(new Set(['approval', 'question', 'plan']))
     const newKinds = new Set(items.filter((i) => i.group === 'new').map((i) => i.kind))
     expect(newKinds.has('finished')).toBe(true)
     expect(newKinds.has('error')).toBe(true)

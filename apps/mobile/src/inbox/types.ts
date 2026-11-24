@@ -16,6 +16,7 @@ export interface MobileInboxServer {
   reachable: boolean
   supportsAttention: boolean
   environments: number
+  lastSyncedAt: number | null
 }
 
 export interface InboxUndo {
@@ -32,6 +33,7 @@ export interface MobileInbox {
   markAllRead(): void
   dismiss(key: string): InboxUndo
   restore(undo: InboxUndo): void
+  retry(serverId: string): void
 }
 
 /** Prefixes a server's attention key with its server id so keys never collide across paired servers. */

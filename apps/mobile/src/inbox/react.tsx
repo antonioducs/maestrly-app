@@ -83,6 +83,7 @@ export function InboxProvider({ children }: { children: ReactNode }) {
   notificationsRef.current = notifications
 
   const watchersRef = useRef(new Map<string, ManagedWatcher>())
+  const fallbackSyncRef = useRef(new Map<string, { sig: string; wasOpen: boolean; at: number }>())
   const backgroundedRef = useRef(AppState.currentState === 'background')
 
   // One stable fleet-controller identity counter so switching active server or restarting its controller reattaches
@@ -135,6 +136,11 @@ export function InboxProvider({ children }: { children: ReactNode }) {
     const activeFleet = fleetRef.current
     const activeChats = chatsRef.current
     const activeEnvId = environmentIdRef.current
+    const currentById = new Map(currentServers.map((server) => [server.id, server]))
+    for (const id of fallbackSyncRef.current.keys()) {
+      const server = currentById.get(id)
+      if (!server || server.features.includes(FLEET_ATTENTION_FEATURE)) fallbackSyncRef.current.delete(id)
+    }
     const inputs: InboxServerInput[] = currentServers.map((server) => {
       const isActive = currentActive?.id === server.id && activeFleet?.source.serverId === server.id
       const supportsAttention = server.features.includes(FLEET_ATTENTION_FEATURE)
@@ -154,6 +160,7 @@ export function InboxProvider({ children }: { children: ReactNode }) {
           supportsAttention: true,
           reachable: watched ? watched.reachable : isActive ? isFleetReachable(activeFleet) : true,
           loaded: watched?.loaded ?? false,
+          lastSyncedAt: watched?.lastSyncedAt ?? null,
           entries: watched?.entries ?? EMPTY_ENTRIES,
           environments,
           ...(activeFleetState ? { bots: activeFleetState.bots, inbox: activeFleetState.inbox } : {}),
@@ -162,6 +169,25 @@ export function InboxProvider({ children }: { children: ReactNode }) {
       }
 
       if (isActive && activeFleetState) {
+        const fallback = fallbackObservations({
+          serverId: server.id,
+          serverName: server.name,
+          bots: activeFleetState.bots,
+          environments: activeFleetState.environments,
+          inbox: activeFleetState.inbox,
+          environmentId: activeEnvId,
+          chatLists: activeChatsState?.lists ?? null,
+        })
+        const sig = JSON.stringify(fallback)
+        const prev = fallbackSyncRef.current.get(server.id)
+        const isOpen = activeFleetState.loaded && activeFleetState.connection === 'open'
+        let lastSyncedAt: number | null = prev?.at ?? null
+        if (isOpen && (!prev?.wasOpen || prev.sig !== sig)) {
+          lastSyncedAt = Date.now()
+          fallbackSyncRef.current.set(server.id, { sig, wasOpen: true, at: lastSyncedAt })
+        } else if (!isOpen && prev?.wasOpen) {
+          fallbackSyncRef.current.set(server.id, { ...prev, wasOpen: false })
+        }
         return {
           id: server.id,
           name: server.name,
@@ -169,21 +195,14 @@ export function InboxProvider({ children }: { children: ReactNode }) {
           supportsAttention: false,
           reachable: isFleetReachable(activeFleet),
           loaded: activeFleetState.loaded,
+          lastSyncedAt,
           entries: EMPTY_ENTRIES,
           environments: new Map(activeFleetState.environments.map((env) => [env.id, env.name])),
           bots: activeFleetState.bots,
           inbox: activeFleetState.inbox,
           activeEnvironmentId: activeEnvId,
           chatLists: activeChatsState?.lists ?? null,
-          fallback: fallbackObservations({
-            serverId: server.id,
-            serverName: server.name,
-            bots: activeFleetState.bots,
-            environments: activeFleetState.environments,
-            inbox: activeFleetState.inbox,
-            environmentId: activeEnvId,
-            chatLists: activeChatsState?.lists ?? null,
-          }),
+          fallback,
         }
       }
 
@@ -194,6 +213,7 @@ export function InboxProvider({ children }: { children: ReactNode }) {
         supportsAttention: false,
         reachable: true,
         loaded: false,
+        lastSyncedAt: null,
         entries: EMPTY_ENTRIES,
         environments: EMPTY_ENVIRONMENTS,
       }
@@ -291,6 +311,7 @@ export function InboxProvider({ children }: { children: ReactNode }) {
               getEnvironments: () => fc.store.getState().environments,
               subscribeStore: (listener) => fc.store.subscribe(listener),
               onAttentionStream: (handlers) => fc.onAttentionStream(handlers),
+              reconnectNow: () => fc.foreground(),
             },
           },
         })
@@ -372,6 +393,17 @@ export function InboxProvider({ children }: { children: ReactNode }) {
   const markAllRead = useCallback(() => inboxController.markAllRead(), [inboxController])
   const dismiss = useCallback((key: string): InboxUndo => inboxController.dismiss(key), [inboxController])
   const restore = useCallback((undo: InboxUndo) => inboxController.restore(undo), [inboxController])
+  const retry = useCallback((serverId: string) => {
+    const managed = watchersRef.current.get(serverId)
+    if (managed?.watcher) {
+      managed.watcher.retryNow()
+      return
+    }
+    const activeFleet = fleetRef.current
+    if (activeFleet && activeFleet.source.serverId === serverId) {
+      activeFleet.foreground()
+    }
+  }, [])
 
   const value = useMemo<MobileInbox>(
     () => ({
@@ -383,8 +415,9 @@ export function InboxProvider({ children }: { children: ReactNode }) {
       markAllRead,
       dismiss,
       restore,
+      retry,
     }),
-    [snapshot.items, snapshot.counts, snapshot.servers, open, markRead, markAllRead, dismiss, restore]
+    [snapshot.items, snapshot.counts, snapshot.servers, open, markRead, markAllRead, dismiss, restore, retry]
   )
 
   return <InboxContext.Provider value={value}>{children}</InboxContext.Provider>
