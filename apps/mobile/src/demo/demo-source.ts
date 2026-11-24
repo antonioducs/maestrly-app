@@ -307,7 +307,7 @@ export function createDemoSource(options: { stepMs?: number; autoplay?: boolean 
     }
   }
 
-  // Seed initial attention entries covering waiting (approval, question, plan, help) and unread news (finished, error)
+  // Seed initial attention entries covering waiting (approval, question, plan) and unread news (finished, error)
   // across all four demo environments (studio, research, personal, company).
   syncRequestAttention(inbox, false)
   const minutesAgo = (minutes: number) => new Date(clock - minutes * 60_000).toISOString()
@@ -324,7 +324,7 @@ export function createDemoSource(options: { stepMs?: number; autoplay?: boolean 
     {
       key: fleetAttentionKey.bot('atlas'),
       source: 'bot',
-      kind: 'help',
+      kind: 'finished',
       at: minutesAgo(8),
       title: 'Atlas',
       environmentId: 'studio',

@@ -425,6 +425,60 @@ try {
     await button(/^Pricing tiers for teams/).waitFor()
   })
 
+  await step('review notifications, open a new item, and dismiss with undo', async () => {
+    //Wait for Pricing tiers for teams click to close drawer and reveal header bell.
+    await button(/^Pricing tiers for teams/).click()
+    // Ensure background demo script (junoNightly) has settled so badge count is stable during the check.
+    await button(/^Notifications, \d+ pending$/).waitFor()
+    const bell = button(/^Notifications, \d+ pending$/)
+    const initialLabel = (await bell.getAttribute('aria-label')) ?? ''
+    const initialCount = Number(initialLabel.match(/(\d+)/)?.[1] ?? 0)
+    if (initialCount < 2) throw new Error(`Expected demo bell count >= 2, got "${initialLabel}"`)
+
+    await bell.click()
+    await page.getByRole('heading', { name: 'Notifications' }).waitFor()
+    await page.getByRole('heading', { name: /^Waiting on you / }).waitFor()
+    await page.getByRole('heading', { name: /^New / }).waitFor()
+    await page.getByRole('heading', { name: /^Read · last 24h / }).waitFor()
+
+    await button(/^Fix flaky gateway reconnect test,/).click()
+    await button(/^Fix flaky gateway reconnect test:/).waitFor()
+    await page.getByRole('textbox', { name: /Message|Ask anything/ }).waitFor()
+
+    const expectedAfterOpen = initialCount - 1
+    await button(`Notifications, ${expectedAfterOpen} pending`).click()
+    const readHeader = page.getByRole('heading', { name: /^Read · last 24h / })
+    await readHeader.waitFor()
+    const readBox = await readHeader.boundingBox()
+    const itemBox = await button(/^Fix flaky gateway reconnect test,/).boundingBox()
+    if (!readBox || !itemBox || itemBox.y <= readBox.y) {
+      throw new Error('Opened item did not move under Read · last 24h')
+    }
+
+    const subtitleLocator = page.getByText(/waiting on you · \d+ new|new$/).last()
+    const subtitleBeforeDismiss = await subtitleLocator.textContent()
+    await button('Edit').click()
+    await button('Dismiss Invoice export timeouts').click()
+    await button('Undo').waitFor()
+    if (await button('Dismiss Invoice export timeouts').count()) {
+      throw new Error('Dismissed item remained visible')
+    }
+    const subtitleAfterDismiss = await subtitleLocator.textContent()
+    if (subtitleAfterDismiss === subtitleBeforeDismiss) {
+      throw new Error(`Counts subtitle did not update on dismiss: "${subtitleAfterDismiss}"`)
+    }
+
+    await button('Undo').click()
+    await button('Dismiss Invoice export timeouts').waitFor()
+    if ((await subtitleLocator.textContent()) !== subtitleBeforeDismiss) {
+      throw new Error(`Undo did not restore counts subtitle "${subtitleBeforeDismiss}"`)
+    }
+
+    await button('Done').click()
+    await button('Back').click()
+    await button(`Notifications, ${expectedAfterOpen} pending`).waitFor()
+  })
+
   if (problems.length) throw new Error(`The app reported problems:\n${problems.join('\n')}`)
   console.log('Mobile web flows passed.')
 } catch (error) {
