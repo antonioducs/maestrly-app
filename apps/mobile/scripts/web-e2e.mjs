@@ -444,6 +444,15 @@ try {
     await button(/^Fix flaky gateway reconnect test,/).click()
     await button(/^Fix flaky gateway reconnect test:/).waitFor()
     await page.getByRole('textbox', { name: /Message|Ask anything/ }).waitFor()
+    if (new URL(page.url()).pathname !== '/home') {
+      throw new Error(`Expected /home after opening center item, got ${page.url()}`)
+    }
+    if ((await button(/^Open menu/).count()) !== 1) {
+      throw new Error(`Expected single home screen after opening center item, got ${await button(/^Open menu/).count()}`)
+    }
+    if ((await page.getByRole('heading', { name: 'Notifications' }).count()) !== 0) {
+      throw new Error('Inbox screen stayed mounted in the stack after opening center item')
+    }
 
     const expectedAfterOpen = initialCount - 1
     await button(`Notifications, ${expectedAfterOpen} pending`).click()

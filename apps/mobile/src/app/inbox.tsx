@@ -34,7 +34,7 @@ export default function InboxScreen() {
   const { t, plural } = useI18n()
   const insets = useSafeAreaInsets()
   const inbox = useInbox()
-  const { active, controller, environmentId: activeEnvironmentId } = useServers()
+  const { active, environmentId: activeEnvironmentId } = useServers()
   const fleetConnection = useOptionalFleetConnection()
   const chatsState = useChats((state) => state.lists)
   const now = useNow(true, 60_000)
@@ -93,15 +93,6 @@ export default function InboxScreen() {
       return inbox.items.some((item) => item.serverId === server.id)
     })
   }, [inbox.servers, inbox.items, serverFilter])
-
-  const latestAtByServer = useMemo(() => {
-    const map = new Map<string, number>()
-    for (const item of inbox.items) {
-      const prev = map.get(item.serverId)
-      if (prev === undefined || item.at > prev) map.set(item.serverId, item.at)
-    }
-    return map
-  }, [inbox.items])
 
   const showChips = inbox.servers.length > 1 && inbox.items.length > 0
   const anyUnread = useMemo(() => inbox.items.some((item) => item.unread), [inbox.items])
@@ -280,7 +271,6 @@ export default function InboxScreen() {
         {unreachableServers.map((server) => {
           const isActiveServer = server.id === active?.id
           const reconnecting = isActiveServer && fleetConnection === 'connecting'
-          const latestAt = latestAtByServer.get(server.id)
           return (
             <View
               key={server.id}
@@ -306,16 +296,16 @@ export default function InboxScreen() {
                     ? t('conn.reconnecting', { server: server.name })
                     : t('conn.offline', { server: server.name })}
                 </AppText>
-                {!reconnecting && latestAt !== undefined ? (
+                {!reconnecting && server.lastSyncedAt !== null ? (
                   <AppText variant="small" tone="muted">
-                    {t('inbox.staleSince', { time: formatCompactAge(now - latestAt, t) })}
+                    {t('inbox.staleSince', { time: formatCompactAge(now - server.lastSyncedAt, t) })}
                   </AppText>
                 ) : null}
               </View>
-              {!reconnecting && isActiveServer && controller ? (
+              {!reconnecting ? (
                 <Button
                   label={t('conn.retryNow')}
-                  onPress={() => controller.foreground()}
+                  onPress={() => inbox.retry(server.id)}
                   variant="secondary"
                   size="sm"
                 />
