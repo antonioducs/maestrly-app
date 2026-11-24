@@ -1007,6 +1007,7 @@ async function buildDefaultConversationDispatchService(): Promise<ConversationDi
           requestKey: record.requestKey,
           conversationId: record.conversationId,
           branch: record.branch,
+          baseCommit: record.baseRevision,
           title: record.title,
         })
       }

@@ -9,6 +9,7 @@ interface MaestroSwarmTaskRow {
   dependsOnJson: string
   conversationId: string | null
   branch: string | null
+  baseCommit: string | null
   phase: MaestroSwarmPhase
   changesReason: MaestroSwarmChangesReason | null
   reviewRound: number
@@ -25,6 +26,7 @@ const COLUMNS = `orchestrator_conversation_id AS orchestratorConversationId,
   depends_on_json AS dependsOnJson,
   conversation_id AS conversationId,
   branch,
+  base_commit AS baseCommit,
   phase,
   changes_reason AS changesReason,
   review_round AS reviewRound,
@@ -52,6 +54,7 @@ function fromRow(row: MaestroSwarmTaskRow | undefined): MaestroSwarmTask | null 
     dependsOn: parseDependsOn(row.dependsOnJson),
     conversationId: row.conversationId,
     branch: row.branch,
+    baseCommit: row.baseCommit,
     phase: row.phase,
     changesReason: row.changesReason,
     reviewRound: Number(row.reviewRound),
@@ -118,6 +121,7 @@ export function upsertMaestroSwarmTask(task: MaestroSwarmTask): void {
          depends_on_json,
          conversation_id,
          branch,
+         base_commit,
          phase,
          changes_reason,
          review_round,
@@ -126,13 +130,14 @@ export function upsertMaestroSwarmTask(task: MaestroSwarmTask): void {
          created_at,
          updated_at
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(orchestrator_conversation_id, task_key) DO UPDATE SET
          title = excluded.title,
          resource_id = excluded.resource_id,
          depends_on_json = excluded.depends_on_json,
          conversation_id = excluded.conversation_id,
          branch = excluded.branch,
+         base_commit = excluded.base_commit,
          phase = excluded.phase,
          changes_reason = excluded.changes_reason,
          review_round = excluded.review_round,
@@ -148,6 +153,7 @@ export function upsertMaestroSwarmTask(task: MaestroSwarmTask): void {
       JSON.stringify(task.dependsOn),
       task.conversationId,
       task.branch,
+      task.baseCommit,
       task.phase,
       task.changesReason,
       task.reviewRound,

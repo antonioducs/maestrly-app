@@ -133,6 +133,7 @@ export function declareSwarmTasks(
           dependsOn: update.dependsOn ? [...update.dependsOn] : [],
           conversationId: null,
           branch: null,
+          baseCommit: null,
           phase,
           changesReason,
           reviewRound: phase === 'changes' ? 1 : 0,
@@ -227,6 +228,7 @@ export function ensureSwarmTasks(
           dependsOn: [],
           conversationId: null,
           branch: null,
+          baseCommit: null,
           phase: 'queued',
           changesReason: null,
           reviewRound: 0,
@@ -255,6 +257,7 @@ export function onSwarmDispatchStarted(input: {
   requestKey: string
   conversationId: string
   branch: string | null
+  baseCommit?: string | null
   title: string
 }): void {
   const existing = getMaestroSwarmTask(input.orchestratorId, input.requestKey)
@@ -264,6 +267,7 @@ export function onSwarmDispatchStarted(input: {
     ...existing,
     conversationId: input.conversationId,
     branch: input.branch,
+    baseCommit: input.baseCommit ?? null,
     phase: 'implementing',
     changesReason: null,
     updatedAt: Date.now(),
@@ -311,7 +315,7 @@ export async function reconcileSwarmMerges(
   }
 ): Promise<void> {
   const candidates = listMaestroSwarmTasks(orchestratorId).filter(
-    (task) => task.branch && task.phase !== 'merged' && task.phase !== 'queued'
+    (task) => task.branch && task.phase !== 'merged' && task.phase !== 'queued' && task.phase !== 'implementing'
   )
   if (candidates.length === 0) return
 
@@ -319,7 +323,8 @@ export async function reconcileSwarmMerges(
   for (const task of candidates) {
     if (!task.branch) continue
     const tip = await git.branchTip(task.branch)
-    if (!tip) continue
+    // A branch still at its dispatch base is trivially an ancestor of HEAD: the worker committed nothing to merge.
+    if (!tip || tip === task.baseCommit) continue
     const ancestor = await git.isAncestor(tip)
     if (ancestor === true) {
       mergedCommits.push({ key: task.key, tip })

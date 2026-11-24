@@ -20,6 +20,8 @@ export interface MaestroSwarmTask {
   dependsOn: string[]
   conversationId: string | null
   branch: string | null
+  /** Commit the worker branch started from; a branch still at it has nothing to merge. */
+  baseCommit: string | null
   phase: MaestroSwarmPhase
   changesReason: MaestroSwarmChangesReason | null
   reviewRound: number

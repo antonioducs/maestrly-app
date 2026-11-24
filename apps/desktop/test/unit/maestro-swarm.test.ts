@@ -256,6 +256,48 @@ describe('maestro swarm state transitions', () => {
     })
   })
 
+  it('reconcileSwarmMerges skips implementing tasks whose branch has not diverged from HEAD yet', async () => {
+    declareSwarmTasks(orchId, [{ key: 'api', title: 'API' }])
+    onSwarmDispatchStarted({
+      orchestratorId: orchId,
+      requestKey: 'api',
+      conversationId: worker1,
+      branch: 'task/api',
+      title: 'API',
+    })
+
+    await reconcileSwarmMerges(orchId, {
+      branchTip: async () => 'base000',
+      isAncestor: async () => true,
+    })
+
+    expect(listSwarm(orchId).find((t) => t.key === 'api')).toMatchObject({
+      phase: 'implementing',
+      mergedCommit: null,
+    })
+  })
+
+  it('reconcileSwarmMerges never marks a delivered task merged while its branch is still at the dispatch base', async () => {
+    declareSwarmTasks(orchId, [{ key: 'api', title: 'API' }])
+    onSwarmDispatchStarted({
+      orchestratorId: orchId,
+      requestKey: 'api',
+      conversationId: worker1,
+      branch: 'task/api',
+      baseCommit: 'base000',
+      title: 'API',
+    })
+    onSwarmWorkerResult({ orchestratorId: orchId, workerConversationId: worker1, status: 'success' })
+    expect(listSwarm(orchId)[0]).toMatchObject({ phase: 'delivered', baseCommit: 'base000' })
+
+    const git = { branchTip: async () => 'base000', isAncestor: async () => true }
+    await reconcileSwarmMerges(orchId, git)
+    expect(listSwarm(orchId)[0]).toMatchObject({ phase: 'delivered', mergedCommit: null })
+
+    await reconcileSwarmMerges(orchId, { ...git, branchTip: async () => 'work111' })
+    expect(listSwarm(orchId)[0]).toMatchObject({ phase: 'merged', mergedCommit: 'work111' })
+  })
+
   it('stopSwarm marks implementing tasks blocked with note stopped and returns their conversation ids', () => {
     declareSwarmTasks(orchId, [
       { key: 'api', title: 'API' },
@@ -358,6 +400,7 @@ describe('maestro swarm state transitions', () => {
         dependsOn: [],
         conversationId: null,
         branch: null,
+        baseCommit: null,
         phase: 'queued',
         changesReason: null,
         reviewRound: 0,
@@ -374,6 +417,7 @@ describe('maestro swarm state transitions', () => {
         dependsOn: ['api'],
         conversationId: worker1,
         branch: 'feat/ui',
+        baseCommit: 'base000',
         phase: 'changes' as MaestroSwarmPhase,
         changesReason: 'review',
         reviewRound: 2,

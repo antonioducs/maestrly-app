@@ -1221,6 +1221,7 @@ function initializeSchema(): void {
       depends_on_json TEXT NOT NULL DEFAULT '[]',
       conversation_id TEXT,
       branch TEXT,
+      base_commit TEXT,
       phase TEXT NOT NULL,
       changes_reason TEXT,
       review_round INTEGER NOT NULL DEFAULT 0,
