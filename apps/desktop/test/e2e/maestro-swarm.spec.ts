@@ -33,6 +33,14 @@ interface SwarmTask {
   mergedCommit: string | null
 }
 
+/** The worker's command, in the shell the `bash` tool runs: PowerShell on Windows, POSIX sh elsewhere. */
+function workerCommit(file: string, content: string, message: string): string {
+  const commit = `git -c user.name=E2E -c user.email=e2e@example.test commit -q -m '${message}'`
+  return process.platform === 'win32'
+    ? `Set-Content -Path ${file} -Value '${content}'; git add -A; ${commit}`
+    : `printf '${content}\\n' > ${file} && git add -A && ${commit}`
+}
+
 /**
  * End-to-end coverage for the Maestro swarm lifecycle against a scripted OpenAI-compatible server:
  * - Maestro conversation on its own feature-branch worktree with a two-agent pool (`neon`, `hydro`) inheriting the
@@ -183,8 +191,7 @@ test('runs a Maestro swarm end to end through dispatch, worker commits, review, 
       if (!did('worker-a-commit')) {
         await workersReleased
         return call(res, 'worker-a-commit', 'bash', {
-          command:
-            "printf 'neon work\\n' > neon.txt && git add -A && git -c user.name=E2E -c user.email=e2e@example.test commit -q -m 'feat: task a'",
+          command: workerCommit('neon.txt', 'neon work', 'feat: task a'),
         })
       }
       return end(res, `${REPORT_A_MARKER}: created neon.txt and committed on branch.`)
@@ -195,8 +202,7 @@ test('runs a Maestro swarm end to end through dispatch, worker commits, review, 
       if (!did('worker-b-commit')) {
         await workersReleased
         return call(res, 'worker-b-commit', 'bash', {
-          command:
-            "printf 'hydro work\\n' > hydro.txt && git add -A && git -c user.name=E2E -c user.email=e2e@example.test commit -q -m 'feat: task b'",
+          command: workerCommit('hydro.txt', 'hydro work', 'feat: task b'),
         })
       }
       return end(res, `${REPORT_B_MARKER}: created hydro.txt and committed on branch.`)
@@ -428,9 +434,9 @@ test('runs a Maestro swarm end to end through dispatch, worker commits, review, 
 
       // Verify both worker commits actually merged into the Maestro feature branch worktree.
       expect(existsSync(path.join(maestro.cwd, 'neon.txt'))).toBe(true)
-      expect(readFileSync(path.join(maestro.cwd, 'neon.txt'), 'utf8')).toBe('neon work\n')
+      expect(readFileSync(path.join(maestro.cwd, 'neon.txt'), 'utf8').trim()).toBe('neon work')
       expect(existsSync(path.join(maestro.cwd, 'hydro.txt'))).toBe(true)
-      expect(readFileSync(path.join(maestro.cwd, 'hydro.txt'), 'utf8')).toBe('hydro work\n')
+      expect(readFileSync(path.join(maestro.cwd, 'hydro.txt'), 'utf8').trim()).toBe('hydro work')
       expect(confirmationSaw).toBe(false)
 
       // 5. Verify UI reflects merged badges in the sidebar and Swarm 2/2 in the Maestro pill.
