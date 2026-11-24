@@ -54,10 +54,30 @@ export interface ChatAttentionDeps {
 export interface ChatAttentionSync {
   /** Stops watching host events and clears listeners. */
   stop(): void
-  /** Drops any in-memory routine notice for `conversationId`, emitting `chat.attention.cleared` if active. */
+  /** Drops any in-memory notice/active tracking for `conversationId`, emitting `chat.attention.cleared` if cleared. */
   clearSeen(conversationId: string): boolean
+  /** Current computed attention kind for `conversationId` based on host state and routine notices. */
+  kindOf(conversationId: string): FleetChatAttentionKind | null
   /** Current in-memory routine notices eligible for inclusion in `chat.attention.snapshot`. */
   routineSnapshot(): FleetChatAttentionSnapshotItem[]
+}
+
+export function clearChatAttentionIds(
+  conversationIds: ReadonlyArray<string>,
+  deps: {
+    clearMark(id: string): boolean
+    emitAttention(id: string, attention: boolean): void
+    attention: Pick<ChatAttentionSync, 'clearSeen' | 'kindOf'>
+  }
+): { cleared: string[] } {
+  const cleared: string[] = []
+  for (const id of conversationIds) {
+    const clearedMark = deps.clearMark(id)
+    if (clearedMark) deps.emitAttention(id, false)
+    const clearedTracked = deps.attention.clearSeen(id)
+    if ((clearedMark || clearedTracked) && deps.attention.kindOf(id) === null) cleared.push(id)
+  }
+  return { cleared }
 }
 
 export function toFleetChatAttentionKind(kind: InboxKind | null): FleetChatAttentionKind | null {
@@ -86,14 +106,14 @@ export function chatAttentionKindOf(
 }
 
 export function buildChatAttentionSnapshot(
-  rows: ReadonlyArray<{ id: string; name: string; status: string; marked: boolean; at: number }>,
+  rows: ReadonlyArray<{ id: string; name: string; status: string; marked: boolean; at: number; routine?: boolean }>,
   hasPendingPlan: (id: string) => boolean,
   extra: ReadonlyArray<FleetChatAttentionSnapshotItem> = []
 ): FleetChatAttentionSnapshotItem[] {
   const items: FleetChatAttentionSnapshotItem[] = []
   const seen = new Set<string>()
   for (const row of rows) {
-    const kind = chatAttentionKindOf(row.status, hasPendingPlan(row.id), row.marked)
+    const kind = chatAttentionKindOf(row.status, hasPendingPlan(row.id), row.routine ? false : row.marked)
     if (!kind) continue
     seen.add(row.id)
     items.push({
@@ -130,18 +150,28 @@ export function createChatAttentionSync(deps: ChatAttentionDeps): ChatAttentionS
   const routineNotices = new Map<string, { kind: 'finished' | 'failed'; name: string; at: number }>()
   for (const item of deps.initialAttention?.() ?? []) activeKinds.set(item.conversationId, item.kind)
 
-  const syncConversation = (conversationId: string) => {
-    if (!deps.conversationState) return
+  const kindOf = (conversationId: string): FleetChatAttentionKind | null => {
+    if (!deps.conversationState) return null
     const state = deps.conversationState(conversationId)
-    let nextKind: FleetChatAttentionKind | null = null
     if (state?.eligible) {
-      nextKind = chatAttentionKindOf(state.status, state.hasPendingPlan, state.marked)
       routineNotices.delete(conversationId)
-    } else if (state?.routine) {
-      nextKind = routineNotices.get(conversationId)?.kind ?? null
-    } else {
-      routineNotices.delete(conversationId)
+      return chatAttentionKindOf(state.status, state.hasPendingPlan, state.marked)
     }
+    if (state?.routine) {
+      return (
+        chatAttentionKindOf(state.status, state.hasPendingPlan, false) ??
+        routineNotices.get(conversationId)?.kind ??
+        null
+      )
+    }
+    routineNotices.delete(conversationId)
+    return null
+  }
+
+  const syncConversation = (conversationId: string, publishedKind?: FleetChatAttentionKind) => {
+    if (!deps.conversationState) return
+    // N1 (out of scope): an active attention kind stays stale until the turn ends because only transitions to null clear.
+    const nextKind = kindOf(conversationId) ?? publishedKind ?? null
     const previousKind = activeKinds.get(conversationId) ?? null
     if (nextKind === null) {
       if (previousKind !== null) {
@@ -154,9 +184,11 @@ export function createChatAttentionSync(deps: ChatAttentionDeps): ChatAttentionS
   }
 
   const clearSeen = (conversationId: string): boolean => {
-    const existed = routineNotices.delete(conversationId)
-    if (existed) syncConversation(conversationId)
-    return existed
+    const hadRoutine = routineNotices.delete(conversationId)
+    const hadActive = activeKinds.has(conversationId)
+    if (!hadRoutine && !hadActive) return false
+    syncConversation(conversationId)
+    return !activeKinds.has(conversationId)
   }
 
   const routineSnapshot = (): FleetChatAttentionSnapshotItem[] => {
@@ -182,10 +214,10 @@ export function createChatAttentionSync(deps: ChatAttentionDeps): ChatAttentionS
     return items
   }
 
-  const publish = (conversationId: string, kind: FleetChatAttentionKind) => {
+  const publish = (conversationId: string, kind: FleetChatAttentionKind): FleetChatAttentionKind | undefined => {
     const conversation = deps.conversation(conversationId)
     // A bot's conversation needs the owner as any chat does: its approvals and plans are theirs to decide.
-    if (!conversation) return
+    if (!conversation) return undefined
     const name = conversation.name.slice(0, 200)
     deps.publish({ conversationId, name, kind })
     if (kind === 'finished' || kind === 'failed') {
@@ -194,14 +226,15 @@ export function createChatAttentionSync(deps: ChatAttentionDeps): ChatAttentionS
         routineNotices.set(conversationId, { kind, name, at: Date.now() })
       }
     }
+    return kind
   }
   const asked = ({ conversationId }: { conversationId: string }) => {
-    publish(conversationId, 'waiting')
-    syncConversation(conversationId)
+    const published = publish(conversationId, 'waiting')
+    syncConversation(conversationId, published)
   }
   const question = ({ conversationId }: { conversationId: string }) => {
-    publish(conversationId, 'question')
-    syncConversation(conversationId)
+    const published = publish(conversationId, 'question')
+    syncConversation(conversationId, published)
   }
   deps.permissions.on('asked', asked)
   deps.questions.on('asked', question)
@@ -209,6 +242,7 @@ export function createChatAttentionSync(deps: ChatAttentionDeps): ChatAttentionS
     const previous = statuses.get(conversationId)
     statuses.set(conversationId, status)
     // Questions and approvals said so when they were asked; only a turn's end is news here.
+    let publishedKind: FleetChatAttentionKind | undefined
     if (status !== previous) {
       // A run may settle before or after its turn reports ready, so whose turn it is is decided when the turn starts:
       // the owner continuing a finished run's conversation hears of each answer as in any chat.
@@ -219,14 +253,14 @@ export function createChatAttentionSync(deps: ChatAttentionDeps): ChatAttentionS
       } else if (status === 'ready') {
         const routine = runTurns.delete(conversationId) ? (deps.routineRun?.(conversationId) ?? null) : null
         if (!routine || isAlerting({ status: routine.outcome }, routine.notify)) {
-          publish(conversationId, deps.hasPendingPlan(conversationId) ? 'plan' : 'finished')
+          publishedKind = publish(conversationId, deps.hasPendingPlan(conversationId) ? 'plan' : 'finished')
         }
       } else if (status === 'error') {
         runTurns.delete(conversationId)
-        publish(conversationId, 'failed')
+        publishedKind = publish(conversationId, 'failed')
       }
     }
-    syncConversation(conversationId)
+    syncConversation(conversationId, publishedKind)
   })
   const stopChanges = deps.watchChanges?.((conversationId) => syncConversation(conversationId))
   const stopSeen = deps.watchSeen?.((conversationId) => {
@@ -241,6 +275,7 @@ export function createChatAttentionSync(deps: ChatAttentionDeps): ChatAttentionS
       stopSeen?.()
     },
     clearSeen,
+    kindOf,
     routineSnapshot,
   }
 }

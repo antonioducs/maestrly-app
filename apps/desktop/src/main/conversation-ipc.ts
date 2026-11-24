@@ -39,8 +39,6 @@ export interface ConversationIpcDeps {
   resumeBackgroundCompaction?: (id: string) => void
   /** Tells every window, on this computer and connected ones, that the conversation's attention mark changed. */
   emitAttention?: (conversationId: string, attention: boolean) => void
-  /** Notifies host listeners when a conversation is archived or deleted so attention sync updates. */
-  onConversationChanged?: (conversationId: string) => void
   /** Notifies host attention sync when a conversation is seen, even without a DB attention mark. */
   onAttentionSeen?: (conversationId: string) => void
 }
@@ -65,7 +63,6 @@ export async function archiveConversation(deps: ConversationIpcDeps, id: string,
   setConversationArchived(id, archived)
   if (archived) {
     if (clearConversationAttention(id)) deps.emitAttention?.(id, false)
-    deps.onConversationChanged?.(id)
   }
   if (!archived) deps.resumeBackgroundCompaction?.(id)
 }
@@ -152,7 +149,6 @@ export function registerConversationIpc(reg: IpcRegistrar, deps: ConversationIpc
     cleanupSharedWatchers(id) // before deleting the row needed to resolve notes paths and cwd
     // Persistent cleanup lives in the service and also covers workspace removal.
     await deleteConversation(id)
-    deps.onConversationChanged?.(id)
   })
 }
 

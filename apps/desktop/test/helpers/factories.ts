@@ -68,6 +68,8 @@ export function makeStandaloneConversation(overrides: Partial<StandaloneConversa
     isMulti: 0,
     uiPrefs: overrides.uiPrefs,
     ...(overrides.botOrigin ? { botOrigin: overrides.botOrigin } : {}),
+    ...(overrides.routineId !== undefined ? { routineId: overrides.routineId } : {}),
+    ...(overrides.routineRunId !== undefined ? { routineRunId: overrides.routineRunId } : {}),
   }
   insertConversation(conv)
   return conv

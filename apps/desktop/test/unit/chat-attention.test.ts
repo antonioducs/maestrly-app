@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import { describe, expect, it } from 'vitest'
 import {
   buildChatAttentionSnapshot,
+  clearChatAttentionIds,
   createChatAttentionSync,
   watchChatAttention,
   type ChatAttentionState,
@@ -417,6 +418,191 @@ describe('chat attention on a workspaces host', () => {
 
       expect(cleared).toEqual(['r-alert', 'r-seen', 'r-turn', 'r-arch'])
       expect(sync.routineSnapshot().map((item) => item.conversationId)).toEqual(['r-fail'])
+    } finally {
+      sync.stop()
+    }
+  })
+
+  it('tracks routine approvals, questions, and plans through sync and snapshot until answered or cleared (B2)', () => {
+    const permissions = new EventEmitter()
+    const questions = new EventEmitter()
+    const statuses = new EventEmitter()
+    const changes = new EventEmitter()
+    const plans = new Set<string>()
+    const stateMap = new Map<string, ChatAttentionState>([
+      ['r-wait', { status: 'working', marked: false, hasPendingPlan: false, eligible: false, routine: true }],
+      ['r-ask', { status: 'working', marked: false, hasPendingPlan: false, eligible: false, routine: true }],
+      ['r-plan', { status: 'working', marked: false, hasPendingPlan: false, eligible: false, routine: true }],
+    ])
+    const published: Array<{ conversationId: string; kind: string }> = []
+    const cleared: string[] = []
+    const sync = createChatAttentionSync({
+      permissions,
+      questions,
+      watchStatuses: (listener) => {
+        const onStatus = (id: string, status: string) => listener(id, status)
+        statuses.on('status', onStatus)
+        return () => statuses.off('status', onStatus)
+      },
+      conversation: (id) => ({ name: `Routine ${id}` }),
+      hasPendingPlan: (id) => plans.has(id),
+      routineRun: () => ({ notify: 'all', outcome: 'done', active: true }),
+      conversationState: (id) => stateMap.get(id) ?? null,
+      watchChanges: (listener) => {
+        const onChange = (id: string) => listener(id)
+        changes.on('change', onChange)
+        return () => changes.off('change', onChange)
+      },
+      publish: ({ conversationId, kind }) => published.push({ conversationId, kind }),
+      publishCleared: (conversationId) => cleared.push(conversationId),
+    })
+
+    try {
+      // Routine approval asked -> waiting -> answered -> cleared.
+      statuses.emit('status', 'r-wait', 'working')
+      permissions.emit('asked', { conversationId: 'r-wait' })
+      stateMap.set('r-wait', {
+        status: 'waiting',
+        marked: false,
+        hasPendingPlan: false,
+        eligible: false,
+        routine: true,
+      })
+      statuses.emit('status', 'r-wait', 'waiting')
+      expect(sync.kindOf('r-wait')).toBe('waiting')
+
+      // Routine question asked -> asking -> answered -> cleared.
+      statuses.emit('status', 'r-ask', 'working')
+      questions.emit('asked', { conversationId: 'r-ask' })
+      stateMap.set('r-ask', { status: 'asking', marked: false, hasPendingPlan: false, eligible: false, routine: true })
+      statuses.emit('status', 'r-ask', 'asking')
+      expect(sync.kindOf('r-ask')).toBe('question')
+
+      // Routine turn ends with pending plan -> plan -> plan decided/cleared -> cleared.
+      statuses.emit('status', 'r-plan', 'working')
+      plans.add('r-plan')
+      stateMap.set('r-plan', { status: 'ready', marked: false, hasPendingPlan: true, eligible: false, routine: true })
+      statuses.emit('status', 'r-plan', 'ready')
+      expect(sync.kindOf('r-plan')).toBe('plan')
+
+      expect(published).toEqual([
+        { conversationId: 'r-wait', kind: 'waiting' },
+        { conversationId: 'r-ask', kind: 'question' },
+        { conversationId: 'r-plan', kind: 'plan' },
+      ])
+
+      // Snapshot includes waiting/asking/planned routine conversations while ignoring DB marks on routine rows.
+      const snapshot = buildChatAttentionSnapshot(
+        [
+          {
+            id: 'r-wait',
+            name: 'Routine waiting',
+            status: 'waiting',
+            marked: false,
+            at: 1_700_000_000_000,
+            routine: true,
+          },
+          { id: 'r-idle', name: 'Routine idle', status: 'ready', marked: true, at: 1_700_000_000_000, routine: true },
+        ],
+        (id) => plans.has(id),
+        sync.routineSnapshot()
+      )
+      expect(snapshot.map(({ conversationId, kind }) => ({ conversationId, kind }))).toEqual([
+        { conversationId: 'r-wait', kind: 'waiting' },
+      ])
+
+      // Answer approval and question -> working; clear plan -> ready without plan.
+      stateMap.set('r-wait', {
+        status: 'working',
+        marked: false,
+        hasPendingPlan: false,
+        eligible: false,
+        routine: true,
+      })
+      statuses.emit('status', 'r-wait', 'working')
+      stateMap.set('r-ask', { status: 'working', marked: false, hasPendingPlan: false, eligible: false, routine: true })
+      statuses.emit('status', 'r-ask', 'working')
+      plans.delete('r-plan')
+      stateMap.set('r-plan', { status: 'ready', marked: false, hasPendingPlan: false, eligible: false, routine: true })
+      changes.emit('change', 'r-plan')
+
+      expect(cleared).toEqual(['r-wait', 'r-ask', 'r-plan'])
+    } finally {
+      sync.stop()
+    }
+  })
+
+  it('tracks published events whose state kind is null at sync time and returns only now-null ids from clear (S6)', () => {
+    const permissions = new EventEmitter()
+    const questions = new EventEmitter()
+    const statuses = new EventEmitter()
+    const changes = new EventEmitter()
+    const stateMap = new Map<string, ChatAttentionState>([
+      // Null at sync time: marked is false even when ready fires.
+      ['c-null-at-publish', { status: 'ready', marked: false, hasPendingPlan: false, eligible: true }],
+      // Still waiting even if DB mark gets cleared.
+      ['c-still-waiting', { status: 'waiting', marked: true, hasPendingPlan: false, eligible: true }],
+      // Finished chat whose DB mark can be cleared cleanly.
+      ['c-finished', { status: 'ready', marked: true, hasPendingPlan: false, eligible: true }],
+    ])
+    const dbMarks = new Set(['c-still-waiting', 'c-finished'])
+    const emittedAttention: Array<{ id: string; attention: boolean }> = []
+    const cleared: string[] = []
+    const sync = createChatAttentionSync({
+      permissions,
+      questions,
+      watchStatuses: (listener) => {
+        const onStatus = (id: string, status: string) => listener(id, status)
+        statuses.on('status', onStatus)
+        return () => statuses.off('status', onStatus)
+      },
+      conversation: (id) => ({ name: `Chat ${id}` }),
+      hasPendingPlan: () => false,
+      initialAttention: () => [
+        { conversationId: 'c-still-waiting', kind: 'waiting' },
+        { conversationId: 'c-finished', kind: 'finished' },
+      ],
+      conversationState: (id) => stateMap.get(id) ?? null,
+      watchChanges: (listener) => {
+        const onChange = (id: string) => listener(id)
+        changes.on('change', onChange)
+        return () => changes.off('change', onChange)
+      },
+      publish: () => undefined,
+      publishCleared: (conversationId) => cleared.push(conversationId),
+    })
+
+    try {
+      // S6(c): ready fires before DB mark exists (kindOf === null), yet c-null-at-publish is tracked and clears later.
+      statuses.emit('status', 'c-null-at-publish', 'working')
+      statuses.emit('status', 'c-null-at-publish', 'ready')
+      changes.emit('change', 'c-null-at-publish')
+      expect(cleared).toContain('c-null-at-publish')
+
+      // S6(a): POST /v1/chat-attention/clear returns only ids whose attention kind is now null.
+      const clearResult = clearChatAttentionIds(['c-still-waiting', 'c-finished', 'unknown'], {
+        clearMark: (id) => {
+          const had = dbMarks.delete(id)
+          if (had) {
+            const cur = stateMap.get(id)
+            if (cur) stateMap.set(id, { ...cur, marked: false })
+          }
+          return had
+        },
+        emitAttention: (id, attention) => {
+          emittedAttention.push({ id, attention })
+          if (!attention) changes.emit('change', id)
+        },
+        attention: sync,
+      })
+
+      expect(emittedAttention).toEqual([
+        { id: 'c-still-waiting', attention: false },
+        { id: 'c-finished', attention: false },
+      ])
+      expect(clearResult).toEqual({ cleared: ['c-finished'] })
+      expect(sync.kindOf('c-still-waiting')).toBe('waiting')
+      expect(sync.kindOf('c-finished')).toBeNull()
     } finally {
       sync.stop()
     }

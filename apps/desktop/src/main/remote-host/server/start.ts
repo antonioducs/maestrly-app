@@ -27,11 +27,12 @@ import { HostEditor } from './host-editor'
 import { HostEnvironment } from './host-environment'
 import { HostFiles } from './host-files'
 import { setHostModelOptions } from './mobile-api'
-import { buildChatAttentionSnapshot, createChatAttentionSync } from './chat-attention'
+import { buildChatAttentionSnapshot, clearChatAttentionIds, createChatAttentionSync } from './chat-attention'
 import type { HostBotAccess } from './bot-access'
 import { getChatPermissionBroker, getChatQuestionBroker } from '../../chat/service'
 import { getPending as getPendingPlan, observePlanEvents } from '../../plan-broker'
 import { getRoutine, getRoutineHealthSummary, getRun } from '../../routines/store'
+import { observeConversationChanges } from '../../workspace-service'
 
 /** What server mode needs from the main process. */
 export interface ServerHostDeps {
@@ -187,9 +188,11 @@ export async function startServerHostMode(window: BrowserWindow, deps: ServerHos
       },
       watchChanges: (listener) => {
         const stopPlans = observePlanEvents((conversationId) => listener(conversationId))
+        const stopWorkspace = observeConversationChanges(listener)
         const stopConversations = deps.watchConversationChanges(listener)
         return () => {
           stopPlans()
+          stopWorkspace()
           stopConversations()
         }
       },
@@ -234,16 +237,12 @@ export async function startServerHostMode(window: BrowserWindow, deps: ServerHos
       () => getRoutineHealthSummary(),
       {
         snapshot,
-        clear: (conversationIds) => {
-          const cleared: string[] = []
-          for (const id of conversationIds) {
-            const clearedMark = clearConversationAttention(id)
-            if (clearedMark) deps.emitAttention(id, false)
-            const clearedRoutine = attention.clearSeen(id)
-            if (clearedMark || clearedRoutine) cleared.push(id)
-          }
-          return { cleared }
-        },
+        clear: (conversationIds) =>
+          clearChatAttentionIds(conversationIds, {
+            clearMark: clearConversationAttention,
+            emitAttention: deps.emitAttention,
+            attention,
+          }),
       }
     )
     const server = createInstanceControlServer(config, host, {

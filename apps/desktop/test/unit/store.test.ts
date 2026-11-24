@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 
 import { freshDb, restartDb, closeDb } from '../helpers/db'
-import { makeWorkspace, makeConversation } from '../helpers/factories'
+import { makeWorkspace, makeConversation, makeStandaloneConversation } from '../helpers/factories'
 
 import {
   getDb,
@@ -47,6 +47,7 @@ import {
   markConversationAttention,
   clearConversationAttention,
   listConversationAttention,
+  listConversationsForAttention,
   renameConversation,
   setConversationArchived,
   setConversationPinned,
@@ -732,6 +733,63 @@ describe('conversations — CRUD and helpers', () => {
     expect(clearConversationAttention('id-missing')).toBe(false)
     expect(markConversationAttention('id-missing')).toBe(false)
     expect(listConversationAttention()).toEqual([])
+  })
+
+  it('listConversationsForAttention uses max(attention_at, last_activity_at) and includes unarchived routine runs', () => {
+    const ws = makeWorkspace()
+    const newerActivity = makeConversation(ws.id, { name: 'Newer activity' })
+    const olderActivity = makeConversation(ws.id, { name: 'Older activity' })
+    const routineWait = makeStandaloneConversation({
+      name: 'Routine waiting',
+      routineId: 'routine-1',
+      routineRunId: 'run-1',
+    })
+    const archivedRoutine = makeStandaloneConversation({
+      name: 'Archived routine',
+      routineId: 'routine-2',
+      routineRunId: 'run-2',
+    })
+
+    // attention_at = 1_000, last_activity_at = 5_000 -> at must be 5_000 (N2).
+    getDb()
+      .prepare('UPDATE conversations SET attention_at = ?, last_activity_at = ? WHERE id = ?')
+      .run(1_000, 5_000, newerActivity.id)
+    // attention_at = 4_000, last_activity_at = 2_000 -> at must stay 4_000.
+    getDb()
+      .prepare('UPDATE conversations SET attention_at = ?, last_activity_at = ? WHERE id = ?')
+      .run(4_000, 2_000, olderActivity.id)
+    // Routine waiting conversation with DB attention_at still has marked=false (B2).
+    getDb()
+      .prepare('UPDATE conversations SET status = ?, attention_at = ?, last_activity_at = ? WHERE id = ?')
+      .run('waiting', 3_000, 3_000, routineWait.id)
+    setConversationArchived(archivedRoutine.id, true)
+
+    expect(listConversationsForAttention()).toEqual([
+      {
+        id: newerActivity.id,
+        name: 'Newer activity',
+        status: 'idle',
+        marked: true,
+        at: 5_000,
+        routine: false,
+      },
+      {
+        id: olderActivity.id,
+        name: 'Older activity',
+        status: 'idle',
+        marked: true,
+        at: 4_000,
+        routine: false,
+      },
+      {
+        id: routineWait.id,
+        name: 'Routine waiting',
+        status: 'waiting',
+        marked: false,
+        at: 3_000,
+        routine: true,
+      },
+    ])
   })
 
   it('renameConversation updates the name', () => {
