@@ -1102,14 +1102,12 @@ function registerIpc(): void {
     getMainWindow: () => mainWindow,
     stopChat,
     notifyWorkspacesChanged: () => sendToMainTargets('workspace:changed'),
-    onConversationChanged: notifyAttentionChange,
   })
   cancelProjectSetupsAndWait = registerProjectSetupIpc(reg).cancelAndWait
   const conversationIpcDeps: ConversationIpcDeps = {
     stopChat,
     resumeBackgroundCompaction,
     emitAttention: emitConversationAttention,
-    onConversationChanged: notifyAttentionChange,
     onAttentionSeen: notifyAttentionSeen,
   }
   registerConversationIpc(reg, conversationIpcDeps)

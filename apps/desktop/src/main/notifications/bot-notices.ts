@@ -74,9 +74,14 @@ export class FleetBotNotices {
 
   live(serverId: FleetServerId, entry: FleetActivityEntry): void {
     const event = fleetBotEventFor(entry)
-    if (!event || this.deps.sees(serverId, event.botId)) return
+    if (!event) return
     const { botId, runId, threadId, lane } = event
-    if (event.mark && !(lane && this.seenRuns.has(`${fleetKey(serverId, botId)}:${lane}`))) {
+    const wouldMark = event.mark && !(lane && this.seenRuns.has(`${fleetKey(serverId, botId)}:${lane}`))
+    if (this.deps.sees(serverId, botId)) {
+      if (wouldMark) this.deps.onSeen?.(serverId, botId)
+      return
+    }
+    if (wouldMark) {
       const at = Date.parse(entry.at)
       this.deps.attention.mark(serverId, botId, lane, {
         kind: attentionKind(event.notice),

@@ -353,17 +353,22 @@ export interface ConversationAttentionRow {
   status: ConversationStatus
   marked: boolean
   at: number
+  routine?: boolean
 }
 
-/** Unarchived, non-routine conversations with fields needed to compute attention state and snapshots. */
+/** Unarchived conversations with fields needed to compute attention state and snapshots. */
 export function listConversationsForAttention(): ConversationAttentionRow[] {
   return (
     getDb()
       .prepare(
-        `SELECT id, name, status, attention_at, last_activity_at, created_at
+        `SELECT id, name, status, attention_at, last_activity_at, created_at, routine_id
          FROM conversations
-         WHERE archived = 0 AND routine_id IS NULL
-         ORDER BY COALESCE(attention_at, NULLIF(last_activity_at, 0), created_at) DESC`
+         WHERE archived = 0
+         ORDER BY COALESCE(
+           CASE WHEN attention_at IS NOT NULL THEN MAX(attention_at, COALESCE(last_activity_at, 0)) END,
+           NULLIF(last_activity_at, 0),
+           created_at
+         ) DESC`
       )
       .all() as Array<{
       id: string
@@ -372,13 +377,20 @@ export function listConversationsForAttention(): ConversationAttentionRow[] {
       attention_at: number | null
       last_activity_at: number
       created_at: number
+      routine_id: string | null
     }>
   ).map((row) => ({
     id: row.id,
     name: row.name,
     status: row.status,
-    marked: row.attention_at !== null,
-    at: row.attention_at ?? (row.last_activity_at > 0 ? row.last_activity_at : row.created_at),
+    marked: row.routine_id === null && row.attention_at !== null,
+    at:
+      row.attention_at !== null
+        ? Math.max(row.attention_at, row.last_activity_at)
+        : row.last_activity_at > 0
+          ? row.last_activity_at
+          : row.created_at,
+    routine: row.routine_id !== null,
   }))
 }
 

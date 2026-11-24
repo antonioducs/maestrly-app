@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { clearPlan, getPending, stagePlan } from '../../src/main/plan-broker'
+import { clearPlan, getPending, observePlanEvents, stagePlan } from '../../src/main/plan-broker'
 import { createTestRegistrar } from './ipc-registrar-test-utils'
 
 const h = vi.hoisted(() => ({
@@ -166,5 +166,51 @@ describe('plan IPC with a real broker', () => {
     expect(h.pauseBotForHuman).toHaveBeenCalledTimes(pauses)
     expect(h.runApprovedPlan).toHaveBeenCalled()
     clearPlan('conv-bot-real')
+  })
+
+  it('notifies plan observers on approve/discard and deletes failed Maestro sibling rollback (S6)', async () => {
+    const planEvents: Array<{ conversationId: string; event: string }> = []
+    const stopPlans = observePlanEvents((conversationId, event) => planEvents.push({ conversationId, event }))
+    try {
+      stagePlan({ agentId: 'conv-accept-real', cwd: '/tmp/project', plan: '# Approve me' })
+      stagePlan({ agentId: 'conv-discard-real', cwd: '/tmp/project', plan: '# Discard me' })
+      stagePlan({ agentId: 'conv-maestro-rollback', cwd: '/tmp/project', plan: '# Rollback sibling' })
+      h.getConversation.mockImplementation((id: string) =>
+        id === 'conv-maestro-rollback'
+          ? { id, scope: 'project', name: 'Feature', experience: 'standard' }
+          : { cli: 'chat' }
+      )
+
+      const deleteConversation = vi.fn(async () => undefined)
+      const createMaestroSibling = vi.fn(async () => ({ id: 'conv-maestro-sibling' }) as never)
+      const applyMaestroStrategyProfile = vi.fn(async () => ({
+        ok: false as const,
+        error: 'maestro-strategy-profile-not-found',
+      }))
+      const { reg, mhandles } = createTestRegistrar()
+      registerPlanIpc(reg, {
+        sendToWindow: vi.fn(),
+        createMaestroSibling,
+        deleteConversation,
+        applyMaestroStrategyProfile,
+      })
+      const decide = mhandles.get('plan:decide')!
+
+      await decide({} as never, 'conv-accept-real', { action: 'approve' })
+      await decide({} as never, 'conv-discard-real', { action: 'discard' })
+      await expect(
+        decide({} as never, 'conv-maestro-rollback', { action: 'approve', implementationTarget: 'maestro' })
+      ).resolves.toEqual({ ok: false, error: 'maestro-strategy-profile-not-found' })
+
+      expect(deleteConversation).toHaveBeenCalledExactlyOnceWith('conv-maestro-sibling')
+      expect(getPending('conv-maestro-rollback')).toMatchObject({ plan: '# Rollback sibling' })
+      expect(planEvents).toContainEqual({ conversationId: 'conv-accept-real', event: 'cleared' })
+      expect(planEvents).toContainEqual({ conversationId: 'conv-discard-real', event: 'cleared' })
+    } finally {
+      clearPlan('conv-accept-real')
+      clearPlan('conv-discard-real')
+      clearPlan('conv-maestro-rollback')
+      stopPlans()
+    }
   })
 })

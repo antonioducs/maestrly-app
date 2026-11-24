@@ -108,7 +108,9 @@ import {
   createConversation,
   createSiblingConversation,
   deleteConversation,
+  observeConversationChanges,
   removeWorkspace,
+  setConversationArchived,
 } from '../../src/main/workspace-service'
 
 beforeEach(() => {
@@ -535,5 +537,58 @@ describe('standalone lifecycle', () => {
     // Attachments and the temporary directory stay while the conversation survives, so a retry still finds them.
     expect(attachmentArtifacts.deleteConversationAttachmentImages).not.toHaveBeenCalled()
     expect(removeConversationTempDir).not.toHaveBeenCalled()
+  })
+})
+
+describe('workspace-service observeConversationChanges (S6)', () => {
+  it('notifies centrally on deleteConversation across project, standalone, and multi-repo paths and on archive', async () => {
+    const changed: string[] = []
+    const stop = observeConversationChanges((id) => changed.push(id))
+
+    try {
+      vi.mocked(store.getConversation).mockReturnValueOnce({
+        id: 'c-proj',
+        scope: 'project',
+        workspaceId: 'ws-1',
+        mode: 'local',
+        isMulti: 0,
+        cwd: '/repo',
+        branch: 'main',
+      } as never)
+      await deleteConversation('c-proj')
+
+      vi.mocked(store.getConversation).mockReturnValueOnce({
+        id: 'c-standalone',
+        scope: 'standalone',
+        workspaceId: null,
+        mode: null,
+        isMulti: 0,
+        cwd: '/private/chat',
+        branch: null,
+      } as never)
+      lifecycle.removeDirectory.mockResolvedValueOnce(undefined)
+      await deleteConversation('c-standalone')
+
+      vi.mocked(store.getConversation).mockReturnValueOnce({
+        id: 'c-multi',
+        scope: 'project',
+        workspaceId: 'ws-1',
+        mode: 'worktree',
+        isMulti: 1,
+        repos: [{ path: '/repo' }],
+        cwd: '/agg',
+        branch: 'multi',
+      } as never)
+      await deleteConversation('c-multi')
+
+      setConversationArchived('c-arch', true)
+      expect(changed).toEqual(['c-proj', 'c-standalone', 'c-multi', 'c-arch'])
+
+      stop()
+      setConversationArchived('c-after-stop', true)
+      expect(changed).toEqual(['c-proj', 'c-standalone', 'c-multi', 'c-arch'])
+    } finally {
+      stop()
+    }
   })
 })
