@@ -5,6 +5,7 @@ import {
   isFleetPeerThreadEvent,
   isFleetRoutineRunEvent,
   isFleetRunnerEvent,
+  type FleetAttentionReaderMode,
   type FleetAttentionUpdatedEvent,
   type FleetGatewayEvent,
 } from '@maestrly/bot-fleet-protocol'
@@ -21,11 +22,16 @@ export class EventHub {
   /** Subscribers that asked for backups (`backups=1`); an older app would fail on their events. */
   private readonly backupReaders = new WeakSet<ServerResponse>()
   /**
-   * Subscribers that opted into `attention.updated` deltas (`attention=1`). `attention.updated` is intentionally NOT
-   * part of the closed `fleetGatewayEventSchema` union parsed by older clients and is NOT in activity seq replay:
-   * phones refetch `GET /v1/attention` after each (re)connect.
+   * Subscribers that opted into `attention.updated` deltas (`attention=1` or `2`). `attention.updated` is
+   * intentionally NOT part of the closed `fleetGatewayEventSchema` union parsed by older clients and is NOT in
+   * activity seq replay: phones refetch `GET /v1/attention` after each (re)connect.
    */
   private readonly attentionReaders = new WeakSet<ServerResponse>()
+  /**
+   * Subscribers in attention-only mode (`attention=2`): they receive only `hello`, keep-alive pings, and
+   * `attention.updated` deltas, and never receive other `FleetGatewayEvent`s.
+   */
+  private readonly attentionOnlyReaders = new WeakSet<ServerResponse>()
   /**
    * Streams that asked for desktop calls, by device, newest last: a Mac is online for its bots while one is open, and
    * a call goes to its newest stream only.
@@ -55,14 +61,20 @@ export class EventHub {
       peerThreads?: boolean
       runners?: boolean
       backups?: boolean
-      attention?: boolean
+      attention?: boolean | FleetAttentionReaderMode
     } = {}
   ) {
-    if (options.reasoning) this.reasoningReaders.add(response)
-    if (options.routineRuns) this.routineRunReaders.add(response)
-    if (options.peerThreads) this.peerThreadReaders.add(response)
-    if (options.backups) this.backupReaders.add(response)
-    if (options.attention) this.attentionReaders.add(response)
+    const attentionMode: FleetAttentionReaderMode = options.attention === true ? 1 : options.attention || 0
+    if (attentionMode === 2) {
+      this.attentionReaders.add(response)
+      this.attentionOnlyReaders.add(response)
+    } else {
+      if (options.reasoning) this.reasoningReaders.add(response)
+      if (options.routineRuns) this.routineRunReaders.add(response)
+      if (options.peerThreads) this.peerThreadReaders.add(response)
+      if (options.backups) this.backupReaders.add(response)
+      if (attentionMode === 1) this.attentionReaders.add(response)
+    }
     response.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
       'Cache-Control': 'no-cache',
@@ -71,7 +83,7 @@ export class EventHub {
     })
     this.subscribers.add(response)
     if (deviceId) this.devices.set(response, deviceId)
-    this.send(response, { type: 'hello', at: new Date().toISOString(), lastActivitySeq })
+    this.writeFrame(response, { type: 'hello', at: new Date().toISOString(), lastActivitySeq })
     response.on('close', () => {
       this.subscribers.delete(response)
       this.devices.delete(response)
@@ -84,11 +96,11 @@ export class EventHub {
       if (runner) this.onRunnerChange(runner)
     })
     this.updateTimers()
-    if (deviceId && options.desktopBridge && !response.destroyed) {
+    if (attentionMode !== 2 && deviceId && options.desktopBridge && !response.destroyed) {
       this.bridges.set(response, deviceId)
       this.onBridgeChange(deviceId)
     }
-    if (deviceId && options.runners && !response.destroyed) {
+    if (attentionMode !== 2 && deviceId && options.runners && !response.destroyed) {
       this.runnerReaders.set(response, deviceId)
       this.onRunnerChange(deviceId)
     }
@@ -152,7 +164,7 @@ export class EventHub {
         // An observer never stops an event from reaching devices.
       }
     }
-    if (!this.subscribers.size) return
+    if (!this.hasFullSubscribers()) return
     // Bot and environment updates are coalesced per bot and per environment (their keys cannot collide, although an
     // environment may share its id with a bot); a removal drops the update still waiting.
     const removed =
@@ -194,7 +206,7 @@ export class EventHub {
     for (const response of this.subscribers) this.send(response, event)
   }
   /**
-   * Sends an `attention.updated` delta to subscribers that opted in with `?attention=1`.
+   * Sends an `attention.updated` delta to subscribers that opted in with `?attention=1` or `?attention=2`.
    *
    * Intentionally separate from `emit(FleetGatewayEvent)`: `attention.updated` is NOT part of `fleetGatewayEventSchema`
    * (closed union parsed by older clients) and is NOT in activity seq replay — phones refetch `GET /v1/attention`
@@ -208,7 +220,14 @@ export class EventHub {
       this.writeFrame(response, event)
     }
   }
+  private hasFullSubscribers(): boolean {
+    for (const response of this.subscribers) {
+      if (!this.attentionOnlyReaders.has(response)) return true
+    }
+    return false
+  }
   private send(response: ServerResponse, event: FleetGatewayEvent) {
+    if (this.attentionOnlyReaders.has(response)) return
     if (
       (event.type === 'transcript.upsert' ||
         event.type === 'routine_run.transcript.upsert' ||
@@ -239,13 +258,16 @@ export class EventHub {
         for (const response of this.subscribers)
           if (this.behind(response) || (!response.write(': ping\n\n') && !this.roomy(response))) response.destroy()
       }, 15000)
+    } else if (this.heartbeat) {
+      clearInterval(this.heartbeat)
+      this.heartbeat = null
+    }
+    if (this.hasFullSubscribers()) {
       this.statsTimer ??= setInterval(() => {
         void this.refresh()
       }, 10000)
-    } else {
-      if (this.heartbeat) clearInterval(this.heartbeat)
-      if (this.statsTimer) clearInterval(this.statsTimer)
-      this.heartbeat = null
+    } else if (this.statsTimer) {
+      clearInterval(this.statsTimer)
       this.statsTimer = null
     }
   }

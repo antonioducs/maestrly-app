@@ -260,9 +260,9 @@ export class AttentionStore {
    * Handles `POST /v1/attention/seen`:
    * - `bot:*` keys are removed locally if present.
    * - `request:*` keys are a no-op (they stay until answered).
-   * - `chat:*` keys are grouped by environment and forwarded to each capable host's `chatAttentionClear` without
-   *   local removal (the host emits `chat.attention.cleared` for those no longer waiting on the owner). Unreachable
-   *   hosts never fail the request; only keys actually cleared are returned.
+   * - `chat:*` keys are grouped by environment and forwarded to each capable host's `chatAttentionClear`; the ids
+   *   the host reports cleared (no longer needing the owner) are removed locally and emitted in a delta immediately.
+   *   Unreachable hosts never fail the request; only keys actually cleared are returned.
    */
   async seen(request: FleetAttentionSeenRequest): Promise<FleetAttentionSeenResponse> {
     const uniqueKeys = [...new Set(request.keys)]
@@ -309,6 +309,8 @@ export class AttentionStore {
       )
       for (const keys of results) clearedChatKeys.push(...keys)
     }
+
+    if (clearedChatKeys.length) this.commit([], clearedChatKeys, true)
 
     return { cleared: [...botKeysToRemove, ...clearedChatKeys] }
   }

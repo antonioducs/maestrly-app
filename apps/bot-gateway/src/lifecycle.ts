@@ -502,12 +502,23 @@ export class Lifecycle {
           }
           const chatAttention = fleetChatAttentionQueryValue(this.environmentCapabilities(environmentId))
           this.linkChatAttention.set(environmentId, chatAttention)
+          // On a `chatAttention=2` workspaces link the connect snapshot is authoritative; ignore replayed
+          // `chat.attention`/`chat.attention.cleared` events arriving before it so a restart does not re-push or
+          // mutate attention state with stale replay entries. `chatAttention=1` links stay unchanged.
+          let awaitingChatSnapshot =
+            chatAttention === 2 && this.store.getEnvironment(environmentId)?.kind === 'workspaces'
           for await (const event of client.events(since, controller.signal, { chatAttention })) {
             // Connect snapshots may carry seq 0 or <= since and always replace chat attention state.
             if (event.type === 'chat.attention.snapshot') {
+              awaitingChatSnapshot = false
               if (event.seq > since) since = event.seq
               delay = 1000
               this.dispatch(environmentId, event)
+              continue
+            }
+            if (awaitingChatSnapshot && (event.type === 'chat.attention' || event.type === 'chat.attention.cleared')) {
+              if (event.seq > since) since = event.seq
+              delay = 1000
               continue
             }
             // A workspaces host has no bots to refresh on a sequence reset; dispatch chat events directly.
