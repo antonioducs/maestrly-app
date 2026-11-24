@@ -44,7 +44,7 @@ import {
   FLEET_BOT_AVATARS_FEATURE,
   FLEET_BOT_AVATAR_LIMITS,
   FLEET_ORDER_FEATURE,
-  fleetReaderWantsAttention,
+  fleetReaderAttentionMode,
   type FleetAttentionSeenRequest,
   type FleetBotAvatarRequest,
   type FleetBotsReorderRequest,
@@ -1262,7 +1262,7 @@ export async function publicRoute(
         peerThreads: fleetReaderWantsPeerThreads(url.searchParams),
         runners: fleetReaderWantsRunners(url.searchParams),
         backups: fleetReaderWantsBackups(url.searchParams),
-        attention: fleetReaderWantsAttention(url.searchParams),
+        attention: fleetReaderAttentionMode(url.searchParams),
       })
       return { stream: true }
     default:

@@ -26,6 +26,7 @@ import {
   fleetMetaResponseSchema,
   fleetPushRegistrationRequestSchema,
   fleetPushRegistrationSchema,
+  fleetReaderAttentionMode,
   fleetReaderChatAttentionVersion,
   fleetReaderWantsAttention,
   fleetReaderWantsChatAttention,
@@ -228,11 +229,21 @@ describe('attention protocol', () => {
     expect(fleetMetaFeatures(fleetMetaResponseSchema.parse(meta))).toContain(FLEET_ATTENTION_FEATURE)
   })
 
-  it('parses attention and versioned chatAttention query flags', () => {
-    expect(fleetReaderWantsAttention(new URLSearchParams(''))).toBe(false)
-    expect(fleetReaderWantsAttention(new URLSearchParams('attention=1'))).toBe(true)
-    expect(fleetReaderWantsAttention(new URLSearchParams('attention=2'))).toBe(false)
-    expect(fleetReaderWantsAttention(new URLSearchParams('attention=x'))).toBe(false)
+  it('parses attention modes and versioned chatAttention query flags', () => {
+    for (const [query, mode, wants] of [
+      ['', 0, false],
+      ['attention=', 0, false],
+      ['attention=0', 0, false],
+      ['attention=1', 1, true],
+      ['attention=2', 2, true],
+      ['attention=3', 0, false],
+      ['attention=x', 0, false],
+      ['reasoning=1&attention=2', 2, true],
+    ] as const) {
+      const params = new URLSearchParams(query)
+      expect(fleetReaderAttentionMode(params)).toBe(mode)
+      expect(fleetReaderWantsAttention(params)).toBe(wants)
+    }
 
     for (const [query, version, wants] of [
       ['', 0, false],

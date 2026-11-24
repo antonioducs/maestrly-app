@@ -559,11 +559,20 @@ export const FLEET_CHAT_ATTENTION_QUERY = 'chatAttention'
 /**
  * Gateway feature (`moreFeatures` of `/v1/meta` only — never in legacy `features`, which is capped at
  * `FLEET_META_FEATURES_LEGACY_MAX` for desktops up to 0.18): the server serves its attention center
- * (`GET /v1/attention`, `POST /v1/attention/seen`), emits `attention.updated` on `GET /v1/events?attention=1`, and
- * accepts `badgeOthers` on `PUT /v1/devices/self/push` to compute the Expo push `badge` count.
+ * (`GET /v1/attention`, `POST /v1/attention/seen`), emits `attention.updated` on `GET /v1/events?attention=1`
+ * (full stream) and `GET /v1/events?attention=2` (attention-only stream), and accepts `badgeOthers` on
+ * `PUT /v1/devices/self/push` to compute the Expo push `badge` count.
  */
 export const FLEET_ATTENTION_FEATURE = 'attention'
-/** The query parameter a reader of `GET /v1/events` sets to `1` to receive `attention.updated` SSE events. */
+/**
+ * The query parameter a reader of `GET /v1/events` sets to opt into `attention.updated` SSE events:
+ * - `1`: full gateway event stream plus `attention.updated` deltas
+ * - `2`: attention-only stream (`hello` control frames, keep-alive pings, and `attention.updated` — no other
+ *   `FleetGatewayEvent`s), used by standalone watchers on non-active servers
+ *
+ * Every gateway advertising `FLEET_ATTENTION_FEATURE` supports both `1` and `2` (same release, no separate feature
+ * flag).
+ */
 export const FLEET_ATTENTION_QUERY = 'attention'
 /** Bounds of server attention entries, snapshots, and seen requests. */
 export const FLEET_ATTENTION_LIMITS = {

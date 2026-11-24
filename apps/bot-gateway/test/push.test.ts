@@ -213,14 +213,18 @@ describe('push notifications', () => {
     await new Promise((resolve) => setImmediate(resolve))
     expect(sent[0].map((m) => [m.data.device, m.badge])).toEqual([
       ['withOthers', 7],
-      ['withoutOthers', 2],
+      ['withoutOthers', undefined],
       ['zeroOthers', 2],
     ])
+    expect(sent[0].find((m) => m.data.device === 'withoutOthers')).not.toHaveProperty('badge')
     count = 0
     await notifier.test('withOthers')
     await notifier.test('withoutOthers')
+    await notifier.test('zeroOthers')
     expect(sent[1][0].badge).toBe(5)
-    expect(sent[2][0].badge).toBe(0)
+    expect(sent[2][0].badge).toBeUndefined()
+    expect(sent[2][0]).not.toHaveProperty('badge')
+    expect(sent[3][0].badge).toBe(0)
   })
 })
 

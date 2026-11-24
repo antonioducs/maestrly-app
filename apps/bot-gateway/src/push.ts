@@ -219,8 +219,10 @@ export class PushNotifier {
   }
 
   private badgeFor(registration: FleetPushRegistration): number | undefined {
-    if (!this.deps.attentionCount && registration.badgeOthers === undefined) return undefined
-    return (this.deps.attentionCount?.() ?? 0) + (registration.badgeOthers ?? 0)
+    // Phones opt in to server-computed app badges by reporting `badgeOthers` (even 0); legacy phones and new phones
+    // before their first sync omit it so pushes do not stamp an uncleared or stale badge.
+    if (registration.badgeOthers === undefined) return undefined
+    return (this.deps.attentionCount?.() ?? 0) + registration.badgeOthers
   }
 
   private bot(botId: string, category: FleetPushCategory, key: Phrase, event: string): Promise<void> {

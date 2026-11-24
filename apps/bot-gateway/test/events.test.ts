@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { ServerResponse } from 'node:http'
 import type { FleetGatewayEvent, FleetTranscriptItem } from '@maestrly/bot-fleet-protocol'
 import { EventHub } from '../src/events.js'
@@ -22,7 +22,7 @@ function subscriber() {
     frames
       .filter((frame) => frame.startsWith('event: fleet'))
       .map((frame) => JSON.parse(frame.slice(frame.indexOf('data: ') + 6)) as FleetGatewayEvent)
-  return { response: response as unknown as ServerResponse, sent }
+  return { response: response as unknown as ServerResponse, sent, frames }
 }
 
 describe('event hub', () => {
@@ -148,38 +148,68 @@ describe('event hub', () => {
     hub.close()
   })
 
-  it('sends attention.updated only to devices that opted in with attention=1', () => {
-    const hub = new EventHub(async () => {})
-    const older = subscriber()
-    const phone = subscriber()
-    hub.add(older.response, 0, 'mac-old', { routineRuns: true, peerThreads: true, runners: true, backups: true })
-    hub.add(phone.response, 0, 'phone-new', { attention: true })
-    const at = '2026-11-23T12:00:00.000Z'
-    const delta = {
-      type: 'attention.updated' as const,
-      upsert: [
-        {
-          key: 'bot:alpha',
-          source: 'bot' as const,
-          kind: 'finished' as const,
-          at,
-          title: 'Alpha',
-          botId: 'alpha',
-        },
-      ],
-      remove: ['chat:work/c1'],
+  it('sends attention.updated to attention=1 and attention=2, and keeps attention=2 free of FleetGatewayEvents', () => {
+    vi.useFakeTimers()
+    try {
+      const refresh = vi.fn(async () => {})
+      const hub = new EventHub(refresh)
+      const older = subscriber()
+      const fullPhone = subscriber()
+      const watcherPhone = subscriber()
+      hub.add(watcherPhone.response, 7, 'phone-watcher', { attention: 2, desktopBridge: true, runners: true })
+      // Attention-only stream never registers as a desktop bridge or runner and does not run stats refresh.
+      expect(hub.bridgeOnline('phone-watcher')).toBe(false)
+      expect(hub.runnerStreamOpen('phone-watcher')).toBe(false)
+      vi.advanceTimersByTime(15_000)
+      expect(watcherPhone.frames).toContain(': ping\n\n')
+      expect(refresh).not.toHaveBeenCalled()
+
+      hub.add(older.response, 7, 'mac-old', { routineRuns: true, peerThreads: true, runners: true, backups: true })
+      hub.add(fullPhone.response, 7, 'phone-active', { attention: 1 })
+      const at = '2026-11-23T12:00:00.000Z'
+      const delta = {
+        type: 'attention.updated' as const,
+        upsert: [
+          {
+            key: 'bot:alpha',
+            source: 'bot' as const,
+            kind: 'finished' as const,
+            at,
+            title: 'Alpha',
+            botId: 'alpha',
+          },
+        ],
+        remove: ['chat:work/c1'],
+      }
+      hub.emitAttention(delta)
+      // Empty deltas emit nothing.
+      hub.emitAttention({ type: 'attention.updated', upsert: [], remove: [] })
+      hub.emit({
+        type: 'transcript.upsert',
+        at,
+        botId: 'alpha',
+        item: { kind: 'assistant', id: 'm:1', at, text: 'Hello', streaming: false },
+      })
+      hub.emit({ type: 'transcript.reset', at, botId: 'alpha' })
+      hub.emit({ type: 'inbox.updated', at, items: [] })
+      expect(older.sent().map((event) => event.type)).toEqual([
+        'hello',
+        'transcript.upsert',
+        'transcript.reset',
+        'inbox.updated',
+      ])
+      expect(fullPhone.sent()).toEqual([
+        expect.objectContaining({ type: 'hello', lastActivitySeq: 7 }),
+        delta,
+        expect.objectContaining({ type: 'transcript.upsert' }),
+        { type: 'transcript.reset', at, botId: 'alpha' },
+        { type: 'inbox.updated', at, items: [] },
+      ])
+      expect(watcherPhone.sent()).toEqual([expect.objectContaining({ type: 'hello', lastActivitySeq: 7 }), delta])
+      hub.close()
+    } finally {
+      vi.useRealTimers()
     }
-    hub.emitAttention(delta)
-    // Empty deltas emit nothing.
-    hub.emitAttention({ type: 'attention.updated', upsert: [], remove: [] })
-    hub.emit({ type: 'transcript.reset', at, botId: 'alpha' })
-    expect(older.sent().map((event) => event.type)).toEqual(['hello', 'transcript.reset'])
-    expect(phone.sent()).toEqual([
-      expect.objectContaining({ type: 'hello' }),
-      delta,
-      { type: 'transcript.reset', at, botId: 'alpha' },
-    ])
-    hub.close()
   })
 })
 

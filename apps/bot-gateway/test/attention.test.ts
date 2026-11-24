@@ -656,6 +656,49 @@ describe('AttentionStore', () => {
     expect(full.snapshot().entries.some((e) => e.key === 'chat:bulk-1/c-0')).toBe(false)
     fullStore.close()
   })
+
+  it('removes host-cleared chat keys locally in seen(), emits a delta, and keeps request keys untouched', async () => {
+    const dir = tempDir()
+    const store = new Store(dir)
+    seedBot(store, 'atlas', 'Atlas')
+    const deltas: FleetAttentionUpdatedEvent[] = []
+    const attention = new AttentionStore({
+      store,
+      environmentHasChatSync: () => true,
+      clearChatAttention: async (_envId, ids) => ids.filter((id) => id === 'c1'),
+      onUpdate: (event) => {
+        fleetAttentionUpdatedEventSchema.parse(event)
+        deltas.push(event)
+      },
+    })
+    attention.chatAttentionSnapshot('work', [
+      { conversationId: 'c1', name: 'Done', kind: 'finished', at: ts(1) },
+      { conversationId: 'c2', name: 'Waiting', kind: 'waiting', at: ts(2) },
+    ])
+    attention.observe({
+      type: 'inbox.updated',
+      at: ts(3),
+      items: [{ botId: 'atlas', interaction: pending('permission', 'req-1', ts(3)) }],
+    })
+    deltas.length = 0
+
+    const result = await attention.seen({
+      keys: ['chat:work/c1', 'chat:work/c2', 'request:atlas/req-1'],
+    })
+    expect(result).toEqual({ cleared: ['chat:work/c1'] })
+    expect(
+      attention
+        .snapshot()
+        .entries.map((e) => e.key)
+        .sort()
+    ).toEqual(['chat:work/c2', 'request:atlas/req-1'])
+    expect(deltas).toEqual([{ type: 'attention.updated', upsert: [], remove: ['chat:work/c1'] }])
+
+    // A follow-up chat.attention.cleared event for c1 from the host is an idempotent no-op.
+    attention.chatAttentionCleared('work', 'c1')
+    expect(deltas).toHaveLength(1)
+    store.close()
+  })
 })
 
 describe('gateway attention routes, SSE, /v1/meta, instance sync, and push badge', () => {
@@ -757,15 +800,18 @@ describe('gateway attention routes, SSE, /v1/meta, instance sync, and push badge
     await until(() => h.attention.size === 5)
     expect(h.attention.snapshot().entries.some((e) => e.environmentId === 'env-legacy')).toBe(false)
 
-    // Open two SSE streams: one WITHOUT attention=1, one WITH attention=1.
+    // Open three SSE streams: mode 0 (no attention), mode 1 (full + attention), mode 2 (attention-only).
     const plainCtrl = new AbortController()
     const optInCtrl = new AbortController()
+    const attentionOnlyCtrl = new AbortController()
     closeFns.push(async () => {
       plainCtrl.abort()
       optInCtrl.abort()
+      attentionOnlyCtrl.abort()
     })
     const plainFrames: Array<{ type: string; [key: string]: unknown }> = []
     const optInFrames: Array<{ type: string; [key: string]: unknown }> = []
+    const attentionOnlyFrames: Array<{ type: string; [key: string]: unknown }> = []
     const readStream = async (
       urlPath: string,
       signal: AbortSignal,
@@ -796,7 +842,13 @@ describe('gateway attention routes, SSE, /v1/meta, instance sync, and push badge
     }
     void readStream('/v1/events', plainCtrl.signal, plainFrames)
     void readStream('/v1/events?attention=1', optInCtrl.signal, optInFrames)
-    await until(() => plainFrames.some((f) => f.type === 'hello') && optInFrames.some((f) => f.type === 'hello'))
+    void readStream('/v1/events?attention=2', attentionOnlyCtrl.signal, attentionOnlyFrames)
+    await until(
+      () =>
+        plainFrames.some((f) => f.type === 'hello') &&
+        optInFrames.some((f) => f.type === 'hello') &&
+        attentionOnlyFrames.some((f) => f.type === 'hello')
+    )
 
     const seqBefore = h.store.lastActivitySeq()
 
@@ -819,35 +871,42 @@ describe('gateway attention routes, SSE, /v1/meta, instance sync, and push badge
     expect(hostA.clearRequests).toEqual([{ conversationIds: ['c1', 'c2'] }])
     expect(hostLegacy.clearRequests).toEqual([])
 
-    // Local store: bot:atlas removed immediately, request:atlas/req-1 stayed, chat:env-a/c1 NOT removed locally yet!
-    const midSnapshot = await (await h.request('GET', '/v1/attention')).json()
-    expect(midSnapshot.entries.map((e: { key: string }) => e.key).sort()).toEqual([
-      'chat:env-a/c1',
+    // Local store: bot:atlas AND host-cleared chat:env-a/c1 are removed immediately; c2, d1, and request stay.
+    const afterSeenSnapshot = await (await h.request('GET', '/v1/attention')).json()
+    expect(afterSeenSnapshot.entries.map((e: { key: string }) => e.key).sort()).toEqual([
       'chat:env-a/c2',
       'chat:env-down/d1',
       'request:atlas/req-1',
     ])
 
-    // Now hostA emits chat.attention.cleared for c1 (c2 stays waiting).
-    hostA.emit({ type: 'chat.attention.cleared', botId: null, conversationId: 'c1' })
-    await until(() =>
-      optInFrames.some(
-        (frame) => frame.type === 'attention.updated' && (frame.remove as string[]).includes('chat:env-a/c1')
-      )
+    // Both attention=1 and attention=2 readers receive the bot + host-cleared chat removal deltas.
+    await until(
+      () =>
+        optInFrames.some(
+          (frame) => frame.type === 'attention.updated' && (frame.remove as string[]).includes('chat:env-a/c1')
+        ) &&
+        attentionOnlyFrames.some(
+          (frame) => frame.type === 'attention.updated' && (frame.remove as string[]).includes('chat:env-a/c1')
+        )
     )
 
-    // Emit a normal gateway event so we know plainFrames drained past the attention updates.
+    // Subsequent chat.attention.cleared for c1 from hostA is an idempotent no-op.
+    hostA.emit({ type: 'chat.attention.cleared', botId: null, conversationId: 'c1' })
+
+    // Emit a normal gateway event so we know plainFrames & optInFrames drained past the attention updates.
     h.events.emit({ type: 'transcript.reset', at: ts(20), botId: 'atlas' })
     await until(
       () =>
         plainFrames.some((f) => f.type === 'transcript.reset') && optInFrames.some((f) => f.type === 'transcript.reset')
     )
 
-    // Reader WITHOUT attention=1 NEVER receives attention.updated; reader WITH attention=1 receives valid deltas.
+    // Mode 0 never gets attention.updated; mode 1 gets both; mode 2 gets ONLY hello + attention.updated.
     expect(plainFrames.some((f) => f.type === 'attention.updated')).toBe(false)
-    const attentionFrames = optInFrames.filter((f) => f.type === 'attention.updated')
-    expect(attentionFrames.length).toBeGreaterThanOrEqual(2)
-    for (const frame of attentionFrames) fleetAttentionUpdatedEventSchema.parse(frame)
+    const optInAttentionFrames = optInFrames.filter((f) => f.type === 'attention.updated')
+    expect(optInAttentionFrames.length).toBe(2)
+    for (const frame of optInAttentionFrames) fleetAttentionUpdatedEventSchema.parse(frame)
+    expect(attentionOnlyFrames.map((f) => f.type)).toEqual(['hello', 'attention.updated', 'attention.updated'])
+    expect(attentionOnlyFrames.some((f) => f.type === 'transcript.reset')).toBe(false)
     // attention.updated is not part of activity seq replay.
     expect(h.store.lastActivitySeq()).toBe(seqBefore)
 
@@ -909,12 +968,123 @@ describe('gateway attention routes, SSE, /v1/meta, instance sync, and push badge
     ).toEqual(['chat:work/c3', 'chat:work/c4'])
   })
 
-  it('computes push badge = attentionStore.size + (badgeOthers ?? 0) AFTER applying the triggering event', async () => {
+  it('ignores chat.attention and chat.attention.cleared replayed before chat.attention.snapshot on chatAttention=2 links while leaving chatAttention=1 unchanged', async () => {
+    const syncHost = await createWorkspacesHost([FLEET_WORKSPACES_HOST_FEATURE, FLEET_CHAT_ATTENTION_SYNC_CAPABILITY])
+    const legacyHost = await createWorkspacesHost([FLEET_WORKSPACES_HOST_FEATURE])
+    const h = await createGatewayHarness(
+      new Map([
+        ['sync-env', syncHost],
+        ['legacy-env', legacyHost],
+      ])
+    )
+    expect(
+      (
+        await h.request('PUT', '/v1/devices/self/push', {
+          provider: 'expo',
+          token: 'ExponentPushToken[replay11111111111111]',
+          platform: 'ios',
+          locale: 'en',
+          preferences: { waiting: true, replies: true, routines: true, errors: true },
+          badgeOthers: 0,
+        })
+      ).status
+    ).toBe(200)
+
+    h.lifecycle.createEnvironment({ name: 'Sync Env', memoryLimitBytes: null, kind: 'workspaces' })
+    h.lifecycle.createEnvironment({ name: 'Legacy Env', memoryLimitBytes: null, kind: 'workspaces' })
+    await until(
+      () =>
+        h.lifecycle.environment('sync-env')?.lifecycle === 'running' &&
+        h.lifecycle.environment('legacy-env')?.lifecycle === 'running'
+    )
+    await until(() => syncHost.subscriptions.length === 1 && legacyHost.subscriptions.length === 1)
+
+    // Pre-snapshot replayed events on chatAttention=2 MUST NOT touch AttentionStore or send pushes.
+    syncHost.emit({
+      seq: 1,
+      type: 'chat.attention',
+      botId: null,
+      conversationId: 'stale-1',
+      name: 'Old replay',
+      kind: 'waiting',
+    })
+    syncHost.emit({ seq: 2, type: 'chat.attention.cleared', botId: null, conversationId: 'stale-1' })
+
+    // Snapshot arrives (authoritative, no push), followed by a live chat.attention (updates store AND pushes).
+    syncHost.emit({
+      seq: 3,
+      type: 'chat.attention.snapshot',
+      botId: null,
+      conversations: [{ conversationId: 'snap-1', name: 'Current', kind: 'question', at: ts(5) }],
+    })
+    await until(() => h.attention.size === 1)
+    expect(h.attention.snapshot().entries.map((e) => e.key)).toEqual(['chat:sync-env/snap-1'])
+    expect(h.sentPushes).toHaveLength(0)
+
+    // Live event after snapshot updates store and pushes (badge = 2 + 0 = 2).
+    syncHost.emit({
+      seq: 4,
+      type: 'chat.attention',
+      botId: null,
+      conversationId: 'live-1',
+      name: 'Live chat',
+      kind: 'plan',
+    })
+    await until(() => h.sentPushes.length === 1)
+    expect(
+      h.attention
+        .snapshot()
+        .entries.map((e) => e.key)
+        .sort()
+    ).toEqual(['chat:sync-env/live-1', 'chat:sync-env/snap-1'])
+    expect(h.sentPushes[0][0]).toMatchObject({ title: 'Live chat', badge: 2 })
+
+    // On link reconnect, pre-snapshot replay is ignored again until the fresh connect snapshot arrives.
+    syncHost.dropStreams()
+    await until(() => syncHost.requests.filter((r) => r.path.startsWith('/v1/events')).length >= 2, 5000)
+    syncHost.emit({
+      seq: 5,
+      type: 'chat.attention',
+      botId: null,
+      conversationId: 'stale-2',
+      name: 'Replayed after drop',
+      kind: 'waiting',
+    })
+    syncHost.emit({ seq: 6, type: 'chat.attention.cleared', botId: null, conversationId: 'snap-1' })
+    syncHost.emit({
+      seq: 7,
+      type: 'chat.attention.snapshot',
+      botId: null,
+      conversations: [{ conversationId: 'after-drop', name: 'Authoritative', kind: 'finished', at: ts(20) }],
+    })
+    await until(() => h.attention.size === 1 && h.attention.snapshot().entries[0]?.key === 'chat:sync-env/after-drop')
+    // No push was sent for stale-2 or after-drop snapshot.
+    expect(h.sentPushes).toHaveLength(1)
+
+    // chatAttention=1 link still pushes immediately without any snapshot.
+    legacyHost.emit({
+      seq: 1,
+      type: 'chat.attention',
+      botId: null,
+      conversationId: 'legacy-chat',
+      name: 'Legacy chat',
+      kind: 'waiting',
+    })
+    await until(() => h.sentPushes.length === 2)
+    expect(h.sentPushes[1][0]).toMatchObject({ title: 'Legacy chat' })
+    expect(h.attention.snapshot().entries.map((e) => e.key)).toEqual(['chat:sync-env/after-drop'])
+  })
+
+  it('computes push badge only for phones that opt in via badgeOthers (including 0) AFTER applying the triggering event', async () => {
     const host = await createWorkspacesHost([FLEET_WORKSPACES_HOST_FEATURE, FLEET_CHAT_ATTENTION_SYNC_CAPABILITY])
     const h = await createGatewayHarness(new Map([['work', host]]))
     seedBot(h.store, 'atlas', 'Atlas')
 
-    // Pair a second phone that does not send badgeOthers (legacy phone).
+    // Pair a second phone that opts in with badgeOthers: 0 and a third legacy phone that omits badgeOthers.
+    const zeroPhone = h.auth.pair(h.auth.createPairing().code, 'Zero Phone', '127.0.0.1', {
+      kind: 'phone',
+      platform: 'ios',
+    })
     const legacyPhone = h.auth.pair(h.auth.createPairing().code, 'Old Phone', '127.0.0.1', {
       kind: 'phone',
       platform: 'android',
@@ -939,6 +1109,23 @@ describe('gateway attention routes, SSE, /v1/meta, instance sync, and push badge
           '/v1/devices/self/push',
           {
             provider: 'expo',
+            token: 'ExponentPushToken[zerophone33333333333]',
+            platform: 'ios',
+            locale: 'en',
+            preferences: { waiting: true, replies: true, routines: true, errors: true },
+            badgeOthers: 0,
+          },
+          zeroPhone.token
+        )
+      ).status
+    ).toBe(200)
+    expect(
+      (
+        await h.request(
+          'PUT',
+          '/v1/devices/self/push',
+          {
+            provider: 'expo',
             token: 'ExponentPushToken[oldphone222222222222]',
             platform: 'android',
             locale: 'en',
@@ -952,16 +1139,19 @@ describe('gateway attention routes, SSE, /v1/meta, instance sync, and push badge
     h.lifecycle.createEnvironment({ name: 'Work', memoryLimitBytes: null, kind: 'workspaces' })
     await until(() => h.lifecycle.environment('work')?.lifecycle === 'running')
     await until(() => host.subscriptions.length === 1)
+    host.emit({ seq: 0, type: 'chat.attention.snapshot', botId: null, conversations: [] })
 
-    // 1) Bot turn completes -> store size becomes 1 BEFORE push computes badge -> new phone badge=4, old phone badge=1.
+    // 1) Bot turn completes -> store size becomes 1 BEFORE push computes badge -> new=4, zero=1, legacy=undefined.
     h.events.emit(botActivity('atlas', 'turn_completed', ts(1), { source: 'owner' }, 1))
     await until(() => h.sentPushes.length === 1)
     expect(h.sentPushes[0].map((m) => [m.to, m.badge]).sort()).toEqual([
       ['ExponentPushToken[newphone111111111111]', 4],
-      ['ExponentPushToken[oldphone222222222222]', 1],
+      ['ExponentPushToken[oldphone222222222222]', undefined],
+      ['ExponentPushToken[zerophone33333333333]', 1],
     ])
+    expect(h.sentPushes[0].find((m) => m.to === 'ExponentPushToken[oldphone222222222222]')).not.toHaveProperty('badge')
 
-    // 2) Pending request arrives -> store size becomes 2 -> new phone badge=5, old phone badge=2.
+    // 2) Pending request arrives -> store size becomes 2 -> new=5, zero=2, legacy=undefined.
     h.events.emit({
       type: 'inbox.updated',
       at: ts(2),
@@ -970,21 +1160,28 @@ describe('gateway attention routes, SSE, /v1/meta, instance sync, and push badge
     await until(() => h.sentPushes.length === 2)
     expect(h.sentPushes[1].map((m) => [m.to, m.badge]).sort()).toEqual([
       ['ExponentPushToken[newphone111111111111]', 5],
-      ['ExponentPushToken[oldphone222222222222]', 2],
+      ['ExponentPushToken[oldphone222222222222]', undefined],
+      ['ExponentPushToken[zerophone33333333333]', 2],
     ])
 
-    // 3) Chat attention arrives -> store size becomes 3 -> new phone badge=6, old phone badge=3.
+    // 3) Chat attention arrives -> store size becomes 3 -> new=6, zero=3, legacy=undefined.
     host.emit({ type: 'chat.attention', botId: null, conversationId: 'c1', name: 'Release', kind: 'plan' })
     await until(() => h.sentPushes.length === 3)
     expect(h.sentPushes[2].map((m) => [m.to, m.badge]).sort()).toEqual([
       ['ExponentPushToken[newphone111111111111]', 6],
-      ['ExponentPushToken[oldphone222222222222]', 3],
+      ['ExponentPushToken[oldphone222222222222]', undefined],
+      ['ExponentPushToken[zerophone33333333333]', 3],
     ])
 
-    // 4) Clear bot:atlas via seen -> store size drops to 2 -> test push carries badge=5.
+    // 4) Clear bot:atlas via seen -> store size drops to 2 -> test pushes reflect badge opt-in accurately.
     expect((await h.request('POST', '/v1/attention/seen', { keys: ['bot:atlas'] })).status).toBe(200)
     expect(h.attention.size).toBe(2)
     expect((await h.request('POST', '/v1/devices/self/push/test', {})).status).toBe(200)
     expect(h.sentPushes[3][0].badge).toBe(5)
+    expect((await h.request('POST', '/v1/devices/self/push/test', {}, zeroPhone.token)).status).toBe(200)
+    expect(h.sentPushes[4][0].badge).toBe(2)
+    expect((await h.request('POST', '/v1/devices/self/push/test', {}, legacyPhone.token)).status).toBe(200)
+    expect(h.sentPushes[5][0].badge).toBeUndefined()
+    expect(h.sentPushes[5][0]).not.toHaveProperty('badge')
   })
 })

@@ -94,8 +94,8 @@ export const fleetAttentionSnapshotSchema = z.object({
 export type FleetAttentionSnapshot = z.infer<typeof fleetAttentionSnapshotSchema>
 
 /**
- * Incremental attention update sent over the gateway SSE stream (`GET /v1/events?attention=1`) ONLY to subscribers
- * where `fleetReaderWantsAttention(url.searchParams)` is true.
+ * Incremental attention update sent over the gateway SSE stream (`GET /v1/events?attention=1` or `?attention=2`) ONLY
+ * to subscribers where `fleetReaderWantsAttention(url.searchParams)` is true.
  *
  * SSE wire framing (matches all other `/v1/events` frames in `apps/bot-gateway/src/events.ts` and
  * `apps/mobile/src/gateway/event-stream.ts`):
@@ -106,8 +106,8 @@ export type FleetAttentionSnapshot = z.infer<typeof fleetAttentionSnapshotSchema
  * ```
  *
  * Intentionally NOT added to `fleetGatewayEventSchema` (a closed discriminated union parsed by older clients).
- * Readers that opt in with `?attention=1` parse `attention.updated` frames with this schema alongside
- * `fleetGatewayEventSchema`.
+ * Readers that opt in with `?attention=1` or `?attention=2` parse `attention.updated` frames with this schema
+ * alongside `fleetGatewayEventSchema`.
  */
 export const fleetAttentionUpdatedEventSchema = z.object({
   type: z.literal('attention.updated'),

@@ -232,9 +232,24 @@ export function fleetChatAttentionQueryValue(capabilities: readonly string[]): 1
   return capabilities.includes(FLEET_CHAT_ATTENTION_SYNC_CAPABILITY) ? 2 : 1
 }
 
-/** Whether a reader of gateway events asked for `attention.updated` events (`attention=1`). */
+export type FleetAttentionReaderMode = 0 | 1 | 2
+
+/**
+ * Which attention stream mode a reader of `GET /v1/events` asked for (`attention`):
+ * - `0`: none (older clients that reject unknown SSE event types)
+ * - `1`: full gateway event stream plus `attention.updated` deltas
+ * - `2`: attention-only stream (`hello`, keep-alive pings, and `attention.updated` — no other `FleetGatewayEvent`s)
+ */
+export function fleetReaderAttentionMode(search: URLSearchParams): FleetAttentionReaderMode {
+  const value = search.get(FLEET_ATTENTION_QUERY)
+  if (value === '2') return 2
+  if (value === '1') return 1
+  return 0
+}
+
+/** Whether a reader of gateway events asked for `attention.updated` events (`attention=1` or `2`). */
 export function fleetReaderWantsAttention(search: URLSearchParams): boolean {
-  return search.get(FLEET_ATTENTION_QUERY) === '1'
+  return fleetReaderAttentionMode(search) > 0
 }
 
 /**
