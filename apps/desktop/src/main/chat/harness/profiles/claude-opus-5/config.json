@@ -20,8 +20,7 @@
               "agent": "ultra.agent.md",
               "ask": "ultra.ask.md",
               "plan": "ultra.plan.md",
-              "design": "ultra.design.md",
-              "maestro": "ultra.maestro.md"
+              "design": "ultra.design.md"
             }
           },
           "environment": { "placement": "last-user-message", "transient": true }

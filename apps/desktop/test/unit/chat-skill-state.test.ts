@@ -95,17 +95,16 @@ describe('global state and per-conversation overrides', () => {
     expect((await effectiveSkills(cwd, a.id, home)).map((s) => s.name)).toEqual(['review'])
   })
 
-  it('gives the main agent its model-invocable skills, except in Ask and for the Maestro orchestrator', async () => {
+  it('gives the main agent its model-invocable skills, except in Ask', async () => {
     mkSkill(cwd, 'deploy', '---\nname: deploy\n---\nbody')
     mkSkill(cwd, 'manual', '---\nname: manual\ndisable-model-invocation: true\n---\nbody')
     const conv = chatConversation()
-    for (const mode of ['agent', 'plan'] as const) {
+    for (const mode of ['agent', 'plan', 'maestro'] as const) {
       const names = (await mainAgentSkills(mode, cwd, conv.id)).map((skill) => skill.name)
       expect(names, mode).toContain('deploy')
       expect(names, mode).not.toContain('manual')
     }
     expect(await mainAgentSkills('ask', cwd, conv.id)).toEqual([])
-    expect(await mainAgentSkills('maestro', cwd, conv.id)).toEqual([])
   })
 
   it('uses global skills when conversation IDs are absent', async () => {

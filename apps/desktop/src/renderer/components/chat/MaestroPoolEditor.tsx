@@ -276,7 +276,7 @@ function RowIdentity({ label, subtitle, badge }: { label: string; subtitle: stri
 }
 
 const resourceSubtitle = (resource: MaestroResourceV1, t: Translate) =>
-  `${t(`maestro.capabilities.${resource.capability}`)} · ${resource.specialties.join(', ') || t('maestro.specialtiesFallback')}`
+  `${t(`maestro.mode.${resource.mode}`)} · ${resource.specialties.join(', ') || t('maestro.specialtiesFallback')}`
 
 /**
  * The Settings Pool: one line per agent with the models it runs, opened in place to edit. With a proposal under

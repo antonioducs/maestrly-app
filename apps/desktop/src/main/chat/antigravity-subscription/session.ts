@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import type { ChatMessage } from '../../../shared/chat'
 import type { ChatBehavior } from '../../../shared/conversation-experience'
+import { capabilityBehaviorFor } from '../../../shared/chat-mode'
 import type { MaestroTurnSnapshotV1 } from '../../../shared/maestro'
 import type { AppToolGroup } from '../../../shared/app-tool-groups'
 import { isBotMode } from '../../fleet/instance/config'
@@ -14,8 +15,7 @@ import { harnessUltraGuidance } from '../harness/host-contracts'
 import { buildHarnessPrompt } from '../harness/prompt-builder'
 import { generatedInterfacesEnabled } from '../generated-interfaces'
 import type { ResolvedHarness } from '../harness/types'
-import { maestroAgentsFromTurn, renderMaestroAgentCatalog } from '../maestro-delegation'
-import { MAESTRO_SYSTEM_SPEC, renderMaestroTurnPolicy } from '../maestro-prompt'
+import { renderMaestroSwarmSection } from '../maestro-prompt'
 import { applyToolPruning, planToolPruning, protectedRecentMessageIds } from '../compaction/tool-pruning'
 import { activeChatContext, droppedImageText, nativeSeedContextText, renderNativeSeedTranscript } from '../message'
 import { pdfFallbackText } from '../pdf-attachments'
@@ -80,22 +80,20 @@ export function hashAntigravityInstructions(instructions: string): string {
 export async function buildAntigravityInstructions(
   args: BuildAntigravityInstructionsArgs
 ): Promise<AntigravityInstructions> {
+  const capabilityMode = capabilityBehaviorFor(args.mode)
   const skills = await mainAgentSkills(args.mode, args.cwd, args.conversationId)
   const allAgents = await listEffectiveAgents({
     cwd: args.cwd,
     conversationId: args.conversationId,
-    mode: args.mode === 'agent' || args.mode === 'maestro' ? 'agent' : 'plan',
+    mode: capabilityMode === 'agent' ? 'agent' : 'plan',
   })
   const agents =
-    args.mode === 'maestro' && args.maestro
-      ? maestroAgentsFromTurn(args.maestro, allAgents)
-      : args.mode === 'agent'
-        ? allAgents
-        : args.maestrlyUltra
-          ? allAgents.filter((agent) => agent.name === 'explore')
-          : []
-  const agentContext =
-    args.mode === 'maestro' && args.maestro ? renderMaestroAgentCatalog(args.maestro) : agentsCatalog(agents)
+    capabilityMode === 'agent'
+      ? allAgents
+      : args.maestrlyUltra
+        ? allAgents.filter((agent) => agent.name === 'explore')
+        : []
+  const agentContext = agentsCatalog(agents)
   const projectContext = await buildProjectContext(args.projectId, args.cwd, args.conversationId)
   const skillsContext = skillsCatalog(skills, args.projectId !== null)
   const scope = args.projectId === null ? 'standalone' : 'project'
@@ -106,11 +104,9 @@ export async function buildAntigravityInstructions(
   const environment = `Today's date: ${new Date().toISOString().slice(0, 10)}. Project directory: ${args.cwd}.${gitLine}`
   const harness = args.harness ?? resolveAntigravityHarness(args.modelId)
   const ultra = args.maestrlyUltra
-    ? args.mode === 'maestro'
-      ? 'Maximum-rigor reasoning applies only to the orchestrator; choose agents deliberately from the frozen Strategy and Pool.'
-      : args.mode === 'agent'
-        ? 'Maximum-rigor Maestrly Ultra mode is active. Decompose non-trivial work, delegate independent slices through task when useful, integrate the results, verify the implementation, and critically review it before finishing.'
-        : 'Maximum-rigor Maestrly Ultra mode is active. Stay read-only, investigate deeply, and cross-check the conclusion.'
+    ? capabilityMode === 'agent'
+      ? 'Maximum-rigor Maestrly Ultra mode is active. Decompose non-trivial work, delegate independent slices through task when useful, integrate the results, verify the implementation, and critically review it before finishing.'
+      : 'Maximum-rigor Maestrly Ultra mode is active. Stay read-only, investigate deeply, and cross-check the conclusion.'
     : ''
   const notes = !isBotMode() && Boolean(getConversation(args.conversationId))
   const allowPlanReview = !isBotMode()
@@ -148,9 +144,8 @@ export async function buildAntigravityInstructions(
       ? ['The `review_plan` tool presents a plan for user approval; when the user approves, a new turn executes it.']
       : []),
     'The `ask_question` tool asks the user a question and waits for the answer.',
-    // The Maestrly base layout already carries the contract in its capability section.
-    ...(args.mode === 'maestro' && !prompt.stablePrefix.includes(MAESTRO_SYSTEM_SPEC) ? [MAESTRO_SYSTEM_SPEC] : []),
-    ...(args.mode === 'maestro' && args.maestro ? [renderMaestroTurnPolicy(args.maestro)] : []),
+    // The Maestrly base layout already carries the capability contract.
+    ...(args.mode === 'maestro' && args.maestro ? [renderMaestroSwarmSection(args.maestro)] : []),
     ...(ultra ? [harnessUltraGuidance(harness, args.mode) ?? ultra] : []),
     ...(notes ? ['The conversation has a Notes tab; use it when the user asks about notes.'] : []),
     "You are an assistant on the user's machine. The Maestrly tool layer enforces permissions; never claim you executed something you did not.",

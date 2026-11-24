@@ -1,9 +1,8 @@
 import type { PermissionScope } from '../../shared/conversation-scope'
 import { autonomousProviderAllowed } from './autonomous'
 import type { ToolSet } from 'ai'
-import type { ChatPermMode, SubagentResumeStatus, SubagentRuntimeHandle } from '../../shared/chat'
+import type { ChatPermMode } from '../../shared/chat'
 import type { ChatBehavior } from '../../shared/conversation-experience'
-import type { MaestroDelegationSnapshotV1 } from '../../shared/maestro'
 import type { SubagentEffectiveProfile, SubagentExecutionSnapshotV1 } from '../../shared/subagent-profiles'
 import { classifyModelFailure, type ModelFailureClassification } from './model-fallback/error-classifier'
 import {
@@ -30,7 +29,6 @@ import {
   subscriptionAccountId,
 } from './catalog'
 import type { ClaudeSubscriptionAccountIdentity, ClaudeSubscriptionManager } from './claude-agent-sdk/manager'
-import { queueClaudeSessionCleanup } from './claude-agent-sdk/session-store'
 import { runClaudeSubagent } from './claude-agent-sdk/subagent-runner'
 import { getCodexSubscriptionManager } from './codex-subscription/manager'
 import {
@@ -47,22 +45,10 @@ import {
   type CodexSubagentCheckpoint,
 } from './codex-subscription/subagent-runner'
 import { classifyCodexQuotaFailureWithRateLimits } from './codex-subscription/quota-error'
-import { queueCodexThreadCleanup } from './codex-subscription/thread-store'
 import { resolveAccountPoolProviderId } from './subscription-failover/account-pool'
 import { freezeFailoverChain } from './subscription-failover/config'
 import { getSubscriptionFailoverRouter, type MarkExhaustedInfo } from './subscription-failover/router'
 import type { NormalizedAiUsage } from './runner'
-import {
-  planSubagentResume,
-  claudeSubagentRuntimeSignature,
-  recreatedTask,
-  resolveSubagentResume,
-  settledSubagentResume,
-  subagentToolSignature,
-  type SubagentReplayMessage,
-  type SubagentResumeRecreateReason,
-  type SubagentResumeSource,
-} from './subagent-resume'
 import { harnessFor } from './harness/execution'
 import { captureHarnessFlags } from './harness/flags'
 import type { ResolvedHarness } from './harness/types'
@@ -83,14 +69,8 @@ import { withSubagentMessageOwnership, type SubagentMessageOwnership } from './s
 import type { SubagentTextUpdateHandler } from './subagent-text-stream'
 import { createSubagentSessionRecorder, type SubagentSessionRecorder } from './subagent-session'
 import { acquireSubagentSlot, SUBAGENT_SLOT_WAIT_LINE } from './subagent-concurrency'
-import {
-  namespaceSubagentToolCallId,
-  namespaceSubagentToolSet,
-  runSubagent,
-  subagentPermissionAssertInput,
-} from './subagent-runner'
+import { namespaceSubagentToolCallId, runSubagent, subagentPermissionAssertInput } from './subagent-runner'
 import { ALL_TOOL_NAMES, buildTools, selectSubagentToolNames } from './tools'
-import { buildMaestroWorkerTools, isMaestroWorkerOperationalToolName } from './maestro-worker-tools'
 import { conversationShellEnv } from './conversation-env'
 import { runnerHookContext, wrapToolSetWithHooks } from './plugin-hooks'
 import { deferredLoadingToolNames, withoutExternalMcpWrappers } from './tool-policy'
@@ -146,10 +126,6 @@ export interface ExecuteSubagentArgs {
   /** Conversation turns already own this row; host workflows must declare their cleanup contract. */
   parentMessageOwnership?: SubagentMessageOwnership
   toolCallId?: string
-  /** Stable Maestro routing identity; falls back to toolCallId for Standard callers. */
-  delegationId?: string
-  delegationLabel?: string
-  maestroSnapshot?: MaestroDelegationSnapshotV1
   mode: ChatBehavior
   permMode: ChatPermMode
   profile: SubagentExecutionSnapshotV1
@@ -167,7 +143,7 @@ export interface ExecuteSubagentArgs {
   progress?: (line: string) => void
   /** Provider-neutral incremental text. Fold append/replace events in arrival order. */
   onTextUpdate?: SubagentTextUpdateHandler
-  /** Session precreated by Maestro's asynchronous protocol. */
+  /** Precreated subagent session recorder. */
   sessionRecorder?: SubagentSessionRecorder
   emitGeneratedImage?: (toolCallId: string, image: GeneratedImageEmission) => void
   onGeneratedImageUsage?: (usage: GeneratedImageUsage) => void
@@ -201,11 +177,10 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
           conversationId: args.conversationId,
           parentMessageId: args.parentMessageId,
           toolCallId: args.toolCallId,
-          origin: args.mode === 'maestro' ? 'delegate' : 'task',
+          origin: 'task',
           agentName: args.agentName,
           task: args.task,
           profile: args.profile,
-          maestro: args.maestroSnapshot,
           startedAt: Date.now(),
         })
       : null)
@@ -228,57 +203,20 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
     }
   }
   const taskCallId = args.toolCallId ?? args.parentMessageId
-  const maestroRuntime =
-    args.mode === 'maestro'
-      ? await buildMaestroWorkerTools({
-          conversationId: args.conversationId,
-          projectId: args.projectId,
-          permissionScope: args.permissionScope,
-          cwd: args.cwd,
-          parentMessageId: args.parentMessageId,
-          delegationId: args.delegationId ?? taskCallId,
-          label: args.delegationLabel ?? args.agentName,
-          profile: args.profile,
-          broker: args.broker,
-          signal: args.signal,
-          emitGeneratedImage: args.emitGeneratedImage,
-          onGeneratedImageUsage: args.onGeneratedImageUsage,
-          generateImage: args.generateImage,
-        })
-      : null
-  const maestroTools = maestroRuntime ? namespaceSubagentToolSet(maestroRuntime.tools, taskCallId) : {}
-  // Maestro owns the catalog/loader pair atomically. Never retain a loader captured by the parent turn after
-  // the worker re-resolves the effective skill state for its own asynchronous start.
-  const inheritedTools = Object.fromEntries(
-    Object.entries(args.tools ?? {}).filter(([name]) => args.mode !== 'maestro' || name !== 'use_skill')
-  ) as ToolSet
-  const providedTools: ToolSet = { ...inheritedTools, ...maestroTools }
-  const effectiveReadOnly = args.mode === 'maestro' ? false : args.readOnly
+  const providedTools: ToolSet = args.tools ?? {}
   const policyAllowed = selectSubagentToolNames({
     definition: args.definition,
-    readOnly: effectiveReadOnly,
+    readOnly: args.readOnly,
     providedHostTools: providedTools,
-    allowSkillLoader: args.mode === 'maestro',
   })
-  const allowed = maestroRuntime
-    ? new Set(Object.keys(providedTools).filter(isMaestroWorkerOperationalToolName))
-    : args.allowedToolNames
-      ? new Set([...args.allowedToolNames].filter((name) => policyAllowed.has(name)))
-      : policyAllowed
-  const effectiveDefinition: ChatAgent = maestroRuntime
-    ? {
-        ...args.definition,
-        tools: [...allowed],
-        prompt: [args.definition.prompt, maestroRuntime.skillCatalog].filter(Boolean).join('\n\n'),
-      }
-    : args.definition
+  const allowed = args.allowedToolNames
+    ? new Set([...args.allowedToolNames].filter((name) => policyAllowed.has(name)))
+    : policyAllowed
   const builtinNames = new Set([...allowed].filter((name) => ALL_TOOL_NAMES.includes(name)))
   // Official child runtimes such as Claude/Copilot expose only the custom ToolSet supplied here. Rebuild the
-  // child's allowed core surface independently from the parent: a Maestro parent remains read-only while a Pool
-  // worker can still receive bash/write/edit. Host tools stay limited to the already-gated parent-provided set.
-  const builtinTools = maestroRuntime
-    ? {}
-    : buildTools({
+  // child's allowed core surface independently from the parent. Host tools stay limited to the already-gated
+  // parent-provided set.
+  const builtinTools = buildTools({
         enabled: builtinNames,
         makeCtx: (toolCallId, toolSignal) => ({
           conversationId: args.conversationId,
@@ -312,68 +250,15 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
     recorder?.instrumentTools({ ...builtinTools, ...providedTools }) ?? { ...builtinTools, ...providedTools },
     runnerHookContext({ conversationId: args.conversationId, cwd: args.cwd, mode: args.mode, signal: args.signal })
   )
-  const deferred = new Set([...(args.deferredToolNames ?? []), ...(maestroRuntime?.deferredToolNames ?? [])])
+  const deferred = new Set(args.deferredToolNames ?? [])
   // A runtime that cannot keep a deferred tool out of its requests gets no typed wrapper of an external MCP tool: those
   // reach it through mcp_search/mcp_call/mcp_read, whichever runtime the parent turn runs on.
   const toolsFor = (providerId: string): ToolSet =>
     providerDefersTools(providerId) ? tools : withoutExternalMcpWrappers(tools)
-  // Maestro continuity: the parent requested continuation of this agent's previous turn. The host decides per
-  // provider whether the native thread can reopen; otherwise recreate the worker with the previous
-  // report injected and record the reason — never silently.
-  const persistRuntime = args.mode === 'maestro'
-  const resumedFrom = args.maestroSnapshot?.resumedFrom
-  const resumeSource: SubagentResumeSource | null = resumedFrom
-    ? (resolveSubagentResume(resumedFrom) ?? {
-        sessionId: resumedFrom,
-        agentName: args.agentName,
-        handle: null,
-        lastReport: '',
-        replay: [],
-      })
-    : null
-  let resumeOutcomeRecorded = false
-  const recordResume = (status: SubagentResumeStatus, reason?: string): void => {
-    if (resumeOutcomeRecorded) return
-    resumeOutcomeRecorded = true
-    recorder?.resumeOutcome(status, reason)
-  }
-  const resumeFor = (
-    providerId: string,
-    accountId: string | null,
-    toolSignature?: string,
-    claudeContract?: { modelId: string; behaviorProfileId: string | null; runtimeSignature: string }
-  ): {
-    task: string
-    handle: SubagentRuntimeHandle | null
-    fallbackTask: string
-    replay?: SubagentReplayMessage[]
-  } => {
-    if (!resumeSource) return { task: attemptTask, handle: null, fallbackTask: attemptTask }
-    const fallback = (reason: SubagentResumeRecreateReason) => recreatedTask(attemptTask, resumeSource, reason)
-    const plan = planSubagentResume({
-      providerId,
-      accountId,
-      toolSignature,
-      ...claudeContract,
-      resume: resumeSource,
-    })
-    if (plan.mode === 'recreate') {
-      recordResume('recreated', plan.reason)
-      return { task: fallback(plan.reason), handle: null, fallbackTask: fallback(plan.reason) }
-    }
-    if (plan.mode === 'replay')
-      return { task: attemptTask, handle: null, fallbackTask: attemptTask, replay: plan.history }
-    return { task: attemptTask, handle: plan.handle, fallbackTask: fallback('resume-rejected') }
-  }
   /** Task of the current model attempt: the original one, or its continuation on a fallback model. */
   let attemptTask = args.task
   /** Raw failure of the current attempt, reported by a runtime before it became the result's error text. */
   let attemptFailure: unknown
-  const settleResume = (result: { resumed?: boolean; resumeReason?: string }): void => {
-    if (!resumeSource) return
-    const outcome = settledSubagentResume(result)
-    recordResume(outcome.status, outcome.reason)
-  }
   /**
    * A Codex child whose account has a fallback route walks it like the root turn and helpers do: a confirmed quota
    * opens that account's circuit and the same task continues from its checkpoint on the next account, while a
@@ -388,7 +273,6 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
     const logicalProviderId = effective.providerId
     const router = getSubscriptionFailoverRouter()
     const runtimes = (await toolSetRuntimes(tools, deferred)).filter((entry) => allowed.has(entry.spec.name))
-    const toolSignature = subagentToolSignature(runtimes.map((entry) => entry.spec))
     const approval = approvalConfig(childMode, args.permMode)
     const attempted = new Set<string>()
     const usage: NormalizedAiUsage = { input: 0, output: 0, cacheRead: 0, cacheCreate: 0, totalInput: 0 }
@@ -468,17 +352,16 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
           progress(`${accountLabel(exhaustedProviderId)} hit limit; continuing on ${accountLabel(target.providerId)}`)
           exhaustedProviderId = null
         }
-        const resume = resumeFor(logicalProviderId, target.accountId, toolSignature)
         const result = await runCodexSubagent({
           conversationScope: args.projectId === null ? 'standalone' : 'project',
           client: target.client,
           cwd: args.cwd,
           profile: profile,
-          definition: effectiveDefinition,
+          definition: args.definition,
           signal: args.signal,
           agentName: args.agentName,
-          task: buildSubagentContinuationPrompt(resume.task, checkpoint),
-          readOnly: effectiveReadOnly,
+          task: buildSubagentContinuationPrompt(attemptTask, checkpoint),
+          readOnly: args.readOnly,
           serviceTier: target.serviceTier ?? 'default',
           approvalPolicy: approval.approvalPolicy,
           sandboxPolicy: sandboxPolicyFor(approval.sandbox, args.cwd),
@@ -490,17 +373,7 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
           removeThread: (threadId) => registration.removeThread(threadId),
           progress,
           onTextUpdate,
-          persistRuntime,
-          ...(resume.handle?.kind === 'codex-thread'
-            ? { resume: { threadId: resume.handle.threadId, fallbackTask: resume.fallbackTask } }
-            : {}),
-          onThreadStarted: ({ threadId }) => {
-            if (!persistRuntime) return
-            recorder?.runtimeHandle({ kind: 'codex-thread', threadId, accountId: target.accountId, toolSignature })
-            queueCodexThreadCleanup(args.conversationId, threadId, target.accountId)
-          },
         })
-        settleResume(result)
         settle(result.error ? 'other' : 'success')
         addUsage(result.usage)
         const totalUsage = accumulatedUsage()
@@ -553,14 +426,13 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
     if (!autonomousProviderAllowed(resolveAccountPoolProviderId(effective.providerId), args.conversationId))
       throw new Error('This provider account is not authorized for the desktop executor.')
     if (isClaudeSubscriptionProvider(effective.providerId)) {
-      let runtimeSignature = ''
       let childHarness: ResolvedHarness | undefined
-      const result = await runClaudeSubagent({
+      return runClaudeSubagent({
         conversationScope: args.projectId === null ? 'standalone' : 'project',
         ...args,
         profile,
-        definition: effectiveDefinition,
-        readOnly: effectiveReadOnly,
+        definition: args.definition,
+        readOnly: args.readOnly,
         prepareTarget: (target) => {
           // The child resolves its own contract from its own model; it never inherits the parent's.
           if (childHarness === undefined)
@@ -568,57 +440,17 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
               resolvedModelId: target.runtimeModelId,
               flags: captureHarnessFlags(),
             })
-          runtimeSignature = claudeSubagentRuntimeSignature({
-            modelId: target.runtimeModelId,
-            accountIdentity: target.accountIdentity,
-            behaviorProfileId: childHarness.identity.behaviorProfileId,
-            prompt: args.projectId === null ? `standalone\n${effectiveDefinition.prompt}` : effectiveDefinition.prompt,
-            readOnly: effectiveReadOnly,
-            sentEffort: effective.sentEffort,
-            fastMode: effective.fastMode === true,
-            toolNames: [...allowed],
-          })
-          const resume = resumeFor(target.providerId, target.accountId, undefined, {
-            modelId: target.runtimeModelId,
-            behaviorProfileId: childHarness.identity.behaviorProfileId,
-            runtimeSignature,
-          })
           return {
-            task: resume.task,
+            task: attemptTask,
             harness: childHarness,
-            ...(resume.handle?.kind === 'claude-session'
-              ? {
-                  resume: {
-                    sessionId: resume.handle.sessionId,
-                    fallbackTask: resume.fallbackTask,
-                    accountId: resume.handle.accountId,
-                  },
-                }
-              : {}),
           }
         },
         tools,
-        allowSkillLoader: args.mode === 'maestro',
+        allowSkillLoader: false,
         progress,
         onTextUpdate,
-        persistRuntime,
         onTerminalFailure: (error) => void (attemptFailure = error),
-        onSessionStarted: ({ sessionId, target }) => {
-          if (!persistRuntime) return
-          recorder?.runtimeHandle({
-            kind: 'claude-session',
-            sessionId,
-            cwd: args.cwd,
-            accountId: target.accountId,
-            modelId: target.runtimeModelId,
-            behaviorProfileId: childHarness?.identity.behaviorProfileId ?? null,
-            runtimeSignature,
-          })
-          queueClaudeSessionCleanup(args.conversationId, sessionId, args.cwd, target.accountId)
-        },
       })
-      settleResume(result)
-      return result
     }
 
     if (isCursorSubscriptionProvider(effective.providerId)) {
@@ -636,9 +468,9 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
       const result = await runCursorSubagent({
         ...args,
         profile,
-        task: resumeFor(effective.providerId, null).task,
-        definition: effectiveDefinition,
-        readOnly: effectiveReadOnly,
+        task: attemptTask,
+        definition: args.definition,
+        readOnly: args.readOnly,
         manager,
         accountIdentity: identity,
         isHostPending: () =>
@@ -647,7 +479,7 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
               args.questionBroker.pendingFor(args.conversationId).length
           ),
         tools: toolsFor(effective.providerId),
-        allowSkillLoader: args.mode === 'maestro',
+        allowSkillLoader: false,
         progress,
         onTextUpdate,
       })
@@ -667,14 +499,14 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
       const result = await runAntigravitySubagent({
         ...args,
         profile,
-        task: resumeFor(effective.providerId, null).task,
-        definition: effectiveDefinition,
-        readOnly: effectiveReadOnly,
+        task: attemptTask,
+        definition: args.definition,
+        readOnly: args.readOnly,
         manager,
         accountIdentity: identity,
         tools: antigravityTools,
         deferrableToolNames: new Set([...deferred, ...deferredLoadingToolNames(antigravityTools)]),
-        allowSkillLoader: args.mode === 'maestro',
+        allowSkillLoader: false,
         progress,
         onTextUpdate,
       })
@@ -694,9 +526,9 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
         conversationScope: args.projectId === null ? 'standalone' : 'project',
         ...args,
         profile,
-        task: resumeFor(effective.providerId, null).task,
-        definition: effectiveDefinition,
-        readOnly: effectiveReadOnly,
+        task: attemptTask,
+        definition: args.definition,
+        readOnly: args.readOnly,
         manager,
         accountIdentity: identity,
         progress,
@@ -706,13 +538,12 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
           args.signal,
           deferred
         ),
-        allowSkillLoader: args.mode === 'maestro',
+        allowSkillLoader: false,
       })
     }
 
     if (isCodexSubscriptionProvider(effective.providerId)) {
-      // Parent Maestro is read-only, but a Pool worker owns its own capability boundary.
-      const childMode = effectiveReadOnly ? ('plan' as const) : ('agent' as const)
+      const childMode = args.readOnly ? ('plan' as const) : ('agent' as const)
       const failoverChain = freezeFailoverChain(effective.providerId)
       if (failoverChain.length > 1) return runCodexOnFailoverChain(failoverChain, childMode, effective, profile)
       // Only a physical account can name a manager: an active-account selection runs on its pool's current one.
@@ -744,20 +575,17 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
         toolCallIdPrefix: args.toolCallId,
       })
       const approval = approvalConfig(childMode, args.permMode)
-      const accountId = subscriptionAccountId(accountProviderId)
-      const toolSignature = subagentToolSignature(runtimes.map((entry) => entry.spec))
-      const resume = resumeFor(effective.providerId, accountId, toolSignature)
       try {
-        const result = await runCodexSubagent({
+        return await runCodexSubagent({
           conversationScope: args.projectId === null ? 'standalone' : 'project',
           client,
           cwd: args.cwd,
           profile: profile,
-          definition: effectiveDefinition,
+          definition: args.definition,
           signal: args.signal,
           agentName: args.agentName,
-          task: resume.task,
-          readOnly: effectiveReadOnly,
+          task: attemptTask,
+          readOnly: args.readOnly,
           serviceTier,
           approvalPolicy: approval.approvalPolicy,
           sandboxPolicy: sandboxPolicyFor(approval.sandbox, args.cwd),
@@ -769,26 +597,13 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
           removeThread: (threadId) => registration.removeThread(threadId),
           progress,
           onTextUpdate,
-          persistRuntime,
-          ...(resume.handle?.kind === 'codex-thread'
-            ? { resume: { threadId: resume.handle.threadId, fallbackTask: resume.fallbackTask } }
-            : {}),
-          onThreadStarted: ({ threadId }) => {
-            if (!persistRuntime) return
-            recorder?.runtimeHandle({ kind: 'codex-thread', threadId, accountId, toolSignature })
-            queueCodexThreadCleanup(args.conversationId, threadId, accountId)
-          },
         })
-        settleResume(result)
-        return result
       } finally {
         registration.remove()
       }
     }
 
-    // BYOK: without a server-side session, resume means replaying the previous turn as history.
-    const resume = resumeFor(effective.providerId, null)
-    const result = await runSubagent({
+    return runSubagent({
       cwd: args.cwd,
       projectId: args.projectId,
       permissionScope: args.permissionScope,
@@ -796,23 +611,20 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
       parentMessageId: args.parentMessageId,
       toolCallId: args.toolCallId,
       profile: profile,
-      definition: effectiveDefinition,
+      definition: args.definition,
       broker: args.broker,
       signal: args.signal,
       agentName: args.agentName,
-      task: resume.task,
-      ...(resume.replay ? { replayHistory: resume.replay } : {}),
+      task: attemptTask,
       progress,
       onTextUpdate,
       messageOwnership: args.parentMessageOwnership,
-      readOnly: effectiveReadOnly,
+      readOnly: args.readOnly,
       tools: toolsFor(effective.providerId),
-      allowSkillLoader: args.mode === 'maestro',
+      allowSkillLoader: false,
       onTerminalFailure: (error) => void (attemptFailure = error),
       ...(retryGate ? { shouldRetryInPlace: retryGate } : {}),
     })
-    if (resume.replay) settleResume({ resumed: true })
-    return result
   }
 
   /**
@@ -902,7 +714,5 @@ async function runSubagentExecution(args: ExecuteSubagentArgs): Promise<Subagent
       error: error instanceof Error ? error.message : String(error),
     })
     throw error
-  } finally {
-    await maestroRuntime?.close()
   }
 }

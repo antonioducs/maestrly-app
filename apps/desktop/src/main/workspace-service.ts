@@ -3,10 +3,13 @@ import {
   permissionScopeKey,
   conversationPermissionScope,
 } from '../shared/conversation-scope'
+import { conversationDispatchBranchSlug } from '../shared/conversation-dispatch'
 import { removeStandaloneConversationDirectory } from './standalone-conversation-service'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import * as git from './git-service'
+import { runGit, runGitOrNull, runGitRaw } from './git-command'
+import { worktreeTreeOid } from './conversation-move/git-snapshot'
 import * as store from './store'
 import type { ConversationExperience } from '../shared/conversation-experience'
 import type { ProjectConversation, ConversationMode, Workspace } from './store'
@@ -361,5 +364,85 @@ export async function createSiblingConversation(
     name: options.name,
     attach: { cwd: src.cwd, branch: src.branch, mode: src.mode },
     ...(options.id ? { id: options.id } : {}),
+  })
+}
+
+function maestroFeatureBranchBase(branchHint: string): string {
+  const normalized = branchHint.normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+  const slug = /[a-z0-9]/i.test(normalized) ? conversationDispatchBranchSlug(branchHint) : ''
+  return slug ? `feat/${slug}` : 'feat/maestro'
+}
+
+/**
+ * The source's HEAD plus its uncommitted work (tracked and untracked, never ignored), as one commit on top of HEAD.
+ * Work done while planning, such as a Design prototype, often stays uncommitted and would otherwise never reach the
+ * swarm. Built through a temporary index, so the source checkout and its index are left as they were.
+ */
+async function carryUncommittedChanges(cwd: string, head: string): Promise<string> {
+  if (await git.hasUnmergedFiles(cwd)) {
+    throw new Error('The source conversation has unresolved merge conflicts. Resolve them before starting Maestro.')
+  }
+  const tree = await worktreeTreeOid(cwd)
+  if (tree === (await runGit(cwd, ['rev-parse', `${head}^{tree}`]))) return head
+  // The repository's own identity when it has one: this commit belongs to the feature branch and its pull request.
+  const identity = (await runGitOrNull(cwd, ['config', 'user.email']))
+    ? undefined
+    : {
+        GIT_AUTHOR_NAME: 'Maestrly',
+        GIT_AUTHOR_EMAIL: 'maestrly@localhost',
+        GIT_COMMITTER_NAME: 'Maestrly',
+        GIT_COMMITTER_EMAIL: 'maestrly@localhost',
+      }
+  const message = 'chore: carry uncommitted work into the Maestro feature branch'
+  const args = ['commit-tree', '--no-gpg-sign', tree, '-p', head, '-m', message]
+  return (await runGitRaw(cwd, args, identity ? { env: identity } : undefined)).trim()
+}
+
+/**
+ * Create a Maestro orchestrator conversation in its own worktree on a new feature branch from the source HEAD,
+ * including the source's uncommitted work.
+ */
+export async function createMaestroWorktreeConversation(
+  sourceConversationId: string,
+  options: { name: string; branchHint: string }
+): Promise<ProjectConversation> {
+  const source = store.getConversation(sourceConversationId)
+  if (!source) throw new Error(tMain('main')('workspace.siblingSourceNotFound'))
+  const src = requireProjectConversation(source)
+  if (src.botOrigin) {
+    throw new Error('Bot conversations own exclusive worktrees and cannot start a Maestro orchestrator.')
+  }
+  assertConversationMigrationMutationAllowed(sourceConversationId, 'Create Maestro worktree conversation')
+
+  if (src.isMulti || src.archived === 1) {
+    throw new Error(tMain('main')('workspace.siblingSourceInvalid'))
+  }
+
+  const ws = store.listWorkspaces().find((w) => w.id === src.workspaceId)
+  if (!ws) throw new Error(tMain('main')('workspace.notFound'))
+
+  const sourceHead = await git.resolveCommit(src.cwd)
+  if (!sourceHead) {
+    throw new Error('Could not resolve HEAD commit of the source conversation.')
+  }
+  const baseRevision = await carryUncommittedChanges(src.cwd, sourceHead)
+
+  const baseBranch = maestroFeatureBranchBase(options.branchHint)
+  let branch = baseBranch
+  let suffix = 2
+  while (await git.branchExists(ws.path, branch)) {
+    branch = `${baseBranch}-${suffix}`
+    suffix += 1
+  }
+
+  return createConversation({
+    id: randomUUID(),
+    workspaceId: ws.id,
+    branch,
+    isNewBranch: true,
+    baseRevision,
+    mode: 'worktree',
+    experience: 'maestro',
+    name: options.name,
   })
 }

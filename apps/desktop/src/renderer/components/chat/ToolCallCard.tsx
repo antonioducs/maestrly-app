@@ -4,7 +4,6 @@ import { ChevronRight, Wrench, Check, X, Loader2, ShieldQuestion, Ban, ImageIcon
 import { cn } from '@/lib/utils'
 import { useHostApi } from '@/lib/hosts/host-context'
 import { toolOutputImages, toolOutputText, type ChatToolImage, type MessagePart } from '../../../shared/chat'
-import { stripMaestroLiveEnvelope } from '../../../shared/maestro-live'
 import { IMAGE_OBJECT_URL_IDLE_MS } from '../../../shared/memory-policy'
 import { imageResultToObjectUrl, withImageFetchSlot } from '../../lib/binary-image'
 
@@ -204,8 +203,8 @@ export function ToolCallDetails({
             : ''
   const outputText =
     typeof out === 'string'
-      ? stripMaestroLiveEnvelope(out)
-      : `${stripMaestroLiveEnvelope(toolOutputText(out))}${toolOutputImages(out).length ? `\n[${toolOutputImages(out).length} image output(s)]` : ''}`
+      ? out
+      : `${toolOutputText(out)}${toolOutputImages(out).length ? `\n[${toolOutputImages(out).length} image output(s)]` : ''}`
   const images = toolOutputImages(out)
   return (
     <>

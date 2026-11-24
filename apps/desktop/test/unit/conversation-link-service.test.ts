@@ -180,7 +180,7 @@ describe('sending messages', () => {
     expect(confirm).not.toHaveBeenCalled()
   })
 
-  it('lets turns started by another conversation reach only linked conversations, within the hop limit', async () => {
+  it('lets turns started by another conversation reach only linked conversations', async () => {
     dispatch(source, child)
     const { deps, service } = harness()
     const confirm = vi.fn(async () => true)
@@ -193,15 +193,23 @@ describe('sending messages', () => {
       status: 'delivered',
     })
     expect(peerCalls(deps).at(-1)).toMatchObject({ conversationId: source, hop: 3 })
-    expect(await service.send(linked(child, source, 3), { conversationId: source, message: 'Again.' }, confirm)).toMatchObject({
-      code: 'hop-limit',
-    })
-    expect(
-      await service.send(linked(child, source, 2), { conversationId: source, message: 'Tell me.', reportBack: true }, confirm)
-    ).toMatchObject({ code: 'hop-limit', error: expect.stringMatching(/without reportBack/) })
     expect(
       await service.send(linked(child, source, 1), { conversationId: source, message: 'Tell me.', reportBack: true }, confirm)
     ).toMatchObject({ status: 'delivered' })
+  })
+
+  it('delivers a linked send with reportBack at hop 5', async () => {
+    dispatch(source, child)
+    const { deps, service } = harness()
+    const confirm = vi.fn(async () => true)
+    const sent = await service.send(
+      linked(child, source, 5),
+      { conversationId: source, message: 'Tell me.', reportBack: true },
+      confirm
+    )
+    expect(sent).toMatchObject({ ok: true, status: 'delivered' })
+    expect(sent.ok && sent.messageId ? getPeerMessage(sent.messageId)?.hop : null).toBe(6)
+    expect(peerCalls(deps).at(-1)).toMatchObject({ conversationId: source, hop: 6, reportBack: true })
   })
 
   it('records nothing when the turn that asked has ended', async () => {
@@ -381,7 +389,10 @@ describe('reporting to the source', () => {
     })
     expect(deferred).toMatchObject({ ok: true, status: 'deferred', conversationId: source })
     expect(deps.startPeerTurn).toHaveBeenCalledTimes(1)
-    expect(await service.report(linked(child, source, 3), { message: 'Late.' })).toMatchObject({ code: 'hop-limit' })
+    const deep = await service.report(linked(child, source, 5), { message: 'Still reporting.' })
+    expect(deep).toMatchObject({ ok: true, status: 'delivered', conversationId: source })
+    expect(deep.ok && deep.messageId ? getPeerMessage(deep.messageId)?.hop : null).toBe(6)
+    expect(peerCalls(deps).at(-1)).toMatchObject({ conversationId: source, kind: 'report', hop: 6, reportBack: false })
   })
 
   it('reports from a typed turn to the conversation that started this one or last sent work', async () => {
@@ -579,6 +590,60 @@ describe('waiting for a conversation', () => {
   })
 })
 
+describe('results arriving together', () => {
+  it('delivers each result once when the second one queues while the first is still starting', async () => {
+    dispatch(source, child)
+    dispatch(source, other)
+    let releaseStart!: () => void
+    const starting = new Promise<void>((resolve) => {
+      releaseStart = resolve
+    })
+    let activeTurn: Promise<void> | null = null
+    let endTurn = () => undefined
+    const { deps, service } = harness({
+      isRunning: vi.fn((id) => id === source && activeTurn !== null),
+      waitForSlot: vi.fn((id) => (id === source && activeTurn ? activeTurn : Promise.resolve())),
+      startPeerTurn: vi.fn(async (input: ConversationPeerTurnInput) => {
+        if (activeTurn) return { ok: false as const, error: 'busy' }
+        activeTurn = new Promise<void>((resolve) => {
+          endTurn = () => {
+            activeTurn = null
+            resolve()
+          }
+        })
+        if (input.body.includes('A done')) await starting
+        return { ok: true as const }
+      }),
+    })
+    const outcome = (summaryText: string) => ({ status: 'success' as const, assistantMessageId: 'a', summaryText })
+
+    const first = service.relayDispatchResult({
+      dispatchId: `dispatch-${child}`,
+      sourceConversationId: source,
+      conversationId: child,
+      outcome: outcome('A done.'),
+    })
+    await vi.waitFor(() => expect(deps.startPeerTurn).toHaveBeenCalledTimes(1))
+    await service.relayDispatchResult({
+      dispatchId: `dispatch-${other}`,
+      sourceConversationId: source,
+      conversationId: other,
+      outcome: outcome('B done.'),
+    })
+    releaseStart()
+    await first
+    endTurn()
+    await vi.waitFor(() => expect(deps.startPeerTurn).toHaveBeenCalledTimes(2))
+    endTurn()
+    await service.idle()
+
+    const bodies = peerCalls(deps).map((input) => input.body)
+    expect(bodies).toHaveLength(2)
+    expect(bodies[0]).toContain('A done.')
+    expect(bodies[1]).toContain('B done.')
+  })
+})
+
 describe('restart', () => {
   it('delivers queued messages and drops results whose turn died with the app', async () => {
     dispatch(source, child)
@@ -620,5 +685,101 @@ describe('restart', () => {
     await service.idle()
     expect(getPeerMessage('orphan')).toMatchObject({ phase: 'failed', error: 'target-deleted' })
     expect(deps.startPeerTurn).not.toHaveBeenCalled()
+  })
+})
+
+describe('swarm lifecycle hooks', () => {
+  it('calls onPeerTurnStarted when delivering a message, and ignores throwing hooks', async () => {
+    dispatch(source, child)
+    const onPeerTurnStarted = vi.fn()
+    const { deps, service } = harness({ onPeerTurnStarted })
+
+    const sent = await service.send(human(), { conversationId: child, message: 'Apply fixes.' }, async () => true)
+    expect(sent).toMatchObject({ ok: true, status: 'delivered' })
+    expect(onPeerTurnStarted).toHaveBeenCalledTimes(1)
+    expect(onPeerTurnStarted).toHaveBeenCalledWith({ fromConversationId: source, toConversationId: child })
+
+    // Report delivery does not invoke onPeerTurnStarted.
+    const reportRes = await service.report(linked(child, source, 1), { message: 'Update.' })
+    expect(reportRes).toMatchObject({ ok: true, status: 'delivered' })
+    expect(onPeerTurnStarted).toHaveBeenCalledTimes(1)
+    expect(deps.startPeerTurn).toHaveBeenCalledTimes(2)
+
+    // Throwing hook must never break delivery.
+    const throwing = vi.fn(() => {
+      throw new Error('hook boom')
+    })
+    const second = harness({ onPeerTurnStarted: throwing })
+    const sent2 = await second.service.send(
+      human(source, { originKey: 'message:typed-2' }),
+      { conversationId: child, message: 'Another fix.' },
+      async () => true
+    )
+    expect(sent2).toMatchObject({ ok: true, status: 'delivered' })
+    expect(throwing).toHaveBeenCalledTimes(1)
+    expect(getPeerMessage(sent2.ok ? sent2.messageId! : '')?.phase).toBe('delivered')
+  })
+
+  it('calls onResult for dispatch results and peer results, and ignores throwing hooks', async () => {
+    dispatch(source, child)
+    const onResult = vi.fn()
+    const { deps, service } = harness({ onResult })
+
+    await service.relayDispatchResult({
+      dispatchId: `dispatch-${child}`,
+      sourceConversationId: source,
+      conversationId: child,
+      outcome: { status: 'success', assistantMessageId: 'a', summaryText: 'Done.' },
+    })
+    // Replaying the same dispatch result does not invoke onResult a second time.
+    await service.relayDispatchResult({
+      dispatchId: `dispatch-${child}`,
+      sourceConversationId: source,
+      conversationId: child,
+      outcome: { status: 'success', assistantMessageId: 'a', summaryText: 'Done.' },
+    })
+    expect(onResult).toHaveBeenCalledTimes(1)
+    expect(onResult).toHaveBeenCalledWith({
+      orchestratorId: source,
+      workerConversationId: child,
+      status: 'success',
+    })
+    expect(deps.startPeerTurn).toHaveBeenCalledTimes(1)
+
+    // Peer result with error status invokes onResult with 'error'.
+    await service.send(
+      human(source, { originKey: 'message:typed-err' }),
+      { conversationId: child, message: 'Retry it.', reportBack: true },
+      async () => true
+    )
+    peerCalls(deps)[1].onOutcome!({ status: 'error', error: 'crash', assistantMessageId: null })
+    await vi.waitFor(() => expect(deps.startPeerTurn).toHaveBeenCalledTimes(3))
+    expect(onResult).toHaveBeenCalledTimes(2)
+    expect(onResult).toHaveBeenLastCalledWith({
+      orchestratorId: source,
+      workerConversationId: child,
+      status: 'error',
+    })
+
+    // Throwing onResult must never break result delivery.
+    const throwingOnResult = vi.fn(() => {
+      throw new Error('result hook boom')
+    })
+    const second = harness({ onResult: throwingOnResult })
+    await second.service.relayDispatchResult({
+      dispatchId: `dispatch-${child}-2`,
+      sourceConversationId: source,
+      conversationId: child,
+      outcome: { status: 'success', assistantMessageId: 'b', summaryText: 'Delivered anyway.' },
+    })
+    expect(throwingOnResult).toHaveBeenCalledTimes(1)
+    expect(second.deps.startPeerTurn).toHaveBeenCalledTimes(1)
+    expect(peerCalls(second.deps)[0]).toMatchObject({
+      conversationId: source,
+      fromConversationId: child,
+      kind: 'result',
+      body: 'Delivered anyway.',
+      resultStatus: 'success',
+    })
   })
 })

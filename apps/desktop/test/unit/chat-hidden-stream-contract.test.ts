@@ -68,7 +68,6 @@ describe('ChatView streams for hidden conversations', () => {
     expect(chatView).toContain('queue.length > 0 ||')
     expect(chatView).toContain('pending.length > 0 ||')
     expect(chatView).toContain('stopPending ||')
-    expect(chatView).toContain('maestroPostPending > 0 ||')
     expect(chatView).toContain('if (!needsLiveSubscription) return')
     // A standalone turn buffers its own tokens, so it must stay subscribed while hidden.
     expect(chatView).toContain("(workspaceId === null && status === 'working')")

@@ -13,7 +13,7 @@ import { buildCursorHarnessContext, renderCursorEnvelopeText } from '../../src/m
 import { commandShellEnvironment } from '../../src/main/chat/tools/command-shell'
 import { buildAntigravityInstructions } from '../../src/main/chat/antigravity-subscription/session'
 import { harnessFor } from '../../src/main/chat/harness/execution'
-import { MAESTRO_SYSTEM_SPEC } from '../../src/main/chat/maestro-prompt'
+import { MAESTRO_SWARM_CONTRACT } from '../../src/main/chat/maestro-prompt'
 import type { ChatStreamEvent } from '../../src/shared/chat'
 import { createDefaultMaestroConfig } from '../../src/shared/maestro'
 const h = vi.hoisted(() => ({
@@ -323,17 +323,17 @@ it('sends each piece of a project Cursor envelope once, whatever layout composed
     expect(text, modelId).toContain(envelope.environment)
   }
 })
-it('gives a Cursor Maestro orchestrator its contract once and no skill catalog', async () => {
+it('gives a Cursor Maestro orchestrator the swarm contract once with Agent subagent catalog', async () => {
   h.git.mockResolvedValue(null)
   const config = createDefaultMaestroConfig()
   // Maestro requires a project.
-  const { envelope, skills } = await buildCursorHarnessContext({
+  const { envelope } = await buildCursorHarnessContext({
     projectId: 'p1',
     cwd,
     conversationId: 'fork',
     mode: 'maestro',
     maestro: {
-      version: 1,
+      version: config.version,
       strategy: config.strategy,
       pool: config.pool,
       source: 'safe-default',
@@ -342,10 +342,11 @@ it('gives a Cursor Maestro orchestrator its contract once and no skill catalog',
     },
     modelId: 'cursor-model',
   })
-  expect(envelope.instructions.split(MAESTRO_SYSTEM_SPEC).length - 1).toBe(1)
-  expect(envelope.agentCatalog).toContain('# Maestro Agent Pool')
-  expect(skills).toEqual([])
-  expect(envelope.skillCatalog).toBe('')
+  expect(envelope.instructions.split(MAESTRO_SWARM_CONTRACT).length - 1).toBe(1)
+  expect(envelope.instructions).toContain('# Maestro Agent Pool')
+  expect(envelope.instructions).toContain('Strategy: balanced')
+  expect(envelope.instructions).not.toContain('parent is structurally read-only')
+  expect(envelope.agentCatalog).toContain('Available Maestrly agents:')
 })
 it('tells an Antigravity session which shell runs its commands', async () => {
   h.git.mockResolvedValue(null)

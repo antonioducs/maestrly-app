@@ -59,7 +59,7 @@ export function registerArtifactTools(
   resolveService: () => ArtifactsService = getArtifactsService,
   options: { open?: boolean } = {}
 ): void {
-  const { server, convId, t, workerScope } = ctx
+  const { server, convId, t } = ctx
 
   const inlineFile = z.object({
     path: z.string().describe(t('tools.artifact_create.params.filePath')),
@@ -261,9 +261,8 @@ export function registerArtifactTools(
     async ({ id, version }) => {
       try {
         const service = resolveService()
-        // A delegated worker opens the tab without taking the drawer's focus from the user.
         const detail = await service.openInConversation(convId, id, version, {
-          activate: !workerScope,
+          activate: true,
         })
         return ok(
           t(service.opensOnViewer ? 'returns.artifacts.openRequested' : 'returns.artifacts.opened', {

@@ -4,12 +4,12 @@ import {
   recordHumanTurnOrigin,
   type HumanTurnOrigin,
 } from '../../src/main/chat/conversation-dispatch-authorization'
+import * as mod from '../../src/main/chat/conversation-link-authorization'
 import {
   assertConversationTurnProvenanceCurrent,
   clearLinkedTurnOrigin,
   currentConversationTurnProvenance,
   currentLinkedTurnOrigin,
-  hopAllowed,
   recordLinkedTurnOrigin,
   type LinkedTurnOrigin,
 } from '../../src/main/chat/conversation-link-authorization'
@@ -97,11 +97,7 @@ describe('linked turn provenance', () => {
     expect(() => assertConversationTurnProvenanceCurrent(typed)).toThrow(/no longer active/)
   })
 
-  it('allows at most three agent-to-agent turns after each typed message', () => {
-    expect(hopAllowed(0, 1)).toBe(true)
-    expect(hopAllowed(2, 1)).toBe(true)
-    expect(hopAllowed(3, 1)).toBe(false)
-    expect(hopAllowed(1, 2)).toBe(true)
-    expect(hopAllowed(2, 2)).toBe(false)
+  it('does not export a hop limit helper', () => {
+    expect('hopAllowed' in mod).toBe(false)
   })
 })

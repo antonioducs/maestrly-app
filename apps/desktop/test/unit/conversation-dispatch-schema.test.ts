@@ -52,6 +52,13 @@ describe('conversation dispatch destination schema', () => {
     expect(conversationDispatchFingerprintInput({ ...input, reportBack: false })).toBe(legacy)
     expect(conversationDispatchFingerprintInput({ ...input, reportBack: true })).not.toBe(legacy)
   })
+  it('accepts agent on tasks for Maestro dispatch', () => {
+    const parsed = conversationDispatchBatchSchema.parse({
+      tasks: [{ ...task, agent: 'builder' }],
+    })
+    expect(parsed.tasks[0].agent).toBe('builder')
+    expect(conversationDispatchBatchSchema.safeParse({ tasks: [{ ...task, agent: '   ' }] }).success).toBe(false)
+  })
   it('retains destination provenance in result parsing', () => {
     expect(
       parseConversationDispatchBatchResult(

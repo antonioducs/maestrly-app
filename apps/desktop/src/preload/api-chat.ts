@@ -74,7 +74,7 @@ import type {
 } from '../shared/review'
 import type { SubagentProfileModelMetaResult } from '../shared/subagent-profile-effort'
 import type { StructuredAgentMentionDraft } from '../shared/chat-agent-mentions'
-import type { MaestroLiveEvent, MaestroLivePostResult, MaestroLiveState } from '../shared/maestro-live'
+import type { MaestroSwarmTask } from '../shared/maestro-swarm'
 import type { UnifiedUsageStats } from '../shared/usage'
 import type {
   MaestroConfigPayload,
@@ -398,6 +398,17 @@ export function makeChatApi(ipcRenderer: IpcTransport) {
       ipcRenderer.on(MAESTRO_CONFIGURATOR_EVENT_CHANNEL, listener)
       return () => ipcRenderer.removeListener(MAESTRO_CONFIGURATOR_EVENT_CHANNEL, listener)
     },
+    chatMaestroSwarmGet: (conversationId: string): Promise<MaestroSwarmTask[]> =>
+      ipcRenderer.invoke('chat:maestro:swarm:get', conversationId),
+    chatMaestroSwarmStop: (
+      conversationId: string
+    ): Promise<{ ok: true; stopped: number } | { ok: false; stopped: 0; error: 'invalid-conversation' }> =>
+      ipcRenderer.invoke('chat:maestro:swarm:stop', conversationId),
+    onMaestroSwarmChanged: (callback: (payload: { conversationId: string }) => void): (() => void) => {
+      const listener = (_event: unknown, payload: { conversationId: string }) => callback(payload)
+      ipcRenderer.on('maestro:swarm-changed', listener)
+      return () => ipcRenderer.removeListener('maestro:swarm-changed', listener)
+    },
 
     chatExecutionProviders: (): Promise<Array<{ id: string; name: string; models: string[] }>> =>
       ipcRenderer.invoke('chat:execution-providers'),
@@ -561,18 +572,6 @@ export function makeChatApi(ipcRenderer: IpcTransport) {
       effort: ChatReasoningEffort
     ): Promise<{ ok: boolean; applied?: boolean; error?: string }> =>
       ipcRenderer.invoke('chat:update-live-reasoning', conversationId, effort),
-
-    chatMaestroLivePost: (
-      conversationId: string,
-      runId: string,
-      text: string,
-      agentMentions?: StructuredAgentMentionDraft[]
-    ): Promise<MaestroLivePostResult> =>
-      ipcRenderer.invoke('chat:maestro-live:post', { conversationId, runId, text, agentMentions }),
-    chatMaestroLiveSnapshot: (conversationId: string): Promise<MaestroLiveState | null> =>
-      ipcRenderer.invoke('chat:maestro-live:snapshot', conversationId),
-    chatMaestroLiveCancel: (conversationId: string, runId: string, messageId: string): Promise<boolean> =>
-      ipcRenderer.invoke('chat:maestro-live:cancel', { conversationId, runId, messageId }),
 
     chatHistoryPage: (
       conversationId: string,
@@ -844,12 +843,6 @@ export function makeChatApi(ipcRenderer: IpcTransport) {
         ipcRenderer.removeListener(channel, listener)
         ipcRenderer.send('chat:unsubscribe', conversationId)
       }
-    },
-    onChatMaestroLive: (conversationId: string, cb: (event: MaestroLiveEvent) => void): (() => void) => {
-      const channel = `chat:maestro-live:${conversationId}`
-      const listener = (_event: unknown, payload: MaestroLiveEvent) => cb(payload)
-      ipcRenderer.on(channel, listener)
-      return () => ipcRenderer.removeListener(channel, listener)
     },
     onChatSubagentSession: (conversationId: string, cb: (event: SubagentSessionChangedEvent) => void): (() => void) => {
       const channel = `chat:subagent-session:${conversationId}`

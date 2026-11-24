@@ -1,25 +1,23 @@
-import type { SubagentExecutionSnapshotV1, SubagentProfileCandidate } from './subagent-profiles'
+import type { SubagentProfileCandidate } from './subagent-profiles'
 
-export const MAESTRO_CONFIG_VERSION = 1 as const
+export const MAESTRO_CONFIG_VERSION = 2 as const
 export const MAESTRO_STRATEGY_PROFILE_VERSION = 1 as const
 export const GLOBAL_MAESTRO_STRATEGY_PROFILE_ID = 'global' as const
 export const BUILTIN_MAESTRO_STRATEGY_PROFILE_PREFIX = 'builtin:' as const
 
 export type MaestroStrategy = 'balanced' | 'best-quality' | 'fast' | 'economy'
-export type MaestroCapability = 'worker' | 'read-only'
+export type MaestroResourceMode = 'agent' | 'design' | 'ask'
 
 export interface MaestroResourceV1 {
   id: string
   label: string
   enabled: boolean
   description: string
-  capability: MaestroCapability
+  mode: MaestroResourceMode
   specialties: string[]
   /** Ordered concrete candidates. Empty means inherit the frozen orchestrator profile as the final candidate. */
   candidates: SubagentProfileCandidate[]
-  /** Optional imported physical agent; absent means a virtual Pool resource. */
-  agentName?: string
-  /** Optional extra instructions for a virtual resource. */
+  /** Optional extra instructions for this resource. */
   instructions?: string
 }
 
@@ -86,35 +84,6 @@ export type MaestroStrategyProfileMutationResult =
   | { ok: true; profile: MaestroStrategyProfileV1; catalog: MaestroStrategyProfileCatalog }
   | { ok: false; error: string }
 
-export type MaestroDelegateKind =
-  | 'explore'
-  | 'implement'
-  | 'test'
-  | 'review'
-  | 'fix'
-  | 'design'
-  | 'general'
-  | (string & {})
-export type MaestroDelegateDomain =
-  | 'frontend'
-  | 'backend'
-  | 'fullstack'
-  | 'infra'
-  | 'data'
-  | 'docs'
-  | 'general'
-  | (string & {})
-export interface MaestroDelegateIntent {
-  agent: string
-  task: string
-  kind: MaestroDelegateKind
-  domain: MaestroDelegateDomain
-  reviewOf: string[]
-  independent: boolean
-
-  resumeSessionId?: string
-}
-
 export interface MaestroTurnSnapshotV1 {
   version: typeof MAESTRO_CONFIG_VERSION
   strategy: MaestroStrategy
@@ -124,40 +93,22 @@ export interface MaestroTurnSnapshotV1 {
   frozenAt: number
 }
 
-export type MaestroDelegationStatus = 'queued' | 'routing' | 'running' | 'success' | 'error' | 'aborted'
-
-export interface MaestroDelegationSnapshotV1 {
-  version: typeof MAESTRO_CONFIG_VERSION
-  delegationId: string
-  kind: MaestroDelegateKind
-  domain: MaestroDelegateDomain
-  reviewOf: string[]
-  strategy: MaestroStrategy
-  selection: 'parent-selected'
-  resource: MaestroResourceV1
-  profile: SubagentExecutionSnapshotV1
-  routedAt: number
-
-  resumedFrom?: string
-}
-
 const defaultPool = (): MaestroResourceV1[] => [
   {
     id: 'explorer',
     label: 'Explorer',
     enabled: true,
     description: 'Fast, read-only repository exploration and context gathering.',
-    capability: 'read-only',
+    mode: 'ask',
     specialties: ['exploration', 'general'],
     candidates: [],
-    agentName: 'explore',
   },
   {
     id: 'frontend',
     label: 'Frontend',
     enabled: true,
     description: 'UI, renderer, accessibility and client-side implementation.',
-    capability: 'worker',
+    mode: 'agent',
     specialties: ['frontend', 'design', 'implementation'],
     candidates: [],
   },
@@ -166,7 +117,7 @@ const defaultPool = (): MaestroResourceV1[] => [
     label: 'Backend',
     enabled: true,
     description: 'Services, persistence, APIs and backend implementation.',
-    capability: 'worker',
+    mode: 'agent',
     specialties: ['backend', 'infra', 'data', 'implementation'],
     candidates: [],
   },
@@ -175,7 +126,7 @@ const defaultPool = (): MaestroResourceV1[] => [
     label: 'Tests',
     enabled: true,
     description: 'Runs focused validation, tests, lint, typecheck and build checks.',
-    capability: 'worker',
+    mode: 'agent',
     specialties: ['test', 'fullstack', 'general'],
     candidates: [],
   },
@@ -184,7 +135,7 @@ const defaultPool = (): MaestroResourceV1[] => [
     label: 'Reviewer',
     enabled: true,
     description: 'Independent, read-only review of delegated changes and findings.',
-    capability: 'read-only',
+    mode: 'ask',
     specialties: ['review', 'fullstack', 'general'],
     candidates: [],
   },
@@ -193,10 +144,9 @@ const defaultPool = (): MaestroResourceV1[] => [
     label: 'Generalist',
     enabled: true,
     description: 'General-purpose implementation, fixes and cross-cutting work.',
-    capability: 'worker',
+    mode: 'agent',
     specialties: ['general', 'fullstack', 'fix', 'implementation'],
     candidates: [],
-    agentName: 'general-purpose',
   },
 ]
 
@@ -246,11 +196,10 @@ export function isMaestroConfigV1(value: unknown): value is MaestroConfigV1 {
       typeof resource.enabled !== 'boolean' ||
       typeof resource.description !== 'string' ||
       !resource.description.trim() ||
-      !['worker', 'read-only'].includes(String(resource.capability)) ||
+      !['agent', 'design', 'ask'].includes(String(resource.mode)) ||
       !Array.isArray(resource.specialties) ||
       resource.specialties.some((specialty) => typeof specialty !== 'string') ||
       !Array.isArray(resource.candidates) ||
-      (resource.agentName !== undefined && typeof resource.agentName !== 'string') ||
       (resource.instructions !== undefined && typeof resource.instructions !== 'string')
     ) {
       return false

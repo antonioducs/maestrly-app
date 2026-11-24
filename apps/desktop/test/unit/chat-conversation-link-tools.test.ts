@@ -54,13 +54,13 @@ import {
   ASSISTANT_TOOL_NAMES,
   CONVERSATION_DISPATCH_TOOL_NAMES,
   CONVERSATION_LINK_TOOL_NAMES,
+  MAESTRO_SWARM_TOOL_NAMES,
   PARENT_ONLY_CONVERSATION_TOOL_NAMES,
   ROUTINE_TOOL_NAMES,
 } from '../../src/main/chat/tool-policy'
 import { interactiveTool } from '../../src/main/chat/autonomous'
 import { setAssistantRoleResolver } from '../../src/main/chat/harness/assistant-role'
 import { assistantActionBudget } from '../../src/main/assistant/action-budget'
-import { isMaestroWorkerOperationalToolName } from '../../src/main/chat/maestro-worker-tools'
 
 const humans: HumanTurnOrigin[] = []
 const linked: LinkedTurnOrigin[] = []
@@ -115,6 +115,7 @@ describe('conversation link tool surface', () => {
       ...CONVERSATION_LINK_TOOL_NAMES,
       ...ASSISTANT_TOOL_NAMES,
       ...ROUTINE_TOOL_NAMES,
+      ...MAESTRO_SWARM_TOOL_NAMES,
     ])
     for (const name of CONVERSATION_LINK_TOOL_NAMES) {
       expect(ALL_TOOL_NAMES).toContain(name)
@@ -141,7 +142,6 @@ describe('conversation link tool surface', () => {
     for (const name of CONVERSATION_LINK_TOOL_NAMES) {
       expect(worker.has(name)).toBe(false)
       expect(explicit.has(name)).toBe(false)
-      expect(isMaestroWorkerOperationalToolName(name)).toBe(false)
       expect(interactiveTool(name)).toBe(true)
       expect(interactiveTool(`mcp__maestrly__${name}`)).toBe(true)
     }
@@ -149,11 +149,12 @@ describe('conversation link tool surface', () => {
     expect(interactiveTool('read')).toBe(false)
   })
 
-  it('is offered to turns the person typed and turns another conversation started, in Agent, Design and Ask', () => {
+  it('is offered to turns the person typed and turns another conversation started, in Agent, Design, Ask and Maestro', () => {
     expect(conversationLinkRuntimeFor('source', 'agent')).toBeUndefined()
     humanTurn()
-    for (const mode of ['agent', 'design', 'ask'] as const) expect(conversationLinkRuntimeFor('source', mode)).toBeDefined()
-    for (const mode of ['plan', 'maestro'] as const) expect(conversationLinkRuntimeFor('source', mode)).toBeUndefined()
+    for (const mode of ['agent', 'design', 'ask', 'maestro'] as const)
+      expect(conversationLinkRuntimeFor('source', mode)).toBeDefined()
+    expect(conversationLinkRuntimeFor('source', 'plan')).toBeUndefined()
 
     linkedTurn()
     const enabled = builtinToolNamesForMode('agent')
@@ -355,7 +356,6 @@ describe('conversation link wiring across runtimes', () => {
     'github-copilot/subagent-runner.ts',
     'cursor-subscription/subagent-runner.ts',
     'antigravity-subscription/subagent-runner.ts',
-    'maestro-worker-tools.ts',
   ])('%s never forwards them to children', (file) => {
     expect(read(file)).toContain('...PARENT_ONLY_CONVERSATION_TOOL_NAMES')
   })

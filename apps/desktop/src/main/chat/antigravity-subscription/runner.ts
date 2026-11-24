@@ -55,9 +55,7 @@ import {
   generateImageToolEnabled,
   mergeGeneratedImageUsage,
 } from '../image-gen'
-import { MAESTRO_DELEGATE_TOOL_DESCRIPTION, MAESTRO_DELEGATE_TOOL_SCHEMA } from '../maestro-delegation'
 import { withTaskComplexity } from '../subagent-route'
-import type { MaestroLiveRunPort } from '../maestro-live'
 import { buildSubagentSupervisionTools } from '../maestro-supervision-tools'
 import { buildAppTools, buildMcpTools, hasPersonalMemoryTools, PERSONAL_MEMORY_TOOLS } from '../mcp'
 import { clipPersistedToolOutput } from '../message'
@@ -151,7 +149,6 @@ export interface RunAntigravitySubscriptionChatArgs {
   permMode?: ChatPermMode
   harness?: ResolvedHarness
   maestro?: MaestroTurnSnapshotV1
-  maestroLive?: MaestroLiveRunPort
   reasoningEffort?: string
   maestrlyUltra?: boolean
   dropImages?: boolean
@@ -461,30 +458,25 @@ export async function runAntigravitySubscriptionChat(
       : {}
 
     let runTask: AntigravityManagedTaskRunner | null = args.runTask ?? null
-    const delegationToolName = args.mode === 'maestro' ? 'delegate' : 'task'
     const taskTools: ToolSet = agents.length
       ? {
-          [delegationToolName]: tool({
+          task: tool({
             description:
-              args.mode === 'maestro'
-                ? MAESTRO_DELEGATE_TOOL_DESCRIPTION
-                : 'Delegate a self-contained slice of work to an isolated Maestrly subagent. ' +
-                  'Give the full context; the subagent does not see this conversation.',
+              'Delegate a self-contained slice of work to an isolated Maestrly subagent. ' +
+              'Give the full context; the subagent does not see this conversation.',
             inputSchema: jsonSchema(
-              args.mode === 'maestro'
-                ? MAESTRO_DELEGATE_TOOL_SCHEMA
-                : withTaskComplexity(
-                    {
-                      type: 'object',
-                      properties: {
-                        agent: { type: 'string', enum: agents.map((agent) => agent.name) },
-                        prompt: { type: 'string', description: 'Self-contained subtask and all required context.' },
-                      },
-                      required: ['agent', 'prompt'],
-                      additionalProperties: false,
-                    },
-                    args.conversationId
-                  )
+              withTaskComplexity(
+                {
+                  type: 'object',
+                  properties: {
+                    agent: { type: 'string', enum: agents.map((agent) => agent.name) },
+                    prompt: { type: 'string', description: 'Self-contained subtask and all required context.' },
+                  },
+                  required: ['agent', 'prompt'],
+                  additionalProperties: false,
+                },
+                args.conversationId
+              )
             ),
             // The host MCP server announces the call; this reports the authoritative terminal state (with `sub`).
             execute: async (input, options) => {
@@ -523,8 +515,6 @@ export async function runAntigravitySubscriptionChat(
       ? buildSubagentSupervisionTools({
           conversationId: args.conversationId,
           parentMessageId: assistantId,
-          maestro: args.mode === 'maestro',
-          signal: args.signal,
         })
       : {}
     const rawTools: ToolSet = { ...core, ...mcp.tools, ...app.tools, ...skillTools, ...taskTools, ...supervisionTools }
@@ -551,8 +541,6 @@ export async function runAntigravitySubscriptionChat(
         permissionScope: args.permissionScope,
         cwd: args.cwd,
         mode: args.mode,
-        maestro: args.maestro,
-        maestroLive: args.maestroLive,
         turnState: createExplicitSubagentTurnState(
           detectExplicitSubagentsForTurn(history, selectableAgentNames),
           selectableAgentNames

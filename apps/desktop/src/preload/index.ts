@@ -43,8 +43,8 @@ export type {
   StandardToMaestroResult,
 } from '../shared/conversation-experience'
 export type * from '../shared/maestro'
-export type * from '../shared/maestro-live'
 export type * from '../shared/maestro-configurator'
+export type * from '../shared/maestro-swarm'
 export type { SoundSettings, SoundVoice } from '../shared/sound'
 export type { SoundPlayRequest, SoundPlayAck, SoundPlaybackFailure } from '../shared/sound-playback'
 

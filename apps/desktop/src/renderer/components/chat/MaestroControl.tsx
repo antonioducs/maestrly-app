@@ -61,7 +61,7 @@ export function createMaestroResource(index: number, t: Translate): MaestroResou
     label: t('maestro.newResourceLabel'),
     enabled: true,
     description: t('maestro.newResourceDescription'),
-    capability: 'worker',
+    mode: 'agent',
     specialties: ['general'],
     candidates: [],
   }
@@ -173,7 +173,7 @@ function PoolRow({
           </span>
         </span>
         <span className="shrink-0 rounded bg-white/[0.05] px-2 py-1 text-xs text-muted-foreground">
-          {t(`maestro.capabilities.${resource.capability}`)}
+          {t(`maestro.mode.${resource.mode}`)}
         </span>
         <span
           className={cn(
@@ -296,17 +296,18 @@ export function ResourceDetail({
       </label>
       <div className="grid grid-cols-2 gap-2">
         <label className="text-sm text-muted-foreground">
-          {t('maestro.capability')}
+          {t('maestro.modeLabel')}
           <OptionSelect
-            value={resource.capability}
+            value={resource.mode}
             disabled={readOnly}
             onValueChange={(selectedValue) =>
-              onChange({ ...resource, capability: selectedValue as MaestroResourceV1['capability'] })
+              onChange({ ...resource, mode: selectedValue as MaestroResourceV1['mode'] })
             }
             className="mt-1.5 h-9 text-xs"
           >
-            <SelectOption value="worker">{t('maestro.capabilities.worker')}</SelectOption>
-            <SelectOption value="read-only">{t('maestro.capabilities.read-only')}</SelectOption>
+            <SelectOption value="agent">{t('maestro.mode.agent')}</SelectOption>
+            <SelectOption value="design">{t('maestro.mode.design')}</SelectOption>
+            <SelectOption value="ask">{t('maestro.mode.ask')}</SelectOption>
           </OptionSelect>
         </label>
         <label className="text-sm text-muted-foreground">
@@ -811,8 +812,7 @@ export function MaestroControl({
           id: agent.name,
           label: agent.name,
           description: agent.description,
-          agentName: agent.name,
-          capability: agent.name === 'explore' ? 'read-only' : 'worker',
+          mode: 'agent',
           specialties: [agent.category ?? 'general'],
         })
       )

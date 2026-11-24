@@ -93,6 +93,7 @@ export function MaestroPlanProfileDialog({ open, busy, decisionError, onOpenChan
                 </p>
               </div>
             )}
+            <p className="text-xs text-muted-foreground">{t('maestro.strategyProfiles.handoffCarriesChanges')}</p>
             {error && (
               <p role="alert" className="rounded border border-red-500/20 bg-red-500/[0.08] p-2 text-xs text-red-300">
                 {error}

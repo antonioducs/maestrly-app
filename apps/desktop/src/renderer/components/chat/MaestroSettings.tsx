@@ -450,8 +450,7 @@ export function MaestroSettings({ config }: { config: ChatConfig }) {
           id: agent.name,
           label: agent.name,
           description: agent.description,
-          agentName: agent.name,
-          capability: agent.name === 'explore' ? 'read-only' : 'worker',
+          mode: 'agent',
           specialties: [agent.category ?? 'general'],
         })
       )

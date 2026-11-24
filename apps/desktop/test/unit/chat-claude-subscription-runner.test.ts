@@ -1016,7 +1016,7 @@ describe('Claude official chat runner', () => {
       expect(options.effort).toBe('high')
       expect((options.hooks as Record<string, unknown[]>).PostToolUse).toBeUndefined()
       if (mode === 'design') expect(options.systemPrompt).toContain('## Design + Ultra guidance')
-      if (mode === 'maestro') expect(options.systemPrompt).toContain('Keep the frozen Strategy')
+      if (mode === 'maestro') expect(options.systemPrompt).toContain(opusUltraGuidance('agent'))
     }
   )
 

@@ -41,9 +41,9 @@ export interface CompiledHarnessPrompt {
   provenance: HarnessSourceProvenance | null
 }
 
-/** Responses layouts have no Maestro mode: the orchestrator runs under the read-only Ask contract. */
+/** Responses layouts have no Maestro mode: the orchestrator runs under the Agent contract. */
 function responsesMode(mode: ChatBehavior): OpenAIPromptMode {
-  return mode === 'maestro' ? 'ask' : mode
+  return mode === 'maestro' ? 'agent' : mode
 }
 
 /**

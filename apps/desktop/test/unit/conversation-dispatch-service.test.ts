@@ -691,6 +691,60 @@ describe('conversation dispatch service', () => {
     expect(after.startTurn).toHaveBeenCalledTimes(1)
   })
 
+  it('invokes onStarted on both started transitions and isolates listener throws', async () => {
+    const startedRecords: string[] = []
+    const onStarted = vi.fn((record) => {
+      startedRecords.push(`${record.requestKey}:${record.phase}:${record.conversationId}`)
+    })
+    const { service } = harness({ onStarted })
+
+    const first = await service.dispatchBatch({
+      grant: grant(),
+      batch: { tasks: [task('A')] },
+      assertCurrent: () => undefined,
+    })
+    expect(first.ok).toBe(true)
+    expect(onStarted).toHaveBeenCalledTimes(1)
+    expect(startedRecords[0]).toBe(`A:started:${first.items[0].conversationId}`)
+
+    // Transition 2: startTurn fails after persisting messages, so startOnce reconciles to started.
+    const onStartedSecond = vi.fn()
+    const { service: reconciledService } = harness({
+      onStarted: onStartedSecond,
+      startTurn: vi.fn(async ({ conversationId }) => {
+        messages.add(conversationId)
+        return { ok: false as const, error: 'rpc-timeout' }
+      }),
+    })
+    const second = await reconciledService.dispatchBatch({
+      grant: grant(),
+      batch: { tasks: [task('B')] },
+      assertCurrent: () => undefined,
+    })
+    expect(second.ok).toBe(true)
+    expect(second.items[0].status).toBe('started')
+    expect(onStartedSecond).toHaveBeenCalledTimes(1)
+    expect(onStartedSecond.mock.calls[0][0]).toMatchObject({
+      requestKey: 'B',
+      phase: 'started',
+      conversationId: second.items[0].conversationId,
+    })
+
+    // Listener throws must never break a started dispatch.
+    const { service: throwingService } = harness({
+      onStarted: vi.fn(() => {
+        throw new Error('listener boom')
+      }),
+    })
+    const third = await throwingService.dispatchBatch({
+      grant: grant(),
+      batch: { tasks: [task('C')] },
+      assertCurrent: () => undefined,
+    })
+    expect(third.ok).toBe(true)
+    expect(third.items[0].status).toBe('started')
+  })
+
   it('fires central conversation change notifications when rollback deletes a prepared conversation (S6)', async () => {
     const changed: string[] = []
     const stop = observeConversationChanges((id) => changed.push(id))

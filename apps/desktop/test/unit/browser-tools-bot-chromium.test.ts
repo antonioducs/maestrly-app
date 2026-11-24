@@ -36,7 +36,6 @@ vi.mock('../../src/main/browser-control', () => ({
 }))
 
 import { nativeImage } from 'electron'
-import { createMaestroWorkerScope, type MaestroWorkerScope } from '../../src/main/maestro-worker-scope'
 import { registerBrowserTools } from '../../src/main/mcp/tools/browser'
 import { setBrowserBackendResolver } from '../../src/main/mcp/tools/browser-backend'
 import { botChromiumBackend } from '../../src/main/fleet/instance/bot-browser/backend'
@@ -119,21 +118,20 @@ function fakeChromium() {
   return { chromium: chromium as unknown as BotChromium, mock: chromium, tabs, pages }
 }
 
-function register(convId: string, workerScope?: MaestroWorkerScope) {
+function register(convId: string) {
   const handlers: Record<string, Handler> = {}
   const descriptions: Record<string, string> = {}
   registerBrowserTools({
     server: {
       registerTool: (name: string, definition: { description: string }, handler: Handler) => {
-        handlers[name] = handler
         descriptions[name] = definition.description
+        handlers[name] = handler
       },
     } as never,
     convId,
     locale: 'en',
     t: ((key: string, values?: Record<string, unknown>) =>
       `${key}${values ? ` ${JSON.stringify(values)}` : ''}`) as never,
-    ...(workerScope ? { workerScope } : {}),
   })
   return { handlers, descriptions }
 }
@@ -179,28 +177,6 @@ describe('browser tools on a bot’s own Chromium', () => {
     expect(fake.pages.get('T1')!.captureScreenshot).toHaveBeenCalled()
     expect(createFromBuffer).toHaveBeenCalledWith(Buffer.from('png'))
     createFromBuffer.mockRestore()
-  })
-
-  it('gives a delegated worker tabs of its own, closed with it', async () => {
-    const { handlers: main } = register('bot-conv')
-    await main.browser_new_tab({ url: 'https://shared.test' })
-    const scope = createMaestroWorkerScope({ conversationId: 'bot-conv', delegationId: 'worker-1' })
-    const { handlers } = register('bot-conv', scope)
-    await handlers.browser_navigate({ url: 'https://worker.test' })
-    expect(fake.mock.createTab).toHaveBeenLastCalledWith('bot-conv', 'https://shared.test', {
-      ownerScopeId: scope.id,
-      activate: false,
-    })
-    const workerTab = fake.tabs.find((tab) => tab.scopeId === scope.id)!
-    expect(fake.mock.page).toHaveBeenCalledWith('bot-conv', workerTab.id)
-    expect(h.navigate).toHaveBeenLastCalledWith(fake.pages.get(workerTab.id), 'https://worker.test', {})
-    await handlers.browser_new_tab({ url: 'https://second.test' })
-    const listed = (await handlers.browser_tabs({})).content[0]!.text!
-    // The worker's own two tabs, not the conversation's.
-    expect(listed.split('\n')).toHaveLength(2)
-    expect(listed).toContain('https://second.test')
-    await scope.close()
-    expect(fake.tabs.map((tab) => tab.url)).toEqual(['https://shared.test'])
   })
 
   it('keeps every other conversation on the drawer’s browser', async () => {

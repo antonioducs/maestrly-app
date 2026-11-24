@@ -41,7 +41,6 @@ import type { LocalRoutine, LocalRoutineRun } from '../../../shared/routines'
 import { ArtifactCard } from '../artifacts/ArtifactCard'
 import { ARTIFACT_CARD_TOOLS } from '../../../shared/artifacts'
 import { SubagentCard } from './SubagentCard'
-import { OrchestrationRun } from './OrchestrationRun'
 import { QuestionCard } from './QuestionCard'
 import { TodoCard } from './TodoCard'
 import { GeneratedImageCard } from './GeneratedImageCard'
@@ -365,7 +364,7 @@ function Part({
       return <RoutineReportCard part={toolPart} conversationId={conversationId} messageId={messageId} />
     if (ARTIFACT_CARD_TOOLS.includes(toolPart.toolName))
       return <ArtifactCard part={toolPart} conversationId={conversationId} messageId={messageId} />
-    if (toolBase === 'task' || toolBase === 'delegate')
+    if (toolBase === 'task')
       return (
         <SubagentCard
           part={toolPart}
@@ -697,34 +696,19 @@ const Bubble = memo(function Bubble({
   }
 
   const wasCut = !message.error && message.finishReason != null && CUT_FINISH_REASONS.has(message.finishReason)
-  const delegateParts = message.parts.filter(
-    (part): part is Extract<MessagePart, { type: 'tool' }> => part.type === 'tool' && part.toolName === 'delegate'
+  const renderPart = (p: MessagePart, i: number) => (
+    <Part
+      key={p.type === 'tool' ? p.toolCallId : `${p.type}-${i}`}
+      part={p}
+      latestTodoId={latestTodoId}
+      conversationId={message.conversationId}
+      messageId={message.id}
+      onOpenImage={onOpenImage}
+      onOpenMention={onOpenMention}
+      searchQuery={searchQuery}
+      currentSearchMatch={currentSearchMatch}
+    />
   )
-  const firstDelegateId = delegateParts[0]?.toolCallId
-  const renderPart = (p: MessagePart, i: number) =>
-    p.type === 'tool' && p.toolName === 'delegate' ? (
-      p.toolCallId === firstDelegateId ? (
-        <OrchestrationRun
-          key="maestro-orchestration-run"
-          parts={delegateParts}
-          conversationId={message.conversationId}
-          messageId={message.id}
-          onOpenMention={onOpenMention}
-        />
-      ) : null
-    ) : (
-      <Part
-        key={p.type === 'tool' ? p.toolCallId : `${p.type}-${i}`}
-        part={p}
-        latestTodoId={latestTodoId}
-        conversationId={message.conversationId}
-        messageId={message.id}
-        onOpenImage={onOpenImage}
-        onOpenMention={onOpenMention}
-        searchQuery={searchQuery}
-        currentSearchMatch={currentSearchMatch}
-      />
-    )
 
   const renderSharedImages = (part: Extract<MessagePart, { type: 'tool' }>) => (
     <SharedToolImages

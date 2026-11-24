@@ -72,7 +72,6 @@ const CATEGORY_BY_NAME: Record<string, ActivityCategory> = {
   // Its screenshots stay in the step's details, where the person sees what the model judged.
   preview_interface: 'screenshot',
   task: 'subagent',
-  delegate: 'subagent',
   generate_image: 'image',
   image_generation: 'image',
 }
@@ -232,7 +231,6 @@ const PINNED_TOOLS = new Set([
   'create_workspace',
   'routine_propose',
   'routine_run_report',
-  'delegate',
   'task',
   ...ARTIFACT_CARD_TOOLS,
 ])

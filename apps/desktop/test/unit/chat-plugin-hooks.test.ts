@@ -147,12 +147,13 @@ describe('plugin hooks', () => {
     expect(await runStop(ctx(), true)).toEqual({})
   })
 
-  it('runs only in Agent and Design conversations', async () => {
+  it('runs only in Agent, Design and Maestro conversations', async () => {
     hooks.list = [hook('Stop', `process.exit(0)`)]
     expect(hooksActive(ctx('agent'))).toBe(true)
     expect(hooksActive(ctx('design'))).toBe(true)
-    for (const mode of ['ask', 'plan', 'maestro'] as const) expect(hooksActive(ctx(mode))).toBe(false)
-    expect(await runStop(ctx('maestro'), false)).toEqual({})
+    expect(hooksActive(ctx('maestro'))).toBe(true)
+    for (const mode of ['ask', 'plan'] as const) expect(hooksActive(ctx(mode))).toBe(false)
+    expect(await runStop(ctx('plan'), false)).toEqual({})
   })
 
   it('tells tool hooks from the other hooks', () => {

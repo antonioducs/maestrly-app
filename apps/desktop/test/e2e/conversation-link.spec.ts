@@ -23,12 +23,12 @@ interface ModelRequest {
 
 /**
  * Conversations talking to each other through real chat turns against a scripted OpenAI-compatible model: a
- * confirmed request opens a review conversation whose final answer comes back to the source, a follow-up and the
- * child's report travel between the linked conversations until the hop limit stops them, and the first message to an
- * unrelated conversation waits for the person's confirmation. Turns started by another conversation are offered the
- * tools that start conversations or create projects, and those tools refuse.
+ * confirmed request opens a review conversation whose final answer comes back to the source, follow-ups and the
+ * child's reports travel between the linked conversations across multiple agent turns without a hop limit, and the
+ * first message to an unrelated conversation waits for the person's confirmation. Turns started by another
+ * conversation are offered the tools that start conversations or create projects, and those tools refuse.
  */
-test('lets conversations message each other, bring results back and stop at the hop limit', async () => {
+test('lets conversations message each other and bring results back across multiple turns', async () => {
   test.setTimeout(240_000)
   await access(path.join(desktop, 'out/main/index.js'))
   const root = mkdtempSync(path.join(os.tmpdir(), 'maestrly-conversation-link-'))
@@ -136,12 +136,17 @@ test('lets conversations message each other, bring results back and stop at the 
       if (!did('report-1')) return call(res, 'report-1', 'report_to_source', { message: 'Fixed item 2.' })
       return end(res, 'Item 2 fixed.')
     }
-    // Source, two agent turns after the person: one more round trip would exceed the hop limit.
+    // Source, two agent turns after the person: another round trip with reportBack still delivers.
     if (lastUser.includes('Fixed item 2.')) {
       if (!did('again-1'))
         return call(res, 'again-1', 'send_to_conversation', { conversationId: childId, message: 'AGAIN', reportBack: true })
-      return end(res, 'Stopping here; the person can continue.')
+      return end(res, 'Asked REV-1 for a second pass.')
     }
+    // Child: receives the follow-up round trip; its final answer is relayed back to the source automatically.
+    if (lastUser.includes('AGAIN')) return end(res, 'Second pass: done.')
+    // Source: receives the second round trip's result.
+    if (lastUser.includes('Result of conversation') && lastUser.includes('Second pass: done.'))
+      return end(res, 'Consolidated: second pass done.')
     // Source: a conversation with no link needs the person's confirmation.
     if (lastUser.includes(NOTIFY)) {
       if (!did('list-1')) return call(res, 'list-1', 'list_conversations', { query: 'Other' })
@@ -241,18 +246,18 @@ test('lets conversations message each other, bring results back and stop at the 
     expect(seeds.length).toBeGreaterThanOrEqual(1)
     for (const tools of seeds) expect(tools).toContain('report_to_source')
 
-    // 2. A follow-up to the child and its report travel without confirmation, until the hop limit stops them.
+    // 2. Follow-ups and reports between linked conversations travel without confirmation or a hop limit.
     await typeAndSend(FOLLOW)
-    await expect.poll(() => requests.some((request) => 'again-1' in request.toolResults), { timeout: 60_000 }).toBe(true)
+    await expect(page.getByText('Consolidated: second pass done.')).toBeVisible({ timeout: 60_000 })
     await idle(source.id)
     await idle(childId)
     expect(JSON.parse(requests.find((request) => 'follow-1' in request.toolResults)!.toolResults['follow-1'])).toMatchObject({
       ok: true,
       conversationId: childId,
     })
-    const refused = JSON.parse(requests.find((request) => 'again-1' in request.toolResults)!.toolResults['again-1'])
-    expect(refused).toMatchObject({ ok: false, code: 'hop-limit' })
-    expect(requests.some((request) => request.lastUser.includes('AGAIN'))).toBe(false)
+    const delivered = JSON.parse(requests.find((request) => 'again-1' in request.toolResults)!.toolResults['again-1'])
+    expect(delivered).toMatchObject({ ok: true, conversationId: childId })
+    expect(requests.some((request) => request.lastUser.includes('AGAIN'))).toBe(true)
     await expect(page.getByTestId('conversation-message-origin').filter({ hasText: 'Report from REV-1 · Review' })).toBeVisible()
 
     // 3. The first message to a conversation with no link waits for the person.
@@ -269,7 +274,7 @@ test('lets conversations message each other, bring results back and stop at the 
 
     // Turns started by another conversation are offered the same tools as typed turns, so a native session survives
     // the switch, but they never start conversations or create projects: what they try is refused.
-    for (const marker of [SEED, 'FIX ITEM 2', 'README changed.', 'Result of conversation', 'Fixed item 2.']) {
+    for (const marker of [SEED, 'FIX ITEM 2', 'AGAIN', 'README changed.', 'Result of conversation', 'Fixed item 2.']) {
       const offered = linkedTurnsOffered(marker)
       expect(offered.length, marker).toBeGreaterThan(0)
       for (const tools of offered) expect(tools).toEqual(expect.arrayContaining(['start_conversations', 'create_workspace']))

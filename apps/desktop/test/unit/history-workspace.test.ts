@@ -8,7 +8,6 @@ import { upsertChatMessage } from '../../src/main/chat/chat-store'
 import { forgetHistoryIndexState } from '../../src/main/chat/history-index/store'
 import { registerHistoryTools } from '../../src/main/mcp/tools/history'
 import type { McpToolContext } from '../../src/main/mcp/tools/context'
-import type { MaestroWorkerScope } from '../../src/main/maestro-worker-scope'
 
 beforeEach(() => {
   forgetHistoryIndexState()
@@ -30,7 +29,7 @@ function say(conversationId: string, text: string, extra: object = {}): void {
   })
 }
 
-function tools(conversationId: string, workerScope?: MaestroWorkerScope) {
+function tools(conversationId: string) {
   const handlers = new Map<
     string,
     (args: Record<string, unknown>) => Promise<{ content: Array<{ text: string }>; isError?: boolean }>
@@ -39,7 +38,6 @@ function tools(conversationId: string, workerScope?: MaestroWorkerScope) {
     convId: conversationId,
     locale: 'en',
     t: (key: string) => key,
-    workerScope,
     server: { registerTool: (name: string, _schema: unknown, handler: never) => handlers.set(name, handler) },
   } as unknown as McpToolContext)
   const call = async (name: string, args: Record<string, unknown>) => {
@@ -115,9 +113,9 @@ describe('workspace history scope', () => {
     expect(counts.get(caller.id)).toBe(1)
   })
 
-  it('refuses the workspace scope to standalone chats, bot conversations, delegated workers and bot runtimes', async () => {
+  it('refuses the workspace scope to standalone chats, bot conversations and bot runtimes', async () => {
     const { caller, bot, standalone } = fixture()
-    for (const denied of [tools(standalone.id), tools(bot.id), tools(caller.id, { id: 'w' } as MaestroWorkerScope)]) {
+    for (const denied of [tools(standalone.id), tools(bot.id)]) {
       expect(await denied.search({ query: 'migration', scope: 'workspace' })).toEqual({
         error: 'returns.history.workspaceDenied',
       })
@@ -141,9 +139,6 @@ describe('workspace history scope', () => {
       })
     }
     expect((await tools(standalone.id).read({ seq: 0, conversationId: caller.id })).error).toBe(true)
-    expect(
-      (await tools(caller.id, { id: 'w' } as MaestroWorkerScope).read({ seq: 0, conversationId: sibling.id })).error
-    ).toBe(true)
     expect((await tools(standalone.id).read({ seq: 0, conversationId: standalone.id })).error).toBe(false)
   })
 })

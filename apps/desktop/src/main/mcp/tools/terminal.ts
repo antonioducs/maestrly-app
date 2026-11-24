@@ -7,9 +7,7 @@ import {
   createShellTerminal,
   closeShellTerminal,
   listShellTerminals,
-  listShellTerminalsOwnedByScope,
   focusShellTerminal,
-  getShellTerminalOwnerScopeId,
   isShellOfConv,
   writeShellTerminal,
 } from '../../terminal-manager'
@@ -33,45 +31,24 @@ const { Terminal: HeadlessTerminal } = headless as unknown as {
 }
 
 export function registerTerminalTools(ctx: McpToolContext): void {
-  const { server, convId, t, workerScope } = ctx
-  if (workerScope && workerScope.conversationId !== convId) {
-    throw new Error('Maestro worker scope conversation does not match the terminal tool context.')
-  }
+  const { server, convId, t } = ctx
   // Drawer terminal tools operate only on this conversation's term:<convId>:* IDs. Reject the main agent
   // session and terminals owned by other conversations.
   const TERM_NOTE = t(isBotMode() ? 'notes.botTerm' : 'notes.term')
   /** Validate that the terminal exists and belongs to this conversation; otherwise return an error. */
   const guard = (id: string): string | null => {
-    if (workerScope && getShellTerminalOwnerScopeId(convId, id) !== workerScope.id) {
-      return t('errors.notTermOfConv', { id })
-    }
     if (!isShellOfConv(convId, id)) return t('errors.notTermOfConv', { id })
     if (!ptyExists(id)) return t('errors.termNotExist', { id })
     return null
   }
   type TerminalToolResult = ReturnType<typeof ok> | ReturnType<typeof err>
-  const runForTerminal = <T>(id: string, operation: () => T | Promise<T>): Promise<T> => {
-    if (!workerScope) return Promise.resolve(operation())
-    return workerScope.runExclusive(`terminal:${convId}:${id}`, operation)
-  }
-  const runGuarded = (
+  const runGuarded = async (
     id: string,
     operation: () => TerminalToolResult | Promise<TerminalToolResult>
-  ): Promise<TerminalToolResult> =>
-    runForTerminal(id, async () => {
-      const error = guard(id)
-      if (error) return err(error)
-      return operation()
-    })
-
-  if (workerScope) {
-    workerScope.registerCleanup(`terminal:${convId}`, () => {
-      for (const terminal of listShellTerminalsOwnedByScope(convId, workerScope.id)) {
-        if (getShellTerminalOwnerScopeId(convId, terminal.id) === workerScope.id) {
-          closeShellTerminal(convId, terminal.id)
-        }
-      }
-    })
+  ): Promise<TerminalToolResult> => {
+    const error = guard(id)
+    if (error) return err(error)
+    return operation()
   }
 
   server.registerTool(
@@ -86,28 +63,19 @@ export function registerTerminalTools(ctx: McpToolContext): void {
       },
     },
     async ({ cwd, cols, rows }) => {
-      const create = async () => {
-        const conv = getConversation(convId)
-        let dir = cwd || conv?.cwd || os.homedir() // use os.homedir() because Windows may lack HOME
-        if (conv?.scope === 'standalone') {
-          const managedCwd = await validateStandaloneConversationDirectory(conv)
-          if (cwd && cwd !== managedCwd) return err('Unsafe standalone chat directory.')
-          dir = managedCwd
-        }
-        const result = workerScope
-          ? createShellTerminal(convId, dir, cols, rows, {
-              ownerScopeId: workerScope.id,
-              label: workerScope.label,
-              activate: false,
-            })
-          : createShellTerminal(convId, dir, cols, rows)
-        if (!result.ok) {
-          if (result.reason === 'cwd-locked') return err(t('errors.termCwdLocked'))
-          return err(t('errors.termSpawnFailed'))
-        }
-        return ok(t('returns.terminal.created', { id: result.id, cwd: dir }))
+      const conv = getConversation(convId)
+      let dir = cwd || conv?.cwd || os.homedir() // use os.homedir() because Windows may lack HOME
+      if (conv?.scope === 'standalone') {
+        const managedCwd = await validateStandaloneConversationDirectory(conv)
+        if (cwd && cwd !== managedCwd) return err('Unsafe standalone chat directory.')
+        dir = managedCwd
       }
-      return workerScope ? workerScope.runExclusive(`terminal-create:${convId}`, create) : create()
+      const result = createShellTerminal(convId, dir, cols, rows)
+      if (!result.ok) {
+        if (result.reason === 'cwd-locked') return err(t('errors.termCwdLocked'))
+        return err(t('errors.termSpawnFailed'))
+      }
+      return ok(t('returns.terminal.created', { id: result.id, cwd: dir }))
     }
   )
 
@@ -119,13 +87,7 @@ export function registerTerminalTools(ctx: McpToolContext): void {
       inputSchema: {},
     },
     async () => {
-      const getTerminals = () =>
-        workerScope
-          ? listShellTerminals(convId).filter(
-              (terminal) => getShellTerminalOwnerScopeId(convId, terminal.id) === workerScope.id
-            )
-          : listShellTerminals(convId)
-      const ts = workerScope ? await workerScope.runExclusive(`terminal-list:${convId}`, getTerminals) : getTerminals()
+      const ts = listShellTerminals(convId)
       if (ts.length === 0) return ok(t('returns.terminal.none'))
       const lines = ts.map((term) => {
         const info = getPtyInfo(term.id)
@@ -168,7 +130,7 @@ export function registerTerminalTools(ctx: McpToolContext): void {
       return runGuarded(id, async () => {
         const before = readPtyOutputStats(id)
         if (!writeShellTerminal(id, command + '\r')) return err(t('errors.termCwdLocked'))
-        const out = await waitForOutput(id, before, timeout_ms ?? 8000, workerScope?.signal)
+        const out = await waitForOutput(id, before, timeout_ms ?? 8000)
         return ok(out || t('returns.terminal.runNoOutput'))
       })
     }
@@ -229,15 +191,6 @@ export function registerTerminalTools(ctx: McpToolContext): void {
       inputSchema: { id: z.string().describe(t('tools.terminal_close.params.id')) },
     },
     async ({ id }) => {
-      if (workerScope) {
-        return runForTerminal(id, () => {
-          if (getShellTerminalOwnerScopeId(convId, id) !== workerScope.id) {
-            return err(t('errors.notTermOfConv', { id }))
-          }
-          closeShellTerminal(convId, id)
-          return ok(t('returns.terminal.closed', { id }))
-        })
-      }
       if (!isShellOfConv(convId, id)) return err(t('errors.notTermOfConv', { id }))
       closeShellTerminal(convId, id)
       return ok(t('returns.terminal.closed', { id }))

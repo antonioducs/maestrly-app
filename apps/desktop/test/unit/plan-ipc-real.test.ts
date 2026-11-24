@@ -85,11 +85,11 @@ describe('plan IPC with a real broker', () => {
       name: 'Feature',
       experience: 'standard',
     })
-    const createMaestroSibling = vi.fn().mockRejectedValue(new Error('sibling-blocked'))
+    const createMaestroOrchestrator = vi.fn().mockRejectedValue(new Error('orchestrator-blocked'))
     const { reg, mhandles } = createTestRegistrar()
     registerPlanIpc(reg, {
       sendToWindow: vi.fn(),
-      createMaestroSibling,
+      createMaestroOrchestrator,
       deleteConversation: vi.fn(),
       applyMaestroStrategyProfile: vi.fn().mockResolvedValue({ ok: true }),
     })
@@ -99,7 +99,7 @@ describe('plan IPC with a real broker', () => {
         action: 'approve',
         implementationTarget: 'maestro',
       })
-    ).resolves.toEqual({ ok: false, error: 'sibling-blocked' })
+    ).resolves.toEqual({ ok: false, error: 'orchestrator-blocked' })
 
     expect(getPending('conv-maestro-real')).toMatchObject({ plan: '# Maestro plan', version: 1 })
     expect(h.runApprovedPlan).not.toHaveBeenCalled()
@@ -182,7 +182,7 @@ describe('plan IPC with a real broker', () => {
       )
 
       const deleteConversation = vi.fn(async () => undefined)
-      const createMaestroSibling = vi.fn(async () => ({ id: 'conv-maestro-sibling' }) as never)
+      const createMaestroOrchestrator = vi.fn(async () => ({ id: 'conv-maestro-sibling' }) as never)
       const applyMaestroStrategyProfile = vi.fn(async () => ({
         ok: false as const,
         error: 'maestro-strategy-profile-not-found',
@@ -190,7 +190,7 @@ describe('plan IPC with a real broker', () => {
       const { reg, mhandles } = createTestRegistrar()
       registerPlanIpc(reg, {
         sendToWindow: vi.fn(),
-        createMaestroSibling,
+        createMaestroOrchestrator,
         deleteConversation,
         applyMaestroStrategyProfile,
       })
@@ -202,7 +202,7 @@ describe('plan IPC with a real broker', () => {
         decide({} as never, 'conv-maestro-rollback', { action: 'approve', implementationTarget: 'maestro' })
       ).resolves.toEqual({ ok: false, error: 'maestro-strategy-profile-not-found' })
 
-      expect(deleteConversation).toHaveBeenCalledExactlyOnceWith('conv-maestro-sibling')
+      expect(deleteConversation).toHaveBeenCalledExactlyOnceWith('conv-maestro-sibling', { preserveWorktree: false })
       expect(getPending('conv-maestro-rollback')).toMatchObject({ plan: '# Rollback sibling' })
       expect(planEvents).toContainEqual({ conversationId: 'conv-accept-real', event: 'cleared' })
       expect(planEvents).toContainEqual({ conversationId: 'conv-discard-real', event: 'cleared' })

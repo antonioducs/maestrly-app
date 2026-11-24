@@ -88,7 +88,7 @@ const result = (hit: HistorySearchHit, names?: ReadonlyMap<string, string>) => (
 const json = (value: unknown) => ok(JSON.stringify(value, null, 2))
 
 export function registerHistoryTools(ctx: McpToolContext): void {
-  const { server, convId, t, workerScope } = ctx
+  const { server, convId, t } = ctx
   server.registerTool(
     'history_search',
     {
@@ -106,7 +106,7 @@ export function registerHistoryTools(ctx: McpToolContext): void {
     async ({ query, limit, mode, beforeSeq, scope }) => {
       const bounded = limit ?? 8
       if (scope === 'workspace') {
-        const access = workspaceHistoryAccess(convId, workerScope)
+        const access = workspaceHistoryAccess(convId)
         if (!access.ok) return err(t('returns.history.workspaceDenied'))
         const names = new Map(access.conversations.map((conversation) => [conversation.id, conversation.name]))
         if (!query) {
@@ -173,7 +173,7 @@ export function registerHistoryTools(ctx: McpToolContext): void {
     },
     async ({ seq, before, after, detail, conversationId }) => {
       const target = conversationId ?? convId
-      if (!canReadConversationHistory(convId, target, workerScope)) return err(t('returns.history.conversationDenied'))
+      if (!canReadConversationHistory(convId, target)) return err(t('returns.history.conversationDenied'))
       return ok(renderHistoryWindow(target, seq, before ?? 3, after ?? 3, t, { detail }))
     }
   )

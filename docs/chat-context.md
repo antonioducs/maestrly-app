@@ -277,9 +277,10 @@ the turns it replaces.
 While the agent works, the composer's main button stops it. Once you type or
 attach something, the same button sends instead: the message waits in the queue
 until the turn ends, or reaches the running turn where the agent accepts
-messages mid-turn, as bots and active Maestro runs do. To stop the agent with
-text in the composer, press Esc there. In a chat, stopping also discards the
-queued messages.
+messages mid-turn, such as bots or runtimes with live steering. To stop the
+agent with text in the composer, press Esc there. In a chat, stopping also
+discards the queued messages. In a Maestro conversation, **Stop swarm** in the
+activity pill stops both the orchestrator and every implementing worker turn.
 
 Maestrly also stops a model that is stuck. When it keeps making the same tool
 call without progress, the call is refused and then the turn ends. With an API
@@ -487,6 +488,18 @@ available, the plan stays pending so you can choose again. If it is created but
 its first turn cannot start, it shows **Retry start** above the composer and
 keeps the plan.
 
+**Implement with Maestro** creates a Maestro orchestrator conversation in a new
+worktree on `feat/<plan-slug>` (with a numeric suffix such as `-2` on collision)
+branched from the current commit, applying the plan, the selected strategy, and
+the orchestrator profile. Uncommitted changes in the source conversation (tracked
+and untracked, never ignored files), such as a Design prototype, go with it in a
+first `chore:` commit on that branch; the source checkout and its index are left
+as they were. A source with unresolved merge conflicts is refused. The orchestrator plans tasks, starts one worker
+conversation per task in its own worktree from the Agent Pool, reviews diffs,
+sends fixes back to the same worker conversation, and merges approved worker
+branches locally with `git merge --no-ff`. Worker conversations are not archived
+or deleted automatically.
+
 ### By asking the agent
 
 In an Agent, Design or Ask turn you can ask for new conversations in plain language,
@@ -629,21 +642,27 @@ when its current turn ends; messages wait in order and are kept across restarts.
   conversation that gave it, marked **Report from …**, for example when the work
   is done or blocked.
 - **Turns the agents start.** Turns started by another conversation can only
-  read and message linked conversations, can never start new conversations or
-  create projects, and stop after three agent-to-agent turns since you last typed
-  a message. The agent then tells you instead of continuing.
+  read and message linked conversations, and agent-created conversations (such
+  as Maestro workers) can never start new conversations or create projects on
+  their own. There is no fixed limit on agent-to-agent turns (`hop` depth is
+  still recorded for diagnostics); stop a conversation — or use **Stop swarm**
+  in a Maestro orchestrator — whenever you want to halt an exchange.
 
-These tools are available in Agent, Design and Ask modes. They are unavailable in
-Plan and Maestro modes, bot conversations, Kanban web chats, automations and
-subagents. Messages between conversations are stored in the local database and
-removed by a local data reset. A result whose turn was interrupted because the
-app closed is not delivered; ask again to continue.
+These tools are available in Agent, Design, Ask and Maestro conversations. They
+are unavailable in Plan mode, bot conversations, Kanban web chats, automations
+and subagents. Messages between conversations are stored in the local database
+and removed by a local data reset. A result whose turn was interrupted because
+the app closed is not delivered; ask again to continue.
 
 ### Limits
 
 Up to 20 conversations can be started per request; ask again for more.
-Starting conversations is available in Agent/Design mode in local standalone
-and project chats. It is unavailable in Plan and Maestro modes,
+Starting conversations is available in Agent, Design and Ask modes in local
+standalone and project chats, and in Maestro project conversations (where each
+task names an enabled Agent Pool resource with `agent`, runs in its own worktree
+branched from the orchestrator's HEAD with `reportBack` enabled and no
+confirmation prompt, and refuses `settings`, shared placement, and
+`target.workspaceId`/`target.baseBranch`). It is unavailable in Plan mode,
 bot conversations, archived
 conversations, conversations with an unfinished migration and multi-repository
 conversations, and the app gives the reason. Missing or unknown workspace IDs,

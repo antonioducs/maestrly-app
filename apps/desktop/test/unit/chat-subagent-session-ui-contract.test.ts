@@ -28,12 +28,9 @@ describe('subagent session UI contract', () => {
     expect(list).toContain('canEdit={!readOnly && !streaming')
   })
 
-  it('keeps normal activity and Maestro grouping on the same session source', () => {
+  it('keeps normal subagent activity on the shared session source', () => {
     const view = source('src/renderer/components/chat/ChatView.tsx')
-    const orchestration = source('src/renderer/components/chat/OrchestrationRun.tsx')
     expect(view).toContain('<SubagentActivityPill sessions={subagentSessions}')
     expect(view).toContain('<SubagentSessionsContext.Provider value={subagentSessions}>')
-    expect(orchestration).toContain('useSubagentSessions()')
-    expect(orchestration).toContain("session?.status === 'preparing'")
   })
 })

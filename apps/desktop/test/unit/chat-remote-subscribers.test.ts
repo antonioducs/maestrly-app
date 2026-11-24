@@ -57,7 +57,7 @@ describe('chat events for remote subscribers', () => {
     const unsubscribed = remoteRenderer(-1005)
     subscribeChatStream(remote as never, 'c')
 
-    for (const channel of ['chat:maestro-live:c', 'chat:subscription-failover:c']) {
+    for (const channel of ['chat:subscription-failover:c']) {
       sendChatEvent(local as never, channel, 1)
       // As before, this computer's renderer receives these without subscribing.
       expect(local.send).toHaveBeenCalledWith(channel, 1)
@@ -97,8 +97,8 @@ describe('chat events for remote subscribers', () => {
     expect(local.send).not.toHaveBeenCalled()
     // Another renderer of this computer keeps receiving only the turns it started.
     expect(other.send).not.toHaveBeenCalled()
-    sendChatEvent(local as never, 'chat:maestro-live:c', 2)
-    expect(local.send).toHaveBeenCalledWith('chat:maestro-live:c', 2)
+    sendChatEvent(local as never, 'chat:subscription-failover:c', 2)
+    expect(local.send).toHaveBeenCalledWith('chat:subscription-failover:c', 2)
     sendChatEvent(local as never, 'chat:unscoped', 3)
     expect(local.send).toHaveBeenCalledWith('chat:unscoped', 3)
     // Backend observers hear gated stream events once, whoever is subscribed.

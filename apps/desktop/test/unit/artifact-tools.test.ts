@@ -4,7 +4,6 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ArtifactsService } from '../../src/main/artifacts/service'
-import type { MaestroWorkerScope } from '../../src/main/maestro-worker-scope'
 import { registerArtifactTools } from '../../src/main/mcp/tools/artifacts'
 import { RepositoryScopeError } from '../../src/main/repository-scope'
 import { tFor } from '../../src/shared/i18n'
@@ -53,10 +52,10 @@ let service: ReturnType<typeof fakeService>
 let client: Client
 let server: McpServer
 
-async function connect(workerScope?: MaestroWorkerScope): Promise<void> {
+async function connect(): Promise<void> {
   server = new McpServer({ name: 'app-tools', version: '1.0.0' })
   registerArtifactTools(
-    { server, convId: 'c1', locale: 'en', t: tFor('en', 'mcp'), workerScope },
+    { server, convId: 'c1', locale: 'en', t: tFor('en', 'mcp') },
     () => service as unknown as ArtifactsService
   )
   const [clientT, serverT] = InMemoryTransport.createLinkedPair()
@@ -244,11 +243,6 @@ describe('artifact tools', () => {
     const opened = await call('artifact_open', { id })
     expect(opened.text).toContain('Landing')
     expect(service.openInConversation).toHaveBeenCalledWith('c1', id, undefined, { activate: true })
-    await client.close()
-    await server.close()
-    await connect({ id: 'worker' } as MaestroWorkerScope)
-    await call('artifact_open', { id, version: 1 })
-    expect(service.openInConversation).toHaveBeenLastCalledWith('c1', id, 1, { activate: false })
   })
 
   it('tells the agent of a workspaces host that the computer showing the conversation opens it', async () => {

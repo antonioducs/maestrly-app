@@ -5,8 +5,54 @@ import { Bot, Check, Loader2, TriangleAlert, X } from 'lucide-react'
 import type { SubagentSessionSummary } from '../../../shared/chat'
 import { useOpenSubagentSession } from './SubagentSessionContext'
 
-function live(session: SubagentSessionSummary): boolean {
+export function isSubagentSessionActive(session: SubagentSessionSummary): boolean {
   return session.status === 'preparing' || session.status === 'running'
+}
+
+export function SubagentActivityList({
+  sessions,
+  onSelectSession,
+}: {
+  sessions: SubagentSessionSummary[]
+  onSelectSession?: () => void
+}) {
+  const { t } = useTranslation('chat')
+  const openSession = useOpenSubagentSession()
+  if (!sessions.length || !openSession) return null
+  return (
+    <>
+      {sessions.map((session) => (
+        <button
+          key={session.id}
+          type="button"
+          onClick={() => {
+            void openSession({
+              conversationId: session.conversationId,
+              parentMessageId: session.parentMessageId,
+              toolCallId: session.toolCallId,
+            })
+            onSelectSession?.()
+          }}
+          className="mb-1 flex w-full items-center gap-2 rounded-lg border border-white/[0.06] bg-black/15 px-2.5 py-2 text-left last:mb-0 hover:bg-white/[0.05]"
+        >
+          {isSubagentSessionActive(session) ? (
+            <Loader2 className="size-3.5 shrink-0 animate-spin text-sky-300" />
+          ) : session.status === 'completed' ? (
+            <Check className="size-3.5 shrink-0 text-emerald-400" />
+          ) : (
+            <TriangleAlert className="size-3.5 shrink-0 text-amber-300" />
+          )}
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-[11px] font-medium text-foreground">{session.agentName}</span>
+            <span className="block truncate text-[9px] text-muted-foreground">
+              {session.currentTool ?? session.phase ?? session.status}
+            </span>
+          </span>
+          <span className="text-[9px] text-muted-foreground">{t(`subagentSession.status.${session.status}`)}</span>
+        </button>
+      ))}
+    </>
+  )
 }
 
 export function SubagentActivityPill({ sessions }: { sessions: SubagentSessionSummary[] }) {
@@ -15,7 +61,7 @@ export function SubagentActivityPill({ sessions }: { sessions: SubagentSessionSu
   const openSession = useOpenSubagentSession()
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
-  const active = sessions.filter(live)
+  const active = sessions.filter(isSubagentSessionActive)
 
   useEffect(() => {
     if (!open) return
@@ -44,38 +90,7 @@ export function SubagentActivityPill({ sessions }: { sessions: SubagentSessionSu
             </button>
           </div>
           <div className="max-h-[55vh] overflow-y-auto p-2">
-            {sessions.map((session) => (
-              <button
-                key={session.id}
-                type="button"
-                onClick={() => {
-                  void openSession({
-                    conversationId: session.conversationId,
-                    parentMessageId: session.parentMessageId,
-                    toolCallId: session.toolCallId,
-                  })
-                  setOpen(false)
-                }}
-                className="mb-1 flex w-full items-center gap-2 rounded-lg border border-white/[0.06] bg-black/15 px-2.5 py-2 text-left last:mb-0 hover:bg-white/[0.05]"
-              >
-                {live(session) ? (
-                  <Loader2 className="size-3.5 shrink-0 animate-spin text-sky-300" />
-                ) : session.status === 'completed' ? (
-                  <Check className="size-3.5 shrink-0 text-emerald-400" />
-                ) : (
-                  <TriangleAlert className="size-3.5 shrink-0 text-amber-300" />
-                )}
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[11px] font-medium text-foreground">{session.agentName}</span>
-                  <span className="block truncate text-[9px] text-muted-foreground">
-                    {session.currentTool ?? session.phase ?? session.status}
-                  </span>
-                </span>
-                <span className="text-[9px] text-muted-foreground">
-                  {t(`subagentSession.status.${session.status}`)}
-                </span>
-              </button>
-            ))}
+            <SubagentActivityList sessions={sessions} onSelectSession={() => setOpen(false)} />
           </div>
         </div>
       )}

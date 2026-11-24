@@ -6,11 +6,6 @@ import type { ConversationStatus } from './conversation'
  * Shared by main and the renderer; authorization, delivery and journaling stay in main.
  */
 
-/**
- * Agent-to-agent turns allowed after each message a person typed. A human turn is hop 0; every message an agent
- * sends starts a turn one hop further, and a person typing in a conversation brings it back to 0.
- */
-export const CONVERSATION_LINK_MAX_HOPS = 3
 export const CONVERSATION_MESSAGE_MAX_BODY = 60_000
 /** Final answers relayed as results are cut here; read_conversation shows the rest. */
 export const CONVERSATION_RESULT_MAX_BODY = 20_000
@@ -33,7 +28,6 @@ export type ConversationLinkErrorCode =
   | 'self'
   | 'archived'
   | 'not-linked'
-  | 'hop-limit'
   | 'declined'
   | 'no-source'
   | 'delivery-failed'

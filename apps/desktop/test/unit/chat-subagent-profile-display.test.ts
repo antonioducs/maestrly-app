@@ -73,12 +73,9 @@ describe('subagent profile display', () => {
     ).toMatchObject({ input: 1, output: 2 })
   })
 
-  it('preserves timer origins with routedAt fallback for older runs', () => {
-    const legacyMaestro = {
-      routedAt: 1_000,
-    } as unknown as NonNullable<SubagentRunMeta['maestro']>
-    expect(subagentRunDisplay({ startedAt: 2_000, maestro: legacyMaestro }).startedAt).toBe(2_000)
-    expect(subagentRunDisplay({ maestro: legacyMaestro }).startedAt).toBe(1_000)
+  it('preserves timer origins and ignores invalid timestamps', () => {
+    expect(subagentRunDisplay({ startedAt: 2_000 }).startedAt).toBe(2_000)
+    expect(subagentRunDisplay({ startedAt: 2_000 }, { startedAt: 1_500 }).startedAt).toBe(1_500)
     expect(subagentRunDisplay({ startedAt: Number.NaN }).startedAt).toBeNull()
   })
 

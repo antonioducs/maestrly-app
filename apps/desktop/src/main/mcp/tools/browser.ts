@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import * as bc from '../../browser-control'
-import { browserBackendFor, type BrowserBackendLease, type BrowserBackendTab } from './browser-backend'
+import { browserBackendFor, type BrowserBackendLease } from './browser-backend'
 import type { McpToolContext } from './context'
 
 const SCREENSHOT_METADATA_TIMEOUT_MS = 1_000
@@ -12,93 +12,22 @@ function shortBrowserError(error: unknown): string {
 }
 
 export function registerBrowserTools(ctx: McpToolContext): void {
-  const { server, convId, t, workerScope } = ctx
-  if (workerScope && workerScope.conversationId !== convId) {
-    throw new Error('Maestro worker scope conversation does not match the browser tool context.')
-  }
+  const { server, convId, t } = ctx
   // The drawer's browser, or the bot's own Chromium in bot mode: read on each call, since a bot's conversation
   // resolves its bot once the environment has started.
   const backend = () => browserBackendFor(convId)
   const DRAWER_NOTE = backend().kind === 'bot-chromium' ? t('notes.botChromium') : t('notes.drawer')
-  type BrowserToolTab = BrowserBackendTab
-  const scopeStateKey = `browser-scope:${convId}`
-  let scopedActiveTabId: string | null = null
-  let scopedOwnedTabIds: string[] = []
 
-  const readScopedTabs = async (): Promise<{ tabs: BrowserToolTab[]; activeId: string | null }> => {
-    if (!workerScope) return { tabs: [], activeId: null }
-    const state = await backend().stateForScope(convId, workerScope.id)
-    const liveOwnedIds = new Set(backend().tabIdsOwnedByScope(convId, workerScope.id))
-    // The state is authoritative for ordering and liveness. This both prunes closed tabs and discovers
-    // tabs inherited through window.open from an owned page.
-    scopedOwnedTabIds = state.tabs.filter((tab) => liveOwnedIds.has(tab.id)).map((tab) => tab.id)
-    if (!scopedActiveTabId || !scopedOwnedTabIds.includes(scopedActiveTabId)) {
-      scopedActiveTabId = scopedOwnedTabIds[0] ?? null
-    }
-    const ownedIds = new Set(scopedOwnedTabIds)
-    return { tabs: state.tabs.filter((tab) => ownedIds.has(tab.id)), activeId: scopedActiveTabId }
-  }
-
-  const ensureScopedTab = async (): Promise<{ tabs: BrowserToolTab[]; activeId: string }> => {
-    if (!workerScope) throw new Error('Maestro browser scope is unavailable.')
-    let scoped = await readScopedTabs()
-    if (scoped.activeId) return { tabs: scoped.tabs, activeId: scoped.activeId }
-
-    const state = await backend().state(convId)
-    const cloneUrl = state.tabs.find((tab) => tab.id === state.activeId)?.url || 'about:blank'
-    scopedActiveTabId = await backend().createTab(convId, cloneUrl, {
-      ownerScopeId: workerScope.id,
-      activate: false,
-    })
-    scoped = await readScopedTabs()
-    if (!scoped.activeId) throw new Error('Maestro browser tab could not be created.')
-    return { tabs: scoped.tabs, activeId: scoped.activeId }
-  }
-
-  if (workerScope) {
-    workerScope.registerCleanup(`browser:${convId}`, async () => {
-      const browser = backend()
-      browser.closeScopeWindows(convId, workerScope.id)
-      for (const tabId of browser.tabIdsOwnedByScope(convId, workerScope.id)) {
-        if (browser.tabOwnerScopeId(convId, tabId) === workerScope.id) await browser.closeTab(convId, tabId)
-      }
-      scopedOwnedTabIds = []
-      scopedActiveTabId = null
-    })
-  }
-
-  /**
-   * The tool call's cancellation, joined with the delegated worker's. Operations also end at their own deadline, so a
-   * page that stops answering cannot hold the call, or the tab lock the next calls wait for.
-   */
-  const controlFor = (extra?: { signal?: AbortSignal }): bc.BrowserControlOperationOptions => {
-    const signals = [extra?.signal, workerScope?.signal].filter((signal): signal is AbortSignal => !!signal)
-    if (signals.length === 0) return {}
-    return { signal: signals.length === 1 ? signals[0] : AbortSignal.any(signals) }
-  }
+  const controlFor = (extra?: { signal?: AbortSignal }): bc.BrowserControlOperationOptions =>
+    extra?.signal ? { signal: extra.signal } : {}
 
   const withBrowserLease = async <T>(operation: (lease: BrowserBackendLease) => Promise<T>): Promise<T> => {
-    if (!workerScope) {
-      const lease = await backend().acquireActive(convId)
-      try {
-        return await operation(lease)
-      } finally {
-        lease.release()
-      }
+    const lease = await backend().acquireActive(convId)
+    try {
+      return await operation(lease)
+    } finally {
+      lease.release()
     }
-
-    const tabId = await workerScope.runExclusive(scopeStateKey, async () => (await ensureScopedTab()).activeId)
-    return workerScope.runExclusive(`browser-tab:${convId}:${tabId}`, async () => {
-      if (backend().tabOwnerScopeId(convId, tabId) !== workerScope.id) {
-        throw new Error('Drawer browser tab is no longer available.')
-      }
-      const lease = await backend().acquireTab(convId, tabId)
-      try {
-        return await operation(lease)
-      } finally {
-        lease.release()
-      }
-    })
   }
   const withBrowserActivity = <T>(
     extra: { signal?: AbortSignal } | undefined,
@@ -578,18 +507,14 @@ export function registerBrowserTools(ctx: McpToolContext): void {
       inputSchema: {},
     },
     async () => {
-      const scoped = workerScope
-        ? await workerScope.runExclusive(scopeStateKey, ensureScopedTab)
-        : await (async () => {
-            backend().touch(convId)
-            return backend().state(convId)
-          })()
-      if (scoped.tabs.length === 0) return { content: [{ type: 'text', text: t('returns.browser.noTabs') }] }
-      const text = scoped.tabs
+      backend().touch(convId)
+      const st = await backend().state(convId)
+      if (st.tabs.length === 0) return { content: [{ type: 'text', text: t('returns.browser.noTabs') }] }
+      const text = st.tabs
         .map((tab, i) =>
           t('returns.browser.tabRow', {
             index: i + 1,
-            active: tab.id === scoped.activeId ? t('returns.browser.tabRowActive') : '',
+            active: tab.id === st.activeId ? t('returns.browser.tabRowActive') : '',
             title: tab.title || t('returns.browser.tabRowNewTitle'),
             url: tab.url || 'about:blank',
           })
@@ -609,32 +534,6 @@ export function registerBrowserTools(ctx: McpToolContext): void {
       },
     },
     async ({ index }) => {
-      if (workerScope) {
-        const scoped = await workerScope.runExclusive(scopeStateKey, async () => {
-          const current = await ensureScopedTab()
-          const tab = current.tabs[index - 1]
-          if (tab) scopedActiveTabId = tab.id
-          return { ...current, tab }
-        })
-        if (!scoped.tab) {
-          return {
-            content: [{ type: 'text', text: t('errors.tabNotExist', { index, total: scoped.tabs.length }) }],
-            isError: true,
-          }
-        }
-        return {
-          content: [
-            {
-              type: 'text',
-              text: t('returns.browser.tabActive', {
-                index,
-                label: scoped.tab.title || scoped.tab.url,
-              }),
-            },
-          ],
-        }
-      }
-
       const st = await backend().state(convId)
       const tab = st.tabs[index - 1]
       if (!tab)
@@ -660,30 +559,6 @@ export function registerBrowserTools(ctx: McpToolContext): void {
       },
     },
     async ({ url }) => {
-      if (workerScope) {
-        const opened = await workerScope.runExclusive(scopeStateKey, async () => {
-          await ensureScopedTab()
-          const tabId = await backend().createTab(convId, url, {
-            ownerScopeId: workerScope.id,
-            activate: false,
-          })
-          scopedActiveTabId = tabId
-          const current = await readScopedTabs()
-          return {
-            index: current.tabs.findIndex((tab) => tab.id === tabId) + 1,
-            total: current.tabs.length,
-          }
-        })
-        return {
-          content: [
-            {
-              type: 'text',
-              text: t('returns.browser.tabOpened', { index: opened.index, total: opened.total }),
-            },
-          ],
-        }
-      }
-
       await backend().createTab(convId, url)
       backend().touch(convId)
       const st = await backend().state(convId)
@@ -705,39 +580,6 @@ export function registerBrowserTools(ctx: McpToolContext): void {
       },
     },
     async ({ index }) => {
-      if (workerScope) {
-        const selected = await workerScope.runExclusive(scopeStateKey, async () => {
-          const current = await ensureScopedTab()
-          return { tab: current.tabs[index - 1], total: current.tabs.length }
-        })
-        if (!selected.tab) {
-          return {
-            content: [{ type: 'text', text: t('errors.tabNotExist', { index, total: selected.total }) }],
-            isError: true,
-          }
-        }
-
-        const closed = await workerScope.runExclusive(`browser-tab:${convId}:${selected.tab.id}`, async () => {
-          if (backend().tabOwnerScopeId(convId, selected.tab!.id) !== workerScope.id) return false
-          await backend().closeTab(convId, selected.tab!.id)
-          return true
-        })
-        if (!closed) {
-          const total = await workerScope.runExclusive(scopeStateKey, async () => (await readScopedTabs()).tabs.length)
-          return {
-            content: [{ type: 'text', text: t('errors.tabNotExist', { index, total }) }],
-            isError: true,
-          }
-        }
-        await workerScope.runExclusive(scopeStateKey, async () => {
-          const current = await readScopedTabs()
-          if (scopedActiveTabId === selected.tab!.id) {
-            scopedActiveTabId = current.tabs[index - 1]?.id ?? current.tabs[index - 2]?.id ?? null
-          }
-        })
-        return { content: [{ type: 'text', text: t('returns.browser.tabClosed', { index }) }] }
-      }
-
       const st = await backend().state(convId)
       const tab = st.tabs[index - 1]
       if (!tab)

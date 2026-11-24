@@ -100,7 +100,7 @@ Images the user attaches are transcribed before your turn and reach you as text 
 
 Understand these fields precisely:
 - strategy selects balanced, best-quality, fast, or economy guidance for the parent;
-- pool resources are logical roles with unique ids, labels, descriptions, worker/read-only capability, specialties, optional instructions, and ordered execution candidates;
+- pool resources are logical roles with unique ids, labels, descriptions, conversation mode (agent, design, or ask), specialties, optional instructions, and ordered execution candidates;
 - every candidate identifies providerId, modelId, a real reasoning effort or off, and optional Fast;
 - an empty candidate list inherits the frozen orchestrator profile as final fallback;
 - candidate order is fallback order;

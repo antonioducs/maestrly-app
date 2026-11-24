@@ -4,12 +4,11 @@
  * A turn is either:
  * - human: admitted from text the person typed here (recorded by conversation-dispatch-authorization), hop 0; or
  * - linked: started by another conversation, either a dispatch seed or a message, report or result it sent. It
- *   carries the sending conversation and how many agent-to-agent turns led to it since a person last typed.
+ *   carries the sending conversation and a diagnostic hop depth incremented on each peer message.
  *
  * Like the human origin, this is decided by the chat service at admission from how the turn entered, never from
  * transcript roles, and it is bound to the admitted run: it expires when the turn ends or a newer one starts.
  */
-import { CONVERSATION_LINK_MAX_HOPS } from '../../shared/conversation-link'
 import { currentHumanTurnOrigin } from './conversation-dispatch-authorization'
 
 export interface LinkedTurnOrigin {
@@ -66,9 +65,4 @@ export function assertConversationTurnProvenanceCurrent(provenance: Conversation
   const current = currentConversationTurnProvenance(provenance.conversationId)
   if (provenance.signal.aborted || current?.token !== provenance.token)
     throw new Error('The turn that made this request is no longer active.')
-}
-
-/** Whether a turn at `hop` may cause `extraTurns` more agent-to-agent turns (a message, plus its result). */
-export function hopAllowed(hop: number, extraTurns: 1 | 2): boolean {
-  return hop + extraTurns <= CONVERSATION_LINK_MAX_HOPS
 }

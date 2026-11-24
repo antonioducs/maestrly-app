@@ -136,6 +136,9 @@ export const conversationDispatchTaskSchema = z
     settings: conversationDispatchSettingsRequestSchema
       .optional()
       .describe('Per-task overrides of the batch defaults.'),
+    agent: identifier
+      .optional()
+      .describe('Maestro conversations only: id of the enabled Agent Pool resource that runs this task. Replaces settings.'),
     placement: conversationDispatchPlacementSchema.optional().describe('Overrides the batch placement.'),
     reportBack: z.boolean().optional().describe('Overrides the batch reportBack.'),
   })

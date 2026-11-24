@@ -4,8 +4,8 @@
  *
  * Authorization is decided by the caller's turn provenance (see chat/conversation-link-authorization): a turn the
  * person typed may read any conversation and message any of them (the first message to one not linked to it needs
- * the person's confirmation); a turn started by another conversation only reaches linked conversations, within the
- * hop limit. Every message is journaled first, so a repeated call replays it, a busy target receives it when its
+ * the person's confirmation); a turn started by another conversation only reaches linked conversations. Every
+ * message is journaled first, so a repeated call replays it, a busy target receives it when its
  * turn ends, and queued messages survive a restart. A target never runs two turns at once: one drain per target.
  */
 import { createHash, randomUUID } from 'node:crypto'
@@ -34,7 +34,6 @@ import {
 } from '../shared/conversation-link'
 import type { SequencedChatMessage, StoredChatMessage } from './chat/chat-store'
 import { isConversationContextMessage } from './chat/chat-store'
-import { hopAllowed } from './chat/conversation-link-authorization'
 import type { ConversationPeerTurnInput } from './chat/service'
 import { getConversationDispatchByDestination } from './conversation-dispatch-store'
 import {
@@ -87,6 +86,8 @@ export interface ConversationLinkServiceDeps {
   now(): number
   /** `prompts` catalog in the app locale. */
   text(key: string, params?: Record<string, string>): string
+  onPeerTurnStarted?(input: { fromConversationId: string; toConversationId: string }): void
+  onResult?(input: { orchestratorId: string; workerConversationId: string; status: string }): void
 }
 
 const PAGE = 100
@@ -361,6 +362,7 @@ export function createConversationLinkService(deps: ConversationLinkServiceDeps)
   async function attempt(
     record: ConversationPeerMessageRecord
   ): Promise<'delivered' | 'busy' | 'unavailable' | 'failed'> {
+    if (getPeerMessage(record.messageId)?.phase !== 'queued') return 'delivered'
     if (!deps.getConversation(record.toConversationId)) {
       transitionPeerMessage(record.messageId, ['queued'], 'failed', 'target-deleted')
       return 'failed'
@@ -372,7 +374,17 @@ export function createConversationLinkService(deps: ConversationLinkServiceDeps)
       result = { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
     if (result.ok) {
-      transitionPeerMessage(record.messageId, ['queued'], 'delivered')
+      const transitioned = transitionPeerMessage(record.messageId, ['queued'], 'delivered')
+      if (transitioned && record.kind === 'message') {
+        try {
+          deps.onPeerTurnStarted?.({
+            fromConversationId: record.fromConversationId,
+            toConversationId: record.toConversationId,
+          })
+        } catch {
+          // Hook failures must never break delivery.
+        }
+      }
       return 'delivered'
     }
     // A review holds the target until it is handed off; waitForSlot waits for that too.
@@ -389,10 +401,13 @@ export function createConversationLinkService(deps: ConversationLinkServiceDeps)
       try {
         let unavailable = 0
         for (;;) {
-          const next = listQueuedPeerMessagesTo(to)[0]
-          if (!next) return
+          if (!listQueuedPeerMessagesTo(to)[0]) return
           await deps.waitForSlot(to)
           await deps.sleep(DRAIN_SETTLE_MS)
+          // Read the head after waiting: a direct delivery may have taken it meanwhile, and attempting a stale record
+          // would start the same turn twice.
+          const next = listQueuedPeerMessagesTo(to)[0]
+          if (!next) return
           if ((await attempt(next)) !== 'unavailable') continue
           if (++unavailable > UNAVAILABLE_MAX_RETRIES) return
           await deps.sleep(UNAVAILABLE_RETRY_MS)
@@ -455,26 +470,12 @@ export function createConversationLinkService(deps: ConversationLinkServiceDeps)
       return fail('archived', `"${conversation.name}" is archived; ask the person to restore it first.`)
     const relation = relationBetween(caller.conversationId, conversation.id)
     const reportBack = input.reportBack === true
-    if (caller.kind === 'linked') {
-      if (!relation)
-        return fail(
-          'not-linked',
-          'Turns not started by the person can only message linked conversations (the one that started this ' +
-            'conversation, conversations started from it, or ones that exchanged messages with it). Tell the person instead.'
-        )
-      if (!hopAllowed(caller.hop, 1))
-        return fail(
-          'hop-limit',
-          'Agent-to-agent hop limit reached: conversations cannot keep messaging each other without the person. ' +
-            'Finish this turn and let the person continue.'
-        )
-      if (reportBack && !hopAllowed(caller.hop, 2))
-        return fail(
-          'hop-limit',
-          'Agent-to-agent hop limit reached for bringing a result back: send without reportBack or let the person ' +
-            'continue.'
-        )
-    }
+    if (caller.kind === 'linked' && !relation)
+      return fail(
+        'not-linked',
+        'Turns not started by the person can only message linked conversations (the one that started this ' +
+          'conversation, conversations started from it, or ones that exchanged messages with it). Tell the person instead.'
+      )
     const gate = caller.kind !== 'human' ? null : caller.isAssistant && admit ? admit : relation ? null : confirm
     if (gate) {
       const confirmed = await gate(summarize(conversation, null), input.message.slice(0, 400)).catch(() => false)
@@ -521,11 +522,6 @@ export function createConversationLinkService(deps: ConversationLinkServiceDeps)
         conversationName: target.name,
         note: `Your final answer in this turn is delivered to "${target.name}" automatically; put the report there.`,
       }
-    if (caller.kind === 'linked' && !hopAllowed(caller.hop, 1))
-      return fail(
-        'hop-limit',
-        'Agent-to-agent hop limit reached: finish this turn with your answer; the person can pass it on.'
-      )
     if (target.archived) return fail('archived', `"${target.name}" is archived; ask the person to restore it first.`)
     const ended = guarded(caller)
     if (ended) return ended
@@ -582,6 +578,15 @@ export function createConversationLinkService(deps: ConversationLinkServiceDeps)
     })
     if (!created) return
     transitionPeerMessage(original.messageId, ['queued', 'delivered'], 'reported')
+    try {
+      deps.onResult?.({
+        orchestratorId: original.fromConversationId,
+        workerConversationId: original.toConversationId,
+        status,
+      })
+    } catch {
+      // Hook failures must never break result delivery.
+    }
     await deliver(result)
   }
 
@@ -607,7 +612,18 @@ export function createConversationLinkService(deps: ConversationLinkServiceDeps)
       reportBack: false,
       resultStatus: status,
     })
-    if (created) await deliver(result)
+    if (created) {
+      try {
+        deps.onResult?.({
+          orchestratorId: input.sourceConversationId,
+          workerConversationId: input.conversationId,
+          status,
+        })
+      } catch {
+        // Hook failures must never break result delivery.
+      }
+      await deliver(result)
+    }
   }
 
   /** After a restart: drain queued messages; a result whose turn died with the app is never delivered. */
@@ -642,11 +658,12 @@ function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
 }
 
 async function buildDefaultConversationLinkService(): Promise<ConversationLinkService> {
-  const [store, chat, chatStore, i18n] = await Promise.all([
+  const [store, chat, chatStore, i18n, maestroSwarm] = await Promise.all([
     import('./store'),
     import('./chat/service'),
     import('./chat/chat-store'),
     import('./i18n'),
+    import('./chat/maestro-swarm'),
   ])
   return createConversationLinkService({
     getConversation: store.getConversation,
@@ -660,6 +677,8 @@ async function buildDefaultConversationLinkService(): Promise<ConversationLinkSe
     sleep: abortableSleep,
     now: Date.now,
     text: (key, params) => i18n.tFor(store.getLocale(), 'prompts')(key, params),
+    onPeerTurnStarted: maestroSwarm.onSwarmWorkerTurnStarted,
+    onResult: maestroSwarm.onSwarmWorkerResult,
   })
 }
 

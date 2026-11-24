@@ -30,7 +30,7 @@ describe('Opus prompt contracts', () => {
     }
     expect(prompt('ask')).toContain('Do NOT edit project files or run commands')
     expect(prompt('plan')).toContain('Calling review_plan ENDS your turn')
-    expect(harnessUltraGuidance(opus, 'maestro')).toContain('frozen Strategy and Pool')
+    expect(harnessUltraGuidance(opus, 'maestro')).toBe(harnessUltraGuidance(opus, 'agent'))
     expect(harnessUltraGuidance(opus, 'agent')).toContain('do not automatically add extra reviewers')
   })
 

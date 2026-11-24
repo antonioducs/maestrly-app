@@ -64,7 +64,6 @@ import {
   setTerminalPopupFocuser,
 } from './terminal-manager'
 import { hasAnyOwnedGroups } from './process-ownership/owned-groups'
-import { activeMaestroDelegationCount } from './chat/maestro-delegation-registry'
 import { installSystemQuitHandlers } from './system-quit'
 import { settleLoad } from './web-contents-load'
 import {
@@ -220,6 +219,8 @@ import {
   stopChat,
 } from './chat/service'
 import { setConversationMaestroConfig } from './chat/maestro-config'
+import { setMaestroSwarmListener } from './chat/maestro-swarm'
+import { registerMaestroSwarmIpc } from './chat/maestro-swarm-ipc'
 import { resolveMaestroStrategyProfile, setLastUsedMaestroStrategyProfile } from './chat/maestro-strategy-profiles'
 import { registerUsageIpc } from './usage/usage-service'
 import type { IpcRegistrar } from './ipc-registrar'
@@ -257,7 +258,7 @@ import { type AssistantSettings, effectiveAssistantShortcut } from '../shared/as
 import { osFromPlatform } from '../shared/shortcuts'
 import { createHostInvoker, HostUnavailableError } from './remote-host/host-invoker'
 import { setAssistantHostAccess } from './assistant/assistant-context'
-import { createSiblingConversation, deleteConversation } from './workspace-service'
+import { createMaestroWorktreeConversation, deleteConversation } from './workspace-service'
 import { registerLocalConversationIpc } from './local-conversation/ipc'
 import { registerTurnSnapshotIpc } from './turn-snapshots/ipc'
 import { initTurnSnapshots } from './turn-snapshots/maintenance'
@@ -1060,7 +1061,8 @@ function registerIpc(): void {
   registerPtyIpc(reg)
   registerPlanIpc(reg, {
     sendToWindow,
-    createMaestroSibling: (sourceConversationId, options) => createSiblingConversation(sourceConversationId, options),
+    createMaestroOrchestrator: (sourceConversationId, options) =>
+      createMaestroWorktreeConversation(sourceConversationId, options),
     deleteConversation,
     applyMaestroStrategyProfile: async (conversationId, profileId) => {
       const profile = resolveMaestroStrategyProfile(profileId, getGlobalMaestroOrchestratorProfile())
@@ -1169,6 +1171,8 @@ function registerIpc(): void {
       else broadcastStatus({ agentId: conversationId, status })
     },
   })
+  registerMaestroSwarmIpc(reg, { stopChat })
+  setMaestroSwarmListener((conversationId) => broadcast('maestro:swarm-changed', { conversationId }))
   registerPluginIpc(reg)
   registerMcpOAuthIpc(reg, {
     // Sign-in for a remote host's server: this computer runs the browser part and the host keeps the result.
@@ -1766,9 +1770,7 @@ app.on('window-all-closed', () => {
 
 /** Agents, terminal commands and what they left in the background: what quitting ends and the prompt warns about. */
 function quitInterruptsWork(): boolean {
-  return (
-    activeChatRunCount() > 0 || activeMaestroDelegationCount() > 0 || hasRunningTerminalCommand() || hasAnyOwnedGroups()
-  )
+  return activeChatRunCount() > 0 || hasRunningTerminalCommand() || hasAnyOwnedGroups()
 }
 
 async function confirmQuit(): Promise<boolean> {

@@ -75,7 +75,6 @@ import type { Conversation } from '../../../shared/conversation'
 import type { ConversationExperience } from '../../../shared/conversation-experience'
 import { BotManualChatControl } from '../bot/BotManualChatControl'
 import { cycleChatMode } from '../../../shared/chat-mode'
-import type { MaestroLiveEvent, MaestroLiveState } from '../../../shared/maestro-live'
 import {
   shouldReloadOnUserSaved,
   validateStructuredAgentMentions,
@@ -124,8 +123,7 @@ import { ConversationDispatchBanner } from './ConversationDispatchBanner'
 import { ReviewRoom } from './review/ReviewRoom'
 import type { ReviewReceiptActions } from './review/ReviewReceiptCard'
 import { MaestroControl } from './MaestroControl'
-import { MaestroActivityPill, type MaestroRun } from './MaestroActivityPill'
-import type { DelegatePart } from './OrchestrationRun'
+import { MaestroActivityPill } from './MaestroActivityPill'
 import { SubagentSessionPanel } from './SubagentSessionPanel'
 import { SubagentSessionContext, SubagentSessionsContext, type OpenSubagentSession } from './SubagentSessionContext'
 import { SubagentActivityPill } from './SubagentActivityPill'
@@ -174,8 +172,6 @@ interface QueuedMsg {
   attachments: UIAttachment[]
 
   agentMentions: StructuredAgentMentionDraft[]
-
-  maestroLive?: { runId: string; messageId: string }
 }
 
 function revokeAttachmentPreview(attachment: UIAttachment): void {
@@ -291,9 +287,6 @@ export function ChatView({
     return ids
   }, [])
   const [queue, setQueue] = useState<QueuedMsg[]>([])
-  const [maestroLive, setMaestroLive] = useState<MaestroLiveState | null>(null)
-  const [maestroSendTarget, setMaestroSendTarget] = useState<'current' | 'next'>('current')
-  const [maestroPostPending, setMaestroPostPending] = useState(0)
 
   const [failoverNotice, setFailoverNotice] = useState<string | null>(null)
   const [hookNotices, setHookNotices] = useState<HookNoticeItem[]>([])
@@ -386,44 +379,6 @@ export function ChatView({
     queueRef.current = resolved
     setQueue(resolved)
   }, [])
-  const maestroLiveRef = useRef<MaestroLiveState | null>(maestroLive)
-  const maestroLiveRevisionRef = useRef(0)
-  maestroLiveRef.current = maestroLive
-  const applyMaestroLiveEvent = useCallback(
-    (event: MaestroLiveEvent) => {
-      maestroLiveRevisionRef.current += 1
-      const changed =
-        event.kind === 'message-posted' ? [event.message] : event.kind === 'messages-updated' ? event.messages : []
-      if (changed.length > 0) {
-        const terminalIds = new Set(
-          changed
-            .filter((message) => message.status === 'embedded' || message.status === 'cancelled')
-            .map((message) => message.id)
-        )
-        if (terminalIds.size > 0) {
-          setQueueState((current) =>
-            current.filter((item) => !item.maestroLive || !terminalIds.has(item.maestroLive.messageId))
-          )
-        }
-      }
-      setMaestroLive((current) => {
-        const run = event.run
-        const base = current?.run.id === run.id ? current.messages : []
-        const updates =
-          event.kind === 'run-updated' ? [] : event.kind === 'message-posted' ? [event.message] : event.messages
-        const byId = new Map(base.map((message) => [message.id, message]))
-        for (const message of updates) byId.set(message.id, message)
-        const next = { run, messages: [...byId.values()].sort((a, b) => a.seq - b.seq) }
-        maestroLiveRef.current = next
-        return next
-      })
-    },
-    [setQueueState]
-  )
-  useEffect(
-    () => api.onChatMaestroLive(conversationId, applyMaestroLiveEvent),
-    [api, applyMaestroLiveEvent, conversationId]
-  )
   useEffect(
     () => () => {
       revokeAttachmentPreviews(attachmentsRef.current)
@@ -474,7 +429,6 @@ export function ChatView({
     draftMentions.length === 0 &&
     attachments.length === 0 &&
     queue.length === 0 &&
-    !maestroPostPending &&
     pending.length === 0 &&
     editingId === null &&
     !compacting &&
@@ -614,16 +568,6 @@ export function ChatView({
     setHighlightMsgId(id)
     highlightTimerRef.current = setTimeout(() => setHighlightMsgId(null), 2500)
   }, [])
-
-  const jumpToMessage = useCallback(
-    (messageId: string) => {
-      const el = scrollRef.current?.querySelector<HTMLElement>(`[data-msg-id="${CSS.escape(messageId)}"]`)
-      if (!el) return
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      flashHighlight(messageId)
-    },
-    [flashHighlight]
-  )
 
   const goToHit = useCallback(
     async (hit: ChatSearchHit) => {
@@ -1098,7 +1042,6 @@ export function ChatView({
     queue.length > 0 ||
     pending.length > 0 ||
     stopPending ||
-    maestroPostPending > 0 ||
     pendingQuestion !== null ||
     status === 'asking' ||
     status === 'waiting' ||
@@ -1313,7 +1256,6 @@ export function ChatView({
     let alive = true
     const compactionRevision = compactionRevisionRef.current
     const questionRevision = runtimeQuestionRevisionRef.current
-    const maestroRevision = maestroLiveRevisionRef.current
     void api.chatRuntime(conversationId).then((runtime) => {
       if (!alive || convIdRef.current !== conversationId) return
       if (runtime.backgroundCompaction) {
@@ -1330,26 +1272,6 @@ export function ChatView({
       setLiveReasoningUpdate(runtime.liveReasoningUpdate)
       setLiveReasoningEfforts(runtime.liveReasoningEfforts)
       setLiveReasoningReset(runtime.liveReasoningReset)
-      if (maestroRevision === maestroLiveRevisionRef.current) {
-        const live = runtime.maestroLive ?? null
-        maestroLiveRef.current = live
-        setMaestroLive(live)
-        if (live) {
-          setQueueState((current) => {
-            const preserved = current.filter((item) => item.maestroLive?.runId !== live.run.id)
-            const pendingLive: QueuedMsg[] = live.messages
-              .filter((message) => message.status === 'pending')
-              .map((message) => ({
-                id: message.id,
-                text: message.text,
-                attachments: [],
-                agentMentions: message.agentMentions,
-                maestroLive: { runId: live.run.id, messageId: message.id },
-              }))
-            return [...preserved, ...pendingLive]
-          })
-        }
-      }
       if (questionRevision === runtimeQuestionRevisionRef.current) {
         setRuntimeQuestionState(runtime.pendingQuestions)
         setMessages((prev) => {
@@ -1635,50 +1557,6 @@ export function ChatView({
         return
       }
       if (streamingRef.current) {
-        const live = maestroLiveRef.current
-        if (isMaestro && maestroSendTarget === 'current' && atts.length === 0 && live?.run.status === 'active') {
-          setMaestroPostPending((count) => count + 1)
-          void api
-            .chatMaestroLivePost(conversationId, live.run.id, text, agentMentions)
-            .then((result) => {
-              if (result.ok) {
-                applyMaestroLiveEvent({ kind: 'message-posted', run: result.run, message: result.message })
-                setQueueState((current) => [
-                  ...current,
-                  {
-                    id: result.message.id,
-                    text,
-                    attachments: [],
-                    agentMentions,
-                    maestroLive: { runId: result.run.id, messageId: result.message.id },
-                  },
-                ])
-
-                void api.chatMaestroLiveSnapshot(conversationId).then((snapshot) => {
-                  if (!snapshot || convIdRef.current !== conversationId) return
-                  applyMaestroLiveEvent({
-                    kind: 'messages-updated',
-                    run: snapshot.run,
-                    messages: snapshot.messages,
-                  })
-                })
-                return
-              }
-
-              setQueueState((current) => [
-                ...current,
-                { id: crypto.randomUUID(), text, attachments: [], agentMentions },
-              ])
-            })
-            .catch(() =>
-              setQueueState((current) => [
-                ...current,
-                { id: crypto.randomUUID(), text, attachments: [], agentMentions },
-              ])
-            )
-            .finally(() => setMaestroPostPending((count) => Math.max(0, count - 1)))
-          return
-        }
         const invocation = parseSlashInvocation(text)
         const invokesSkill = Boolean(
           invocation && remoteCmdsRef.current.skills.some((skill) => skill.name === invocation.name)
@@ -1710,7 +1588,6 @@ export function ChatView({
           return
         }
         setQueueState((q) => [...q, { id: crypto.randomUUID(), text, attachments: atts, agentMentions }])
-        if (isMaestro) setMaestroSendTarget('current')
         return
       }
       // A refused send must not cost what was written: a busy chat, or a prompt a plugin hook blocked, gives the
@@ -1722,17 +1599,7 @@ export function ChatView({
         setAttachments((current) => (current.length ? current : atts))
       })
     },
-    [
-      api,
-      applyMaestroLiveEvent,
-      attachments,
-      conversationId,
-      doSend,
-      isMaestro,
-      maestroSendTarget,
-      midTurnSteering,
-      setQueueState,
-    ]
+    [api, attachments, conversationId, doSend, isMaestro, midTurnSteering, setQueueState]
   )
 
   /** A dictation or the assistant's voice, sent joined to the draft. */
@@ -1756,9 +1623,8 @@ export function ChatView({
               name: resource.id,
               description: resource.description,
               category: resource.specialties[0],
-              source: resource.agentName ? `maestro-import:${resource.agentName}` : 'maestro-pool',
+              source: 'maestro-pool',
               virtual: true,
-              baseAgentName: resource.agentName,
             })),
         }))
       : api.chatSubagentProfilesCatalog(conversationId)
@@ -2114,17 +1980,6 @@ export function ChatView({
     !streaming &&
     messages.length >= 2
 
-  const maestroRuns = useMemo<MaestroRun[]>(() => {
-    const runs: MaestroRun[] = []
-    for (const message of messages) {
-      const parts = message.parts.filter(
-        (part): part is DelegatePart => part.type === 'tool' && part.toolName === 'delegate'
-      )
-      if (parts.length > 0) runs.push({ messageId: message.id, parts })
-    }
-    return runs
-  }, [messages])
-
   const reloadSubagentSessions = useCallback(async () => {
     const sessions = await api.chatSubagentSessions(conversationId, { limit: 200 })
     setSubagentSessions(sessions)
@@ -2207,15 +2062,8 @@ export function ChatView({
     applyReasoning(next)
   }, [applyReasoning, modelMeta?.nativeUltraMode, reasoning, reasoningEfforts])
   const canCycleReasoning = modelMeta?.reasoning === true || maestrlyUltraActive
-  const maestroLiveActive = isMaestro && streaming && maestroLive?.run.status === 'active'
-  const effectiveMaestroTarget = attachments.length > 0 ? 'next' : maestroSendTarget
   const experienceTransitionDisabled =
-    streaming ||
-    compacting ||
-    queue.length > 0 ||
-    maestroPostPending > 0 ||
-    pending.length > 0 ||
-    pendingQuestion !== null
+    streaming || compacting || queue.length > 0 || pending.length > 0 || pendingQuestion !== null
 
   return (
     <SubagentSessionContext.Provider value={openSubagentSession}>
@@ -2328,13 +2176,7 @@ export function ChatView({
                 )}
 
                 {isMaestro ? (
-                  <MaestroActivityPill
-                    runs={maestroRuns}
-                    conversationId={conversationId}
-                    liveState={maestroLive}
-                    onOpenMention={openMention}
-                    onJumpToMessage={jumpToMessage}
-                  />
+                  <MaestroActivityPill conversationId={conversationId} subagentSessions={subagentSessions} />
                 ) : (
                   <SubagentActivityPill sessions={subagentSessions} />
                 )}
@@ -2394,22 +2236,10 @@ export function ChatView({
                         className="flex items-center gap-2 rounded-lg border border-white/[0.06] bg-white/[0.03] px-2.5 py-1.5 text-[13px]"
                       >
                         <span className="min-w-0 flex-1 truncate text-foreground">{q.text}</span>
-                        {q.maestroLive && (
-                          <span className="shrink-0 rounded bg-amber-400/10 px-1.5 py-0.5 text-[10px] text-amber-200">
-                            {t('view.maestroLiveWaiting')}
-                          </span>
-                        )}
                         <button
                           type="button"
                           title={t('view.queueEdit')}
                           onClick={() => {
-                            if (q.maestroLive) {
-                              void api.chatMaestroLiveCancel(
-                                conversationId,
-                                q.maestroLive.runId,
-                                q.maestroLive.messageId
-                              )
-                            }
                             setDraft(q.text)
                             setDraftMentions(q.agentMentions)
                             setAttachments(q.attachments)
@@ -2423,13 +2253,6 @@ export function ChatView({
                           type="button"
                           title={t('view.queueRemove')}
                           onClick={() => {
-                            if (q.maestroLive) {
-                              void api.chatMaestroLiveCancel(
-                                conversationId,
-                                q.maestroLive.runId,
-                                q.maestroLive.messageId
-                              )
-                            }
                             revokeAttachmentPreviews(q.attachments)
                             setQueueState((cur) => cur.filter((x) => x.id !== q.id))
                           }}
@@ -2535,14 +2358,10 @@ export function ChatView({
                   onMentionsChange={setDraftMentions}
                   structuredAgentMentions={draftMentions}
                   streaming={streaming}
-                  sendWhileStreaming={maestroLiveActive || midTurnSteering}
+                  sendWhileStreaming={midTurnSteering}
                   placeholder={isRoutineRun ? t('run.composerPlaceholderDone', { ns: 'routines' }) : undefined}
                   streamingPlaceholder={
-                    maestroLiveActive
-                      ? t('composer.placeholderMaestroLive')
-                      : isRoutineRun
-                        ? t('run.composerPlaceholderRunning', { ns: 'routines' })
-                        : undefined
+                    isRoutineRun ? t('run.composerPlaceholderRunning', { ns: 'routines' }) : undefined
                   }
                   disabled={keyMissing || botBlocked}
                   disabledPlaceholder={botBlocked ? t('bots.managedBy', { ns: 'ui', name: botName }) : undefined}
@@ -2571,31 +2390,6 @@ export function ChatView({
                   }
                   leftSlot={
                     <>
-                      {maestroLiveActive && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setMaestroSendTarget((current) => (current === 'current' ? 'next' : 'current'))
-                          }
-                          disabled={attachments.length > 0}
-                          className={cn(
-                            'mr-1 rounded-full border px-2 py-0.5 text-[11px] transition',
-                            effectiveMaestroTarget === 'current'
-                              ? 'border-amber-400/30 bg-amber-400/10 text-amber-100'
-                              : 'border-white/10 bg-white/[0.03] text-muted-foreground',
-                            attachments.length > 0 && 'cursor-not-allowed opacity-60'
-                          )}
-                          title={
-                            attachments.length > 0
-                              ? t('composer.maestroAttachmentsNext')
-                              : t('composer.maestroTargetToggle')
-                          }
-                        >
-                          {effectiveMaestroTarget === 'current'
-                            ? t('composer.maestroTargetCurrent')
-                            : t('composer.maestroTargetNext')}
-                        </button>
-                      )}
                       <ChatPlusMenu
                         conversationId={conversationId}
                         mode={mode}

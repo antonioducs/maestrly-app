@@ -69,7 +69,7 @@ describe('Maestro and Standard conversation behavior', () => {
     expect(getConversation(maestro.id)?.experience).toBe('maestro')
   })
 
-  it('refuses the handoff while a durable Maestro run is still active', () => {
+  it('allows the handoff when an old row exists in chat_maestro_runs but no turn is active', () => {
     const workspace = makeWorkspace()
     const maestro = makeConversation(workspace.id, { experience: 'maestro', status: 'ready' })
     getDb()
@@ -79,11 +79,8 @@ describe('Maestro and Standard conversation behavior', () => {
       )
       .run('run-1', maestro.id, Date.now())
 
-    expect(convertMaestroConversationToStandard(maestro.id)).toEqual({
-      ok: false,
-      error: 'conversation-busy',
-    })
-    expect(getConversation(maestro.id)?.experience).toBe('maestro')
+    expect(convertMaestroConversationToStandard(maestro.id)).toEqual({ ok: true })
+    expect(getConversation(maestro.id)?.experience).toBe('standard')
   })
 
   it('enters Maestro without losing history, model, Pool, or the current Standard mode', () => {

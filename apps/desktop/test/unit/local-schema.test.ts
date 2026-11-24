@@ -61,6 +61,7 @@ const LOCAL_TABLES = [
   'local_routine_proposals',
   'local_routine_runs',
   'local_routines',
+  'maestro_swarm_tasks',
   'memory_consolidation_state',
   'memory_extraction_state',
   'permission_saved',

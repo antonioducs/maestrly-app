@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { closeDb, freshDb } from '../helpers/db'
 import { makeConversation, makeWorkspace } from '../helpers/factories'
-import { createDefaultMaestroConfig } from '../../src/shared/maestro'
+import { createDefaultMaestroConfig, isMaestroConfigV1 } from '../../src/shared/maestro'
+import { sanitizeMaestroDraftShape } from '../../src/shared/maestro-config-validation'
 import {
   freezeMaestroTurn,
   getConversationMaestroConfig,
@@ -10,6 +11,7 @@ import {
   setConversationMaestroConfig,
   setGlobalMaestroConfig,
   setProjectConversationMaestroConfig,
+  validateMaestroConfig,
 } from '../../src/main/chat/maestro-config'
 import { setAppSetting } from '../../src/main/store'
 
@@ -21,7 +23,7 @@ describe('Maestro config persistence and snapshots', () => {
     expect(getGlobalMaestroConfig()).toMatchObject({
       source: 'safe-default',
       hasConversationOverride: false,
-      config: { version: 1, strategy: 'balanced' },
+      config: { version: 2, strategy: 'balanced' },
     })
     setAppSetting(MAESTRO_CONFIG_SETTING_KEY, '{broken')
     const recovered = getGlobalMaestroConfig()
@@ -88,7 +90,7 @@ describe('Maestro config persistence and snapshots', () => {
 
     const migrated = getGlobalMaestroConfig().config
     expect(migrated).toEqual({
-      version: 1,
+      version: 2,
       strategy: 'balanced',
       pool: [
         {
@@ -96,7 +98,7 @@ describe('Maestro config persistence and snapshots', () => {
           label: 'Legacy Worker',
           enabled: true,
           description: 'Preserve me',
-          capability: 'worker',
+          mode: 'agent',
           specialties: ['frontend'],
           instructions: 'Keep these instructions.',
           candidates: [{ providerId: 'openai', modelId: 'gpt-5', effort: 'high', fastMode: true }],
@@ -121,5 +123,139 @@ describe('Maestro config persistence and snapshots', () => {
     const workspace = makeWorkspace()
     const standard = makeConversation(workspace.id, { experience: 'standard' })
     expect(setConversationMaestroConfig(standard.id, createDefaultMaestroConfig())).toMatchObject({ ok: false })
+  })
+
+  it('migrates a v1 config to v2 on read', () => {
+    const v1 = {
+      version: 1,
+      strategy: 'balanced',
+      pool: [
+        {
+          id: 'neon',
+          label: 'Neon',
+          enabled: true,
+          description: 'd',
+          capability: 'worker',
+          specialties: [],
+          candidates: [],
+          agentName: 'general-purpose',
+        },
+        {
+          id: 'rev',
+          label: 'Rev',
+          enabled: true,
+          description: 'd',
+          capability: 'read-only',
+          specialties: [],
+          candidates: [],
+        },
+      ],
+    }
+    const result = validateMaestroConfig(v1)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value.config.version).toBe(2)
+    expect(result.value.config.pool.map((r) => r.mode)).toEqual(['agent', 'ask'])
+    expect(result.value.config.pool[0]).not.toHaveProperty('agentName')
+    expect(result.value.config.pool[0]).not.toHaveProperty('capability')
+  })
+
+  it('rejects an unknown v2 mode', () => {
+    const bad = {
+      ...createDefaultMaestroConfig(),
+      pool: [{ ...createDefaultMaestroConfig().pool[0], mode: 'boss' }],
+    }
+    expect(validateMaestroConfig(bad).ok).toBe(false)
+  })
+
+  it('default pool uses modes', () => {
+    expect(createDefaultMaestroConfig().pool.map((r) => [r.id, r.mode])).toEqual([
+      ['explorer', 'ask'],
+      ['frontend', 'agent'],
+      ['backend', 'agent'],
+      ['tester', 'agent'],
+      ['reviewer', 'ask'],
+      ['generalist', 'agent'],
+    ])
+  })
+
+  it('validates explicit mode even on v1, requires mode on v2, and migrates v1 drafts', () => {
+    const v1WithMode = {
+      version: 1,
+      strategy: 'balanced',
+      pool: [
+        {
+          id: 'designer',
+          label: 'Designer',
+          enabled: true,
+          description: 'd',
+          mode: 'design',
+          specialties: [],
+          candidates: [],
+        },
+      ],
+    }
+    const valid = validateMaestroConfig(v1WithMode)
+    expect(valid.ok).toBe(true)
+    if (valid.ok) expect(valid.value.config.pool[0]?.mode).toBe('design')
+
+    const v1WithBadMode = {
+      ...v1WithMode,
+      pool: [{ ...v1WithMode.pool[0], mode: 'boss', capability: 'worker' }],
+    }
+    expect(validateMaestroConfig(v1WithBadMode).ok).toBe(false)
+
+    const v2MissingMode = {
+      version: 2,
+      strategy: 'balanced',
+      pool: [
+        {
+          id: 'worker',
+          label: 'Worker',
+          enabled: true,
+          description: 'd',
+          capability: 'worker',
+          specialties: [],
+          candidates: [],
+        },
+      ],
+    }
+    expect(validateMaestroConfig(v2MissingMode).ok).toBe(false)
+
+    expect(isMaestroConfigV1(createDefaultMaestroConfig())).toBe(true)
+    expect(isMaestroConfigV1(v2MissingMode)).toBe(false)
+
+    const v1Draft = {
+      version: 1,
+      strategy: 'fast',
+      pool: [
+        {
+          id: 'rev',
+          label: 'Rev',
+          enabled: true,
+          description: 'd',
+          capability: 'read-only',
+          specialties: [],
+          candidates: [],
+          agentName: 'explore',
+        },
+      ],
+    }
+    const sanitized = sanitizeMaestroDraftShape(v1Draft)
+    expect(sanitized).toEqual({
+      version: 2,
+      strategy: 'fast',
+      pool: [
+        {
+          id: 'rev',
+          label: 'Rev',
+          enabled: true,
+          description: 'd',
+          mode: 'ask',
+          specialties: [],
+          candidates: [],
+        },
+      ],
+    })
   })
 })
