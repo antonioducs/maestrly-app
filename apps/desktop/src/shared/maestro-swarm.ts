@@ -45,6 +45,7 @@ function escapeCell(value: string | null | undefined): string {
   if (value === null || value === undefined) return '-'
   const cleaned = value
     .replace(/\r\n|\r|\n/g, ' ')
+    .replace(/\\/g, '\\\\')
     .replace(/\|/g, '\\|')
     .trim()
   return cleaned.length > 0 ? cleaned : '-'

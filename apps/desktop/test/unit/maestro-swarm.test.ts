@@ -421,7 +421,7 @@ describe('maestro swarm state transitions', () => {
         phase: 'changes' as MaestroSwarmPhase,
         changesReason: 'review',
         reviewRound: 2,
-        note: 'Fix | layout\nnow',
+        note: 'Fix | layout\nnow, path a\\|b',
         mergedCommit: null,
         createdAt: 2000,
         updatedAt: 2000,
@@ -431,7 +431,7 @@ describe('maestro swarm state transitions', () => {
     expect(rendered).toContain('# Maestro swarm state')
     expect(rendered).toContain('| api | API pedidos | neon | - | - | queued | 0 | - |')
     expect(rendered).toContain(
-      `| ui | UI \\| checkout form | - | ${worker1} | feat/ui | changes (review) | 2 | Fix \\| layout now |`
+      `| ui | UI \\| checkout form | - | ${worker1} | feat/ui | changes (review) | 2 | Fix \\| layout now, path a\\\\\\|b |`
     )
     expect(
       rendered.endsWith(
