@@ -513,11 +513,6 @@ import { createMaestroSwarmGit } from './maestro-swarm-git'
 import { registerMaestroConfiguratorIpc } from './maestro-configurator-ipc'
 import { maestroConfiguratorService } from './maestro-configurator'
 import { freezeMaestroTurn } from './maestro-config'
-import {
-  clearMaestroLiveRunsForConversation,
-  getActiveMaestroLiveRun,
-  reconcileInterruptedMaestroLiveRuns,
-} from './maestro-live-store'
 import { canReplayOpenAIInferenceState, getOpenAIInferenceState } from './openai/inference-store'
 import { tryAcquireCwdActivity } from '../cwd-activity-coordinator'
 import {
@@ -2600,7 +2595,6 @@ export function chatRuntimeState(conversationId: string): ChatRuntimeState {
       .pendingFor(conversationId)
       .map((request) => toRequestPayload(request).request),
     pendingQuestions: getQuestionBroker().pendingQuestionsFor(conversationId),
-    maestroLive: null,
     midTurnSteering: run?.midTurnSteering === true,
     liveReasoningUpdate: run?.liveReasoningUpdate === true,
     liveReasoningEfforts: run?.liveReasoningEfforts ?? [],
@@ -2720,7 +2714,6 @@ export function convertMaestroConversationToStandard(conversationId: string): Ma
   if (
     active.has(conversationId) ||
     pendingConversationOperations.has(conversationId) ||
-    getActiveMaestroLiveRun(conversationId) ||
     (conversation.status !== 'idle' && conversation.status !== 'ready' && conversation.status !== 'error')
   ) {
     return { ok: false, error: 'conversation-busy' }
@@ -2744,7 +2737,6 @@ export function convertStandardConversationToMaestro(conversationId: string): St
   if (
     active.has(conversationId) ||
     pendingConversationOperations.has(conversationId) ||
-    getActiveMaestroLiveRun(conversationId) ||
     (conversation.status !== 'idle' && conversation.status !== 'ready' && conversation.status !== 'error')
   ) {
     return { ok: false, error: 'conversation-busy' }
@@ -9875,11 +9867,6 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
   } catch {
     // Best-effort, as above.
   }
-  try {
-    reconcileInterruptedMaestroLiveRuns()
-  } catch {
-    // Best-effort: the live inbox must never prevent chat startup.
-  }
 
   // The live stream is opt-in per renderer and conversation. Counts stay in MAIN to support multiple
   // consumers in one WebContents; cleanup on `destroyed` prevents orphan subscriptions.
@@ -10604,29 +10591,6 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
     }
   })
   deps.mhandle(
-    'chat:maestro-live:post',
-    (
-      _event,
-      payload?: {
-        conversationId?: string
-        runId?: string
-        text?: string
-        agentMentions?: StructuredAgentMentionDraft[]
-      }
-    ) => {
-      const conversationId = typeof payload?.conversationId === 'string' ? payload.conversationId : ''
-      const runId = typeof payload?.runId === 'string' ? payload.runId : ''
-      const text = typeof payload?.text === 'string' ? payload.text : ''
-      if (!conversationId || !runId || !text.trim()) return { ok: false as const, error: 'invalid-input' as const }
-      return { ok: false as const, error: 'run-not-active' as const }
-    }
-  )
-  deps.mhandle('chat:maestro-live:snapshot', (_event, _conversationId: string) => null)
-  deps.mhandle(
-    'chat:maestro-live:cancel',
-    (_event, _payload?: { conversationId?: string; runId?: string; messageId?: string }) => false
-  )
-  deps.mhandle(
     'chat:subagents:list',
     (
       _e,
@@ -11095,7 +11059,6 @@ export function registerChatIpc(deps: ChatIpcDeps): void {
       if (getConvUiPrefs(conversationId).hookSession)
         patchConvUiPrefs(conversationId, { hookSession: { cleared: true } })
       publishBackgroundCompactionStatus(conversationId, backgroundCompactionStatus(conversationId))
-      clearMaestroLiveRunsForConversation(conversationId)
       return { ok: true }
     } finally {
       releaseConversationOperation(conversationId, operation)

@@ -95,7 +95,7 @@ function chatConversationIdFromChannel(channel: string): string | null {
 
 /** The conversation of the other per-conversation channels of a turn, which its renderer receives unsubscribed. */
 function chatConversationIdOfUngatedChannel(channel: string): string | null {
-  for (const prefix of ['chat:maestro-live:', 'chat:subscription-failover:'])
+  for (const prefix of ['chat:subscription-failover:'])
     if (channel.startsWith(prefix)) return channel.slice(prefix.length)
   return null
 }

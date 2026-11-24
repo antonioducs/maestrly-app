@@ -1970,8 +1970,6 @@ async function buildDynamicTools(
       const supervisionTools = buildSubagentSupervisionTools({
         conversationId: args.conversationId,
         parentMessageId: state.messageId,
-        maestro: false,
-        signal: args.signal,
       })
       runtimes.push(...(await toolSetRuntimes(supervisionTools, new Set())))
     }

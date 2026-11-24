@@ -61,7 +61,6 @@ import {
 import { interactiveTool } from '../../src/main/chat/autonomous'
 import { setAssistantRoleResolver } from '../../src/main/chat/harness/assistant-role'
 import { assistantActionBudget } from '../../src/main/assistant/action-budget'
-import { isMaestroWorkerOperationalToolName } from '../../src/main/chat/maestro-worker-tools'
 
 const humans: HumanTurnOrigin[] = []
 const linked: LinkedTurnOrigin[] = []
@@ -143,7 +142,6 @@ describe('conversation link tool surface', () => {
     for (const name of CONVERSATION_LINK_TOOL_NAMES) {
       expect(worker.has(name)).toBe(false)
       expect(explicit.has(name)).toBe(false)
-      expect(isMaestroWorkerOperationalToolName(name)).toBe(false)
       expect(interactiveTool(name)).toBe(true)
       expect(interactiveTool(`mcp__maestrly__${name}`)).toBe(true)
     }
@@ -358,7 +356,6 @@ describe('conversation link wiring across runtimes', () => {
     'github-copilot/subagent-runner.ts',
     'cursor-subscription/subagent-runner.ts',
     'antigravity-subscription/subagent-runner.ts',
-    'maestro-worker-tools.ts',
   ])('%s never forwards them to children', (file) => {
     expect(read(file)).toContain('...PARENT_ONLY_CONVERSATION_TOOL_NAMES')
   })

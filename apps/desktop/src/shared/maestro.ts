@@ -1,4 +1,4 @@
-import type { SubagentExecutionSnapshotV1, SubagentProfileCandidate } from './subagent-profiles'
+import type { SubagentProfileCandidate } from './subagent-profiles'
 
 export const MAESTRO_CONFIG_VERSION = 2 as const
 export const MAESTRO_STRATEGY_PROFILE_VERSION = 1 as const
@@ -84,35 +84,6 @@ export type MaestroStrategyProfileMutationResult =
   | { ok: true; profile: MaestroStrategyProfileV1; catalog: MaestroStrategyProfileCatalog }
   | { ok: false; error: string }
 
-export type MaestroDelegateKind =
-  | 'explore'
-  | 'implement'
-  | 'test'
-  | 'review'
-  | 'fix'
-  | 'design'
-  | 'general'
-  | (string & {})
-export type MaestroDelegateDomain =
-  | 'frontend'
-  | 'backend'
-  | 'fullstack'
-  | 'infra'
-  | 'data'
-  | 'docs'
-  | 'general'
-  | (string & {})
-export interface MaestroDelegateIntent {
-  agent: string
-  task: string
-  kind: MaestroDelegateKind
-  domain: MaestroDelegateDomain
-  reviewOf: string[]
-  independent: boolean
-
-  resumeSessionId?: string
-}
-
 export interface MaestroTurnSnapshotV1 {
   version: typeof MAESTRO_CONFIG_VERSION
   strategy: MaestroStrategy
@@ -120,23 +91,6 @@ export interface MaestroTurnSnapshotV1 {
   source: MaestroConfigPayload['source']
   diagnostics: MaestroConfigDiagnostic[]
   frozenAt: number
-}
-
-export type MaestroDelegationStatus = 'queued' | 'routing' | 'running' | 'success' | 'error' | 'aborted'
-
-export interface MaestroDelegationSnapshotV1 {
-  version: typeof MAESTRO_CONFIG_VERSION
-  delegationId: string
-  kind: MaestroDelegateKind
-  domain: MaestroDelegateDomain
-  reviewOf: string[]
-  strategy: MaestroStrategy
-  selection: 'parent-selected'
-  resource: MaestroResourceV1
-  profile: SubagentExecutionSnapshotV1
-  routedAt: number
-
-  resumedFrom?: string
 }
 
 const defaultPool = (): MaestroResourceV1[] => [

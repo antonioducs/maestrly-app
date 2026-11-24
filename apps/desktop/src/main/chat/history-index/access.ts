@@ -1,10 +1,9 @@
 import { isBotMode } from '../../fleet/instance/config'
-import type { MaestroWorkerScope } from '../../maestro-worker-scope'
 import { getConversation, getDb } from '../../store'
 
 /**
  * Who may read the history of other conversations, and which. Only a person's own project conversation, in the
- * desktop app and not as a delegated worker, may look into the other project conversations of its workspace
+ * desktop app, may look into the other project conversations of its workspace
  * (archived ones included, bots' excluded). Standalone chats, bot conversations and bot runtimes stay confined to
  * their own history.
  */
@@ -19,13 +18,11 @@ export interface HistoryScopeConversation {
 
 export type HistoryWorkspaceAccess =
   | { ok: true; workspaceId: string; conversations: HistoryScopeConversation[] }
-  | { ok: false; reason: 'worker' | 'bot' | 'standalone' | 'missing' }
+  | { ok: false; reason: 'bot' | 'standalone' | 'missing' }
 
 function callerWorkspace(
-  callerId: string,
-  workerScope?: MaestroWorkerScope
-): { workspaceId: string } | { reason: 'worker' | 'bot' | 'standalone' | 'missing' } {
-  if (workerScope) return { reason: 'worker' }
+  callerId: string
+): { workspaceId: string } | { reason: 'bot' | 'standalone' | 'missing' } {
   if (isBotMode()) return { reason: 'bot' }
   const caller = getConversation(callerId)
   if (!caller) return { reason: 'missing' }
@@ -35,8 +32,8 @@ function callerWorkspace(
 }
 
 /** The caller first, then the most recently active project conversations of its workspace. */
-export function workspaceHistoryAccess(callerId: string, workerScope?: MaestroWorkerScope): HistoryWorkspaceAccess {
-  const caller = callerWorkspace(callerId, workerScope)
+export function workspaceHistoryAccess(callerId: string): HistoryWorkspaceAccess {
+  const caller = callerWorkspace(callerId)
   if ('reason' in caller) return { ok: false, reason: caller.reason }
   const rows = getDb()
     .prepare(
@@ -63,13 +60,9 @@ export function workspaceHistoryAccess(callerId: string, workerScope?: MaestroWo
 }
 
 /** Whether the caller may read `targetId`'s history: its own always, another only under workspace access. */
-export function canReadConversationHistory(
-  callerId: string,
-  targetId: string,
-  workerScope?: MaestroWorkerScope
-): boolean {
+export function canReadConversationHistory(callerId: string, targetId: string): boolean {
   if (targetId === callerId) return true
-  const caller = callerWorkspace(callerId, workerScope)
+  const caller = callerWorkspace(callerId)
   if ('reason' in caller) return false
   const target = getConversation(targetId)
   return !!target && target.scope === 'project' && target.workspaceId === caller.workspaceId && !target.botOrigin

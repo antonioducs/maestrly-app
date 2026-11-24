@@ -646,8 +646,6 @@ async function prepareRuntime(
       ? buildSubagentSupervisionTools({
           conversationId: args.conversationId,
           parentMessageId: assistantId,
-          maestro: false,
-          signal: args.signal,
         })
       : {}
     const hostRuntime = mergeCopilotToolSets(core, mcp.tools, app.tools, skillTools, {})

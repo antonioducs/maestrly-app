@@ -50,8 +50,7 @@ function validCost(value: unknown): number | null {
 }
 
 /**
- * `session` is the persisted observable session. Maestro `delegate` returns before the worker finishes, so the
- * tool-part snapshot (`meta`) never receives the final usage — the session is the source of truth when present.
+ * `session` is the persisted observable session and is the source of truth for usage and timing when present.
  */
 export function subagentRunDisplay(
   meta: SubagentRunMeta | undefined,
@@ -70,9 +69,7 @@ export function subagentRunDisplay(
     cacheCreate,
     totalTokens: totalTokensOf({ input, output, cacheRead, cacheCreate }),
     runtimeEstimatedCostUsd: validCost(session?.runtimeEstimatedCostUsd) ?? validCost(meta?.runtimeEstimatedCostUsd),
-    // `routedAt` keeps already-persisted Maestro runs correct after this field was introduced.
-    startedAt:
-      validTimestamp(session?.startedAt) ?? validTimestamp(meta?.startedAt) ?? validTimestamp(meta?.maestro?.routedAt),
+    startedAt: validTimestamp(session?.startedAt) ?? validTimestamp(meta?.startedAt),
     durationMs:
       typeof session?.durationMs === 'number'
         ? session.durationMs

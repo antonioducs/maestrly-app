@@ -12,7 +12,6 @@ import type {
   SubagentTranscriptChange,
   SubagentTranscriptPage,
 } from '../../shared/chat'
-import type { MaestroDelegationSnapshotV1 } from '../../shared/maestro'
 import type { SubagentExecutionSnapshotV1 } from '../../shared/subagent-profiles'
 import { getDb, transaction } from '../store'
 import { parseParts } from './message'
@@ -95,9 +94,6 @@ function summaryFromRow(row: SessionRow): SubagentSessionSummary {
     ...(json<SubagentExecutionSnapshotV1>(row.profile_json)
       ? { profile: json<SubagentExecutionSnapshotV1>(row.profile_json)! }
       : {}),
-    ...(json<MaestroDelegationSnapshotV1>(row.maestro_json)
-      ? { maestro: json<MaestroDelegationSnapshotV1>(row.maestro_json)! }
-      : {}),
     startedAt: row.started_at,
     lastActivityAt: row.last_activity_at,
     ...(finishedAt != null ? { finishedAt, durationMs: Math.max(0, finishedAt - row.started_at) } : {}),
@@ -141,7 +137,6 @@ export function createSubagentSession(input: {
   agentName: string
   task: string
   profile?: SubagentExecutionSnapshotV1
-  maestro?: MaestroDelegationSnapshotV1
   startedAt?: number
   resumedFrom?: string
 }): SubagentSessionSummary {
@@ -167,7 +162,7 @@ export function createSubagentSession(input: {
         'preparing',
         'preparing-runtime',
         input.profile ? JSON.stringify(input.profile) : null,
-        input.maestro ? JSON.stringify(input.maestro) : null,
+        null,
         '{}',
         1,
         startedAt,

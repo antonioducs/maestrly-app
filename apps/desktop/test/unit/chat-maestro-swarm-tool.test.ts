@@ -11,7 +11,6 @@ import {
 import { swarmUpdateTool } from '../../src/main/chat/tools/maestro-swarm'
 import { listSwarm } from '../../src/main/chat/maestro-swarm'
 import { MAESTRO_SWARM_TOOL_NAMES, PARENT_ONLY_CONVERSATION_TOOL_NAMES } from '../../src/main/chat/tool-policy'
-import { isMaestroWorkerOperationalToolName } from '../../src/main/chat/maestro-worker-tools'
 import type { ToolContext } from '../../src/main/chat/tools/util'
 
 function context(conversationId: string): ToolContext {
@@ -39,7 +38,6 @@ describe('swarm_update tool', () => {
     expect(PARENT_ONLY_CONVERSATION_TOOL_NAMES).toContain('swarm_update')
     expect(builtinToolNamesForMode('maestro').has('swarm_update')).toBe(false)
     expect(builtinToolNamesForMode('agent').has('swarm_update')).toBe(false)
-    expect(isMaestroWorkerOperationalToolName('swarm_update')).toBe(false)
 
     const provided = new Set(['swarm_update', 'read', 'bash'])
     const worker = selectSubagentToolNames({

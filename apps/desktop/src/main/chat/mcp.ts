@@ -31,7 +31,6 @@ import type { ChatBehavior } from '../../shared/conversation-experience'
 import { capabilityBehaviorFor } from '../../shared/chat-mode'
 import { toolOutputImages } from '../../shared/chat'
 import { appToolGroupOf, type AppToolGroup } from '../../shared/app-tool-groups'
-import type { MaestroWorkerScope } from '../maestro-worker-scope'
 import {
   chatToolOutputToAiSdkOutput,
   describeToolOutputImages,
@@ -1170,8 +1169,6 @@ export async function buildAppTools(args: {
   exclude?: Set<string>
   /** App-tool groups the user turned off; their tools are omitted even when `only` lists them. */
   disabledGroups?: readonly AppToolGroup[]
-  /** Host-only operational scope for a delegated Maestro worker. Never enters a visible tool schema. */
-  workerScope?: MaestroWorkerScope
   /** Effective capability of the model receiving app-tool results. */
   supportsImages?: boolean
   /** Host-owned fallback for runtimes without vision. */
@@ -1179,7 +1176,7 @@ export async function buildAppTools(args: {
 }): Promise<{ tools: ToolSet; close: () => Promise<void> }> {
   const { buildAppToolsServer } = await loadAppToolsRegistry()
   const [clientT, serverT] = InMemoryTransport.createLinkedPair()
-  const server = buildAppToolsServer(args.conversationId, args.workerScope)
+  const server = buildAppToolsServer(args.conversationId)
   const client = new Client({ name: 'maestrly-chat-app', version: '1.0.0' })
   try {
     await server.connect(serverT)

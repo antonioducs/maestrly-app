@@ -270,8 +270,6 @@ describe('OpenAI tool optimization', () => {
       ...buildSubagentSupervisionTools({
         conversationId: 'conv-format-audit',
         parentMessageId: 'msg-format-audit',
-        maestro: true,
-        signal: new AbortController().signal,
       }),
       ...autonomousReportTools(),
     }

@@ -3,8 +3,6 @@ import { unwrapCursorMcpToolCall } from './cursor-mcp-tool'
 import type { HarnessProfileIdentity } from './harness'
 import type { JSONObject, JSONValue, SharedV3ProviderOptions } from '@ai-sdk/provider'
 import type { SubagentExecutionSnapshotV1 } from './subagent-profiles'
-import type { MaestroDelegationSnapshotV1 } from './maestro'
-import type { MaestroLiveState } from './maestro-live'
 import type { BackgroundCompactionConfig, BackgroundCompactionStatus } from './background-compaction'
 import type { AppToolGroupState } from './app-tool-groups'
 import type { PluginScope } from './plugins'
@@ -322,8 +320,6 @@ export function contextOccupancy(u: ChatUsage): number {
 
 export interface SubagentRunMeta {
   profile?: SubagentExecutionSnapshotV1
-
-  maestro?: MaestroDelegationSnapshotV1
   /** Wall-clock origin of this run. Persisted so the live timer survives renderer remounts and reloads. */
   startedAt?: number
   usage?: { input: number; output: number; cacheRead: number; cacheCreate: number }
@@ -381,7 +377,6 @@ export interface SubagentSessionSummary {
   phase?: string
   currentTool?: string
   profile?: SubagentExecutionSnapshotV1
-  maestro?: MaestroDelegationSnapshotV1
   startedAt: number
   lastActivityAt: number
   finishedAt?: number
@@ -1306,8 +1301,6 @@ export interface ChatRuntimeState {
   backgroundCompaction?: BackgroundCompactionStatus
   pendingPermissions: ChatPermissionRequest[]
   pendingQuestions: PendingChatQuestion[]
-
-  maestroLive?: MaestroLiveState | null
 
   midTurnSteering: boolean
   liveReasoningUpdate: boolean

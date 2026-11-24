@@ -64,7 +64,6 @@ import {
   setTerminalPopupFocuser,
 } from './terminal-manager'
 import { hasAnyOwnedGroups } from './process-ownership/owned-groups'
-import { activeMaestroDelegationCount } from './chat/maestro-delegation-registry'
 import { installSystemQuitHandlers } from './system-quit'
 import { settleLoad } from './web-contents-load'
 import {
@@ -1744,9 +1743,7 @@ app.on('window-all-closed', () => {
 
 /** Agents, terminal commands and what they left in the background: what quitting ends and the prompt warns about. */
 function quitInterruptsWork(): boolean {
-  return (
-    activeChatRunCount() > 0 || activeMaestroDelegationCount() > 0 || hasRunningTerminalCommand() || hasAnyOwnedGroups()
-  )
+  return activeChatRunCount() > 0 || hasRunningTerminalCommand() || hasAnyOwnedGroups()
 }
 
 async function confirmQuit(): Promise<boolean> {

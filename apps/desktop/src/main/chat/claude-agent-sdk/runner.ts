@@ -707,8 +707,6 @@ async function prepareRuntime(
       ? buildSubagentSupervisionTools({
           conversationId: args.conversationId,
           parentMessageId: assistantId,
-          maestro: false,
-          signal: args.signal,
         })
       : {}
     const governed: ToolSet = { ...hostTools, ...taskTools, ...supervisionTools }

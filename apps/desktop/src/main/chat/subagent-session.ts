@@ -11,7 +11,6 @@ import type {
   SubagentWaitResult,
   ToolOutput,
 } from '../../shared/chat'
-import type { MaestroDelegationSnapshotV1 } from '../../shared/maestro'
 import type { SubagentExecutionSnapshotV1 } from '../../shared/subagent-profiles'
 import { applySubagentTextUpdate, type SubagentTextUpdate } from './subagent-text-stream'
 import { clipPersistedToolOutput } from './message'
@@ -55,7 +54,6 @@ export function onSubagentSessionChanged(listener: SessionListener): () => void 
 
 /**
  * Same-process recovery for a persisted live session that no longer has an owning execution.
- * This is not a timeout: callers must first prove that the Maestro registry no longer owns the worker.
  */
 export function interruptOrphanedSubagentSession(
   sessionId: string,
@@ -176,7 +174,6 @@ class PersistentSubagentSessionRecorder implements SubagentSessionRecorder {
     agentName: string
     task: string
     profile?: SubagentExecutionSnapshotV1
-    maestro?: MaestroDelegationSnapshotV1
     startedAt?: number
     resumedFrom?: string
   }) {
@@ -388,7 +385,6 @@ export function createSubagentSessionRecorder(input: {
   agentName: string
   task: string
   profile?: SubagentExecutionSnapshotV1
-  maestro?: MaestroDelegationSnapshotV1
   startedAt?: number
   resumedFrom?: string
 }): SubagentSessionRecorder {

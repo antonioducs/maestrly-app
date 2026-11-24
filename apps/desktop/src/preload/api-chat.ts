@@ -74,7 +74,6 @@ import type {
 } from '../shared/review'
 import type { SubagentProfileModelMetaResult } from '../shared/subagent-profile-effort'
 import type { StructuredAgentMentionDraft } from '../shared/chat-agent-mentions'
-import type { MaestroLiveEvent, MaestroLivePostResult, MaestroLiveState } from '../shared/maestro-live'
 import type { MaestroSwarmTask } from '../shared/maestro-swarm'
 import type { UnifiedUsageStats } from '../shared/usage'
 import type {
@@ -574,18 +573,6 @@ export function makeChatApi(ipcRenderer: IpcTransport) {
     ): Promise<{ ok: boolean; applied?: boolean; error?: string }> =>
       ipcRenderer.invoke('chat:update-live-reasoning', conversationId, effort),
 
-    chatMaestroLivePost: (
-      conversationId: string,
-      runId: string,
-      text: string,
-      agentMentions?: StructuredAgentMentionDraft[]
-    ): Promise<MaestroLivePostResult> =>
-      ipcRenderer.invoke('chat:maestro-live:post', { conversationId, runId, text, agentMentions }),
-    chatMaestroLiveSnapshot: (conversationId: string): Promise<MaestroLiveState | null> =>
-      ipcRenderer.invoke('chat:maestro-live:snapshot', conversationId),
-    chatMaestroLiveCancel: (conversationId: string, runId: string, messageId: string): Promise<boolean> =>
-      ipcRenderer.invoke('chat:maestro-live:cancel', { conversationId, runId, messageId }),
-
     chatHistoryPage: (
       conversationId: string,
       opts?: { beforeSeq?: number; aroundSeq?: number; limit?: number }
@@ -856,12 +843,6 @@ export function makeChatApi(ipcRenderer: IpcTransport) {
         ipcRenderer.removeListener(channel, listener)
         ipcRenderer.send('chat:unsubscribe', conversationId)
       }
-    },
-    onChatMaestroLive: (conversationId: string, cb: (event: MaestroLiveEvent) => void): (() => void) => {
-      const channel = `chat:maestro-live:${conversationId}`
-      const listener = (_event: unknown, payload: MaestroLiveEvent) => cb(payload)
-      ipcRenderer.on(channel, listener)
-      return () => ipcRenderer.removeListener(channel, listener)
     },
     onChatSubagentSession: (conversationId: string, cb: (event: SubagentSessionChangedEvent) => void): (() => void) => {
       const channel = `chat:subagent-session:${conversationId}`

@@ -4,7 +4,6 @@ import { Bot, ChevronRight, PanelRightOpen, TriangleAlert } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useHostApi } from '@/lib/hosts/host-context'
 import { toolOutputText, type ChatModelMeta, type MessagePart, type ToolState } from '../../../shared/chat'
-import { stripMaestroLiveEnvelope } from '../../../shared/maestro-live'
 import {
   subagentEffortLabel,
   subagentProfileDiagnostics,
@@ -89,10 +88,7 @@ export const SubagentCard = memo(function SubagentCard({
     (session) => session.toolCallId === part.toolCallId && session.parentMessageId === messageId
   )
   const display = subagentRunDisplay(stateMeta, observableSession)
-  const agent =
-    typeof input?.agent === 'string'
-      ? input.agent
-      : (stateMeta?.maestro?.resource.label ?? display.profile?.agentName ?? null)
+  const agent = typeof input?.agent === 'string' ? input.agent : (display.profile?.agentName ?? null)
   const prompt = typeof input?.prompt === 'string' ? input.prompt : typeof input?.task === 'string' ? input.task : null
   const running =
     part.state.status === 'running' ||
@@ -123,8 +119,7 @@ export const SubagentCard = memo(function SubagentCard({
       <ToolCallCard part={part} conversationId={conversationId} messageId={messageId} />
     )
 
-  const progressTail =
-    running && part.state.status === 'running' ? stripMaestroLiveEnvelope(toolOutputText(part.state.output)) : ''
+  const progressTail = running && part.state.status === 'running' ? toolOutputText(part.state.output) : ''
   const progressLines = progressTail.split('\n').filter((l) => l.trim())
   const preparingRuntime = t('subagent.preparingRuntime')
   const modelStarted = t('subagent.modelStarted')
@@ -270,10 +265,7 @@ export const SubagentCard = memo(function SubagentCard({
               <div className="max-h-72 overflow-auto rounded bg-black/30 p-2 text-[13px]">
                 {/* Keep the legacy JSX contract discoverable for the file-reference UI test. */}
                 {/* <MarkdownViewer markdown={part.state.output} onOpenMention={onOpenMention} /> */}
-                <MarkdownViewer
-                  markdown={stripMaestroLiveEnvelope(toolOutputText(part.state.output))}
-                  onOpenMention={onOpenMention}
-                />
+                <MarkdownViewer markdown={toolOutputText(part.state.output)} onOpenMention={onOpenMention} />
               </div>
             </>
           )}
@@ -284,7 +276,7 @@ export const SubagentCard = memo(function SubagentCard({
                 part.state.error === 'Aborted' ? 'text-muted-foreground' : 'text-red-400'
               )}
             >
-              {part.state.error === 'Aborted' ? t('subagent.aborted') : stripMaestroLiveEnvelope(part.state.error)}
+              {part.state.error === 'Aborted' ? t('subagent.aborted') : part.state.error}
             </pre>
           )}
           {part.state.status === 'denied' && (

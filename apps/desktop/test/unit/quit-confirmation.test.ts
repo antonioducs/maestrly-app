@@ -15,14 +15,13 @@ function declaration(head: string): string {
 
 interface Work {
   chatRuns: number
-  delegations: number
   terminalCommand: boolean
   backgroundCommands: boolean
 }
 
 /** Runs the real quit confirmation of the main entry against a stub app, dialog and work probes. */
 function quitConfirmation(work: Partial<Work> = {}, answer: 'cancel' | 'close' = 'close') {
-  const state: Work = { chatRuns: 0, delegations: 0, terminalCommand: false, backgroundCommands: false, ...work }
+  const state: Work = { chatRuns: 0, terminalCommand: false, backgroundCommands: false, ...work }
   const code = transformSync(
     [
       'let backgroundQuit = false',
@@ -47,7 +46,6 @@ function quitConfirmation(work: Partial<Work> = {}, answer: 'cancel' | 'close' =
     dialog: { showMessageBox },
     tMain: () => (key: string) => key,
     activeChatRunCount: () => state.chatRuns,
-    activeMaestroDelegationCount: () => state.delegations,
     hasRunningTerminalCommand: () => state.terminalCommand,
     hasAnyOwnedGroups: () => state.backgroundCommands,
     isE2E: () => false,
@@ -77,7 +75,6 @@ describe('quit confirmation', () => {
 
   it.each<[string, Partial<Work>]>([
     ['an agent turn', { chatRuns: 1 }],
-    ['a delegated agent', { delegations: 1 }],
     ['a terminal command', { terminalCommand: true }],
     ['a background command', { backgroundCommands: true }],
   ])('asks before ending %s, and cancelling keeps the app open', async (_label, work) => {

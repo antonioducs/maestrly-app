@@ -7,7 +7,6 @@ import { registerTerminalTools } from './mcp/tools/terminal'
 import { registerConversationNotesTools, registerProjectNotesTools } from './mcp/tools/notes'
 import { registerMemoryTools } from './mcp/tools/memory'
 import { registerDebugTools } from './mcp/tools/debug'
-import type { MaestroWorkerScope } from './maestro-worker-scope'
 import { registerBotModeTools } from './mcp/tools/bot-instance'
 import { registerServerModeTools } from './mcp/tools/server-computer'
 import { registerArtifactTools } from './mcp/tools/artifacts'
@@ -34,10 +33,10 @@ function buildNativeAppToolsServer(name: string): {
   return { server, locale, t }
 }
 
-export function buildAppToolsServer(conversationId: string, workerScope?: MaestroWorkerScope): McpServer {
+export function buildAppToolsServer(conversationId: string): McpServer {
   const { server, locale, t } = buildNativeAppToolsServer('maestrly-app-tools')
 
-  const ctx = { server, convId: conversationId, locale, t, workerScope }
+  const ctx = { server, convId: conversationId, locale, t }
   const conversation = getConversation(conversationId)
   registerBrowserTools(ctx)
   registerTerminalTools(ctx)
@@ -62,7 +61,7 @@ export function buildAppToolsServer(conversationId: string, workerScope?: Maestr
   }
   registerBotModeTools(ctx)
   registerServerModeTools(ctx)
-  // Only where the prompt teaches interfaces: never for delegated workers, and not when the person turned them off.
-  if (!workerScope && generatedInterfacesEnabled()) registerInterfaceTools(ctx)
+  // Only where the prompt teaches interfaces, and not when the person turned them off.
+  if (generatedInterfacesEnabled()) registerInterfaceTools(ctx)
   return server
 }

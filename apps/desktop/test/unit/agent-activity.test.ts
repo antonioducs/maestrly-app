@@ -213,14 +213,14 @@ describe('chat message segments', () => {
     })
   })
 
-  it('keeps a native checkpoint and Maestro delegations out of the activity', () => {
+  it('keeps a native checkpoint out of the activity while delegate falls back to generic tool activity', () => {
     const parts: MessagePart[] = [
       tool('a', 'read', { path: 'x' }),
       { type: 'text', id: 'cp', text: 'checkpoint', checkpoint: 'openai-native' },
       tool('d', 'delegate', {}),
       tool('b', 'bash', { command: 'ls' }),
     ]
-    expect(kinds(chatActivitySegments(parts, false))).toEqual(['text', 'delegate', 'activity[read,bash]'])
+    expect(kinds(chatActivitySegments(parts, false))).toEqual(['text', 'activity[read,delegate,bash]'])
   })
 
   describe('screenshots', () => {

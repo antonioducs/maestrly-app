@@ -35,40 +35,35 @@ describe('Maestro renderer contract', () => {
     expect(preload).toContain("ipcRenderer.invoke('chat:maestro:convert-to-standard', conversationId)")
   })
 
-  it('hides Standard mode UX, disables cycling, and renders the dedicated footer and persistent timeline', () => {
+  it('hides Standard mode UX, disables cycling, and renders the dedicated Maestro control', () => {
     const view = readFileSync('src/renderer/components/chat/ChatView.tsx', 'utf8')
     const control = readFileSync('src/renderer/components/chat/MaestroControl.tsx', 'utf8')
-    const timeline = readFileSync('src/renderer/components/chat/OrchestrationRun.tsx', 'utf8')
+    const list = readFileSync('src/renderer/components/chat/ChatMessageList.tsx', 'utf8')
     expect(view).toContain('onCycleMode={isMaestro ? undefined : cycleMode}')
     expect(view).toContain("if (isMaestro) {\n      setMode('agent')")
     expect(view).toContain('<MaestroControl')
     expect(control).toContain("t('maestro.chip'")
     expect(control).toContain("t('maestro.saveConversation')")
-    expect(timeline).toContain("t('maestro.run.title')")
-    expect(timeline).toContain("t('maestro.run.parentSelected')")
-    expect(timeline).not.toContain('snapshot?.diversity')
+    expect(list).not.toContain('OrchestrationRun')
   })
 
-  it('sends to the active Maestro run while it streams and routes text with a durable fallback', () => {
+  it('queues composer messages while Maestro streams without legacy maestro-live IPC', () => {
     const view = readFileSync('src/renderer/components/chat/ChatView.tsx', 'utf8')
     const composer = readFileSync('src/renderer/components/chat/ChatComposer.tsx', 'utf8')
     const preload = readFileSync('src/preload/api-chat.ts', 'utf8')
-    // While the run streams, the main button sends whatever is typed; it stops the run only with nothing to send.
     expect(composer).toContain('const stopMode = streaming && (!canSend || !!disabled)')
     expect(composer).toContain('const queues = streaming && !sendWhileStreaming')
-    expect(view).toContain('chatMaestroLivePost')
-    expect(view).toContain("maestroSendTarget === 'current'")
-    expect(view).toContain("t('composer.maestroTargetNext')")
-    expect(view).toContain('maestroLive: { runId: result.run.id, messageId: result.message.id }')
-    expect(preload).toContain("ipcRenderer.invoke('chat:maestro-live:post'")
-    expect(preload).toContain('onChatMaestroLive')
+    expect(view).not.toContain('chatMaestroLivePost')
+    expect(view).not.toContain('maestroSendTarget')
+    expect(view).not.toContain('maestroTargetNext')
+    expect(preload).not.toContain('chat:maestro-live:')
+    expect(preload).not.toContain('onChatMaestroLive')
   })
 
-  it('localizes the Maestro panel, activity pill and orchestration timeline instead of hardcoding copy', () => {
+  it('localizes the Maestro panel and activity pill instead of hardcoding copy', () => {
     for (const file of [
       'src/renderer/components/chat/MaestroControl.tsx',
       'src/renderer/components/chat/MaestroActivityPill.tsx',
-      'src/renderer/components/chat/OrchestrationRun.tsx',
     ]) {
       const source = readFileSync(file, 'utf8')
       expect(source, file).toContain("useTranslation('chat')")
@@ -98,7 +93,6 @@ describe('Maestro renderer contract', () => {
     expect(card).toContain("t('subagent.preparingRuntime')")
     expect(card).toContain("t('subagent.modelStarted')")
     expect(display).toContain('meta?.startedAt')
-    expect(display).toContain('meta?.maestro?.routedAt')
     expect(card).not.toContain("return 'starting…'")
   })
 

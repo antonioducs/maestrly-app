@@ -1172,8 +1172,6 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     ? buildSubagentSupervisionTools({
         conversationId,
         parentMessageId: assistantId,
-        maestro: false,
-        signal,
       })
     : {}
   let allTools: ToolSet = { ...tools, ...mcp.tools, ...app.tools, ...skillTools, ...taskTools, ...supervisionTools }

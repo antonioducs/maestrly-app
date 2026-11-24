@@ -619,8 +619,6 @@ async function runCursorSubscriptionChatInScope(
         ? buildSubagentSupervisionTools({
             conversationId: args.conversationId,
             parentMessageId: assistantId,
-            maestro: false,
-            signal: args.signal,
           })
         : {}
       const rawTools: ToolSet = {

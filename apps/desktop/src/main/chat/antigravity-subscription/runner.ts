@@ -515,8 +515,6 @@ export async function runAntigravitySubscriptionChat(
       ? buildSubagentSupervisionTools({
           conversationId: args.conversationId,
           parentMessageId: assistantId,
-          maestro: false,
-          signal: args.signal,
         })
       : {}
     const rawTools: ToolSet = { ...core, ...mcp.tools, ...app.tools, ...skillTools, ...taskTools, ...supervisionTools }

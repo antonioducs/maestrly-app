@@ -81,7 +81,6 @@ import {
   PARENT_ONLY_CONVERSATION_TOOL_NAMES,
 } from '../../src/main/chat/tool-policy'
 import { interactiveTool, registerAutonomousConversation } from '../../src/main/chat/autonomous'
-import { isMaestroWorkerOperationalToolName } from '../../src/main/chat/maestro-worker-tools'
 import {
   CONVERSATION_DISPATCH_MAX_PROMPT,
   conversationDispatchBranchSlug,
@@ -221,7 +220,6 @@ describe('conversation dispatch tool surface', () => {
     for (const name of CONVERSATION_DISPATCH_TOOL_NAMES) {
       expect(worker.has(name)).toBe(false)
       expect(explicit.has(name)).toBe(false)
-      expect(isMaestroWorkerOperationalToolName(name)).toBe(false)
       expect(interactiveTool(name)).toBe(true)
       expect(interactiveTool(`mcp__maestrly__${name}`)).toBe(true)
     }
@@ -1099,7 +1097,6 @@ describe('conversation dispatch wiring across runtimes', () => {
     'claude-agent-sdk/task-runtime.ts',
     'github-copilot/subagent-runner.ts',
     'cursor-subscription/subagent-runner.ts',
-    'maestro-worker-tools.ts',
   ])('%s never forwards the tools to children', (file) => {
     expect(read(file)).toContain('...PARENT_ONLY_CONVERSATION_TOOL_NAMES')
   })
