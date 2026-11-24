@@ -82,6 +82,63 @@ describe('createMaestroWorktreeConversation', () => {
     expect(row.count).toBe(0)
   })
 
+  it('carries the source uncommitted changes into one commit on the feature branch without touching the source', async () => {
+    const sourceHead = await gitCommit(repo, '.gitignore', 'secret.env\n', 'ignore secrets')
+    await writeFile(path.join(repo, 'README.md'), 'edited\n')
+    await mkdir(path.join(repo, 'prototypes'))
+    await writeFile(path.join(repo, 'prototypes', 'index.html'), '<h1>prototype</h1>\n')
+    await writeFile(path.join(repo, 'secret.env'), 'TOKEN=1\n')
+    await runGit(repo, ['add', 'README.md'])
+    const statusBefore = await runGit(repo, ['status', '--porcelain'])
+    const source = makeConversation(workspaceId, {
+      name: 'Checkout',
+      branch: 'main',
+      mode: 'local',
+      cwd: repo,
+      experience: 'standard',
+    })
+
+    const orchestrator = await createMaestroWorktreeConversation(source.id, {
+      name: 'Checkout · Maestro',
+      branchHint: 'Pedidos',
+    })
+
+    const head = (await resolveCommit(orchestrator.cwd))!
+    expect(head).not.toBe(sourceHead)
+    expect(await runGit(orchestrator.cwd, ['rev-parse', 'HEAD^'])).toBe(sourceHead)
+    expect(await runGit(orchestrator.cwd, ['log', '-1', '--format=%s'])).toMatch(/^chore: /)
+    expect(await runGit(orchestrator.cwd, ['show', 'HEAD:README.md'])).toBe('edited')
+    expect(await runGit(orchestrator.cwd, ['show', 'HEAD:prototypes/index.html'])).toBe('<h1>prototype</h1>')
+    expect(existsSync(path.join(orchestrator.cwd, 'prototypes', 'index.html'))).toBe(true)
+    expect(existsSync(path.join(orchestrator.cwd, 'secret.env'))).toBe(false)
+    expect(await runGit(orchestrator.cwd, ['status', '--porcelain'])).toBe('')
+
+    expect(await resolveCommit(repo)).toBe(sourceHead)
+    expect(await runGit(repo, ['status', '--porcelain'])).toBe(statusBefore)
+  })
+
+  it('refuses to carry a source with unresolved merge conflicts', async () => {
+    await runGit(repo, ['checkout', '-b', 'other'])
+    await gitCommit(repo, 'README.md', 'other\n', 'other change')
+    await runGit(repo, ['checkout', 'main'])
+    await gitCommit(repo, 'README.md', 'main\n', 'main change')
+    await runGit(repo, ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'merge', 'other']).catch(
+      () => undefined
+    )
+    const source = makeConversation(workspaceId, {
+      name: 'Checkout',
+      branch: 'main',
+      mode: 'local',
+      cwd: repo,
+      experience: 'standard',
+    })
+
+    await expect(
+      createMaestroWorktreeConversation(source.id, { name: 'Checkout · Maestro', branchHint: 'Pedidos' })
+    ).rejects.toThrow(/conflict/i)
+    expect(await branchExists(repo, 'feat/pedidos')).toBe(false)
+  })
+
   it('appends -2 and -3 when feat/<slug> branches already exist', async () => {
     const sourceHead = (await resolveCommit(repo))!
     const source = makeConversation(workspaceId, {

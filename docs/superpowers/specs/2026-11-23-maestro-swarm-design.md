@@ -62,7 +62,9 @@ flowchart LR
 
 - **From a plan.** "Implement with Maestro" creates the orchestrator through the dispatch allocator with worktree
   placement and a new branch `feat/<plan-slug>` (with a numeric suffix on collision), based on the source
-  conversation's HEAD. It no longer creates a shared-cwd sibling. The plan, the strategy profile and the orchestrator
+  conversation's HEAD. The source's uncommitted work (a prototype made while planning, for example) is carried in a
+  first commit built through a temporary index, without touching the source checkout. It no longer creates a
+  shared-cwd sibling. The plan, the strategy profile and the orchestrator
   profile are applied as today.
 - **From "Use Maestro" in a new chat.** The conversation is created with the placement the person chose. If its branch
   is the workspace's default branch, the contract tells the orchestrator to create a feature branch before dispatching.

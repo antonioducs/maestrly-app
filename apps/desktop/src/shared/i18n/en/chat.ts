@@ -2002,6 +2002,8 @@ export default {
       orchestratorSaved: 'This orchestrator profile will be saved only in this custom strategy.',
       handoffTitle: 'Implement with Maestro',
       handoffDescription: 'Choose the configuration, Pool, and orchestrator profile for this implementation.',
+      handoffCarriesChanges:
+        'Maestro starts on a new feature branch. Uncommitted changes in this conversation, such as a prototype, go with it in a first commit; this checkout stays as it is.',
       loading: 'Loading strategies…',
       cancel: 'Cancel',
       start: 'Create and implement',

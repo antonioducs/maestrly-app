@@ -491,7 +491,10 @@ keeps the plan.
 **Implement with Maestro** creates a Maestro orchestrator conversation in a new
 worktree on `feat/<plan-slug>` (with a numeric suffix such as `-2` on collision)
 branched from the current commit, applying the plan, the selected strategy, and
-the orchestrator profile. The orchestrator plans tasks, starts one worker
+the orchestrator profile. Uncommitted changes in the source conversation (tracked
+and untracked, never ignored files), such as a Design prototype, go with it in a
+first `chore:` commit on that branch; the source checkout and its index are left
+as they were. A source with unresolved merge conflicts is refused. The orchestrator plans tasks, starts one worker
 conversation per task in its own worktree from the Agent Pool, reviews diffs,
 sends fixes back to the same worker conversation, and merges approved worker
 branches locally with `git merge --no-ff`. Worker conversations are not archived

@@ -102,6 +102,8 @@ describe('Maestro Agent capabilities and swarm prompt', () => {
     expect(section).not.toContain('disabled-agent')
     expect(section).toContain('# Frozen Maestro Strategy\nStrategy: balanced\n' + maestroStrategyGuidance('balanced'))
     expect(section.toLowerCase()).not.toContain('delegate')
+    expect(MAESTRO_SWARM_CONTRACT).toContain('never dispatch work that is already done')
+    expect(MAESTRO_SWARM_CONTRACT).toContain('Pass prototype paths to the implementers as their reference')
   })
 
   it('returns the exact strategy guidance for every MaestroStrategy', () => {

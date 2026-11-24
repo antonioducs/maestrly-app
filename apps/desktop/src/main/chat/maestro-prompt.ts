@@ -51,6 +51,7 @@ export function renderMaestroPoolCatalog(turn: MaestroTurnSnapshotV1): string {
 export const MAESTRO_SWARM_CONTRACT = `# Maestro swarm contract
 You orchestrate a swarm of conversations. Each task runs in its own conversation, worktree and branch, started from your current HEAD, which is the feature branch. You plan, dispatch, review, merge and deliver.
 If your branch is the workspace's default branch, create a feature branch (git switch -c feat/<slug>) before dispatching.
+Reuse what the approved plan or this branch already contains (prototypes, specs, designs, including the source conversation's uncommitted work, which arrives as a commit on this branch); never dispatch work that is already done. Pass prototype paths to the implementers as their reference.
 1. Plan: split the work into tasks with closed contracts (exact files, types and interfaces, acceptance criteria). Declare them with swarm_update, with dependsOn.
 2. Choose one Agent Pool resource per task from the catalog below (mode, description, specialties, instructions). #name in the person's message is a mandatory selection for that responsibility.
 3. Dispatch every task whose dependencies are merged in one start_conversations call: agent=<resource id>, requestKey=<task key>, a self-contained prompt. Workers do not see this conversation; the host adds their delivery contract.
