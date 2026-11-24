@@ -590,6 +590,60 @@ describe('waiting for a conversation', () => {
   })
 })
 
+describe('results arriving together', () => {
+  it('delivers each result once when the second one queues while the first is still starting', async () => {
+    dispatch(source, child)
+    dispatch(source, other)
+    let releaseStart!: () => void
+    const starting = new Promise<void>((resolve) => {
+      releaseStart = resolve
+    })
+    let activeTurn: Promise<void> | null = null
+    let endTurn = () => undefined
+    const { deps, service } = harness({
+      isRunning: vi.fn((id) => id === source && activeTurn !== null),
+      waitForSlot: vi.fn((id) => (id === source && activeTurn ? activeTurn : Promise.resolve())),
+      startPeerTurn: vi.fn(async (input: ConversationPeerTurnInput) => {
+        if (activeTurn) return { ok: false as const, error: 'busy' }
+        activeTurn = new Promise<void>((resolve) => {
+          endTurn = () => {
+            activeTurn = null
+            resolve()
+          }
+        })
+        if (input.body.includes('A done')) await starting
+        return { ok: true as const }
+      }),
+    })
+    const outcome = (summaryText: string) => ({ status: 'success' as const, assistantMessageId: 'a', summaryText })
+
+    const first = service.relayDispatchResult({
+      dispatchId: `dispatch-${child}`,
+      sourceConversationId: source,
+      conversationId: child,
+      outcome: outcome('A done.'),
+    })
+    await vi.waitFor(() => expect(deps.startPeerTurn).toHaveBeenCalledTimes(1))
+    await service.relayDispatchResult({
+      dispatchId: `dispatch-${other}`,
+      sourceConversationId: source,
+      conversationId: other,
+      outcome: outcome('B done.'),
+    })
+    releaseStart()
+    await first
+    endTurn()
+    await vi.waitFor(() => expect(deps.startPeerTurn).toHaveBeenCalledTimes(2))
+    endTurn()
+    await service.idle()
+
+    const bodies = peerCalls(deps).map((input) => input.body)
+    expect(bodies).toHaveLength(2)
+    expect(bodies[0]).toContain('A done.')
+    expect(bodies[1]).toContain('B done.')
+  })
+})
+
 describe('restart', () => {
   it('delivers queued messages and drops results whose turn died with the app', async () => {
     dispatch(source, child)

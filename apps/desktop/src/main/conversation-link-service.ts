@@ -362,6 +362,7 @@ export function createConversationLinkService(deps: ConversationLinkServiceDeps)
   async function attempt(
     record: ConversationPeerMessageRecord
   ): Promise<'delivered' | 'busy' | 'unavailable' | 'failed'> {
+    if (getPeerMessage(record.messageId)?.phase !== 'queued') return 'delivered'
     if (!deps.getConversation(record.toConversationId)) {
       transitionPeerMessage(record.messageId, ['queued'], 'failed', 'target-deleted')
       return 'failed'
@@ -400,10 +401,13 @@ export function createConversationLinkService(deps: ConversationLinkServiceDeps)
       try {
         let unavailable = 0
         for (;;) {
-          const next = listQueuedPeerMessagesTo(to)[0]
-          if (!next) return
+          if (!listQueuedPeerMessagesTo(to)[0]) return
           await deps.waitForSlot(to)
           await deps.sleep(DRAIN_SETTLE_MS)
+          // Read the head after waiting: a direct delivery may have taken it meanwhile, and attempting a stale record
+          // would start the same turn twice.
+          const next = listQueuedPeerMessagesTo(to)[0]
+          if (!next) return
           if ((await attempt(next)) !== 'unavailable') continue
           if (++unavailable > UNAVAILABLE_MAX_RETRIES) return
           await deps.sleep(UNAVAILABLE_RETRY_MS)
