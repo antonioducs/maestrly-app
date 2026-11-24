@@ -5,6 +5,47 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.43.0] - 2026-11-24
+
+### Added
+
+- **Mobile notifications center and app badge**: adds the notifications center
+  across all paired servers with a header bell count, app-icon badge,
+  swipe-to-dismiss with undo, and synced read/cleared state between desktop
+  and mobile. The bot-gateway store moves to schema 26 (rolling back to an
+  older gateway requires restoring a database backup).
+- **Dispatched conversation folders on mobile**: groups conversations started
+  by another conversation under their root origin folder with a plum dispatch
+  mark and an **Open origin** action, matching desktop.
+- **Working mode selection for `start_conversations`**: `start_conversations`
+  now accepts an optional `mode` (`agent`, `design`, `plan`, or `ask`) in
+  `defaults` and per task so agents can dispatch Design, Plan, or Ask
+  conversations directly.
+- **Opt-out of confirmation when starting conversations**: adds **Settings →
+  Execution → Require your approval to start new conversations** (on by
+  default). Turning it off lets `start_conversations` run without confirmation
+  prompts and allows conversation-creation tools during host-driven turns
+  (approved plan implementation, host continuations, and returning conversation
+  results), while still blocking agent-created cascades and bot, runner, or
+  routine turns.
+
+### Changed
+
+- **Maestro conversation swarm**: Maestro now orchestrates a swarm of real
+  worker conversations, each in its own worktree branched from the
+  orchestrator's feature branch, instead of running isolated subagent workers.
+  Adds `swarm_update`, local `git merge --no-ff` merging with conflict
+  feedback, **Implement with Maestro** worktree creation preserving uncommitted
+  changes, `maestro_swarm_tasks` persistence with a unified activity pill and
+  sidebar phase badges, Agent Pool v2 (`mode` replaces `capability` and drops
+  imported `agentName` bindings, migrating v1 configs automatically on read),
+  and plugin hook execution in Maestro conversations. Also removes the
+  agent-to-agent hop limit across conversations and retires the legacy
+  `delegate` engine (the legacy `chat_maestro_runs` tables remain unused in
+  the schema so existing profiles open cleanly, while older versions will not
+  read new swarm state). See [Local data](docs/local-data.md#maestro-swarm-state)
+  and [Plugins](docs/plugins.md).
+
 ## [0.42.0] - 2026-11-22
 
 ### Added
