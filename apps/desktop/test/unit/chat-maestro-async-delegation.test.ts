@@ -77,7 +77,7 @@ describe('Maestro async delegation registry', () => {
           resource: {
             id: 'frontend-specialist',
             label: 'Frontend Specialist',
-            capability: 'worker',
+            mode: 'agent',
           },
         } as never,
         parentSignal: new AbortController().signal,
@@ -166,7 +166,7 @@ describe('Maestro async delegation registry', () => {
         domain: 'frontend',
         independent: true,
         reviewOf: [],
-        resource: { id: 'frontend-specialist', label: 'Frontend Specialist', capability: 'worker' },
+        resource: { id: 'frontend-specialist', label: 'Frontend Specialist', mode: 'agent' },
       } as never,
       parentSignal: new AbortController().signal,
       execute: async (signal) => {
@@ -209,7 +209,7 @@ describe('Maestro async delegation registry', () => {
         domain: 'frontend',
         independent: true,
         reviewOf: [],
-        resource: { id: 'frontend-specialist', label: 'Frontend Specialist', capability: 'worker' },
+        resource: { id: 'frontend-specialist', label: 'Frontend Specialist', mode: 'agent' },
       } as never,
       parentSignal: new AbortController().signal,
       execute: async (_signal, sessionRecorder) => {
@@ -264,7 +264,7 @@ describe('Maestro async delegation registry', () => {
         domain: 'frontend',
         independent: true,
         reviewOf: [],
-        resource: { id: 'frontend-specialist', label: 'Frontend Specialist', capability: 'worker' },
+        resource: { id: 'frontend-specialist', label: 'Frontend Specialist', mode: 'agent' },
       } as never,
       parentSignal: new AbortController().signal,
       execute: async (signal) =>
@@ -335,7 +335,7 @@ describe('Maestro async delegation registry', () => {
         domain: 'frontend',
         independent: true,
         reviewOf: [],
-        resource: { id: 'frontend-specialist', label: 'Frontend Specialist', capability: 'worker' },
+        resource: { id: 'frontend-specialist', label: 'Frontend Specialist', mode: 'agent' },
       } as never,
       parentSignal: new AbortController().signal,
       execute: async (signal) =>
@@ -374,7 +374,7 @@ describe('Maestro async delegation registry', () => {
         domain: 'frontend',
         independent: true,
         reviewOf: [],
-        resource: { id: 'frontend-specialist', label: 'Frontend Specialist', capability: 'worker' },
+        resource: { id: 'frontend-specialist', label: 'Frontend Specialist', mode: 'agent' },
       } as never,
       parentSignal: new AbortController().signal,
       execute: async () => ({ output: 'Returned without terminal state.' }),
@@ -457,7 +457,7 @@ describe('Maestro async delegation registry', () => {
         independent: false,
         reviewOf: [],
         resumedFrom: previous.id,
-        resource: { id: 'frontend-specialist', label: 'Frontend Specialist', capability: 'worker' },
+        resource: { id: 'frontend-specialist', label: 'Frontend Specialist', mode: 'agent' },
       } as never,
       parentSignal: new AbortController().signal,
       execute: async (_signal, recorder) => {

@@ -24,7 +24,7 @@ describe('Maestro configurator shared contract', () => {
       label: 'Designer',
       enabled: true,
       description: 'Visual design.',
-      capability: 'worker',
+      mode: 'design',
       specialties: ['design'],
       candidates: [],
     })

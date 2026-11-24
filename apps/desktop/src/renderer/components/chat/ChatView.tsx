@@ -1756,9 +1756,8 @@ export function ChatView({
               name: resource.id,
               description: resource.description,
               category: resource.specialties[0],
-              source: resource.agentName ? `maestro-import:${resource.agentName}` : 'maestro-pool',
+              source: 'maestro-pool',
               virtual: true,
-              baseAgentName: resource.agentName,
             })),
         }))
       : api.chatSubagentProfilesCatalog(conversationId)

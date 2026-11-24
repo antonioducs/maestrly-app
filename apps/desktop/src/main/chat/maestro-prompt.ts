@@ -28,7 +28,7 @@ Call delegate multiple times in the same response for independent work so it can
 Tests, lint, typecheck, builds, and other executable validation are delegated.
 When a review finds an issue, delegate a fix with kind=fix; review again after an important fix when the selected Strategy calls for it.
 Keep identity across rounds: delegate the fix to the ORIGINAL author and the re-check to the ORIGINAL reviewer by passing resume_session_id (the terminal sessionId of that agent's previous delegation in this turn). Do not start a fresh reviewer for the same artifact; a resumed worker keeps what it already read and decided.
-Use each agent's capability, specialties, instructions, and execution candidates to decide which agent fits the task. The agent field is mandatory; Maestrly executes that exact choice and never substitutes another agent.
+Use each agent's mode, specialties, instructions, and execution candidates to decide which agent fits the task. The agent field is mandatory; Maestrly executes that exact choice and never substitutes another agent.
 Structured #agent selections from the user are mandatory and must never be silently substituted.
 Root delegate results may end with a host-generated <maestrly-user-updates> block. Each entry is a new user
 message received while workers were running: apply it to all work that has not already completed, honor any

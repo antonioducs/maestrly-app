@@ -76,7 +76,7 @@ describe('Maestro parent/worker capability boundary', () => {
   it('tells review resources that scoped browser and terminal validation are operationally available', () => {
     const config = createDefaultMaestroConfig()
     const agents = maestroAgentsFromTurn({
-      version: 1,
+      version: config.version,
       strategy: config.strategy,
       pool: config.pool,
       source: 'safe-default',

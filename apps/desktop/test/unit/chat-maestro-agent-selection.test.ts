@@ -38,7 +38,7 @@ const resource = (patch: Partial<MaestroResourceV1> & Pick<MaestroResourceV1, 'i
     label: id,
     enabled: true,
     description: `${id} description`,
-    capability: 'worker',
+    mode: 'agent',
     specialties: ['general'],
     candidates: [{ providerId: 'openai', modelId: 'gpt-worker', effort: 'off' }],
     ...rest,
@@ -98,7 +98,7 @@ describe('Maestro parent-selected execution', () => {
   it('uses built-in physical agents for project snapshots even when a local catalog overrides the same name', () => {
     const explorer = BUILTIN_AGENTS.find((agent) => agent.name === 'explore')!
     const projectTurn = {
-      ...turn([resource({ id: 'explorer', capability: 'read-only', agentName: 'explore' })]),
+      ...turn([resource({ id: 'explorer', mode: 'ask' })]),
       source: 'project' as const,
     }
     const mapped = maestroAgentsFromTurn(projectTurn, [
@@ -209,7 +209,7 @@ describe('Maestro parent-selected execution', () => {
         resource({
           id: 'frontend',
           label: 'Frontend specialist',
-          capability: 'worker',
+          mode: 'agent',
           specialties: ['frontend', 'design'],
           instructions: 'Prefer accessible UI.',
           candidates: [{ providerId: 'openai', modelId: 'fast-worker', effort: 'high', fastMode: true }],
@@ -218,7 +218,8 @@ describe('Maestro parent-selected execution', () => {
       ])
     )
     expect(catalog).toContain('frontend (Frontend specialist)')
-    expect(catalog).toContain('capability: worker')
+    expect(catalog).toContain('mode: agent')
+    expect(catalog).not.toContain('physical binding')
     expect(catalog).toContain('specialties: frontend, design')
     expect(catalog).toContain('instructions: Prefer accessible UI.')
     expect(catalog).toContain('provider=openai, model=fast-worker, effort=high, Fast=on')

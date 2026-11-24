@@ -1913,10 +1913,11 @@ export default {
     resourceDescription: 'Description',
     resourceInstructions: 'Agent instructions',
     resourceInstructionsPlaceholder: 'Optional instructions used whenever this agent runs…',
-    capability: 'Capability',
-    capabilities: {
-      worker: 'Worker',
-      'read-only': 'Read-only',
+    modeLabel: 'Mode',
+    mode: {
+      agent: 'Agent',
+      design: 'Design',
+      ask: 'Ask',
     },
     specialties: 'Specialties',
     specialtiesPlaceholder: 'frontend, tests',
@@ -1946,9 +1947,8 @@ export default {
       label: 'name',
       enabled: 'on/off',
       description: 'description',
-      capability: 'capability',
+      mode: 'mode',
       specialties: 'specialties',
-      agentName: 'linked agent',
       instructions: 'instructions',
     },
     poolEditor: {

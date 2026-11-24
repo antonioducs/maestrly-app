@@ -3322,7 +3322,7 @@ describe('Codex subscription runner', () => {
     args.mode = 'maestro'
     args.permMode = 'full'
     args.maestro = {
-      version: 1,
+      version: config.version,
       strategy: config.strategy,
       pool: config.pool,
       source: 'safe-default',
@@ -3444,7 +3444,7 @@ describe('Codex subscription runner', () => {
     args.mode = 'maestro'
     args.permMode = 'full'
     args.maestro = {
-      version: 1,
+      version: config.version,
       strategy: config.strategy,
       pool: config.pool,
       source: 'safe-default',

@@ -5,6 +5,7 @@ import {
   type MaestroConfigDiagnostic,
   type MaestroConfigPayload,
   type MaestroConfigV1,
+  type MaestroResourceMode,
   type MaestroResourceV1,
 } from './maestro'
 
@@ -20,6 +21,9 @@ const diagnostic = (message: string, resourceId?: string): MaestroConfigDiagnost
 })
 
 const STRATEGIES = ['balanced', 'best-quality', 'fast', 'economy'] as const
+const RESOURCE_MODES: readonly MaestroResourceMode[] = ['agent', 'design', 'ask']
+const isMaestroResourceMode = (value: unknown): value is MaestroResourceMode =>
+  typeof value === 'string' && (RESOURCE_MODES as readonly string[]).includes(value)
 
 function parseCandidate(value: unknown, path: string, resourceId: string) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -46,7 +50,8 @@ function parseCandidate(value: unknown, path: string, resourceId: string) {
 
 function parseResource(
   value: unknown,
-  index: number
+  index: number,
+  configVersion: 1 | 2
 ): { value?: MaestroResourceV1; errors: MaestroConfigDiagnostic[] } {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return { errors: [diagnostic(`pool[${index}] must be an object.`)] }
@@ -60,8 +65,16 @@ function parseResource(
   if (!label) errors.push(diagnostic(`pool[${index}].label is required.`, id))
   if (typeof raw.enabled !== 'boolean') errors.push(diagnostic(`pool[${index}].enabled must be boolean.`, id))
   if (!description) errors.push(diagnostic(`pool[${index}].description is required.`, id))
-  if (raw.capability !== 'worker' && raw.capability !== 'read-only') {
-    errors.push(diagnostic(`pool[${index}].capability is invalid.`, id))
+  let mode: MaestroResourceMode | undefined
+  if (raw.mode !== undefined) {
+    if (isMaestroResourceMode(raw.mode)) mode = raw.mode
+    else errors.push(diagnostic(`pool[${index}].mode is invalid.`, id))
+  } else if (configVersion === 1) {
+    if (raw.capability === 'worker') mode = 'agent'
+    else if (raw.capability === 'read-only') mode = 'ask'
+    else errors.push(diagnostic(`pool[${index}].capability is invalid.`, id))
+  } else {
+    errors.push(diagnostic(`pool[${index}].mode is invalid.`, id))
   }
   if (!Array.isArray(raw.specialties) || raw.specialties.some((item) => typeof item !== 'string')) {
     errors.push(diagnostic(`pool[${index}].specialties must be a string array.`, id))
@@ -75,9 +88,6 @@ function parseResource(
       else candidates.push(parsed.value!)
     })
   }
-  if (raw.agentName !== undefined && typeof raw.agentName !== 'string') {
-    errors.push(diagnostic(`pool[${index}].agentName must be a string.`, id))
-  }
   if (raw.instructions !== undefined && typeof raw.instructions !== 'string') {
     errors.push(diagnostic(`pool[${index}].instructions must be a string.`, id))
   }
@@ -89,10 +99,9 @@ function parseResource(
       label,
       enabled: raw.enabled as boolean,
       description,
-      capability: raw.capability as MaestroResourceV1['capability'],
+      mode: mode!,
       specialties,
       candidates,
-      ...(typeof raw.agentName === 'string' && raw.agentName.trim() ? { agentName: raw.agentName.trim() } : {}),
       ...(typeof raw.instructions === 'string' && raw.instructions.trim()
         ? { instructions: raw.instructions.trim() }
         : {}),
@@ -107,9 +116,10 @@ export function validateMaestroConfig(value: unknown): MaestroConfigSaveResult {
     return { ok: false, errors: [diagnostic('Maestro config must be an object.')] }
   }
   const raw = value as Record<string, unknown>
-  if (raw.version !== MAESTRO_CONFIG_VERSION) {
+  if (raw.version !== 1 && raw.version !== MAESTRO_CONFIG_VERSION) {
     return { ok: false, errors: [diagnostic('Unsupported Maestro config version.')] }
   }
+  const configVersion = raw.version as 1 | 2
   if (![...STRATEGIES, 'custom'].includes(String(raw.strategy))) {
     return { ok: false, errors: [diagnostic('Maestro strategy is invalid.')] }
   }
@@ -118,7 +128,7 @@ export function validateMaestroConfig(value: unknown): MaestroConfigSaveResult {
   const pool: MaestroResourceV1[] = []
   if (Array.isArray(raw.pool)) {
     raw.pool.forEach((resource, index) => {
-      const parsed = parseResource(resource, index)
+      const parsed = parseResource(resource, index, configVersion)
       errors.push(...parsed.errors)
       if (parsed.value) pool.push(parsed.value)
     })
@@ -150,7 +160,13 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
  */
 export function sanitizeMaestroDraftShape(value: unknown): MaestroConfigV1 | null {
   if (!isRecord(value)) return null
-  if (value.version !== MAESTRO_CONFIG_VERSION || !Array.isArray(value.pool) || value.pool.length === 0) return null
+  if (
+    (value.version !== 1 && value.version !== MAESTRO_CONFIG_VERSION) ||
+    !Array.isArray(value.pool) ||
+    value.pool.length === 0
+  ) {
+    return null
+  }
   const strategy = STRATEGIES.includes(value.strategy as MaestroConfigV1['strategy'])
     ? (value.strategy as MaestroConfigV1['strategy'])
     : 'balanced'
@@ -162,7 +178,11 @@ export function sanitizeMaestroDraftShape(value: unknown): MaestroConfigV1 | nul
       label: text(resource.label),
       enabled: resource.enabled !== false,
       description: text(resource.description),
-      capability: resource.capability === 'read-only' ? 'read-only' : 'worker',
+      mode: isMaestroResourceMode(resource.mode)
+        ? resource.mode
+        : resource.capability === 'read-only'
+          ? 'ask'
+          : 'agent',
       specialties: Array.isArray(resource.specialties)
         ? resource.specialties.filter((specialty): specialty is string => typeof specialty === 'string')
         : [],
@@ -172,7 +192,6 @@ export function sanitizeMaestroDraftShape(value: unknown): MaestroConfigV1 | nul
         effort: text(candidate.effort),
         ...(candidate.fastMode === true ? { fastMode: true } : {}),
       })),
-      ...(typeof resource.agentName === 'string' ? { agentName: resource.agentName } : {}),
       ...(typeof resource.instructions === 'string' ? { instructions: resource.instructions } : {}),
     })
   }

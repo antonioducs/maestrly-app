@@ -333,7 +333,7 @@ it('gives a Cursor Maestro orchestrator its contract once and no skill catalog',
     conversationId: 'fork',
     mode: 'maestro',
     maestro: {
-      version: 1,
+      version: config.version,
       strategy: config.strategy,
       pool: config.pool,
       source: 'safe-default',

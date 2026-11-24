@@ -17,7 +17,7 @@ const occurrences = (text: string, needle: string) => text.split(needle).length 
 const frozenMaestroTurn = (): MaestroTurnSnapshotV1 => {
   const config = createDefaultMaestroConfig()
   return {
-    version: 1,
+    version: config.version,
     strategy: config.strategy,
     pool: config.pool,
     source: 'safe-default',

@@ -104,10 +104,9 @@ export function renderMaestroAgentCatalog(turn: MaestroTurnSnapshotV1): string {
       : 'inherits the parent provider/model/effort/Fast'
     return [
       `- ${resource.id} (${resource.label})`,
-      `  capability: ${resource.capability}`,
+      `  mode: ${resource.mode}`,
       `  description: ${resource.description}`,
       `  specialties: ${resource.specialties.join(', ') || 'general'}`,
-      `  physical binding: ${resource.agentName?.trim() || '(virtual resource)'}`,
       `  instructions: ${resource.instructions?.trim() || '(default agent instructions)'}`,
       `  execution candidates: ${candidates}`,
     ].join('\n')
@@ -115,7 +114,7 @@ export function renderMaestroAgentCatalog(turn: MaestroTurnSnapshotV1): string {
   return [
     '# Maestro Agent Pool',
     'You choose the logical agent for every delegate call. Maestrly validates and executes that exact agent and never substitutes another one.',
-    'Use capability, specialties, instructions, and configured execution candidates to make the choice. You may run independent agents in parallel.',
+    'Use mode, specialties, instructions, and configured execution candidates to make the choice. You may run independent agents in parallel.',
     '`#agent-name` in the user message is a mandatory selection for that responsibility.',
     'Available enabled agents:',
     ...lines,
@@ -138,17 +137,12 @@ export function maestroAgentsFromTurn(
   return turn.pool
     .filter((resource) => resource.enabled)
     .map((resource) => {
-      const imported = resource.agentName
-        ? executionAgents.find(
-            (agent) => normalizeSubagentProfileKey(agent.name) === normalizeSubagentProfileKey(resource.agentName!)
-          )
-        : undefined
-      const base = imported ?? (resource.capability === 'worker' ? fallbackWorker : fallbackReader)
+      const base = resource.mode === 'ask' ? fallbackReader : fallbackWorker
       const basePrompt =
         resource.instructions?.trim() ||
         `${base.prompt}\n\nYou are the Maestro Pool resource “${resource.label}”. Focus on: ${resource.specialties.join(', ') || 'general'}.`
       const operationalBoundary =
-        resource.capability === 'read-only'
+        resource.mode === 'ask'
           ? 'This Maestro delegation still receives the full operational tool catalog. You may use your isolated browser tabs and terminals to inspect, run validation, reproduce behavior, and gather evidence. Keep project source changes out of a review/investigation task unless the delegated task explicitly requires a fix.'
           : 'This Maestro delegation receives the full operational tool catalog. Browser tabs and terminals created for you are isolated to this delegation; use only those scoped resources and never attempt to control another worker’s resources.'
       return {
@@ -156,9 +150,9 @@ export function maestroAgentsFromTurn(
         name: resource.id,
         description: resource.description,
         category: resource.specialties[0] ?? 'general',
-        tools: resource.capability === 'worker' ? (base.tools ?? fallbackWorker.tools) : undefined,
+        tools: resource.mode === 'ask' ? undefined : (base.tools ?? fallbackWorker.tools),
         prompt: `${basePrompt}\n\n${operationalBoundary}`,
-        source: resource.agentName ? `maestro-import:${base.source}` : 'maestro-pool',
+        source: 'maestro-pool',
         virtual: true,
         baseAgentName: base.name,
       }

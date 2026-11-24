@@ -256,9 +256,8 @@ const RESOURCE_FIELDS: Array<Exclude<keyof MaestroResourceV1, 'id' | 'candidates
   'label',
   'enabled',
   'description',
-  'capability',
+  'mode',
   'specialties',
-  'agentName',
   'instructions',
 ]
 
