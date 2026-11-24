@@ -3165,6 +3165,19 @@ body.is-full .notice {
   display: none;
 }
 
+.screen-thumb {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top left;
+  background: #ffffff;
+  pointer-events: none;
+  user-select: none;
+}
+
 .screen-placeholder {
   position: absolute;
   inset: 0;
@@ -3186,6 +3199,10 @@ body.is-full .notice {
 
 .screen-placeholder-body p {
   margin: 0;
+}
+
+.screen-placeholder.is-idle .screen-placeholder-body {
+  opacity: 0.6;
 }
 
 .screen-placeholder.is-failed .screen-placeholder-body {

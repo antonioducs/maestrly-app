@@ -35,6 +35,8 @@ import {
   resolveScreenViewport,
   screenFrameUrl,
   selectLiveScreens,
+  THUMBNAIL_MAX_HEIGHT,
+  THUMBNAIL_MAX_WIDTH,
   tokenDraftKey,
 } from './design-model.js'
 
@@ -85,6 +87,8 @@ export interface DesignSnapshot {
   previewingCommentId: string | null
   focusedScreenId: string | null
   screensState: ReadonlyMap<string, ScreenFrameState>
+  /** Pictures of the screens drawn so far in this version, as data URLs; null when a screen could not be drawn. */
+  screenThumbnails: ReadonlyMap<string, string | null>
   /** Component name -> per-screen instance counts collected so far. */
   componentUsage: (component: string) => ScreenUsage[]
   /** Distinct normalized `data-ds-props` variant strings seen for `component` in `components.html`. */
@@ -157,10 +161,18 @@ export interface DesignController {
 
   // View & Screens (`shell/screens.ts`)
   setView(view: DesignView): void
-  /** Updates visible/focused screens in `screens` view and reconciles the `<= 6` live iframe pool. */
-  setVisibleScreens(visibleIds: readonly string[], focusedId: string | null): void
+  /**
+   * Updates visible/focused screens in `screens` view and reconciles the `<= 6` live iframe pool. `detailIds` are the
+   * visible screens shown larger than their picture, which stay live once drawn.
+   */
+  setVisibleScreens(visibleIds: readonly string[], focusedId: string | null, detailIds?: readonly string[]): void
   /** Returns the live `<iframe>` for `screenId` when pooled, or `null` when evicted/unmounted. */
   screenFrame(screenId: string): HTMLIFrameElement | null
+  /**
+   * Sets where each screen's live `<iframe>` lives (`null`: a hidden parking host). Frames are created in their host
+   * and moved only when it changes, since moving an iframe reloads it where `moveBefore` is unavailable.
+   */
+  setScreenHost(resolve: ((screenId: string) => HTMLElement | null) | null): void
   /** Retries loading a screen frame that failed or timed out. */
   retryScreen(screenId: string): void
   /** Focuses a screen in `screens` view without leaving it. */
@@ -208,6 +220,8 @@ export interface DesignController {
 
 const CAPABILITY_REFRESH_BUFFER_MS = 60_000
 const FRAME_LOAD_FALLBACK_MS = 5_000
+/** A page that does not send its picture by then is treated as one that cannot be drawn. */
+const CAPTURE_TIMEOUT_MS = 15_000
 
 interface PooledFrame {
   screenId: string
@@ -215,6 +229,24 @@ interface PooledFrame {
   status: 'loading' | 'ready' | 'error'
   errorMessage: string | null
   loadTimer: ReturnType<typeof setTimeout> | null
+}
+
+type MovingParent = HTMLElement & { moveBefore?: (node: Node, child: Node | null) => void }
+
+/** Puts `frame` first in `host`, keeping its document alive with `moveBefore` where the browser has it. */
+function placeFrame(host: HTMLElement, frame: HTMLIFrameElement): void {
+  if (frame.parentElement === host) return
+  const parent = host as MovingParent
+  const before = host.firstChild
+  if (typeof parent.moveBefore === 'function' && frame.isConnected && host.isConnected) {
+    try {
+      parent.moveBefore(frame, before)
+      return
+    } catch {
+      // Different documents or a disconnected node: fall back to a plain insert, which reloads the frame.
+    }
+  }
+  host.insertBefore(frame, before)
 }
 
 function postToFrame(frame: HTMLIFrameElement, message: ShellMessage): void {
@@ -289,6 +321,10 @@ export function createDesignController(options: DesignControllerOptions): Design
   const pooledFrames = new Map<string, PooledFrame>()
   const screenStates = new Map<string, ScreenFrameState>()
   const pendingScreenLoads: string[] = []
+  let detailScreenIds: string[] = []
+  const thumbnails = new Map<string, string | null>()
+  const captures = new Map<string, { screenId: string; timer: ReturnType<typeof setTimeout> }>()
+  let captureSeq = 0
 
   const inventoryByScreen = new Map<string, Record<string, number>>()
   const variantsByComponent = new Map<string, string[]>()
@@ -305,6 +341,11 @@ export function createDesignController(options: DesignControllerOptions): Design
   let inventoryReqSeq = 0
 
   let parkingHost: HTMLElement | null = null
+  let screenHost: ((screenId: string) => HTMLElement | null) | null = null
+
+  function hostFor(screenId: string): HTMLElement | null {
+    return screenHost?.(screenId) ?? ensureParkingHost()
+  }
 
   function ensureParkingHost(): HTMLElement | null {
     if (parkingHost) return parkingHost
@@ -423,10 +464,42 @@ export function createDesignController(options: DesignControllerOptions): Design
     }
   }
 
+  function captureInFlight(screenId: string): boolean {
+    for (const request of captures.values()) if (request.screenId === screenId) return true
+    return false
+  }
+
+  function dropCaptures(screenId?: string): void {
+    for (const [requestId, request] of captures) {
+      if (screenId !== undefined && request.screenId !== screenId) continue
+      clearTimeout(request.timer)
+      captures.delete(requestId)
+    }
+  }
+
+  function requestCapture(screenId: string, frame: HTMLIFrameElement): void {
+    if (thumbnails.has(screenId) || captureInFlight(screenId)) return
+    const requestId = `cap${++captureSeq}`
+    const timer = setTimeout(() => {
+      if (!captures.delete(requestId)) return
+      if (!thumbnails.has(screenId)) thumbnails.set(screenId, null)
+      reconcilePool()
+      options.onChange()
+    }, CAPTURE_TIMEOUT_MS)
+    captures.set(requestId, { screenId, timer })
+    postToFrame(frame, {
+      type: 'capture-request',
+      requestId,
+      maxWidth: THUMBNAIL_MAX_WIDTH,
+      maxHeight: THUMBNAIL_MAX_HEIGHT,
+    })
+  }
+
   function evictScreenFrame(screenId: string): void {
     const entry = pooledFrames.get(screenId)
     if (!entry) return
     clearFrameTimer(entry)
+    dropCaptures(screenId)
     pooledFrames.delete(screenId)
     try {
       entry.el.src = 'about:blank'
@@ -499,7 +572,11 @@ export function createDesignController(options: DesignControllerOptions): Design
       const dims = resolveScreenViewport(screen.viewport)
       iframe.style.width = `${dims.width}px`
       iframe.style.height = `${dims.height}px`
-      ensureParkingHost()?.appendChild(iframe)
+      iframe.tabIndex = -1
+      iframe.setAttribute('aria-hidden', 'true')
+      const host = hostFor(screenId)
+      if (host === parkingHost) host?.appendChild(iframe)
+      else host?.insertBefore(iframe, host.firstChild)
 
       const entry: PooledFrame = {
         screenId,
@@ -512,6 +589,7 @@ export function createDesignController(options: DesignControllerOptions): Design
             entry.errorMessage = 'Timed out loading screen'
             entry.loadTimer = null
             screenStates.set(screenId, { screenId, status: 'error', errorMessage: entry.errorMessage })
+            if (!thumbnails.has(screenId)) thumbnails.set(screenId, null)
             measuringScreenIds.delete(screenId)
             reconcilePool()
             options.onChange()
@@ -546,6 +624,8 @@ export function createDesignController(options: DesignControllerOptions): Design
         focusedId: focusedScreenId,
         lruIds: lruScreenIds,
         limit: MAX_LIVE_SCREEN_FRAMES - reserveForInventory,
+        thumbnails,
+        detailIds: detailScreenIds,
       })
       for (const id of chosen) desired.add(id)
     }
@@ -560,16 +640,22 @@ export function createDesignController(options: DesignControllerOptions): Design
       if (!desired.has(id)) evictScreenFrame(id)
     }
 
-    // Remove queued loads that are no longer desired.
-    for (let i = pendingScreenLoads.length - 1; i >= 0; i--) {
-      if (!desired.has(pendingScreenLoads[i]!)) pendingScreenLoads.splice(i, 1)
+    // The screen the person is looking at closely loads before background work, interrupting it when needed.
+    if (view === 'screens') {
+      const urgent = new Set([focusedScreenId, ...detailScreenIds].filter((id): id is string => id !== null))
+      for (const id of urgent) {
+        if (!desired.has(id) || pooledFrames.has(id) || countLoadingFrames() < MAX_CONCURRENT_FRAME_LOADS) continue
+        const background = [...pooledFrames.values()].find(
+          (entry) => entry.status === 'loading' && !urgent.has(entry.screenId)
+        )
+        if (background) evictScreenFrame(background.screenId)
+      }
     }
 
-    // Queue desired frames that aren't pooled or queued yet.
+    // Queue desired frames that aren't pooled, in priority order.
+    pendingScreenLoads.length = 0
     for (const id of desired) {
-      if (!pooledFrames.has(id) && !pendingScreenLoads.includes(id)) {
-        pendingScreenLoads.push(id)
-      }
+      if (!pooledFrames.has(id)) pendingScreenLoads.push(id)
     }
 
     void pumpScreenLoads()
@@ -620,6 +706,8 @@ export function createDesignController(options: DesignControllerOptions): Design
     inventoryRequested = false
     screenStates.clear()
     evictAllScreenFrames()
+    thumbnails.clear()
+    dropCaptures()
   }
 
   function rebaseDraftsOntoDesign(previousDesign: ViewerDesign | null, currentDesign: ViewerDesign): void {
@@ -690,6 +778,7 @@ export function createDesignController(options: DesignControllerOptions): Design
         previewingCommentId,
         focusedScreenId,
         screensState: new Map(screenStates),
+        screenThumbnails: new Map(thumbnails),
         componentUsage(component: string): ScreenUsage[] {
           if (!design) return []
           return design.screens.map((screen) => {
@@ -923,7 +1012,16 @@ export function createDesignController(options: DesignControllerOptions): Design
             if (!inventoryByScreen.has(screenId)) {
               sendInventoryRequest(entry.el)
             }
+            requestCapture(screenId, entry.el)
             void pumpScreenLoads()
+            options.onChange()
+          } else if (message.type === 'capture') {
+            const request = captures.get(message.requestId)
+            if (request?.screenId !== screenId) return 'screen'
+            clearTimeout(request.timer)
+            captures.delete(message.requestId)
+            thumbnails.set(screenId, message.image)
+            reconcilePool()
             options.onChange()
           } else if (message.type === 'inventory') {
             if (!design?.componentsPath) mergeInventoryVariants(message.variants)
@@ -957,8 +1055,13 @@ export function createDesignController(options: DesignControllerOptions): Design
       options.onChange()
     },
 
-    setVisibleScreens(visibleIds: readonly string[], focusedId: string | null): void {
+    setVisibleScreens(
+      visibleIds: readonly string[],
+      focusedId: string | null,
+      detailIds: readonly string[] = []
+    ): void {
       visibleScreenIds = [...visibleIds]
+      detailScreenIds = [...detailIds]
       focusedScreenId = focusedId
       if (focusedId) touchLru(focusedId)
       reconcilePool()
@@ -969,10 +1072,19 @@ export function createDesignController(options: DesignControllerOptions): Design
       return pooledFrames.get(screenId)?.el ?? null
     },
 
+    setScreenHost(resolve: ((screenId: string) => HTMLElement | null) | null): void {
+      screenHost = resolve
+      for (const [screenId, entry] of pooledFrames) {
+        const host = hostFor(screenId)
+        if (host) placeFrame(host, entry.el)
+      }
+    },
+
     retryScreen(screenId: string): void {
       if (!design?.screens.some((s) => s.id === screenId)) return
       evictScreenFrame(screenId)
       screenStates.set(screenId, { screenId, status: 'idle', errorMessage: null })
+      if (thumbnails.get(screenId) === null) thumbnails.delete(screenId)
       if (!inventoryByScreen.has(screenId) && (inventoryRequested || view === 'page')) {
         measuringScreenIds.add(screenId)
         if (!inventoryQueue.includes(screenId)) inventoryQueue.push(screenId)
@@ -1522,6 +1634,8 @@ export function createDesignController(options: DesignControllerOptions): Design
 
     destroy(): void {
       destroyed = true
+      screenHost = null
+      dropCaptures()
       disposeComponentsProbe(false)
       evictAllScreenFrames()
       parkingHost?.remove()
@@ -1555,6 +1669,8 @@ export function createDesignController(options: DesignControllerOptions): Design
     inventoryQueue.length = 0
     inventoryRequested = false
     evictAllScreenFrames()
+    thumbnails.clear()
+    dropCaptures()
     screenStates.clear()
     for (const screen of nextDesign.screens) {
       screenStates.set(screen.id, { screenId: screen.id, status: 'idle', errorMessage: null })

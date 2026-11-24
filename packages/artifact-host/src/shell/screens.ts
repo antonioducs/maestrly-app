@@ -1,5 +1,5 @@
-// Screens canvas view: pannable/zoomable layout of every screen in `maestrly-design.json`, mounting live iframes
-// owned by `DesignController.screenFrame(id)` and showing zoom + focus controls in the stage's floating layer.
+// Screens canvas view: pannable/zoomable layout of every screen in `maestrly-design.json`, hosting the live iframes
+// the `DesignController` creates in each card and showing zoom + focus controls in the stage's floating layer.
 import {
   arrangeScreens,
   fitAllCamera,
@@ -9,10 +9,12 @@ import {
   type ScreenCamera,
   type ScreensLayout,
   shouldHideScreenSize,
+  viewportKindOf,
   zoomAtCamera,
 } from './design-ui-model.js'
 import type { DesignScreen } from './contract.js'
 import type { DesignController, DesignSnapshot } from './design.js'
+import { thumbnailSize } from './design-model.js'
 import { h } from './dom.js'
 import type { Translate } from './i18n.js'
 import { icon } from './icons.js'
@@ -44,12 +46,20 @@ interface ScreenEntry extends PlacedScreen {
   sizeEl: HTMLElement
   frameBox: HTMLElement
   placeholder: HTMLElement
-  mountedFrame: HTMLIFrameElement | null
+  /** The screen's picture, shown whenever its live frame is not ready. */
+  thumb: HTMLImageElement | null
+  /** Width in CSS pixels of the screen's picture: above it on screen (times the pixel ratio), the frame stays live. */
+  thumbWidth: number
   lastStatus: string
   /** Natural (untruncated) CSS pixel widths of the label text, measured once so `.is-compact` never flickers. */
   nameWidth: number
   sizeWidth: number
 }
+
+type FrameStatus = 'idle' | 'loading' | 'ready' | 'error'
+
+/** What the camera keeps framed when the stage resizes: every screen, the selected one, or wherever the person left it. */
+type Framing = 'all' | 'screen' | 'free'
 
 export function createScreensSurface(options: ScreensSurfaceOptions): ScreensSurface {
   const { t, controller, stage, float } = options
@@ -62,7 +72,7 @@ export function createScreensSurface(options: ScreensSurfaceOptions): ScreensSur
 
   let layout: ScreensLayout = arrangeScreens(screens, surface.getBoundingClientRect())
   let cam: ScreenCamera = { x: 0, y: 0, z: 0.2 }
-  let fitted = true
+  let framing: Framing = 'all'
   let currentFocus: string | null = initial.focusedScreenId
   let zoomLabel: HTMLButtonElement | null = null
   const items = new Map<string, ScreenEntry>()
@@ -103,7 +113,8 @@ export function createScreensSurface(options: ScreensSurfaceOptions): ScreensSur
       sizeEl,
       frameBox,
       placeholder,
-      mountedFrame: null,
+      thumb: null,
+      thumbWidth: thumbnailSize(width, height).width,
       lastStatus: '',
       nameWidth: 0,
       sizeWidth: 0,
@@ -129,12 +140,32 @@ export function createScreensSurface(options: ScreensSurfaceOptions): ScreensSur
     }
   }
 
-  function renderPlaceholder(entry: ScreenEntry, status: 'idle' | 'loading' | 'ready' | 'error'): void {
-    if (entry.lastStatus === status) return
-    entry.lastStatus = status
-    entry.placeholder.hidden = status === 'ready'
-    entry.placeholder.classList.toggle('is-failed', status === 'error')
-    if (status === 'ready') return
+  function renderThumb(entry: ScreenEntry, image: string | null | undefined, status: FrameStatus): boolean {
+    const shown = Boolean(image) && status !== 'ready'
+    if (image && !entry.thumb) {
+      entry.thumb = h('img', { class: 'screen-thumb', alt: '', draggable: 'false', decoding: 'async' })
+      entry.frameBox.insertBefore(entry.thumb, entry.placeholder)
+    }
+    if (entry.thumb) {
+      if (image && entry.thumb.getAttribute('src') !== image) entry.thumb.src = image
+      entry.thumb.hidden = !shown
+    }
+    return shown
+  }
+
+  /**
+   * What a screen shows without a ready frame: its picture when there is one; otherwise a calm card while it waits for
+   * its turn, a spinner while it loads, or why it failed. A screen that cannot be drawn loads when it is selected.
+   */
+  function renderPlaceholder(entry: ScreenEntry, status: FrameStatus, image: string | null | undefined): void {
+    const pictured = renderThumb(entry, image, status)
+    const state = pictured ? 'pictured' : status === 'idle' && image === null ? 'undrawable' : status
+    if (entry.lastStatus === state) return
+    entry.lastStatus = state
+    entry.placeholder.hidden = state === 'ready' || state === 'pictured'
+    entry.placeholder.classList.toggle('is-failed', state === 'error')
+    entry.placeholder.classList.toggle('is-idle', state === 'idle' || state === 'undrawable')
+    if (entry.placeholder.hidden) return
     entry.placeholder.replaceChildren(
       h(
         'div',
@@ -155,7 +186,12 @@ export function createScreensSurface(options: ScreensSurfaceOptions): ScreensSur
                 t('retry')
               ),
             ]
-          : [h('span', { class: 'spinner', 'aria-hidden': 'true' }), h('p', {}, t('loading'))]
+          : state === 'idle' || state === 'undrawable'
+            ? [
+                icon(viewportKindOf(entry.screen.viewport), 28),
+                h('p', {}, t(state === 'idle' ? 'screenQueued' : 'screenIdle')),
+              ]
+            : [h('span', { class: 'spinner', 'aria-hidden': 'true' }), h('p', {}, t('loading'))]
       )
     )
   }
@@ -168,7 +204,13 @@ export function createScreensSurface(options: ScreensSurfaceOptions): ScreensSur
       const box = surface.getBoundingClientRect()
       if (box.width === 0 || box.height === 0) return
       const visibleIds = rankVisibleScreens(layout.placed, cam, box)
-      controller.setVisibleScreens(visibleIds, currentFocus)
+      const ratio = window.devicePixelRatio || 1
+      // A picture holds up to a little past its own size; shown any larger, the screen needs its live frame.
+      const detailIds = visibleIds.filter((id) => {
+        const entry = items.get(id)
+        return entry !== undefined && entry.width * cam.z * ratio > entry.thumbWidth * 1.15
+      })
+      controller.setVisibleScreens(visibleIds, currentFocus, detailIds)
     }
     if (immediate) run()
     else visibleTimer = setTimeout(run, LIVE_DEBOUNCE_MS)
@@ -200,7 +242,7 @@ export function createScreensSurface(options: ScreensSurfaceOptions): ScreensSur
 
   function fitAll(animate = false): void {
     cam = fitAllCamera({ width: layout.width, height: layout.height }, surface.getBoundingClientRect())
-    fitted = true
+    framing = 'all'
     applyCamera(animate)
   }
 
@@ -208,13 +250,13 @@ export function createScreensSurface(options: ScreensSurfaceOptions): ScreensSur
     const entry = items.get(id)
     if (!entry) return
     cam = fitScreenCamera(entry, surface.getBoundingClientRect())
-    fitted = false
+    framing = 'screen'
     applyCamera(animate)
   }
 
   function zoomAt(px: number, py: number, factor: number): void {
     cam = zoomAtCamera(cam, px, py, factor)
-    fitted = false
+    framing = 'free'
     applyCamera(false)
   }
 
@@ -232,12 +274,31 @@ export function createScreensSurface(options: ScreensSurfaceOptions): ScreensSur
     }
   }
 
-  function setFocus(id: string | null, animate = true, notifyController = true): void {
+  /** Selects a screen without moving the camera, so a click never feels like it went somewhere else. */
+  function select(id: string | null, notifyController = true): void {
     currentFocus = id
     applyFocusStyles(id)
+    if (notifyController) controller.focusScreen(id)
+  }
+
+  /** Selects a screen and frames it, or frames every screen when `id` is null. */
+  function setFocus(id: string | null, animate = true, notifyController = true): void {
+    select(id, notifyController)
     if (id) fitScreen(id, animate)
     else fitAll(animate)
-    if (notifyController) controller.focusScreen(id)
+  }
+
+  /** Clears the selection, returning to every screen only when the camera was framing the selected one. */
+  function clearFocus(animate = true, notifyController = true): void {
+    if (framing === 'screen') setFocus(null, animate, notifyController)
+    else select(null, notifyController)
+  }
+
+  function reframe(): void {
+    relayout()
+    if (framing === 'screen' && currentFocus) fitScreen(currentFocus, false)
+    else if (framing === 'all' || framing === 'screen') fitAll(false)
+    else updateLabelCompactness()
   }
 
   function step(delta: number): void {
@@ -263,8 +324,10 @@ export function createScreensSurface(options: ScreensSurfaceOptions): ScreensSur
     items.get(nearest.screen.id)?.el.focus({ preventScroll: true })
   }
 
-  // Pointer panning, clicking to focus, double-clicking to open, and wheel pan/zoom.
+  // Pointer panning, clicking to select, double-clicking to open, and wheel pan/zoom.
   let drag: { x: number; y: number; cx: number; cy: number; moved: boolean; id: string | null } | null = null
+  // Pointer capture retargets clicks to the surface, so the double-click opens the screen the last press landed on.
+  let pressed: { id: string | null; moved: boolean } | null = null
   surface.addEventListener('pointerdown', (event) => {
     const target = event.target instanceof Element ? event.target : null
     if (event.button !== 0 || target?.closest('button')) return
@@ -286,15 +349,23 @@ export function createScreensSurface(options: ScreensSurfaceOptions): ScreensSur
     drag.moved = true
     surface.classList.add('is-panning')
     cam = { ...cam, x: drag.cx + dx, y: drag.cy + dy }
-    fitted = false
+    framing = 'free'
     applyCamera(false)
   })
   surface.addEventListener('pointerup', () => {
     if (!drag) return
     const { moved, id } = drag
     drag = null
+    pressed = { id, moved }
     surface.classList.remove('is-panning')
-    if (!moved && id !== currentFocus) setFocus(id)
+    if (moved || id === currentFocus) return
+    if (id) select(id)
+    else clearFocus()
+  })
+  surface.addEventListener('pointercancel', () => {
+    drag = null
+    pressed = null
+    surface.classList.remove('is-panning')
   })
   function openScreen(id: string): void {
     const entry = items.get(id)
@@ -303,7 +374,9 @@ export function createScreensSurface(options: ScreensSurfaceOptions): ScreensSur
   }
 
   surface.addEventListener('dblclick', (event) => {
-    const id = event.target instanceof Element ? event.target.closest<HTMLElement>('.screen')?.dataset.screen : null
+    const id = pressed
+      ? !pressed.moved && pressed.id
+      : event.target instanceof Element && event.target.closest<HTMLElement>('.screen')?.dataset.screen
     if (id) openScreen(id)
   })
   surface.addEventListener(
@@ -315,7 +388,7 @@ export function createScreensSurface(options: ScreensSurfaceOptions): ScreensSur
         zoomAt(event.clientX - box.left, event.clientY - box.top, Math.exp(-event.deltaY * 0.01))
       } else {
         cam = { ...cam, x: cam.x - event.deltaX, y: cam.y - event.deltaY }
-        fitted = false
+        framing = 'free'
         applyCamera(false)
       }
     },
@@ -335,12 +408,7 @@ export function createScreensSurface(options: ScreensSurfaceOptions): ScreensSur
     event.preventDefault()
   })
 
-  const observer = new ResizeObserver(() => {
-    relayout()
-    if (currentFocus) fitScreen(currentFocus, false)
-    else if (fitted) fitAll(false)
-    else updateLabelCompactness()
-  })
+  const observer = new ResizeObserver(reframe)
   observer.observe(surface)
 
   function renderControls(snapshot: DesignSnapshot): void {
@@ -455,51 +523,37 @@ export function createScreensSurface(options: ScreensSurfaceOptions): ScreensSur
 
   function sync(snapshot: DesignSnapshot): void {
     if (snapshot.focusedScreenId !== currentFocus) {
-      setFocus(snapshot.focusedScreenId, true, false)
+      if (snapshot.focusedScreenId) setFocus(snapshot.focusedScreenId, true, false)
+      else clearFocus(true, false)
     }
     for (const [id, entry] of items) {
-      const frame = controller.screenFrame(id)
-      if (frame && entry.mountedFrame !== frame) {
-        entry.mountedFrame?.remove()
-        frame.tabIndex = -1
-        frame.setAttribute('aria-hidden', 'true')
-        frame.title = entry.screen.name
-        frame.style.width = `${entry.width}px`
-        frame.style.height = `${entry.height}px`
-        entry.frameBox.prepend(frame)
-        entry.mountedFrame = frame
-      } else if (!frame && entry.mountedFrame) {
-        entry.mountedFrame.remove()
-        entry.mountedFrame = null
-      }
       const status = snapshot.screensState.get(id)?.status ?? 'idle'
-      renderPlaceholder(entry, status)
+      renderPlaceholder(entry, status, snapshot.screenThumbnails.get(id))
     }
     renderControls(snapshot)
   }
 
-  for (const entry of items.values()) renderPlaceholder(entry, 'idle')
-  requestAnimationFrame(() => setFocus(currentFocus, false, false))
+  for (const [id, entry] of items) renderPlaceholder(entry, 'idle', initial.screenThumbnails.get(id))
+  // The controller creates each live frame inside its card: moving a loaded iframe would reload it.
+  controller.setScreenHost((id) => items.get(id)?.frameBox ?? null)
+  // The canvas opens on every screen; the screen last opened stays selected without the camera jumping to it.
+  applyFocusStyles(currentFocus)
+  requestAnimationFrame(() => fitAll(false))
 
   return {
     surface,
     sync,
     renderControls,
-    resize() {
-      relayout()
-      if (currentFocus) fitScreen(currentFocus, false)
-      else if (fitted) fitAll(false)
-    },
+    resize: reframe,
     focus(id, animate = true) {
-      setFocus(id, animate)
+      if (id) setFocus(id, animate)
+      else clearFocus(animate)
     },
     destroy() {
       if (visibleTimer !== null) clearTimeout(visibleTimer)
       observer.disconnect()
-      for (const entry of items.values()) {
-        entry.mountedFrame?.remove()
-        entry.mountedFrame = null
-      }
+      // Frames the controller keeps (to measure components) go back to its hidden host instead of being dropped.
+      controller.setScreenHost(null)
       for (const el of float.querySelectorAll('.zoom, .screen-focus')) el.remove()
       surface.remove()
     },
