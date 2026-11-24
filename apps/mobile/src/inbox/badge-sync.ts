@@ -35,14 +35,25 @@ export function computeBadgeOthers(
 
 export interface BadgeSyncOptions {
   setBadge: (count: number) => Promise<void> | void
-  syncPushBadge: (badgeOthersByServer: Readonly<Record<string, number>>) => Promise<void> | void
+  /**
+   * Sends updated `badgeOthers` values for changed attention-capable servers. May return a per-server success map
+   * (`true` = registered); returning `void` treats every server in the payload as succeeded, and rejecting marks none.
+   */
+  syncPushBadge: (
+    badgeOthersByServer: Readonly<Record<string, number>>
+  ) => Promise<Readonly<Record<string, boolean>> | void> | Readonly<Record<string, boolean>> | void
   debounceMs?: number
 }
 
 export interface BadgeSync {
   /** Updates the app-icon badge immediately on total change and schedules debounced `badgeOthers` push sync. */
   update(total: number, badgeOthers: Readonly<Record<string, number>>): void
-  /** Flushes pending or current `badgeOthers` immediately (called when the app moves to background). */
+  /**
+   * Resets the remembered last badge and immediately re-applies the current local total to the OS icon badge
+   * (called on foreground and after a foreground notification, so incoming push badges never leave the icon drifted).
+   */
+  reapplyBadge(): void
+  /** Flushes any `badgeOthers` entries that changed since the last successful send (called on app background). */
   flushOnBackground(): void
   stop(): void
 }
@@ -57,15 +68,16 @@ function sameRecord(a: Readonly<Record<string, number>>, b: Readonly<Record<stri
 
 /**
  * Coordinates the OS app-icon badge (`setBadgeCountAsync`) and per-server `badgeOthers` push registration updates:
- * - OS badge updates immediately whenever `total` changes (including `0` when cleared).
- * - `badgeOthers` syncs to attention-capable servers debounced (~2 s) on changes and immediately on background.
+ * - OS badge updates immediately whenever `total` changes (including `0` when cleared), and re-applies on demand.
+ * - `badgeOthers` syncs to attention-capable servers debounced (~2 s) on changes and flushed on background only for
+ *   servers whose value changed since the last successful send.
  */
 export function createBadgeSync(options: BadgeSyncOptions): BadgeSync {
   const debounceMs = options.debounceMs ?? BADGE_OTHERS_DEBOUNCE_MS
   let lastBadge: number | null = null
-  let lastSentOthers: Record<string, number> = {}
+  let lastTotal: number | null = null
+  const lastSentOthers: Record<string, number> = {}
   let latestOthers: Record<string, number> = {}
-  let dirtyOthers = false
   let timer: ReturnType<typeof setTimeout> | null = null
   let stopped = false
 
@@ -74,45 +86,71 @@ export function createBadgeSync(options: BadgeSyncOptions): BadgeSync {
     timer = null
   }
 
-  const sendOthers = (forceAll: boolean) => {
-    clearTimer()
-    if (stopped) return
+  const changedPayload = (): Record<string, number> => {
     const payload: Record<string, number> = {}
     for (const [serverId, value] of Object.entries(latestOthers)) {
-      if (forceAll || lastSentOthers[serverId] !== value) payload[serverId] = value
+      if (lastSentOthers[serverId] !== value) payload[serverId] = value
     }
-    dirtyOthers = false
-    if (Object.keys(payload).length === 0) return
-    lastSentOthers = { ...latestOthers }
-    void Promise.resolve(options.syncPushBadge(payload)).catch(() => {})
+    return payload
+  }
+
+  const pruneRemovedSent = () => {
+    for (const serverId of Object.keys(lastSentOthers)) {
+      if (!(serverId in latestOthers)) delete lastSentOthers[serverId]
+    }
+  }
+
+  const sendOthers = () => {
+    clearTimer()
+    if (stopped) return
+    pruneRemovedSent()
+    const payload = changedPayload()
+    const sentKeys = Object.keys(payload)
+    if (sentKeys.length === 0) return
+    void Promise.resolve(options.syncPushBadge(payload))
+      .then((outcome) => {
+        if (stopped) return
+        for (const serverId of sentKeys) {
+          const ok = outcome === undefined ? true : outcome[serverId] === true
+          if (ok && serverId in latestOthers) lastSentOthers[serverId] = payload[serverId]
+        }
+      })
+      .catch(() => {
+        // Leave `lastSentOthers` unchanged so the next update or background flush retries failed servers.
+      })
   }
 
   return {
     update(total, badgeOthers) {
       if (stopped) return
       const normalized = Math.max(0, Math.floor(Number.isFinite(total) ? total : 0))
+      lastTotal = normalized
       if (lastBadge !== normalized) {
         lastBadge = normalized
         void Promise.resolve(options.setBadge(normalized)).catch(() => {})
       }
       if (!sameRecord(latestOthers, badgeOthers)) {
         latestOthers = { ...badgeOthers }
-        dirtyOthers = !sameRecord(lastSentOthers, latestOthers)
-        if (dirtyOthers) {
+        pruneRemovedSent()
+        if (Object.keys(changedPayload()).length > 0) {
           clearTimer()
-          timer = setTimeout(() => sendOthers(false), debounceMs)
+          timer = setTimeout(sendOthers, debounceMs)
         } else {
           clearTimer()
         }
       }
     },
+    reapplyBadge() {
+      if (stopped) return
+      lastBadge = null
+      if (lastTotal !== null) {
+        lastBadge = lastTotal
+        void Promise.resolve(options.setBadge(lastTotal)).catch(() => {})
+      }
+    },
     flushOnBackground() {
       if (stopped) return
-      if (Object.keys(latestOthers).length === 0) {
-        clearTimer()
-        return
-      }
-      sendOthers(true)
+      sendOthers()
     },
     stop() {
       stopped = true

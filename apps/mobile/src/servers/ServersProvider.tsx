@@ -24,6 +24,7 @@ import { dictationChoiceKey, isDictationChoice, type DictationChoice } from '../
 import { GatewayError, type GatewayClient } from '../gateway/client'
 import { useI18n } from '../i18n'
 import { asyncKeyValue, secureSecrets } from './adapters'
+import { createMetaFeatureRefresher, sameFeatures } from './meta-refresh'
 import { pairWithServer } from './pairing'
 import { memoryStores, ServerRegistry, type KeyValueStore, type PairedServer } from './registry'
 
@@ -111,6 +112,20 @@ export function ServersProvider({ children }: { children: ReactNode }) {
   }, [reload])
 
   const active = servers.find((server) => server.id === activeId) ?? null
+  const serversRef = useRef(servers)
+  serversRef.current = servers
+
+  const updateServerFeatures = useCallback(
+    async (id: string, features: string[]) => {
+      const existing = serversRef.current.find((item) => item.id === id)
+      if (!existing || sameFeatures(existing.features, features)) return
+      await registry.updateFeatures(id, features)
+      setServers((list) =>
+        list.map((item) => (item.id === id && !sameFeatures(item.features, features) ? { ...item, features } : item))
+      )
+    },
+    [registry]
+  )
 
   // The active server's fleet controller, replaced when another server is active.
   useEffect(() => {
@@ -140,7 +155,7 @@ export function ServersProvider({ children }: { children: ReactNode }) {
       if (cancelled) return
       const fleet = createFleetController(demo ? createDemoSource() : createHttpSource(active, token), kv, {
         uuid: Crypto.randomUUID,
-        onFeatures: (features) => void registry.updateFeatures(active.id, features),
+        onFeatures: (features) => void updateServerFeatures(active.id, features),
       })
       created = fleet
       const [saved] = await Promise.all([kv.get(environmentChoiceKey(active.id)).catch(() => null), fleet.start()])
@@ -230,19 +245,45 @@ export function ServersProvider({ children }: { children: ReactNode }) {
     [active, controller, environmentId, kv]
   )
 
+  const clientFor = useCallback(
+    async (server: PairedServer) => {
+      if (server.id === DEMO_SERVER.id) return null
+      const token = await registry.token(server.id)
+      return token ? gatewayClientFor(server, token) : null
+    },
+    [registry]
+  )
+
+  const metaRefresher = useMemo(
+    () =>
+      createMetaFeatureRefresher({
+        clientFor,
+        onFeatures: updateServerFeatures,
+      }),
+    [clientFor, updateServerFeatures]
+  )
+
+  useEffect(() => () => metaRefresher.stop(), [metaRefresher])
+
+  const serverIdsKey = servers.map((server) => server.id).join('|')
   useEffect(() => {
-    if (!controller) return
+    if (!ready || serversRef.current.length === 0) return
+    void metaRefresher.refresh(serversRef.current)
+  }, [ready, serverIdsKey, metaRefresher])
+
+  useEffect(() => {
     const subscription = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
-        controller.foreground()
+        controller?.foreground()
         chats?.foreground()
+        void metaRefresher.refresh(serversRef.current)
       } else if (state === 'background') {
-        controller.background()
+        controller?.background()
         chats?.background()
       }
     })
     return () => subscription.remove()
-  }, [controller, chats])
+  }, [controller, chats, metaRefresher])
 
   const activate = useCallback(
     async (id: string) => {
@@ -295,15 +336,6 @@ export function ServersProvider({ children }: { children: ReactNode }) {
       await reload()
     },
     [kv, registry, reload, servers]
-  )
-
-  const clientFor = useCallback(
-    async (server: PairedServer) => {
-      if (server.id === DEMO_SERVER.id) return null
-      const token = await registry.token(server.id)
-      return token ? gatewayClientFor(server, token) : null
-    },
-    [registry]
   )
 
   const [dictationChoice, setDictationChoiceState] = useState<DictationChoice | null>(null)

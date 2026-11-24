@@ -1,5 +1,6 @@
 import {
   FLEET_ATTENTION_LIMITS,
+  fleetAttentionKey,
   parseFleetAttentionKey,
   type FleetAttentionEntry,
   type FleetBot,
@@ -17,6 +18,7 @@ import {
   reconcileInbox,
   restoreInboxEntry,
   type InboxEntry,
+  type InboxKind,
   type InboxLane,
   type InboxLedger,
   type InboxObservation,
@@ -26,6 +28,7 @@ import {
 import { allConversations } from '../chats/state'
 import type { KeyValueStore } from '../servers/registry'
 import { computeBadgeOthers } from './badge-sync'
+import { sameFallbackObservations } from './sync'
 import {
   inboxItemKey,
   mobileInboxPlace,
@@ -47,6 +50,8 @@ export interface InboxServerInput {
   supportsAttention: boolean
   reachable: boolean
   loaded: boolean
+  /** Monotonic snapshot counter from the watcher (incremented on initial load, reconnect, foreground, and retry). */
+  snapshotSeq?: number
   /** Epoch ms of the last successful sync (snapshot, delta, or fallback update), or null before the first one. */
   lastSyncedAt?: number | null
   /** Active entries from `GET /v1/attention` + SSE deltas (when `supportsAttention` is true). */
@@ -58,7 +63,10 @@ export interface InboxServerInput {
   inbox?: readonly FleetInboxItem[]
   activeEnvironmentId?: string | null
   chatLists?: MobileLists | null
-  /** Fallback observations for an active server without `FLEET_ATTENTION_FEATURE`. */
+  /**
+   * Fallback observations for an active server without `FLEET_ATTENTION_FEATURE`, or active-environment chat
+   * fallback observations when the gateway has `attention` but that host lacks `chat-attention-sync`.
+   */
   fallback?: readonly InboxObservation<string>[]
 }
 
@@ -89,6 +97,14 @@ export interface InboxController {
   setServers(inputs: readonly InboxServerInput[]): void
   /** Forces a time-based recomputation (e.g. on foreground). */
   tick(): void
+  /** Updates whether the app is currently foregrounded (AppState === 'active'). */
+  setForeground(foreground: boolean): void
+  /**
+   * Marks a bot conversation or lane as currently focused; while focused and foregrounded, its `bot:<botId>`
+   * attention entry is marked read locally and sent to `POST /v1/attention/seen` on open and on new arrivals.
+   * Returns a cleanup function that releases this focus registration.
+   */
+  focusBot(serverId: string, botId: string): () => void
   markRead(keys: readonly string[]): void
   markAllRead(): void
   dismiss(key: string): InboxUndo
@@ -129,6 +145,20 @@ function resolveLedgerEnvironment(
   if (entry.view.place.key.startsWith(placePrefix)) return entry.view.place.key.slice(placePrefix.length)
   if (entry.view.target.kind === 'bot') return botsById.get(entry.view.target.botId)?.environmentId ?? null
   return null
+}
+
+function isAlreadyReadLocally(existing: InboxEntry<string> | undefined, at: number | null): boolean {
+  return (
+    existing !== undefined && existing.readAt !== null && (at === null || at <= Math.max(existing.readAt, existing.at))
+  )
+}
+
+function isAlreadyDismissedLocally(existing: InboxEntry<string> | undefined, at: number | null): boolean {
+  return (
+    existing !== undefined &&
+    existing.dismissedAt !== null &&
+    (at === null || at <= Math.max(existing.dismissedAt, existing.at))
+  )
 }
 
 function entryToObservation(
@@ -187,11 +217,7 @@ function entryToObservation(
   const existing = ledger[key]
   // For news (finished/error/activity), treat the entry as optimistically read if the local ledger already marked this
   // event read while waiting for the server's SSE removal; a newer timestamp reopens it via `unreadAgain`.
-  const alreadyReadLocally =
-    !waiting &&
-    existing !== undefined &&
-    existing.readAt !== null &&
-    (at === null || at <= Math.max(existing.readAt, existing.at))
+  const alreadyReadLocally = !waiting && isAlreadyReadLocally(existing, at)
 
   const observation: InboxObservation<string> = {
     key,
@@ -262,10 +288,19 @@ export function createInboxController(options: InboxControllerOptions): InboxCon
 
   let ledger: InboxLedger<string> = {}
   let ledgerLoaded = false
+  let foreground = true
   let serverInputs: readonly InboxServerInput[] = []
   let serversById = new Map<string, InboxServerInput>()
   const seededServers = new Set<string>()
-  const fallbackSyncByServer = new Map<string, { signature: string; reachable: boolean; at: number }>()
+  const focusedBots = new Map<symbol, { serverId: string; botId: string }>()
+  /** Local active state kept when Undo restores an unread news item that `dismiss` already marked seen on the gateway. */
+  const restoredActive = new Map<string, { kind: InboxKind; at: number }>()
+  /** Tracks last snapshot/loaded state per attention server so failed `seen` calls retry after every snapshot load. */
+  const snapshotSyncByServer = new Map<string, { seq: number | undefined; loaded: boolean; reachable: boolean }>()
+  const fallbackSyncByServer = new Map<
+    string,
+    { fallback: readonly InboxObservation<string>[] | null; reachable: boolean; at: number }
+  >()
   const listeners = new Set<() => void>()
 
   let persistTimer: ReturnType<typeof setTimeout> | null = null
@@ -351,11 +386,15 @@ export function createInboxController(options: InboxControllerOptions): InboxCon
         for (const entry of server.entries.values()) {
           const { observation, meta } = entryToObservation(server, entry, ledger, botsById, requestsByKey, chatsById)
           activeKeys.add(observation.key)
+          // A newer server event supersedes any locally restored snapshot from a prior dismiss/undo.
+          if (restoredActive.has(observation.key)) restoredActive.delete(observation.key)
           observations.push(observation)
           metaByKey.set(observation.key, meta)
         }
-      } else if (server.fallback) {
+      }
+      if (server.fallback) {
         for (const observation of server.fallback) {
+          if (activeKeys.has(observation.key)) continue
           activeKeys.add(observation.key)
           observations.push(observation)
           const parsed = parseInboxItemKey(observation.key)
@@ -377,8 +416,10 @@ export function createInboxController(options: InboxControllerOptions): InboxCon
         }
       }
 
-      // Synthesize settled (`active: null`) observations for non-transient ledger entries of this server once loaded,
-      // so items read locally or cleared on another device move into the `read` group and expire after INBOX_READ_TTL_MS.
+      // Synthesize observations for non-transient ledger entries of this server once loaded:
+      // - If Undo restored an unread news item after `dismiss` already cleared it on the gateway, keep it active/unread
+      //   locally until read, dismissed again, or superseded.
+      // - Otherwise synthesize settled (`active: null`) so read items stay in `read` for INBOX_READ_TTL_MS.
       if (server.loaded) {
         const prefix = `${server.id}|`
         for (const [key, entry] of Object.entries(ledger)) {
@@ -393,11 +434,14 @@ export function createInboxController(options: InboxControllerOptions): InboxCon
             environmentName,
             server.environments.size
           )
+          const restored = restoredActive.get(key)
+          const keepUnread =
+            restored !== undefined && entry.readAt === null && entry.dismissedAt === null && !isWaitingKind(entry.kind)
           observations.push({
             key,
             view: { ...entry.view, place },
-            active: null,
-            at: entry.at,
+            active: keepUnread ? { kind: restored.kind, unread: true } : null,
+            at: keepUnread ? restored.at : entry.at,
             known: false,
           })
           metaByKey.set(key, {
@@ -414,11 +458,77 @@ export function createInboxController(options: InboxControllerOptions): InboxCon
     return { observations, metaByKey }
   }
 
-  const recompute = () => {
+  const dispatchSeen = (keys: readonly string[]) => {
+    if (!options.sendSeen || keys.length === 0) return
+    for (const batch of batchSeenKeysByServer(keys, serversById)) {
+      void Promise.resolve(options.sendSeen(batch.serverId, batch.keys)).catch(() => {})
+    }
+  }
+
+  /**
+   * Collects active NEWS entries on loaded attention servers that were already read or dismissed locally, so a
+   * previously failed `POST /v1/attention/seen` is retried after every snapshot load or reconnect.
+   */
+  const collectSnapshotRetrySeenKeys = (skipKeys: ReadonlySet<string>): string[] => {
+    if (!ledgerLoaded) return []
+    const retryKeys: string[] = []
+    for (const id of snapshotSyncByServer.keys()) {
+      const server = serversById.get(id)
+      if (!server?.supportsAttention) snapshotSyncByServer.delete(id)
+    }
+    for (const server of serverInputs) {
+      if (!server.supportsAttention) continue
+      const prev = snapshotSyncByServer.get(server.id)
+      const seq = server.snapshotSeq
+      const snapshotJustLoaded =
+        server.loaded &&
+        (seq !== undefined
+          ? seq > 0 && prev?.seq !== seq
+          : !prev?.loaded || (server.reachable && prev.reachable === false))
+      snapshotSyncByServer.set(server.id, { seq, loaded: server.loaded, reachable: server.reachable })
+      if (!snapshotJustLoaded) continue
+      for (const entry of server.entries.values()) {
+        if (isWaitingKind(entry.kind)) continue
+        const key = inboxItemKey(server.id, entry.key)
+        if (skipKeys.has(key)) continue
+        const parsedAt = Date.parse(entry.at)
+        const at = Number.isFinite(parsedAt) ? parsedAt : null
+        const existing = ledger[key]
+        if (isAlreadyReadLocally(existing, at) || isAlreadyDismissedLocally(existing, at)) {
+          retryKeys.push(key)
+        }
+      }
+    }
+    return retryKeys
+  }
+
+  const recompute = (checkSnapshotRetries = false) => {
     const currentNow = now()
     maybeSeedServers(currentNow)
     const { observations, metaByKey } = buildObservations()
-    const reconciled = reconcileInbox(ledger, observations, currentNow)
+    let reconciled = reconcileInbox(ledger, observations, currentNow)
+
+    // B3: when a bot conversation or lane is focused and the app is foregrounded, mark its `bot:<id>` news read
+    // immediately (local ledger + gateway seen) without flashing an unread badge.
+    const focusedKeysToMark: string[] = []
+    if (foreground && focusedBots.size > 0) {
+      const focusedKeys = new Set<string>()
+      for (const { serverId, botId } of focusedBots.values()) {
+        focusedKeys.add(inboxItemKey(serverId, fleetAttentionKey.bot(botId)))
+      }
+      for (const observation of observations) {
+        if (!focusedKeys.has(observation.key) || !observation.active) continue
+        if (isWaitingKind(observation.active.kind) || !observation.active.unread) continue
+        if (reconciled[observation.key]?.readAt !== null) continue
+        focusedKeysToMark.push(observation.key)
+        restoredActive.delete(observation.key)
+        observation.active = { ...observation.active, unread: false }
+      }
+      if (focusedKeysToMark.length > 0) {
+        reconciled = markInboxRead(reconciled, focusedKeysToMark, currentNow)
+      }
+    }
+
     updateLedger(reconciled)
 
     const rawItems = inboxItems(ledger, observations, currentNow)
@@ -456,12 +566,10 @@ export function createInboxController(options: InboxControllerOptions): InboxCon
       badgeOthers,
     }
     notify()
-  }
 
-  const dispatchSeen = (keys: readonly string[]) => {
-    if (!options.sendSeen || keys.length === 0) return
-    for (const batch of batchSeenKeysByServer(keys, serversById)) {
-      void Promise.resolve(options.sendSeen(batch.serverId, batch.keys)).catch(() => {})
+    const retryKeys = checkSnapshotRetries ? collectSnapshotRetrySeenKeys(new Set(focusedKeysToMark)) : []
+    if (focusedKeysToMark.length > 0 || retryKeys.length > 0) {
+      dispatchSeen([...focusedKeysToMark, ...retryKeys])
     }
   }
 
@@ -480,7 +588,7 @@ export function createInboxController(options: InboxControllerOptions): InboxCon
       ledgerLoaded = true
       // Keep any in-memory entries written before storage finished loading.
       if (Object.keys(loaded).length > 0) ledger = { ...loaded, ...ledger }
-      recompute()
+      recompute(true)
       if (!tickTimer && tickMs > 0) {
         tickTimer = setInterval(() => {
           if (!stopped) recompute()
@@ -498,10 +606,10 @@ export function createInboxController(options: InboxControllerOptions): InboxCon
       for (const server of inputs) {
         if (server.supportsAttention || server.lastSyncedAt !== undefined) continue
         const prev = fallbackSyncByServer.get(server.id)
+        const nextFallback = server.fallback ?? null
         if (server.loaded && server.reachable) {
-          const signature = JSON.stringify(server.fallback ?? null)
-          if (!prev?.reachable || prev.signature !== signature) {
-            fallbackSyncByServer.set(server.id, { signature, reachable: true, at: currentNow })
+          if (!prev?.reachable || !sameFallbackObservations(prev.fallback, nextFallback)) {
+            fallbackSyncByServer.set(server.id, { fallback: nextFallback, reachable: true, at: currentNow })
           }
         } else if (!server.reachable && prev?.reachable) {
           fallbackSyncByServer.set(server.id, { ...prev, reachable: false })
@@ -515,17 +623,32 @@ export function createInboxController(options: InboxControllerOptions): InboxCon
           if (parsed && !serversById.has(parsed.serverId)) {
             next ??= { ...ledger }
             delete next[key]
+            restoredActive.delete(key)
           }
         }
         if (next) updateLedger(next)
       }
-      recompute()
+      recompute(true)
     },
     tick() {
       if (!stopped) recompute()
     },
+    setForeground(nextForeground) {
+      if (foreground === nextForeground) return
+      foreground = nextForeground
+      if (foreground && !stopped && focusedBots.size > 0) recompute()
+    },
+    focusBot(serverId, botId) {
+      const token = Symbol(`focus:${serverId}:${botId}`)
+      focusedBots.set(token, { serverId, botId })
+      if (foreground && !stopped) recompute()
+      return () => {
+        focusedBots.delete(token)
+      }
+    },
     markRead(keys) {
       if (keys.length === 0) return
+      for (const key of keys) restoredActive.delete(key)
       const currentNow = now()
       const { observations } = buildObservations()
       const reconciled = reconcileInbox(ledger, observations, currentNow)
@@ -534,8 +657,9 @@ export function createInboxController(options: InboxControllerOptions): InboxCon
       dispatchSeen(keys)
     },
     markAllRead() {
-      const unreadKeys = state.items.filter((item) => item.unread).map((item) => item.key)
+      const unreadKeys = state.items.filter((item) => item.unread && !isWaitingKind(item.kind)).map((item) => item.key)
       if (unreadKeys.length === 0) return
+      for (const key of unreadKeys) restoredActive.delete(key)
       const currentNow = now()
       const { observations } = buildObservations()
       const reconciled = reconcileInbox(ledger, observations, currentNow)
@@ -544,15 +668,39 @@ export function createInboxController(options: InboxControllerOptions): InboxCon
       dispatchSeen(unreadKeys)
     },
     dismiss(key) {
+      restoredActive.delete(key)
       const currentNow = now()
       const { observations } = buildObservations()
       const reconciled = reconcileInbox(ledger, observations, currentNow)
       const previous = reconciled[key]
+      const parsed = parseInboxItemKey(key)
+      const server = parsed ? serversById.get(parsed.serverId) : undefined
+      const activeEntry = parsed && server?.supportsAttention ? server.entries.get(parsed.entryKey) : undefined
       updateLedger(dismissInboxItem(reconciled, key, currentNow))
       recompute()
+      // Dismissing a NEWS item (finished/error/activity) also marks it seen on the gateway so it stops counting
+      // across devices and in push badges. Dismissed WAITING items (approval/question/plan/help) are intentionally
+      // NOT sent to `seen`: they stay active on the gateway and keep counting in the push badge until answered
+      // (product decision).
+      const dismissedKind = activeEntry?.kind ?? previous?.kind
+      if (dismissedKind && !isWaitingKind(dismissedKind) && activeEntry !== undefined) {
+        dispatchSeen([key])
+      }
       return { key, entry: previous }
     },
     restore(undo) {
+      if (
+        undo.entry &&
+        undo.entry.readAt === null &&
+        undo.entry.dismissedAt === null &&
+        !isWaitingKind(undo.entry.kind)
+      ) {
+        const parsed = parseInboxItemKey(undo.key)
+        const server = parsed ? serversById.get(parsed.serverId) : undefined
+        if (server?.supportsAttention && !server.entries.has(parsed!.entryKey)) {
+          restoredActive.set(undo.key, { kind: undo.entry.kind, at: undo.entry.at })
+        }
+      }
       updateLedger(restoreInboxEntry(ledger, undo.key, undo.entry))
       recompute()
     },

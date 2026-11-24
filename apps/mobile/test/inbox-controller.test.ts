@@ -1,6 +1,7 @@
 import {
   FLEET_ATTENTION_FEATURE,
   FLEET_ATTENTION_LIMITS,
+  FLEET_CHAT_ATTENTION_SYNC_CAPABILITY,
   FLEET_ENVIRONMENTS_FEATURE,
   fleetAttentionKey,
   fleetMetaFeatures,
@@ -11,15 +12,18 @@ import {
 } from '@maestrly/bot-fleet-protocol'
 import { INBOX_READ_TTL_MS } from '@maestrly/bot-fleet-protocol/inbox'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { chatsReducer, initialChatsState, type ChatsAction, type ChatsState } from '../src/chats/state'
 import { createDemoSource, DEMO_FEATURES, DEMO_SERVER, demoInitialReadEntries } from '../src/demo/demo-source'
 import { botRecord, environmentRecord } from '../src/fleet/factories'
+import { fleetReducer, initialFleetState, type FleetAction, type FleetState } from '../src/fleet/state'
 import {
   batchSeenKeysByServer,
   createInboxController,
   INBOX_LEDGER_KEY,
   type InboxServerInput,
 } from '../src/inbox/controller'
-import { fallbackObservations } from '../src/inbox/fallback'
+import { environmentNeedsChatFallback, fallbackChatObservations, fallbackObservations } from '../src/inbox/fallback'
+import { sameFallbackObservations, subscribeInboxStoreSlices } from '../src/inbox/sync'
 import { inboxItemKey, openInboxItem } from '../src/inbox/types'
 import { memoryStores } from '../src/servers/registry'
 
@@ -665,5 +669,508 @@ describe('demo server attention', () => {
     expect(deltas).toEqual([{ type: 'attention.updated', upsert: [], remove: ['bot:ledger'] }])
     stream.close()
     controller.stop()
+  })
+})
+
+describe('focused bot auto-seen (B3)', () => {
+  it('marks bot:<id> read and sends seen on open, on new arrival while focused, and on foreground return', async () => {
+    const { kv } = memoryStores()
+    const sendSeen = vi.fn()
+    let now = BASE_NOW
+    const controller = createInboxController({ kv, sendSeen, now: () => now, tickMs: 0 })
+    await controller.start()
+
+    const botEntry = (atMs: number): FleetAttentionEntry => ({
+      key: fleetAttentionKey.bot('atlas'),
+      source: 'bot',
+      kind: 'finished',
+      at: new Date(atMs).toISOString(),
+      title: 'Atlas',
+      botId: 'atlas',
+    })
+    const reqEntry: FleetAttentionEntry = {
+      key: fleetAttentionKey.request('atlas', 'req-1'),
+      source: 'request',
+      kind: 'approval',
+      at: iso(-5_000),
+      title: 'Atlas',
+      botId: 'atlas',
+      requestId: 'req-1',
+    }
+
+    controller.setServers([
+      serverInput({
+        id: 's1',
+        name: 'Office',
+        snapshotSeq: 1,
+        entries: new Map([
+          [botEntry(BASE_NOW - 10_000).key, botEntry(BASE_NOW - 10_000)],
+          [reqEntry.key, reqEntry],
+        ]),
+      }),
+    ])
+    expect(controller.getState().counts).toEqual({ waiting: 1, unread: 1, total: 2 })
+    expect(sendSeen).not.toHaveBeenCalled()
+
+    // Focusing Atlas while foregrounded immediately marks bot:atlas read + sends seen, leaving waiting request untouched.
+    const blur = controller.focusBot('s1', 'atlas')
+    expect(controller.getState().counts).toEqual({ waiting: 1, unread: 0, total: 1 })
+    expect(sendSeen).toHaveBeenCalledTimes(1)
+    expect(sendSeen).toHaveBeenLastCalledWith('s1', ['bot:atlas'])
+
+    // A new reply arrives while Atlas stays focused and foregrounded -> auto-marked read + seen immediately.
+    now = BASE_NOW + 10_000
+    controller.setServers([
+      serverInput({
+        id: 's1',
+        name: 'Office',
+        snapshotSeq: 1,
+        entries: new Map([
+          [botEntry(BASE_NOW + 10_000).key, botEntry(BASE_NOW + 10_000)],
+          [reqEntry.key, reqEntry],
+        ]),
+      }),
+    ])
+    expect(controller.getState().counts).toEqual({ waiting: 1, unread: 0, total: 1 })
+    expect(sendSeen).toHaveBeenCalledTimes(2)
+    expect(sendSeen).toHaveBeenLastCalledWith('s1', ['bot:atlas'])
+
+    // While backgrounded, a new reply stays unread and does NOT send seen until foreground returns.
+    controller.setForeground(false)
+    now = BASE_NOW + 25_000
+    controller.setServers([
+      serverInput({
+        id: 's1',
+        name: 'Office',
+        snapshotSeq: 1,
+        entries: new Map([
+          [botEntry(BASE_NOW + 25_000).key, botEntry(BASE_NOW + 25_000)],
+          [reqEntry.key, reqEntry],
+        ]),
+      }),
+    ])
+    expect(controller.getState().counts).toEqual({ waiting: 1, unread: 1, total: 2 })
+    expect(sendSeen).toHaveBeenCalledTimes(2)
+
+    // Returning to foreground immediately marks the focused bot read + sends seen.
+    now = BASE_NOW + 30_000
+    controller.setForeground(true)
+    expect(controller.getState().counts).toEqual({ waiting: 1, unread: 0, total: 1 })
+    expect(sendSeen).toHaveBeenCalledTimes(3)
+    expect(sendSeen).toHaveBeenLastCalledWith('s1', ['bot:atlas'])
+
+    // After blurring the bot view, subsequent replies remain unread and do NOT send seen.
+    blur()
+    now = BASE_NOW + 45_000
+    controller.setServers([
+      serverInput({
+        id: 's1',
+        name: 'Office',
+        snapshotSeq: 1,
+        entries: new Map([
+          [botEntry(BASE_NOW + 45_000).key, botEntry(BASE_NOW + 45_000)],
+          [reqEntry.key, reqEntry],
+        ]),
+      }),
+    ])
+    expect(controller.getState().counts).toEqual({ waiting: 1, unread: 1, total: 2 })
+    expect(sendSeen).toHaveBeenCalledTimes(3)
+    controller.stop()
+  })
+
+  it('marks bot:<id> seen when the snapshot loads after push-tap focus registration', async () => {
+    const { kv } = memoryStores()
+    const sendSeen = vi.fn()
+    const controller = createInboxController({ kv, sendSeen, now: () => BASE_NOW, tickMs: 0 })
+    await controller.start()
+
+    // Focus happens before snapshot loads (e.g. cold push-tap navigation to bot/lane).
+    const blur = controller.focusBot('s1', 'pixel')
+    expect(sendSeen).not.toHaveBeenCalled()
+
+    controller.setServers([
+      serverInput({
+        id: 's1',
+        name: 'Office',
+        snapshotSeq: 1,
+        entries: new Map([
+          [
+            'bot:pixel',
+            {
+              key: 'bot:pixel',
+              source: 'bot',
+              kind: 'finished',
+              at: iso(-2_000),
+              title: 'Pixel',
+              botId: 'pixel',
+              runId: 'run-9',
+            },
+          ],
+        ]),
+      }),
+    ])
+
+    expect(controller.getState().counts.unread).toBe(0)
+    expect(sendSeen).toHaveBeenCalledTimes(1)
+    expect(sendSeen).toHaveBeenCalledWith('s1', ['bot:pixel'])
+    blur()
+    controller.stop()
+  })
+})
+
+describe('seen retries and dismiss semantics (S2)', () => {
+  it('retries failed seen calls (batched <= 200) on next snapshot load for locally read NEWS only', async () => {
+    const { kv } = memoryStores()
+    let shouldFail = true
+    const sent: Array<{ serverId: string; keys: string[] }> = []
+    const sendSeen = vi.fn(async (serverId: string, keys: string[]) => {
+      sent.push({ serverId, keys })
+      if (shouldFail) throw new Error('offline')
+    })
+    let now = BASE_NOW
+    const controller = createInboxController({ kv, sendSeen, now: () => now, tickMs: 0 })
+    await controller.start()
+
+    // Seed 205 news items + 1 waiting item on s1.
+    const entries = new Map<string, FleetAttentionEntry>()
+    for (let i = 0; i < 205; i++) {
+      const key = `chat:p/c-${i}`
+      entries.set(key, {
+        key,
+        source: 'chat',
+        kind: 'finished',
+        at: iso(-10_000),
+        title: `Chat ${i}`,
+        environmentId: 'p',
+        conversationId: `c-${i}`,
+      })
+    }
+    entries.set('request:atlas/r1', {
+      key: 'request:atlas/r1',
+      source: 'request',
+      kind: 'approval',
+      at: iso(-10_000),
+      title: 'Atlas',
+      botId: 'atlas',
+      requestId: 'r1',
+    })
+
+    controller.setServers([serverInput({ id: 's1', name: 'Office', snapshotSeq: 1, entries })])
+    expect(sent).toHaveLength(0)
+
+    // Mark all read while offline: sendSeen fails (2 batches: 200 + 5).
+    controller.markAllRead()
+    expect(sent).toHaveLength(2)
+    expect(sent.map((b) => b.keys.length)).toEqual([FLEET_ATTENTION_LIMITS.seenKeysMax, 5])
+
+    // Unrelated SSE update with the SAME snapshotSeq does not re-send seen.
+    sent.length = 0
+    controller.setServers([serverInput({ id: 's1', name: 'Office', snapshotSeq: 1, entries })])
+    expect(sent).toHaveLength(0)
+
+    // Reconnect snapshot (snapshotSeq: 2): c-0 has a NEWER timestamp (should NOT be retried), others still match.
+    shouldFail = false
+    now = BASE_NOW + 60_000
+    const nextEntries = new Map(entries)
+    nextEntries.set('chat:p/c-0', {
+      key: 'chat:p/c-0',
+      source: 'chat',
+      kind: 'finished',
+      at: iso(50_000),
+      title: 'Chat 0 newer',
+      environmentId: 'p',
+      conversationId: 'c-0',
+    })
+    controller.setServers([serverInput({ id: 's1', name: 'Office', snapshotSeq: 2, entries: nextEntries })])
+
+    // Retries 204 locally-read news entries in 2 batches (200 + 4), excluding c-0 (newer) and request:atlas/r1 (waiting).
+    expect(sent).toHaveLength(2)
+    expect(sent.map((b) => b.keys.length)).toEqual([FLEET_ATTENTION_LIMITS.seenKeysMax, 4])
+    const allRetried = sent.flatMap((b) => b.keys)
+    expect(allRetried).not.toContain('chat:p/c-0')
+    expect(allRetried).not.toContain('request:atlas/r1')
+    expect(controller.getState().counts).toEqual({ waiting: 1, unread: 1, total: 2 })
+    controller.stop()
+  })
+
+  it('sends seen when dismissing a NEWS item, does NOT send seen for a WAITING item, and Undo restores counts', async () => {
+    const { kv } = memoryStores()
+    const sendSeen = vi.fn()
+    const controller = createInboxController({ kv, sendSeen, now: () => BASE_NOW, tickMs: 0 })
+    await controller.start()
+
+    const newsEntry: FleetAttentionEntry = {
+      key: 'chat:company/k-inv',
+      source: 'chat',
+      kind: 'error',
+      at: iso(-5_000),
+      title: 'Invoice export timeouts',
+      environmentId: 'company',
+      conversationId: 'k-inv',
+    }
+    const waitingEntry: FleetAttentionEntry = {
+      key: 'request:atlas/r1',
+      source: 'request',
+      kind: 'approval',
+      at: iso(-4_000),
+      title: 'Atlas',
+      botId: 'atlas',
+      requestId: 'r1',
+    }
+    const entries = new Map<string, FleetAttentionEntry>([
+      [newsEntry.key, newsEntry],
+      [waitingEntry.key, waitingEntry],
+    ])
+    controller.setServers([serverInput({ id: 's1', name: 'Office', snapshotSeq: 1, entries })])
+    expect(controller.getState().counts).toEqual({ waiting: 1, unread: 1, total: 2 })
+
+    // Dismissing a WAITING item hides it locally but MUST NOT send seen to the gateway.
+    const undoWaiting = controller.dismiss(inboxItemKey('s1', waitingEntry.key))
+    expect(sendSeen).not.toHaveBeenCalled()
+    expect(controller.getState().counts).toEqual({ waiting: 0, unread: 1, total: 1 })
+    controller.restore(undoWaiting)
+    expect(controller.getState().counts).toEqual({ waiting: 1, unread: 1, total: 2 })
+
+    // Dismissing a NEWS item sends seen to the gateway.
+    const undoNews = controller.dismiss(inboxItemKey('s1', newsEntry.key))
+    expect(sendSeen).toHaveBeenCalledTimes(1)
+    expect(sendSeen).toHaveBeenCalledWith('s1', [newsEntry.key])
+    expect(controller.getState().counts).toEqual({ waiting: 1, unread: 0, total: 1 })
+
+    // Even after the gateway removes the news entry in response to `seen`, Undo restores it to `new` + counts.
+    controller.setServers([
+      serverInput({
+        id: 's1',
+        name: 'Office',
+        snapshotSeq: 1,
+        entries: new Map([[waitingEntry.key, waitingEntry]]),
+      }),
+    ])
+    controller.restore(undoNews)
+    expect(controller.getState().counts).toEqual({ waiting: 1, unread: 1, total: 2 })
+    expect(controller.getState().items.find((i) => i.key === inboxItemKey('s1', newsEntry.key))?.group).toBe('new')
+    controller.stop()
+  })
+})
+
+describe('chat fallback for older desktop hosts on attention-capable gateways (S3)', () => {
+  it('checks chat-attention-sync capability and merges active environment chat fallback alongside gateway entries', async () => {
+    const oldEnv = environmentRecord({
+      id: 'legacy-ws',
+      name: 'Legacy Desk',
+      kind: 'workspaces',
+      capabilities: ['mobile-api'],
+    })
+    const newEnv = environmentRecord({
+      id: 'new-ws',
+      name: 'New Desk',
+      kind: 'workspaces',
+      capabilities: ['mobile-api', FLEET_CHAT_ATTENTION_SYNC_CAPABILITY],
+    })
+    const environments = [oldEnv, newEnv]
+
+    expect(environmentNeedsChatFallback(environments, 'legacy-ws')).toBe(true)
+    expect(environmentNeedsChatFallback(environments, 'new-ws')).toBe(false)
+    expect(environmentNeedsChatFallback(environments, 'unknown')).toBe(false)
+    expect(environmentNeedsChatFallback(environments, null)).toBe(false)
+
+    const chatLists: MobileLists = {
+      chats: [
+        {
+          id: 'c-ask',
+          name: 'Need input',
+          workspaceId: null,
+          workspaceName: null,
+          branch: null,
+          status: 'asking',
+          lastActivityAt: iso(-3_000),
+          pinned: false,
+          experience: 'standard',
+        },
+      ],
+      workspaces: [],
+    }
+    const chatFallback = fallbackChatObservations({
+      serverId: 's1',
+      serverName: 'Office',
+      environments,
+      environmentId: 'legacy-ws',
+      chatLists,
+    })
+
+    const { kv } = memoryStores()
+    const controller = createInboxController({ kv, now: () => BASE_NOW, tickMs: 0 })
+    await controller.start()
+    controller.setServers([
+      serverInput({
+        id: 's1',
+        name: 'Office',
+        supportsAttention: true,
+        loaded: true,
+        snapshotSeq: 1,
+        environments: new Map([
+          ['legacy-ws', 'Legacy Desk'],
+          ['new-ws', 'New Desk'],
+        ]),
+        entries: new Map([
+          [
+            'bot:atlas',
+            {
+              key: 'bot:atlas',
+              source: 'bot',
+              kind: 'finished',
+              at: iso(-2_000),
+              title: 'Atlas',
+              botId: 'atlas',
+            },
+          ],
+        ]),
+        fallback: chatFallback,
+      }),
+    ])
+
+    const items = controller.getState().items
+    expect(items.map((item) => item.key)).toEqual(['s1|bot:atlas', 's1|chat:legacy-ws/c-ask'])
+    expect(controller.getState().counts).toEqual({ waiting: 1, unread: 1, total: 2 })
+    controller.stop()
+  })
+})
+
+describe('inbox store slice subscriptions (S5)', () => {
+  it('skips setServers on streamed transcript/view/runtime updates and fires on inbox-relevant changes', () => {
+    let fleetState: FleetState = initialFleetState
+    const fleetListeners = new Set<() => void>()
+    const dispatchFleet = (action: FleetAction) => {
+      fleetState = fleetReducer(fleetState, action)
+      for (const listener of fleetListeners) listener()
+    }
+    const fleetStore = {
+      getState: () => fleetState,
+      subscribe: (listener: () => void) => {
+        fleetListeners.add(listener)
+        return () => fleetListeners.delete(listener)
+      },
+    }
+
+    let chatsState: ChatsState = initialChatsState
+    const chatsListeners = new Set<() => void>()
+    const dispatchChats = (action: ChatsAction) => {
+      chatsState = chatsReducer(chatsState, action)
+      for (const listener of chatsListeners) listener()
+    }
+    const chatsStore = {
+      getState: () => chatsState,
+      subscribe: (listener: () => void) => {
+        chatsListeners.add(listener)
+        return () => chatsListeners.delete(listener)
+      },
+    }
+
+    const setServersSpy = vi.fn()
+    const unsubscribe = subscribeInboxStoreSlices(fleetStore, chatsStore, setServersSpy)
+
+    // Transcript-only updates on fleet store must NOT invoke setServersSpy.
+    dispatchFleet({
+      type: 'transcript-page',
+      botId: 'atlas',
+      mode: 'latest',
+      page: { items: [], before: null },
+    })
+    dispatchFleet({
+      type: 'event',
+      event: {
+        type: 'transcript.upsert',
+        at: iso(0),
+        botId: 'atlas',
+        item: { id: 'm1', kind: 'assistant', at: iso(0), text: 'streaming chunk 1', streaming: true },
+      },
+    })
+    dispatchFleet({
+      type: 'event',
+      event: {
+        type: 'transcript.upsert',
+        at: iso(100),
+        botId: 'atlas',
+        item: { id: 'm2', kind: 'assistant', at: iso(100), text: 'streaming chunk 2', streaming: false },
+      },
+    })
+    // Chat transcript & runtime streaming updates must NOT invoke setServersSpy.
+    dispatchChats({
+      type: 'runtime',
+      conversationId: 'c1',
+      runtime: { streaming: true, compacting: false, plan: null, context: null },
+    })
+    dispatchChats({
+      type: 'items',
+      conversationId: 'c1',
+      items: [{ id: 'cm1', kind: 'assistant', at: iso(200), text: 'hello', streaming: false }],
+    })
+    expect(setServersSpy).not.toHaveBeenCalled()
+
+    // Relevant fleet changes (connection, inbox, bots, environments) DO trigger setServersSpy.
+    dispatchFleet({ type: 'connection', state: 'open', retryAt: null })
+    expect(setServersSpy).toHaveBeenCalledTimes(1)
+
+    dispatchFleet({
+      type: 'snapshot',
+      bots: [botRecord({ id: 'atlas', name: 'Atlas' })],
+      environments: [environmentRecord({ id: 'studio', name: 'Studio' })],
+      inbox: [],
+    })
+    expect(setServersSpy).toHaveBeenCalledTimes(2)
+
+    // Relevant chat lists changes DO trigger setServersSpy.
+    dispatchChats({ type: 'lists', lists: { chats: [], workspaces: [] } })
+    expect(setServersSpy).toHaveBeenCalledTimes(3)
+
+    // Structural fallback equality check without JSON.stringify.
+    const obsA = fallbackChatObservations({
+      serverId: 's1',
+      serverName: 'Office',
+      environments: [environmentRecord({ id: 'p', name: 'Personal', kind: 'workspaces' })],
+      environmentId: 'p',
+      chatLists: {
+        chats: [
+          {
+            id: 'c1',
+            name: 'Chat 1',
+            workspaceId: null,
+            workspaceName: null,
+            branch: null,
+            status: 'asking',
+            lastActivityAt: iso(0),
+            pinned: false,
+            experience: 'standard',
+          },
+        ],
+        workspaces: [],
+      },
+    })
+    const obsB = fallbackChatObservations({
+      serverId: 's1',
+      serverName: 'Office',
+      environments: [environmentRecord({ id: 'p', name: 'Personal', kind: 'workspaces' })],
+      environmentId: 'p',
+      chatLists: {
+        chats: [
+          {
+            id: 'c1',
+            name: 'Chat 1',
+            workspaceId: null,
+            workspaceName: null,
+            branch: null,
+            status: 'asking',
+            lastActivityAt: iso(0),
+            pinned: false,
+            experience: 'standard',
+          },
+        ],
+        workspaces: [],
+      },
+    })
+    expect(sameFallbackObservations(obsA, obsB)).toBe(true)
+    expect(sameFallbackObservations(obsA, [])).toBe(false)
+
+    unsubscribe()
   })
 })
