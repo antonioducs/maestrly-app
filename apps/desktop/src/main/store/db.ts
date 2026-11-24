@@ -1211,6 +1211,27 @@ function initializeSchema(): void {
     // The source asked for the destination's first final answer to be delivered back to it.
     db.exec('ALTER TABLE conversation_dispatches ADD COLUMN report_back INTEGER NOT NULL DEFAULT 0;')
   }
+  // Persisted swarm task state owned by a Maestro orchestrator conversation.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS maestro_swarm_tasks (
+      orchestrator_conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+      task_key TEXT NOT NULL,
+      title TEXT NOT NULL,
+      resource_id TEXT,
+      depends_on_json TEXT NOT NULL DEFAULT '[]',
+      conversation_id TEXT,
+      branch TEXT,
+      phase TEXT NOT NULL,
+      changes_reason TEXT,
+      review_round INTEGER NOT NULL DEFAULT 0,
+      note TEXT,
+      merged_commit TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (orchestrator_conversation_id, task_key)
+    );
+    CREATE INDEX IF NOT EXISTS maestro_swarm_tasks_conversation ON maestro_swarm_tasks(conversation_id);
+  `)
   // Messages between conversations: sent by an agent, reported back to the conversation that gave the work, or a
   // final answer brought back on request. The journal makes a repeated send replay instead of delivering twice, keeps
   // queued deliveries across restarts, and links the two conversations for later turns.
