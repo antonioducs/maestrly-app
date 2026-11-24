@@ -257,7 +257,7 @@ import { type AssistantSettings, effectiveAssistantShortcut } from '../shared/as
 import { osFromPlatform } from '../shared/shortcuts'
 import { createHostInvoker, HostUnavailableError } from './remote-host/host-invoker'
 import { setAssistantHostAccess } from './assistant/assistant-context'
-import { createSiblingConversation, deleteConversation } from './workspace-service'
+import { createMaestroWorktreeConversation, deleteConversation } from './workspace-service'
 import { registerLocalConversationIpc } from './local-conversation/ipc'
 import { registerTurnSnapshotIpc } from './turn-snapshots/ipc'
 import { initTurnSnapshots } from './turn-snapshots/maintenance'
@@ -1043,7 +1043,8 @@ function registerIpc(): void {
   registerPtyIpc(reg)
   registerPlanIpc(reg, {
     sendToWindow,
-    createMaestroSibling: (sourceConversationId, options) => createSiblingConversation(sourceConversationId, options),
+    createMaestroOrchestrator: (sourceConversationId, options) =>
+      createMaestroWorktreeConversation(sourceConversationId, options),
     deleteConversation,
     applyMaestroStrategyProfile: async (conversationId, profileId) => {
       const profile = resolveMaestroStrategyProfile(profileId, getGlobalMaestroOrchestratorProfile())

@@ -22,11 +22,14 @@ import { sendToRemoteMains } from './remote-ui-targets'
 
 export interface PlanIpcDeps {
   sendToWindow: (ch: string, payload?: unknown) => void
-  createMaestroSibling?: (
+  createMaestroOrchestrator?: (
     sourceConversationId: string,
-    options: { experience: 'maestro'; name: string }
+    options: { name: string; branchHint: string }
   ) => Promise<Conversation>
-  deleteConversation?: (conversationId: string) => Promise<void>
+  deleteConversation?: (
+    conversationId: string,
+    options?: { preserveBranch?: boolean; preserveWorktree?: boolean }
+  ) => Promise<void>
   applyMaestroStrategyProfile?: (
     conversationId: string,
     profileId: string
@@ -55,10 +58,10 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-async function discardUnstartedSibling(deps: PlanIpcDeps, conversationId: string): Promise<string | null> {
+async function discardUnstartedOrchestrator(deps: PlanIpcDeps, conversationId: string): Promise<string | null> {
   if (!deps.deleteConversation) return 'plan-maestro-rollback-unavailable'
   try {
-    await deps.deleteConversation(conversationId)
+    await deps.deleteConversation(conversationId, { preserveWorktree: false })
     return null
   } catch (error) {
     return `plan-maestro-rollback-failed: ${errorText(error)}`
@@ -131,15 +134,15 @@ export function registerPlanIpc(reg: IpcRegistrar, deps: PlanIpcDeps): void {
         if (sourceConversation.experience !== 'standard') {
           return { ok: false, error: 'plan-maestro-source-must-be-standard' }
         }
-        if (!deps.createMaestroSibling || !deps.deleteConversation || !deps.applyMaestroStrategyProfile) {
+        if (!deps.createMaestroOrchestrator || !deps.deleteConversation || !deps.applyMaestroStrategyProfile) {
           return { ok: false, error: 'plan-maestro-handoff-unavailable' }
         }
 
         let maestroConversation: Conversation
         try {
-          maestroConversation = await deps.createMaestroSibling(agentId, {
-            experience: 'maestro',
+          maestroConversation = await deps.createMaestroOrchestrator(agentId, {
             name: `${sourceConversation.name} · Maestro`,
+            branchHint: result.title?.trim() || sourceConversation.name,
           })
         } catch (error) {
           // Keep the staged decision so the user can resolve the blocker and retry.
@@ -149,16 +152,16 @@ export function registerPlanIpc(reg: IpcRegistrar, deps: PlanIpcDeps): void {
         const profileId = decision.maestroStrategyProfileId?.trim() || 'global'
         const profileApplied = await deps.applyMaestroStrategyProfile(maestroConversation.id, profileId)
         if (!profileApplied.ok) {
-          const rollbackError = await discardUnstartedSibling(deps, maestroConversation.id)
+          const rollbackError = await discardUnstartedOrchestrator(deps, maestroConversation.id)
           return { ok: false, error: rollbackError ?? profileApplied.error }
         }
 
         if (!commitPlanDecision(agentId, result.action)) {
-          const rollbackError = await discardUnstartedSibling(deps, maestroConversation.id)
+          const rollbackError = await discardUnstartedOrchestrator(deps, maestroConversation.id)
           return { ok: false, error: rollbackError ?? 'plan-decision-stale' }
         }
 
-        // Preserve the source mode; only the Maestro sibling receives and implements the plan.
+        // Preserve the source mode; only the Maestro orchestrator receives and implements the plan.
         deps.markMaestroStrategyProfileUsed?.(profileId)
         deps.sendToWindow('conversation:open', { conversation: maestroConversation, focus: true })
         void runApprovedPlan(maestroConversation.id, approvedPlan, result.title)

@@ -3,6 +3,7 @@ import {
   permissionScopeKey,
   conversationPermissionScope,
 } from '../shared/conversation-scope'
+import { conversationDispatchBranchSlug } from '../shared/conversation-dispatch'
 import { removeStandaloneConversationDirectory } from './standalone-conversation-service'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -347,5 +348,56 @@ export async function createSiblingConversation(
     name: options.name,
     attach: { cwd: src.cwd, branch: src.branch, mode: src.mode },
     ...(options.id ? { id: options.id } : {}),
+  })
+}
+
+function maestroFeatureBranchBase(branchHint: string): string {
+  const normalized = branchHint.normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+  const slug = /[a-z0-9]/i.test(normalized) ? conversationDispatchBranchSlug(branchHint) : ''
+  return slug ? `feat/${slug}` : 'feat/maestro'
+}
+
+/** Create a Maestro orchestrator conversation in its own worktree on a new feature branch from the source HEAD. */
+export async function createMaestroWorktreeConversation(
+  sourceConversationId: string,
+  options: { name: string; branchHint: string }
+): Promise<ProjectConversation> {
+  const source = store.getConversation(sourceConversationId)
+  if (!source) throw new Error(tMain('main')('workspace.siblingSourceNotFound'))
+  const src = requireProjectConversation(source)
+  if (src.botOrigin) {
+    throw new Error('Bot conversations own exclusive worktrees and cannot start a Maestro orchestrator.')
+  }
+  assertConversationMigrationMutationAllowed(sourceConversationId, 'Create Maestro worktree conversation')
+
+  if (src.isMulti || src.archived === 1) {
+    throw new Error(tMain('main')('workspace.siblingSourceInvalid'))
+  }
+
+  const ws = store.listWorkspaces().find((w) => w.id === src.workspaceId)
+  if (!ws) throw new Error(tMain('main')('workspace.notFound'))
+
+  const baseRevision = await git.resolveCommit(src.cwd)
+  if (!baseRevision) {
+    throw new Error('Could not resolve HEAD commit of the source conversation.')
+  }
+
+  const baseBranch = maestroFeatureBranchBase(options.branchHint)
+  let branch = baseBranch
+  let suffix = 2
+  while (await git.branchExists(ws.path, branch)) {
+    branch = `${baseBranch}-${suffix}`
+    suffix += 1
+  }
+
+  return createConversation({
+    id: randomUUID(),
+    workspaceId: ws.id,
+    branch,
+    isNewBranch: true,
+    baseRevision,
+    mode: 'worktree',
+    experience: 'maestro',
+    name: options.name,
   })
 }

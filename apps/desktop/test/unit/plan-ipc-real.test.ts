@@ -85,11 +85,11 @@ describe('plan IPC with a real broker', () => {
       name: 'Feature',
       experience: 'standard',
     })
-    const createMaestroSibling = vi.fn().mockRejectedValue(new Error('sibling-blocked'))
+    const createMaestroOrchestrator = vi.fn().mockRejectedValue(new Error('orchestrator-blocked'))
     const { reg, mhandles } = createTestRegistrar()
     registerPlanIpc(reg, {
       sendToWindow: vi.fn(),
-      createMaestroSibling,
+      createMaestroOrchestrator,
       deleteConversation: vi.fn(),
       applyMaestroStrategyProfile: vi.fn().mockResolvedValue({ ok: true }),
     })
@@ -99,7 +99,7 @@ describe('plan IPC with a real broker', () => {
         action: 'approve',
         implementationTarget: 'maestro',
       })
-    ).resolves.toEqual({ ok: false, error: 'sibling-blocked' })
+    ).resolves.toEqual({ ok: false, error: 'orchestrator-blocked' })
 
     expect(getPending('conv-maestro-real')).toMatchObject({ plan: '# Maestro plan', version: 1 })
     expect(h.runApprovedPlan).not.toHaveBeenCalled()

@@ -13,7 +13,7 @@ const h = vi.hoisted(() => ({
   runPlanRevision: vi.fn(),
   setChatMode: vi.fn(),
   isConversationUnderReview: vi.fn((_conversationId: string) => false),
-  createMaestroSibling: vi.fn(),
+  createMaestroOrchestrator: vi.fn(),
   deleteConversation: vi.fn(),
   applyMaestroStrategyProfile: vi.fn(),
   markMaestroStrategyProfileUsed: vi.fn(),
@@ -67,7 +67,7 @@ describe('registerPlanIpc', () => {
     h.runApprovedPlan.mockReset()
     h.runPlanRevision.mockReset()
     h.setChatMode.mockReset()
-    h.createMaestroSibling.mockReset()
+    h.createMaestroOrchestrator.mockReset()
     h.deleteConversation.mockReset()
     h.deleteConversation.mockResolvedValue(undefined)
     h.applyMaestroStrategyProfile.mockReset()
@@ -100,7 +100,7 @@ describe('registerPlanIpc', () => {
     h.decidePlan.mockReturnValue({ action: 'approve', approvedPlan: 'A general plan' })
     registerPlanIpc(reg, {
       sendToWindow: vi.fn(),
-      createMaestroSibling: h.createMaestroSibling,
+      createMaestroOrchestrator: h.createMaestroOrchestrator,
       deleteConversation: h.deleteConversation,
       applyMaestroStrategyProfile: h.applyMaestroStrategyProfile,
     })
@@ -109,7 +109,7 @@ describe('registerPlanIpc', () => {
       implementationTarget: 'maestro',
     })
     expect(result).toEqual({ ok: false, error: 'project-required' })
-    expect(h.createMaestroSibling).not.toHaveBeenCalled()
+    expect(h.createMaestroOrchestrator).not.toHaveBeenCalled()
     expect(h.commitPlanDecision).not.toHaveBeenCalled()
   })
 
@@ -128,7 +128,7 @@ describe('registerPlanIpc', () => {
     expect(h.runPlanRevision).not.toHaveBeenCalled()
   })
 
-  it('Maestro approval creates a sibling, preserves Standard, and runs only in the new conversation', async () => {
+  it('Maestro approval creates an orchestrator worktree, preserves Standard, and runs only in the new conversation', async () => {
     const { reg, mhandles } = createTestRegistrar()
     const sendToWindow = vi.fn()
     const source = {
@@ -142,14 +142,16 @@ describe('registerPlanIpc', () => {
       ...source,
       id: 'conv-maestro',
       name: 'Checkout · Maestro',
+      branch: 'feat/pedidos',
+      cwd: '/worktrees/dispatch-conv-maestro',
       experience: 'maestro',
     }
     h.getConversation.mockReturnValue(source)
-    h.decidePlan.mockReturnValue({ action: 'approve', approvedPlan: '## Edited plan' })
-    h.createMaestroSibling.mockResolvedValue(maestro)
+    h.decidePlan.mockReturnValue({ action: 'approve', approvedPlan: '## Edited plan', title: 'Pedidos' })
+    h.createMaestroOrchestrator.mockResolvedValue(maestro)
     registerPlanIpc(reg, {
       sendToWindow,
-      createMaestroSibling: h.createMaestroSibling,
+      createMaestroOrchestrator: h.createMaestroOrchestrator,
       deleteConversation: h.deleteConversation,
       applyMaestroStrategyProfile: h.applyMaestroStrategyProfile,
       markMaestroStrategyProfileUsed: h.markMaestroStrategyProfileUsed,
@@ -163,9 +165,9 @@ describe('registerPlanIpc', () => {
     })
 
     expect(result).toEqual({ ok: true, conversationId: maestro.id })
-    expect(h.createMaestroSibling).toHaveBeenCalledWith(source.id, {
-      experience: 'maestro',
+    expect(h.createMaestroOrchestrator).toHaveBeenCalledWith(source.id, {
       name: 'Checkout · Maestro',
+      branchHint: 'Pedidos',
     })
     expect(h.commitPlanDecision).toHaveBeenCalledWith(source.id, 'approve')
     expect(h.applyMaestroStrategyProfile).toHaveBeenCalledExactlyOnceWith(maestro.id, 'custom-premium')
@@ -177,21 +179,59 @@ describe('registerPlanIpc', () => {
       conversation: maestro,
       focus: true,
     })
-    expect(h.runApprovedPlan).toHaveBeenCalledExactlyOnceWith(maestro.id, '## Edited plan', undefined)
+    expect(h.runApprovedPlan).toHaveBeenCalledExactlyOnceWith(maestro.id, '## Edited plan', 'Pedidos')
     expect(h.setChatMode).not.toHaveBeenCalled()
     expect(sendToWindow).not.toHaveBeenCalledWith(`chat:mode:${source.id}`, expect.anything())
     expect(h.runApprovedPlan).not.toHaveBeenCalledWith(source.id, expect.anything())
     expect(h.deleteConversation).not.toHaveBeenCalled()
   })
 
-  it('sibling creation failure leaves the plan pending for retry', async () => {
+  it('Maestro approval falls back to the source conversation name when the plan has no title', async () => {
+    const { reg, mhandles } = createTestRegistrar()
+    const source = {
+      id: 'conv-standard',
+      name: 'Checkout',
+      experience: 'standard',
+      branch: 'main',
+      cwd: '/worktrees/checkout',
+    }
+    const maestro = {
+      ...source,
+      id: 'conv-maestro',
+      name: 'Checkout · Maestro',
+      branch: 'feat/checkout',
+      experience: 'maestro',
+    }
+    h.getConversation.mockReturnValue(source)
+    h.decidePlan.mockReturnValue({ action: 'approve', approvedPlan: '## Plan' })
+    h.createMaestroOrchestrator.mockResolvedValue(maestro)
+    registerPlanIpc(reg, {
+      sendToWindow: vi.fn(),
+      createMaestroOrchestrator: h.createMaestroOrchestrator,
+      deleteConversation: h.deleteConversation,
+      applyMaestroStrategyProfile: h.applyMaestroStrategyProfile,
+    })
+
+    const result = await mhandles.get('plan:decide')?.({} as never, source.id, {
+      action: 'approve',
+      implementationTarget: 'maestro',
+    })
+
+    expect(result).toEqual({ ok: true, conversationId: maestro.id })
+    expect(h.createMaestroOrchestrator).toHaveBeenCalledWith(source.id, {
+      name: 'Checkout · Maestro',
+      branchHint: 'Checkout',
+    })
+  })
+
+  it('orchestrator creation failure leaves the plan pending for retry', async () => {
     const { reg, mhandles } = createTestRegistrar()
     h.getConversation.mockReturnValue({ id: 'conv-standard', name: 'Feature', experience: 'standard' })
     h.decidePlan.mockReturnValue({ action: 'approve', approvedPlan: '# Plan' })
-    h.createMaestroSibling.mockRejectedValue(new Error('workspace.siblingSourceInvalid'))
+    h.createMaestroOrchestrator.mockRejectedValue(new Error('workspace.siblingSourceInvalid'))
     registerPlanIpc(reg, {
       sendToWindow: vi.fn(),
-      createMaestroSibling: h.createMaestroSibling,
+      createMaestroOrchestrator: h.createMaestroOrchestrator,
       deleteConversation: h.deleteConversation,
       applyMaestroStrategyProfile: h.applyMaestroStrategyProfile,
     })
@@ -211,11 +251,11 @@ describe('registerPlanIpc', () => {
     const maestro = { id: 'conv-maestro', name: 'Feature · Maestro', experience: 'maestro' }
     h.getConversation.mockReturnValue({ id: 'conv-standard', name: 'Feature', experience: 'standard' })
     h.decidePlan.mockReturnValue({ action: 'approve', approvedPlan: '# Plan' })
-    h.createMaestroSibling.mockResolvedValue(maestro)
+    h.createMaestroOrchestrator.mockResolvedValue(maestro)
     h.applyMaestroStrategyProfile.mockResolvedValue({ ok: false, error: 'maestro-strategy-profile-not-found' })
     registerPlanIpc(reg, {
       sendToWindow: vi.fn(),
-      createMaestroSibling: h.createMaestroSibling,
+      createMaestroOrchestrator: h.createMaestroOrchestrator,
       deleteConversation: h.deleteConversation,
       applyMaestroStrategyProfile: h.applyMaestroStrategyProfile,
     })
@@ -228,21 +268,21 @@ describe('registerPlanIpc', () => {
 
     expect(result).toEqual({ ok: false, error: 'maestro-strategy-profile-not-found' })
     expect(h.applyMaestroStrategyProfile).toHaveBeenCalledWith(maestro.id, 'removed-profile')
-    expect(h.deleteConversation).toHaveBeenCalledExactlyOnceWith(maestro.id)
+    expect(h.deleteConversation).toHaveBeenCalledExactlyOnceWith(maestro.id, { preserveWorktree: false })
     expect(h.commitPlanDecision).not.toHaveBeenCalled()
     expect(h.runApprovedPlan).not.toHaveBeenCalled()
   })
 
-  it('a stale Maestro decision removes the unstarted sibling', async () => {
+  it('a stale Maestro decision removes the unstarted orchestrator and its worktree', async () => {
     const { reg, mhandles } = createTestRegistrar()
     const maestro = { id: 'conv-maestro', name: 'Feature · Maestro', experience: 'maestro' }
     h.getConversation.mockReturnValue({ id: 'conv-standard', name: 'Feature', experience: 'standard' })
     h.decidePlan.mockReturnValue({ action: 'approve', approvedPlan: '# Plan' })
     h.commitPlanDecision.mockReturnValue(false)
-    h.createMaestroSibling.mockResolvedValue(maestro)
+    h.createMaestroOrchestrator.mockResolvedValue(maestro)
     registerPlanIpc(reg, {
       sendToWindow: vi.fn(),
-      createMaestroSibling: h.createMaestroSibling,
+      createMaestroOrchestrator: h.createMaestroOrchestrator,
       deleteConversation: h.deleteConversation,
       applyMaestroStrategyProfile: h.applyMaestroStrategyProfile,
     })
@@ -253,7 +293,7 @@ describe('registerPlanIpc', () => {
     })
 
     expect(result).toEqual({ ok: false, error: 'plan-decision-stale' })
-    expect(h.deleteConversation).toHaveBeenCalledExactlyOnceWith(maestro.id)
+    expect(h.deleteConversation).toHaveBeenCalledExactlyOnceWith(maestro.id, { preserveWorktree: false })
     expect(h.runApprovedPlan).not.toHaveBeenCalled()
   })
 
