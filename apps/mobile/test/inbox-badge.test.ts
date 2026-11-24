@@ -108,6 +108,86 @@ describe('inbox badge & badgeOthers sync', () => {
     expect('badgeOthers' in (sent.legacy as Record<string, unknown>)).toBe(false)
   })
 
+  it('re-applies the local OS badge total on reapplyBadge even when the count did not change (S1)', () => {
+    const setBadge = vi.fn()
+    const syncPushBadge = vi.fn()
+    const sync = createBadgeSync({ setBadge, syncPushBadge })
+
+    sync.update(3, { s1: 1 })
+    expect(setBadge).toHaveBeenCalledTimes(1)
+    expect(setBadge).toHaveBeenLastCalledWith(3)
+
+    // Same count is normally skipped.
+    sync.update(3, { s1: 1 })
+    expect(setBadge).toHaveBeenCalledTimes(1)
+
+    // Returning to foreground or receiving a foreground push resets the remembered badge and re-applies local total.
+    sync.reapplyBadge()
+    expect(setBadge).toHaveBeenCalledTimes(2)
+    expect(setBadge).toHaveBeenLastCalledWith(3)
+
+    // Subsequent update with the same count is skipped again until the count changes or reapplyBadge runs again.
+    sync.update(3, { s1: 1 })
+    expect(setBadge).toHaveBeenCalledTimes(2)
+    sync.stop()
+  })
+
+  it('flushOnBackground skips unchanged servers and retries only failed servers (N7)', async () => {
+    const setBadge = vi.fn()
+    let outcome: Record<string, boolean> | 'throw' = { s1: true, s2: true }
+    const syncPushBadge = vi.fn(async (_payload: Readonly<Record<string, number>>) => {
+      if (outcome === 'throw') throw new Error('offline')
+      return outcome
+    })
+    const sync = createBadgeSync({ setBadge, syncPushBadge })
+
+    sync.update(3, { s1: 1, s2: 2 })
+    await vi.advanceTimersByTimeAsync(BADGE_OTHERS_DEBOUNCE_MS)
+    await Promise.resolve()
+    expect(syncPushBadge).toHaveBeenCalledTimes(1)
+    expect(syncPushBadge).toHaveBeenLastCalledWith({ s1: 1, s2: 2 })
+
+    // Nothing changed since the last successful send: backgrounding must NOT re-register push.
+    sync.flushOnBackground()
+    await Promise.resolve()
+    expect(syncPushBadge).toHaveBeenCalledTimes(1)
+
+    // Update s1 only; simulate s1 failing while s2 is unchanged.
+    outcome = { s1: false }
+    sync.update(4, { s1: 2, s2: 2 })
+    await vi.advanceTimersByTimeAsync(BADGE_OTHERS_DEBOUNCE_MS)
+    await Promise.resolve()
+    expect(syncPushBadge).toHaveBeenCalledTimes(2)
+    expect(syncPushBadge).toHaveBeenLastCalledWith({ s1: 2 })
+
+    // Because s1 failed, background flush retries ONLY s1 (not s2).
+    outcome = { s1: true }
+    sync.flushOnBackground()
+    await Promise.resolve()
+    expect(syncPushBadge).toHaveBeenCalledTimes(3)
+    expect(syncPushBadge).toHaveBeenLastCalledWith({ s1: 2 })
+
+    // Once s1 succeeded, another background flush is a no-op.
+    sync.flushOnBackground()
+    await Promise.resolve()
+    expect(syncPushBadge).toHaveBeenCalledTimes(3)
+
+    // A rejected sync leaves lastSentOthers unchanged so background flush retries it.
+    outcome = 'throw'
+    sync.update(5, { s1: 2, s2: 3 })
+    await vi.advanceTimersByTimeAsync(BADGE_OTHERS_DEBOUNCE_MS)
+    await Promise.resolve()
+    expect(syncPushBadge).toHaveBeenCalledTimes(4)
+    expect(syncPushBadge).toHaveBeenLastCalledWith({ s2: 3 })
+
+    outcome = { s2: true }
+    sync.flushOnBackground()
+    await Promise.resolve()
+    expect(syncPushBadge).toHaveBeenCalledTimes(5)
+    expect(syncPushBadge).toHaveBeenLastCalledWith({ s2: 3 })
+    sync.stop()
+  })
+
   it('formats pushLink for bot routine runs and peer threads', () => {
     expect(pushLink({ serverId: 's1', kind: 'bot', id: 'atlas', runId: 'run-1' })).toBe(
       '/lane/atlas?kind=run&lane=run-1&server=s1'

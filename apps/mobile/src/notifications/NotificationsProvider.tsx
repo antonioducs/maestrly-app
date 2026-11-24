@@ -42,8 +42,10 @@ type NotificationsValue = {
   /** Whether the phone already offered notifications after pairing. */
   offered: boolean
   markOffered(): void
-  /** Re-sends push registrations with updated `badgeOthers` for servers advertising `attention`. */
-  syncBadgeOthers(badgeOthersByServer: Readonly<Record<string, number>>): Promise<void>
+  /** Re-sends push registrations with updated `badgeOthers` for servers advertising `attention`; returns per-server success. */
+  syncBadgeOthers(badgeOthersByServer: Readonly<Record<string, number>>): Promise<Record<string, boolean>>
+  /** Subscribes to foreground notifications received by the app so the icon badge can be re-applied from local truth. */
+  onNotificationReceived(listener: () => void): () => void
 }
 
 const NotificationsContext = createContext<NotificationsValue | null>(null)
@@ -85,6 +87,7 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
   const serversRef = useRef(servers)
   serversRef.current = servers
   const badgeOthersRef = useRef<Readonly<Record<string, number>>>({})
+  const receivedListenersRef = useRef(new Set<() => void>())
   const localeRef = useRef(locale)
   localeRef.current = locale
   const preferencesRef = useRef(preferences)
@@ -102,7 +105,8 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
           target.kind === shown.kind &&
           target.id === shown.id &&
           (!target.environmentId || target.environmentId === shown.environmentId)
-        return { shouldShowBanner: !visible, shouldShowList: true, shouldPlaySound: !visible, shouldSetBadge: true }
+        // Keep `shouldSetBadge: false` so incoming foreground pushes never overwrite the local cross-server badge total.
+        return { shouldShowBanner: !visible, shouldShowList: true, shouldPlaySound: !visible, shouldSetBadge: false }
       },
     })
     if (Platform.OS === 'android')
@@ -123,10 +127,16 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     void Notifications.getLastNotificationResponseAsync().then((response) => {
       if (response) setOpened(response.notification.request.content.data)
     })
-    const subscription = Notifications.addNotificationResponseReceivedListener((response) =>
+    const receivedSubscription = Notifications.addNotificationReceivedListener(() => {
+      for (const listener of receivedListenersRef.current) listener()
+    })
+    const responseSubscription = Notifications.addNotificationResponseReceivedListener((response) =>
       setOpened(response.notification.request.content.data)
     )
-    return () => subscription.remove()
+    return () => {
+      receivedSubscription.remove()
+      responseSubscription.remove()
+    }
   }, [kv])
 
   // Opens what a tapped notification is about once the servers are known.
@@ -237,16 +247,16 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
   }, [kv])
 
   const syncBadgeOthers = useCallback(
-    async (badgeOthersByServer: Readonly<Record<string, number>>) => {
+    async (badgeOthersByServer: Readonly<Record<string, number>>): Promise<Record<string, boolean>> => {
       badgeOthersRef.current = { ...badgeOthersRef.current, ...badgeOthersByServer }
-      if (!native || !token || permission !== 'granted') return
+      if (!native || !token || permission !== 'granted') return {}
       const targets = serversRef.current.filter(
         (server) =>
           server.id !== DEMO_SERVER.id &&
           server.features.includes(FLEET_ATTENTION_FEATURE) &&
           server.id in badgeOthersByServer
       )
-      if (!targets.length) return
+      if (!targets.length) return {}
       const updated = await registerWithServers({
         servers: targets,
         token,
@@ -257,9 +267,19 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
         clientFor,
       })
       setResults((previous) => ({ ...previous, ...updated }))
+      const outcome: Record<string, boolean> = {}
+      for (const [serverId, status] of Object.entries(updated)) outcome[serverId] = status === 'registered'
+      return outcome
     },
     [token, permission, clientFor]
   )
+
+  const onNotificationReceived = useCallback((listener: () => void) => {
+    receivedListenersRef.current.add(listener)
+    return () => {
+      receivedListenersRef.current.delete(listener)
+    }
+  }, [])
 
   const value = useMemo<NotificationsValue>(
     () => ({
@@ -274,8 +294,21 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       offered,
       markOffered,
       syncBadgeOthers,
+      onNotificationReceived,
     }),
-    [permission, problem, preferences, setPreference, enable, results, sendTest, offered, markOffered, syncBadgeOthers]
+    [
+      permission,
+      problem,
+      preferences,
+      setPreference,
+      enable,
+      results,
+      sendTest,
+      offered,
+      markOffered,
+      syncBadgeOthers,
+      onNotificationReceived,
+    ]
   )
   return <NotificationsContext.Provider value={value}>{children}</NotificationsContext.Provider>
 }

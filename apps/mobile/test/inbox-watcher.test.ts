@@ -118,22 +118,45 @@ beforeEach(() => vi.useFakeTimers())
 afterEach(() => vi.useRealTimers())
 
 describe('inbox attention watcher', () => {
-  it('subscribes with ?attention=1, fetches snapshot + environments on hello, and applies SSE deltas', async () => {
+  it('subscribes with ?attention=2, fetches snapshot + environments on hello, ignores non-attention frames, and applies SSE deltas', async () => {
     const h = createStandaloneHarness()
     h.watcher.start()
     await flush()
 
-    expect(h.urls[0]).toBe('https://s1.example.dev/v1/events?attention=1')
+    expect(h.urls[0]).toBe('https://s1.example.dev/v1/events?attention=2')
     h.connections[0].push(helloFrame)
     await flush()
 
     expect(h.attentionFn).toHaveBeenCalledTimes(1)
     expect(h.envsFn).toHaveBeenCalledTimes(1)
     expect(h.watcher.getState().loaded).toBe(true)
+    expect(h.watcher.getState().snapshotSeq).toBe(1)
     expect(h.watcher.getState().reachable).toBe(true)
     expect([...h.watcher.getState().entries.keys()]).toEqual(['chat:personal/c1'])
     expect(h.watcher.getState().environments.get('personal')).toBe('Personal')
     expect(h.watcher.getState().environments.get('company')).toBe('Company')
+
+    // Defensively ignore any non-hello fleet frames (e.g. transcript or bot updates from an older gateway).
+    const onEmit = vi.fn()
+    h.watcher.subscribe(onEmit)
+    h.connections[0].push(
+      frame({
+        type: 'transcript.appended',
+        at: AT,
+        botId: 'atlas',
+        item: {
+          id: 't1',
+          kind: 'message',
+          role: 'assistant',
+          at: AT,
+          text: 'hello',
+        },
+      })
+    )
+    h.connections[0].push(frame({ type: 'bot.deleted', at: AT, botId: 'atlas' }))
+    await flush()
+    expect(onEmit).not.toHaveBeenCalled()
+    expect(h.attentionFn).toHaveBeenCalledTimes(1)
 
     // Apply an incremental upsert + remove over SSE.
     h.connections[0].push(
@@ -145,6 +168,7 @@ describe('inbox attention watcher', () => {
     )
     await flush()
 
+    expect(onEmit).toHaveBeenCalledTimes(1)
     expect([...h.watcher.getState().entries.keys()]).toEqual(['bot:atlas'])
     expect(h.watcher.getState().entries.get('bot:atlas')?.kind).toBe('help')
     h.watcher.stop()

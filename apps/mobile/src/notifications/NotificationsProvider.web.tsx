@@ -16,7 +16,8 @@ const unavailable: NotificationsValue = {
   sendTest: async () => {},
   offered: true,
   markOffered: () => {},
-  syncBadgeOthers: async () => {},
+  syncBadgeOthers: async () => ({}),
+  onNotificationReceived: () => () => {},
 }
 const NotificationsContext = createContext<NotificationsValue>(unavailable)
 

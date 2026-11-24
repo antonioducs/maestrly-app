@@ -2,8 +2,10 @@ import {
   FLEET_ATTENTION_FEATURE,
   FLEET_ENVIRONMENTS_FEATURE,
   type FleetAttentionEntry,
+  type FleetEnvironment,
 } from '@maestrly/bot-fleet-protocol'
-import { router } from 'expo-router'
+import type { InboxObservation } from '@maestrly/bot-fleet-protocol/inbox'
+import { router, useFocusEffect } from 'expo-router'
 import {
   createContext,
   useCallback,
@@ -23,8 +25,9 @@ import { useNotifications } from '../notifications/NotificationsProvider'
 import type { PairedServer } from '../servers/registry'
 import { useServers } from '../servers/ServersProvider'
 import { createBadgeSync, setAppBadgeCount } from './badge'
-import { createInboxController, type InboxServerInput } from './controller'
-import { fallbackObservations } from './fallback'
+import { createInboxController, type InboxController, type InboxServerInput } from './controller'
+import { environmentNeedsChatFallback, fallbackChatObservations, fallbackObservations } from './fallback'
+import { sameFallbackObservations, subscribeInboxStoreSlices } from './sync'
 import { openInboxItem, type InboxUndo, type MobileInbox, type MobileInboxItem } from './types'
 import { createAttentionWatcher, type AttentionWatcher } from './watcher'
 
@@ -32,8 +35,46 @@ export type { InboxUndo, MobileInbox, MobileInboxItem, MobileInboxServer } from 
 
 const EMPTY_ENTRIES: ReadonlyMap<string, FleetAttentionEntry> = new Map()
 const EMPTY_ENVIRONMENTS: ReadonlyMap<string, string> = new Map()
+const environmentMapCache = new WeakMap<readonly FleetEnvironment[], ReadonlyMap<string, string>>()
 
 const InboxContext = createContext<MobileInbox | null>(null)
+const InboxControllerContext = createContext<InboxController | null>(null)
+
+function environmentsMap(list: readonly FleetEnvironment[]): ReadonlyMap<string, string> {
+  if (list.length === 0) return EMPTY_ENVIRONMENTS
+  let cached = environmentMapCache.get(list)
+  if (!cached) {
+    cached = new Map(list.map((env) => [env.id, env.name]))
+    environmentMapCache.set(list, cached)
+  }
+  return cached
+}
+
+function sameServerInput(a: InboxServerInput, b: InboxServerInput): boolean {
+  return (
+    a.id === b.id &&
+    a.name === b.name &&
+    a.features === b.features &&
+    a.supportsAttention === b.supportsAttention &&
+    a.reachable === b.reachable &&
+    a.loaded === b.loaded &&
+    a.snapshotSeq === b.snapshotSeq &&
+    a.lastSyncedAt === b.lastSyncedAt &&
+    a.entries === b.entries &&
+    a.environments === b.environments &&
+    a.bots === b.bots &&
+    a.inbox === b.inbox &&
+    a.activeEnvironmentId === b.activeEnvironmentId &&
+    a.chatLists === b.chatLists &&
+    sameFallbackObservations(a.fallback, b.fallback)
+  )
+}
+
+function sameServerInputs(a: readonly InboxServerInput[] | null, b: readonly InboxServerInput[]): boolean {
+  if (!a || a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (!sameServerInput(a[i], b[i])) return false
+  return true
+}
 
 interface ManagedWatcher {
   descriptor: string
@@ -83,7 +124,10 @@ export function InboxProvider({ children }: { children: ReactNode }) {
   notificationsRef.current = notifications
 
   const watchersRef = useRef(new Map<string, ManagedWatcher>())
-  const fallbackSyncRef = useRef(new Map<string, { sig: string; wasOpen: boolean; at: number }>())
+  const fallbackSyncRef = useRef(
+    new Map<string, { fallback: readonly InboxObservation<string>[]; wasOpen: boolean; at: number }>()
+  )
+  const lastInputsRef = useRef<readonly InboxServerInput[] | null>(null)
   const backgroundedRef = useRef(AppState.currentState === 'background')
 
   // One stable fleet-controller identity counter so switching active server or restarting its controller reattaches
@@ -151,8 +195,18 @@ export function InboxProvider({ children }: { children: ReactNode }) {
         const watched = watchersRef.current.get(server.id)?.watcher?.getState()
         const environments =
           isActive && activeFleetState && activeFleetState.environments.length > 0
-            ? new Map(activeFleetState.environments.map((env) => [env.id, env.name]))
+            ? environmentsMap(activeFleetState.environments)
             : (watched?.environments ?? EMPTY_ENVIRONMENTS)
+        const chatFallback =
+          isActive && activeFleetState && environmentNeedsChatFallback(activeFleetState.environments, activeEnvId)
+            ? fallbackChatObservations({
+                serverId: server.id,
+                serverName: server.name,
+                environments: activeFleetState.environments,
+                environmentId: activeEnvId,
+                chatLists: activeChatsState?.lists ?? null,
+              })
+            : undefined
         return {
           id: server.id,
           name: server.name,
@@ -160,11 +214,13 @@ export function InboxProvider({ children }: { children: ReactNode }) {
           supportsAttention: true,
           reachable: watched ? watched.reachable : isActive ? isFleetReachable(activeFleet) : true,
           loaded: watched?.loaded ?? false,
+          snapshotSeq: watched?.snapshotSeq ?? 0,
           lastSyncedAt: watched?.lastSyncedAt ?? null,
           entries: watched?.entries ?? EMPTY_ENTRIES,
           environments,
           ...(activeFleetState ? { bots: activeFleetState.bots, inbox: activeFleetState.inbox } : {}),
           ...(isActive ? { activeEnvironmentId: activeEnvId, chatLists: activeChatsState?.lists ?? null } : {}),
+          ...(chatFallback ? { fallback: chatFallback } : {}),
         }
       }
 
@@ -178,13 +234,12 @@ export function InboxProvider({ children }: { children: ReactNode }) {
           environmentId: activeEnvId,
           chatLists: activeChatsState?.lists ?? null,
         })
-        const sig = JSON.stringify(fallback)
         const prev = fallbackSyncRef.current.get(server.id)
         const isOpen = activeFleetState.loaded && activeFleetState.connection === 'open'
         let lastSyncedAt: number | null = prev?.at ?? null
-        if (isOpen && (!prev?.wasOpen || prev.sig !== sig)) {
+        if (isOpen && (!prev?.wasOpen || !sameFallbackObservations(prev.fallback, fallback))) {
           lastSyncedAt = Date.now()
-          fallbackSyncRef.current.set(server.id, { sig, wasOpen: true, at: lastSyncedAt })
+          fallbackSyncRef.current.set(server.id, { fallback, wasOpen: true, at: lastSyncedAt })
         } else if (!isOpen && prev?.wasOpen) {
           fallbackSyncRef.current.set(server.id, { ...prev, wasOpen: false })
         }
@@ -197,7 +252,7 @@ export function InboxProvider({ children }: { children: ReactNode }) {
           loaded: activeFleetState.loaded,
           lastSyncedAt,
           entries: EMPTY_ENTRIES,
-          environments: new Map(activeFleetState.environments.map((env) => [env.id, env.name])),
+          environments: environmentsMap(activeFleetState.environments),
           bots: activeFleetState.bots,
           inbox: activeFleetState.inbox,
           activeEnvironmentId: activeEnvId,
@@ -218,6 +273,8 @@ export function InboxProvider({ children }: { children: ReactNode }) {
         environments: EMPTY_ENVIRONMENTS,
       }
     })
+    if (sameServerInputs(lastInputsRef.current, inputs)) return
+    lastInputsRef.current = inputs
     inboxController.setServers(inputs)
   }, [inboxController])
 
@@ -244,8 +301,8 @@ export function InboxProvider({ children }: { children: ReactNode }) {
     }
   }, [inboxController, badgeSync])
 
-  // Reconcile per-server attention watchers: shared stream for the active server, standalone `?attention=1` stream
-  // for non-active servers with the feature, and immediate cleanup on unpair or feature loss.
+  // Reconcile per-server attention watchers: shared stream (`?attention=1`) for the active server, standalone
+  // attention-only (`?attention=2`) stream for non-active servers with the feature, and immediate cleanup on unpair.
   const serverSignature = servers
     .map(
       (server) =>
@@ -345,21 +402,24 @@ export function InboxProvider({ children }: { children: ReactNode }) {
     syncServers()
   }, [serverSignature, active?.id, activeFleetId, syncServers])
 
-  // Keep active server's bots/environments/requests/chats synced into the inbox controller (both for fallback mode
-  // and for enriching attention entries with bot tints, workspace names, and request summaries).
+  // Keep active server's inbox-relevant slices (`connection`, `loaded`, `bots`, `inbox`, `environments`, `lists`)
+  // synced into the inbox controller without rebuilding on streamed transcript/view/runtime updates.
   useEffect(() => {
-    const unsubFleet = fleetController?.store.subscribe(syncServers)
-    const unsubChats = chats?.store.subscribe(syncServers)
+    const unsubscribe = subscribeInboxStoreSlices(fleetController?.store, chats?.store, syncServers)
     syncServers()
-    return () => {
-      unsubFleet?.()
-      unsubChats?.()
-    }
+    return unsubscribe
   }, [fleetController, chats, environmentId, servers, active?.id, syncServers])
 
-  // Pause watchers + flush badgeOthers and ledger on background; resume + refetch on foreground.
+  // Re-apply the local icon badge total whenever a foreground push notification arrives so the OS badge stays in sync.
   useEffect(() => {
+    return notifications.onNotificationReceived(() => badgeSync.reapplyBadge())
+  }, [notifications, badgeSync])
+
+  // Pause watchers + flush changed badgeOthers and ledger on background; resume + refetch + re-apply badge on active.
+  useEffect(() => {
+    inboxController.setForeground(AppState.currentState === 'active')
     const subscription = AppState.addEventListener('change', (nextState) => {
+      inboxController.setForeground(nextState === 'active')
       if (nextState === 'background') {
         backgroundedRef.current = true
         for (const entry of watchersRef.current.values()) entry.watcher?.background()
@@ -369,6 +429,7 @@ export function InboxProvider({ children }: { children: ReactNode }) {
         backgroundedRef.current = false
         for (const entry of watchersRef.current.values()) entry.watcher?.foreground()
         inboxController.tick()
+        badgeSync.reapplyBadge()
       }
     })
     return () => subscription.remove()
@@ -420,11 +481,29 @@ export function InboxProvider({ children }: { children: ReactNode }) {
     [snapshot.items, snapshot.counts, snapshot.servers, open, markRead, markAllRead, dismiss, restore, retry]
   )
 
-  return <InboxContext.Provider value={value}>{children}</InboxContext.Provider>
+  return (
+    <InboxControllerContext.Provider value={inboxController}>
+      <InboxContext.Provider value={value}>{children}</InboxContext.Provider>
+    </InboxControllerContext.Provider>
+  )
 }
 
 export function useInbox(): MobileInbox {
   const value = useContext(InboxContext)
   if (!value) throw new Error('useInbox must be used inside InboxProvider')
   return value
+}
+
+/**
+ * Keeps `bot:<botId>` marked read (local ledger + gateway `POST /v1/attention/seen`) while the calling bot or lane
+ * screen is focused and the app is foregrounded, both on open and when new replies arrive while focused.
+ */
+export function useBotAttentionSeen(serverId: string | null | undefined, botId: string | null | undefined): void {
+  const controller = useContext(InboxControllerContext)
+  useFocusEffect(
+    useCallback(() => {
+      if (!controller || !serverId || !botId) return
+      return controller.focusBot(serverId, botId)
+    }, [controller, serverId, botId])
+  )
 }

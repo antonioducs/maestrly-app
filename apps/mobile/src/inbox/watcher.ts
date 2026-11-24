@@ -27,6 +27,8 @@ export interface WatchedServerState {
   readonly reachable: boolean
   /** True once at least one snapshot fetch has succeeded. */
   readonly loaded: boolean
+  /** Monotonic count of completed snapshot fetches (connect, reconnect, foreground, retry). */
+  readonly snapshotSeq: number
   /** Epoch ms of the last successful snapshot or attention delta, or null before the first sync. */
   readonly lastSyncedAt: number | null
 }
@@ -111,6 +113,7 @@ export function createAttentionWatcher(options: AttentionWatcherOptions): Attent
   let environments = new Map<string, string>()
   let reachable = true
   let loaded = false
+  let snapshotSeq = 0
   let lastSyncedAt: number | null = null
   let started = false
   let stopped = false
@@ -133,6 +136,7 @@ export function createAttentionWatcher(options: AttentionWatcherOptions): Attent
     environments,
     reachable,
     loaded,
+    snapshotSeq,
     lastSyncedAt,
   })
 
@@ -202,6 +206,7 @@ export function createAttentionWatcher(options: AttentionWatcherOptions): Attent
       if (envList) environments = new Map(envList.environments.map((env) => [env.id, env.name]))
       else syncSharedEnvironments()
       loaded = true
+      snapshotSeq++
       lastSyncedAt = now()
       fetchAttempt = 0
       reachable = !isUnhealthyStreamState(streamState)
@@ -234,13 +239,15 @@ export function createAttentionWatcher(options: AttentionWatcherOptions): Attent
     if (options.transport.mode !== 'standalone' || streamHandle || stopped || paused) return
     const transport = options.transport
     const opener = transport.openStream ?? openEventStream
-    const url = transport.origin + buildPath(FLEET_GATEWAY_ROUTES.events.path, {}, { [FLEET_ATTENTION_QUERY]: 1 })
+    // Attention-only mode (`attention=2`): gateway sends only keep-alive/hello and `attention.updated` frames.
+    const url = transport.origin + buildPath(FLEET_GATEWAY_ROUTES.events.path, {}, { [FLEET_ATTENTION_QUERY]: '2' })
     const streamOptions: EventStreamOptions = {
       url,
       headers: transport.headers(),
       fetch: transport.fetchStream,
       createDecoder: transport.createDecoder ?? (() => new TextDecoder()),
       onEvent(event) {
+        // Ignore any non-hello fleet event defensively even if an older gateway sends full frames.
         if (event.type === 'hello') {
           streamState = 'open'
           void fetchSnapshot()

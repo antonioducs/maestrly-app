@@ -13,6 +13,7 @@ import { type FleetState, runsSeenSet, selectRunsSeen, selectThreadsSeen, thread
 import { editableItemId } from '../fleet/transcript-search'
 import { GatewayError } from '../gateway/client'
 import { useI18n } from '../i18n'
+import { useBotAttentionSeen } from '../inbox'
 import { useServers, type Current } from '../servers/ServersProvider'
 import { useTheme } from '../theme/ThemeProvider'
 import { ChatConversation } from '../ui/chat/ChatConversation'
@@ -176,6 +177,8 @@ function BotConversation({ bot }: { bot: FleetBot }) {
     }),
     [bot, online, focusComposer, inbox, controller, active?.id, edit, lanes]
   )
+
+  useBotAttentionSeen(controller.source.serverId, bot.id)
 
   useEffect(() => {
     void controller.openBot(bot.id)

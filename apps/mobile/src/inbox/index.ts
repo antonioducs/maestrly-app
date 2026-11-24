@@ -16,8 +16,25 @@ export {
   type InboxControllerState,
   type InboxServerInput,
 } from './controller'
-export { fallbackObservations, type FallbackSourceInput } from './fallback'
-export { InboxProvider, useInbox } from './react'
+export {
+  environmentNeedsChatFallback,
+  fallbackChatObservations,
+  fallbackObservations,
+  type FallbackChatSourceInput,
+  type FallbackSourceInput,
+} from './fallback'
+export { InboxProvider, useBotAttentionSeen, useInbox } from './react'
+export {
+  sameChatsInboxSlice,
+  sameFallbackObservations,
+  sameFleetInboxSlice,
+  selectChatsInboxSlice,
+  selectFleetInboxSlice,
+  subscribeInboxStoreSlices,
+  type ChatsInboxSlice,
+  type FleetInboxSlice,
+  type SubscribableStore,
+} from './sync'
 export {
   inboxItemKey,
   inboxItemLink,
