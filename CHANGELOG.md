@@ -5,6 +5,19 @@ User-visible changes by version. Downloads are on
 
 ## [Unreleased]
 
+## [0.43.1] - 2026-11-24
+
+### Fixed
+
+- **Artifact Screens canvas thumbnails**: the **Screens** (`S`) canvas in the
+  artifact viewer now renders every screen into an in-memory thumbnail instead
+  of leaving screens beyond the 6-frame live pool spinning, keeps live iframes
+  only for focused or zoomed-in screens, opens showing all screens rather than
+  zooming to the last opened one, selects on single click and opens on double
+  click or `Enter`, and distinguishes waiting, loading, and undrawable
+  screens. External CDN fonts and stylesheets are omitted from thumbnails due
+  to CSP restrictions, and thumbnails are redrawn when reopening an artifact.
+
 ## [0.43.0] - 2026-11-24
 
 ### Added
